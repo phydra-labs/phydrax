@@ -1,0 +1,227 @@
+--- a/include/quda.h
++++ b/include/quda.h
+@@ -15,11 +15,27 @@
+ #include <quda_define.h>
+ #include <quda_constants.h>
+ 
+-#ifndef __CUDACC_RTC__
+-#define double_complex double _Complex
+-#else // keep NVRTC happy since it can't handle C types
+-#define double_complex double2
++#if defined(__CUDACC_RTC__)
++typedef double2 QudaComplex;
++#define QUDA_COMPLEX_REAL(z) ((z).x)
++#define QUDA_COMPLEX_IMAG(z) ((z).y)
++#elif defined(_WIN32)
++#include <stddef.h>
++typedef struct { double real, imag; } QudaComplex;
++#define QUDA_COMPLEX_REAL(z) ((z).real)
++#define QUDA_COMPLEX_IMAG(z) ((z).imag)
++#ifdef __cplusplus
++static_assert(sizeof(QudaComplex) == 2 * sizeof(double), "QUDA complex C ABI size");
++static_assert(alignof(QudaComplex) == alignof(double), "QUDA complex C ABI alignment");
++static_assert(offsetof(QudaComplex, real) == 0, "QUDA complex real component offset");
++static_assert(offsetof(QudaComplex, imag) == sizeof(double), "QUDA complex imaginary component offset");
+ #endif
++#else
++typedef double _Complex QudaComplex;
++#define QUDA_COMPLEX_REAL(z) (__real__(z))
++#define QUDA_COMPLEX_IMAG(z) (__imag__(z))
++#endif
++#define double_complex QudaComplex
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -1939,7 +1955,7 @@
+    * @param[in] inv_param Meta-data structure
+    * @param[in] X Lattice dimensions
+    */
+-  void laphSinkProject(double _Complex *host_sinks, void **host_quark, int n_quark, int tile_quark,
++  void laphSinkProject(double_complex *host_sinks, void **host_quark, int n_quark, int tile_quark,
+                        void **host_evec, int nevec, int tile_evec, QudaInvertParam *inv_param, const int X[4]);
+ 
+ #ifdef __cplusplus
+--- a/lib/interface_quda.cpp
++++ b/lib/interface_quda.cpp
+@@ -1606,16 +1606,16 @@
+ 
+ namespace quda {
+ 
+-  static void copy_mobius_coeff(complex_t *dst, const double _Complex *src, int Ls)
++  static void copy_mobius_coeff(complex_t *dst, const QudaComplex *src, int Ls)
+   {
+-    for (int i = 0; i < Ls; i++) dst[i] = complex_t(real_t(__real__(src[i])), real_t(__imag__(src[i])));
+-  }
+-
+-  static void copy_evals_to_host(double _Complex *dst, const std::vector<complex_t> &src)
++    for (int i = 0; i < Ls; i++) dst[i] = complex_t(real_t(QUDA_COMPLEX_REAL(src[i])), real_t(QUDA_COMPLEX_IMAG(src[i])));
++  }
++
++  static void copy_evals_to_host(QudaComplex *dst, const std::vector<complex_t> &src)
+   {
+     for (size_t i = 0; i < src.size(); i++) {
+-      __real__(dst[i]) = to_double(src[i].real());
+-      __imag__(dst[i]) = to_double(src[i].imag());
++      QUDA_COMPLEX_REAL(dst[i]) = to_double(src[i].real());
++      QUDA_COMPLEX_IMAG(dst[i]) = to_double(src[i].imag());
+     }
+   }
+ 
+@@ -2688,7 +2688,7 @@
+   popVerbosity();
+ }
+ 
+-void eigensolveQuda(void **host_evecs, double _Complex *host_evals, QudaEigParam *eig_param)
++void eigensolveQuda(void **host_evecs, QudaComplex *host_evals, QudaEigParam *eig_param)
+ {
+   if (!initialized) errorQuda("QUDA not initialized");
+ 
+@@ -5115,7 +5115,7 @@
+   ploop[1] = obsParam.ploop[1];
+ }
+ 
+-void computeGaugeLoopTraceQuda(double _Complex *traces, int **input_path_buf, int *path_length, double *loop_coeff,
++void computeGaugeLoopTraceQuda(QudaComplex *traces, int **input_path_buf, int *path_length, double *loop_coeff,
+                                int num_paths, int max_length, double factor)
+ {
+   if (!gaugePrecise) errorQuda("Cannot compute gauge loop traces as there is no resident gauge field");
+@@ -6356,7 +6356,7 @@
+   if (param->remove_staggered_phase == QUDA_BOOLEAN_TRUE) { gauge->applyStaggeredPhase(); }
+ }
+ 
+-static void check_param(double _Complex *host_sinks, void **host_quark, int n_quark, int tile_quark, void **host_evec,
++static void check_param(QudaComplex *host_sinks, void **host_quark, int n_quark, int tile_quark, void **host_evec,
+                         int n_evec, int tile_evec, QudaInvertParam *inv_param, const int X[4])
+ {
+   if (host_sinks == nullptr) errorQuda("Invalid host_sink ptr");
+@@ -6373,7 +6373,7 @@
+     if (X[i] < 1 || X[i] > 512) errorQuda("Invalid lattice dimension %d", i);
+ }
+ 
+-void laphSinkProject(double _Complex *host_sinks, void **host_quark, int n_quark, int tile_quark, void **host_evec,
++void laphSinkProject(QudaComplex *host_sinks, void **host_quark, int n_quark, int tile_quark, void **host_evec,
+                      int n_evec, int tile_evec, QudaInvertParam *inv_param, const int X[4])
+ {
+   auto profile = pushProfile(profileSinkProject, inv_param);
+--- a/lib/gauge_observable.cpp
++++ b/lib/gauge_observable.cpp
+@@ -61,8 +61,8 @@
+ 
+       for (int i = 0; i < param.num_paths; i++) {
+         auto &z = loop_traces[i];
+-        __real__(param.traces[i]) = to_double(std::real(z));
+-        __imag__(param.traces[i]) = to_double(std::imag(z));
++        QUDA_COMPLEX_REAL(param.traces[i]) = to_double(std::real(z));
++        QUDA_COMPLEX_IMAG(param.traces[i]) = to_double(std::imag(z));
+       }
+     }
+ 
+--- a/lib/targets/cuda/blas_lapack_cublas.cpp
++++ b/lib/targets/cuda/blas_lapack_cublas.cpp
+@@ -416,9 +416,9 @@
+ 
+           typedef cuDoubleComplex Z;
+ 
+-          const Z alpha = {__real__(blas_param.alpha), __imag__(blas_param.alpha)};
+-
+-          const Z beta = {__real__(blas_param.beta), __imag__(blas_param.beta)};
++          const Z alpha = {QUDA_COMPLEX_REAL(blas_param.alpha), QUDA_COMPLEX_IMAG(blas_param.alpha)};
++
++          const Z beta = {QUDA_COMPLEX_REAL(blas_param.beta), QUDA_COMPLEX_IMAG(blas_param.beta)};
+ 
+           cublasStatus_t error;
+           if (batch > 1) {
+@@ -441,9 +441,9 @@
+ 
+           typedef cuFloatComplex C;
+ 
+-          const C alpha = {(float)__real__(blas_param.alpha), (float)__imag__(blas_param.alpha)};
+-
+-          const C beta = {(float)__real__(blas_param.beta), (float)__imag__(blas_param.beta)};
++          const C alpha = {(float)QUDA_COMPLEX_REAL(blas_param.alpha), (float)QUDA_COMPLEX_IMAG(blas_param.alpha)};
++
++          const C beta = {(float)QUDA_COMPLEX_REAL(blas_param.beta), (float)QUDA_COMPLEX_IMAG(blas_param.beta)};
+ 
+           cublasStatus_t error;
+           if (batch > 1) {
+@@ -466,8 +466,8 @@
+ 
+           typedef double D;
+ 
+-          const D alpha = (D)__real__(blas_param.alpha);
+-          const D beta = (D)__real__(blas_param.beta);
++          const D alpha = (D)QUDA_COMPLEX_REAL(blas_param.alpha);
++          const D beta = (D)QUDA_COMPLEX_REAL(blas_param.beta);
+ 
+           cublasStatus_t error;
+           if (batch > 1) {
+@@ -490,8 +490,8 @@
+ 
+           typedef float S;
+ 
+-          const S alpha = (S)__real__(blas_param.alpha);
+-          const S beta = (S)__real__(blas_param.beta);
++          const S alpha = (S)QUDA_COMPLEX_REAL(blas_param.alpha);
++          const S beta = (S)QUDA_COMPLEX_REAL(blas_param.beta);
+ 
+           cublasStatus_t error;
+           if (batch > 1) {
+--- a/lib/targets/generic/blas_lapack_eigen.cpp
++++ b/lib/targets/generic/blas_lapack_eigen.cpp
+@@ -331,32 +331,32 @@
+         if (blas_param.data_type == QUDA_BLAS_DATATYPE_Z) {
+ 
+           typedef std::complex<double> Z;
+-          const Z alpha = blas_param.alpha;
+-          const Z beta = blas_param.beta;
++          const Z alpha = {QUDA_COMPLEX_REAL(blas_param.alpha), QUDA_COMPLEX_IMAG(blas_param.alpha)};
++          const Z beta = {QUDA_COMPLEX_REAL(blas_param.beta), QUDA_COMPLEX_IMAG(blas_param.beta)};
+           GEMM<MatrixXcd, Z>(A_h, B_h, C_h, alpha, beta, max_stride, blas_param);
+           flops += batch * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
+ 
+         } else if (blas_param.data_type == QUDA_BLAS_DATATYPE_C) {
+ 
+           typedef std::complex<float> C;
+-          const C alpha = blas_param.alpha;
+-          const C beta = blas_param.beta;
++          const C alpha = {(float)QUDA_COMPLEX_REAL(blas_param.alpha), (float)QUDA_COMPLEX_IMAG(blas_param.alpha)};
++          const C beta = {(float)QUDA_COMPLEX_REAL(blas_param.beta), (float)QUDA_COMPLEX_IMAG(blas_param.beta)};
+           GEMM<MatrixXcf, C>(A_h, B_h, C_h, alpha, beta, max_stride, blas_param);
+           flops += batch * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
+ 
+         } else if (blas_param.data_type == QUDA_BLAS_DATATYPE_D) {
+ 
+           typedef double D;
+-          const D alpha = (D)(static_cast<std::complex<double>>(blas_param.alpha).real());
+-          const D beta = (D)(static_cast<std::complex<double>>(blas_param.beta).real());
++          const D alpha = (D)QUDA_COMPLEX_REAL(blas_param.alpha);
++          const D beta = (D)QUDA_COMPLEX_REAL(blas_param.beta);
+           GEMM<MatrixXd, D>(A_h, B_h, C_h, alpha, beta, max_stride, blas_param);
+           flops += batch * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
+ 
+         } else if (blas_param.data_type == QUDA_BLAS_DATATYPE_S) {
+ 
+           typedef float S;
+-          const S alpha = (S)(static_cast<std::complex<float>>(blas_param.alpha).real());
+-          const S beta = (S)(static_cast<std::complex<float>>(blas_param.beta).real());
++          const S alpha = (S)QUDA_COMPLEX_REAL(blas_param.alpha);
++          const S beta = (S)QUDA_COMPLEX_REAL(blas_param.beta);
+           GEMM<MatrixXf, S>(A_h, B_h, C_h, alpha, beta, max_stride, blas_param);
+           flops += batch * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
+ 
+--- a/lib/milc_interface.cpp
++++ b/lib/milc_interface.cpp
+@@ -775,5 +775,5 @@
+   QudaGaugeObservableParam obsParam = newQudaGaugeObservableParam();
+   obsParam.compute_gauge_loop_trace = QUDA_BOOLEAN_TRUE;
+-  obsParam.traces = reinterpret_cast<double _Complex *>(traces);
++  obsParam.traces = reinterpret_cast<QudaComplex *>(traces);
+   obsParam.input_path_buff = input_path_buf;
+   obsParam.path_length = path_length;
+@@ -853,5 +853,5 @@
+   obsParam.compute_polyakov_loop = QUDA_BOOLEAN_TRUE;
+   obsParam.compute_gauge_loop_trace = QUDA_BOOLEAN_TRUE;
+-  obsParam.traces = reinterpret_cast<double _Complex *>(traces);
++  obsParam.traces = reinterpret_cast<QudaComplex *>(traces);
+   obsParam.input_path_buff = input_path_buf;
+   obsParam.path_length = path_length;

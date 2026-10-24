@@ -10,7 +10,7 @@ from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 
-from .._execution_device import device_platform
+from .._cuda_capabilities import cuda_compiler_capabilities, selected_device
 from .._strict import StrictModule
 from ..backends.cudss import CudssExecutionMode
 from ..typing import parse
@@ -203,13 +203,12 @@ def sparse_provider_availability(
                 else "JAX CPU sparse LU unavailable: " + "; ".join(missing) + "."
             )
         case "jax-cuda":
-            import jax
-
-            available = any(device_platform(device) == "cuda" for device in jax.devices())
+            compiler = cuda_compiler_capabilities(selected_device().client)
+            available = compiler.sparse_qr
             reason = (
-                "CUDA device available."
+                "The selected CUDA compiler provides the sparse QR native kernel."
                 if available
-                else "No JAX CUDA device is available."
+                else f"The selected runtime has no admitted sparse QR kernel: {compiler.reason}"
             )
         case "cudss":
             from ..backends.cudss import cudss_availability

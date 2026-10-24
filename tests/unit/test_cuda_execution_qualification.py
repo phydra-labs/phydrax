@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import hashlib
 import json
+import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -84,6 +88,7 @@ def _peers(devices: list[str] = DEVICES) -> dict[str, Any]:
         "passed": True,
         "errors": [],
         "ownership": _ownership(devices, 1),
+        "peer_matrix_status": "not-applicable" if len(devices) == 1 else "required",
         "peer_connectivity": [
             {
                 "source_uuid": source,
@@ -380,6 +385,8 @@ def test_cli_retains_failed_evidence_for_incomplete_scenario_selection(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "failed.json"
+    python = tmp_path / "python.exe"
+    python.touch()
     with pytest.raises(SystemExit) as error:
         qualification.main(
             [
@@ -391,6 +398,10 @@ def test_cli_retains_failed_evidence_for_incomplete_scenario_selection(
                 "peer-copies",
                 "--output",
                 str(output),
+                "--python",
+                str(python),
+                "--work-root",
+                str(tmp_path),
             ]
         )
     assert error.value.code == 1
@@ -409,7 +420,15 @@ def test_missing_result_retains_command_and_fails_nonzero(
         return completed
 
     monkeypatch.setattr(qualification, "run", timeout)
-    result = qualification._scenario("1x2", DEVICES[-2:], tmp_path, {}, 0.1)
+    result = qualification._scenario(
+        "1x2",
+        DEVICES[-2:],
+        tmp_path,
+        {},
+        0.1,
+        python=tmp_path / "python.exe",
+        harness=tmp_path,
+    )
     assert result["passed"] is False
     assert result["command"]["timed_out"]
     assert result["devices"] == DEVICES[-2:]
@@ -422,6 +441,8 @@ def test_complete_cli_selection_still_refuses_forced_cpu_topology(
 ) -> None:
     monkeypatch.setenv("JAX_PLATFORMS", "cpu")
     output = tmp_path / "cpu-refused.json"
+    python = tmp_path / "python.exe"
+    python.touch()
     with pytest.raises(SystemExit) as error:
         qualification.main(
             [
@@ -433,6 +454,10 @@ def test_complete_cli_selection_still_refuses_forced_cpu_topology(
                 *qualification.SCENARIOS,
                 "--output",
                 str(output),
+                "--python",
+                str(python),
+                "--work-root",
+                str(tmp_path),
             ]
         )
     assert error.value.code == 1
@@ -546,6 +571,7 @@ def _consumers(devices: list[str]) -> dict[str, Any]:
         passed=True,
         errors=[],
         ownership=_ownership(devices, 1),
+        peer_matrix_status="not-applicable" if len(devices) == 1 else "required",
         rows=rows,
         sizes_bytes=list(CONSUMER_SIZES),
         steps=list(STEPS),
@@ -677,3 +703,255 @@ def test_consumer_evidence_distinguishes_failure_boundaries(stage: str) -> None:
     assert row["passed"] is False
     assert row["failure_stage"] == stage
     assert len(row["expected_prefix"]) == 8
+
+
+@pytest.mark.parametrize(
+    "scenario,factory",
+    [
+        ("peer-copies", _peers),
+        ("jax-consumers", _consumers),
+    ],
+)
+def test_single_device_empty_matrix_is_not_peer_qualification(
+    scenario: str, factory: Callable[[list[str]], dict[str, Any]]
+) -> None:
+    record = factory(DEVICES[:1])
+    assert qualification.scenario_errors(_command(), record, scenario, DEVICES[:1]) == []
+    del record["peer_matrix_status"]
+    assert qualification.scenario_errors(_command(), record, scenario, DEVICES[:1])
+
+
+def test_one_process_scientific_smoke_never_launches_coordinator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools import distributed_substrate_benchmark as substrate
+
+    monkeypatch.setattr(
+        substrate, "_launch_ranks", lambda *_: pytest.fail("one-process coordinator")
+    )
+    monkeypatch.setattr(substrate.jax, "local_devices", lambda: [])
+    monkeypatch.setattr(substrate, "_local_record", lambda _: ({"passed": True}, []))
+    substrate.main(
+        [
+            "--local-processes",
+            "1",
+            "--devices-per-process",
+            "1",
+            "--required-gpus",
+            "1",
+            "--size",
+            "17",
+            "--iterations",
+            "2",
+            "--output",
+            str(tmp_path / "smoke.json"),
+        ]
+    )
+    assert json.loads((tmp_path / "smoke.json").read_text())["passed"]
+
+
+@pytest.mark.parametrize(
+    "identity_fault",
+    [None, "missing", "duplicate", "malformed", "short", "nonzero", "timeout"],
+)
+def test_windows_qualification_requires_installed_identity_before_gpu_scenarios(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, identity_fault: str | None
+) -> None:
+    from benchmarks import _runtime
+    from tools import qualify_cuda_wheels
+
+    monkeypatch.setattr(qualification.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("JAX_PLATFORMS", "cuda")
+    monkeypatch.delenv("JAX_PLATFORM_NAME", raising=False)
+    monkeypatch.delenv("JAX_NUM_CPU_DEVICES", raising=False)
+    monkeypatch.delenv("XLA_FLAGS", raising=False)
+    monkeypatch.setattr(
+        _runtime,
+        "source_build_fingerprint",
+        lambda *_: pytest.fail(
+            "installed qualification must not require checkout identity"
+        ),
+    )
+    monkeypatch.setattr(_runtime, "benchmark_driver_fingerprint", lambda *_: "synthetic")
+    monkeypatch.setattr(qualify_cuda_wheels, "copy_harness", lambda *_: {})
+    scenarios: list[str] = []
+
+    def scenario(name: str, *args: object, **kwargs: object) -> dict[str, object]:
+        scenarios.append(name)
+        return {"errors": [], "passed": True}
+
+    monkeypatch.setattr(qualification, "_scenario", scenario)
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> CommandEvidence:
+        commands.append(command)
+        completed = _command()
+        completed["command"] = command
+        if command[0] == str(python):
+            completed["stdout"] = "INSTALLED_BUILD_FINGERPRINT " + "a" * 64 + "\n"
+            if identity_fault == "missing":
+                completed["stdout"] = ""
+            elif identity_fault == "duplicate":
+                completed["stdout"] *= 2
+            elif identity_fault == "malformed":
+                completed["stdout"] = "INSTALLED_BUILD_FINGERPRINT " + "z" * 64
+            elif identity_fault == "short":
+                completed["stdout"] = "INSTALLED_BUILD_FINGERPRINT abc"
+            elif identity_fault == "nonzero":
+                completed["returncode"] = 1
+            elif identity_fault == "timeout":
+                completed["timed_out"] = True
+        return completed
+
+    monkeypatch.setattr(qualification, "run", run)
+    python = tmp_path / "python.exe"
+    python.touch()
+    arguments = [
+        "--python",
+        str(python),
+        "--work-root",
+        str(tmp_path),
+        "--required-gpus",
+        "1",
+        "--devices",
+        DEVICES[0],
+        "--scenarios",
+        *qualification.required_scenarios(1),
+        "--output",
+        str(tmp_path / "inventory.json"),
+    ]
+    if identity_fault is None:
+        qualification.main(arguments)
+    else:
+        with pytest.raises(SystemExit) as error:
+            qualification.main(arguments)
+        assert error.value.code == 1
+    record = json.loads((tmp_path / "inventory.json").read_text())
+    assert record["passed"] is (identity_fault is None)
+    assert "source_build_fingerprint" not in record["identity"]
+    assert record["identity"]["qualification_driver_fingerprint"] == "synthetic"
+    assert record["identity"]["substrate_driver_fingerprint"] == "synthetic"
+    assert record["installed_build_identity_command"]["command"][0] == str(python)
+    assert "-I" in record["installed_build_identity_command"]["command"]
+    if identity_fault is None:
+        assert record["identity"]["installed_build_fingerprint"] == "a" * 64
+        assert scenarios == list(qualification.required_scenarios(1))
+        assert any(command[0] == "nvidia-smi" for command in commands)
+    else:
+        assert "installed_build_fingerprint" not in record["identity"]
+        assert record["errors"]
+        assert not scenarios
+        assert not any(command[0] == "nvidia-smi" for command in commands)
+    assert not any(command[0] == "lscpu" or "topo" in command for command in commands)
+
+
+def _worker_windows_runtime(
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType
+) -> ModuleType:
+    from tests._support import cuda_execution_worker as worker
+
+    monkeypatch.setattr(worker, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setitem(
+        sys.modules, "phydrax_cuda13_pjrt", ModuleType("phydrax_cuda13_pjrt")
+    )
+    monkeypatch.setitem(sys.modules, "phydrax_cuda13_pjrt.runtime", module)
+    return worker
+
+
+def test_windows_worker_driver_lookup_uses_public_api_and_windows_convention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker_windows_runtime(
+        monkeypatch, ModuleType("phydrax_cuda13_pjrt.runtime")
+    )
+    convention = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+    callback = convention(ctypes.c_int, ctypes.c_int)(lambda value: value + 7)
+    address = ctypes.cast(callback, ctypes.c_void_p).value
+    signatures: list[tuple[Any, ...]] = []
+
+    def windows_signature(*signature: Any) -> Any:
+        signatures.append(signature)
+        return convention(*signature)
+
+    def entrypoint(
+        symbol: bytes, output: Any, version: int, flags: int, query: Any
+    ) -> int:
+        assert symbol == b"cuDeviceGet"
+        assert version == 13000 and flags == 0
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = address
+        ctypes.cast(query, ctypes.POINTER(ctypes.c_int))[0] = 0
+        return 0
+
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", windows_signature, raising=False)
+    runtime = SimpleNamespace(cudaGetDriverEntryPointByVersion=entrypoint)
+    function = worker._driver_function(runtime, b"cuDeviceGet", (ctypes.c_int,))
+    assert function(3) == 10
+    assert signatures == [(ctypes.c_int, ctypes.c_int)]
+
+
+@pytest.mark.parametrize("version", (13010, 14010))
+def test_windows_inventory_records_hybrid_not_a_fictitious_shared_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    version: int,
+) -> None:
+    import importlib.metadata
+
+    from benchmarks import _runtime
+    from phydrax import _cuda_native
+
+    identity = {
+        "linkage": "driver-hybrid",
+        "owner": "display-driver",
+        "runtime_path": "System32/DriverStore/FileRepository/test/nvcudart_hybrid64.dll",
+        "runtime_sha256": "a" * 64,
+        "driver_path": "System32/DriverStore/FileRepository/test/nvcuda64.dll",
+        "driver_sha256": "b" * 64,
+        "driver_dispatch_path": "System32/nvcuda.dll",
+        "driver_dispatch_sha256": "c" * 64,
+    }
+    module = ModuleType("phydrax_cuda13_pjrt.runtime")
+    monkeypatch.setattr(
+        module,
+        "runtime_identity",
+        lambda: SimpleNamespace(
+            runtime_path=identity["runtime_path"], _asdict=lambda: identity
+        ),
+        raising=False,
+    )
+    worker = _worker_windows_runtime(monkeypatch, module)
+    monkeypatch.setattr(worker, "ownership", lambda _: [])
+    monkeypatch.setattr(
+        _cuda_native,
+        "load_cuda_component",
+        lambda _: SimpleNamespace(
+            name="cudss",
+            path="admitted.dll",
+            version="0.2.2",
+            build_hash="d" * 64,
+            major=13,
+        ),
+    )
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "synthetic")
+    monkeypatch.setattr(
+        _runtime, "capture_environment", lambda: SimpleNamespace(to_dict=lambda: {})
+    )
+
+    def observed(output: Any) -> int:
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_int))[0] = version
+        return 0
+
+    # Deliberately no _name: a bound API is not a shared-library handle.
+    api = SimpleNamespace(
+        owner_path="admitted.dll",
+        cudaDriverGetVersion=observed,
+        cudaRuntimeGetVersion=observed,
+    )
+    record = worker.inventory(api)
+    assert record["runtime_identity"] == identity
+    assert record["runtime_path"] == identity["runtime_path"]
+    assert record["runtime_api_owner_path"] == "admitted.dll"
+    assert record["compiled_cuda_major"] == 13
+    assert record["driver_compatibility_version"] == version
+    assert record["runtime_version"] == version
+    assert "driver_version" not in record

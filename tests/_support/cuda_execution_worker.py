@@ -7,12 +7,17 @@ import argparse
 import ctypes
 import hashlib
 import json
+import sys
 import uuid
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TYPE_CHECKING, TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
+
+
+if TYPE_CHECKING:
+    from phydrax_cuda13_pjrt.runtime import CudaRuntimeAPI
 
 
 SIZES = (4, 4096, 1048580)
@@ -52,20 +57,28 @@ def checked(status: int, operation: str) -> None:
         raise RuntimeError(f"{operation} failed with CUDA status {status}")
 
 
-def cuda_runtime() -> ctypes.CDLL:
+def cuda_runtime() -> ctypes.CDLL | CudaRuntimeAPI:
     """Use only the CUDA runtime admitted by the canonical companion loader."""
-    from phydrax._cuda_native import load_cuda_component
-    from phydrax._elf_dependencies import read_dynamic_section
+    if sys.platform == "win32":
+        from phydrax_cuda13_pjrt.runtime import cuda_runtime_api, library_handle
 
-    component = load_cuda_component("cudss")
-    paths = [
-        path
-        for path in component.preloaded
-        if read_dynamic_section(path).soname == "libcudart.so.13"
-    ]
-    if len(paths) != 1:
-        raise RuntimeError(f"Expected one audited CUDA13 runtime, got {paths}")
-    runtime = ctypes.CDLL(paths[0])
+        from phydrax._cuda_native import load_cuda_component
+
+        component = load_cuda_component("cudss")
+        return cuda_runtime_api(library_handle(component.path))
+    else:
+        from phydrax._cuda_native import load_cuda_component
+        from phydrax._elf_dependencies import read_dynamic_section
+
+        component = load_cuda_component("cudss")
+        paths = [
+            path
+            for path in component.preloaded
+            if read_dynamic_section(path).soname == "libcudart.so.13"
+        ]
+        if len(paths) != 1:
+            raise RuntimeError(f"Expected one audited CUDA13 runtime, got {paths}")
+        runtime = ctypes.CDLL(paths[0])
     pointer, integer = ctypes.c_void_p, ctypes.c_int
     signatures: dict[str, tuple[Any, ...]] = {
         "cudaSetDevice": (integer,),
@@ -98,7 +111,7 @@ def cuda_runtime() -> ctypes.CDLL:
 
 
 def _driver_function(
-    runtime: ctypes.CDLL, symbol: bytes, arguments: tuple[Any, ...]
+    runtime: ctypes.CDLL | CudaRuntimeAPI, symbol: bytes, arguments: tuple[Any, ...]
 ) -> Any:
     pointer, query = ctypes.c_void_p(), ctypes.c_int()
     checked(
@@ -111,10 +124,11 @@ def _driver_function(
         raise RuntimeError(
             f"CUDA13 driver entry point unavailable: {symbol!r}, query={query.value}"
         )
-    return ctypes.CFUNCTYPE(ctypes.c_int, *arguments)(pointer.value)
+    convention = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
+    return convention(ctypes.c_int, *arguments)(pointer.value)
 
 
-def ownership(runtime: ctypes.CDLL) -> list[Ownership]:
+def ownership(runtime: ctypes.CDLL | CudaRuntimeAPI) -> list[Ownership]:
     import jax
 
     devices = jax.local_devices()
@@ -145,7 +159,7 @@ def ownership(runtime: ctypes.CDLL) -> list[Ownership]:
     return result
 
 
-def inventory(runtime: ctypes.CDLL) -> dict[str, Any]:
+def inventory(runtime: ctypes.CDLL | CudaRuntimeAPI) -> dict[str, Any]:
     from importlib.metadata import version as distribution_version
 
     import jax
@@ -159,8 +173,28 @@ def inventory(runtime: ctypes.CDLL) -> dict[str, Any]:
     driver, version = ctypes.c_int(), ctypes.c_int()
     checked(runtime.cudaDriverGetVersion(ctypes.byref(driver)), "cudaDriverGetVersion")
     checked(runtime.cudaRuntimeGetVersion(ctypes.byref(version)), "cudaRuntimeGetVersion")
-    if version.value // 1000 != 13:
-        raise ValueError("Qualification requires the wheel-owned CUDA13 runtime")
+    if sys.platform == "win32":
+        from phydrax_cuda13_pjrt.runtime import runtime_identity
+
+        if component.major != 13 or version.value < 13000 or driver.value < 13000:
+            raise ValueError(
+                "Qualification requires CUDA13 and a compatible display driver"
+            )
+        identity = runtime_identity()
+        runtime_evidence = {
+            "compiled_cuda_major": component.major,
+            "driver_compatibility_version": driver.value,
+            "runtime_identity": identity._asdict(),
+            "runtime_path": identity.runtime_path,
+            "runtime_api_owner_path": runtime.owner_path,
+        }
+    else:
+        if version.value // 1000 != 13:
+            raise ValueError("Qualification requires the wheel-owned CUDA13 runtime")
+        runtime_evidence = {
+            "driver_version": driver.value,
+            "runtime_path": str(runtime._name),
+        }
     details = []
     for row in devices:
         ordinal = row["local_ordinal"]
@@ -211,11 +245,15 @@ def inventory(runtime: ctypes.CDLL) -> dict[str, Any]:
     return {
         "ownership": devices,
         "devices": details,
-        "driver_version": driver.value,
+        **runtime_evidence,
         "environment": capture_environment().to_dict(),
         "cuda_distributions": {
             name: distribution_version(name)
-            for name in ("jax-cuda13-plugin", "jax-cuda13-pjrt", "nvidia-cuda-runtime")
+            for name in (
+                ("phydrax-cuda13-pjrt", "phydrax-cuda13", "nvidia-cuda-runtime")
+                if sys.platform == "win32"
+                else ("jax-cuda13-plugin", "jax-cuda13-pjrt", "nvidia-cuda-runtime")
+            )
         },
         "native_component": {
             "name": component.name,
@@ -227,8 +265,8 @@ def inventory(runtime: ctypes.CDLL) -> dict[str, Any]:
         "runtime_version": version.value,
         "jax": jax.__version__,
         "jaxlib": jaxlib.__version__,
-        "runtime_path": str(runtime._name),
         "peer_connectivity": connectivity,
+        "peer_matrix_status": "not-applicable" if len(devices) == 1 else "required",
     }
 
 
@@ -278,7 +316,7 @@ def _copy_evidence(
     }
 
 
-def peer_copies(runtime: ctypes.CDLL, rows: list[CopyEvidence]) -> None:
+def peer_copies(runtime: ctypes.CDLL | CudaRuntimeAPI, rows: list[CopyEvidence]) -> None:
     import jax
 
     devices = jax.local_devices()
@@ -384,35 +422,8 @@ def peer_copies(runtime: ctypes.CDLL, rows: list[CopyEvidence]) -> None:
 
 
 def bare_ownership() -> list[Ownership]:
-    """Resolve physical identities using the driver, never an optional vendor DSO."""
-    import jax
-
-    driver = ctypes.CDLL("libcuda.so.1")
-    driver.cuInit.argtypes = (ctypes.c_uint,)
-    driver.cuDeviceGet.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_int)
-    driver.cuDeviceGetUuid.argtypes = (ctypes.c_void_p, ctypes.c_int)
-    checked(driver.cuInit(0), "cuInit")
-    rows: list[Ownership] = []
-    for device in jax.local_devices():
-        if device.platform != "gpu":
-            raise ValueError("Bare JAX transport requires physical CUDA devices")
-        handle, raw = ctypes.c_int(), ctypes.create_string_buffer(16)
-        checked(
-            driver.cuDeviceGet(ctypes.byref(handle), device.local_hardware_id),
-            "cuDeviceGet",
-        )
-        checked(driver.cuDeviceGetUuid(raw, handle), "cuDeviceGetUuid")
-        rows.append(
-            {
-                "rank": jax.process_index(),
-                "local_ordinal": device.local_hardware_id,
-                "gpu_uuid": "GPU-" + str(uuid.UUID(bytes=raw.raw)),
-                "platform": device.platform,
-            }
-        )
-    if len({row["gpu_uuid"] for row in rows}) != len(rows):
-        raise ValueError("Duplicate physical GPU UUIDs")
-    return rows
+    """Resolve physical identities through the admitted CUDA runtime."""
+    return ownership(cuda_runtime())
 
 
 def consumer_oracle(
@@ -464,6 +475,7 @@ def jax_consumers(record: dict[str, Any], required_gpus: int) -> None:
 
     identities = bare_ownership()
     record["ownership"] = identities
+    record["peer_matrix_status"] = "not-applicable" if required_gpus == 1 else "required"
     if len(identities) != required_gpus:
         raise ValueError("Visible physical GPUs differ from --required-gpus")
     devices = jax.local_devices()

@@ -36,11 +36,12 @@ from phydrax._execution_collectives import (
 )
 from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
+from phydrax.execution import default_device
 
 
 @pytest.fixture(autouse=True)
 def _cpu_default() -> Iterator[None]:
-    with jax.default_device(jax.local_devices(backend="cpu")[0]):
+    with default_device(jax.local_devices(backend="cpu")[0]):
         yield
 
 

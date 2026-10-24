@@ -4,17 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 import zipfile
 from email.message import Message
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 from unittest.mock import Mock
 from xml.etree import ElementTree
 
+import numpy as np
 import pytest
 
 from tools import qualify_accelerator_wheels as qualification
@@ -32,11 +37,16 @@ from tools.qualify_accelerator_wheels import (
     last_json,
     probe_record,
     REQUIRED_CASES,
+    resource_record_errors,
+    RESOURCE_REGIONS,
     ROCM_CASES,
     ROCM_ENVIRONMENT,
     runtime_errors,
     wheel_files,
 )
+
+
+NONCE = "0123456789abcdef0123456789abcdef"
 
 
 def _runtime(accelerator: Accelerator = Accelerator.TPU) -> dict[str, object]:
@@ -63,6 +73,107 @@ def _runtime(accelerator: Accelerator = Accelerator.TPU) -> dict[str, object]:
     }
 
 
+def _measurement(scope: str = "baseline") -> dict[str, object]:
+    return {
+        "method": "jax_memory_stats",
+        "scope": scope,
+        "value_bytes": None,
+        "resolution_bytes": None,
+        "unavailable_reason": "parser input: provider exposes no allocator statistics",
+    }
+
+
+def _phase(phase: str, runtime: dict[str, object]) -> dict[str, Any]:
+    sample = {
+        "process_index": 0,
+        "device_id": runtime["qualified_device_id"],
+        "platform": runtime["platform"],
+        "provider_id": runtime["client_platform"],
+        "provider_version": runtime["platform_version"],
+        "timestamp_ns": 1,
+        "allocator_limit": _measurement(),
+        "allocator_reserved": _measurement(),
+        "allocator_in_use": _measurement(),
+        "allocator_peak_in_use": _measurement("peak"),
+        "live_array_bytes": {
+            "method": "jax_live_arrays",
+            "scope": "baseline",
+            "value_bytes": 8,
+            "resolution_bytes": 1,
+            "unavailable_reason": None,
+        },
+    }
+    return {
+        "phase": phase,
+        "interval_seconds": 0.01,
+        "duration_seconds": 0.001,
+        "sample_count": 2,
+        "maximum_sample_gap_seconds": 0.001,
+        "sampled_peak_resident": {
+            "method": "interval_sampling",
+            "scope": "peak",
+            "value_bytes": 4096,
+            "resolution_bytes": 4096,
+            "unavailable_reason": None,
+        },
+        "devices": [
+            {
+                "baseline": sample,
+                "final": json.loads(json.dumps(sample)),
+                "sampled_peak_in_use": {
+                    **_measurement("peak"),
+                    "method": "interval_sampling",
+                },
+            }
+        ],
+    }
+
+
+def _resource(region: str, runtime: dict[str, object] | None = None) -> dict[str, Any]:
+    """Synthetic parser input shaped like the recorder, never device evidence."""
+    runtime = runtime or _runtime()
+    signature = [{"shape": [2], "dtype": "float32", "weak_type": False}]
+    return {
+        "region": region,
+        "evidence_nonce": NONCE,
+        "runtime": runtime,
+        "program_sha256": "6" * 64,
+        "input_signature": signature,
+        "output_signature": signature,
+        "lowering_seconds": 0.01,
+        "compilation_seconds": 0.02,
+        "first_execution_seconds": 0.003,
+        "warm_execution": {
+            "count": 1,
+            "samples_seconds": [0.001],
+            "min_seconds": 0.001,
+            "median_seconds": 0.001,
+            "mean_seconds": 0.001,
+            "std_seconds": 0.0,
+            "max_seconds": 0.001,
+        },
+        "logical_retained_bytes": 8,
+        "compiled_memory": {
+            "argument_bytes": 8,
+            "output_bytes": 8,
+            "alias_bytes": 0,
+            "temporary_bytes": 16,
+            "generated_code_bytes": 0,
+            "host_argument_bytes": 0,
+            "host_output_bytes": 0,
+            "host_alias_bytes": 0,
+            "host_temporary_bytes": 0,
+            "host_generated_code_bytes": 0,
+            "peak_bytes": None,
+        },
+        "compiled_memory_unavailable_reason": None,
+        "phase_memory": {
+            "first_execution": _phase("first-execution", runtime),
+            "warm_execution": _phase("warm-execution", runtime),
+        },
+    }
+
+
 def _xml(
     path: Path,
     names: tuple[str, ...] = REQUIRED_CASES,
@@ -70,6 +181,7 @@ def _xml(
     outcome: str | None = None,
     runtime: dict[str, object] | None = None,
     evidence: bool = True,
+    resources: dict[str, list[object]] | None = None,
 ) -> None:
     suite = ElementTree.Element("testsuite")
     for name in names:
@@ -90,21 +202,179 @@ def _xml(
                 name="accelerator_runtime",
                 value=json.dumps(runtime or _runtime()),
             )
+            records = (resources or {}).get(
+                name,
+                [_resource(region, runtime) for region in RESOURCE_REGIONS.get(name, ())],
+            )
+            for record in records:
+                ElementTree.SubElement(
+                    properties,
+                    "property",
+                    name="accelerator_resources",
+                    value=record if isinstance(record, str) else json.dumps(record),
+                )
     ElementTree.ElementTree(suite).write(path)
 
 
 def test_report_requires_exact_successful_case_set_and_runtime(tmp_path: Path) -> None:
     report = tmp_path / "report.xml"
     _xml(report)
-    errors, cases = case_report_errors(report, _runtime())
+    errors, cases = case_report_errors(report, _runtime(), NONCE)
     assert errors == [] and len(cases) == len(REQUIRED_CASES)
+
+
+def _break_resource(failure: str) -> list[object]:
+    record = _resource("bounded-pcg-solve")
+    warm = record["phase_memory"]["warm_execution"]
+    device = warm["devices"][0]
+    match failure:
+        case "missing":
+            return []
+        case "duplicate":
+            return [record, record]
+        case "unexpected-region":
+            return [record, _resource("fourier-resample")]
+        case "malformed":
+            return ["{not json"]
+        case "stale-nonce":
+            record["evidence_nonce"] = "f" * 32
+        case "unbound-nonce":
+            record["evidence_nonce"] = None
+        case "cpu-runtime":
+            record = _resource(
+                "bounded-pcg-solve",
+                {**_runtime(), "platform": "cpu", "client_platform": "cpu"},
+            )
+        case "other-device-sample":
+            device["final"]["device_id"] = 1
+        case "cpu-device-sample":
+            device["baseline"]["platform"] = "cpu"
+        case "unsampled-device":
+            warm["devices"] = []
+        case "missing-phase":
+            del record["phase_memory"]["first_execution"]
+        case "no-compiled-memory":
+            record["compiled_memory"] = None
+            record["compiled_memory_unavailable_reason"] = "provider exposes none"
+        case "missing-lowering":
+            record["lowering_seconds"] = None
+        case "nan-execution":
+            record["first_execution_seconds"] = float("nan")
+        case "no-warm-samples":
+            record["warm_execution"] = {
+                **record["warm_execution"],
+                "count": 0,
+                "samples_seconds": [],
+            }
+        case "unexplained-unavailable":
+            device["baseline"]["allocator_in_use"]["unavailable_reason"] = None
+        case "missing-signature":
+            record["input_signature"] = []
+        case "missing-retained-bytes":
+            del record["logical_retained_bytes"]
+        case "inconsistent-warm-summary":
+            record["warm_execution"] = {
+                "count": 2,
+                "samples_seconds": [0.001, 0.003],
+                "min_seconds": 0.001,
+                "median_seconds": 0.003,
+                "mean_seconds": 0.002,
+                "std_seconds": 0.001,
+                "max_seconds": 0.003,
+            }
+        case "nan-warm-summary":
+            record["warm_execution"]["mean_seconds"] = float("nan")
+        case "other-process-sample":
+            device["final"]["process_index"] = 1
+        case "foreign-provider-sample":
+            device["baseline"]["provider_id"] = "cpu"
+        case "unhashable-region":
+            record["region"] = ["bounded-pcg-solve"]
+    return [record]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "missing",
+        "duplicate",
+        "unexpected-region",
+        "malformed",
+        "stale-nonce",
+        "unbound-nonce",
+        "cpu-runtime",
+        "other-device-sample",
+        "cpu-device-sample",
+        "unsampled-device",
+        "missing-phase",
+        "no-compiled-memory",
+        "missing-lowering",
+        "nan-execution",
+        "no-warm-samples",
+        "unexplained-unavailable",
+        "missing-signature",
+        "missing-retained-bytes",
+        "inconsistent-warm-summary",
+        "nan-warm-summary",
+        "other-process-sample",
+        "foreign-provider-sample",
+        "unhashable-region",
+    ),
+)
+def test_resource_gate_refuses_absent_stale_or_foreign_evidence(
+    tmp_path: Path, failure: str
+) -> None:
+    report = tmp_path / "report.xml"
+    case = "test_bounded_linear_solve"
+    _xml(report, resources={case: _break_resource(failure)})
+    errors, _ = case_report_errors(report, _runtime(), NONCE)
+    assert errors and all(error.startswith(case) for error in errors)
+
+
+def test_cpu_recorder_satisfies_gate_only_for_its_own_runtime_and_run() -> None:
+    """Exercise the real recorder on CPU; neither accelerator nor performance evidence."""
+    import jax
+    import jax.numpy as jnp
+
+    from phydrax.execution import default_device
+    from tests._support.accelerator_qualification import compiled_region_evidence
+
+    device = jax.devices("cpu")[0]
+    with default_device(device):
+        gradient, evidence = compiled_region_evidence(
+            jax.grad(lambda point: point[0] ** 3 * point[1] ** 2),
+            (jnp.asarray([0.5, 0.25], dtype=jnp.float32),),
+            device=device,
+        )
+    np.testing.assert_array_equal(gradient, np.asarray([0.046875, 0.0625], np.float32))
+    assert gradient.devices() == {device}
+    runtime = {
+        **_runtime(),
+        "platform": device.platform,
+        "client_platform": device.client.platform,
+        "platform_version": device.client.platform_version,
+        "qualified_device_id": device.id,
+    }
+    record = json.loads(
+        json.dumps(
+            {
+                "region": "coordinate-gradient",
+                "evidence_nonce": NONCE,
+                "runtime": runtime,
+                **evidence,
+            }
+        )
+    )
+    assert resource_record_errors(record, runtime, NONCE) == []
+    assert resource_record_errors(record, _runtime(), NONCE)
+    assert resource_record_errors(record, runtime, "f" * 32)
 
 
 @pytest.mark.parametrize("outcome", ("skipped", "failure", "error"))
 def test_skipped_or_failed_cases_never_qualify(tmp_path: Path, outcome: str) -> None:
     report = tmp_path / "report.xml"
     _xml(report, outcome=outcome)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
 
 
 @pytest.mark.parametrize(
@@ -120,18 +390,18 @@ def test_missing_duplicate_or_extra_case_refuses(
 ) -> None:
     report = tmp_path / "report.xml"
     _xml(report, names)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
 
 
 def test_missing_or_wrong_actual_placement_refuses(tmp_path: Path) -> None:
     report = tmp_path / "report.xml"
     _xml(report, evidence=False)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
     _xml(report, runtime={**_runtime(), "platform": "cpu"})
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
     report.write_text("not xml")
-    assert case_report_errors(report, _runtime())[0]
-    assert case_report_errors(tmp_path / "absent", _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
+    assert case_report_errors(tmp_path / "absent", _runtime(), NONCE)[0]
 
 
 @pytest.mark.parametrize("accelerator", tuple(Accelerator))
@@ -310,10 +580,10 @@ def test_rocm_report_requires_native_precision_on_each_selected_device(
     runtime = {**_runtime(accelerator), "qualified_device_id": 3}
     assert len(REQUIRED_CASES + ROCM_CASES) == 20
     _xml(path, REQUIRED_CASES, runtime=runtime)
-    assert case_report_errors(path, runtime)[0]
+    assert case_report_errors(path, runtime, NONCE)[0]
     _xml(path, REQUIRED_CASES + ROCM_CASES, runtime=runtime)
-    assert not case_report_errors(path, runtime)[0]
-    assert case_report_errors(path, {**runtime, "qualified_device_id": 0})[0]
+    assert not case_report_errors(path, runtime, NONCE)[0]
+    assert case_report_errors(path, {**runtime, "qualified_device_id": 0}, NONCE)[0]
 
 
 def test_core_wheel_content_identity_changes_with_bytes(tmp_path: Path) -> None:
@@ -449,7 +719,8 @@ def _add_bundle_fixture(payload: dict[str, object]) -> None:
             ).encode()
         ).hexdigest()
     provenance["rocm_bundle"] = {"manifest": text, "payloads": inventories}
-    site = Path(provenance["venv"]) / "site-packages"
+    # These are Linux producer records, not paths on the test runner's host.
+    site = PurePosixPath(provenance["venv"]) / "site-packages"
     facts.update(
         bundle_version="10.1.0",
         bundle_architectures=["gfx1250", "gfx942", "gfx950"],
@@ -485,6 +756,8 @@ def _add_bundle_fixture(payload: dict[str, object]) -> None:
         "mixed-runtime",
         "not-loaded",
         "external-sdk",
+        "windows-manifest-path",
+        "windows-compiler-path",
         "manual-loader-path",
         "missing-compiler",
         "missing-runtime",
@@ -534,6 +807,14 @@ def test_rocm_bundle_evidence_refuses_incomplete_or_foreign_runtime(
         facts["bundle_loaded"] = False
     elif failure == "external-sdk":
         facts["bundle_manifest"] = "/checkout/sdk/phydrax_rocm_runtime/runtime.json"
+    elif failure == "windows-manifest-path":
+        facts["bundle_manifest"] = (
+            r"\parser-input\venv\site-packages\phydrax_rocm_runtime\runtime.json"
+        )
+    elif failure == "windows-compiler-path":
+        environment["LLVM_PATH"] = (
+            r"\parser-input\venv\site-packages\_rocm_sdk_core\lib\llvm"
+        )
     elif failure == "manual-loader-path":
         environment["LD_LIBRARY_PATH"] = "/checkout/sdk/lib"
     elif failure == "missing-compiler":
@@ -725,13 +1006,13 @@ def test_probe_and_cases_require_same_frontend_patch(tmp_path: Path, field: str)
     assert isinstance(runtime, dict)
     cases = tmp_path / "cases.xml"
     _xml(cases, runtime=runtime)
-    assert not case_report_errors(cases, runtime)[0]
+    assert not case_report_errors(cases, runtime, NONCE)[0]
     patch = runtime["frontend_index_patch"]
     assert isinstance(patch, dict)
     patch[field] = "mismatched-parser-input"
     write_json_evidence(path, payload)
     assert probe_record(path, Accelerator.TPU) is None
-    assert case_report_errors(cases, runtime)[0]
+    assert case_report_errors(cases, runtime, NONCE)[0]
 
 
 @pytest.mark.parametrize(
@@ -805,6 +1086,7 @@ def test_example_frontend_patch_must_match_probe(
             }
         ),
     )
+    monkeypatch.setattr(qualification, "token_hex", Mock(return_value=NONCE))
     report = qualification._qualify_device(
         argparse.Namespace(tpu_autodetect=False, timeout=1),
         Accelerator.TPU,
@@ -819,18 +1101,71 @@ def test_example_frontend_patch_must_match_probe(
     assert not report["hardware_qualified"]
 
 
-def test_process_logs_are_bounded_without_losing_retained_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize("fresh", (True, False))
+def test_device_run_binds_resource_evidence_to_its_own_nonce(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fresh: bool
+) -> None:
+    payload = _probe_payload()
+    runtime = payload["runtime"]
+    assert isinstance(runtime, dict)
+    example = {
+        **runtime,
+        "accelerator": Accelerator.TPU.value,
+        "status": "passed",
+        "results_on_device": True,
+    }
+    write_json_evidence(tmp_path / "installed-runtime-device-0.json", payload)
+    # Complete evidence from an earlier run must not qualify a later one.
+    _xml(tmp_path / "cases-device-0.xml", runtime=runtime)
+    run_command = Mock(
+        return_value={"returncode": 0, "timed_out": False, "stdout": json.dumps(example)}
+    )
+    monkeypatch.setattr(qualification, "run", run_command)
+    monkeypatch.setattr(
+        qualification, "token_hex", Mock(return_value=NONCE if fresh else "e" * 32)
+    )
+    report = qualification._qualify_device(
+        argparse.Namespace(tpu_autodetect=False, timeout=1),
+        Accelerator.TPU,
+        tmp_path,
+        tmp_path / "venv",
+        tmp_path / "expected-core.json",
+        0,
+    )
+    environment = run_command.call_args_list[1].kwargs["environment"]
+    assert environment["PHYDRAX_QUALIFICATION_NONCE"] == report["evidence_nonce"]
+    assert report["hardware_qualified"] is fresh
+    assert fresh == (not report["errors"])
+    assert all(
+        "not bound to this qualification run" in error for error in report["errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    "payload", [b"x", b"\xff", "λ".encode()], ids=["ascii", "invalid-utf8", "utf8"]
+)
+def test_process_logs_are_bounded_without_losing_retained_output(
+    tmp_path: Path, payload: bytes
+) -> None:
+    source = (
+        f"import os; payload={payload!r} * {TEXT_LIMIT * 3}; "
+        "os.write(1,payload); os.write(2,payload)"
+    )
     result = run(
-        [sys.executable, "-c", f"print('x' * {TEXT_LIMIT * 3})"],
+        [sys.executable, "-c", source],
         cwd=tmp_path,
         environment=dict(os.environ),
         timeout=10,
     )
     assert result["returncode"] == 0 and not result["timed_out"]
-    full_log = Path(result["stdout_path"]).read_bytes()
-    assert len(result["stdout"].encode()) <= TEXT_LIMIT
-    assert len(full_log) > TEXT_LIMIT
-    assert hashlib.sha256(full_log).hexdigest() == result["stdout_sha256"]
+    for text, path, digest in (
+        (result["stdout"], result["stdout_path"], result["stdout_sha256"]),
+        (result["stderr"], result["stderr_path"], result["stderr_sha256"]),
+    ):
+        full_log = Path(path).read_bytes()
+        assert len(text.encode()) <= TEXT_LIMIT
+        assert full_log == payload * (TEXT_LIMIT * 3)
+        assert hashlib.sha256(full_log).hexdigest() == digest
 
 
 def test_process_timeout_is_not_a_success_or_hardware_refusal(tmp_path: Path) -> None:
@@ -843,18 +1178,238 @@ def test_process_timeout_is_not_a_success_or_hardware_refusal(tmp_path: Path) ->
     assert result["timed_out"] and result["returncode"] != 0
 
 
-def test_process_group_cleanup_terminates_descendants_after_parent_exits(
-    tmp_path: Path,
+@pytest.mark.parametrize("parent_outcome", ["normal", "timeout", "crash"])
+def test_process_group_cleanup_terminates_descendants_without_touching_other_processes(
+    tmp_path: Path, parent_outcome: str
 ) -> None:
+    ready = tmp_path / "descendant-ready"
     marker = tmp_path / "orphan-ran"
-    child = f"import time; from pathlib import Path; time.sleep(0.5); Path({str(marker)!r}).write_text('orphan')"
-    source = f"import subprocess,sys; child=subprocess.Popen([sys.executable,'-c',{child!r}]); print(child.pid,flush=True)"
+    sentinel = tmp_path / "unrelated-ran"
+    child = (
+        "import time; from pathlib import Path; "
+        f"Path({str(ready)!r}).write_text('ready'); "
+        f"time.sleep(2); Path({str(marker)!r}).write_text('orphan'); time.sleep(30)"
+    )
+    ending = {
+        "normal": "pass",
+        "timeout": "time.sleep(30)",
+        "crash": "os._exit(23)",
+    }[parent_outcome]
+    source = (
+        "import os,subprocess,sys,time; from pathlib import Path; "
+        f"child=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+        f"ready=Path({str(ready)!r})\n"
+        "while not ready.exists(): time.sleep(0.01)\n"
+        "print(child.pid,flush=True)\n"
+        f"{ending}\n"
+    )
+    unrelated_source = (
+        "import time; from pathlib import Path; time.sleep(2); "
+        f"Path({str(sentinel)!r}).write_text('alive'); time.sleep(30)"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", unrelated_source], cwd=tmp_path
+    ) as unrelated:
+        try:
+            result = run(
+                [sys.executable, "-c", source],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=1.0 if parent_outcome == "timeout" else 10.0,
+            )
+            assert ready.exists(), "The descendant must actually start before cleanup"
+            assert result["stdout"].strip().isdigit()
+            assert result["timed_out"] is (parent_outcome == "timeout")
+            if parent_outcome == "normal":
+                assert result["returncode"] == 0
+            elif parent_outcome == "crash":
+                assert result["returncode"] == 23
+            else:
+                assert result["returncode"] != 0
+            time.sleep(2.2)
+            assert not marker.exists()
+            assert sentinel.read_text() == "alive"
+            assert unrelated.poll() is None
+        finally:
+            unrelated.kill()
+            unrelated.wait(timeout=10)
+
+
+@pytest.mark.parametrize("exitcode", [0, 37, 259])
+def test_process_exit_status_is_exact(tmp_path: Path, exitcode: int) -> None:
+    if exitcode > 255 and os.name != "nt":
+        pytest.skip("POSIX exit statuses contain only the low byte")
+    result = run(
+        [sys.executable, "-c", f"import os; os._exit({exitcode})"],
+        cwd=tmp_path,
+        environment=dict(os.environ),
+        timeout=10,
+    )
+    assert result["returncode"] == exitcode
+    assert not result["timed_out"]
+
+
+def test_process_crash_preserves_platform_status(tmp_path: Path) -> None:
+    if os.name == "nt":
+        source = (
+            "import ctypes; k=ctypes.WinDLL('kernel32'); "
+            "k.GetCurrentProcess.restype=ctypes.c_void_p; "
+            "k.TerminateProcess.argtypes=(ctypes.c_void_p,ctypes.c_uint32); "
+            "k.TerminateProcess(k.GetCurrentProcess(),0xC0000005)"
+        )
+        expected = 0xC0000005
+    else:
+        source = "import os,signal; os.kill(os.getpid(),signal.SIGKILL)"
+        expected = -signal.SIGKILL
     result = run(
         [sys.executable, "-c", source],
         cwd=tmp_path,
         environment=dict(os.environ),
         timeout=10,
     )
-    assert result["returncode"] == 0 and result["stdout"].strip().isdigit()
-    time.sleep(0.7)
-    assert not marker.exists()
+    assert result["returncode"] == expected
+    assert not result["timed_out"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object boundary")
+def test_windows_assignment_failure_never_runs_and_terminates_suspended_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools import _windows_process as windows
+
+    marker = tmp_path / "unassigned-child-ran"
+    kernel = windows._kernel32()
+    assign = windows._assign_job
+    processes: list[int] = []
+
+    def refuse_job(library: ctypes.CDLL, job: int, process: int) -> None:
+        processes.append(windows._duplicate(library, process, inherit=False))
+        # Exercise the real Win32 assignment refusal, not a fabricated status.
+        assign(library, 0, process)
+
+    monkeypatch.setattr(windows, "_assign_job", refuse_job)
+    try:
+        with pytest.raises(OSError):
+            run(
+                [
+                    sys.executable,
+                    "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).touch()",
+                ],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=10,
+            )
+        assert len(processes) == 1
+        assert kernel.WaitForSingleObject(processes[0], 0) == 0
+        assert not marker.exists()
+    finally:
+        for process in processes:
+            windows._close(kernel, process)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 inherited-handle allowlist")
+def test_windows_child_does_not_inherit_unlisted_handle(tmp_path: Path) -> None:
+    from tools import _windows_process as windows
+
+    kernel = windows._kernel32()
+    kernel.CreateEventW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_wchar_p,
+    )
+    kernel.CreateEventW.restype = ctypes.c_void_p
+    event = kernel.CreateEventW(None, True, False, None)
+    assert event
+    try:
+        inherited = windows._duplicate(kernel, event, inherit=True)
+        try:
+            source = (
+                "import ctypes; k=ctypes.WinDLL('kernel32'); "
+                "k.SetEvent.argtypes=(ctypes.c_void_p,); "
+                f"k.SetEvent({inherited})"
+            )
+            result = run(
+                [sys.executable, "-c", source],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=10,
+            )
+            assert result["returncode"] == 0 and not result["timed_out"]
+            # A numeric handle may be reused in the child; test the actual
+            # parent's event rather than mere validity of that integer there.
+            assert kernel.WaitForSingleObject(event, 0) == 258
+        finally:
+            windows._close(kernel, inherited)
+    finally:
+        windows._close(kernel, event)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 kill-on-close supervisor cleanup")
+def test_windows_supervisor_exit_closes_job_and_terminates_owned_tree(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "owned-child-ready"
+    orphan = tmp_path / "owned-child-survived"
+    child = (
+        "import time; from pathlib import Path; "
+        f"Path({str(ready)!r}).touch(); time.sleep(3); "
+        f"Path({str(orphan)!r}).touch(); time.sleep(30)"
+    )
+    source = (
+        "import os,sys,threading,time; from pathlib import Path; "
+        "from tools._accelerator_process import run\n"
+        "def exit_supervisor():\n"
+        f"    while not Path({str(ready)!r}).exists(): time.sleep(0.01)\n"
+        "    os._exit(17)\n"
+        "threading.Thread(target=exit_supervisor,daemon=True).start()\n"
+        f"run([sys.executable,'-c',{child!r}],cwd=Path({str(tmp_path)!r}),"
+        "environment=dict(os.environ),timeout=20)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=Path(__file__).resolve().parents[2],
+        env=dict(os.environ),
+        timeout=15,
+        capture_output=True,
+    )
+    assert completed.returncode == 17
+    assert ready.exists()
+    time.sleep(3.2)
+    assert not orphan.exists()
+
+
+def test_direct_script_runner_supervises_child_without_package_search_path(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "direct-command.py"
+    marker = tmp_path / "executed"
+    child = (
+        "import sys; from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text('executed'); sys.exit(37)"
+    )
+    script.write_text(
+        "import json,os,sys\n"
+        "from pathlib import Path\n"
+        "from _accelerator_process import run\n"
+        f"result=run([sys.executable,'-S','-c',{child!r}],"
+        f"cwd=Path({str(tmp_path)!r}),environment=dict(os.environ),timeout=10)\n"
+        "print(json.dumps(result))\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "tools")
+    completed = subprocess.run(
+        [sys.executable, "-S", str(script)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stderr
+    evidence = json.loads(completed.stdout)
+    assert evidence["returncode"] == 37
+    assert not evidence["timed_out"]
+    assert marker.read_text() == "executed"

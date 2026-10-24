@@ -18,7 +18,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, final, Literal
+from typing import Any, assert_never, final, Literal
 
 import equinox as eqx
 import jax
@@ -273,6 +273,7 @@ class _Loaded:
     library: ctypes.CDLL
     functions: dict[str, Any]
     dependencies: tuple[ctypes.CDLL, ...]
+    runtime: Any | None = None
 
 
 _LOCK = threading.RLock()
@@ -346,17 +347,20 @@ def _cuda_facts() -> CudaEnvironmentFacts:
             "backend-unavailable",
             "No JAX CUDA device is available; enable the CUDA JAX platform and install phydrax[cuda13].",
         )
-    if len(facts.plugin_majors) != 1:
+    if len(facts.plugins) != 1:
         raise _refuse(
             "no-cuda-plugin",
             "No unique JAX CUDA13 plugin is installed; install phydrax[cuda13].",
         )
     runtime = cuda_devices[0].client.platform_version
     match = re.fullmatch(r"cuda (\d+)", runtime)
-    if match is None or int(match[1]) // 1000 != 13:
+    compatible = match is not None and (
+        int(match[1]) >= 13000 if sys.platform == "win32" else int(match[1]) // 1000 == 13
+    )
+    if not compatible:
         raise _refuse(
             "companion-major-mismatch",
-            f"JAX runtime {runtime!r} does not match CUDA 13. {_reinstall()}",
+            f"JAX runtime {runtime!r} is not compatible with CUDA 13. {_reinstall()}",
         )
     return facts
 
@@ -375,6 +379,15 @@ def _missing_dependency(soname: str, path: str) -> CudaNativeUnavailableError:
 
 
 def _dependency_paths(path: Path, facts: CudaEnvironmentFacts) -> tuple[str, ...]:
+    if sys.platform == "win32":
+        from phydrax_cuda13_pjrt.runtime import load_libraries
+
+        root = path.resolve()
+        return tuple(
+            filename
+            for filename in load_libraries(path)
+            if Path(filename).resolve() != root
+        )
     wheels: dict[str, str] = {}
     for filename, owner_major in facts.wheel_library_majors:
         if owner_major != 13 or _CUDA_SONAME.fullmatch(Path(filename).name) is None:
@@ -531,6 +544,17 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
     """Validate, preload and register a component exactly once in this process."""
     global _EXIT_REGISTERED
     name = parse(name, CudaNativeComponentName, "name")
+    if sys.platform == "win32":
+        match name:
+            case "cudss" | "amgx" | "quda" | "cutensor":
+                pass
+            case "cutensornet" | "cuest" | "collective" | "cudecomp" | "cudss_mgmn":
+                raise _refuse(
+                    "component-unavailable",
+                    f"CUDA component {name} is not supported by the native Windows runtime.",
+                )
+            case _ as unreachable:
+                assert_never(unreachable)
     with _LOCK:
         if name in _LOADED:
             return _LOADED[name].identity
@@ -540,15 +564,33 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
         path = _library_location(name, library_input(_SETTINGS[name]))
         try:
             preloaded = _dependency_paths(path, facts)
-            dependencies = tuple(ctypes.CDLL(filename) for filename in preloaded)
-            library = ctypes.CDLL(str(path))
-        except (OSError, ValueError) as error:
+            if sys.platform == "win32":
+                from phydrax_cuda13_pjrt.runtime import library_handle
+
+                dependencies = tuple(library_handle(filename) for filename in preloaded)
+                library = library_handle(path)
+            else:
+                dependencies = tuple(ctypes.CDLL(filename) for filename in preloaded)
+                library = ctypes.CDLL(str(path))
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
             raise _refuse(
                 "companion-invalid",
                 f"Cannot load CUDA {name} companion {path}: {error}. {_reinstall()}",
                 str(path),
             ) from error
         identity, functions, handlers = _bind(library, path, name, preloaded)
+        runtime = None
+        if sys.platform == "win32":
+            from phydrax_cuda13_pjrt.runtime import cuda_runtime_api
+
+            try:
+                runtime = cuda_runtime_api(library)
+            except (AttributeError, OSError, RuntimeError, ValueError) as error:
+                raise _refuse(
+                    "companion-invalid",
+                    f"Cannot bind CUDA {name} runtime ABI from {path}: {error}. {_reinstall()}",
+                    str(path),
+                ) from error
         if name in _GROUP_OWNED_COMPONENTS and name != "collective":
             bridge = _LOADED["collective"].identity
             if identity.build_hash != bridge.build_hash:
@@ -562,7 +604,7 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
             jax.ffi.register_ffi_target(
                 target, jax.ffi.pycapsule(ctypes.c_void_p(pointer)), platform="CUDA"
             )
-        _LOADED[name] = _Loaded(identity, library, functions, dependencies)
+        _LOADED[name] = _Loaded(identity, library, functions, dependencies, runtime)
         if name not in _GROUP_OWNED_COMPONENTS and not _EXIT_REGISTERED:
             atexit.register(_shutdown)
             _EXIT_REGISTERED = True
@@ -774,38 +816,92 @@ def cuda_native_resources() -> CudaNativeResources:
         )
 
 
+def _retirement_runtimes() -> list[Any]:
+    """Resolve already-admitted runtime ABIs without loading a new component."""
+    if not _LOADED:
+        return []
+    if sys.platform == "win32":
+        # Use only the ABI already bound to each successfully admitted component.
+        # Shutdown must not discover/load a new component after partial admission.
+        runtimes = []
+        for loaded in _LOADED.values():
+            if loaded.runtime is None:
+                if loaded.identity.preloaded:
+                    raise RuntimeError(
+                        f"Cannot synchronize CUDA component {loaded.identity.name}: "
+                        "its owning runtime ABI was not bound."
+                    )
+                continue
+            runtimes.append(loaded.runtime)
+        if not runtimes:
+            return []
+    else:
+        facts = collect_cuda_environment(initialize_backend=False)
+        majors = {loaded.identity.major for loaded in _LOADED.values()}
+        runtime_paths = tuple(
+            path
+            for path, major in facts.wheel_library_majors
+            if major in majors and Path(path).name.startswith("libcudart.so.")
+        )
+        if not runtime_paths:
+            # Fixtures without any CUDA dependency have no device work to drain.
+            if any(loaded.identity.preloaded for loaded in _LOADED.values()):
+                raise RuntimeError(
+                    "Cannot synchronize CUDA devices: NVIDIA runtime wheel is missing."
+                )
+            return []
+        runtimes = [ctypes.CDLL(runtime_paths[0])]
+    return runtimes
+
+
 def _synchronize_devices() -> None:
-    facts = collect_cuda_environment(initialize_backend=False)
-    majors = {loaded.identity.major for loaded in _LOADED.values()}
-    runtime_paths = tuple(
-        path
-        for path, major in facts.wheel_library_majors
-        if major in majors and Path(path).name.startswith("libcudart.so.")
-    )
-    if not runtime_paths:
-        # Fixtures without any CUDA dependency have no device work to drain.
-        if any(loaded.identity.preloaded for loaded in _LOADED.values()):
-            raise RuntimeError(
-                "Cannot synchronize CUDA devices: NVIDIA runtime wheel is missing."
-            )
+    runtimes = _retirement_runtimes()
+    if not runtimes:
         return
-    runtime = ctypes.CDLL(runtime_paths[0])
-    set_device = runtime.cudaSetDevice
-    set_device.argtypes = [_I32]
-    set_device.restype = _I32
-    synchronize = runtime.cudaDeviceSynchronize
-    synchronize.argtypes = []
-    synchronize.restype = _I32
+    devices = tuple(
+        device.local_hardware_id
+        for device in jax.local_devices()
+        if device_platform(device) == "cuda"
+    )
     failures: list[str] = []
-    for device in jax.local_devices():
-        if device_platform(device) == "cuda":
-            status = set_device(device.local_hardware_id)
-            if status == 0:
-                status = synchronize()
+    for runtime in runtimes:
+        get_device = runtime.cudaGetDevice
+        get_device.argtypes = [ctypes.POINTER(_I32)]
+        get_device.restype = _I32
+        set_device = runtime.cudaSetDevice
+        set_device.argtypes = [_I32]
+        set_device.restype = _I32
+        synchronize = runtime.cudaDeviceSynchronize
+        synchronize.argtypes = []
+        synchronize.restype = _I32
+        original = _I32()
+        status = get_device(ctypes.byref(original))
+        if status != 0:
+            failures.append(f"CUDA caller device query failed (status {status}).")
+            continue
+        try:
+            for device in devices:
+                status = set_device(device)
+                if status == 0:
+                    status = synchronize()
+                if status != 0:
+                    failures.append(
+                        f"CUDA device {device} exit synchronization failed (status {status})."
+                    )
+        finally:
+            status = set_device(original.value)
             if status != 0:
                 failures.append(
-                    f"CUDA device {device.local_hardware_id} exit synchronization failed (status {status})."
+                    f"CUDA caller device {original.value} restoration failed (status {status})."
                 )
+    if sys.platform == "win32":
+        from phydrax_cuda13_pjrt.runtime import runtime_identity
+
+        # Observation failure must never prevent draining already-owned work.
+        try:
+            runtime_identity()
+        except (OSError, RuntimeError) as error:
+            failures.append(f"CUDA runtime identity observation failed: {error}")
     if failures:
         raise RuntimeError("; ".join(failures))
 

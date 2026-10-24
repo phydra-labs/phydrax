@@ -15,6 +15,7 @@ import pytest
 from jax import lax
 
 from phydrax._jax_config import default_device
+from phydrax.linalg._low_rank_updates import _array_tree_lineage
 from tests._support.metal_qualification import metal_device, record_metal_execution
 
 
@@ -193,7 +194,7 @@ def test_associative_boolean_reduction_exact(
     record_metal_execution(record_property, result)
 
 
-@pytest.mark.parametrize("kind", ["sum", "prod", "all", "any"])
+@pytest.mark.parametrize("kind", ["sum", "prod", "all", "any", "xor"])
 @pytest.mark.parametrize("case", ["empty-reduced", "no-axes", "scalar", "empty-output"])
 def test_associative_reduction_empty_and_no_axes(
     device: jax.Device, record_property: RecordProperty, kind: str, case: str
@@ -211,6 +212,7 @@ def test_associative_reduction_empty_and_no_axes(
         "prod": (lax.mul, np.multiply, 1),
         "all": (lax.bitwise_and, np.bitwise_and, True),
         "any": (lax.bitwise_or, np.bitwise_or, False),
+        "xor": (lax.bitwise_xor, np.bitwise_xor, 0),
     }[kind]
     initial = np.asarray(identity, dtype=dtype)
     result = jax.jit(lambda x, init: lax.reduce(x, init, reducer, axes))(
@@ -219,6 +221,101 @@ def test_associative_reduction_empty_and_no_axes(
     expected = reference.reduce(host, axis=axes, initial=initial, dtype=dtype)
     assert result.dtype == dtype
     np.testing.assert_array_equal(np.asarray(result), expected)
+    record_metal_execution(record_property, result)
+
+
+_BITWISE_DTYPES = [
+    "bool",
+    "int8",
+    "uint8",
+    "int16",
+    "uint16",
+    "int32",
+    "uint32",
+    "int64",
+    "uint64",
+]
+
+
+def _bit_pattern(shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+    count = int(np.prod(shape, dtype=np.int64))
+    # Odd-multiplier mixing reaches every bit of the 64-bit word, including the
+    # top (sign) bit, so truncation exercises every declared width.
+    raw = np.arange(1, count + 1, dtype=np.uint64) * np.uint64(0x9E3779B97F4A7C15)
+    raw ^= raw >> np.uint64(29)
+    if dtype == np.bool_:
+        return ((raw >> np.uint64(63)) == 1).reshape(shape)
+    return raw.astype(dtype).reshape(shape)
+
+
+def _xor_initial(dtype: np.dtype, kind: str) -> np.ndarray:
+    if kind == "neutral":
+        return np.zeros((), dtype)
+    if dtype == np.bool_:
+        return np.asarray(True)
+    top = np.asarray(1 << (np.iinfo(dtype).bits - 1), np.uint64)
+    return top.astype(dtype)
+
+
+# The neutral (zero/False) initial value is the portable lax.reduce contract and
+# the one the lineage consumer uses; it is the primary qualification.
+# "nonidentity-plugin-specific" pins THIS plugin's bounded serial shader, which
+# folds the supplied initial value exactly once per output. That is NOT a
+# portable lax.reduce/StableHLO contract: StableHLO intersperses "an
+# implementation-defined amount of init_values at implementation-defined
+# positions" (StableHLO spec, reduce), so programs must not rely on a
+# non-identity XOR initial value:
+# https://github.com/openxla/stablehlo/blob/908d6b7a21b3f02772671e0dd83c47f937015e81/docs/spec.md#reduce
+
+
+@pytest.mark.parametrize("dtype_name", _BITWISE_DTYPES)
+@pytest.mark.parametrize("axes", [(0,), (0, 2), (0, 1, 2)])
+@pytest.mark.parametrize("initial_kind", ["neutral", "nonidentity-plugin-specific"])
+def test_xor_reduction_exact_declared_width_and_initial(
+    device: jax.Device,
+    record_property: RecordProperty,
+    dtype_name: str,
+    axes: tuple[int, ...],
+    initial_kind: str,
+) -> None:
+    dtype = np.dtype(dtype_name)
+    host = _bit_pattern((33, 3, 65), dtype)
+    initial = _xor_initial(dtype, initial_kind)
+    result = jax.jit(lambda x, init: lax.reduce(x, init, lax.bitwise_xor, axes))(
+        _put(host, device), _put(initial, device)
+    )
+    # Neutral: the portable result. Non-identity: this plugin folds the initial
+    # value exactly once per output (implementation-specific, see above).
+    expected = np.bitwise_xor(
+        np.bitwise_xor.reduce(host, axis=axes, dtype=dtype), initial
+    )
+    actual = np.asarray(result)
+    assert actual.dtype == expected.dtype == dtype
+    np.testing.assert_array_equal(actual, expected)
+    record_metal_execution(record_property, result)
+
+
+@pytest.mark.parametrize("dtype_name", ["bool", "int8", "uint64"])
+@pytest.mark.parametrize("layout", ["long-axis", "many-outputs"])
+def test_xor_reduction_long_axes_and_many_outputs(
+    device: jax.Device, record_property: RecordProperty, dtype_name: str, layout: str
+) -> None:
+    shape, axes = {
+        "long-axis": ((1_048_577,), (0,)),
+        "many-outputs": ((17, 65_536), (0,)),
+    }[layout]
+    dtype = np.dtype(dtype_name)
+    host = _bit_pattern(shape, dtype)
+    initial = _xor_initial(dtype, "neutral")
+    result = jax.jit(lambda x, init: lax.reduce(x, init, lax.bitwise_xor, axes))(
+        _put(host, device), _put(initial, device)
+    )
+    expected = np.bitwise_xor(
+        np.bitwise_xor.reduce(host, axis=axes, dtype=dtype), initial
+    )
+    actual = np.asarray(result)
+    assert actual.dtype == dtype
+    np.testing.assert_array_equal(actual, expected)
     record_metal_execution(record_property, result)
 
 
@@ -234,7 +331,7 @@ _WINDOW_CASES = {
 
 def _window_reference(
     host: np.ndarray,
-    initial: np.float32,
+    initial: np.generic,
     kind: str,
     window: tuple[int, ...],
     strides: tuple[int, ...],
@@ -264,10 +361,14 @@ def _window_reference(
             strict=True,
         )
     )
-    result = np.empty(shape, np.float32)
-    combine = {"max": np.maximum, "min": np.minimum, "sum": np.add, "prod": np.multiply}[
-        kind
-    ]
+    result = np.empty(shape, host.dtype)
+    combine = {
+        "max": np.maximum,
+        "min": np.minimum,
+        "sum": np.add,
+        "prod": np.multiply,
+        "xor": np.bitwise_xor,
+    }[kind]
     # This small host-only oracle enumerates specified padding/dilation slots;
     # it does not call JAX, MLX, or the plugin under qualification.
     # All callers use neutral init values: extra init leaves cannot change the
@@ -289,7 +390,7 @@ def _window_reference(
                 p // base for p, base in zip(padded, base_dilation, strict=True)
             )
             value = host[index] if valid else initial
-            accumulator = np.float32(combine(accumulator, value))
+            accumulator = host.dtype.type(combine(accumulator, value))
         result[output] = accumulator
     return result
 
@@ -320,6 +421,36 @@ def test_reduce_window_padding_dilation_and_initial_values(
         host, initial, kind, window, strides, padding, base, dilation
     )
     _assert_float_bits(np.asarray(result), expected)
+    record_metal_execution(record_property, result)
+
+
+@pytest.mark.parametrize("dtype_name", ["bool", "int8", "uint64"])
+@pytest.mark.parametrize("case", list(_WINDOW_CASES))
+def test_reduce_window_xor_exact_padding_and_dilation(
+    device: jax.Device, record_property: RecordProperty, dtype_name: str, case: str
+) -> None:
+    shape, window, strides, padding, base, dilation = _WINDOW_CASES[case]
+    dtype = np.dtype(dtype_name)
+    host = _bit_pattern(shape, dtype)
+    initial = np.zeros((), dtype)
+    result = jax.jit(
+        lambda x, init: lax.reduce_window(
+            x,
+            init,
+            lax.bitwise_xor,
+            window,
+            strides,
+            padding,
+            base_dilation=base,
+            window_dilation=dilation,
+        )
+    )(_put(host, device), _put(initial, device))
+    expected = _window_reference(
+        host, dtype.type(0), "xor", window, strides, padding, base, dilation
+    )
+    actual = np.asarray(result)
+    assert actual.dtype == dtype
+    np.testing.assert_array_equal(actual, expected)
     record_metal_execution(record_property, result)
 
 
@@ -522,3 +653,98 @@ def test_cbrt_fp32_ulp_bound_and_special_values(
     ulp_error = np.abs(actual_magnitude - expected_magnitude)
     assert np.all(ulp_error <= 2), f"FP32 cbrt exceeds two ULP: {ulp_error.tolist()}"
     record_metal_execution(record_property, result)
+
+
+_WORD_MASK = (1 << 64) - 1
+
+
+def _host_lineage_words(leaf: np.ndarray) -> list[int]:
+    parts = (leaf.real, leaf.imag) if np.iscomplexobj(leaf) else (leaf,)
+    words: list[int] = []
+    for part in parts:
+        contiguous = np.ascontiguousarray(part)
+        if contiguous.dtype.kind == "f":
+            contiguous = contiguous.view(f"u{contiguous.dtype.itemsize}")
+        # Python integers: signed values sign-extend to 64 bits, bools are 0/1.
+        words.extend(int(value) & _WORD_MASK for value in contiguous.ravel().tolist())
+    return words
+
+
+def _host_tree_lineage(leaves: list[np.ndarray]) -> tuple[int, int]:
+    # Independent arbitrary-precision host bit mix of the documented lineage
+    # formula; it calls neither JAX nor the plugin under qualification.
+    prime = 1099511628211
+    mixer = 11400714819323198485
+    first, second = 1469598103934665603, 1099511628211
+    for leaf_index, leaf in enumerate(leaves):
+        words = _host_lineage_words(leaf)
+        if not words:
+            continue
+        salt = (leaf_index + 1) * mixer
+        mixed = [
+            word ^ (((index + 1) * mixer + salt) & _WORD_MASK)
+            for index, word in enumerate(words)
+        ]
+        folded = 0
+        for value in mixed:
+            folded ^= value
+        first = ((first ^ folded) * prime) & _WORD_MASK
+        second = (
+            second + sum((value ^ (value >> 29)) * prime for value in mixed)
+        ) & _WORD_MASK
+    return first, second
+
+
+def _lineage_leaves() -> list[np.ndarray]:
+    return [
+        np.asarray([[0.0, 1.5, -2.25], [3.0e38, np.inf, -7.0]], np.float32),
+        np.asarray([-1, 2**62 + 5, -(2**63)], np.int64),
+        np.asarray([2**64 - 1, 2**63, 12345], np.uint64),
+        np.zeros((0,), np.float32),
+        np.asarray([True, False, True]),
+        np.asarray([1 + 2j, -0.5 + 0.25j], np.complex64),
+        np.asarray([-128, 127, -1], np.int8),
+    ]
+
+
+def _flip_bit(
+    leaves: list[np.ndarray], leaf: int, index: tuple[int, ...], bit: int
+) -> list[np.ndarray]:
+    changed = [value.copy() for value in leaves]
+    unsigned = changed[leaf].view(f"u{changed[leaf].dtype.itemsize}")
+    unsigned[index] ^= np.asarray(1 << bit, unsigned.dtype)
+    return changed
+
+
+def test_array_tree_lineage_uint64_matches_independent_host_mix(
+    device: jax.Device, record_property: RecordProperty
+) -> None:
+    base = _lineage_leaves()
+    variants = {
+        "base": base,
+        "uint64-bit-63": _flip_bit(base, 2, (2,), 63),
+        "int64-bit-63": _flip_bit(base, 1, (1,), 63),
+        "int8-sign-extension": _flip_bit(base, 6, (1,), 7),
+        "float32-sign-of-zero": _flip_bit(base, 0, (0, 0), 31),
+    }
+    program = jax.jit(_array_tree_lineage)
+    results = []
+    observed: dict[str, tuple[int, int]] = {}
+    for name, leaves in variants.items():
+        result = program(tuple(_put(leaf, device) for leaf in leaves))
+        actual = np.asarray(result)
+        assert actual.dtype == np.uint64 and actual.shape == (2,), name
+        expected = _host_tree_lineage(leaves)
+        # Identical to the formula's host value: existing lineage IDs are unchanged.
+        assert tuple(int(value) for value in actual.tolist()) == expected, name
+        observed[name] = expected
+        results.append(result)
+    # Each single high-bit change, including sign extension into the upper 32
+    # bits of a 64-bit word, changes the lineage of that tree. Variants are not
+    # required to differ from each other: a bit-63 flip contributes the same
+    # delta to the XOR fold and the wrapped sum whichever word it hits, so
+    # uint64-bit-63 and int64-bit-63 share one lineage by construction.
+    for name, lineage in observed.items():
+        if name != "base":
+            assert lineage != observed["base"], name
+    record_metal_execution(record_property, *results)

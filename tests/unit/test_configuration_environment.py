@@ -148,6 +148,27 @@ def test_bootstrap_projection_round_trips_through_child_startup() -> None:
         base=_launch_base(),
     )
     source = f"from phydrax import config; import jax; expected = config.RuntimeBootstrap(coordinator_address={bootstrap.coordinator_address!r}, num_processes=1, process_id=0, local_device_ids=(0,), coordinator_bind_address={bootstrap.coordinator_bind_address!r}, heartbeat_timeout_seconds=29, initialization_timeout_seconds=47); assert config.snapshot().requested.bootstrap == expected; assert config.snapshot().distributed_initialized; assert jax.process_count() == 1; jax.distributed.shutdown()"
+    if sys.platform == "win32":
+        source = """
+import jax
+from jax._src import xla_bridge
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("Windows bootstrap reached distributed initialization")
+
+jax.distributed.initialize = forbidden
+assert not xla_bridge.backends_are_initialized()
+try:
+    from phydrax import config
+except RuntimeError as error:
+    assert type(error).__name__ == "ConfigurationApplicationError"
+    assert error.setting == "bootstrap"
+    assert error.applied == ()
+else:
+    raise AssertionError("Windows distributed bootstrap was admitted")
+assert not xla_bridge.backends_are_initialized()
+assert not jax.distributed.is_initialized()
+"""
     result = subprocess.run(
         [sys.executable, "-c", source],
         env=environment,

@@ -21,6 +21,7 @@ from phydrax._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from tests._support.filesystem import create_directory_link
 
 
 def _npy_payload(value: object, /, *, allow_pickle: bool = False) -> bytes:
@@ -157,6 +158,8 @@ def test_explicit_trusted_policy_preserves_legacy_high_rank_archive(
 def test_array_archive_rejects_symlink_and_fifo_sources_without_following(
     tmp_path: Path,
 ) -> None:
+    if os.name != "posix":
+        pytest.skip("FIFO source rejection requires POSIX named pipes.")
     archive = write_array_archive(
         tmp_path / "source.zip",
         manifest={"kind": "path-safety"},
@@ -182,7 +185,7 @@ def test_array_archive_rejects_symlinked_parent_component(tmp_path: Path) -> Non
         arrays={"value": np.asarray(1.0)},
     )
     linked_parent = tmp_path / "linked-parent"
-    linked_parent.symlink_to(trusted, target_is_directory=True)
+    create_directory_link(linked_parent, trusted)
 
     with pytest.raises(ArrayArchiveCorruptionError):
         read_array_archive(linked_parent / archive.name)

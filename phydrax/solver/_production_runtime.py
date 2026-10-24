@@ -32,7 +32,17 @@ from .._array_archive import (
 from .._execution_resources import ResourceRequest
 from .._execution_sampling import PhaseMemoryEvidence, PhaseMemorySampler
 from .._fingerprint import canonical_fingerprint, canonical_json
-from .._host_io import descriptor_relative_path, open_directory_descriptor
+from .._host_io import (
+    descriptor_relative_path,
+    link_at,
+    list_directory,
+    open_directory_descriptor,
+    open_file_at,
+    require_owned_directory,
+    stat_at,
+    sync_directory,
+    unlink_at,
+)
 from .._iteration import (
     bind_iteration_scope,
     IterationCapabilities,
@@ -43,6 +53,7 @@ from .._iteration import (
     IterationSession,
     IterationSessionState,
 )
+from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
@@ -111,12 +122,11 @@ def _canonical_auxiliary_tree(tree: Any, role: str, /) -> Any:
 
 
 _JSON_FILE_LIMIT = 65_536
-_REGULAR_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 
 def _entry_exists(directory_descriptor: int, name: str, /) -> bool:
     try:
-        os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        stat_at(directory_descriptor, name)
     except FileNotFoundError:
         return False
     return True
@@ -125,7 +135,7 @@ def _entry_exists(directory_descriptor: int, name: str, /) -> bool:
 def _read_regular_file_at(
     directory_descriptor: int, name: str, maximum_bytes: int, /
 ) -> bytes:
-    descriptor = os.open(name, _REGULAR_FILE_OPEN_FLAGS, dir_fd=directory_descriptor)
+    descriptor = open_file_at(directory_descriptor, name)
     try:
         information = os.fstat(descriptor)
         if not stat.S_ISREG(information.st_mode):
@@ -149,7 +159,7 @@ def _regular_file_identity_at(
     maximum_bytes: int,
     /,
 ) -> tuple[int, str]:
-    descriptor = os.open(name, _REGULAR_FILE_OPEN_FLAGS, dir_fd=directory_descriptor)
+    descriptor = open_file_at(directory_descriptor, name)
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
@@ -200,34 +210,12 @@ def _write_json_atomic_at(
     )
     if len(encoded) > _JSON_FILE_LIMIT:
         raise ValueError("Checkpoint metadata exceeds its byte limit.")
-    temporary = f".{name}.{secrets.token_hex(16)}.tmp"
-    descriptor = -1
-    try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=directory_descriptor,
-        )
-        with os.fdopen(descriptor, "wb") as stream:
-            descriptor = -1
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(
-            temporary,
-            name,
-            src_dir_fd=directory_descriptor,
-            dst_dir_fd=directory_descriptor,
-        )
-        os.fsync(directory_descriptor)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            os.unlink(temporary, dir_fd=directory_descriptor)
-        except FileNotFoundError:
-            pass
+    publish_bytes(
+        descriptor_relative_path(directory_descriptor, name),
+        encoded,
+        maximum_bytes=_JSON_FILE_LIMIT,
+        mode="atomic_replace",
+    )
 
 
 def _validate_json_nesting(payload: str, maximum: int, /) -> None:
@@ -536,7 +524,16 @@ class CheckpointMigrationRecord:
 
 
 class DurableCheckpointStore:
-    """Descriptor-confined, crash-consistent checkpoint generations."""
+    """Descriptor-confined, crash-consistent checkpoint generations.
+
+    The shared host-I/O owner enforces current ownership (POSIX permissions or
+    Windows owner/DACL), no-follow admission, and durable namespace updates.
+    Unsupported or failed filesystem synchronization never issues a receipt.
+    This store is distinct from the explicitly POSIX artifact-repository backend.
+    Immutable archive names are published by exclusive hard link and staged-name
+    removal before directory synchronization and commit-pointer publication;
+    filesystem-specific exclusive rename flags are not required.
+    """
 
     _POINTER_KEYS = frozenset(
         {
@@ -579,16 +576,11 @@ class DurableCheckpointStore:
             )
         self.root = Path(root)
         root_descriptor = open_directory_descriptor(self.root, create=True)
-        information = os.fstat(root_descriptor)
-        if (
-            not stat.S_ISDIR(information.st_mode)
-            or information.st_uid != os.geteuid()
-            or information.st_mode & 0o022
-        ):
+        try:
+            require_owned_directory(root_descriptor)
+        except BaseException:
             os.close(root_descriptor)
-            raise PermissionError(
-                "Checkpoint root must be an owner-controlled non-writable directory."
-            )
+            raise
         self._root_descriptor = root_descriptor
         self.manifest = manifest
         self.policy = policy
@@ -791,16 +783,12 @@ class DurableCheckpointStore:
                 temporary_name,
                 DEFAULT_ARRAY_ARCHIVE_LIMITS.max_container_bytes,
             )
-            os.replace(
-                temporary_name,
-                target_name,
-                src_dir_fd=self._root_descriptor,
-                dst_dir_fd=self._root_descriptor,
-            )
-            os.fsync(self._root_descriptor)
+            link_at(self._root_descriptor, temporary_name, target_name)
+            unlink_at(self._root_descriptor, temporary_name)
+            sync_directory(self._root_descriptor)
         finally:
             try:
-                os.unlink(temporary_name, dir_fd=self._root_descriptor)
+                unlink_at(self._root_descriptor, temporary_name)
             except FileNotFoundError:
                 pass
         pointer = {
@@ -825,16 +813,16 @@ class DurableCheckpointStore:
         _write_json_atomic_at(self._root_descriptor, "committed.json", pointer)
         generations = sorted(
             name
-            for name in os.listdir(self._root_descriptor)
+            for name in list_directory(self._root_descriptor)
             if len(name) == len("generation-00000000.phx")
             and name.startswith("generation-")
             and name.endswith(".phx")
             and name[11:19].isdigit()
         )
         for obsolete in generations[: -self.policy.retention]:
-            os.unlink(obsolete, dir_fd=self._root_descriptor)
+            unlink_at(self._root_descriptor, obsolete)
         if len(generations) > self.policy.retention:
-            os.fsync(self._root_descriptor)
+            sync_directory(self._root_descriptor)
         return self.verify_commit(self._receipt(pointer))
 
     def latest(

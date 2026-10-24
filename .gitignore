@@ -71,6 +71,8 @@ benchmarks/*
 !benchmarks/cuest_molecular.py
 !benchmarks/_cuest_kernels.py
 !benchmarks/cuest_molecular_campaign.py
+!benchmarks/windows_cuda.py
+!benchmarks/rtx_5090_windows_qualification.json
 !benchmarks/a40_qualification.json
 # Eight-A100 physical, installed-provider, and integrated qualification evidence.
 !benchmarks/a100_cuda_execution.json
@@ -87,6 +89,8 @@ benchmarks/*
 !benchmarks/metal_execution_scaling.py
 !benchmarks/m1_max_qualification.json
 !benchmarks/m1_max_optimization.json
+!benchmarks/metal_runtime_completion.py
+!benchmarks/metal_runtime_completion.json
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py
@@ -159,6 +163,8 @@ benchmarks/*
 !benchmarks/_memory.py
 !benchmarks/memory_*.py
 !benchmarks/memory_*.json
+# Accelerator-qualification compiled-region evidence driver (no retained record).
+!benchmarks/accelerator_region_evidence.py
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv

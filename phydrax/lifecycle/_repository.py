@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -419,6 +418,18 @@ class InMemoryConditionalObjectClient:
 class POSIXArtifactRepository:
     """Crash-consistent POSIX repository with attempt-private immutable roots."""
 
+    root: Path
+    policy: POSIXRepositoryPolicy
+    provider_id: str
+    maximum_chunk_bytes: int
+    maximum_metadata_bytes: int
+    failure_injector: FailureInjector | None
+    support_tuple: SupportTuple
+    _root_descriptor: int
+    _directory_descriptors: dict[str, int]
+    _layout_identities: dict[str, tuple[int, int]]
+    _pinned_layout_identities: dict[str, tuple[int, int]]
+
     @checked
     def __init__(
         self,
@@ -428,6 +439,8 @@ class POSIXArtifactRepository:
         *,
         failure_injector: FailureInjector | None = None,
     ) -> None:
+        if os.name != "posix":
+            raise OSError("POSIXArtifactRepository requires a POSIX filesystem backend.")
         policy.filesystem_profile.require_transactional_support()
         self.root = _admit_repository_root(root)
         self.policy = policy
@@ -1455,6 +1468,10 @@ class POSIXArtifactRepository:
 
     @contextmanager
     def _exclusive_lock(self) -> Iterator[None]:
+        if os.name != "posix":
+            raise OSError("POSIXArtifactRepository locking requires a POSIX host.")
+        import fcntl
+
         self._verify_repository_layout()
         lock_path = self.root / "locks" / "repository.lock"
         with self._open_parent_descriptor(lock_path) as (parent, name):
@@ -2633,6 +2650,8 @@ def _read_json_file(path: Path, maximum: int, /) -> dict[str, object]:
 
 
 def _read_bounded_file(path: Path, maximum: int, /) -> bytes:
+    if os.name != "posix":
+        raise OSError("POSIX repository reads require a POSIX host.")
     maximum_ = _nonnegative(maximum, "maximum read bytes")
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)

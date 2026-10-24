@@ -19,8 +19,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
-from jax.core import ShapedArray
-from jax.extend.core import Jaxpr, jaxprs_in_params
 
 from phydrax._trainable import (
     combine_parameters,
@@ -31,6 +29,7 @@ from phydrax.nn.layers import Linear
 from phydrax.nn.models import MLP
 from phydrax.operators.differential import laplacian
 from phydrax.optim import adam
+from tests._support.assertions import assert_no_float64_values
 from tests._support.metal_pde import (
     build_model,
     optimizer,
@@ -104,36 +103,6 @@ def _relative_error(actual: Any, reference: Any, /) -> float:
     )
     difference = actual_flat.astype(jnp.float64) - reference_flat
     return float(jnp.linalg.norm(difference) / jnp.linalg.norm(reference_flat))
-
-
-def _float64_avals(jaxpr: Jaxpr, /) -> list[str]:
-    """Every float64/complex128 value in a traced program, including sub-programs."""
-    found: list[str] = []
-
-    def check(where: str, dtype: Any) -> None:
-        if str(dtype) in ("float64", "complex128"):
-            found.append(f"{where}: {dtype}")
-
-    def visit(inner: Jaxpr) -> None:
-        for const in inner.consts:
-            check("const", getattr(const, "dtype", None))
-        for var in (*inner.all_invars, *inner.outvars):
-            if isinstance(var.aval, ShapedArray):
-                check("jaxpr variable", var.aval.dtype)
-        for equation in inner.eqns:
-            name = equation.primitive.name
-            for atom in (*equation.invars, *equation.outvars):
-                if isinstance(atom.aval, ShapedArray):
-                    check(name, atom.aval.dtype)
-            for nested in jaxprs_in_params(equation.params):
-                visit(nested)
-
-    visit(jaxpr)
-    return found
-
-
-def _assert_no_float64(jaxpr: Any, /) -> None:
-    assert _float64_avals(jaxpr) == []
 
 
 def _train_step(parameters: Any, rest: tuple[Any, Any], points: jax.Array) -> Any:
@@ -238,14 +207,14 @@ def test_float32_construction_derivatives_and_update_trace_without_float64(
             eqx.is_array,
         )
     )(jr.key(0))
-    _assert_no_float64(construction)
+    assert_no_float64_values(construction)
 
     model = _mlp(name, dtype=jnp.float32)
     parameters, state, fixed = partition_parameters(model)
     step, _, _ = eqx.filter_make_jaxpr(_train_step)(
         parameters, (state, fixed), _points(jnp.float32)
     )
-    _assert_no_float64(step)
+    assert_no_float64_values(step)
 
 
 @pytest.mark.parametrize("name", tuple(_CONFIGURATIONS))
@@ -326,7 +295,7 @@ def test_float32_poisson_domain_step_is_float32_and_matches_float64() -> None:
     state = optimizer().init(parameters)
 
     program, _, _ = eqx.filter_make_jaxpr(step)(parameters, state)
-    _assert_no_float64(program)
+    assert_no_float64_values(program)
 
     # The contracted coordinate Laplacian is the trace of the Hessian.
     field = box.Model("x")(model)

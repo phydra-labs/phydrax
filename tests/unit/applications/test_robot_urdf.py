@@ -390,6 +390,8 @@ def test_robot_urdf_scenario_4() -> None:
 
 
 def test_urdf_file_symlinks_and_special_files_fail_closed(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("FIFO source rejection requires POSIX named pipes.")
     root = tmp_path / "root"
     root.mkdir()
     outside = tmp_path / "outside"

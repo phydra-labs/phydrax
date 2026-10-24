@@ -13,7 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tests._support.accelerator_qualification import accelerator_device, record_execution
+from phydrax.execution import default_device
+from tests._support.accelerator_qualification import (
+    accelerator_device,
+    record_compiled_region,
+    record_execution,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -21,14 +26,14 @@ def execution_device() -> Iterator[jax.Device]:
     if "PHYDRAX_ACCELERATOR" not in os.environ:
         pytest.skip("Explicit accelerator qualification process required")
     device = accelerator_device()
-    with jax.default_device(device):
+    with default_device(device):
         yield device
 
 
 def test_mlp_pde_derivatives_and_update(
     record_property: Callable[[str, object], None],
 ) -> None:
-    from examples.accelerator_scientific_execution import poisson_steps
+    from examples.accelerator_scientific_execution import poisson_steps, poisson_training
 
     values, arrays = poisson_steps(steps=4)
     record_execution(record_property, *arrays)
@@ -43,6 +48,33 @@ def test_mlp_pde_derivatives_and_update(
     )
     assert all(array.dtype == jnp.float32 for array in arrays)
 
+    # The core workload: one compiled Adam update of the same prepared PINN.
+    training = poisson_training()
+    updated, _, loss, gradient = record_compiled_region(
+        record_property,
+        "pinn-training-step",
+        training.step,
+        training.parameters,
+        training.state,
+    )
+    measured = (loss, *jax.tree.leaves(updated), *jax.tree.leaves(gradient))
+    record_execution(record_property, *measured)
+    assert all(array.dtype == jnp.float32 for array in measured)
+    np.testing.assert_allclose(loss, values["initial_loss"], rtol=1e-4)
+    np.testing.assert_allclose(
+        np.sqrt(sum(np.sum(np.square(leaf)) for leaf in jax.tree.leaves(gradient))),
+        values["directional_derivative"],
+        rtol=1e-4,
+    )
+    changes = [
+        np.asarray(new) - np.asarray(old)
+        for new, old in zip(
+            jax.tree.leaves(updated), jax.tree.leaves(training.parameters), strict=True
+        )
+    ]
+    assert all(np.all(np.isfinite(change)) for change in changes)
+    assert any(np.any(change != 0) for change in changes)
+
 
 def test_polynomial_coordinate_gradient_and_hessian(
     record_property: Callable[[str, object], None],
@@ -51,8 +83,12 @@ def test_polynomial_coordinate_gradient_and_hessian(
         return point[0] ** 3 * point[1] ** 2
 
     point = jnp.asarray([0.5, 0.25], dtype=jnp.float32)
-    gradient = jax.jit(jax.grad(polynomial))(point)
-    hessian = jax.jit(jax.hessian(polynomial))(point)
+    gradient = record_compiled_region(
+        record_property, "coordinate-gradient", jax.grad(polynomial), point
+    )
+    hessian = record_compiled_region(
+        record_property, "coordinate-hessian", jax.hessian(polynomial), point
+    )
     record_execution(record_property, gradient, hessian)
     np.testing.assert_array_equal(gradient, np.asarray([0.046875, 0.0625], np.float32))
     np.testing.assert_array_equal(
@@ -70,12 +106,13 @@ def test_wide_integer_sort_and_arithmetic(
         else np.asarray([2**63 + 7, 2**63 + 2, 2**63 + 9, 2**63 + 1], np.uint64)
     )
 
-    @jax.jit
     def execute(keys: jax.Array) -> tuple[jax.Array, ...]:
         order = jnp.argsort(keys, stable=True)
         return order, keys[order], keys + jnp.asarray(11, dtype=keys.dtype)
 
-    outputs = execute(jnp.asarray(values))
+    outputs = record_compiled_region(
+        record_property, "wide-integer-sort", execute, jnp.asarray(values)
+    )
     record_execution(record_property, *outputs)
     np.testing.assert_array_equal(outputs[0], np.argsort(values, kind="stable"))
     np.testing.assert_array_equal(outputs[1], np.sort(values, kind="stable"))
@@ -91,14 +128,15 @@ def test_point_gather_scatter_full_width_addresses(
 ) -> None:
     host = np.asarray([2**60 + 3, 2**60 + 1, 2**60 + 3, 2**60 + 2], np.int64)
 
-    @jax.jit
     def execute(keys: jax.Array) -> tuple[jax.Array, jax.Array]:
         addresses = jnp.asarray([0, 2**32 + 1, 2, -(2**32) + 1], dtype=jnp.int64)
         gathered = jnp.take(keys, addresses, mode="fill", fill_value=-17)
         scattered = jnp.zeros((4,), dtype=jnp.int64).at[addresses].set(keys, mode="drop")
         return gathered, scattered
 
-    gathered, scattered = execute(jnp.asarray(host))
+    gathered, scattered = record_compiled_region(
+        record_property, "full-width-gather-scatter", execute, jnp.asarray(host)
+    )
     record_execution(record_property, gathered, scattered)
     np.testing.assert_array_equal(
         gathered, np.asarray([host[0], -17, host[2], -17], np.int64)
@@ -127,7 +165,6 @@ def test_full_width_window_gather(
         offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)
     )
 
-    @jax.jit
     def windows(values: jax.Array, addresses: jax.Array) -> jax.Array:
         return jax.lax.gather(
             values,
@@ -138,7 +175,13 @@ def test_full_width_window_gather(
             fill_value=-17,
         )
 
-    gathered = windows(jnp.asarray(operand), jnp.asarray(indices))
+    gathered = record_compiled_region(
+        record_property,
+        "full-width-window-gather",
+        windows,
+        jnp.asarray(operand),
+        jnp.asarray(indices),
+    )
     expected = np.stack(
         [
             operand[start : start + 2] if 0 <= start <= 3 else np.full(2, -17, np.int64)
@@ -208,7 +251,6 @@ def test_compiled_loops_and_ordered_callbacks(
     assert int(result) == 3 and events == list(range(6))
     record_execution(record_property, result)
 
-    @jax.jit
     def other_loops(start: jax.Array) -> tuple[jax.Array, jax.Array]:
         def condition(value: jax.Array) -> jax.Array:
             return value < 6
@@ -223,7 +265,9 @@ def test_compiled_loops_and_ordered_callbacks(
         summed, _ = jax.lax.scan(accumulate, start, jnp.arange(6, dtype=jnp.int64))
         return counted, summed
 
-    counted, summed = other_loops(jnp.asarray(0, dtype=jnp.int64))
+    counted, summed = record_compiled_region(
+        record_property, "bounded-loops", other_loops, jnp.asarray(0, dtype=jnp.int64)
+    )
     record_execution(record_property, counted, summed)
     assert int(counted) == 6 and int(summed) == 15
 
@@ -293,7 +337,7 @@ def test_bounded_linear_solve(
     def solve(target: jax.Array) -> Any:
         return la.solve(problem, target, policy=policy)
 
-    result = eqx.filter_jit(solve)(rhs)
+    result = record_compiled_region(record_property, "bounded-pcg-solve", solve, rhs)
     record_execution(
         record_property, result.value, result.status, result.diagnostics.residual_norm
     )
@@ -320,7 +364,12 @@ def test_linear_iteration_exhaustion(
         differentiation=la.DifferentiationPolicy("none"),
         failure=la.FailurePolicy("status"),
     )
-    failed = la.solve(problem, rhs, policy=policy)
+    failed = record_compiled_region(
+        record_property,
+        "exhausted-pcg-solve",
+        lambda target: la.solve(problem, target, policy=policy),
+        rhs,
+    )
     record_execution(record_property, failed.value, failed.status)
     assert int(failed.status) == int(la.LinearSolveStatus.MAXIMUM_STEPS_REACHED)
 
@@ -330,13 +379,17 @@ def test_real_fourier_resampling(record_property: Callable[[str, object], None])
 
     source = np.cos(2 * np.pi * np.arange(8) / 8).astype(np.float32)
 
-    @jax.jit
     def resample(values: jax.Array) -> jax.Array:
         return fourier_resample(values, (13,))
 
-    output = resample(jnp.asarray(source))
-    derivative = jax.jit(jax.grad(lambda values: jnp.sum(resample(values))))(
-        jnp.asarray(source)
+    output = record_compiled_region(
+        record_property, "fourier-resample", resample, jnp.asarray(source)
+    )
+    derivative = record_compiled_region(
+        record_property,
+        "fourier-resample-gradient",
+        jax.grad(lambda values: jnp.sum(resample(values))),
+        jnp.asarray(source),
     )
     record_execution(record_property, output, derivative)
     np.testing.assert_allclose(

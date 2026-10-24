@@ -53,6 +53,26 @@
   `reset_successful`/`reset_status`. Environment provenance now binds the codec
   and resolved horizons, so environment IDs and transition PyTrees change.
   Recreate environment states.
+- Replace CUDA environment major-only plugin facts with individual
+  `CudaPluginInstallation` records in `CudaEnvironmentFacts.plugins`; remove
+  `plugin_majors`. Compiler-bound atomistic targets now include `compiler_id`.
+  Reprepare affected execution artifacts instead of relabeling old identities.
+- Add native Windows CUDA 13 packaging, source-pinned PJRT/kernel preparation,
+  DLL ownership/admission, and cuDSS/AmgX/QUDA companion portability. Native
+  compilation and Windows GPU qualification remain required release gates.
+  Unsupported compiler/provider/topology requests refuse explicitly.
+- Add Windows process-tree ownership, host-memory evidence, and NTFS held-handle
+  publication. Missing measurements and failed namespace synchronization remain
+  failures or unavailable evidence, never plausible zero values or receipts.
+- Keep Windows CUDA bootstrap failures sticky across repeated JAX operations;
+  authenticate actual hook code rather than following arbitrary wrappers.
+  Resolve extension roots by full path, retain inspection causes, and reject
+  actual import ambiguities or foreign CUDA families without rejecting unrelated
+  extension basenames.
+- Expose execution-owned device scopes and detached frontend patch identity
+  through the canonical public facades. SQLite service paths retain ancestor
+  handles for the connection lifetime. Checkpoint generation publication uses
+  hard links without adding a Linux rename-flags requirement.
 - Move exact scalar GP execution to native prepared factors and solve evidence.
   `ExactGaussianProcessFactor.factorization` replaces its raw `cholesky` field;
   retained storage includes covariance, factor, and evidence. Likelihood states
@@ -170,6 +190,35 @@
 - Add opt-in verified forest rank bounds, complete-state control rollout and
   replay, and phase-separated robotics/contact/rank qualification drivers with
   explicit resource refusal and compiler/storage evidence.
+- Refuse inherited CPU-LAPACK Metal custom calls during native compilation,
+  including unreachable branches, while preserving explicit host callbacks.
+  Add exact-width Boolean/integer XOR reductions and low-rank lineage support
+  through the existing bounded reduction kernels.
+- Implement read-only Metal optimized-program inspection with checked PJRT
+  size/fill semantics and cached module text. Preserve the executed module,
+  adapt single-device Shardy annotations for reporting, and normalize admitted
+  MHLO custom-call names at the interchange boundary without widening admission.
+  New companion source/build identities require rebuilt, qualified artifacts.
+- Restore reverse-mode QP and MPC sensitivities by keeping the implicit KKT
+  tangent action linear in its right-hand side. Matrix rank/finiteness still
+  control derivative validity; irregular systems retain poisoned derivatives.
+- Keep optional PySCF typing independent of installed extras and refuse
+  authenticated MPI channel admission on hosts without Linux peer credentials.
+- Extend explicit construction dtype through measure-aware attention, its
+  operator-model family, sample geometry, and latent tensor grids. Preserve
+  selected geometry precision through reconstruction without casting caller
+  values or changing omitted-dtype construction.
+- Stabilize saturated and empty-support attention higher derivatives. Preserve
+  fused XLA forward execution while differentiating the bounded native
+  reference; cuDNN retains its existing provider derivative route.
+- Add a CPU-only scientific TPU lowering preflight with independent numerical
+  checks and explicitly transformed derivative programs. Required exports and
+  expected callback refusals are reported separately; successful preflight is
+  neither complete export coverage nor TPU compilation/hardware qualification.
+- Require phase-separated compiled-region resource evidence in installed
+  accelerator qualification, including the Poisson PINN training update.
+  Bind records to the observed runtime and qualification invocation; preserve
+  unavailable allocator counters instead of substituting zeros.
 - Add the `rocm10` extra for standard CPython 3.13 and matched
   JAX/JAXlib/AMD plugin 0.12.0, with packaged ROCm 10.1.0 userspace and
   `gfx942`, `gfx950`, and `gfx1250` payloads targeting the MI300/MI350 families

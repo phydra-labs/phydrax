@@ -10,7 +10,8 @@ requires = [
   "nvidia-nvvm>=13.4.92,<14",
   "nvidia-cuda-runtime>=13.4.92,<14",
   "nvidia-cuda-cccl>=13.3.4.3.1,<14",
-  "nvidia-cublas>=13.8.0.4,<14",
+  "nvidia-cublas>=13.8.0.4,<14; sys_platform != 'win32'",
+  "nvidia-cublas==13.8.0.4; sys_platform == 'win32'",
   "nvidia-cusparse>=12.8.6.72,<13",
   "nvidia-cusolver>=12.3.4.7,<13",
   "nvidia-curand>=10.4.4.72,<11",
@@ -20,7 +21,7 @@ requires = [
   "nvidia-cuda-profiler-api>=13.4.92,<14",
   "nvidia-cudss-cu13>=0.8,<0.9",
   "cutensor-cu13==2.8.1",
-  "cutensornet-cu13==2.14.0",
+  "cutensornet-cu13==2.14.0; sys_platform == 'linux'",
 ]
 build-backend = "_build_backend"
 backend-path = ["."]
@@ -35,8 +36,10 @@ authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
 license = {text = "Phydra Non-Production License (PNPL)"}
 dependencies = [
   "phydrax-cuda-major==13.*",
+  "phydrax-cuda13-pjrt==0.2.2; sys_platform == 'win32'",
   "nvidia-cudss-cu13>=0.8,<0.9",
-  "nvidia-cublas>=13.8.0.4,<14",
+  "nvidia-cublas>=13.8.0.4,<14; sys_platform != 'win32'",
+  "nvidia-cublas==13.8.0.4; sys_platform == 'win32'",
   "nvidia-cusparse>=12.8.6.72,<13",
   "nvidia-cusolver>=12.3.4.7,<13",
   "nvidia-curand>=10.4.4.72,<11",

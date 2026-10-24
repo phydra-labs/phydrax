@@ -1,0 +1,142 @@
+diff --git a/src/pjrt_plugin/ops/control_flow.cc b/src/pjrt_plugin/ops/control_flow.cc
+index aa8c2c9..ac17c46 100644
+--- a/src/pjrt_plugin/ops/control_flow.cc
++++ b/src/pjrt_plugin/ops/control_flow.cc
+@@ -1506,7 +1506,9 @@ bool HandleCustomCall(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     if (!customCallOp)
+         return false;
+ 
+-    auto callTargetName = customCallOp.getCallTargetName().str();
++    // Published mps.mhlo.X dispatches exactly like the admitted mhlo.X.
++    auto target = customCallOp.getCallTargetName();
++    std::string callTargetName(CanonicalCustomCallTarget({target.data(), target.size()}));
+ 
+     if (callTargetName == kHostCallbackTarget)
+         return HandleHostCallback(op, values, ctx);
+@@ -2307,6 +2309,7 @@ bool HandleRngBitGenerator(mlir::Operation* op, ValueMap& values,
+ // target before execution, wherever it appears (including unselected branches),
+ // so no target can reach a CPU numerical route such as LAPACK eigh/qr/svd.
+ bool IsAdmittedCustomCallTarget(std::string_view target) {
++    target = CanonicalCustomCallTarget(target);
+     static const std::unordered_set<std::string_view> kTargets = {
+         "Sharding",
+         "SPMDFullToShardShape",
+@@ -2338,6 +2341,28 @@ bool IsAdmittedCustomCallTarget(std::string_view target) {
+            UnaryMlxOps().count(target.substr(kMhloPrefix.size()));
+ }
+ 
++static constexpr std::string_view kMhloTargetPrefix = "mhlo.";
++static constexpr std::string_view kPublishedTargetPrefix = "mps.";
++
++std::string_view CanonicalCustomCallTarget(std::string_view target) {
++    if (target.substr(0, kPublishedTargetPrefix.size()) != kPublishedTargetPrefix)
++        return target;
++    std::string_view canonical = target.substr(kPublishedTargetPrefix.size());
++    if (canonical.substr(0, kMhloTargetPrefix.size()) != kMhloTargetPrefix)
++        return target;
++    return canonical;
++}
++
++std::string PublishedCustomCallTarget(std::string_view target) {
++    if (target.substr(0, kMhloTargetPrefix.size()) == kMhloTargetPrefix &&
++        IsAdmittedCustomCallTarget(target)) {
++        std::string published(kPublishedTargetPrefix);
++        published += target;
++        return published;
++    }
++    return std::string(target);
++}
++
+ void RegisterControlFlowHandlers(std::unordered_map<std::string, OpHandler>& handlers) {
+     handlers.insert({"func.return", HandleReturn});
+     handlers.insert({"func.call", HandleCall});
+diff --git a/src/pjrt_plugin/ops/handler_utils.h b/src/pjrt_plugin/ops/handler_utils.h
+index 739b8ce..085b3f9 100644
+--- a/src/pjrt_plugin/ops/handler_utils.h
++++ b/src/pjrt_plugin/ops/handler_utils.h
+@@ -182,6 +182,16 @@ bool HandleHostCallback(mlir::Operation* op, ValueMap& values, ExecContext& ctx)
+ // and single-device sharding annotations; the parser refuses all others.
+ bool IsAdmittedCustomCallTarget(std::string_view target);
+ 
++// PJRT_Executable_OptimizedProgram publishes admitted mhlo.* targets as
++// mps.mhlo.*: XLA's StableHLO -> HLO conversion reserves the mhlo.* custom-call
++// namespace for its own MHLO extensibility protocol. Admission and dispatch
++// accept both spellings. Canonical form of a published target (mps.mhlo.X ->
++// mhlo.X); every other target is returned unchanged.
++std::string_view CanonicalCustomCallTarget(std::string_view target);
++// Published spelling of a target: mps.mhlo.X for an admitted mhlo.X, otherwise
++// the target unchanged.
++std::string PublishedCustomCallTarget(std::string_view target);
++
+ // --- Shared enums/helpers (defined in gather_scatter.cc, used by reduction.cc) ---
+ 
+ enum class ScatterType { Update, Add, Sub, Mul, Min, Max, Unknown };
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index ef6680e..d75e4e8 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -852,20 +852,32 @@ std::string printOptimizedProgram(mlir::ModuleOp module) {
+     if (!module) {
+         return text;
+     }
+-    bool constrained = false;
+-    module.walk([&](mlir::sdy::ShardingConstraintOp) {
+-        constrained = true;
+-        return mlir::WalkResult::interrupt();
++    auto published = [](mlir::stablehlo::CustomCallOp call) {
++        auto target = call.getCallTargetName();
++        return jax_mps::PublishedCustomCallTarget({target.data(), target.size()});
++    };
++    bool respelled = false;
++    module.walk([&](mlir::Operation* op) {
++        auto call = mlir::dyn_cast<mlir::stablehlo::CustomCallOp>(op);
++        respelled = mlir::isa<mlir::sdy::ShardingConstraintOp>(op) ||
++                    (call && published(call) != call.getCallTargetName().str());
++        return respelled ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+     });
+     llvm::raw_string_ostream os(text);
+-    if (!constrained) {
++    if (!respelled) {
+         module.print(os);
+         return text;
+     }
+-    // checkSingleDevice admitted only single-device meshes, where a sharding
+-    // constraint is the identity that HandleShardingConstraint executes. Spell
+-    // it on a clone so the executed module stays untouched.
++    // Respell on a clone so the executed module stays untouched. Admitted
++    // mhlo.X targets become mps.mhlo.X (only call_target_name changes; operands,
++    // results and every other attribute are kept), which admission and dispatch
++    // treat as mhlo.X. checkSingleDevice admitted only single-device meshes,
++    // where a sharding constraint is the identity HandleShardingConstraint
++    // executes.
+     mlir::OwningOpRef<mlir::ModuleOp> program(module.clone());
++    program->walk([&](mlir::stablehlo::CustomCallOp call) {
++        call.setCallTargetName(published(call));
++    });
+     program->walk([](mlir::sdy::ShardingConstraintOp constraint) {
+         mlir::OpBuilder builder(constraint);
+         mlir::Value input = constraint.getInput();
+diff --git a/src/pjrt_plugin/stablehlo_parser.h b/src/pjrt_plugin/stablehlo_parser.h
+index 20a48a3..4735786 100644
+--- a/src/pjrt_plugin/stablehlo_parser.h
++++ b/src/pjrt_plugin/stablehlo_parser.h
+@@ -69,12 +69,13 @@ ParsedModule parseStableHLOText(const std::string& text);
+ std::string bytecodeToText(const char* data, size_t size);
+ 
+ // MLIR assembly of a finalized module (the IR the executable walks) for
+-// PJRT_Executable_OptimizedProgram. The module itself is never modified. Its
+-// one export spelling: single-device sdy.sharding_constraint, which the XLA
+-// StableHLO -> HLO conversion cannot lower, is printed as the equivalent
+-// stablehlo.custom_call @Sharding {mhlo.sharding = "{replicated}"} identity
+-// that this plugin admits and dispatches to the same pass-through. Empty if
+-// there is no module.
++// PJRT_Executable_OptimizedProgram. The module itself is never modified. Two
++// export spellings let the XLA StableHLO -> HLO conversion succeed; this plugin
++// admits and dispatches each exactly like the executed form. A single-device
++// sdy.sharding_constraint is printed as the identity stablehlo.custom_call
++// @Sharding {mhlo.sharding = "{replicated}"}, and an admitted mhlo.X
++// custom-call target (a namespace that conversion reserves) as mps.mhlo.X with
++// every other attribute unchanged. Empty if there is no module.
+ std::string printOptimizedProgram(mlir::ModuleOp module);
+ 
+ }  // namespace mps

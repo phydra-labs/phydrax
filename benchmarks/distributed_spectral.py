@@ -19,6 +19,7 @@ import argparse
 import math
 import os
 import platform
+import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -312,7 +313,14 @@ def _hardware_evidence(topology: SpectralMeshTopology) -> dict[str, Any]:
             "machine": platform.machine(),
             "processor": platform.processor(),
             "logical_cpus": os.cpu_count(),
-            "load_average_1_5_15": list(os.getloadavg()),
+            "load_average_1_5_15": (
+                None if sys.platform == "win32" else list(os.getloadavg())
+            ),
+            "load_average_unavailable_reason": (
+                "Windows does not provide os.getloadavg"
+                if sys.platform == "win32"
+                else None
+            ),
         },
         "process": {
             "index": jax.process_index(),

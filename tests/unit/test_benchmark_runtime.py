@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import gc
 import importlib.metadata
+import json
 import math
 import weakref
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from benchmarks._runtime import (
     compiler_evidence,
     CompilerEvidence,
     DurationDistribution,
+    installed_build_fingerprint,
     installed_package_fingerprint,
     logical_array_bytes,
     measure_host,
@@ -343,6 +345,196 @@ def test_installed_package_fingerprint_normalizes_order_and_spelling(
         installed_package_fingerprint()
 
 
+def _installed_wheel(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    metadata = root / "phydrax-1.0.dist-info"
+    contents = {
+        "phydrax/__init__.py": "VALUE = 1\n",
+        "phydrax/kernel.pyd": "native-wheel-bytes",
+        "phydrax/__pycache__/__init__.cpython-314.pyc": "generated-bytecode",
+        "phydrax-1.0.dist-info/METADATA": "Metadata-Version: 2.3\nName: phydrax\nVersion: 1.0\n",
+        "phydrax-1.0.dist-info/WHEEL": "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp314-cp314-win_amd64\n",
+        "phydrax-1.0.dist-info/INSTALLER": "uv\n",
+        "phydrax-1.0.dist-info/REQUESTED": "",
+        "phydrax-1.0.dist-info/direct_url.json": json.dumps(
+            {"url": (root / "phydrax.whl").as_uri()}
+        ),
+    }
+    for name, content in contents.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    record = metadata / "RECORD"
+    record.write_text(
+        "".join(f"{name},,\n" for name in contents) + "phydrax-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    distribution = importlib.metadata.PathDistribution(metadata)
+
+    def selected_distribution(name: str) -> importlib.metadata.Distribution:
+        assert name == "phydrax"
+        return distribution
+
+    monkeypatch.setattr(importlib.metadata, "distribution", selected_distribution)
+    origin = str(root / "phydrax" / "__init__.py")
+    monkeypatch.setattr(benchmark_runtime.phydrax, "__file__", origin)
+    monkeypatch.setattr(
+        benchmark_runtime.phydrax, "__spec__", SimpleNamespace(origin=origin)
+    )
+    return record
+
+
+def test_installed_build_identity_is_prefix_independent_and_hashes_actual_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_root = tmp_path / "first"
+    record = _installed_wheel(first_root, monkeypatch)
+    initial = installed_build_fingerprint()
+    assert not (first_root / "uv.lock").exists()
+    assert not (first_root / "pyproject.toml").exists()
+    record.write_text(
+        "\n".join(reversed(record.read_text(encoding="utf-8").splitlines())) + "\n",
+        encoding="utf-8",
+    )
+    cache = first_root / "phydrax" / "__pycache__" / "__init__.cpython-314.pyc"
+    cache.unlink()
+    assert installed_build_fingerprint() == initial
+
+    second_root = tmp_path / "different-prefix"
+    record = _installed_wheel(second_root, monkeypatch)
+    (record.parent / "INSTALLER").write_text("pip\n", encoding="utf-8")
+    (record.parent / "REQUESTED").unlink()
+    record.write_text(
+        record.read_text(encoding="utf-8").replace(
+            "phydrax-1.0.dist-info/REQUESTED,,\n", ""
+        ),
+        encoding="utf-8",
+    )
+    assert installed_build_fingerprint() == initial
+    (second_root / "phydrax" / "kernel.pyd").write_text(
+        "mutated-wheel-byte", encoding="utf-8"
+    )
+    assert installed_build_fingerprint() != initial
+
+
+@pytest.mark.parametrize("filename", ["METADATA", "WHEEL"])
+def test_installed_build_identity_hashes_authored_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    record = _installed_wheel(tmp_path, monkeypatch)
+    initial = installed_build_fingerprint()
+    path = record.parent / filename
+    path.write_text(
+        path.read_text(encoding="utf-8") + "Build: changed\n", encoding="utf-8"
+    )
+    assert installed_build_fingerprint() != initial
+
+
+@pytest.mark.parametrize("unowned", ["checkout", "omitted", "editable"])
+def test_installed_build_identity_refuses_unowned_or_editable_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unowned: str,
+) -> None:
+    record = _installed_wheel(tmp_path / "installed", monkeypatch)
+    if unowned == "checkout":
+        checkout = tmp_path / "__init__.py"
+        checkout.write_text("VALUE = 1\n", encoding="utf-8")
+        monkeypatch.setattr(benchmark_runtime.phydrax, "__file__", str(checkout))
+        monkeypatch.setattr(
+            benchmark_runtime.phydrax, "__spec__", SimpleNamespace(origin=str(checkout))
+        )
+    elif unowned == "omitted":
+        record.write_text(
+            record.read_text(encoding="utf-8").replace("phydrax/__init__.py,,\n", ""),
+            encoding="utf-8",
+        )
+    else:
+        (record.parent / "direct_url.json").write_text(
+            json.dumps({"url": tmp_path.as_uri(), "dir_info": {"editable": True}}),
+            encoding="utf-8",
+        )
+    with pytest.raises(ValueError, match="not owned|editable"):
+        installed_build_fingerprint()
+
+
+@pytest.mark.parametrize(
+    "name", ["../outside.py", "/outside.py", "C:/outside.py", r"..\outside.py"]
+)
+def test_installed_build_identity_refuses_escaped_record_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    record = _installed_wheel(tmp_path, monkeypatch)
+    record.write_text(
+        record.read_text(encoding="utf-8") + f"{name},,\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="escapes"):
+        installed_build_fingerprint()
+
+
+def test_installed_build_identity_refuses_resolved_record_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _installed_wheel(tmp_path / "installed", monkeypatch)
+    outside = tmp_path / "outside.pyd"
+    outside.write_text("outside", encoding="utf-8")
+    original_resolve = Path.resolve
+    payload = tmp_path / "installed" / "phydrax" / "kernel.pyd"
+
+    def escaped_resolve(path: Path, strict: bool = False) -> Path:
+        if path == payload:
+            return outside
+        return original_resolve(path, strict=strict)
+
+    # Model a resolved symlink/junction without requiring Windows symlink privileges.
+    monkeypatch.setattr(Path, "resolve", escaped_resolve)
+    with pytest.raises(ValueError, match="escapes"):
+        installed_build_fingerprint()
+
+
+@pytest.mark.parametrize("filename", ["RECORD", "WHEEL", "METADATA"])
+def test_installed_build_identity_requires_wheel_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    record = _installed_wheel(tmp_path, monkeypatch)
+    (record.parent / filename).unlink()
+    with pytest.raises(FileNotFoundError):
+        installed_build_fingerprint()
+
+
+def test_installed_build_identity_preserves_malformed_metadata_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _installed_wheel(tmp_path, monkeypatch)
+    original_record = record.read_text(encoding="utf-8")
+    record.write_text("phydrax/__init__.py\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Malformed"):
+        installed_build_fingerprint()
+    record.write_text(original_record, encoding="utf-8")
+    (record.parent / "direct_url.json").write_text("{invalid", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        installed_build_fingerprint()
+
+
+def test_installed_build_identity_preserves_missing_distribution_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_distribution(name: str) -> importlib.metadata.Distribution:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "distribution", missing_distribution)
+    with pytest.raises(importlib.metadata.PackageNotFoundError):
+        installed_build_fingerprint()
+
+
 def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -> None:
     environment = capture_environment()
     payload = environment.to_dict()
@@ -513,6 +705,13 @@ def test_benchmark_identity_detects_source_mutation(tmp_path: Path) -> None:
         validate_benchmark_record(stored, changed)
 
 
+def test_source_build_identity_still_requires_lockfile(tmp_path: Path) -> None:
+    _benchmark_source_tree(tmp_path)
+    (tmp_path / "uv.lock").unlink()
+    with pytest.raises(FileNotFoundError, match="uv.lock"):
+        source_build_fingerprint(tmp_path)
+
+
 def test_benchmark_identity_detects_driver_mutation(tmp_path: Path) -> None:
     driver = _benchmark_source_tree(tmp_path)
     initial = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
@@ -562,3 +761,101 @@ def test_adaptive_sphere_refuses_point_limit_before_preparation() -> None:
     config = MeshfreeConfig(sizes=(768,), dimension=3, max_points=64)
     with pytest.raises(DeclaredCapacityRefusal, match="max_points=64"):
         measure_adaptive_sphere_zonal_peak(768, 0, config)
+
+
+def test_windows_runtime_provenance_preserves_unobserved_allocator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    installation = SimpleNamespace(
+        distribution="phydrax-cuda13-pjrt",
+        version="1.0",
+        cuda_major=13,
+        jax_version="0.12.0",
+        jaxlib_version="0.12.0",
+        build_id="build-a",
+        manifest_path="C:/synthetic/runtime.json",
+        assets=(),
+        issues=(),
+        capabilities=("cuda",),
+    )
+    state = SimpleNamespace(
+        status="registered", error=None, allocator=None, preallocate=None
+    )
+    identity = {
+        "linkage": "driver-hybrid",
+        "owner": "display-driver",
+        "runtime_path": "C:/Windows/System32/DriverStore/FileRepository/nvidia/nvcudart_hybrid64.dll",
+        "runtime_sha256": "a" * 64,
+        "driver_path": "C:/Windows/System32/DriverStore/FileRepository/nvidia/nvcuda64.dll",
+        "driver_sha256": "b" * 64,
+        "driver_dispatch_path": "C:/Windows/System32/nvcuda.dll",
+        "driver_dispatch_sha256": "c" * 64,
+    }
+    monkeypatch.setattr(benchmark_runtime.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "1.0")
+    monkeypatch.setitem(
+        sys.modules,
+        "phydrax_cuda13_pjrt.runtime",
+        SimpleNamespace(
+            installation_record=lambda: installation,
+            runtime_identity=lambda: SimpleNamespace(_asdict=lambda: dict(identity)),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "phydrax_cuda13_pjrt.plugin",
+        SimpleNamespace(
+            bootstrap_state=lambda: state,
+        ),
+    )
+    initial = benchmark_runtime._windows_cuda_provenance()
+    assert initial is not None
+    assert initial["effective_allocator"] is None
+    assert initial["effective_preallocate"] is None
+    assert initial["runtime_identity"] == identity
+    state.allocator, state.preallocate = "platform", False
+    changed = benchmark_runtime._windows_cuda_provenance()
+    assert canonical_fingerprint(initial) != canonical_fingerprint(changed)
+    installation.build_id = "build-b"
+    assert canonical_fingerprint(changed) != canonical_fingerprint(
+        benchmark_runtime._windows_cuda_provenance()
+    )
+    before_driver_change = benchmark_runtime._windows_cuda_provenance()
+    identity["runtime_sha256"] = "d" * 64
+    assert canonical_fingerprint(before_driver_change) != canonical_fingerprint(
+        benchmark_runtime._windows_cuda_provenance()
+    )
+    state.status = "cpu_selected"
+    unobserved = benchmark_runtime._windows_cuda_provenance()
+    assert unobserved is not None
+    assert unobserved["runtime_identity"] is None
+
+
+def test_corrupt_windows_runtime_provenance_is_not_silently_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    def corrupt() -> None:
+        raise ValueError("corrupt runtime manifest")
+
+    monkeypatch.setattr(benchmark_runtime.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "1.0")
+    monkeypatch.setitem(
+        sys.modules,
+        "phydrax_cuda13_pjrt.runtime",
+        SimpleNamespace(
+            installation_record=corrupt,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "phydrax_cuda13_pjrt.plugin",
+        SimpleNamespace(
+            bootstrap_state=lambda: None,
+        ),
+    )
+    with pytest.raises(ValueError, match="corrupt runtime manifest"):
+        benchmark_runtime._windows_cuda_provenance()

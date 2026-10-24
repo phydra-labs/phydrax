@@ -420,6 +420,7 @@ class OperatorNormalizationPolicy(NonTrainableState):
                             quadrature_weights=quadrature,
                             basis=axis.basis,
                             periodic=axis.periodic,
+                            dtype=axis.nodes.dtype,
                         )
                     )
                 axes = tuple(transformed_axes)
@@ -437,6 +438,7 @@ class OperatorNormalizationPolicy(NonTrainableState):
             topology=samples.topology,
             support_id=(samples.support_id if coordinate_normalizer is None else None),
             measure_id=(samples.measure_id if coordinate_normalizer is None else None),
+            dtype=samples.geometry_dtype,
         )
 
     def normalize_batch(self, batch: OperatorBatch, /) -> OperatorBatch:

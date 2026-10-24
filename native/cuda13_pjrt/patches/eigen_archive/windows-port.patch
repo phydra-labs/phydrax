@@ -1,0 +1,24 @@
+--- a/Eigen/src/Core/Fill.h
++++ b/Eigen/src/Core/Fill.h
+@@ -114,6 +114,13 @@
+   }
+ };
+ 
++// winjax: in the GPU device compilation phase `memset` is a host-only
++// function for clang CUDA, so fall back to the assignment-loop implementation
++// (mirrors the eigen_fill_impl guard above).
++#if defined(EIGEN_GPU_COMPILE_PHASE)
++template <typename Xpr>
++struct eigen_zero_impl<Xpr, /*use_memset*/ true> : eigen_zero_impl<Xpr, /*use_memset*/ false> {};
++#else
+ template <typename Xpr>
+ struct eigen_zero_impl<Xpr, /*use_memset*/ true> {
+   using Scalar = typename Xpr::Scalar;
+@@ -133,6 +140,7 @@
+     run(dst);
+   }
+ };
++#endif  // EIGEN_GPU_COMPILE_PHASE
+ 
+ }  // namespace internal
+ }  // namespace Eigen

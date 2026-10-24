@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import final
 
+from .._cuda_capabilities import windows_topology_refusal
 from ._availability import probe_cuda_component
 from ._types import (
     AbstractExternalBackend,
@@ -43,6 +44,14 @@ CUDECOMP_CAPABILITIES = BackendCapabilities(
 
 def cudecomp_availability() -> BackendAvailability:
     """Discover the exact site component without claiming a live MPI transport."""
+    refusal = windows_topology_refusal(site_mpi=True)
+    if refusal is not None:
+        return BackendAvailability(
+            capabilities=CUDECOMP_CAPABILITIES,
+            available=False,
+            requirement="a Linux site-built cuDecomp component and GPU-aware MPI",
+            reason=refusal,
+        )
     return probe_cuda_component(
         CUDECOMP_CAPABILITIES,
         component="cudecomp",

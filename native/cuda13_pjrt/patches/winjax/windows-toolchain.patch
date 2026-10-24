@@ -1,0 +1,31 @@
+diff --git a/local_config_cc/winjax_cc_wrapper.py b/local_config_cc/winjax_cc_wrapper.py
+--- a/local_config_cc/winjax_cc_wrapper.py
++++ b/local_config_cc/winjax_cc_wrapper.py
+@@ -17,1 +17,2 @@
+-import os
++import ctypes
++import os
+@@ -35,1 +36,20 @@
++_COMMAND_LINE_TO_ARGV = ctypes.WinDLL("shell32.dll", use_last_error=True, winmode=0x800).CommandLineToArgvW
++_COMMAND_LINE_TO_ARGV.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
++_COMMAND_LINE_TO_ARGV.restype = ctypes.POINTER(ctypes.c_wchar_p)
++_LOCAL_FREE = ctypes.WinDLL("kernel32.dll", winmode=0x800).LocalFree
++_LOCAL_FREE.argtypes = [ctypes.c_void_p]
++_LOCAL_FREE.restype = ctypes.c_void_p
++
++
++def _split_response_line(line: str) -> list[str]:
++    count = ctypes.c_int()
++    argv = _COMMAND_LINE_TO_ARGV("winjax " + line, ctypes.byref(count))
++    if not argv:
++        raise ctypes.WinError(ctypes.get_last_error())
++    try:
++        return [argv[index] for index in range(1, count.value)]
++    finally:
++        _LOCAL_FREE(argv)
++
++
+ def _expand_params(argv):
+@@ -44,1 +64,1 @@
+-                        out.append(line.strip('"'))
++                        out.extend(_split_response_line(line))

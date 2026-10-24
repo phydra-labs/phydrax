@@ -13,10 +13,12 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax._dtype_names import real_precision_dtype_name
 from phydrax.nn._contracts import (
     AFFINE,
     compose_regularity,
@@ -33,7 +35,10 @@ from phydrax.nn.layers._measure_attention import (
     MeasureAwareAttention,
 )
 from phydrax.nn.models._mlp import MLP
-from phydrax.nn.operator.architectures.attention._upt import LatentTokenProcessor
+from phydrax.nn.operator.architectures.attention._upt import (
+    _masked,
+    LatentTokenProcessor,
+)
 from phydrax.nn.operator.architectures.geometric._geometry_operator import (
     _sample_coordinates,
     _sample_mask,
@@ -53,6 +58,10 @@ class GNOT(AbstractOperatorModel):
     cross-attention path to the query points. Branches are fused by learned
     query-local gates conditioned on measure-weighted source summaries, then
     refined by a quadrature-aware transformer over the query geometry.
+
+    `dtype` selects the real floating dtype of every learned parameter
+    (encoders, attention, fusion gates, processor and projection); `None` keeps
+    JAX's default floating dtype.
     """
 
     operator_architecture = "GNOT"
@@ -92,8 +101,11 @@ class GNOT(AbstractOperatorModel):
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         if not isinstance(in_channels, Mapping) or not in_channels:
             raise ValueError("GNOT in_channels must be a non-empty named mapping.")
         source_items = tuple(
@@ -145,6 +157,7 @@ class GNOT(AbstractOperatorModel):
                 out_size=hidden_width,
                 width_size=encoder_hidden,
                 depth=int(encoder_depth),
+                dtype=param_dtype,
                 key=next(keys),
             )
             for _, channels in source_items
@@ -160,6 +173,7 @@ class GNOT(AbstractOperatorModel):
                 execution=attention_execution,
                 block_size=attention_block_size,
                 accumulation_dtype=accumulation_dtype,
+                dtype=param_dtype,
                 key=next(keys),
             )
             for _ in source_items
@@ -170,6 +184,7 @@ class GNOT(AbstractOperatorModel):
                 out_size="scalar",
                 width_size=fusion_hidden,
                 depth=int(fusion_depth),
+                dtype=param_dtype,
                 key=next(keys),
             )
             for _ in source_items
@@ -179,6 +194,7 @@ class GNOT(AbstractOperatorModel):
             out_size=hidden_width,
             width_size=encoder_hidden,
             depth=int(encoder_depth),
+            dtype=param_dtype,
             key=next(keys),
         )
         self.processor = LatentTokenProcessor(
@@ -192,12 +208,14 @@ class GNOT(AbstractOperatorModel):
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
             norm_eps=float(norm_eps),
+            dtype=param_dtype,
             key=next(keys),
         )
         self.projection = Linear(
             in_size=hidden_width,
             out_size=_get_size(out_channels),
             activation=None,
+            dtype=param_dtype,
             key=next(keys),
         )
         self.in_size = source_channels
@@ -296,7 +314,7 @@ class GNOT(AbstractOperatorModel):
         gates = jnn.softmax(jnp.stack(branch_logits, axis=-1), axis=-1)
         fused = query_features + jnp.sum(stacked_values * gates[..., None], axis=-2)
         refined = jnp.asarray(self.processor(fused, query_measure, flat_query_mask))
-        output = self.projection(refined) * flat_query_mask[..., None]
+        output = _masked(self.projection(refined), flat_query_mask)
         shaped = output.reshape(
             case_shape
             + batch.require_single_query().sample_shape

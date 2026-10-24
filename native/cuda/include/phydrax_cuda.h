@@ -1,7 +1,9 @@
 #ifndef PHYDRAX_CUDA_H
 #define PHYDRAX_CUDA_H
 #include <stdint.h>
-#if defined(__GNUC__)
+#if defined(_WIN32)
+#define PHX_CUDA_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__)
 #define PHX_CUDA_EXPORT __attribute__((visibility("default")))
 #else
 #define PHX_CUDA_EXPORT
@@ -18,6 +20,11 @@ PHX_CUDA_EXPORT const char* phx_cuda_build_hash(void);
 PHX_CUDA_EXPORT int32_t phx_cuda_major(void);
 PHX_CUDA_EXPORT const char* phx_cuda_component(void);
 PHX_CUDA_EXPORT const char* phx_cuda_last_error(void);
+/* Borrowed CUDA API pointer; retain this component library for its lifetime.
+ * The function retains NVIDIA's CUDART calling convention. Unknown/null names
+ * return NULL and set phx_cuda_last_error; this accessor does not initialize CUDA.
+ */
+PHX_CUDA_EXPORT void* phx_cuda_runtime_function(const char* name);
 PHX_CUDA_EXPORT int32_t phx_cuda_handler_count(void);
 PHX_CUDA_EXPORT const char* phx_cuda_handler_name(int32_t index);
 PHX_CUDA_EXPORT void* phx_cuda_handler(int32_t index);

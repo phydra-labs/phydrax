@@ -18,6 +18,13 @@ derivative continuity, capacity, hardware, and rights boundaries.
     has been obtained. A catalog entry is a declared obligation, not a release or
     a measured result.
 
+Native Windows CUDA and compiled Mosaic MACE are separate capabilities. A
+Windows CUDA runtime without Mosaic can execute ordinary native-JAX model
+routes, but an explicit compiled MACE request refuses before staging. Compute
+capability alone is not compiler admission. `AtomisticKernelTarget.compiler_id`
+binds the runtime/compiler provenance; reprepare compiler-bound artifacts after
+that identity changes. CPU interpreter evidence is never Windows GPU evidence.
+
 ## Admitted architecture
 
 `MACEArchitecture` declares one model completely. There is no implicit default

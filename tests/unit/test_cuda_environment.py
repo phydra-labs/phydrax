@@ -7,6 +7,8 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import NoReturn
 
 import jax
 import pytest
@@ -19,21 +21,32 @@ from phydrax._cuda_environment import (
     cuda_enabled,
     provider_dependency_closure,
 )
-from phydrax._elf_dependencies import (
+from phydrax._execution_device import device_platform
+from phydrax._native_dependencies import (
     DependencyClosure,
+    resolve_native_dependencies,
     ResolvedDependency,
     UnresolvedDependency,
 )
-from phydrax._execution_device import device_platform
 from phydrax.backends import (
     assess_cuda_environment,
     cuda_environment,
     CudaEnvironmentFacts,
     CudaEnvironmentIssue,
     CudaIssueCode,
+    CudaPluginInstallation,
     MappedCudaLibrary,
 )
 from tests._support.elf import write_shared_object
+
+
+def _plugins(majors: tuple[int, ...]) -> tuple[CudaPluginInstallation, ...]:
+    return tuple(
+        CudaPluginInstallation(
+            distribution=f"jax-cuda{major}-plugin", version="0.12.0", cuda_major=major
+        )
+        for major in majors
+    )
 
 
 def _facts() -> CudaEnvironmentFacts:
@@ -80,11 +93,20 @@ def test_companion_issue_codes_preserve_actionable_evidence(code: CudaIssueCode)
     assert issue.paths == ("/companion.so",)
 
 
-@pytest.mark.parametrize("machine", ("x86_64", "aarch64"))
-def test_requested_cuda_requires_plugin(machine: str) -> None:
+@pytest.mark.parametrize(
+    ("host", "machine"),
+    [
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("win32", "AMD64"),
+        ("win32", "ARM64"),
+    ],
+    ids=["linux-x86", "linux-arm", "windows-x86", "windows-unsupported-architecture"],
+)
+def test_requested_cuda_requires_plugin(host: str, machine: str) -> None:
     _only_issue(
         CudaEnvironmentFacts(
-            host_platform="linux", host_machine=machine, requested_major=13
+            host_platform=host, host_machine=machine, requested_major=13
         ),
         "no-cuda-plugin",
     )
@@ -92,7 +114,7 @@ def test_requested_cuda_requires_plugin(machine: str) -> None:
 
 @pytest.mark.parametrize(
     ("host_platform", "host_machine"),
-    [("darwin", "arm64"), ("linux", "ppc64le"), ("win32", "AMD64")],
+    [("darwin", "arm64"), ("linux", "ppc64le")],
 )
 def test_missing_plugin_warns_on_unsupported_hosts(
     host_platform: str, host_machine: str
@@ -106,13 +128,37 @@ def test_missing_plugin_warns_on_unsupported_hosts(
     )
 
 
+def test_same_major_plugin_owners_are_not_deduplicated() -> None:
+    plugins = (
+        *_plugins((13,)),
+        CudaPluginInstallation(
+            distribution="phydrax-cuda13-pjrt", version="0.2.2", cuda_major=13
+        ),
+    )
+    _only_issue(replace(_facts(), plugins=plugins), "duplicate-cuda-plugins")
+
+
+@pytest.mark.parametrize(
+    ("field", "code"),
+    [
+        ("installation_error", "plugin-invalid"),
+        ("inspection_error", "native-inspection-unavailable"),
+    ],
+    ids=["corrupt-installation", "unavailable-inspection"],
+)
+def test_incomplete_cuda_evidence_cannot_succeed(field: str, code: CudaIssueCode) -> None:
+    facts = replace(_facts(), **{field: "Required CUDA evidence is unavailable."})
+    issue = _only_issue(facts, code)
+    assert issue.message == "Required CUDA evidence is unavailable."
+
+
 def test_duplicate_plugins_are_refused() -> None:
-    _only_issue(replace(_facts(), plugin_majors=(12, 13)), "duplicate-cuda-plugins")
+    _only_issue(replace(_facts(), plugins=_plugins((12, 13))), "duplicate-cuda-plugins")
 
 
 def test_marker_must_match_unique_plugin() -> None:
     _only_issue(
-        replace(_facts(), requested_major=12, plugin_majors=(13,)),
+        replace(_facts(), requested_major=12, plugins=_plugins((13,))),
         "plugin-major-mismatch",
     )
 
@@ -122,14 +168,14 @@ def test_marker_must_match_unique_plugin() -> None:
 def test_unsupported_plugin_is_refused_even_without_install_marker(
     major: int, platforms: tuple[str, ...] | None
 ) -> None:
-    facts = replace(_facts(), plugin_majors=(major,), selected_platforms=platforms)
+    facts = replace(_facts(), plugins=_plugins((major,)), selected_platforms=platforms)
     _only_issue(facts, "plugin-major-mismatch")
     assert not cuda_enabled(facts)
 
 
 def test_cuda13_install_marker_and_plugin_are_accepted() -> None:
     report = assess_cuda_environment(
-        replace(_facts(), requested_major=13, plugin_majors=(13,))
+        replace(_facts(), requested_major=13, plugins=_plugins((13,)))
     )
     assert report.successful
     assert report.issues == ()
@@ -138,7 +184,7 @@ def test_cuda13_install_marker_and_plugin_are_accepted() -> None:
 @pytest.mark.parametrize("major", [11, 12, 14])
 def test_unsupported_runtime_is_refused(major: int) -> None:
     _only_issue(
-        replace(_facts(), plugin_majors=(13,), runtime_version=(major, 0)),
+        replace(_facts(), plugins=_plugins((13,)), runtime_version=(major, 0)),
         "unsupported-cuda-major",
     )
 
@@ -159,19 +205,20 @@ def test_foreign_distributions_include_exact_uninstall_command() -> None:
 
 def test_old_driver_is_refused() -> None:
     _only_issue(
-        replace(_facts(), plugin_majors=(13,), driver_version=(12, 8)), "driver-too-old"
+        replace(_facts(), plugins=_plugins((13,)), driver_version=(12, 8)),
+        "driver-too-old",
     )
 
 
 def test_matching_driver_passes() -> None:
     assert assess_cuda_environment(
-        replace(_facts(), plugin_majors=(13,), driver_version=(13, 2))
+        replace(_facts(), plugins=_plugins((13,)), driver_version=(13, 2))
     ).successful
 
 
 def test_explicit_cpu_platform_only_warns() -> None:
     facts = replace(
-        _facts(), plugin_majors=(13,), selected_platforms=("cpu",), device_probed=True
+        _facts(), plugins=_plugins((13,)), selected_platforms=("cpu",), device_probed=True
     )
     _only_issue(facts, "cpu-platform-selected", "warning")
     assert not cuda_enabled(facts)
@@ -182,12 +229,12 @@ def test_cuda_enabled_respects_cuda_or_gpu_selection(
     platforms: tuple[str, ...] | None,
 ) -> None:
     assert cuda_enabled(
-        replace(_facts(), plugin_majors=(13,), selected_platforms=platforms)
+        replace(_facts(), plugins=_plugins((13,)), selected_platforms=platforms)
     )
 
 
 def test_static_facts_do_not_claim_backend_unavailable() -> None:
-    report = assess_cuda_environment(replace(_facts(), plugin_majors=(13,)))
+    report = assess_cuda_environment(replace(_facts(), plugins=_plugins((13,))))
     assert report.successful
     assert report.issues == ()
 
@@ -197,7 +244,7 @@ def test_backend_unavailable_names_shadowing_and_initialization_error() -> None:
     issue = _only_issue(
         replace(
             _facts(),
-            plugin_majors=(13,),
+            plugins=_plugins((13,)),
             device_probed=True,
             backend_error="CUDA plugin failed",
             library_path_cuda_dirs=paths,
@@ -213,7 +260,7 @@ def test_library_path_shadowing_warns() -> None:
     issue = _only_issue(
         replace(
             _facts(),
-            plugin_majors=(13,),
+            plugins=_plugins((13,)),
             device_probed=True,
             runtime_version=(13, 4),
             library_path_cuda_dirs=("/usr/local/cuda/lib64",),
@@ -257,7 +304,7 @@ def test_assessment_issue_order_is_deterministic() -> None:
     facts = replace(
         _facts(),
         requested_major=12,
-        plugin_majors=(13,),
+        plugins=_plugins((13,)),
         foreign_nvidia_distributions=("nvidia-cublas-cu12",),
         driver_version=(12, 8),
         device_probed=True,
@@ -284,6 +331,7 @@ def _closure(
     return DependencyClosure(
         root="/provider/extension.so",
         machine="x86_64",
+        object_format="elf",
         resolved=resolved,
         unresolved=unresolved,
     )
@@ -311,7 +359,9 @@ def test_math_library_sonames_have_toolkit_specific_majors(
     soname: str, major: int
 ) -> None:
     closure = _closure(resolved=(_dependency(soname, f"/unknown/{soname}"),))
-    issues = assess_provider_dependencies(closure, replace(_facts(), plugin_majors=(13,)))
+    issues = assess_provider_dependencies(
+        closure, replace(_facts(), plugins=_plugins((13,)))
+    )
     if major == 13:
         assert issues == ()
     else:
@@ -336,7 +386,7 @@ def test_ambiguous_soname_uses_wheel_then_toolkit_path(
 ) -> None:
     issues = assess_provider_dependencies(
         _closure(resolved=(_dependency("libcusparse.so.12", path),)),
-        replace(_facts(), plugin_majors=(13,), wheel_library_majors=owners),
+        replace(_facts(), plugins=_plugins((13,)), wheel_library_majors=owners),
     )
     assert bool(issues) == refused
 
@@ -344,7 +394,7 @@ def test_ambiguous_soname_uses_wheel_then_toolkit_path(
 def test_provider_mismatch_names_soname_path_and_requester() -> None:
     dependency = _dependency("libcublas.so.12", "/cuda12/lib/libcublas.so.12")
     issues = assess_provider_dependencies(
-        _closure(resolved=(dependency,)), replace(_facts(), plugin_majors=(13,))
+        _closure(resolved=(dependency,)), replace(_facts(), plugins=_plugins((13,)))
     )
     assert len(issues) == 1
     issue = issues[0]
@@ -362,7 +412,7 @@ def test_unresolved_cuda_provider_dependency_is_refused() -> None:
         soname="libcudart.so.13", requested_by="/provider/ext.so", reason="not found"
     )
     issues = assess_provider_dependencies(
-        _closure(unresolved=(dependency,)), replace(_facts(), plugin_majors=(13,))
+        _closure(unresolved=(dependency,)), replace(_facts(), plugins=_plugins((13,)))
     )
     assert len(issues) == 1
     assert issues[0].code == "provider-dependency-unresolved"
@@ -385,14 +435,14 @@ def test_non_cuda_dependencies_have_no_cuda_issue() -> None:
         ),
     )
     assert (
-        assess_provider_dependencies(closure, replace(_facts(), plugin_majors=(13,)))
+        assess_provider_dependencies(closure, replace(_facts(), plugins=_plugins((13,))))
         == ()
     )
 
 
 def test_preloaded_ambiguous_cuda13_wheel_is_accepted() -> None:
     path = "/wheel/nvidia/cu13/lib/libcusparse.so.12"
-    facts = replace(_facts(), plugin_majors=(13,), wheel_library_majors=((path, 13),))
+    facts = replace(_facts(), plugins=_plugins((13,)), wheel_library_majors=((path, 13),))
     assert (
         assess_provider_dependencies(
             _closure(resolved=(_dependency("libcusparse.so.12", path, preloaded=True),)),
@@ -408,7 +458,8 @@ def test_disabled_cuda_does_not_assess_provider_dependencies() -> None:
     )
     assert (
         assess_provider_dependencies(
-            closure, replace(_facts(), plugin_majors=(13,), selected_platforms=("cpu",))
+            closure,
+            replace(_facts(), plugins=_plugins((13,)), selected_platforms=("cpu",)),
         )
         == ()
     )
@@ -528,7 +579,9 @@ def test_collection_preserves_marker_and_attributes_foreign_wheels(
     facts = collect_cuda_environment(initialize_backend=False)
 
     assert facts.requested_major == 13
-    assert facts.plugin_majors == (() if plugin_major is None else (plugin_major,))
+    assert tuple(plugin.cuda_major for plugin in facts.plugins) == (
+        () if plugin_major is None else (plugin_major,)
+    )
     assert facts.foreign_nvidia_distributions == (
         () if wheel_major == 13 else (wheel_name,)
     )
@@ -537,6 +590,9 @@ def test_collection_preserves_marker_and_attributes_foreign_wheels(
     )
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="This contract owns glibc system resolution."
+)
 def test_provider_closure_host_helper_resolves_system_libraries() -> None:
     closure = provider_dependency_closure(
         sys.executable, facts=_facts(), jax_backend_preloaded=False
@@ -551,8 +607,14 @@ def test_cuda_runtime_major_matches_plugin() -> None:
         pytest.skip("No CUDA device")
     report = cuda_environment()
     assert report.facts.runtime_version is not None
-    assert report.facts.plugin_majors == (13,)
-    assert report.facts.runtime_version[0] == 13
+    assert tuple(plugin.cuda_major for plugin in report.facts.plugins) == (13,)
+    if report.facts.host_platform == "win32":
+        assert report.facts.compiled_cuda_major == 13
+        assert report.facts.driver_compatibility_version is not None
+        assert report.facts.driver_compatibility_version >= (13, 0)
+        assert dict(report.facts.runtime_identity)["linkage"] == "driver-hybrid"
+    else:
+        assert report.facts.runtime_version[0] == 13
 
 
 @pytest.mark.parametrize(
@@ -570,7 +632,7 @@ def test_hostile_cuda_challenge_requires_an_alternate_matching_soname(
     directory.mkdir()
     candidate = directory / soname
     if challenge == "same-file":
-        candidate.symlink_to(installed)
+        candidate.hardlink_to(installed)
     elif challenge == "alternate":
         write_shared_object(candidate, soname=soname)
     elif challenge == "wrong-soname":
@@ -581,3 +643,204 @@ def test_hostile_cuda_challenge_requires_an_alternate_matching_soname(
     else:
         expected = ((soname, str(candidate)),) if challenge == "alternate" else ()
         assert competing_cuda_libraries(str(directory), mapped) == expected
+
+
+@pytest.mark.parametrize("name", ["cudart64_12.dll", "cublas64_12.dll"])
+def test_windows_unowned_mapped_major_is_reported(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    import phydrax._cuda_environment as environment
+
+    facts = replace(
+        _facts(),
+        host_platform="win32",
+        host_machine="AMD64",
+        plugins=(
+            CudaPluginInstallation(
+                distribution="phydrax-cuda13-pjrt", version="0.2.2", cuda_major=13
+            ),
+        ),
+    )
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+    setattr(
+        runtime,
+        "runtime_identity",
+        lambda: SimpleNamespace(
+            _asdict=lambda: {"linkage": "driver-hybrid", "owner": "display-driver"}
+        ),
+    )
+    setattr(
+        runtime,
+        "mapped_libraries",
+        lambda: (
+            SimpleNamespace(
+                name="cublas64_13.dll", path="C:/cuda/cublas64_13.dll", cuda_major=13
+            ),
+            SimpleNamespace(name=name, path=f"C:/foreign/{name}", cuda_major=None),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    monkeypatch.setattr(environment, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(environment, "collect_cuda_environment", lambda **kwargs: facts)
+    report = environment.cuda_environment()
+    assert not report.successful
+    issue = next(issue for issue in report.issues if issue.code == "mixed-cuda-majors")
+    assert f"C:/foreign/{name}" in issue.paths
+
+
+@pytest.mark.parametrize("compatibility", [(13, 1), (14, 0)])
+def test_windows_driver_compatibility_is_not_compiled_runtime_major(
+    compatibility: tuple[int, int],
+) -> None:
+    facts = CudaEnvironmentFacts(
+        host_platform="win32",
+        host_machine="AMD64",
+        compiled_cuda_major=13,
+        runtime_version=compatibility,
+        driver_compatibility_version=compatibility,
+        plugins=(
+            CudaPluginInstallation(
+                distribution="phydrax-cuda13-pjrt", version="0.2.2", cuda_major=13
+            ),
+        ),
+    )
+    assert assess_cuda_environment(facts).successful
+    _only_issue(replace(facts, driver_compatibility_version=(12, 9)), "driver-too-old")
+    _only_issue(replace(facts, compiled_cuda_major=14), "unsupported-cuda-major")
+
+
+def test_windows_unowned_same_major_userland_is_refused() -> None:
+    library = MappedCudaLibrary(
+        soname="cublas64_13.dll", path="C:/foreign/cublas64_13.dll", major=13
+    )
+    facts = replace(_facts(), host_platform="win32", mapped_libraries=(library,))
+    assert _only_issue(facts, "unowned-cuda-library").paths == (library.path,)
+    assert assess_cuda_environment(
+        replace(facts, wheel_library_majors=(("c:\\FOREIGN\\cublas64_13.dll", 13),))
+    ).successful
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing hybrid", "foreign driver cohort", "inventory unavailable"]
+)
+def test_windows_runtime_identity_inspection_failure_is_not_clean(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    import phydrax._cuda_environment as environment
+
+    facts = CudaEnvironmentFacts(
+        host_platform="win32",
+        host_machine="AMD64",
+        plugins=(
+            CudaPluginInstallation(
+                distribution="phydrax-cuda13-pjrt", version="0.2.2", cuda_major=13
+            ),
+        ),
+    )
+
+    def refused() -> NoReturn:
+        raise RuntimeError(failure)
+
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+    setattr(runtime, "runtime_identity", refused)
+    setattr(
+        runtime,
+        "mapped_libraries",
+        lambda: (
+            SimpleNamespace(
+                name="cudart64_12.dll", path="C:/foreign/cudart64_12.dll", cuda_major=None
+            ),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    monkeypatch.setattr(environment, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(environment, "collect_cuda_environment", lambda **kwargs: facts)
+    report = environment.cuda_environment()
+    assert not report.successful
+    assert report.facts.runtime_identity == ()
+    assert report.issues[0].code == "native-inspection-unavailable"
+    assert failure in report.issues[0].message
+    assert {issue.code for issue in report.issues} == {
+        "native-inspection-unavailable",
+        "unsupported-cuda-major",
+        "unowned-cuda-library",
+    }
+
+
+@pytest.mark.parametrize("exception", [RuntimeError, ImportError])
+def test_windows_dependency_inspection_refusal_retains_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exception: type[Exception]
+) -> None:
+    from tests._support.pe import write_pe
+
+    path = write_pe(tmp_path / "provider.dll")
+    original = exception("Unowned resident CUDA DLL family member foreign/cudnn.dll")
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+
+    def refused(path: str) -> NoReturn:
+        raise original
+
+    setattr(runtime, "dependency_closure", refused)
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    with pytest.raises(ValueError, match="Unowned resident CUDA") as caught:
+        resolve_native_dependencies(path, library_path=(), executable=None)
+    assert caught.value.__cause__ is original
+
+
+def test_windows_incomplete_inspection_keeps_all_issues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests._support.pe import write_pe
+
+    path = write_pe(tmp_path / "provider.dll")
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+    setattr(
+        runtime,
+        "dependency_closure",
+        lambda path: SimpleNamespace(
+            root=str(path),
+            machine=0x8664,
+            complete=False,
+            issues=("unowned dependency missing.dll", "module inventory truncated"),
+            edges=(
+                SimpleNamespace(
+                    name="missing.dll",
+                    requester=str(path),
+                    path=None,
+                    kind="unresolved",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    with pytest.raises(ValueError, match="module inventory truncated"):
+        resolve_native_dependencies(path, library_path=(), executable=None)
+
+
+def test_windows_mapping_failure_retains_prior_inspection_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax._cuda_environment as environment
+
+    facts = replace(
+        _facts(),
+        host_platform="win32",
+        host_machine="AMD64",
+        plugins=_plugins((13,)),
+        inspection_error="driver inspection denied",
+    )
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+
+    def refused() -> NoReturn:
+        raise RuntimeError("module inventory denied")
+
+    setattr(runtime, "mapped_libraries", refused)
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    monkeypatch.setattr(environment, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(environment, "collect_cuda_environment", lambda **kwargs: facts)
+    report = environment.cuda_environment()
+    assert not report.successful
+    assert report.facts.inspection_error is not None
+    assert "driver inspection denied" in report.facts.inspection_error
+    assert "module inventory denied" in report.facts.inspection_error

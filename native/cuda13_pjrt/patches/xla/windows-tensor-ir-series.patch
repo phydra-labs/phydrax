@@ -1,0 +1,6 @@
+diff --git a/third_party/tensor_ir/patches/series b/third_party/tensor_ir/patches/series
+--- a/third_party/tensor_ir/patches/series
++++ b/third_party/tensor_ir/patches/series
+@@ -7,1 +7,2 @@
+ tiling_hotfixes.patch
++../../windows_port/tensor_ir.patch

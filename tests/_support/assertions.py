@@ -5,6 +5,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import numpy as np
+from jax.core import ShapedArray
+from jax.extend.core import ClosedJaxpr, Jaxpr, jaxprs_in_params
 
 
 def _leaf_differences(
@@ -108,3 +110,34 @@ def assert_tree_close(
         return
     differences = _leaf_differences(left, right, rtol=rtol, atol=atol)
     raise AssertionError("PyTrees differ:\n" + "\n".join(differences))
+
+
+def float64_program_values(program: Jaxpr | ClosedJaxpr, /) -> list[str]:
+    """Every float64/complex128 value in a traced program, including sub-programs."""
+    found: list[str] = []
+
+    def check(where: str, dtype: object) -> None:
+        if str(dtype) in ("float64", "complex128"):
+            found.append(f"{where}: {dtype}")
+
+    def visit(inner: Jaxpr | ClosedJaxpr) -> None:
+        for const in inner.consts:
+            check("const", getattr(const, "dtype", None))
+        for var in (*inner.all_invars, *inner.outvars):
+            if isinstance(var.aval, ShapedArray):
+                check("jaxpr variable", var.aval.dtype)
+        for equation in inner.eqns:
+            name = equation.primitive.name
+            for atom in (*equation.invars, *equation.outvars):
+                if isinstance(atom.aval, ShapedArray):
+                    check(name, atom.aval.dtype)
+            for nested in jaxprs_in_params(equation.params):
+                visit(nested)
+
+    visit(program)
+    return found
+
+
+def assert_no_float64_values(program: Jaxpr | ClosedJaxpr, /) -> None:
+    """Assert a traced program holds no float64/complex128 value anywhere."""
+    assert float64_program_values(program) == []

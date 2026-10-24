@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import equinox as eqx
@@ -9,12 +10,14 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._cuda_capabilities import CudaCompilerCapabilities
 from phydrax._execution_device import device_platform
 from phydrax.backends import (
     pallas_spatial_availability,
     spatial_pair_acceleration,
     spatial_squared_norm,
 )
+from phydrax.backends._types import BackendUnavailableError
 from phydrax.backends.spatial import spatial_leaf_pair_fragment
 from phydrax.discretization.spatial import (
     MortonAddressPlan,
@@ -895,3 +898,114 @@ def test_leaf_fragment_empty_source_capacity_keeps_seed(pallas_interpret: bool) 
         np.testing.assert_array_equal(actual.high, seed.high)
         np.testing.assert_array_equal(jnp.signbit(actual.high), jnp.signbit(seed.high))
         np.testing.assert_array_equal(actual.correction, seed.correction)
+
+
+def test_cuda_spatial_requires_actual_triton_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.backends.spatial as backend
+
+    device = SimpleNamespace(
+        platform="gpu",
+        compute_capability="12.0",
+        client=SimpleNamespace(platform="cuda", platform_version="cuda 13000"),
+    )
+    compiler = CudaCompilerCapabilities(
+        host_platform="win32",
+        distribution="phydrax-cuda13-pjrt",
+        version="test",
+        build_id="without-pallas",
+        jax_version=jax.__version__,
+        jaxlib_version="0.12.0",
+        platform_version="cuda 13000",
+        reason="This build has no Pallas Triton lowering.",
+    )
+    monkeypatch.setattr(backend, "selected_device", lambda: device)
+    monkeypatch.setattr(backend, "cuda_compiler_capabilities", lambda _: compiler)
+    availability = pallas_spatial_availability()
+    assert not availability.available
+    assert dict(availability.versions)["cuda-compiler"] == compiler.identity
+    values = jnp.asarray([[1.0, 2.0, -3.0]])
+    with pytest.raises(BackendUnavailableError, match="Pallas Triton") as caught:
+        spatial_squared_norm(values, backend="pallas")
+    assert caught.value.backend == "pallas-spatial"
+    assert caught.value.capability == "spatial.distance_squared"
+    with pytest.raises(BackendUnavailableError, match="Pallas Triton"):
+        spatial_pair_acceleration(
+            values,
+            jnp.ones(1),
+            jnp.ones(1, dtype=bool),
+            softening=0.1,
+            coefficient=1.0,
+            backend="pallas",
+        )
+    np.testing.assert_array_equal(spatial_squared_norm(values, backend="jax"), [14.0])
+    assert pallas_spatial_availability(interpret=True).available
+
+
+def test_tpu_spatial_admission_does_not_require_cuda_compilers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.backends.spatial as backend
+
+    monkeypatch.setattr(
+        backend, "selected_device", lambda: SimpleNamespace(platform="tpu")
+    )
+    availability = pallas_spatial_availability()
+    assert availability.available
+    availability.require("spatial.distance_squared")
+    assert not availability.capabilities.supports("particle_fmm.p2p")
+
+
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
+@pytest.mark.parametrize("accumulation", ("fast", "deterministic", "compensated"))
+def test_jax_leaf_fragments_do_not_require_optional_compilers(
+    dtype: str,
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    # This route is unconditional: no optional-compiler fixture may skip it.
+    sources, receivers, prepared = _leaf_fragment_case(dtype, accumulation)
+    payload = phx.sparse.StreamedPayloadSpec(
+        jax.ShapeDtypeStruct((3, 4), sources[0].dtype),
+        jax.ShapeDtypeStruct((3, 4), sources[0].dtype),
+    )
+
+    def aggregate(
+        parameters: dict[str, jax.Array],
+        source_values: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+        receiver_values: tuple[jax.Array, jax.Array, jax.Array],
+        edge_values: jax.Array,
+        fragment: phx.sparse.StreamedFragment,
+        initial: phx.sparse.KeyGroupAccumulation,
+    ) -> phx.sparse.KeyGroupAccumulation:
+        del parameters, edge_values
+        return spatial_leaf_pair_fragment(
+            source_values,
+            receiver_values,
+            fragment,
+            initial,
+            softening=0.2,
+            coefficient=1.3,
+            short_range_scale=0.7,
+            short_range_cutoff=2.0,
+            backend="jax",
+        )
+
+    result = prepared.evaluate_fragments(
+        payload,
+        aggregate,
+        lambda parameters, receiver, value: value,
+        {},
+        sources,
+        receivers,
+        jnp.zeros((11,), dtype=sources[0].dtype),
+    )
+    assert bool(result.evidence.successful)
+    assert result.receiver_outputs.devices() == sources[0].devices()
+    tolerance = 4e-6 if dtype == "float32" else 2e-12
+    np.testing.assert_allclose(
+        result.receiver_outputs,
+        _direct_leaf_field(sources, receivers, prepared, 0.7, 2.0),
+        rtol=tolerance,
+        atol=tolerance,
+    )

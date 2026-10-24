@@ -13,10 +13,12 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from phydrax._strict import StrictModule
 from phydrax.nn._contracts import (
     compose_regularity,
@@ -35,6 +37,7 @@ from phydrax.nn.operator.architectures.attention._upt import (
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
+    _masked,
     _query_decoder_regularity,
     LatentTokenProcessor,
 )
@@ -63,6 +66,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         *,
         top_k: int,
         temperature: float,
+        dtype: RealPrecisionDType | None,
         key: PRNGKey,
     ) -> None:
         self.channels = int(channels)
@@ -80,12 +84,14 @@ class _PhysicsSliceTokenizer(StrictModule):
             in_size=self.channels,
             out_size=self.num_slices,
             activation=None,
+            dtype=dtype,
             key=assignment_key,
         )
         self.value = Linear(
             in_size=self.channels,
             out_size=self.channels,
             activation=None,
+            dtype=dtype,
             key=value_key,
         )
 
@@ -126,17 +132,23 @@ class _PhysicsSliceTokenizer(StrictModule):
         if weights.shape != array.shape[:2] or valid.shape != array.shape[:2]:
             raise ValueError("Slice quadrature and masks must match physical points.")
 
-        safe_features = jnp.where(valid[..., None], array, 0.0)
+        safe_features = jnp.where(
+            valid[..., None], array, jnp.asarray(0.0, dtype=array.dtype)
+        )
         memberships = self._memberships(safe_features)
-        measure = jnp.where(valid & (weights > 0.0), weights, 0.0)
+        measure = jnp.where(
+            valid & (weights > 0.0), weights, jnp.asarray(0.0, dtype=weights.dtype)
+        )
         weighted_memberships = memberships * measure[..., None]
         slice_measure = jnp.sum(weighted_memberships, axis=1)
         slice_mask = slice_measure > 0.0
-        normalizer = jnp.where(slice_mask, slice_measure, 1.0)
+        normalizer = jnp.where(
+            slice_mask, slice_measure, jnp.asarray(1.0, dtype=slice_measure.dtype)
+        )
         tokens = ein.contract(
             "bns,bnc->bsc", weighted_memberships, self.value(safe_features)
         )
-        tokens = (tokens / normalizer[..., None]) * slice_mask[..., None]
+        tokens = _masked(tokens / normalizer[..., None], slice_mask)
         return tokens, slice_measure, slice_mask
 
     def _value_regularity(self) -> DerivativeRegularity | None:
@@ -162,6 +174,9 @@ class Transolver(AbstractEncodedOperatorModel):
     ``slice_top_k=1`` gives the non-overlapping Transolver partition. Larger
     values use normalized top-k memberships, so each physical point contributes
     to several slices; setting it to ``num_slices`` gives fully soft overlap.
+
+    `dtype` selects the real floating dtype of every learned parameter; `None`
+    keeps JAX's default floating dtype.
     """
 
     operator_architecture = "Transolver"
@@ -206,8 +221,11 @@ class Transolver(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -254,6 +272,7 @@ class Transolver(AbstractEncodedOperatorModel):
             in_size=self.in_channels + self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[0],
         )
         self.tokenizer = _PhysicsSliceTokenizer(
@@ -261,6 +280,7 @@ class Transolver(AbstractEncodedOperatorModel):
             self.num_slices,
             top_k=self.slice_top_k,
             temperature=self.slice_temperature,
+            dtype=param_dtype,
             key=keys[1],
         )
         self.processor = LatentTokenProcessor(
@@ -273,12 +293,14 @@ class Transolver(AbstractEncodedOperatorModel):
             execution=attention_execution,
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=keys[2],
         )
         self.query_lift = Linear(
             in_size=self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[3],
         )
         self.decoder_attention = MeasureAwareAttention(
@@ -291,13 +313,17 @@ class Transolver(AbstractEncodedOperatorModel):
             execution=attention_execution,
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=keys[4],
         )
-        self.decoder_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
+        self.decoder_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
         self.projection = Linear(
             in_size=self.width,
             out_size=self.out_channels,
             activation=None,
+            dtype=param_dtype,
             key=keys[5],
         )
 
@@ -332,11 +358,15 @@ class Transolver(AbstractEncodedOperatorModel):
         coordinates = coordinates.reshape((cases, point_count, self.coord_dim))
         quadrature = quadrature.reshape((cases, point_count))
         source_mask = source_mask.reshape((cases, point_count))
-        safe_values = jnp.where(source_mask[..., None], values, 0.0)
-        safe_coordinates = jnp.where(source_mask[..., None], coordinates, 0.0)
-        source_features = (
-            self.source_lift(jnp.concatenate((safe_values, safe_coordinates), axis=-1))
-            * source_mask[..., None]
+        safe_values = jnp.where(
+            source_mask[..., None], values, jnp.asarray(0.0, dtype=values.dtype)
+        )
+        safe_coordinates = jnp.where(
+            source_mask[..., None], coordinates, jnp.asarray(0.0, dtype=coordinates.dtype)
+        )
+        source_features = _masked(
+            self.source_lift(jnp.concatenate((safe_values, safe_coordinates), axis=-1)),
+            source_mask,
         )
         tokens, slice_measure, slice_mask = self.tokenizer(
             source_features, quadrature, source_mask
@@ -385,8 +415,10 @@ class Transolver(AbstractEncodedOperatorModel):
             (cases, query_count)
         )
         coordinates = coordinates.reshape((cases, query_count, self.coord_dim))
-        safe_coordinates = jnp.where(query_mask[..., None], coordinates, 0.0)
-        query_features = self.query_lift(safe_coordinates) * query_mask[..., None]
+        safe_coordinates = jnp.where(
+            query_mask[..., None], coordinates, jnp.asarray(0.0, dtype=coordinates.dtype)
+        )
+        query_features = _masked(self.query_lift(safe_coordinates), query_mask)
         source = state.values.reshape((cases, self.num_slices, self.width))
         decoded = self.decoder_attention(
             source,
@@ -395,11 +427,10 @@ class Transolver(AbstractEncodedOperatorModel):
             source_mask=state.mask.reshape((cases, self.num_slices)),
             query_mask=query_mask,
         )
-        decoded = (
-            _feature_norm(self.decoder_norm, query_features + decoded)
-            * query_mask[..., None]
+        decoded = _masked(
+            _feature_norm(self.decoder_norm, query_features + decoded), query_mask
         )
-        output = self.projection(decoded) * query_mask[..., None]
+        output = _masked(self.projection(decoded), query_mask)
         shaped = output.reshape(
             state.case_shape + query.sample_shape + (self.out_channels,)
         )

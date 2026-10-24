@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Actual upstream accelerator identity and placement; never a CPU substitute."""
+"""Actual upstream accelerator identity, placement, and compiled-region evidence.
+
+Never a CPU substitute: scientific results must live on the selected device.
+"""
 
 from __future__ import annotations
 
@@ -7,21 +10,26 @@ import base64
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from packaging.utils import canonicalize_name
 
 from tools.check_accelerator_extras import Accelerator
+
 
 if TYPE_CHECKING:
     import jax
 
 
 RUNTIME_PROPERTY = "accelerator_runtime"
+RESOURCE_PROPERTY = "accelerator_resources"
+EVIDENCE_NONCE_VARIABLE = "PHYDRAX_QUALIFICATION_NONCE"
+WARM_REPEATS = 3
+_SAMPLE_INTERVAL_SECONDS = 0.01
 
 
 def selected_accelerator() -> Accelerator:
@@ -92,7 +100,8 @@ def accelerator_device() -> jax.Device:
 def runtime_evidence(*arrays: object) -> dict[str, object]:
     import jax
 
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
+    from phydrax import config
+    from phydrax.backends import frontend_index_patch_identity
 
     device = accelerator_device()
     if not arrays:
@@ -103,6 +112,7 @@ def runtime_evidence(*arrays: object) -> dict[str, object]:
                 f"Scientific result is not placed exclusively on {device}: {array}"
             )
         array.block_until_ready()
+    settings = config.snapshot()
     return {
         "selected": selected_accelerator().value,
         "rocm_major": selected_accelerator().rocm_major,
@@ -118,8 +128,8 @@ def runtime_evidence(*arrays: object) -> dict[str, object]:
         "local_device_count": jax.local_device_count(
             selected_accelerator().runtime_platform
         ),
-        "x64_enabled": bool(jax.config.x64_enabled),
-        "matmul_precision": str(jax.config.jax_default_matmul_precision),
+        "x64_enabled": settings.enable_x64,
+        "matmul_precision": str(settings.matmul_precision),
         "frontend_index_patch": frontend_index_patch_identity(),
     }
 
@@ -130,6 +140,122 @@ def record_execution(
     record_property(
         RUNTIME_PROPERTY, json.dumps(runtime_evidence(*arrays), sort_keys=True)
     )
+
+
+def _signature(value: object) -> list[dict[str, object]]:
+    import jax
+
+    return [
+        {
+            "shape": list(leaf.shape),
+            "dtype": str(leaf.dtype),
+            "weak_type": bool(jax.typeof(leaf).weak_type),
+        }
+        for leaf in jax.tree.leaves(value)
+    ]
+
+
+def compiled_region_evidence(
+    function: Callable[..., Any],
+    arguments: Sequence[Any],
+    /,
+    *,
+    device: jax.Device,
+    warm_repeats: int = WARM_REPEATS,
+) -> tuple[Any, dict[str, object]]:
+    """Lower, compile, and execute one scientific region on ``device`` by phase.
+
+    Lowering and compilation are host phases. First and warm executions are
+    synchronized and memory-sampled separately; the returned value is the last
+    warm result of this measured executable. XLA's compiled memory plan is
+    ``None`` with a reason when the provider exposes none, and allocator
+    counters remain explicit unavailable measurements; neither becomes zero.
+    """
+    import equinox as eqx
+    import jax
+
+    from benchmarks._runtime import (
+        logical_array_bytes,
+        measure_host,
+        measure_repeated,
+        measure_synchronized,
+    )
+    from phydrax.execution import compiled_memory_estimate, PhaseMemorySampler
+
+    placed = jax.device_put(tuple(arguments), device)
+    statics: list[Any] = []
+
+    def arrays_only(*values: jax.Array) -> Any:
+        dynamic, static = eqx.partition(function(*values), eqx.is_array)
+        statics.append(static)
+        return dynamic
+
+    lowered, lowering_seconds = measure_host(lambda: jax.jit(arrays_only).lower(*placed))
+    compiled, compilation_seconds = measure_host(lowered.compile)
+
+    def execute() -> Any:
+        return compiled(*placed)
+
+    with PhaseMemorySampler(
+        "first-execution", interval_seconds=_SAMPLE_INTERVAL_SECONDS, devices=(device,)
+    ) as first:
+        _, first_seconds = measure_synchronized(execute)
+    with PhaseMemorySampler(
+        "warm-execution", interval_seconds=_SAMPLE_INTERVAL_SECONDS, devices=(device,)
+    ) as warm:
+        dynamic, warm_seconds = measure_repeated(execute, warmup=0, repeats=warm_repeats)
+    estimate = compiled_memory_estimate(compiled)
+    return eqx.combine(dynamic, statics[0]), {
+        "program_sha256": hashlib.sha256(lowered.as_text().encode()).hexdigest(),
+        "input_signature": _signature(placed),
+        "output_signature": _signature(dynamic),
+        "lowering_seconds": lowering_seconds,
+        "compilation_seconds": compilation_seconds,
+        "first_execution_seconds": first_seconds,
+        "warm_execution": warm_seconds.to_seconds_dict(),
+        "logical_retained_bytes": logical_array_bytes(dynamic),
+        "compiled_memory": None if estimate is None else estimate.to_payload(),
+        "compiled_memory_unavailable_reason": (
+            "The provider exposes no XLA compiled memory analysis"
+            if estimate is None
+            else None
+        ),
+        "phase_memory": {
+            "first_execution": first.evidence.to_payload(),
+            "warm_execution": warm.evidence.to_payload(),
+        },
+    }
+
+
+def record_compiled_region(
+    record_property: Callable[[str, object], None],
+    region: str,
+    function: Callable[..., Any],
+    /,
+    *arguments: Any,
+) -> Any:
+    """Measure one region on the selected device and bind it to this run."""
+    import equinox as eqx
+    import jax
+
+    outputs, evidence = compiled_region_evidence(
+        function, arguments, device=accelerator_device()
+    )
+    record_property(
+        RESOURCE_PROPERTY,
+        json.dumps(
+            {
+                "region": region,
+                "evidence_nonce": os.environ.get(EVIDENCE_NONCE_VARIABLE),
+                "runtime": runtime_evidence(
+                    *jax.tree.leaves(eqx.filter(outputs, eqx.is_array))
+                ),
+                **evidence,
+            },
+            sort_keys=True,
+        ),
+    )
+    return outputs
 
 
 def diagnostic_evidence() -> dict[str, object]:
@@ -174,7 +300,7 @@ def installed_provenance(
 ) -> dict[str, object]:
     """Bind actual installed bytes, including upstream RECORDs, to this fresh venv."""
     import phydrax
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
+    from phydrax.backends import frontend_index_patch_identity
 
     selected = selected_accelerator()
     package = Path(phydrax.__file__).resolve()

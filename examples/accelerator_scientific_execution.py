@@ -16,11 +16,26 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 
-def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]]:
-    """Differentiate a normal domain-bound MLP twice in space and train it."""
+if TYPE_CHECKING:
+    import jax
+
+
+class PoissonTraining(NamedTuple):
+    """Float32 PINN parameters, Adam state, and their pure residual/update."""
+
+    parameters: Any
+    state: Any
+    residual: Callable[[Any], jax.Array]
+    objective: Callable[[Any], jax.Array]
+    step: Callable[[Any, Any], tuple[Any, Any, jax.Array, Any]]
+
+
+def poisson_training() -> PoissonTraining:
+    """Prepare a normal domain-bound MLP Poisson PINN and its Adam update step."""
     import equinox as eqx
     import jax
     import jax.numpy as jnp
@@ -31,8 +46,6 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
     from phydrax.operators.differential import laplacian
     from phydrax.optim import adam
 
-    if steps < 1:
-        raise ValueError("steps must be positive")
     box = phx.domain.HyperRectangle(
         np.zeros(2, np.float32), np.ones(2, np.float32), dtype=jnp.float32
     )
@@ -50,7 +63,6 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
     )
     parameters, static = eqx.partition(model, eqx.is_inexact_array)
     optimizer = adam(1e-3)
-    state = optimizer.init(parameters)
 
     def residual(candidate: Any) -> jax.Array:
         field = box.Model("x")(eqx.combine(candidate, static))
@@ -68,11 +80,26 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
     def objective(candidate: Any) -> jax.Array:
         return jnp.mean(residual(candidate) ** 2)
 
-    @eqx.filter_jit
     def step(current: Any, current_state: Any) -> tuple[Any, Any, jax.Array, Any]:
         value, gradient = eqx.filter_value_and_grad(objective)(current)
         updates, next_state = optimizer.update(gradient, current_state, current)
         return eqx.apply_updates(current, updates), next_state, value, gradient
+
+    return PoissonTraining(
+        parameters, optimizer.init(parameters), residual, objective, step
+    )
+
+
+def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]]:
+    """Differentiate a normal domain-bound MLP twice in space and train it."""
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    if steps < 1:
+        raise ValueError("steps must be positive")
+    parameters, state, residual, objective, update = poisson_training()
+    step = eqx.filter_jit(update)
 
     initial, initial_gradient = eqx.filter_value_and_grad(objective)(parameters)
     directional = jnp.sqrt(
@@ -154,9 +181,13 @@ def main() -> int:
     import jax
     import numpy as np
 
-    from phydrax._jax_config import default_device
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
-    from phydrax.backends import oneapi_environment, rocm_environment, tpu_environment
+    from phydrax.backends import (
+        frontend_index_patch_identity,
+        oneapi_environment,
+        rocm_environment,
+        tpu_environment,
+    )
+    from phydrax.execution import default_device
 
     match args.accelerator:
         case "oneapi":
