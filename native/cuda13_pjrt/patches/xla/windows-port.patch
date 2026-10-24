@@ -1,0 +1,653 @@
+diff --git a/xla/backends/gpu/autotuner/cudnn.cc b/xla/backends/gpu/autotuner/cudnn.cc
+--- a/xla/backends/gpu/autotuner/cudnn.cc
++++ b/xla/backends/gpu/autotuner/cudnn.cc
+@@ -316,6 +316,13 @@
+       se::dnn::DataType output_type,
+       GetDNNDataTypeFromPrimitiveType(gpu_conv_config.output_type));
+   se::dnn::DnnSupport* dnn = stream_executor->AsDnn();
++  if (dnn == nullptr) {
++    // AsDnn() returns null when no DNN plugin (cuDNN) is linked into the
++    // application; calling GetAlgorithms below would dereference it.
++    return absl::FailedPreconditionError(
++        "DNN library (cuDNN) is not available; cannot enumerate convolution "
++        "algorithms.");
++  }
+   auto allocator =
+       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+           stream_executor);
+diff --git a/xla/backends/profiler/gpu/cupti_wrapper.cc b/xla/backends/profiler/gpu/cupti_wrapper.cc
+--- a/xla/backends/profiler/gpu/cupti_wrapper.cc
++++ b/xla/backends/profiler/gpu/cupti_wrapper.cc
+@@ -29,6 +29,12 @@
+ #include "third_party/gpus/cuda/include/cuda.h"
+ #include "xla/backends/profiler/gpu/cupti_interface.h"
+ 
++#ifdef _WIN32
++#include <windows.h>
++
++#include <psapi.h>
++#endif
++
+ #if CUPTI_API_VERSION >= 24
+ #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
+ #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
+@@ -102,6 +108,77 @@
+ 
+ }  // namespace
+ 
++#ifdef _WIN32
++// On PE/COFF, [[gnu::weak]] externals never resolve against import libraries:
++// the linker leaves them null even when a linked DLL exports the symbol.
++// Instead, resolve the optional CUPTI entry points at runtime from whichever
++// loaded module exports the CUPTI API. This preserves the semantics of the
++// ELF weak-symbol probes below: a symbol missing from the loaded CUPTI simply
++// stays null and the wrapper reports CUPTI_ERROR_NOT_SUPPORTED.
++namespace {
++
++HMODULE GetCuptiModule() {
++  static HMODULE cupti_module = [] {
++    HMODULE modules[1024];
++    DWORD bytes_needed = 0;
++    if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules),
++                            &bytes_needed)) {
++      return static_cast<HMODULE>(nullptr);
++    }
++    DWORD count = bytes_needed / sizeof(HMODULE);
++    if (count > 1024) count = 1024;
++    for (DWORD i = 0; i < count; ++i) {
++      // Identify the CUPTI DLL by a symbol every CUPTI version exports.
++      if (GetProcAddress(modules[i], "cuptiGetResultString") != nullptr) {
++        return modules[i];
++      }
++    }
++    return static_cast<HMODULE>(nullptr);
++  }();
++  return cupti_module;
++}
++
++template <typename FnPtr>
++FnPtr LoadOptionalCuptiSymbol(const char* name) {
++  HMODULE cupti_module = GetCuptiModule();
++  if (cupti_module == nullptr) {
++    return nullptr;
++  }
++  return reinterpret_cast<FnPtr>(
++      reinterpret_cast<void*>(GetProcAddress(cupti_module, name)));
++}
++
++}  // namespace
++
++// Declares `name` as a function pointer resolved from the CUPTI module at
++// plugin load time; null when the loaded CUPTI does not export it. Call sites
++// are identical to the weak-symbol declarations used on ELF.
++#define XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(name, ...)  \
++  static CUptiResult (*const name)(__VA_ARGS__) =     \
++      LoadOptionalCuptiSymbol<CUptiResult (*)(__VA_ARGS__)>(#name);
++
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivityRegisterCallbacks_v2,
++                                  CUpti_SubscriberHandle,
++                                  CuptiBuffersCallbackRequestFuncV2Abi,
++                                  CuptiBuffersCallbackCompleteFuncV2Abi)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivityEnable_v2,
++                                  CUpti_SubscriberHandle, CUpti_ActivityKind,
++                                  CuptiActivityConfigAbi*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivityDisable_v2,
++                                  CUpti_SubscriberHandle, CUpti_ActivityKind,
++                                  CuptiActivityConfigAbi*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivityGetNextRecord_v2,
++                                  CUpti_SubscriberHandle, uint8_t*, size_t,
++                                  CUpti_Activity**)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivitySetAttribute_v2,
++                                  CUpti_SubscriberHandle,
++                                  CUpti_ActivityAttribute, size_t*, void*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiGetTimestamp_v2, CUpti_SubscriberHandle,
++                                  uint64_t*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiSubscribe_v2, CUpti_SubscriberHandle*,
++                                  CUpti_CallbackFunc, void*,
++                                  CuptiSubscriberParamsAbi*)
++#else
+ extern "C" {
+ [[gnu::weak]] CUptiResult cuptiActivityRegisterCallbacks_v2(
+     CUpti_SubscriberHandle subscriber,
+@@ -126,6 +203,7 @@
+                                             void* userdata,
+                                             CuptiSubscriberParamsAbi* params);
+ }  // extern "C"
++#endif  // _WIN32
+ 
+ CUptiResult CuptiWrapper::ActivityDisable(CUpti_ActivityKind kind) {
+   return cuptiActivityDisable(kind);
+@@ -363,10 +441,14 @@
+   return cuptiGetStreamIdEx(context, stream, per_thread_stream, stream_id);
+ }
+ 
++#ifdef _WIN32
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiActivityEnableHWTrace, uint8_t)
++#else
+ extern "C" {
+ // Prototype for cuptiActivityEnableHWTrace if headers are not present.
+ [[gnu::weak]] CUptiResult cuptiActivityEnableHWTrace(uint8_t enable);
+ }  // extern "C"
++#endif  // _WIN32
+ 
+ CUptiResult CuptiWrapper::ActivityEnableHWTrace(bool enable) {
+   return (cuptiActivityEnableHWTrace == nullptr)
+@@ -375,6 +457,109 @@
+ }
+ 
+ // Prototypes for PM sampling and profiler host APIs if headers are not present
++#ifdef _WIN32
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostInitialize,
++                                  CUpti_Profiler_Host_Initialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostDeinitialize,
++                                  CUpti_Profiler_Host_Deinitialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetSupportedChips,
++                                  CUpti_Profiler_Host_GetSupportedChips_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetBaseMetrics,
++                                  CUpti_Profiler_Host_GetBaseMetrics_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetSubMetrics,
++                                  CUpti_Profiler_Host_GetSubMetrics_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerHostGetMetricProperties,
++    CUpti_Profiler_Host_GetMetricProperties_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetRangeName,
++                                  CUpti_Profiler_Host_GetRangeName_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerHostEvaluateToGpuValues,
++    CUpti_Profiler_Host_EvaluateToGpuValues_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostConfigAddMetrics,
++                                  CUpti_Profiler_Host_ConfigAddMetrics_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerHostGetConfigImageSize,
++    CUpti_Profiler_Host_GetConfigImageSize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetConfigImage,
++                                  CUpti_Profiler_Host_GetConfigImage_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerHostGetNumOfPasses,
++                                  CUpti_Profiler_Host_GetNumOfPasses_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerHostGetMaxNumHardwareMetricsPerPass,
++    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerInitialize,
++                                  CUpti_Profiler_Initialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerDeInitialize,
++                                  CUpti_Profiler_DeInitialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerCounterDataImageCalculateSize,
++    CUpti_Profiler_CounterDataImage_CalculateSize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerCounterDataImageInitialize,
++    CUpti_Profiler_CounterDataImage_Initialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerCounterDataImageCalculateScratchBufferSize,
++    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerCounterDataImageInitializeScratchBuffer,
++    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerBeginSession,
++                                  CUpti_Profiler_BeginSession_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerEndSession,
++                                  CUpti_Profiler_EndSession_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerSetConfig,
++                                  CUpti_Profiler_SetConfig_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerBeginPass,
++                                  CUpti_Profiler_BeginPass_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerEndPass,
++                                  CUpti_Profiler_EndPass_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerEnableProfiling,
++                                  CUpti_Profiler_EnableProfiling_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerDisableProfiling,
++                                  CUpti_Profiler_DisableProfiling_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerIsPassCollected,
++                                  CUpti_Profiler_IsPassCollected_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerFlushCounterData,
++                                  CUpti_Profiler_FlushCounterData_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerPushRange,
++                                  CUpti_Profiler_PushRange_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerPopRange,
++                                  CUpti_Profiler_PopRange_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiProfilerGetCounterAvailability,
++    CUpti_Profiler_GetCounterAvailability_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerDeviceSupported,
++                                  CUpti_Profiler_DeviceSupported_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiProfilerUnsetConfig,
++                                  CUpti_Profiler_UnsetConfig_Params*)
++
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingSetConfig,
++                                  CUpti_PmSampling_SetConfig_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingEnable,
++                                  CUpti_PmSampling_Enable_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingDisable,
++                                  CUpti_PmSampling_Disable_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingStart,
++                                  CUpti_PmSampling_Start_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingStop,
++                                  CUpti_PmSampling_Stop_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingDecodeData,
++                                  CUpti_PmSampling_DecodeData_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiPmSamplingGetCounterAvailability,
++    CUpti_PmSampling_GetCounterAvailability_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingGetCounterDataSize,
++                                  CUpti_PmSampling_GetCounterDataSize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiPmSamplingCounterDataImageInitialize,
++    CUpti_PmSampling_CounterDataImage_Initialize_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(cuptiPmSamplingGetCounterDataInfo,
++                                  CUpti_PmSampling_GetCounterDataInfo_Params*)
++XLA_DECLARE_OPTIONAL_CUPTI_SYMBOL(
++    cuptiPmSamplingCounterDataGetSampleInfo,
++    CUpti_PmSampling_CounterData_GetSampleInfo_Params*)
++#else
+ extern "C" {
+ [[gnu::weak]] CUptiResult cuptiProfilerHostInitialize(
+     CUpti_Profiler_Host_Initialize_Params* params);
+@@ -467,6 +652,7 @@
+ [[gnu::weak]] CUptiResult cuptiPmSamplingCounterDataGetSampleInfo(
+     CUpti_PmSampling_CounterData_GetSampleInfo_Params* params);
+ }
++#endif  // _WIN32
+ 
+ // Profiler Host APIs
+ CUptiResult CuptiWrapper::ProfilerHostInitialize(
+diff --git a/xla/pjrt/BUILD b/xla/pjrt/BUILD
+--- a/xla/pjrt/BUILD
++++ b/xla/pjrt/BUILD
+@@ -343,6 +343,7 @@
+         "//xla/pjrt/c:pjrt_c_api_hdrs",
+         "//xla/pjrt/c:pjrt_c_api_status_utils",
+         "//xla/tsl/platform:errors",
++        "@tsl//tsl/platform:load_library",
+         "@com_google_absl//absl/container:flat_hash_map",
+         "@com_google_absl//absl/log",
+         "@com_google_absl//absl/status",
+diff --git a/xla/pjrt/c/BUILD b/xla/pjrt/c/BUILD
+--- a/xla/pjrt/c/BUILD
++++ b/xla/pjrt/c/BUILD
+@@ -718,10 +718,13 @@
+     additional_linker_inputs = [
+         ":pjrt_c_api_gpu_version_script.lds",
+     ],
+-    linkopts = [
+-        "-Wl,--version-script,$(location :pjrt_c_api_gpu_version_script.lds)",
+-        "-Wl,--no-undefined",
+-    ],
++    linkopts = select({
++        "//xla/tsl:windows": [],
++        "//conditions:default": [
++            "-Wl,--version-script,$(location :pjrt_c_api_gpu_version_script.lds)",
++            "-Wl,--no-undefined",
++        ],
++    }),
+     linkshared = True,
+     tags = [
+         "no_mac",  # No GPU on mac.
+diff --git a/xla/pjrt/pjrt_api.cc b/xla/pjrt/pjrt_api.cc
+--- a/xla/pjrt/pjrt_api.cc
++++ b/xla/pjrt/pjrt_api.cc
+@@ -36,6 +36,9 @@
+ #include <dlfcn.h>
+ 
+ #include "absl/status/status_macros.h"
++#else
++#include "absl/status/status_macros.h"
++#include "tsl/platform/load_library.h"
+ #endif
+ 
+ namespace pjrt {
+@@ -101,8 +104,17 @@
+ absl::StatusOr<const PJRT_Api*> LoadPjrtPlugin(absl::string_view device_type,
+                                                absl::string_view library_path) {
+ #ifdef PLATFORM_WINDOWS
+-  return absl::UnimplementedError(
+-      "LoadPjrtPlugin is not implemented on windows yet.");
++  void* library = nullptr;
++  ABSL_RETURN_IF_ERROR(tsl::internal::LoadDynamicLibrary(
++      std::string(library_path).c_str(), &library));
++  PjrtApiInitFn init_fn = nullptr;
++  ABSL_RETURN_IF_ERROR(tsl::internal::GetSymbolFromLibrary(
++      library, "GetPjrtApi", reinterpret_cast<void**>(&init_fn)));
++  LOG(INFO) << "GetPjrtApi was found for " << device_type << " at "
++            << library_path;
++  const PJRT_Api* api = init_fn();
++  ABSL_RETURN_IF_ERROR(SetPjrtApi(device_type, api));
++  return api;
+ #else
+   void* library = dlopen(library_path.data(), RTLD_LAZY);
+   if (library == nullptr) {
+diff --git a/xla/stream_executor/cuda/cuda_device_allocator.cc b/xla/stream_executor/cuda/cuda_device_allocator.cc
+--- a/xla/stream_executor/cuda/cuda_device_allocator.cc
++++ b/xla/stream_executor/cuda/cuda_device_allocator.cc
+@@ -85,12 +85,16 @@
+   properties.allocFlags.gpuDirectRDMACapable = options.enable_rdma ? 1 : 0;
+ 
+   int handle_types = CU_MEM_HANDLE_TYPE_NONE;
++#ifndef _WIN32
++  // POSIX_FILE_DESCRIPTOR and FABRIC handle types do not exist on Windows;
++  // requesting them makes cuMemCreate fail with CUDA_ERROR_INVALID_VALUE.
+   if (options.enable_posix_fd_handle) {
+     handle_types |= CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+   }
+   if (options.enable_fabric_handle) {
+     handle_types |= CU_MEM_HANDLE_TYPE_FABRIC;
+   }
++#endif
+   properties.requestedHandleTypes =
+       static_cast<CUmemAllocationHandleType>(handle_types);
+   return properties;
+@@ -141,4 +145,9 @@
+-  ABSL_ASSIGN_OR_RETURN(requested.enable_rdma, IsRdmaSupported(device));
+-  ABSL_ASSIGN_OR_RETURN(requested.enable_fabric_handle,
+-                        IsFabricSupported(device));
+-  requested.enable_posix_fd_handle = true;
++  ABSL_ASSIGN_OR_RETURN(requested.enable_rdma, IsRdmaSupported(device));
++#ifdef _WIN32
++  requested.enable_fabric_handle = false;
++  requested.enable_posix_fd_handle = false;
++#else
++  ABSL_ASSIGN_OR_RETURN(requested.enable_fabric_handle,
++                        IsFabricSupported(device));
++  requested.enable_posix_fd_handle = true;
++#endif
+diff --git a/xla/stream_executor/cuda/cuda_device_allocator.h b/xla/stream_executor/cuda/cuda_device_allocator.h
+--- a/xla/stream_executor/cuda/cuda_device_allocator.h
++++ b/xla/stream_executor/cuda/cuda_device_allocator.h
+@@ -45,8 +45,13 @@
+     // Whether to enable peer access from all accessible devices.
+     bool enable_peer_access = false;
+ 
+-    // Whether to request POSIX_FILE_DESCRIPTOR handle type.
++    // Whether to request POSIX_FILE_DESCRIPTOR handle type. POSIX file
++    // descriptors do not exist on Windows, so the default is false there.
++#ifdef _WIN32
++    bool enable_posix_fd_handle = false;
++#else
+     bool enable_posix_fd_handle = true;
++#endif
+ 
+     // Whether to request FABRIC handle type.
+     bool enable_fabric_handle = false;
+diff --git a/xla/stream_executor/cuda/cuda_diagnostics.cc b/xla/stream_executor/cuda/cuda_diagnostics.cc
+--- a/xla/stream_executor/cuda/cuda_diagnostics.cc
++++ b/xla/stream_executor/cuda/cuda_diagnostics.cc
+@@ -15,6 +15,8 @@
+ 
+ #include "xla/stream_executor/cuda/cuda_diagnostics.h"
+ 
++#include "tsl/platform/platform.h"  // IWYU pragma: keep, for PLATFORM_WINDOWS
++
+ #if !defined(PLATFORM_WINDOWS)
+ #include <dirent.h>
+ #endif
+diff --git a/xla/stream_executor/cuda/cuda_executor.cc b/xla/stream_executor/cuda/cuda_executor.cc
+--- a/xla/stream_executor/cuda/cuda_executor.cc
++++ b/xla/stream_executor/cuda/cuda_executor.cc
+@@ -333,10 +333,10 @@
+ absl::StatusOr<std::string> GetDeviceName(CUdevice device) {
+   std::array<char, 64> chars;
+   ABSL_RETURN_IF_ERROR(
+-      cuda::ToStatus(cuDeviceGetName(chars.begin(), chars.size() - 1, device),
++      cuda::ToStatus(cuDeviceGetName(chars.data(), chars.size() - 1, device),
+                      "Failed to get device name"));
+   chars[chars.size() - 1] = '\0';
+-  return chars.begin();
++  return chars.data();
+ }
+ 
+ // Returns the compute capability for the device; i.e (3, 5).
+diff --git a/xla/stream_executor/cuda/cudnn_api_wrappers.cc b/xla/stream_executor/cuda/cudnn_api_wrappers.cc
+--- a/xla/stream_executor/cuda/cudnn_api_wrappers.cc
++++ b/xla/stream_executor/cuda/cudnn_api_wrappers.cc
+@@ -15,8 +15,6 @@
+ 
+ #include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
+ 
+-#include <sys/resource.h>
+-
+ #include <string>
+ 
+ #include "absl/status/status.h"
+@@ -84,8 +82,17 @@
+ // cudnn_plugin. This is mainly relevant for unit tests that use the CUDA
+ // executor which depends on this wrapper but should not introduce a dependency
+ // on cudnn.
++//
++// On Windows (PE/COFF) weak externals never resolve against import libraries,
++// so the weak-symbol probe would always see null even though the GPU plugin
++// links cuDNN. Declare the symbol strongly there; the plugin always links the
++// cuDNN import library on Windows.
++#ifdef _WIN32
++extern "C" cudnnStatus_t cudnnGetProperty(libraryPropertyType type, int* value);
++#else
+ extern "C" [[gnu::weak]] cudnnStatus_t cudnnGetProperty(
+     libraryPropertyType type, int* value);
++#endif
+ 
+ static libraryPropertyType ToLibraryPropertyType(CudnnProperty type) {
+   switch (type) {
+@@ -99,9 +106,13 @@
+ }
+ 
+ absl::StatusOr<int> GetCudnnProperty(CudnnProperty type) {
++#ifndef _WIN32
++  // With the strong declaration on Windows this check would be tautological
++  // (the address of a linked function is never null).
+   if (!cudnnGetProperty) {
+     return absl::NotFoundError("cuDNN is not linked into the application.");
+   }
++#endif
+   int value{};
+   ABSL_RETURN_IF_ERROR(
+       ToStatus(cudnnGetProperty(ToLibraryPropertyType(type), &value)));
+diff --git a/xla/stream_executor/gpu/buffer_comparator_kernel_lib.cu.h b/xla/stream_executor/gpu/buffer_comparator_kernel_lib.cu.h
+--- a/xla/stream_executor/gpu/buffer_comparator_kernel_lib.cu.h
++++ b/xla/stream_executor/gpu/buffer_comparator_kernel_lib.cu.h
+@@ -109,7 +109,7 @@
+       elem_b = static_cast<uint64_t>(buffer_b[idx]);
+     }
+     float rel_error =
+-        fabs(elem_a - elem_b) / (fmax(fabs(elem_a), fabs(elem_b)) + 1);
++        fabsf(elem_a - elem_b) / (fmaxf(fabsf(elem_a), fabsf(elem_b)) + 1);
+     if (rel_error > rel_error_threshold || isnan(rel_error)) {
+       atomicAdd(mismatch_count, 1);
+     }
+diff --git a/xla/tsl/cuda/BUILD.bazel b/xla/tsl/cuda/BUILD.bazel
+--- a/xla/tsl/cuda/BUILD.bazel
++++ b/xla/tsl/cuda/BUILD.bazel
+@@ -110,7 +110,7 @@
+ )
+ 
+ cc_library(
+-    name = "cuda",  # buildifier: disable=duplicated-name
++    name = "cuda_driver_stub",
+     srcs = if_cuda_is_configured([
+         "cuda_stub.cc",
+         "cuda.tramp.S",
+@@ -129,6 +129,17 @@
+     ]),
+ )
+ 
++# The implib.so-based dlopen stub only exists on Linux; on Windows the CUDA
++# driver API is linked via the cuda.lib import library from the toolkit.
++alias(
++    name = "cuda",  # buildifier: disable=duplicated-name
++    actual = select({
++        "//xla/tsl:windows": "@cuda_cudart//:cuda_driver",
++        "//conditions:default": ":cuda_driver_stub",
++    }),
++    visibility = ["//visibility:public"],
++)
++
+ cuda_stub(
+     name = "cudart",
+     srcs = ["cudart.symbols"],
+@@ -515,6 +526,11 @@
+ 
+ alias(
+     name = "nvml",  # buildifier: disable=duplicated-name
+-    actual = ":nvml_stub",
++    # The implib.so-based dlopen stub only exists on Linux; on Windows link
++    # against the nvml.lib import library from the toolkit.
++    actual = select({
++        "//xla/tsl:windows": "@cuda_nvml//:nvml",
++        "//conditions:default": ":nvml_stub",
++    }),
+     visibility = ["//visibility:public"],
+ )
+@@ -546,6 +562,11 @@
+ 
+ alias(
+     name = "nvrtc",  # buildifier: disable=duplicated-name
+-    actual = ":nvrtc_stub",
++    # The implib.so-based dlopen stub only exists on Linux; on Windows link
++    # against the nvrtc.lib import library from the toolkit.
++    actual = select({
++        "//xla/tsl:windows": "@cuda_nvrtc//:nvrtc",
++        "//conditions:default": ":nvrtc_stub",
++    }),
+     visibility = ["//visibility:public"],
+ )
+diff --git a/xla/util/build_defs.bzl b/xla/util/build_defs.bzl
+--- a/xla/util/build_defs.bzl
++++ b/xla/util/build_defs.bzl
+@@ -39,8 +39,12 @@
+ 
+     proto_descriptor_sets = _descriptor_set_list(ctx.attr.deps, ctx.file.descriptor_set)
+ 
++    # protoc splits the --descriptor_set_in list on the host's path-list
++    # separator: ';' on Windows, ':' elsewhere.
+     descriptor_set_in = ("--descriptor_set_in=%s" %
+-                         ":".join([file.path for file in proto_descriptor_sets]))
++                         ctx.configuration.host_path_separator.join(
++                             [file.path for file in proto_descriptor_sets],
++                         ))
+ 
+     if len(ctx.outputs.outs) != 1:
+         fail("Expected exactly one output")
+@@ -79,7 +83,14 @@
+             outputs = ctx.outputs.outs,
+             inputs = [ctx.file.src] + proto_descriptor_sets,
+             tools = [ctx.executable._tool],
+-            command = " ".join([ctx.executable._tool.path] + protoc_args + redirect),
++            # Quote the protoc arguments: on Windows the descriptor set list
++            # is ';'-separated, which the shell would otherwise parse as a
++            # command separator.
++            command = " ".join(
++                [ctx.executable._tool.path] +
++                ["'%s'" % arg for arg in protoc_args] +
++                redirect,
++            ),
+             mnemonic = "ProtoDataCompiler",
+             use_default_shell_env = False,
+         )
+diff --git a/xla/tsl/platform/windows/subprocess.cc b/xla/tsl/platform/windows/subprocess.cc
+--- a/xla/tsl/platform/windows/subprocess.cc
++++ b/xla/tsl/platform/windows/subprocess.cc
+@@ -302,6 +302,10 @@
+   // The waiter must release proc_mu_ while waiting in order for Kill() to work.
+   proc_mu_.lock();
+   bool running = running_;
++  if (!running || win_pi_ == nullptr) {
++    proc_mu_.unlock();
++    return false;
++  }
+   PROCESS_INFORMATION pi_ = *reinterpret_cast<PROCESS_INFORMATION*>(win_pi_);
+   proc_mu_.unlock();
+ 
+@@ -312,6 +316,7 @@
+       DWORD process_exit_code = 0;
+       if (GetExitCodeProcess(pi_.hProcess, &process_exit_code)) {
+         *status = static_cast<int>(process_exit_code);
++        ret = true;
+       } else {
+         LOG(FATAL) << "Wait failed with code: " << GetLastError();
+       }
+@@ -333,7 +338,8 @@
+     reinterpret_cast<PROCESS_INFORMATION*>(win_pi_)->hThread = nullptr;
+   }
+   proc_mu_.unlock();
+-  return *status == 0;
++  // Waiting successfully is independent of the child's exit status.
++  return ret;
+ }
+ 
+ bool SubProcess::Kill(int unused_signal) {
+diff --git a/xla/stream_executor/cuda/subprocess_compilation_provider.cc b/xla/stream_executor/cuda/subprocess_compilation_provider.cc
+--- a/xla/stream_executor/cuda/subprocess_compilation_provider.cc
++++ b/xla/stream_executor/cuda/subprocess_compilation_provider.cc
+@@ -79,13 +79,17 @@
+                                          ".version 99.99"};
+   tsl::SubProcess ptxas_info_dumper;
+   ptxas_info_dumper.SetProgram(path_to_ptxas, ptxas_args);
++  // Windows CUDA tools emit compiler diagnostics on stdout.
++  ptxas_info_dumper.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+   ptxas_info_dumper.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+   if (!ptxas_info_dumper.Start()) {
+     return absl::InternalError("Failed to launch ptxas");
+   }
++  std::string stdout_output;
+   std::string stderr_output;
+   int exit_status = ptxas_info_dumper.Communicate(
+-      /*stdin_input=*/nullptr, /*stdout_output=*/nullptr, &stderr_output);
++      /*stdin_input=*/nullptr, &stdout_output, &stderr_output);
++  stderr_output.append(stdout_output);
+   if (exit_status == 0) {
+     return absl::InternalError("ptxas succeeded where it was expected to fail");
+   }
+diff --git a/xla/stream_executor/cuda/subprocess_compilation.cc b/xla/stream_executor/cuda/subprocess_compilation.cc
+--- a/xla/stream_executor/cuda/subprocess_compilation.cc
++++ b/xla/stream_executor/cuda/subprocess_compilation.cc
+@@ -314,13 +314,17 @@
+   }
+ 
+   ptxas_info_dumper.SetProgram(std::string{ptxas_path}, ptxas_args);
++  // Windows CUDA tools emit compiler diagnostics on stdout.
++  ptxas_info_dumper.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+   ptxas_info_dumper.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+   if (!ptxas_info_dumper.Start()) {
+     return absl::InternalError("Failed to launch ptxas");
+   }
++  std::string stdout_output;
+   std::string stderr_output;
+   int exit_status = ptxas_info_dumper.Communicate(
+-      /*stdin_input=*/nullptr, /*stdout_output=*/nullptr, &stderr_output);
++      /*stdin_input=*/nullptr, &stdout_output, &stderr_output);
++  stderr_output.append(stdout_output);
+   if (exit_status != 0) {
+     //  It happens when the ptxas installed is too old for the current GPU.
+     //  Example error message associated with this error code:
+@@ -443,13 +447,16 @@
+     VLOG(3) << absl::StrJoin(fatbinary_args, " ");
+   }
+   fatbinary.SetProgram(fatbinary_path, fatbinary_args);
++  fatbinary.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+   fatbinary.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+   if (!fatbinary.Start()) {
+     return absl::InternalError("Failed to launch fatbinary.");
+   }
++  std::string stdout_output;
+   std::string stderr_output;
+   int exit_status = fatbinary.Communicate(
+-      /*stdin_input=*/nullptr, /*stdout_output=*/nullptr, &stderr_output);
++      /*stdin_input=*/nullptr, &stdout_output, &stderr_output);
++  stderr_output.append(stdout_output);
+   if (exit_status != 0) {
+     return absl::InternalError(absl::StrFormat(
+         "fatbinary exited with non-zero error code %d, output: %s", exit_status,
+@@ -538,12 +545,15 @@
+ 
+   tsl::SubProcess process;
+   process.SetProgram(std::string{nvlink_path}, args);
++  process.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+   process.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+ 
+   TF_RET_CHECK(process.Start());
++  std::string stdout_output;
+   std::string stderr_output;
+   int exit_status = process.Communicate(
+-      /*stdin_input=*/nullptr, /*stdout_output=*/nullptr, &stderr_output);
++      /*stdin_input=*/nullptr, &stdout_output, &stderr_output);
++  stderr_output.append(stdout_output);
+ 
+   if (exit_status != 0) {
+     return absl::InternalError(

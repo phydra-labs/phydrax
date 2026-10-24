@@ -14,7 +14,7 @@ import sqlite3
 import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -102,6 +102,7 @@ from phydrax.service._security import (
     SigningKeyTrustRecord,
     SigningTrustStore,
 )
+from tests._support.filesystem import create_directory_link
 
 
 class _Clock:
@@ -313,11 +314,56 @@ def test_commercial_service_scenario_1() -> None:
             transaction.insert_job(conflict)
 
 
+@pytest.mark.parametrize("failure_stage", ("admission", "connect", "schema"))
+def test_sqlite_failed_initialization_releases_directory_handles(
+    tmp_path: Any, monkeypatch: Any, failure_stage: str
+) -> None:
+    import phydrax.service._durability as durability
+
+    parent = tmp_path / "database"
+    parent.mkdir()
+    path = parent / "service.sqlite"
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("injected initialization failure")
+
+    if failure_stage == "admission":
+        (parent / ".service.sqlite.phydrax-sqlite").touch()
+        with pytest.raises(ValueError, match="alias conflicts"):
+            SQLiteServiceStore(path)
+    else:
+        if failure_stage == "connect":
+            monkeypatch.setattr(durability.sqlite3, "connect", fail)
+        else:
+            monkeypatch.setattr(SQLiteServiceStore, "_create_schema", fail)
+        with pytest.raises(RuntimeError, match="injected initialization failure"):
+            SQLiteServiceStore(path)
+    # Native Windows denies this rename if any admitted directory handle leaked.
+    released = tmp_path / "released-database"
+    parent.rename(released)
+    assert (released / path.name).is_file()
+
+
+def test_sqlite_store_rejects_linked_parent_directory(tmp_path: Any) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    parent = tmp_path / "database"
+    create_directory_link(parent, target)
+    with pytest.raises((OSError, ValueError)):
+        SQLiteServiceStore(parent / "service.sqlite")
+    assert not (target / "service.sqlite").exists()
+
+
 def test_sqlite_store_rejects_symlink_database_path(tmp_path: Any) -> None:
     target = tmp_path / "target.sqlite"
     target.touch()
     link = tmp_path / "service.sqlite"
-    link.symlink_to(target)
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("File symlinks require Windows developer mode or privilege.")
+        raise
     with pytest.raises(ValueError, match="symbolic link"):
         SQLiteServiceStore(link)
 
@@ -334,7 +380,10 @@ def test_sqlite_store_detects_final_path_swap_during_connect(
 
     def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
         path.rename(tmp_path / "admitted.sqlite")
-        path.symlink_to(target)
+        if os.name == "nt":
+            path.hardlink_to(target)
+        else:
+            path.symlink_to(target)
         return real_connect(value, *args, **kwargs)
 
     monkeypatch.setattr(durability.sqlite3, "connect", swapping_connect)
@@ -355,14 +404,25 @@ def test_sqlite_store_detects_parent_swap_during_connect(
     real_connect = durability.sqlite3.connect
 
     def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.name == "nt":
+            with pytest.raises(PermissionError):
+                parent.rename(tmp_path / "admitted-database")
+            assert path.is_file()
+            return real_connect(value, *args, **kwargs)
         parent.rename(tmp_path / "admitted-database")
         parent.mkdir()
         path.symlink_to(target)
         return real_connect(value, *args, **kwargs)
 
     monkeypatch.setattr(durability.sqlite3, "connect", swapping_connect)
-    with pytest.raises(ValueError, match="changed during connection"):
-        SQLiteServiceStore(path)
+    if os.name == "nt":
+        store = SQLiteServiceStore(path)
+        store.close()
+        assert path.stat().st_size > 0
+        assert target.stat().st_size == 0
+    else:
+        with pytest.raises(ValueError, match="changed during connection"):
+            SQLiteServiceStore(path)
 
 
 def test_sqlite_connection_remains_bound_through_swap_and_restore(
@@ -378,9 +438,13 @@ def test_sqlite_connection_remains_bound_through_swap_and_restore(
 
     def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
         path.rename(admitted)
-        path.symlink_to(target)
+        if os.name == "nt":
+            path.hardlink_to(target)
+        else:
+            path.symlink_to(target)
         connection = real_connect(value, *args, **kwargs)
         path.unlink()
+        connection.execute("CREATE TABLE binding_probe (value INTEGER)")
         admitted.rename(path)
         return connection
 
@@ -389,9 +453,17 @@ def test_sqlite_connection_remains_bound_through_swap_and_restore(
     store.close()
     assert path.stat().st_size > 0
     assert target.stat().st_size == 0
+    with real_connect(path) as observed:
+        assert observed.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'binding_probe'"
+        ).fetchone() == ("binding_probe",)
 
 
 def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path: Any) -> None:
+    if os.name != "posix":
+        with pytest.raises(OSError, match="POSIX process groups"):
+            SubprocessCommandExecutor().run((sys.executable, "-c", "pass"))
+        return
     child_pid_path = tmp_path / "child.pid"
     child_code = (
         "import signal,time;signal.signal(signal.SIGTERM, signal.SIG_IGN);time.sleep(60)"
@@ -424,7 +496,10 @@ def test_commercial_service_scenario_2() -> None:
         timeout_seconds=5.0,
         maximum_response_bytes=16,
     )
-    with pytest.raises(IntegrityError, match="byte limit"):
+    with pytest.raises(
+        IntegrityError if os.name == "posix" else OSError,
+        match="byte limit" if os.name == "posix" else "POSIX process groups",
+    ):
         executor.run(
             (
                 sys.executable,
@@ -925,11 +1000,17 @@ def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
     def swapping_open(*args: Any, **kwargs: Any) -> Any:
         with real_open(*args, **kwargs) as opened:
             source.rename(root / "held-source")
-            source.symlink_to(outside, target_is_directory=True)
+            create_directory_link(source, outside)
             yield opened
 
     monkeypatch.setattr(provenance, "open_regular_beneath", swapping_open)
-    assert digest_paths(root, ("source/input.txt",)) == expected
+    if os.name == "nt":
+        with pytest.raises(ValueError, match="changed while being hashed") as caught:
+            digest_paths(root, ("source/input.txt",))
+        assert isinstance(caught.value.__cause__, PermissionError)
+        assert (source / "input.txt").read_text() == "trusted"
+    else:
+        assert digest_paths(root, ("source/input.txt",)) == expected
 
 
 def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
@@ -1207,7 +1288,7 @@ def test_execution_heartbeat_and_attempt_fence_reject_stale_completion() -> None
 
 
 def test_durable_service_restart_rehydrates_results_and_idempotency(
-    tmp_path: Any,
+    tmp_path: Any, request: Any
 ) -> None:
     path = tmp_path / "service.sqlite"
     quota = {"tenant": TenantQuota(2, 2, 4096, 0, 1024)}
@@ -1231,6 +1312,7 @@ def test_durable_service_restart_rehydrates_results_and_idempotency(
     first_store.close()
 
     second_store = SQLiteServiceStore(path)
+    request.addfinalizer(second_store.close)
     restarted = InProcessReferenceService(
         _ServiceValidator(),
         ScopeTenantAuthorizer(),
@@ -1292,7 +1374,7 @@ def test_durable_restart_refuses_tampered_payload_types(
     service.execute("tenant", job_id)
     store.close()
 
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         (raw,) = connection.execute(
             "SELECT payload_json FROM jobs WHERE job_id = ?", (job_id,)
         ).fetchone()
@@ -1306,19 +1388,24 @@ def test_durable_restart_refuses_tampered_payload_types(
             (json.dumps(payload), job_id),
         )
 
-    with pytest.raises(IntegrityError):
+    with (
+        closing(SQLiteServiceStore(database)) as reopened_store,
+        pytest.raises(IntegrityError),
+    ):
         InProcessReferenceService(
             _ServiceValidator(),
             ScopeTenantAuthorizer(),
             quota,
             clock=_Clock(10),
-            durable_store=SQLiteServiceStore(database),
+            durable_store=reopened_store,
         )
 
 
 def test_checkpoint_callback_requires_repository_commit_and_survives_restart(
     tmp_path: Any,
 ) -> None:
+    if os.name != "posix":
+        pytest.skip("This integration requires the explicit POSIX artifact provider.")
     profile = HPCFilesystemProfile(
         "service-checkpoint",
         "local-posix",

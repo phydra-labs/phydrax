@@ -9,6 +9,7 @@ import pytest
 from phydrax import config
 from phydrax._cuda_native import load_cuda_component
 from phydrax._execution_device import device_platform
+from phydrax.execution import default_device
 
 
 @pytest.fixture
@@ -29,6 +30,6 @@ def cuest_runtime() -> Iterator[None]:
     load_cuda_component("cuest")
     with (
         config.context(config.NumericsConfig(enable_x64=True)),
-        jax.default_device(devices[0]),
+        default_device(devices[0]),
     ):
         yield

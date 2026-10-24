@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
@@ -933,7 +934,7 @@ def make_record(
             {"neighbor_capacity": neighbors, "chunk_rows": chunk}
             for neighbors, chunk in sorted(set(capacity_variants))
         ]
-    load = os.getloadavg()
+    load = None if sys.platform == "win32" else list(os.getloadavg())
     record: dict[str, Any] = {
         "kind": "meshfree-phase-benchmark",
         "config": configuration,
@@ -942,7 +943,12 @@ def make_record(
         "precision": config.precision,
         "release_status": "candidate",
         "host_load": {
-            "load_average_1_5_15": list(load),
+            "load_average_1_5_15": load,
+            "load_average_unavailable_reason": (
+                "Windows does not provide os.getloadavg"
+                if sys.platform == "win32"
+                else None
+            ),
             "logical_cpus": os.cpu_count(),
             "scope": "Shared host; wall time is reported beside process CPU time and compile counts",
         },

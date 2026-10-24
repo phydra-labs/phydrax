@@ -1,0 +1,150 @@
+--- a/lib/targets/cuda/quda_api.cpp
++++ b/lib/targets/cuda/quda_api.cpp
+@@ -6,6 +6,12 @@
+ #include <device.h>
+ #include <quda_cuda_api.h>
+ #include <kernel_helper.h>
++#ifdef _WIN32
++#include <cstdint>
++#include <cstdio>
++#include <map>
++#include <mutex>
++#endif
+ 
+ // if this macro is defined then we use the driver API, else use the
+ // runtime API.  Typically the driver API has 10-20% less overhead
+@@ -184,6 +190,105 @@
+     set_runtime_error(error, __func__, kernel.name.c_str(), __FILE__, __STRINGIFY__(__LINE__), activeTuning());
+     return error == cudaSuccess ? QUDA_SUCCESS : QUDA_ERROR;
+   }
++
++#ifdef _WIN32
++  namespace {
++    struct ConstantArgumentState {
++      cudaEvent_t completion = nullptr;
++      bool recorded = false;
++      bool poisoned = false;
++      char failure[512] {};
++    };
++    std::mutex constant_argument_mutex;
++    std::map<std::pair<int, std::uintptr_t>, ConstantArgumentState> constant_arguments;
++    constexpr size_t max_constant_argument_owners = 512;
++  }
++
++  qudaError_t qudaLaunchConstantKernel(const kernel_t &kernel, const TuneParam &tp,
++                                     const qudaStream_t &stream, const void *arg,
++                                     void *buffer, size_t bytes)
++  {
++    std::lock_guard<std::mutex> lock(constant_argument_mutex);
++    int device = -1;
++    auto status = cudaGetDevice(&device);
++    if (status != cudaSuccess) {
++      set_runtime_error(status, "cudaGetDevice", __func__, __FILE__, __STRINGIFY__(__LINE__), true);
++      return QUDA_ERROR;
++    }
++    const auto key = std::make_pair(device, reinterpret_cast<std::uintptr_t>(buffer));
++    auto found = constant_arguments.find(key);
++    if (found == constant_arguments.end()) {
++      if (constant_arguments.size() >= max_constant_argument_owners) {
++        last_error = QUDA_ERROR;
++        last_error_str = "QUDA constant argument ownership capacity exhausted";
++        return QUDA_ERROR;
++      }
++      found = constant_arguments.try_emplace(key).first;
++    }
++    auto &state = found->second;
++    if (state.poisoned) {
++      last_error = QUDA_ERROR;
++      last_error_str = state.failure;
++      return QUDA_ERROR;
++    }
++    auto fail = [&](const char *operation, cudaError_t error) {
++      state.poisoned = true;
++      std::snprintf(state.failure, sizeof(state.failure), "%s: CUDA status %d: %s",
++                    operation, static_cast<int>(error), cudaGetErrorString(error));
++      last_error = QUDA_ERROR;
++      last_error_str = state.failure;
++      return QUDA_ERROR;
++    };
++    if (!state.completion) {
++      status = cudaEventCreateWithFlags(&state.completion, cudaEventDisableTiming);
++      if (status != cudaSuccess) return fail("constant argument event creation", status);
++    }
++    const auto native_stream = get_stream(stream);
++    if (state.recorded) {
++      status = cudaStreamWaitEvent(native_stream, state.completion, 0);
++      if (status != cudaSuccess) return fail("constant argument prior-use wait", status);
++    }
++    status = cudaMemcpyAsync(buffer, arg, bytes, cudaMemcpyHostToDevice, native_stream);
++    if (status != cudaSuccess) return fail("constant argument upload", status);
++    const auto launched = qudaLaunchKernel(kernel, tp, stream, arg);
++    if (launched != QUDA_SUCCESS) {
++      state.poisoned = true;
++      std::snprintf(state.failure, sizeof(state.failure), "%s", last_error_str.c_str());
++      return launched;
++    }
++    status = cudaEventRecord(state.completion, native_stream);
++    if (status != cudaSuccess) return fail("constant argument completion fence", status);
++    state.recorded = true;
++    return QUDA_SUCCESS;
++  }
++
++  // The component drains this owning device before calling this function.
++  cudaError_t release_constant_arguments()
++  {
++    std::lock_guard<std::mutex> lock(constant_argument_mutex);
++    int device = -1;
++    auto first_error = cudaGetDevice(&device);
++    if (first_error != cudaSuccess) return first_error;
++    for (auto item = constant_arguments.begin(); item != constant_arguments.end();) {
++      if (item->first.first != device) {
++        ++item;
++        continue;
++      }
++      auto &state = item->second;
++      const auto status = state.completion ? cudaEventDestroy(state.completion) : cudaSuccess;
++      if (status != cudaSuccess) {
++        state.poisoned = true;
++        std::snprintf(state.failure, sizeof(state.failure), "constant argument event destruction: CUDA status %d: %s",
++                      static_cast<int>(status), cudaGetErrorString(status));
++        if (first_error == cudaSuccess) first_error = status;
++        ++item;
++      } else {
++        item = constant_arguments.erase(item);
++      }
++    }
++    return first_error;
++  }
++#endif
+ 
+   class QudaMem : public Tunable
+   {
+--- a/include/targets/cuda/tunable_kernel.h
++++ b/include/targets/cuda/tunable_kernel.h
+@@ -22,6 +22,11 @@
+      @param[in] stream Stream identifier
+   */
+   qudaError_t qudaLaunchKernel(const kernel_t &kernel, const TuneParam &tp, const qudaStream_t &stream, const void *arg);
++#ifdef _WIN32
++  qudaError_t qudaLaunchConstantKernel(const kernel_t &kernel, const TuneParam &tp,
++                                     const qudaStream_t &stream, const void *arg,
++                                     void *buffer, size_t bytes);
++#endif
+ 
+   /**
+      @brief Wrapper around cudaOccupancyMaxActiveBlocks
+@@ -95,9 +100,14 @@
+       launch_error = launch_jitify<Functor, grid_stride, Arg>(kernel.name, tp, stream, arg);
+ #else
+       check_arg_size(arg);
++#ifdef _WIN32
++      setMaxActiveBlocks(kernel, tp);
++      launch_error = qudaLaunchConstantKernel(kernel, tp, stream, &arg, device::get_constant_buffer<Arg>(), sizeof(Arg));
++#else
+       qudaMemcpyAsync(device::get_constant_buffer<Arg>(), &arg, sizeof(Arg), qudaMemcpyHostToDevice, stream);
+       setMaxActiveBlocks(kernel, tp);
+       launch_error = qudaLaunchKernel(kernel, tp, stream, static_cast<const void *>(&arg));
++#endif // _WIN32
+ #endif
+       return launch_error;
+     }

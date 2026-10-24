@@ -43,6 +43,7 @@ FIRST_PARTY = (
     "mkdocstrings_setup.py",
     "native/meshcore/python",
     "native/cuda13",
+    "native/cuda13_pjrt",
     "native/cuest_runtime",
     "native/metal",
     "packaging/rocm/python",

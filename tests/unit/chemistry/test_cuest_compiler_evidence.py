@@ -18,6 +18,7 @@ from benchmarks.cuest_molecular import (
     _DF_JK_RTOL,
 )
 from phydrax import config
+from phydrax.execution import default_device
 
 
 def test_raw_kernel_closure_contains_only_static_metadata(
@@ -80,7 +81,7 @@ def test_raw_kernel_closure_contains_only_static_metadata(
     second_host = tuple(value.copy() for value in first_host)
     second_host[-2][0, 0] = 3.0
     cpu = jax.devices("cpu")[0]
-    with config.context(config.NumericsConfig(enable_x64=True)), jax.default_device(cpu):
+    with config.context(config.NumericsConfig(enable_x64=True)), default_device(cpu):
         first = tuple(jax.device_put(value, cpu) for value in first_host)
         second = tuple(jax.device_put(value, cpu) for value in second_host)
         kernel(first)

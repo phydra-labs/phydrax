@@ -13,6 +13,7 @@ same request that already took effect.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -106,8 +107,38 @@ def _merged(previous: RuntimeConfig, update: RuntimeConfig, /) -> RuntimeConfig:
     )
 
 
+def _admit_windows_cuda(platforms: tuple[str, ...] | None, /) -> None:
+    """Admit Windows CUDA intent without initializing a native runtime."""
+    if sys.platform != "win32":
+        return
+    from ._cuda_environment import assess_cuda_environment, collect_cuda_installation
+
+    effective = platforms if platforms is not None else _jax_config.platforms()
+    selected = effective is not None and any(
+        platform in ("cuda", "gpu") for platform in effective
+    )
+    facts = collect_cuda_installation()
+    if facts.requested_major is None and not facts.plugins and not selected:
+        return
+    facts = replace(
+        facts,
+        selected_platforms=effective,
+        requested_major=13
+        if selected and facts.requested_major is None
+        else facts.requested_major,
+    )
+    messages = tuple(
+        issue.message
+        for issue in assess_cuda_environment(facts).issues
+        if issue.severity == "error"
+    )
+    if messages:
+        raise ConfigurationApplicationError("platforms", (), "; ".join(messages))
+
+
 def _admit_accelerators(platforms: tuple[str, ...] | None, /) -> None:
     """Validate selected installations without discovering devices or applying effects."""
+    _admit_windows_cuda(platforms)
     for platform in platforms or ():
         match platform:
             case "mps":
@@ -187,6 +218,13 @@ def _admit(settings: RuntimeConfig, /) -> None:
     _admit_accelerators(settings.platforms)
     bootstrap = settings.bootstrap
     if bootstrap is not None and bootstrap.requests_distributed_initialization:
+        if sys.platform == "win32":
+            raise ConfigurationApplicationError(
+                "bootstrap",
+                (),
+                "Distributed JAX bootstrap is unsupported on native Windows; "
+                "use a single process without a distributed coordinator.",
+            )
         if _jax_config.distributed_initialized():
             raise ConfigurationApplicationError(
                 "bootstrap", (), "the JAX distributed runtime is already initialized."

@@ -316,12 +316,15 @@ def test_foreign_distribution_is_refused(
 def test_activation_uses_absolute_dependency_order_retains_handles_and_no_ld_path(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if sys.platform == "win32":
+        pytest.skip("ROCm preload activation requires POSIX RTLD loader flags.")
+    expected_mode = os.RTLD_NOW | os.RTLD_GLOBAL
     calls = []
     handles = []
 
     def load(path: str, *, mode: int) -> object:
         assert Path(path).is_absolute()
-        assert mode == os.RTLD_NOW | os.RTLD_GLOBAL
+        assert mode == expected_mode
         calls.append(path)
         handle = object()
         handles.append(handle)

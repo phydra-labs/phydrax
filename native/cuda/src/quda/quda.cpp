@@ -1,6 +1,7 @@
 // Copyright (c) 2026 PHYDRA, Inc. All rights reserved.
 // Device-resident public QUDA C API adaptation through the public XLA FFI.
 #include "phx_cuda_common.hpp"
+#include "quda_kernels.hpp"
 #include <quda.h>
 #include <cuda_runtime.h>
 #include <xla/ffi/api/ffi.h>
@@ -10,16 +11,21 @@
 #include <filesystem>
 #include <limits>
 #include <mutex>
+#ifndef _WIN32
 #include <pwd.h>
+#include <unistd.h>
+#endif
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 
 namespace ffi = xla::ffi;
 namespace quda {
 // Declared in QUDA's internal tune_quda.h: "cpu_arch=...,gpu_arch=...,cuda_version=...".
 // QUDA aborts on a tune cache written by a build with another value.
 const std::string get_quda_hash();
+#ifdef _WIN32
+cudaError_t release_constant_arguments();
+#endif
 }  // namespace quda
 namespace {
 std::mutex quda_mutex;
@@ -40,8 +46,20 @@ class DeviceAllocation {
 };
 
 void prepare_cache() {
+#ifdef _WIN32
+  // Use the Unicode CRT environment shared with the statically linked QUDA.
+  if (_wgetenv(L"QUDA_RESOURCE_PATH") != nullptr) return;
+#else
   if (std::getenv("QUDA_RESOURCE_PATH") != nullptr) return;
+#endif
   std::filesystem::path root;
+#ifdef _WIN32
+  const wchar_t* profile = _wgetenv(L"USERPROFILE");
+  if (profile == nullptr || *profile == L'\0')
+    throw std::runtime_error("QUDA tune cache requires USERPROFILE");
+  root = std::filesystem::path(profile) / L"AppData" / L"Local";
+  if (!root.is_absolute()) throw std::runtime_error("QUDA tune cache requires an absolute USERPROFILE");
+#else
   const char* xdg = std::getenv("XDG_CACHE_HOME");
   if (xdg != nullptr && *xdg != '\0') {
     root = xdg;
@@ -55,6 +73,7 @@ void prepare_cache() {
     }
     root /= ".cache";
   }
+#endif
   // The Phydrax build hash covers sources only; QUDA's hash adds the compiled
   // architectures and compiler version that its tune cache must match.
   std::string variant = quda::get_quda_hash();
@@ -65,7 +84,11 @@ void prepare_cache() {
   }
   const auto path = root / "phydrax" / "quda" / phx_cuda_build_hash() / variant;
   std::filesystem::create_directories(path);
+#ifdef _WIN32
+  if (_wputenv_s(L"QUDA_RESOURCE_PATH", path.c_str()) != 0)
+#else
   if (setenv("QUDA_RESOURCE_PATH", path.c_str(), 0) != 0)
+#endif
     throw std::runtime_error("Unable to set QUDA_RESOURCE_PATH for the native tune cache");
 }
 
@@ -135,29 +158,6 @@ QudaGaugeParam load_gauge(ffi::Buffer<dtype> links, const Geometry& geometry) {
   return param;
 }
 
-__global__ void any_unowned(const bool* mask, int64_t size, int* invalid) {
-  for (int64_t i = blockIdx.x * blockDim.x + threadIdx.x; i < size; i += blockDim.x * gridDim.x)
-    if (!mask[i]) atomicExch(invalid, 1);
-}
-
-template <class Real>
-__global__ void decode_momentum(const Real* packed, Real* out, int64_t sites) {
-  for (int64_t site = blockIdx.x * blockDim.x + threadIdx.x; site < sites; site += blockDim.x * gridDim.x) {
-    const Real* p = packed + site * 10;
-    Real* matrix = out + site * 18;
-    for (int i = 0; i < 18; ++i) matrix[i] = 0;
-    const int row[3] = {0, 0, 1};
-    const int col[3] = {1, 2, 2};
-    for (int k = 0; k < 3; ++k) {
-      matrix[2 * (3 * row[k] + col[k])] = p[2 * k];
-      matrix[2 * (3 * row[k] + col[k]) + 1] = p[2 * k + 1];
-      matrix[2 * (3 * col[k] + row[k])] = -p[2 * k];
-      matrix[2 * (3 * col[k] + row[k]) + 1] = p[2 * k + 1];
-    }
-    for (int color = 0; color < 3; ++color) matrix[2 * (4 * color) + 1] = p[6 + color];
-  }
-}
-
 // QUDA executes on private streams, not the XLA stream. A synchronized boundary
 // is intentional: wait for XLA producers before loading DEVICE links, and wait
 // for all QUDA work before returning device outputs to XLA. The process mutex
@@ -188,7 +188,7 @@ ffi::Error gauge_action(cudaStream_t stream, ffi::Buffer<dtype> links, ffi::Buff
       throw std::invalid_argument("QUDA action requires owned_mask shape (volume,6) and a scalar result");
     DeviceAllocation invalid(sizeof(int));
     check_cuda(cudaMemset(invalid.data, 0, sizeof(int)), "QUDA mask validation initialization");
-    any_unowned<<<128, 256>>>(mask.typed_data(), mask.element_count(), static_cast<int*>(invalid.data));
+    phx::cuda::quda_kernels::launch_any_unowned(mask.typed_data(), mask.element_count(), static_cast<int*>(invalid.data));
     int host_invalid = 0;
     check_cuda(cudaMemcpy(&host_invalid, invalid.data, sizeof(int), cudaMemcpyDeviceToHost), "QUDA ownership validation");
     if (host_invalid) throw std::invalid_argument("QUDA gauge action requires a fully owned periodic lattice");
@@ -243,7 +243,8 @@ ffi::Error gauge_force(cudaStream_t stream, ffi::Buffer<dtype> links, ffi::Resul
     param.return_result_mom = 1;
     computeGaugeForceQuda(momentum_ptrs.data(), nullptr, direction_ptrs, lengths, coefficients, 6, 3, 1.0, &param);
     check_cuda(cudaDeviceSynchronize(), "QUDA momentum completion synchronization");
-    decode_momentum<<<128, 256>>>(static_cast<Real*>(momentum.data), reinterpret_cast<Real*>(out->typed_data()), 4 * geometry.volume);
+    phx::cuda::quda_kernels::launch_decode_momentum(
+      static_cast<Real*>(momentum.data), reinterpret_cast<Real*>(out->typed_data()), 4 * geometry.volume);
     check_cuda(cudaGetLastError(), "QUDA momentum decoding");
   });
 }
@@ -298,6 +299,9 @@ int32_t component_shutdown() {
     check_cuda(cudaGetDevice(&previous), "QUDA shutdown device query");
     check_cuda(cudaSetDevice(initialized_device), "QUDA shutdown device selection");
     check_cuda(cudaDeviceSynchronize(), "QUDA shutdown synchronization");
+#ifdef _WIN32
+    check_cuda(quda::release_constant_arguments(), "QUDA constant argument event teardown");
+#endif
     endQuda();
     initialized = false;
     initialized_device = -1;

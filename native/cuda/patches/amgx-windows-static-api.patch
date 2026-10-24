@@ -1,0 +1,24 @@
+--- a/include/amgx_c.h
++++ b/include/amgx_c.h
+@@ -5,7 +5,7 @@
+ #ifndef __AMGX_C_H_INCLUDE__
+ #define __AMGX_C_H_INCLUDE__
+ 
+-#ifdef SWIG
++#if defined(SWIG) || defined(PHX_AMGX_STATIC)
+ #define AMGX_API
+ #else
+ #ifdef _WIN32
+--- a/include/amgxP_c.h
++++ b/include/amgxP_c.h
+@@ -5,7 +5,9 @@
+ #ifndef __AMGX_P_C_H_INCLUDE__
+ #define __AMGX_P_C_H_INCLUDE__
+ 
+-#ifdef _WIN32
++#if defined(PHX_AMGX_STATIC)
++#define AMGX_API
++#elif defined(_WIN32)
+ #ifdef AMGX_API_EXPORTS
+ #define AMGX_API __declspec( dllexport )
+ #else

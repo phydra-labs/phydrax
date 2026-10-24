@@ -4,6 +4,7 @@
 
 
 import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -66,6 +67,14 @@ def _posix_policy(
         maximum_chunk_bytes=maximum_chunk_bytes,
         maximum_metadata_bytes=64 * 1024,
     )
+
+
+@pytest.mark.skipif(os.name == "posix", reason="Non-POSIX backend admission")
+def test_posix_repository_refuses_before_creating_windows_state(tmp_path: Path) -> None:
+    destination = tmp_path / "unsupported-posix-repository"
+    with pytest.raises(OSError, match="requires a POSIX filesystem backend"):
+        POSIXArtifactRepository(destination, _posix_policy())
+    assert not destination.exists()
 
 
 def _object_profile(

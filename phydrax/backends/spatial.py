@@ -13,8 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .._cuda_capabilities import cuda_compiler_capabilities, selected_device
 from .._execution_device import device_platform
-from .._jax_config import default_device_selection
 from ..sparse._execution import KeyGroupAccumulation
 from ..sparse._streamed import StreamedFragment
 from ..typing import parse
@@ -79,19 +79,25 @@ def pallas_spatial_availability(*, interpret: bool = False) -> BackendAvailabili
     TPU supports float32 distance/Morton leaves, not the compiled particle-FMM
     fragment route. Inspect ``capabilities`` before admitting an operation.
     """
-    selection = default_device_selection()
-    device = selection if isinstance(selection, jax.Device) else jax.devices(selection)[0]
+    device = selected_device()
     platform = device_platform(device)
     tpu = not interpret and platform == "tpu"
     capabilities = PALLAS_TPU_SPATIAL_CAPABILITIES if tpu else PALLAS_SPATIAL_CAPABILITIES
-    available = bool(interpret) or platform in ("cuda", "tpu")
+    compiler = (
+        cuda_compiler_capabilities(device.client)
+        if not interpret and platform == "cuda"
+        else None
+    )
+    available = bool(interpret) or tpu or bool(compiler and compiler.pallas_triton)
     reason = (
         "Pallas interpret mode is explicitly enabled"
         if interpret
         else "TPU float32 distance/Morton leaves are available; particle FMM is unsupported"
         if tpu
-        else "a Pallas CUDA device is selected"
+        else "the selected CUDA compiler supports Pallas Triton"
         if available
+        else f"Pallas Triton is unavailable for the selected compiler: {compiler.reason}"
+        if compiler is not None
         else "Pallas spatial compilation requires CUDA or TPU distance leaves; "
         "use explicit interpret mode on CPU"
     )
@@ -100,7 +106,11 @@ def pallas_spatial_availability(*, interpret: bool = False) -> BackendAvailabili
         available=available,
         requirement="JAX Pallas CUDA, TPU float32 distance leaves, or explicit interpret mode",
         reason=reason,
-        versions=(("jax", jax.__version__),),
+        versions=(
+            (("jax", jax.__version__), ("cuda-compiler", compiler.identity))
+            if compiler is not None
+            else (("jax", jax.__version__),)
+        ),
     )
 
 

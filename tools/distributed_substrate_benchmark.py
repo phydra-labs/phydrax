@@ -348,6 +348,16 @@ def _launch_ranks(
     ):
         if value is not None:
             command.extend((option, str(value)))
+    harness = os.environ.get("PHYDRAX_QUALIFICATION_HARNESS")
+    if harness is not None:
+        from tools.qualify_cuda_wheels import installed_command
+
+        command = installed_command(
+            Path(sys.executable),
+            Path(harness),
+            "tools.distributed_substrate_benchmark",
+            command[3:],
+        )
     try:
         results = launch_local_processes(
             command,

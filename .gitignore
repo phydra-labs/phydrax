@@ -71,6 +71,8 @@ benchmarks/*
 !benchmarks/cuest_molecular.py
 !benchmarks/_cuest_kernels.py
 !benchmarks/cuest_molecular_campaign.py
+!benchmarks/windows_cuda.py
+!benchmarks/rtx_5090_windows_qualification.json
 !benchmarks/a40_qualification.json
 # Eight-A100 physical, installed-provider, and integrated qualification evidence.
 !benchmarks/a100_cuda_execution.json

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import time
@@ -301,6 +302,13 @@ def test_report_chains_verify_and_durations_are_not_content_addressed() -> None:
 def test_fresh_interpreter_route_reports_skips_and_failures_not_passes(
     tmp_path: Path,
 ) -> None:
+    if os.name != "posix":
+        for filename in ("test_specimen.py", "test_broken.py"):
+            with pytest.raises(RuntimeError, match="requires a POSIX host"):
+                run_pytest_subprocess(
+                    [filename], root=tmp_path, workers=1, environment={}
+                )
+        return
     (tmp_path / "test_specimen.py").write_text(
         "import os\n"
         "import pytest\n\n"
@@ -430,6 +438,17 @@ def _process_alive(pid: int, /) -> bool:
 def test_fresh_interpreter_route_past_its_deadline_observes_nothing(
     tmp_path: Path,
 ) -> None:
+    if os.name != "posix":
+        for timeout in (15.0, 0.0):
+            with pytest.raises(RuntimeError, match="requires a POSIX host"):
+                run_pytest_subprocess(
+                    ["test_hang.py"],
+                    root=tmp_path,
+                    workers=1,
+                    environment={},
+                    timeout=timeout,
+                )
+        return
     marker = tmp_path / "descendant.pid"
     (tmp_path / "test_hang.py").write_text(
         "import pathlib, subprocess, time\n\n"

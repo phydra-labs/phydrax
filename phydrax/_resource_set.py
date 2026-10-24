@@ -2,7 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Bounded, descriptor-relative admission of local multi-file resources."""
+"""Bounded resource-set admission through held, no-follow host descriptors.
+
+Member paths in manifests remain POSIX-spelled on every host. Windows traversal
+uses native handle-relative operations and rejects reparse points rather than
+interpreting directory handles as pathname aliases.
+"""
 
 from __future__ import annotations
 
@@ -16,14 +21,19 @@ from pathlib import PurePosixPath
 from typing import Iterator, Literal
 
 from ._fingerprint import canonical_fingerprint
-from ._host_io import directory_identity, open_directory_beneath, stat_identity
+from ._host_io import (
+    _validate_component,
+    directory_identity,
+    list_directory,
+    open_directory_at,
+    open_directory_beneath,
+    open_file_at,
+    stat_at,
+    stat_identity,
+)
 
 
 _ResourceSetFailure = Literal["policy", "malformed", "limit", "inconsistent"]
-_DIRECTORY_FLAGS = (
-    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-)
-_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 _HASH_CHUNK_BYTES = 1_048_576
 
 
@@ -144,10 +154,8 @@ class OpenedResourceSet:
         descriptors = [os.dup(self.descriptor)]
         try:
             for component in path.parts[:-1]:
-                descriptors.append(
-                    os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptors[-1])
-                )
-            descriptor = os.open(path.parts[-1], _FILE_FLAGS, dir_fd=descriptors[-1])
+                descriptors.append(open_directory_at(descriptors[-1], component))
+            descriptor = open_file_at(descriptors[-1], path.parts[-1])
             descriptors.append(descriptor)
             opened = os.fstat(descriptor)
             if (
@@ -188,7 +196,7 @@ class OpenedResourceSet:
             return bytes(payload)
         except ResourceSetReadError:
             raise
-        except OSError as error:
+        except (OSError, ValueError) as error:
             raise ResourceSetReadError(
                 "inconsistent",
                 "An admitted resource-set member changed before it could be read.",
@@ -343,27 +351,24 @@ def _walk_directory(
         raise ResourceSetReadError(
             "policy", "Resource-set members must be regular files or directories."
         )
-    names: list[str] = []
-    with os.scandir(directory_descriptor) as entries:
-        for entry in entries:
-            if totals[1] >= limits.max_members:
-                raise ResourceSetReadError(
-                    "limit", "Resource set exceeds its total entry limit."
-                )
-            totals[1] += 1
-            names.append(entry.name)
+    names = list_directory(directory_descriptor)
+    if len(names) > limits.max_members - totals[1]:
+        raise ResourceSetReadError("limit", "Resource set exceeds its total entry limit.")
+    totals[1] += len(names)
     for name in sorted(names):
-        if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+        try:
+            _validate_component(name)
+        except ValueError as error:
             raise ResourceSetReadError(
                 "malformed", "Resource-set member name is invalid."
-            )
+            ) from error
         try:
             name.encode("utf-8")
         except UnicodeEncodeError as error:
             raise ResourceSetReadError(
                 "malformed", "Resource-set member names must be valid UTF-8."
             ) from error
-        information = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        information = stat_at(directory_descriptor, name)
         relative_parts = (*prefix, name)
         relative_path = PurePosixPath(*relative_parts).as_posix()
         if stat.S_ISLNK(information.st_mode):
@@ -371,7 +376,7 @@ def _walk_directory(
                 "policy", "Resource sets cannot contain symbolic links."
             )
         if stat.S_ISDIR(information.st_mode):
-            child = os.open(name, _DIRECTORY_FLAGS, dir_fd=directory_descriptor)
+            child = open_directory_at(directory_descriptor, name)
             try:
                 opened = os.fstat(child)
                 if stat_identity(information) != stat_identity(opened):
@@ -425,7 +430,12 @@ def _read_member(
     limits: ResourceSetLimits,
     /,
 ) -> ResourceMemberManifest:
-    descriptor = os.open(name, _FILE_FLAGS, dir_fd=directory_descriptor)
+    try:
+        descriptor = open_file_at(directory_descriptor, name)
+    except ValueError as error:
+        raise ResourceSetReadError(
+            "inconsistent", "A resource-set member changed while opening."
+        ) from error
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or stat_identity(initial) != stat_identity(

@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Breaking
+- Replace CUDA environment major-only plugin facts with individual
+  `CudaPluginInstallation` records in `CudaEnvironmentFacts.plugins`; remove
+  `plugin_majors`. Compiler-bound atomistic targets now include `compiler_id`.
+  Reprepare affected execution artifacts instead of relabeling old identities.
+- Add native Windows CUDA 13 packaging, source-pinned PJRT/kernel preparation,
+  DLL ownership/admission, and cuDSS/AmgX/QUDA companion portability. Native
+  compilation and Windows GPU qualification remain required release gates.
+  Unsupported compiler/provider/topology requests refuse explicitly.
+- Add Windows process-tree ownership, host-memory evidence, and NTFS held-handle
+  publication. Missing measurements and failed namespace synchronization remain
+  failures or unavailable evidence, never plausible zero values or receipts.
+- Keep Windows CUDA bootstrap failures sticky across repeated JAX operations;
+  authenticate actual hook code rather than following arbitrary wrappers.
+  Resolve extension roots by full path, retain inspection causes, and reject
+  actual import ambiguities or foreign CUDA families without rejecting unrelated
+  extension basenames.
+- Expose execution-owned device scopes and detached frontend patch identity
+  through the canonical public facades. SQLite service paths retain ancestor
+  handles for the connection lifetime. Checkpoint generation publication uses
+  hard links without adding a Linux rename-flags requirement.
 - Move exact scalar GP execution to native prepared factors and solve evidence.
   `ExactGaussianProcessFactor.factorization` replaces its raw `cholesky` field;
   retained storage includes covariance, factor, and evidence. Likelihood states

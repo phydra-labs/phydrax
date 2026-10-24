@@ -11,17 +11,16 @@ import json
 import os
 import re
 import sqlite3
-import stat
 import threading
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
 from .._execution_resources import ResourceRequest
-from .._host_io import open_directory_beneath
+from .._host_io import link_at, open_directory_beneath, open_file_at, stat_at
 from ._contracts import (
     AuditRecord,
     IntegrityError,
@@ -504,22 +503,22 @@ class SQLiteServiceStore:
             raise ValueError("SQLite database bound must be a positive integer.")
         self._lock = threading.RLock()
         admission = _admit_sqlite_path(path)
-        admitted_path = ":memory:" if admission is None else admission.connection_path
-        if admission is not None:
-            admission.verify()
-        connection_target = (
-            admitted_path
-            if admission is None
-            else f"{Path(admitted_path).as_uri()}?mode=rw"
-        )
         try:
+            admitted_path = ":memory:" if admission is None else admission.connection_path
+            if admission is not None:
+                admission.verify()
+            connection_target = (
+                admitted_path
+                if admission is None
+                else f"{Path(admitted_path).as_uri()}?mode=rw"
+            )
             self._connection = sqlite3.connect(
                 connection_target,
                 isolation_level=None,
                 check_same_thread=False,
                 uri=admission is not None,
             )
-        except sqlite3.Error:
+        except BaseException:
             try:
                 if admission is not None:
                     admission.verify()
@@ -536,19 +535,23 @@ class SQLiteServiceStore:
                 admission.close()
             raise
         self._path_admission = admission
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys=ON")
-        page_size = int(self._connection.execute("PRAGMA page_size").fetchone()[0])
-        maximum_pages = maximum_database_bytes // page_size
-        if maximum_pages < 1:
+        try:
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA foreign_keys=ON")
+            page_size = int(self._connection.execute("PRAGMA page_size").fetchone()[0])
+            maximum_pages = maximum_database_bytes // page_size
+            if maximum_pages < 1:
+                raise ValueError(
+                    "SQLite database bound is smaller than one database page."
+                )
+            page_count = int(self._connection.execute("PRAGMA page_count").fetchone()[0])
+            if page_count > maximum_pages:
+                raise ValueError("Existing SQLite database exceeds its byte bound.")
+            self._connection.execute(f"PRAGMA max_page_count={maximum_pages}")
+            self._create_schema()
+        except BaseException:
             self.close()
-            raise ValueError("SQLite database bound is smaller than one database page.")
-        page_count = int(self._connection.execute("PRAGMA page_count").fetchone()[0])
-        if page_count > maximum_pages:
-            self.close()
-            raise ValueError("Existing SQLite database exceeds its byte bound.")
-        self._connection.execute(f"PRAGMA max_page_count={maximum_pages}")
-        self._create_schema()
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -988,19 +991,21 @@ class _SQLitePathAdmission:
     parent_descriptor: int
     file_identity: tuple[int, int, int]
     parent_identity: tuple[int, int, int]
+    resources: ExitStack
 
     def verify(self) -> None:
         try:
             file_status = os.fstat(self.file_descriptor)
             parent_status = os.fstat(self.parent_descriptor)
-            path_status = os.stat(self.path, follow_symlinks=False)
-            path_parent_status = os.stat(self.parent_path, follow_symlinks=False)
-            connection_status = os.stat(
-                self.link_name,
-                dir_fd=self.parent_descriptor,
-                follow_symlinks=False,
-            )
-        except OSError as error:
+            with open_directory_beneath(
+                self.parent_path,
+                trusted_root=self.parent_path.parent,
+                maximum_depth=1,
+            ) as current_parent:
+                path_parent_status = os.fstat(current_parent.descriptor)
+                path_status = stat_at(current_parent.descriptor, Path(self.path).name)
+            connection_status = stat_at(self.parent_descriptor, self.link_name)
+        except (OSError, ValueError, RuntimeError) as error:
             raise ValueError("SQLite database path changed during connection.") from error
         if (
             self.file_identity
@@ -1025,8 +1030,7 @@ class _SQLitePathAdmission:
             raise ValueError("SQLite database path changed during connection.")
 
     def close(self) -> None:
-        os.close(self.file_descriptor)
-        os.close(self.parent_descriptor)
+        self.resources.close()
 
 
 def _admit_sqlite_path(path: str | Path, /) -> _SQLitePathAdmission | None:
@@ -1036,73 +1040,63 @@ def _admit_sqlite_path(path: str | Path, /) -> _SQLitePathAdmission | None:
     parent = candidate.parent
     if not parent.exists() or not parent.is_dir():
         raise ValueError("SQLite database parent must be an existing directory.")
-    with open_directory_beneath(
-        parent,
-        trusted_root=parent.parent,
-        maximum_depth=1,
-    ) as opened_parent:
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            file_descriptor = os.open(
-                candidate.name,
-                flags,
-                0o600,
-                dir_fd=opened_parent.descriptor,
-            )
-        except OSError as error:
-            raise ValueError("SQLite database cannot be a symbolic link.") from error
-        try:
-            file_status = os.fstat(file_descriptor)
-            if not stat.S_ISREG(file_status.st_mode):
-                raise ValueError("SQLite database must be a regular file.")
-            os.fchmod(file_descriptor, 0o600)
-            file_status = os.fstat(file_descriptor)
-            parent_descriptor = os.dup(opened_parent.descriptor)
-            link_name = f".{candidate.name}.phydrax-sqlite"
-            try:
-                os.link(
-                    candidate.name,
-                    link_name,
-                    src_dir_fd=opened_parent.descriptor,
-                    dst_dir_fd=opened_parent.descriptor,
-                    follow_symlinks=False,
-                )
-            except FileExistsError:
-                alias_status = os.stat(
-                    link_name,
-                    dir_fd=opened_parent.descriptor,
-                    follow_symlinks=False,
-                )
-                if (
-                    alias_status.st_dev,
-                    alias_status.st_ino,
-                    alias_status.st_mode,
-                ) != (
-                    file_status.st_dev,
-                    file_status.st_ino,
-                    file_status.st_mode,
-                ):
-                    raise ValueError(
-                        "SQLite stable connection alias conflicts with the database."
-                    )
-            admission = _SQLitePathAdmission(
-                str(candidate),
-                str(parent / link_name),
-                link_name,
+    with ExitStack() as resources:
+        opened_parent = resources.enter_context(
+            open_directory_beneath(
                 parent,
-                os.dup(file_descriptor),
-                parent_descriptor,
-                (file_status.st_dev, file_status.st_ino, file_status.st_mode),
-                (
-                    opened_parent.directory_status.st_dev,
-                    opened_parent.directory_status.st_ino,
-                    opened_parent.directory_status.st_mode,
-                ),
+                trusted_root=parent.parent,
+                maximum_depth=1,
             )
-        finally:
-            os.close(file_descriptor)
-    admission.verify()
-    return admission
+        )
+        try:
+            file_descriptor = open_file_at(
+                opened_parent.descriptor, candidate.name, write=True, create=True
+            )
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "SQLite database must be a regular file, not a symbolic link."
+            ) from error
+        resources.callback(os.close, file_descriptor)
+        if os.name == "posix":
+            os.fchmod(file_descriptor, 0o600)
+        file_status = os.fstat(file_descriptor)
+        link_name = f".{candidate.name}.phydrax-sqlite"
+        try:
+            link_at(opened_parent.descriptor, candidate.name, link_name)
+        except FileExistsError:
+            alias_status = stat_at(opened_parent.descriptor, link_name)
+            if (
+                alias_status.st_dev,
+                alias_status.st_ino,
+                alias_status.st_mode,
+            ) != (
+                file_status.st_dev,
+                file_status.st_ino,
+                file_status.st_mode,
+            ):
+                raise ValueError(
+                    "SQLite stable connection alias conflicts with the database."
+                )
+        admission = _SQLitePathAdmission(
+            str(candidate),
+            str(parent / link_name),
+            link_name,
+            parent,
+            file_descriptor,
+            opened_parent.descriptor,
+            (file_status.st_dev, file_status.st_ino, file_status.st_mode),
+            (
+                opened_parent.directory_status.st_dev,
+                opened_parent.directory_status.st_ino,
+                opened_parent.directory_status.st_mode,
+            ),
+            resources,
+        )
+        admission.verify()
+        # Retain every ancestor until SQLite closes, not merely its immediate
+        # parent. On Windows these held handles prevent ancestor replacement.
+        admission.resources = resources.pop_all()
+        return admission
 
 
 def audit_digest(record: AuditRecord, /) -> str:

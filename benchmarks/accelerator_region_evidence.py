@@ -26,6 +26,7 @@ import numpy as np
 from benchmarks._runtime import capture_environment
 from examples.accelerator_scientific_execution import poisson_training
 from phydrax import config as pxconfig
+from phydrax.execution import default_device
 from tests._support.accelerator_qualification import (
     compiled_region_evidence,
     WARM_REPEATS,
@@ -51,7 +52,7 @@ def main() -> int:
     if len(matching) != 1:
         parser.error(f"Device ID {args.device_id} is not a unique {args.platform} device")
     device = matching[0]
-    with jax.default_device(device):
+    with default_device(device):
         training = poisson_training()
         (_, _, loss, _), evidence = compiled_region_evidence(
             training.step,

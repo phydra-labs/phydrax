@@ -229,6 +229,8 @@ def _records(path: Path) -> list[dict[str, Any]]:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    if os.name != "posix":
+        raise RuntimeError("Taylor diagnostic process supervision requires a POSIX host.")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=("all", *_CASES), default="all")
     parser.add_argument(

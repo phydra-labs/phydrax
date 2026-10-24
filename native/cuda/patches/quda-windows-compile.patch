@@ -1,0 +1,320 @@
+--- a/include/targets/generic/math_helper.h
++++ b/include/targets/generic/math_helper.h
+@@ -27,8 +27,17 @@
+   inline bool isnan(double a) { return std::isnan(a); }
+   template <typename T> inline T max(const T a, const T b) { return a > b ? a : b; }
+   template <typename T> inline T min(const T a, const T b) { return a < b ? a : b; }
++#ifdef _WIN32
++  template <typename T> inline void sincos(const T a, T *s, T *c)
++  {
++    *s = std::sin(a);
++    *c = std::cos(a);
++  }
++  template <typename T> inline void sincospi(const T a, T *s, T *c) { quda::sincos(a * static_cast<T>(M_PI), s, c); }
++#else
+   template <typename T> inline void sincos(const T a, T *s, T *c) { ::sincos(a, s, c); }
+   template <typename T> inline void sincospi(const T a, T *s, T *c) { ::sincos(a * static_cast<T>(M_PI), s, c); }
++#endif
+   template <typename T> inline T sinpi(const T a) { return ::sin(a * static_cast<float>(M_PI)); }
+   template <typename T> inline T cospi(const T a) { return ::cos(a * static_cast<float>(M_PI)); }
+   template <typename T> inline T rsqrt(const T a) { return static_cast<T>(1.0) / ::sqrt(a); }
+--- a/include/kernel_helper.h
++++ b/include/kernel_helper.h
+@@ -13,8 +13,8 @@
+     kernel_t(const void *func, const char *name) : func(func), name(name) { }
+   };
+ 
+-  enum class use_kernel_arg_p { FALSE, TRUE, ALWAYS };
++  enum class use_kernel_arg_p { DISABLED, ENABLED, ALWAYS };
+ 
+-  template <use_kernel_arg_p use_kernel_arg_ = use_kernel_arg_p::TRUE, bool check_bounds_ = true> struct kernel_param {
++  template <use_kernel_arg_p use_kernel_arg_ = use_kernel_arg_p::ENABLED, bool check_bounds_ = true> struct kernel_param {
+     static constexpr use_kernel_arg_p use_kernel_arg = use_kernel_arg_;
+     static constexpr bool check_bounds = check_bounds_;
+@@ -74,5 +74,5 @@
+     static constexpr bool default_use_kernel_arg()
+     {
+-      return use_kernel_arg != use_kernel_arg_p::FALSE;
++      return use_kernel_arg != use_kernel_arg_p::DISABLED;
+     }
+ 
+--- a/include/dslash_helper.cuh
++++ b/include/dslash_helper.cuh
+@@ -16,5 +16,5 @@
+ #include <tma_helper.hpp>
+ 
+-constexpr quda::use_kernel_arg_p use_kernel_arg = quda::use_kernel_arg_p::TRUE;
++constexpr quda::use_kernel_arg_p use_kernel_arg = quda::use_kernel_arg_p::ENABLED;
+ 
+ #include <kernel.h>
+--- a/include/kernels/block_transpose.cuh
++++ b/include/kernels/block_transpose.cuh
+@@ -14,5 +14,5 @@
+   template <class v_t_, class b_t_, bool is_device_, typename vFloat, typename vAccessor, typename bFloat,
+             typename bAccessor, int nSpin_, int nColor_, int nVec_, bool from_to_non_rel_>
+-  struct BlockTransposeArg : kernel_param<use_kernel_arg_p::TRUE, false> { // no bound checks
++  struct BlockTransposeArg : kernel_param<use_kernel_arg_p::ENABLED, false> { // no bound checks
+     using real = typename mapper<vFloat>::type;
+     static constexpr bool is_device = is_device_;
+--- a/include/targets/cuda/reduce_helper.h
++++ b/include/targets/cuda/reduce_helper.h
+@@ -71,5 +71,5 @@
+      memory
+    */
+-  template <typename T, use_kernel_arg_p use_kernel_arg = use_kernel_arg_p::TRUE> struct ReduceArg : kernel_param<use_kernel_arg> {
++  template <typename T, use_kernel_arg_p use_kernel_arg = use_kernel_arg_p::ENABLED> struct ReduceArg : kernel_param<use_kernel_arg> {
+     using reduce_t = T;
+ 
+--- a/include/targets/generic/reduce_helper.h
++++ b/include/targets/generic/reduce_helper.h
+@@ -23,5 +23,5 @@
+      memory
+    */
+-  template <typename T, use_kernel_arg_p use_kernel_arg = use_kernel_arg_p::TRUE>
++  template <typename T, use_kernel_arg_p use_kernel_arg = use_kernel_arg_p::ENABLED>
+   struct ReduceArg : kernel_param<use_kernel_arg> {
+     using reduce_t = T;
+--- a/lib/targets/cuda/blas_lapack_cublas.cpp
++++ b/lib/targets/cuda/blas_lapack_cublas.cpp
+@@ -417,9 +417,7 @@
+           typedef cuDoubleComplex Z;
+ 
+-          const Z alpha = {static_cast<std::complex<double>>(blas_param.alpha).real(),
+-                           static_cast<std::complex<double>>(blas_param.alpha).imag()};
++          const Z alpha = {__real__(blas_param.alpha), __imag__(blas_param.alpha)};
+ 
+-          const Z beta = {static_cast<std::complex<double>>(blas_param.beta).real(),
+-                          static_cast<std::complex<double>>(blas_param.beta).imag()};
++          const Z beta = {__real__(blas_param.beta), __imag__(blas_param.beta)};
+ 
+           cublasStatus_t error;
+@@ -444,9 +442,7 @@
+           typedef cuFloatComplex C;
+ 
+-          const C alpha = {(float)static_cast<std::complex<double>>(blas_param.alpha).real(),
+-                           (float)static_cast<std::complex<double>>(blas_param.alpha).imag()};
++          const C alpha = {(float)__real__(blas_param.alpha), (float)__imag__(blas_param.alpha)};
+ 
+-          const C beta = {(float)static_cast<std::complex<double>>(blas_param.beta).real(),
+-                          (float)static_cast<std::complex<double>>(blas_param.beta).imag()};
++          const C beta = {(float)__real__(blas_param.beta), (float)__imag__(blas_param.beta)};
+ 
+           cublasStatus_t error;
+@@ -471,6 +467,6 @@
+           typedef double D;
+ 
+-          const D alpha = (D)(static_cast<std::complex<double>>(blas_param.alpha).real());
+-          const D beta = (D)(static_cast<std::complex<double>>(blas_param.beta).real());
++          const D alpha = (D)__real__(blas_param.alpha);
++          const D beta = (D)__real__(blas_param.beta);
+ 
+           cublasStatus_t error;
+@@ -495,6 +491,6 @@
+           typedef float S;
+ 
+-          const S alpha = (S)(static_cast<std::complex<float>>(blas_param.alpha).real());
+-          const S beta = (S)(static_cast<std::complex<float>>(blas_param.beta).real());
++          const S alpha = (S)__real__(blas_param.alpha);
++          const S beta = (S)__real__(blas_param.beta);
+ 
+           cublasStatus_t error;
+--- a/include/targets/cuda/tma_helper.hpp
++++ b/include/targets/cuda/tma_helper.hpp
+@@ -15,6 +15,7 @@
+ 
+ #else
+ #include <cuda.h>
++#include <array>
+ #include <unordered_map>
+ #include <cuda/ptx>
+ #include <cuda/barrier>
+--- a/include/kernel_helper.h
++++ b/include/kernel_helper.h
+@@ -89,5 +89,5 @@
+ #ifdef JITIFY
+ #define KERNEL(kernel) kernel_t(nullptr, #kernel)
+ #else
+-#define KERNEL(kernel) kernel_t(reinterpret_cast<const void *>(kernel<Functor, Arg, grid_stride>), #kernel)
++#define KERNEL(kernel) kernel_t(reinterpret_cast<const void *>(static_cast<std::conditional_t<device::use_kernel_arg<Arg>(), void (*)(Arg), void (*)()>>(kernel<Functor, Arg, grid_stride>)), #kernel)
+ #endif
+--- a/include/instantiate.h
++++ b/include/instantiate.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <array>
++#include <type_traits>
+ #include <enum_quda.h>
+ #include <util_quda.h>
+ #include <quda_internal.h>
+@@ -33,7 +34,11 @@
+      @brief Helper function for returning if a given gauge field order is enabled
+      @tparam order The order requested
+    */
+-  template <QudaGaugeFieldOrder order> constexpr bool is_enabled();
++  template <auto value> constexpr bool is_enabled()
++  {
++    static_assert(std::is_same_v<decltype(value), QudaDslashType>, "Missing QUDA capability specialization");
++    return false;
++  }
+ #ifdef BUILD_QDP_INTERFACE
+   template <> constexpr bool is_enabled<QUDA_QDP_GAUGE_ORDER>() { return true; }
+ #else
+@@ -112,7 +117,6 @@
+      @tparam reconstruct The reconstruct requested
+      @return True if enabled, false if not
+   */
+-  template <QudaReconstructType reconstruct> constexpr bool is_enabled();
+   template <> constexpr bool is_enabled<QUDA_RECONSTRUCT_NO>() { return (QUDA_RECONSTRUCT & 4) ? true : false; }
+   template <> constexpr bool is_enabled<QUDA_RECONSTRUCT_13>() { return (QUDA_RECONSTRUCT & 2) ? true : false; }
+   template <> constexpr bool is_enabled<QUDA_RECONSTRUCT_12>() { return (QUDA_RECONSTRUCT & 2) ? true : false; }
+@@ -587,7 +591,6 @@
+      @tparam dslash_type The dslash_type requested
+      @return True if enabled, false if not
+   */
+-  template <QudaDslashType dslash_type> constexpr bool is_enabled() { return false; }
+ #ifdef GPU_WILSON_DIRAC
+   template <> constexpr bool is_enabled<QUDA_WILSON_DSLASH>() { return true; }
+ #endif
+--- a/include/targets/cuda/target_device.h
++++ b/include/targets/cuda/target_device.h
+@@ -341,6 +341,12 @@
+     */
+     template <typename Arg> constexpr bool use_kernel_arg()
+     {
++#ifdef _WIN32
++      if constexpr (alignof(Arg) > 16) {
++        static_assert(!Arg::always_use_kernel_arg(), "Over-aligned kernel arguments cannot use the MSVC by-value ABI");
++        return false;
++      }
++#endif
+       return Arg::always_use_kernel_arg() ||
+         (Arg::default_use_kernel_arg() && sizeof(Arg) <= device::max_kernel_arg_size());
+     }
+--- a/include/targets/cuda/constant_kernel_arg.h
++++ b/include/targets/cuda/constant_kernel_arg.h
+@@ -14,7 +14,7 @@
+    instantiation correctly.
+  */
+ 
+-#ifndef QUDA_LARGE_KERNEL_ARG
++#if !defined(QUDA_LARGE_KERNEL_ARG) || defined(_WIN32)
+ 
+ // set a preprocessor flag that we have included constant_kernel_arg.h
+ #define QUDA_USE_CONSTANT_MEMORY
+@@ -31,9 +31,15 @@
+ #if defined(__CUDACC_RDC__) && !defined(QUDA_CONSTANT_DEFINE)
+     // rdc is enabled when NVSHMEM is enabled, so we need to make the
+     // buffer as extern and define it in one place only
++#ifdef _WIN32
++    alignas(128)
++#endif
+     extern __constant__ char buffer[max_constant_size()];
+ #else
++#ifdef _WIN32
++    alignas(128)
++#endif
+     __constant__ char buffer[max_constant_size()];
+ #endif
+ 
+     /**
+@@ -42,6 +48,9 @@
+      */
+     template <typename Arg> constexpr std::enable_if_t<!use_kernel_arg<Arg>(), Arg &> get_arg()
+     {
++#ifdef _WIN32
++      static_assert(alignof(Arg) <= 128, "Kernel argument exceeds the aligned constant buffer ABI");
++#endif
+       return reinterpret_cast<Arg &>(buffer);
+     }
+ 
+--- a/include/targets/cuda/math_helper.h
++++ b/include/targets/cuda/math_helper.h
+@@ -72,8 +72,8 @@
+   template <typename T> inline __host__ __device__ T acosh(const T a) { return ::acosh(a); }
+   template <typename T> inline __host__ __device__ T asinh(const T a) { return ::asinh(a); }
+   template <typename T> inline __host__ __device__ T cbrt(const T a) { return ::cbrt(a); }
+-  inline __host__ __device__ bool isnan(float a) { return std::isnan(a); }
+-  inline __host__ __device__ bool isnan(double a) { return std::isnan(a); }
++  inline __host__ __device__ bool isnan(float a) { return ::isnan(a); }
++  inline __host__ __device__ bool isnan(double a) { return ::isnan(a); }
+   template <typename T> inline __host__ __device__ T pow(const T a, const int b) { return ::pow(a, b); }
+   template <typename T> inline __host__ __device__ T pow(const T a, const T b) { return ::pow(a, b); }
+   template <typename T> inline __host__ __device__ T fmod(const T a, const T b) { return ::fmod(a, b); }
+--- a/include/instantiate.h
++++ b/include/instantiate.h
+@@ -189,7 +189,7 @@
+   {
+     if (U.Reconstruct() == Recon::recon[i]) {
+       if constexpr (is_enabled<Recon::recon[i]>())
+-        Apply<Float, nColor, Recon::recon[i]>(U, args...);
++        static_cast<void>(Apply<Float, nColor, Recon::recon[i]>(U, args...));
+       else
+         errorQuda("QUDA_RECONSTRUCT=%d does not enable %d", QUDA_RECONSTRUCT, Recon::recon[i]);
+     } else if constexpr (i > 0) {
+--- a/include/dbldbl.h
++++ b/include/dbldbl.h
+@@ -393,11 +393,17 @@
+ 
+ __device__ __host__ inline doubledouble abs(const doubledouble &a) { return doubledouble(abs_dbldbl(a.a)); }
+ 
++#ifdef __CUDA_ARCH__
++__device__ __host__ inline bool isinf(const doubledouble &a) { return ::isinf(a.head()); }
++__device__ __host__ inline bool isnan(const doubledouble &a) { return ::isnan(a.head()); }
++__device__ __host__ inline bool isfinite(const doubledouble &a) { return ::isfinite(a.head()); }
++#else
+ __device__ __host__ inline bool isinf(const doubledouble &a) { return std::isinf(a.head()); }
+ 
+ __device__ __host__ inline bool isnan(const doubledouble &a) { return std::isnan(a.head()); }
+ 
+ __device__ __host__ inline bool isfinite(const doubledouble &a) { return std::isfinite(a.head()); }
++#endif
+ 
+ __device__ __host__  inline bool operator>(const doubledouble &a, const doubledouble &b)
+ {
+--- a/lib/evec_project.cu
++++ b/lib/evec_project.cu
+@@ -54,8 +54,8 @@
+     for (auto tx = 0u; tx < x.size(); tx += max_nx) {
+       for (auto ty = 0u; ty < y.size(); ty += max_ny) {
+         // compute remainder here
+-        auto tile_x = std::min(max_nx, x.size() - tx);
+-        auto tile_y = std::min(max_ny, y.size() - ty);
++        auto tile_x = std::min<size_t>(max_nx, x.size() - tx);
++        auto tile_y = std::min<size_t>(max_ny, y.size() - ty);
+         std::vector<real_t> result_tile(2 * x.Nspin() * Lt * tile_x * tile_y);
+ 
+         instantiate<EvecProjectLaplace3D>(cvector_ref<const ColorSpinorField> {x.begin() + tx, x.begin() + tx + tile_x},
+--- a/include/multi_blas_helper.cuh
++++ b/include/multi_blas_helper.cuh
+@@ -240,5 +240,5 @@
+ 
+       // additional limit since there's diminished benefit past a certain point
+-      constexpr auto max_nyw = 128lu;
++      constexpr size_t max_nyw = 128;
+ 
+       return std::min(arg_nyw, std::min(coeff_nyw, max_nyw));
+@@ -295,5 +295,5 @@
+ 
+       // additional limit since there's diminished benefit past a certain point
+-      constexpr auto max_nyw = 128lu;
++      constexpr size_t max_nyw = 128;
+ 
+       return std::min(arg_nyw, std::min(coeff_nyw, max_nyw));
+--- a/lib/dslash_policy.hpp
++++ b/lib/dslash_policy.hpp
+@@ -1,3 +1,4 @@
++#include <array>
+ #include <memory>
+ #include <tune_quda.h>
+ #include <index_helper.cuh>
+--- a/lib/interface_quda.cpp
++++ b/lib/interface_quda.cpp
+@@ -470 +470 @@
+-extern char* gitversion;
++extern const char* gitversion;
+--- a/lib/tune.cpp
++++ b/lib/tune.cpp
+@@ -26 +26 @@
+-extern char *gitversion;
++extern const char *gitversion;

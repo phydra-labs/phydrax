@@ -30,7 +30,7 @@ import statistics
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from secrets import token_hex
 from typing import Any
 from xml.etree import ElementTree
@@ -625,7 +625,7 @@ def _distribution_record_valid(record: object) -> bool:
 
 
 def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]) -> bool:
-    """Bind all three architecture payloads and automatic setup to installed bytes."""
+    """Validate Linux-produced ROCm paths independently of the inspecting host."""
     try:
         bundle = provenance["rocm_bundle"]
         manifest_text = bundle["manifest"]
@@ -644,8 +644,8 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             != hashlib.sha256(manifest_text.encode()).hexdigest()
         ):
             return False
-        venv = Path(provenance["venv"])
-        manifest_path = Path(facts["bundle_manifest"])
+        venv = PurePosixPath(provenance["venv"])
+        manifest_path = PurePosixPath(facts["bundle_manifest"])
         if (
             not venv.is_absolute()
             or not manifest_path.is_absolute()
@@ -694,7 +694,7 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             inventory_paths = set()
             for item in inventory:
                 relative = item["path"]
-                path = Path(relative)
+                path = PurePosixPath(relative)
                 if (
                     path.is_absolute()
                     or ".." in path.parts
@@ -736,7 +736,7 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             ("LLVM_PATH", "llvm_path"),
             ("HIP_DEVICE_LIB_PATH", "bitcode_path"),
         ):
-            relative = Path(compiler[key])
+            relative = PurePosixPath(compiler[key])
             if relative.is_absolute() or ".." in relative.parts:
                 return False
             if environment.get(variable) != str(site / relative):
@@ -997,7 +997,7 @@ def _qualify_device(
         "from tools._accelerator_process import write_json_evidence\n"
         "import jax,jax.numpy as jnp\n"
         f"provenance=installed_provenance(Path({str(venv)!r}),json.loads(Path({str(expected)!r}).read_text()))\n"
-        "with jax.default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
+        "with phx.execution.default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
         "diagnostics=diagnostic_evidence()\n"
         f"write_json_evidence(Path({str(probe_path)!r}),dict(provenance=provenance,runtime=runtime,diagnostics=diagnostics))\n"
         "print(json.dumps(dict(status='observed')))"

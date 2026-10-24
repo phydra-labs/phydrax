@@ -1,0 +1,759 @@
+{
+  "capabilities": [
+    "cuda",
+    "custom_calls",
+    "ffi",
+    "profiler",
+    "sparse_qr",
+    "xla_triton_codegen"
+  ],
+  "capability_evidence": {
+    "sparse_qr": {
+      "module": "jax_cuda13_plugin._solver",
+      "prefix_source_line": 49,
+      "prefix_source_path": "jaxlib/gpu/vendor.h",
+      "qualification": "Source-backed build capability only; installed-wheel numerical qualification is required.",
+      "registration": "cusolver_csrlsvqr_ffi",
+      "revision": "8dcb7aeced770bd22531b42d0b925c7342787c27",
+      "runtime_admission": "Require the actual module registrations map to contain cusolver_csrlsvqr_ffi.",
+      "source": "jax",
+      "source_lines": [
+        45,
+        46,
+        47,
+        48,
+        49
+      ],
+      "source_path": "jaxlib/gpu/solver.cc",
+      "target": "//jaxlib/cuda:_solver"
+    }
+  },
+  "dropped_port_hunks": [
+    "Triton GCNAsmFormat.h: file removed upstream"
+  ],
+  "license_sources": [
+    {
+      "path": "licenses/jax-native-LICENSE.txt",
+      "source": "jax",
+      "source_path": "jaxlib/tools/LICENSE.txt"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+tensor_ir/LICENSE",
+      "path": "licenses/tensor_ir-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+cuda_tile/LICENSE.txt",
+      "path": "licenses/cuda_tile-LICENSE.txt"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+stablehlo/LICENSE",
+      "path": "licenses/stablehlo-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+shardy/LICENSE",
+      "path": "licenses/shardy-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+XNNPACK/LICENSE",
+      "path": "licenses/XNNPACK-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+slinky/LICENSE",
+      "path": "licenses/slinky-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+ducc/src/ducc0/fft/fft.h",
+      "license_choice": "BSD-3-Clause",
+      "line_range": [
+        1,
+        37
+      ],
+      "path": "licenses/ducc-BSD-3-Clause"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+onednn_async/THIRD-PARTY-PROGRAMS",
+      "path": "licenses/oneDNN-THIRD-PARTY-PROGRAMS"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+org_brotli/LICENSE",
+      "path": "licenses/brotli-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++llvm_extension+llvm_xz/COPYING",
+      "path": "licenses/xz-COPYING"
+    },
+    {
+      "build_path": "bazel-output/external/xla++llvm_extension+llvm_xz/COPYING.0BSD",
+      "path": "licenses/xz-COPYING.0BSD"
+    },
+    {
+      "archive_member": "zstd-1.5.7/LICENSE",
+      "archive_sha256": "7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4",
+      "license_choice": "BSD-3-Clause",
+      "path": "licenses/zstd-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/highway+/LICENSE",
+      "path": "licenses/highway-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/jsoncpp+/LICENSE",
+      "path": "licenses/jsoncpp-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+cpuinfo/LICENSE",
+      "path": "licenses/cpuinfo-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+nanobind/LICENSE",
+      "path": "licenses/nanobind-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+riegeli/LICENSE",
+      "path": "licenses/riegeli-LICENSE"
+    },
+    {
+      "path": "licenses/protobuf-utf8_range-LICENSE",
+      "source": "protobuf",
+      "source_path": "third_party/utf8_range/LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/grpc+/NOTICE.txt",
+      "path": "licenses/gRPC-NOTICE.txt"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+cudnn_frontend_archive/LICENSE.txt",
+      "path": "licenses/cudnn_frontend-LICENSE.txt"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+ml_dtypes_py/LICENSE",
+      "path": "licenses/ml_dtypes-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+ml_dtypes_py/LICENSE.eigen",
+      "path": "licenses/ml_dtypes-LICENSE.eigen"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+robin_map/LICENSE",
+      "path": "licenses/robin_map-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+spdlog/LICENSE",
+      "path": "licenses/spdlog-LICENSE"
+    },
+    {
+      "build_path": "bazel-output/external/xla++third_party_ext+fmt/LICENSE.rst",
+      "path": "licenses/fmt-LICENSE.rst"
+    },
+    {
+      "archive_member": "NVTX-3.5.0/LICENSE.txt",
+      "archive_sha256": "f244c5eec33f9769123a755dda1e9b80339345ab278cf9542ff34677c88804b5",
+      "path": "licenses/NVTX-LICENSE.txt"
+    },
+    {
+      "build_path": "cuda-redist/cccl/cccl-windows-x86_64-13.3.3.3.1-archive/LICENSE",
+      "path": "licenses/CCCL-LICENSE"
+    },
+    {
+      "path": "licenses/rapids_logger-LICENSE",
+      "source": "rapids_logger",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/rmm-LICENSE",
+      "source": "rmm",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/rules_ml_toolchain-LICENSE",
+      "source": "rules_ml_toolchain",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/raft-LICENSE",
+      "source": "raft",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/abseil-LICENSE",
+      "source": "abseil",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/protobuf-LICENSE",
+      "source": "protobuf",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/triton-LICENSE",
+      "source": "triton",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/eigen-COPYING.APACHE",
+      "source": "eigen",
+      "source_path": "COPYING.APACHE"
+    },
+    {
+      "path": "licenses/eigen-COPYING.BSD",
+      "source": "eigen",
+      "source_path": "COPYING.BSD"
+    },
+    {
+      "path": "licenses/eigen-COPYING.MINPACK",
+      "source": "eigen",
+      "source_path": "COPYING.MINPACK"
+    },
+    {
+      "path": "licenses/eigen-COPYING.MPL2",
+      "source": "eigen",
+      "source_path": "COPYING.MPL2"
+    },
+    {
+      "path": "licenses/eigen-COPYING.README",
+      "source": "eigen",
+      "source_path": "COPYING.README"
+    },
+    {
+      "path": "licenses/eigen-LICENSE",
+      "source": "eigen",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/jax-LICENSE",
+      "source": "jax",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/xla-LICENSE",
+      "source": "xla",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/Phydrax-LICENSE",
+      "source": "phydrax",
+      "source_path": "LICENSE"
+    },
+    {
+      "path": "licenses/CUDA-LICENSE",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/LICENSE.txt"
+    },
+    {
+      "path": "licenses/LLVM-LICENSE",
+      "url": "https://raw.githubusercontent.com/llvm/llvm-project/2b35fb9283a44aae92cb72a41d077ee8de2be7ad/llvm/LICENSE.TXT"
+    }
+  ],
+  "licenses": {
+    "licenses/CCCL-LICENSE": "f96f51edda77fb9897de29d924d615e6bd153f4969db85fc6b7a22d7a624631e",
+    "licenses/CUDA-LICENSE": "e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07",
+    "licenses/LLVM-LICENSE": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee",
+    "licenses/NVTX-LICENSE.txt": "abdfd8a6738b27cd1504e091f77b682dbae928339f040b8a6f59a548245991a0",
+    "licenses/Phydrax-LICENSE": "fb10f93ec0caaaaa4ba15d619484757464db11bbbd65ada2a5707e46ee18c3d6",
+    "licenses/XNNPACK-LICENSE": "63f519e15726f4c4f830bd958f694c84fecb4e0a4cacc527d2696bb71ef95ada",
+    "licenses/abseil-LICENSE": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747",
+    "licenses/brotli-LICENSE": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+    "licenses/cpuinfo-LICENSE": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70",
+    "licenses/cuda_tile-LICENSE.txt": "84d6c973baba1be2ed69e4f267c10bcda823323866b399f46e86b1a5be92da39",
+    "licenses/cudnn_frontend-LICENSE.txt": "3fc4b473a2c08768a8066bf7e4a58a1185060f3ad674f2ca9e2011bca4adf2ce",
+    "licenses/ducc-BSD-3-Clause": "8702f117b525f03e2d73c277a968a96e8309cd08dd045364f96f538005d2926f",
+    "licenses/eigen-COPYING.APACHE": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7",
+    "licenses/eigen-COPYING.BSD": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb",
+    "licenses/eigen-COPYING.MINPACK": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0",
+    "licenses/eigen-COPYING.MPL2": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+    "licenses/eigen-COPYING.README": "0aafdc086877b9f6cdded871bfbe6b3947306c9fb91f0354d4876179b675a943",
+    "licenses/eigen-LICENSE": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+    "licenses/fmt-LICENSE.rst": "825c9324e70f8c839c8ba910543dd4a7daee243b86ef960594c11381a19980b8",
+    "licenses/gRPC-NOTICE.txt": "693ff28ec216d5112ac1bbfe64ef539005867d1c7bd427b57d579683293b947f",
+    "licenses/highway-LICENSE": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af",
+    "licenses/jax-LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/jax-native-LICENSE.txt": "e3d8688a2c75d4e33641cc88046a8a1593ee79822411fa45a7bd32e37f847d29",
+    "licenses/jsoncpp-LICENSE": "cec0db5f6d7ed6b3a72647bd50aed02e13c3377fd44382b96dc2915534c042ad",
+    "licenses/ml_dtypes-LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/ml_dtypes-LICENSE.eigen": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+    "licenses/nanobind-LICENSE": "f305091a4e57805870b217a28ea4b1f16610eece8457d2370f822a9696b75836",
+    "licenses/oneDNN-THIRD-PARTY-PROGRAMS": "2567c1c5cab0ed7709dac7ac0d0aea504f6fb8bb4bd221ef8718defadecf0fa3",
+    "licenses/protobuf-LICENSE": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+    "licenses/protobuf-utf8_range-LICENSE": "02de69b64fc36d9e938f418e52723e42f0b2b226d58a9cb3c8dcbdf7059f5074",
+    "licenses/raft-LICENSE": "756005f963846334943e8bfc08ef98cd254257d8467ac7a7ffd42a1be262f442",
+    "licenses/rapids_logger-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "licenses/riegeli-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "licenses/rmm-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "licenses/robin_map-LICENSE": "11f2c685ba565a31aef1219f63a7a8845602c97bff70016b9e3278dfe51a2ec5",
+    "licenses/rules_ml_toolchain-LICENSE": "f9946796a8a5bd5981565142fa42e3b0cc36aef6f80e86beaf5905b3c0fef1b5",
+    "licenses/shardy-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "licenses/slinky-LICENSE": "1cd94109c5cf7d9de182125c1f8ca4077592de982b400714f6691ba712dcc41e",
+    "licenses/spdlog-LICENSE": "4ccecab18d1ff0b61174fe3d6c430541625d3ddb865b0d5887db296f883c76e7",
+    "licenses/stablehlo-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "licenses/tensor_ir-LICENSE": "555dd2b91d48b500b72409223b3ff5190202a86c5b439b679e3e9f43491f6ded",
+    "licenses/triton-LICENSE": "92640fb97222fd0a698ff28ce0c3782c172623f8d6c609b557636a80f28fb946",
+    "licenses/xla-LICENSE": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+    "licenses/xz-COPYING": "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8",
+    "licenses/xz-COPYING.0BSD": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+    "licenses/zstd-LICENSE": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+  },
+  "patches": [
+    {
+      "path": "patches/jax/windows-module-graph.patch",
+      "sha256": "ae599196f0ae7ffe28c0a95e40b9c7b34ec880e4fe0a35378c239a12ce12a8b3",
+      "source": "jax"
+    },
+    {
+      "path": "patches/jax/windows-wheel-build.patch",
+      "sha256": "fca9d09a427bbc4b3535f83ed8b764a54846663a00662324b38881b2799d9e29",
+      "source": "jax"
+    },
+    {
+      "path": "patches/rules_python/windows-port.patch",
+      "sha256": "1e1d1ea4b813916d77ee92a8adb5120cd412dbd62027a6a58e34f3a749cfddb9",
+      "source": "rules_python"
+    },
+    {
+      "path": "patches/xla/windows-module-graph.patch",
+      "sha256": "0a9ebc7db1a5ad52fe6cc76bf0fa8211e3b61ded99668f63e87dc5e39b4a71a0",
+      "source": "xla"
+    },
+    {
+      "path": "patches/xla/windows-tensor-ir-series.patch",
+      "sha256": "92987e3b0d86309dd0f15c2817656ecae525d5e269d7947d58917f0fdfc10a5f",
+      "source": "xla"
+    },
+    {
+      "path": "patches/tensor_ir/windows-port.patch",
+      "sha256": "ba70768ad7a109f166fddcfc7d766d0ae5a233dac6306ab08a8e1487b96011ad",
+      "source": "tensor_ir"
+    },
+    {
+      "path": "patches/jax/windows-kernels.patch",
+      "sha256": "0cabbf4ce65bdbc4d5b4bfc159888fc48c592490ac1f26c24aeeff2f7cf121c6",
+      "source": "jax"
+    },
+    {
+      "path": "patches/xla/windows-port.patch",
+      "sha256": "14848d61896b2f93498d8f4311408d53c47057f192e98d7cff8206be558e50fb",
+      "source": "xla"
+    },
+    {
+      "path": "patches/com_google_absl/windows-port.patch",
+      "sha256": "ddae9866a2f93f18af80afafe44c74b634afbacceb1a8c7e8a0124370f81e7f1",
+      "source": "abseil"
+    },
+    {
+      "path": "patches/com_google_protobuf/windows-port.patch",
+      "sha256": "c4e432e3ecf7e60b31f00c66873643d2517dee6d33ea552f1cf718e3c4efb290",
+      "source": "protobuf"
+    },
+    {
+      "path": "patches/eigen_archive/windows-port.patch",
+      "sha256": "c6d798c394b605a0330c679a8e3ae45bca1c24b7f7dffdf7f22e3598205bc79e",
+      "source": "eigen"
+    },
+    {
+      "path": "patches/raft/windows-port.patch",
+      "sha256": "3910e8f15eb6bfdd68a4b9e3693dd268a9137a4071bb4f73b8827343c2bb7e2c",
+      "source": "raft"
+    },
+    {
+      "path": "patches/rmm/windows-port.patch",
+      "sha256": "763b22b775142d75dc9b8350641f478a5dee2ef61b05d73e6441cab937bda8df",
+      "source": "rmm"
+    },
+    {
+      "path": "patches/rapids_logger/windows-port.patch",
+      "sha256": "b190c3351a1179b26de8234ec17f570b2a308caed9268759b74500b6717a47df",
+      "source": "rapids_logger"
+    },
+    {
+      "path": "patches/triton/windows-port.patch",
+      "sha256": "786aece2ff42672f16e709b191403d8b4e1944c47f46648441faa75e863fd35b",
+      "source": "triton"
+    },
+    {
+      "path": "patches/winjax/windows-toolchain.patch",
+      "phase": "toolchain",
+      "sha256": "c21689e7bae31fd9063a184a649952303e27e467e1bf67c4b4970a2734a7a0a9",
+      "source": "winjax"
+    },
+    {
+      "path": "patches/cccl/0001-string-view-host-device-deduction-guides.patch",
+      "phase": "toolchain",
+      "sha256": "7e409a3445e30456af39e639f06d6bdbdd3783646a99bb9b53a971015f1760e1",
+      "source": "cuda_cccl"
+    },
+    {
+      "path": "patches/cccl/0002-cccl-throw-std-qualification.patch",
+      "phase": "toolchain",
+      "sha256": "368a9891d2ff71ec07c85fb9584e3daff8a36ca0063db1aef1b46b8a74a69359",
+      "source": "cuda_cccl"
+    }
+  ],
+  "port_lineage": {
+    "license_status": "packaging/winjax/pyproject.toml declares Apache-2.0; inherited templates retain Apache notices. No repository-wide license file; declaration scope for original root configure/wrapper code needs rights review. Build-only, not included in wheels.",
+    "native_repository": "https://github.com/eterevsky/xla",
+    "native_revision": "9a28ad95fb9bab712917188e622fc1595ca9ead7",
+    "redistributed": false,
+    "repository": "https://github.com/eterevsky/winjax",
+    "revision": "43824c1930b69f2f77f066296eb5f29024ab46fa",
+    "sha256": "e24484d8404bdc7fa0d46b8a3d75da1407a030c2b8c900257dd3d51d0a90b165",
+    "url": "https://codeload.github.com/eterevsky/winjax/tar.gz/43824c1930b69f2f77f066296eb5f29024ab46fa"
+  },
+  "recipe_inputs": {
+    "native/cuda13_pjrt/toolchains/configure.py": "5b9e837bebde68ac92de8bf597001f97ac976a94502bbbd104e36373550469a6",
+    "tools/build_cuda_pjrt_wheels.py": "3cf263244039c4ed3e88bfd33fe70d63cc2a2e7ef1b64b30dc6c556523ec689d"
+  },
+  "required_kernels": [
+    "_hybrid",
+    "_linalg",
+    "_prng",
+    "_rnn",
+    "_solver",
+    "_sparse",
+    "_triton",
+    "_versions",
+    "cuda_plugin_extension"
+  ],
+  "sources": [
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "jax",
+      "repository": "https://github.com/jax-ml/jax",
+      "revision": "8dcb7aeced770bd22531b42d0b925c7342787c27",
+      "sha256": "9677e119ba5d88776559b6ef4c4f3db71dd1a4afb6a83c6150ce21c7e9b41c52",
+      "strip_prefix": "jax-8dcb7aeced770bd22531b42d0b925c7342787c27",
+      "url": "https://codeload.github.com/jax-ml/jax/tar.gz/8dcb7aeced770bd22531b42d0b925c7342787c27"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "xla",
+      "repository": "https://github.com/openxla/xla",
+      "revision": "d867969800d4a8fd045505eabc65e1e66f30794f",
+      "sha256": "50a67f42a9f8536ef84cbe2de5c988f3b33dc9844857392c6e61690b2e7fdf88",
+      "strip_prefix": "xla-d867969800d4a8fd045505eabc65e1e66f30794f",
+      "url": "https://codeload.github.com/openxla/xla/tar.gz/d867969800d4a8fd045505eabc65e1e66f30794f"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "rapids_logger",
+      "repository": "https://github.com/rapidsai/rapids-logger",
+      "revision": "v0.2.3",
+      "sha256": "36578b337993cdbc7f4c52e5d871289628ac408f3a6028ab4e73a64fcdaa9412",
+      "strip_prefix": "rapids-logger-0.2.3",
+      "url": "https://codeload.github.com/rapidsai/rapids-logger/tar.gz/v0.2.3"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "rmm",
+      "repository": "https://github.com/rapidsai/rmm",
+      "revision": "v26.02.00",
+      "sha256": "f7460ec9f177d79e8a709b7011cd11392059bcbd906336f4f5b90ef2b5547683",
+      "strip_prefix": "rmm-26.02.00",
+      "url": "https://codeload.github.com/rapidsai/rmm/tar.gz/v26.02.00"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "rules_ml_toolchain",
+      "repository": "https://github.com/google-ml-infra/rules_ml_toolchain",
+      "revision": "3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
+      "sha256": "f7ee2ba7040cbfbecfc40f8018c5a9c1c8e2a1a9161e2e2727b510d223c7ac9a",
+      "strip_prefix": "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
+      "url": "https://codeload.github.com/google-ml-infra/rules_ml_toolchain/tar.gz/3a4df0c8e9e51687ac4c62c793a00a27286e5e83"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "raft",
+      "repository": "https://github.com/rapidsai/raft",
+      "revision": "v26.02.00",
+      "sha256": "b4c005c70d9e1281a65dc30dc39051d1e4e713130da1fa0b76df832064674b59",
+      "strip_prefix": "raft-26.02.00",
+      "url": "https://codeload.github.com/rapidsai/raft/tar.gz/v26.02.00"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "abseil",
+      "repository": "https://github.com/abseil/abseil-cpp",
+      "revision": "20260526.0",
+      "sha256": "6e1aee535473414164bf83e4ebc40240dec71a4701f8a642d906e95bea1aea0c",
+      "strip_prefix": "abseil-cpp-20260526.0",
+      "url": "https://codeload.github.com/abseil/abseil-cpp/tar.gz/20260526.0"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "protobuf",
+      "repository": "https://github.com/protocolbuffers/protobuf",
+      "revision": "v35.1",
+      "sha256": "22775f9376938295efa2d59a59bde4cd075a42df5a9b4d27aa9b99fa6a413bd2",
+      "strip_prefix": "protobuf-35.1",
+      "url": "https://codeload.github.com/protocolbuffers/protobuf/tar.gz/v35.1"
+    },
+    {
+      "license_files": [
+        "LICENSE"
+      ],
+      "name": "triton",
+      "repository": "https://github.com/triton-lang/triton",
+      "revision": "b575c0c38d428a609e25487db64051a5fa7bfab8",
+      "sha256": "8af8fff829127873870396b6fc0a6e402b1fb5ca96692126c9138ba2710b0346",
+      "strip_prefix": "triton-b575c0c38d428a609e25487db64051a5fa7bfab8",
+      "url": "https://codeload.github.com/triton-lang/triton/tar.gz/b575c0c38d428a609e25487db64051a5fa7bfab8"
+    },
+    {
+      "license_files": [
+        "COPYING.APACHE",
+        "COPYING.BSD",
+        "COPYING.MINPACK",
+        "COPYING.MPL2",
+        "COPYING.README",
+        "LICENSE"
+      ],
+      "name": "eigen",
+      "repository": "https://gitlab.com/libeigen/eigen",
+      "revision": "ea13a98decd497a8c5588fb5de71b57bcf10d864",
+      "sha256": "35c6126e246585d9cf6600b65471582c2701aae64b784a6fd19168a90cfc841e",
+      "strip_prefix": "eigen-ea13a98decd497a8c5588fb5de71b57bcf10d864",
+      "url": "https://storage.googleapis.com/mirror.tensorflow.org/gitlab.com/libeigen/eigen/-/archive/ea13a98decd497a8c5588fb5de71b57bcf10d864/eigen-ea13a98decd497a8c5588fb5de71b57bcf10d864.tar.gz"
+    }
+  ],
+  "toolchain": {
+    "bazel_sha256": "5fc2f2805b8c697a54732558576938d06bab63aa0f9b6610cc01d2cae0388705",
+    "bazel_url": "https://releases.bazel.build/9.2.0/release/bazel-9.2.0-windows-x86_64.exe",
+    "bazel_version": "9.2.0",
+    "compiler": "clang-cl host / clang++ CUDA; MSVC ABI",
+    "cuda_compute_capabilities": [
+      "sm_120"
+    ],
+    "cuda_metadata_sha256": "507eddaab1360336bc0fe17b77552e0b7dfe1e74da888671c3a2f5fad7775db1",
+    "cuda_redistributables": [
+      {
+        "license": "CCCL EULA",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cccl/LICENSE.txt",
+        "md5": "733b7312dfaf8dd67b080190ccbfe343",
+        "name": "cccl",
+        "relative_path": "cccl/windows-x86_64/cccl-windows-x86_64-13.3.3.3.1-archive.zip",
+        "sha256": "607dcfca31da168171fbdae5b7096ade646c4c2b1e0ff2899077dde0ccbdd6fb",
+        "size": "3544189",
+        "version": "13.3.3.3.1"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_crt/LICENSE.txt",
+        "md5": "3afe8200e49c16314b5f5ec0bf55a52c",
+        "name": "cuda_crt",
+        "relative_path": "cuda_crt/windows-x86_64/cuda_crt-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "752c528281a06a0ddf89237d760ffd6acde1b9cd59efc35803c2591127ef55f0",
+        "size": "163110",
+        "version": "13.3.33"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/LICENSE.txt",
+        "md5": "38e6477bad56eca8e6bed74b6f5efb6b",
+        "name": "cuda_cudart",
+        "relative_path": "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-13.3.29-archive.zip",
+        "sha256": "1feb7dd266813ffe8dbc24e115183a5ac35a4795c8d34aca0df85ab616b64d9c",
+        "size": "2589792",
+        "version": "13.3.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cupti/LICENSE.txt",
+        "md5": "570053f3c2f249bbcd220a6d51fd22ae",
+        "name": "cuda_cupti",
+        "relative_path": "cuda_cupti/windows-x86_64/cuda_cupti-windows-x86_64-13.3.35-archive.zip",
+        "sha256": "51d7b1a6e66f343cda1dff0fbd3309a0031034834f33f825e6ab87b7ad0b174b",
+        "size": "14155281",
+        "version": "13.3.35"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/LICENSE.txt",
+        "md5": "80e4219a2e7cf34ac41921635c2fdc50",
+        "name": "cuda_nvcc",
+        "relative_path": "cuda_nvcc/windows-x86_64/cuda_nvcc-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "8fed1ab69ed4e637ad76baff572579630674df9ff02570777800782ee5bdfbc5",
+        "size": "31959263",
+        "version": "13.3.33"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvdisasm/LICENSE.txt",
+        "md5": "08e452b44299f597edb44a9d1bea7191",
+        "name": "cuda_nvdisasm",
+        "relative_path": "cuda_nvdisasm/windows-x86_64/cuda_nvdisasm-windows-x86_64-13.3.29-archive.zip",
+        "sha256": "b37b06979b064e51207d6761c575a68c5e5adb1f213f014551870a995b5c17e3",
+        "size": "4999385",
+        "version": "13.3.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvml_dev/LICENSE.txt",
+        "md5": "aed95a496ded8db99d0d5b152f9695bb",
+        "name": "cuda_nvml_dev",
+        "relative_path": "cuda_nvml_dev/windows-x86_64/cuda_nvml_dev-windows-x86_64-13.3.29-archive.zip",
+        "sha256": "4e1bd1c66dd66293c6d94b1ed2efa5065654533b36ccbc7477dc1f466dc3d65c",
+        "size": "174612",
+        "version": "13.3.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/LICENSE.txt",
+        "md5": "d0b0b28b765ace7adc6466343fcf1c35",
+        "name": "cuda_nvrtc",
+        "relative_path": "cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "8519f678588610bf380ccaac130729aa1a624c407183e7ad9c319c19ecc63d2f",
+        "size": "312126196",
+        "version": "13.3.33"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvtx/LICENSE.txt",
+        "md5": "39203e6bdcfbfcb281ac998168998310",
+        "name": "cuda_nvtx",
+        "relative_path": "cuda_nvtx/windows-x86_64/cuda_nvtx-windows-x86_64-13.3.29-archive.zip",
+        "sha256": "027baa3516c9a9c8512721e9bb3d0415c6d6bde93ec9521fa1d39a413f9f1844",
+        "size": "152549",
+        "version": "13.3.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_profiler_api/LICENSE.txt",
+        "md5": "72f95826e266670dc0ae93dbf47f6729",
+        "name": "cuda_profiler_api",
+        "relative_path": "cuda_profiler_api/windows-x86_64/cuda_profiler_api-windows-x86_64-13.3.27-archive.zip",
+        "sha256": "b41e9634dee36a7c31e121f636c43ba8b461de03de678bcb918060bd352fa2b8",
+        "size": "21250",
+        "version": "13.3.27"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/LICENSE.txt",
+        "md5": "033b2cc750213afc19e7409fbbc85686",
+        "name": "libcublas",
+        "relative_path": "libcublas/windows-x86_64/libcublas-windows-x86_64-13.5.1.27-archive.zip",
+        "sha256": "c946e1c825e05895747a95ed4fee18030b08052c09783b9b7b19818fd2e31f58",
+        "size": "391055517",
+        "version": "13.5.1.27"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/LICENSE.txt",
+        "md5": "7eca9509a39aa662d75d3834d3c9cb42",
+        "name": "libcufft",
+        "relative_path": "libcufft/windows-x86_64/libcufft-windows-x86_64-12.3.0.29-archive.zip",
+        "sha256": "83df908ae67e2b3a86201de8463562ab49dd9ee8b3b5efc3fdc2e681b14b5dd9",
+        "size": "182627436",
+        "version": "12.3.0.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libcurand/LICENSE.txt",
+        "md5": "04c07f76f70b1f2357ca97577b394b31",
+        "name": "libcurand",
+        "relative_path": "libcurand/windows-x86_64/libcurand-windows-x86_64-10.4.3.29-archive.zip",
+        "sha256": "d3c518485188990666cf9ad848dab40cd0f686a6760344a52fc9eed24acc5b49",
+        "size": "54953801",
+        "version": "10.4.3.29"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libcusolver/LICENSE.txt",
+        "md5": "c3ac89e465d86aa96d81c9b99e263b7c",
+        "name": "libcusolver",
+        "relative_path": "libcusolver/windows-x86_64/libcusolver-windows-x86_64-12.2.2.18-archive.zip",
+        "sha256": "1a25d1671bcbc96aefe481549a5f61563bc022f3aebb5bc598f70d727d69d7bb",
+        "size": "218734586",
+        "version": "12.2.2.18"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libcusparse/LICENSE.txt",
+        "md5": "f0ea33c109da49d634162d523e4023e1",
+        "name": "libcusparse",
+        "relative_path": "libcusparse/windows-x86_64/libcusparse-windows-x86_64-12.8.1.7-archive.zip",
+        "sha256": "bfd1e9f3db523f7a1e77ab47cddb41a7bd85d65070191926012153b19473507e",
+        "size": "152435128",
+        "version": "12.8.1.7"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libnvjitlink/LICENSE.txt",
+        "md5": "e90cea350b27b1671311cc1034b9ea85",
+        "name": "libnvjitlink",
+        "relative_path": "libnvjitlink/windows-x86_64/libnvjitlink-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "43bc22509507c138c86885191bb2709b5d23506ea6abdc8bc64d9960e2b63363",
+        "size": "274601597",
+        "version": "13.3.33"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libnvptxcompiler/LICENSE.txt",
+        "md5": "ad151e4d8709b1287084521cd04fd08a",
+        "name": "libnvptxcompiler",
+        "relative_path": "libnvptxcompiler/windows-x86_64/libnvptxcompiler-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "7bc5ffd885fb96b07fd8a601a3a7ebe06612730ca5453a6dda9197a848e84998",
+        "size": "48105367",
+        "version": "13.3.33"
+      },
+      {
+        "license": "CUDA Toolkit",
+        "license_url": "https://developer.download.nvidia.com/compute/cuda/redist/libnvvm/LICENSE.txt",
+        "md5": "143904101490b3a7eb86e9bb685f1e0e",
+        "name": "libnvvm",
+        "relative_path": "libnvvm/windows-x86_64/libnvvm-windows-x86_64-13.3.33-archive.zip",
+        "sha256": "e8e48fcceb3ffeb3e421f29fc40252580c6dfd2a841bea3490782233048a5f00",
+        "size": "58567644",
+        "version": "13.3.33"
+      }
+    ],
+    "cuda_runtime_linkage": {
+      "cuda.lib": "NVIDIA static driver dispatch-loader thunks",
+      "cudart.lib": "NVIDIA static hybrid-runtime dispatch-loader thunks",
+      "installed_driver_build_input": false,
+      "runtime_owner": "NVIDIA display driver; runtime identity requires installed-wheel qualification"
+    },
+    "cuda_version": "13.3",
+    "cudnn_wheel": {
+      "filename": "nvidia_cudnn_cu13-9.27.0.42-py3-none-win_amd64.whl",
+      "sha256": "7d96f634adafd55c72231eb0500ca77ab109ec8ebff7b33000b76e081bc4558e",
+      "url": "https://files.pythonhosted.org/packages/87/6a/e55ff0ac26a5c6e2b21f41c9d04ad096b4ed6da593fba7e25845c61b0532/nvidia_cudnn_cu13-9.27.0.42-py3-none-win_amd64.whl"
+    },
+    "host": "x86_64-pc-windows-msvc",
+    "llvm_minimum_major": 20,
+    "llvm_version": "22.1.8",
+    "msvc_toolset_version": "14.51.36231",
+    "python": "3.13",
+    "toolchain_paths": "explicit profile-local inputs; no discovery",
+    "windows_sdk_version": "10.0.26100.0"
+  },
+  "unsupported_capabilities": [
+    "distributed",
+    "mosaic_gpu",
+    "pallas_gpu"
+  ],
+  "upstream_fixes_retained": [
+    "xla/pjrt/common_pjrt_client.cc: LinearizeIntoImpl dependency evaluated before move",
+    "xla/core/host_offloading/host_offloading_nanort_executable.cc: program shape evaluated before move",
+    "xla/ffi/call_frame.h: exact bool attribute overload",
+    "xla/tsl/framework/bfc_allocator.cc: granularity-aware strict allocator progress"
+  ],
+  "upstream_module_graph": {
+    "jax_module_sha256": "5820d9280ee73da9ff012a97dc97891fde827268e579288c5e78f2be7d715eea",
+    "llvm_archive_sha256": "b61c85c97cde1c3e96ea7cfd09737c24578d6d0656c392d79ce402da6904b828",
+    "llvm_revision": "2b35fb9283a44aae92cb72a41d077ee8de2be7ad",
+    "xla_module_sha256": "ca6a60ac2b145ac0ce7391b598945f27cb5a481fc1f6787bc8dcbe5bf02d087e"
+  }
+}

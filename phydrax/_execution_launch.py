@@ -283,6 +283,10 @@ def _supervisor_exchange(
 
 def require_local_process_supervision() -> LocalProcessSupervision:
     """Acquire a freshly confirmed supervisor for an explicit collective lease."""
+    if os.name != "posix":
+        raise RuntimeError(
+            "Live local process supervision requires POSIX process groups."
+        )
     payload = _supervisor_exchange("active")
     integer_fields = (
         "parent_pid",
@@ -400,6 +404,8 @@ def _supervisor_requests(
 
 
 def _kill_launch_group(group: int) -> None:
+    if os.name != "posix":
+        raise RuntimeError("Local launch teardown requires POSIX process groups.")
     try:
         os.killpg(group, signal.SIGKILL)
     except ProcessLookupError:
@@ -892,7 +898,7 @@ def _spawn_mpi_launcher(
 
 
 def _accept_mpi_channels(state: _MPILaunchState) -> None:
-    if not hasattr(socket, "SO_PEERCRED"):
+    if sys.platform != "linux" or not hasattr(socket, "SO_PEERCRED"):
         raise RuntimeError(
             "Authenticated site MPI launching requires Linux peer credentials and /proc."
         )
@@ -916,6 +922,10 @@ def _accept_mpi_channels(state: _MPILaunchState) -> None:
 def _validated_mpi_registration(
     state: _MPILaunchState, connection: _MPISupervisorChannel, request: dict[str, Any]
 ) -> tuple[int, str, int, int]:
+    if sys.platform != "linux":
+        raise RuntimeError(
+            "Authenticated MPI registration requires Linux process groups."
+        )
     rank = request.get("process_id")
     role = request.get("role")
     process = state.process
@@ -992,6 +1002,8 @@ def _record_mpi_spawn(
     rank: int,
     request: dict[str, Any],
 ) -> None:
+    if sys.platform != "linux":
+        raise RuntimeError("Authenticated MPI workers require Linux process groups.")
     child_pid = request.get("worker_pid")
     if (
         connection.role != "monitor"
@@ -1036,6 +1048,8 @@ def _record_mpi_exit(
 def _require_mpi_rank_live(
     state: _MPILaunchState, connection: _MPISupervisorChannel, rank: int
 ) -> None:
+    if sys.platform != "linux":
+        raise RuntimeError("Authenticated MPI supervision requires Linux process groups.")
     identity = state.identities[rank]
     if connection.role != "rank" or identity is None:
         raise RuntimeError("MPI supervision requires the registered worker channel.")
@@ -1079,6 +1093,8 @@ def _reply_mpi_request(
     rank: int,
     challenge: str,
 ) -> None:
+    if sys.platform != "linux":
+        raise RuntimeError("Authenticated MPI supervision requires Linux process groups.")
     parent_pid, _ = _linux_process_identity(connection.peer_pid)
     identity = state.job.identity(
         connection.peer_pid, parent_pid, os.getpgid(connection.peer_pid), rank
@@ -1241,6 +1257,8 @@ def _launch_mpi_processes(
     timeout_seconds: float,
     max_output_bytes: int,
 ) -> tuple[LocalProcessResult, ...]:
+    if sys.platform != "linux":
+        raise RuntimeError("Authenticated site MPI launching requires Linux.")
     launcher_arguments = _admit_mpi_launcher(mpi_launcher, plan)
     job = _LaunchJob(plan, timeout_seconds, max_output_bytes)
     with (
@@ -1269,6 +1287,8 @@ def _launch_mpi_processes(
 
 def _mpi_bootstrap(config_path: str, *, monitor: bool) -> int:
     """Preserve the real MPI slot environment; never initialize another world."""
+    if sys.platform != "linux":
+        raise RuntimeError("Authenticated site MPI bootstrap requires Linux.")
     config: Any = json.loads(Path(config_path).read_text(encoding="utf-8"))
     plan = LocalProcessLaunchPlan(
         config["num_processes"],

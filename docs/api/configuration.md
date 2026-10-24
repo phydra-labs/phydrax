@@ -50,6 +50,15 @@ The configuration facade does not downcast models or change scientific dtype
 policies. See [Apple GPU execution](../guides_metal_execution.md) and the
 [Metal environment API](backends.md#apple-metal-environment).
 
+Native Windows CUDA intent is admitted through installed runtime metadata before
+device initialization. Missing, incompatible, or corrupt plugin installations
+are errors on Windows; selecting a CUDA extra is not permission for an implicit
+CPU substitute. Explicit `RuntimeConfig(platforms=("cpu",))` or
+`JAX_PLATFORMS=cpu` preserves deliberate CPU execution with an intact stack.
+Windows distributed bootstrap refuses before coordinator initialization,
+including an explicitly requested one-process coordinator. This does not
+disable ordinary CPU multi-device reference simulation.
+
 Persistent records use one canonical wire form. Every union value is written as
 `{"case": ..., "value": ...}`; nominal union alternatives (records and enums)
 declare their own `__config_kind__`, which names their case. Enum values record

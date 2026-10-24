@@ -369,6 +369,9 @@ def run(
         "finest_record_has_multiple_periods": finest["shedding_periods"] >= 2,
         "finest_strouhal_in_blockage_bracket": reference_consistent,
     }
+    load_average = None
+    if os.name == "posix":
+        load_average = list(os.getloadavg())
     return {
         "environment": {
             "python": platform.python_version(),
@@ -376,7 +379,7 @@ def run(
             "platform": platform.platform(),
             "logical_cpus": os.cpu_count(),
             "devices": sorted(device.device_kind for device in jax.devices()),
-            "load_average_at_report": list(os.getloadavg()),
+            "load_average_at_report": load_average,
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "x64": bool(pxconfig.x64_enabled()),

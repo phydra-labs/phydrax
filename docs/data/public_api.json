@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "d1049ecc6e7bfdd5c6f2004aee26a4e62e1c07ad14b16bc06eed1e33cb070dd1",
+  "manifest_id": "d9e96365dcdebb1f4935fdab45011cd67975d4c05b96a903e04b73f3b5dd41c2",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -9706,6 +9706,7 @@
       "phydrax.backends.CudaIssueSeverity",
       "phydrax.backends.CudaNativePartition",
       "phydrax.backends.CudaNativeResources",
+      "phydrax.backends.CudaPluginInstallation",
       "phydrax.backends.CudecompBackend",
       "phydrax.backends.CudssBackend",
       "phydrax.backends.HOMOTOPY_CONTINUATION_CAPABILITIES",
@@ -9844,6 +9845,7 @@
       "phydrax.backends.execute_homotopy_continuation",
       "phydrax.backends.execute_homotopy_geometry",
       "phydrax.backends.execute_macaulay2_symbolic",
+      "phydrax.backends.frontend_index_patch_identity",
       "phydrax.backends.grid_availability",
       "phydrax.backends.homotopy_continuation_availability",
       "phydrax.backends.import_backend_module",
@@ -21006,6 +21008,7 @@
       "phydrax.execution.bind_execution_group",
       "phydrax.execution.compiled_memory_estimate",
       "phydrax.execution.create_collective_lease",
+      "phydrax.execution.default_device",
       "phydrax.execution.discover_resource_inventory",
       "phydrax.execution.evaluate_execution_worksets_filter_vmap",
       "phydrax.execution.evaluate_execution_worksets_grouped",

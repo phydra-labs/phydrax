@@ -45,8 +45,8 @@ from jax.core import ShapedArray
 from jax.extend.core import subjaxprs
 
 import phydrax as phx
-from phydrax._jax_indexing_frontend import frontend_index_patch_identity
 from phydrax._publication import publish_bytes
+from phydrax.backends import frontend_index_patch_identity
 from tools._accelerator_process import JSON_LIMIT, TEXT_LIMIT
 from tools.check_accelerator_extras import sha256
 

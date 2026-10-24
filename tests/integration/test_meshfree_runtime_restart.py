@@ -774,6 +774,8 @@ def _records(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def test_cli_killed_mid_run_resumes_to_the_uninterrupted_result(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("This restart test requires POSIX SIGKILL exit semantics.")
     reference = _cli(tmp_path / "reference", "--archive-seconds", "0.0")
     out, err = reference.communicate(timeout=1800)
     assert reference.returncode == 0, err[-4000:]
@@ -821,6 +823,8 @@ def test_cli_killed_mid_run_resumes_to_the_uninterrupted_result(tmp_path: Path) 
 def test_epoch_cli_killed_inside_a_rebased_epoch_resumes_to_the_uninterrupted_result(
     tmp_path: Path,
 ) -> None:
+    if sys.platform == "win32":
+        pytest.skip("This restart test requires POSIX SIGKILL exit semantics.")
     module = "examples.meshfree_production_epochs"
     reference = _cli(tmp_path / "reference", "--archive-seconds", "0.0", module=module)
     out, err = reference.communicate(timeout=1800)

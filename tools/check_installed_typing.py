@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from collections.abc import Sequence
@@ -55,7 +56,9 @@ def check_installed(wheel: Path, python: str, workspace: Path, /) -> None:
     """Install `wheel` for one Python version and type-check the fixtures there."""
     environment = workspace / f"venv-{python}"
     _run(("uv", "venv", "--python", python, str(environment)), cwd=workspace)
-    interpreter = environment / "bin" / "python"
+    interpreter = environment / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
     _run(
         ("uv", "pip", "install", "--python", str(interpreter), str(wheel)),
         cwd=workspace,

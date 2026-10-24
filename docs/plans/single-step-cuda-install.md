@@ -7,13 +7,19 @@ installation path. CUDA 13 is the only supported CUDA major. The NVIDIA driver
 must support CUDA 13 (R580+); pip cannot install or upgrade it. The base
 `pip install phydrax` remains a valid CPU-only installation.
 
-The extra installs JAX's CUDA plugin, NVIDIA runtime/math wheels, and
-`phydrax-cuda-major==13.*`. The metadata-only marker, built from
-`packaging/cuda-major/13`, records explicit installed CUDA intent for diagnostics.
-On Linux x86-64 and aarch64 the extra also pins the wheel-only
-`phydrax-cuda13` companion to the Phydrax release. A matching native companion
-wheel is required on both architectures. No system CUDA toolkit or
-`LD_LIBRARY_PATH` is required for the wheel-based runtime.
+The extra installs NVIDIA runtime/math wheels and `phydrax-cuda-major==13.*`.
+The metadata-only marker, built from `packaging/cuda-major/13`, records explicit
+installed CUDA intent. Linux x86-64 and aarch64 select upstream JAX CUDA and the
+wheel-only `phydrax-cuda13` companion. Native Windows selects stock
+JAX/JAXlib 0.12.0 and requires both that numerical companion and the lockstep
+`phydrax-cuda13-pjrt` runtime/kernel wheel. Missing binaries or unsupported
+Windows wheel tags refuse installation; marker-only Windows success is removed.
+No system CUDA toolkit or manual library-path setup is part of the wheel contract.
+
+Windows native builds and installed-GPU qualification are still release gates,
+not results established by this implementation record. See the
+[Windows implementation plan](windows-cuda13.md). Historical Linux evidence
+below retains its original platform, hardware, and artifact identities.
 
 The former multi-major implementation plan and its obsolete packaging,
 publication, and switching recipes are superseded by this contract. Current

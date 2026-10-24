@@ -1,15 +1,18 @@
 """CUDA 13 build and resolver gates refuse incompatible runtime artifacts."""
 
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Mapping, Sequence
 from email.message import Message
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 from tools import build_cuda_wheels as build, check_cuda_extras as extras
 
@@ -51,19 +54,28 @@ def test_cuest_runtime_recipe_refuses_invalid_build_inputs(
     assert not (tmp_path / "build/cuest-support").exists()
 
 
-def test_cuda_metadata_records_core_and_cuest_intent() -> None:
+def cuda_metadata() -> Message:
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]
     metadata = Message()
-    metadata["Version"] = "0.2.2"
-    metadata["Provides-Extra"] = "cuda13"
-    metadata["Provides-Extra"] = "cuest"
-    metadata["Requires-Dist"] = 'phydrax-cuda-major==13.*; extra == "cuda13"'
-    metadata["Requires-Dist"] = 'phydrax-cuda-major==13.*; extra == "cuest"'
-    metadata["Requires-Dist"] = (
-        "phydrax-cuda13==0.2.2; "
-        '(sys_platform == "linux" and '
-        '(platform_machine == "x86_64" or platform_machine == "aarch64")) '
-        'and extra == "cuda13"'
-    )
+    metadata["Version"] = project["version"]
+    for extra in ("cuda13", "cutensor", "cutensornet", "cuest"):
+        metadata["Provides-Extra"] = extra
+        for text in project["optional-dependencies"][extra]:
+            requirement = Requirement(text)
+            marker = f"extra == '{extra}'"
+            if requirement.marker is not None:
+                marker = f"({requirement.marker}) and {marker}"
+            requirement.marker = None
+            metadata["Requires-Dist"] = f"{requirement}; {marker}"
+    return metadata
+
+
+def test_cuda_metadata_records_core_and_cuest_intent() -> None:
+    metadata = cuda_metadata()
     assert extras.metadata_errors(metadata) == []
 
     incomplete = Message()
@@ -129,13 +141,13 @@ def test_cuda13_resolution_refuses_foreign_runtime(
     assert any(diagnostic in error for error in errors)
 
 
-@pytest.mark.parametrize("platform", ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"])
-def test_non_linux_cuda_intent_requires_no_gpu_packages(platform: str) -> None:
+@pytest.mark.parametrize("platform", ["aarch64-apple-darwin", "aarch64-pc-windows-msvc"])
+def test_unsupported_host_cuda_intent_requires_no_gpu_packages(platform: str) -> None:
     resolved = {"phydrax-cuda-major": "13.0"}
     assert not extras.resolution_errors(resolved, platform, "0.2.2")
     resolved["nvidia-cuda-runtime"] = "13.4.92"
     assert any(
-        "Non-Linux resolution includes" in error
+        "Unsupported-host resolution includes" in error
         for error in extras.resolution_errors(resolved, platform, "0.2.2")
     )
 
@@ -182,6 +194,100 @@ def test_optional_runtime_release_must_match_its_companion(
     linux_resolution["phydrax-cuest"] = "0.2.1"
     errors = extras.resolution_errors(linux_resolution, "x86_64-manylinux_2_28", "0.2.2")
     assert any("phydrax-cuest==0.2.2" in error for error in errors)
+
+
+@pytest.fixture
+def windows_resolution(linux_resolution: dict[str, str]) -> dict[str, str]:
+    linux_resolution.pop("jax-cuda13-plugin")
+    linux_resolution.pop("jax-cuda13-pjrt")
+    return {
+        **linux_resolution,
+        "jax": "0.12.0",
+        "jaxlib": "0.12.0",
+        "phydrax-cuda13-pjrt": "0.2.2",
+    }
+
+
+def test_windows_resolution_requires_owned_stock_stack(
+    windows_resolution: dict[str, str],
+) -> None:
+    assert (
+        extras.resolution_errors(windows_resolution, "x86_64-pc-windows-msvc", "0.2.2")
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ("jax", "jaxlib", "phydrax-cuda13", "phydrax-cuda13-pjrt")
+)
+@pytest.mark.parametrize("version", (None, "0.0.0"))
+def test_windows_resolution_refuses_missing_or_mismatched_stack(
+    windows_resolution: dict[str, str],
+    name: str,
+    version: str | None,
+) -> None:
+    if version is None:
+        windows_resolution.pop(name)
+    else:
+        windows_resolution[name] = version
+    assert any(
+        name in error
+        for error in extras.resolution_errors(
+            windows_resolution, "x86_64-pc-windows-msvc", "0.2.2"
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "owner", ("jax-cuda13-plugin", "jax-cuda13-pjrt", "jax-cuda12-plugin", "winjax")
+)
+def test_windows_resolution_refuses_competing_import_owners(
+    windows_resolution: dict[str, str],
+    owner: str,
+) -> None:
+    windows_resolution[owner] = "0.12.0"
+    assert any(
+        "sole Windows CUDA owner" in error
+        for error in extras.resolution_errors(
+            windows_resolution, "x86_64-pc-windows-msvc", "0.2.2"
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ("cutensornet-cu13", "phydrax-cuest", "nvidia-nccl-cu13", "nvidia-nvshmem-cu13"),
+)
+def test_windows_resolution_does_not_qualify_unsupported_providers(
+    windows_resolution: dict[str, str],
+    provider: str,
+) -> None:
+    windows_resolution[provider] = "0.2.2"
+    assert any(
+        "Unsupported Windows runtime" in error
+        for error in extras.resolution_errors(
+            windows_resolution, "x86_64-pc-windows-msvc", "0.2.2"
+        )
+    )
+
+
+@pytest.mark.parametrize("extra", ("cutensornet", "cuest"))
+def test_metadata_refuses_silently_erased_windows_provider(extra: str) -> None:
+    metadata = cuda_metadata()
+    requirements = metadata.get_all("Requires-Dist", [])
+    del metadata["Requires-Dist"]
+    for text in requirements:
+        requirement = Requirement(text)
+        if requirement.marker is not None and f'extra == "{extra}"' in str(
+            requirement.marker
+        ):
+            metadata["Requires-Dist"] = f"{text} and sys_platform == 'linux'"
+        else:
+            metadata["Requires-Dist"] = text
+    assert any(
+        f"[{extra}]" in error and "win32" in error
+        for error in extras.metadata_errors(metadata)
+    )
 
 
 def test_build_cli_rejects_removed_major_selector(tmp_path: Path) -> None:
@@ -305,6 +411,10 @@ def test_native_host_selects_matching_container(
         1,
         container,
     )
+    if os.name != "posix":
+        with pytest.raises(build.AuditFailure, match="POSIX host"):
+            build.container_command(config)
+        return
     command = build.container_command(config)
     assert command[command.index("--platform") + 1] == container_platform
     assert f"quay.io/pypa/manylinux_2_28_{architecture}:latest" in command
@@ -321,7 +431,7 @@ def test_build_rejects_unsupported_host(
 ) -> None:
     monkeypatch.setattr(build.platform, "machine", lambda: architecture)
     monkeypatch.setattr(build.sys, "platform", system)
-    with pytest.raises(build.AuditFailure, match="require Linux x86_64 or aarch64"):
+    with pytest.raises(build.AuditFailure):
         build.host_platform()
 
 
