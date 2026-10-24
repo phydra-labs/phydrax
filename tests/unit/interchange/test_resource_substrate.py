@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
+import os
+import stat
 import struct
 import zipfile
 from pathlib import Path
@@ -16,6 +19,7 @@ import numpy as np
 import pytest
 
 import phydrax._host_io as host_io
+import phydrax._publication as publication
 import phydrax._resource_archive as resource_archive
 from phydrax._external_resource import (
     bounded_resource_from_bytes,
@@ -46,6 +50,7 @@ from phydrax.qualification import (
     read_reference_artifact,
     ReferenceArtifactManifest,
 )
+from tests._support.filesystem import create_directory_link
 
 
 def _resource_limits(maximum_bytes: int = 1_000_000) -> ResourceLimits:
@@ -99,13 +104,13 @@ def test_opened_resource_preserves_consumer_errors(tmp_path: Path) -> None:
             raise ConsumerError("consumer failure")
 
 
-def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path) -> None:
+def test_trusted_root_walk_rejects_directory_link_ancestors(tmp_path: Path) -> None:
     actual = tmp_path / "actual"
     root = actual / "root"
     root.mkdir(parents=True)
     (root / "resource.bin").write_bytes(b"outside")
     alias = tmp_path / "alias"
-    alias.symlink_to(actual, target_is_directory=True)
+    create_directory_link(alias, actual)
 
     with pytest.raises(ResourceReadError) as caught:
         read_bounded_resource(
@@ -115,10 +120,11 @@ def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path) -> None:
         )
 
     assert caught.value.reason == "policy"
+    assert (root / "resource.bin").read_bytes() == b"outside"
 
 
 def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
-    monkeypatch: Any,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     parent = tmp_path / "parent"
@@ -130,25 +136,34 @@ def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
     replacement_trusted.mkdir(parents=True)
     (replacement_trusted / "resource.bin").write_bytes(b"replacement")
     detached = tmp_path / "detached"
-    original_open = host_io.os.open
-    replaced = False
+    operation_owner = host_io
+    if os.name == "nt":
+        import phydrax._windows_host_io as windows_host_io
 
-    def replace_ancestor(path: Any, flags: Any, *args: Any, **kwargs: Any) -> Any:
-        nonlocal replaced
-        if path == "trusted" and kwargs.get("dir_fd") is not None and not replaced:
-            replaced = True
-            parent.rename(detached)
-            replacement_parent.rename(parent)
-        return original_open(path, flags, *args, **kwargs)
+        operation_owner = windows_host_io
+    original_open = operation_owner.open_directory_at
+    attempted = False
 
-    monkeypatch.setattr(host_io.os, "open", replace_ancestor)
+    def replace_ancestor(parent_fd: int, name: str, *, create: bool = False) -> int:
+        nonlocal attempted
+        if name == "trusted" and not attempted:
+            attempted = True
+            if os.name == "nt":
+                with pytest.raises(PermissionError):
+                    parent.rename(detached)
+            else:
+                parent.rename(detached)
+                replacement_parent.rename(parent)
+        return original_open(parent_fd, name, create=create)
+
+    monkeypatch.setattr(operation_owner, "open_directory_at", replace_ancestor)
     resource = read_bounded_resource(
         "resource.bin",
         trusted_root=trusted,
         limits=_resource_limits(),
     )
 
-    assert replaced
+    assert attempted
     assert resource.data == b"original"
 
 
@@ -174,10 +189,15 @@ def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path) -
     assert admitted.manifest.total_size_bytes == 6
     assert admitted.manifest.total_entry_count == 3
 
-    (dataset / "unsafe").symlink_to(tmp_path / "outside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.bin"
+    sentinel.write_bytes(b"outside resource set")
+    create_directory_link(dataset / "unsafe", outside)
     with pytest.raises(ResourceSetReadError) as caught:
         read_bounded_resource_set("dataset", trusted_root=root, limits=limits)
     assert caught.value.reason == "policy"
+    assert sentinel.read_bytes() == b"outside resource set"
 
 
 def test_resource_set_counts_directories_against_total_entry_limit(
@@ -213,12 +233,131 @@ def test_opened_resource_set_reads_from_admitted_directory_generation(
         with pytest.raises(ResourceSetReadError) as caught:
             opened.read_member("module.bin", maximum_bytes=1)
         assert caught.value.reason == "limit"
-        dataset.rename(tmp_path / "admitted-generation")
-        dataset.mkdir()
-        (dataset / "module.bin").write_bytes(b"replacement")
+        if os.name == "nt":
+            with pytest.raises(PermissionError):
+                dataset.rename(tmp_path / "admitted-generation")
+        else:
+            dataset.rename(tmp_path / "admitted-generation")
+            dataset.mkdir()
+            (dataset / "module.bin").write_bytes(b"replacement")
         payload = opened.read_member("module.bin")
 
     assert payload == b"admitted"
+
+
+def test_host_file_descriptor_supports_binary_stream_and_identity(tmp_path: Path) -> None:
+    parent = host_io.open_directory_descriptor(tmp_path, create=False)
+    payload = b"binary\r\n\x1a\x00payload"
+    try:
+        descriptor = host_io.open_file_at(
+            parent, "resource.bin", write=True, create=True, exclusive=True
+        )
+        with os.fdopen(descriptor, "w+b") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            status = os.fstat(stream.fileno())
+            assert stat.S_ISREG(status.st_mode)
+            assert host_io.stat_identity(host_io.stat_at(parent, "resource.bin")) == (
+                host_io.stat_identity(status)
+            )
+            duplicate = os.dup(stream.fileno())
+            with os.fdopen(duplicate, "rb") as copy:
+                copy.seek(0)
+                assert copy.read() == payload
+        host_io.sync_directory(parent)
+        assert host_io.list_directory(parent) == ["resource.bin"]
+        with host_io.open_regular_file(
+            host_io.descriptor_relative_path(parent, "resource.bin")
+        ) as source:
+            assert source.read() == payload
+    finally:
+        os.close(parent)
+
+
+def test_host_exclusive_directory_rename_preserves_existing_target(
+    tmp_path: Path,
+) -> None:
+    parent = host_io.open_directory_descriptor(tmp_path, create=False)
+    try:
+        host_io.create_directory_at(parent, "staged")
+        host_io.create_directory_at(parent, "existing")
+        with pytest.raises(FileExistsError):
+            host_io.rename_at(parent, "staged", "existing", replace=False)
+        assert set(host_io.list_directory(parent)) == {"staged", "existing"}
+        host_io.rename_at(parent, "staged", "committed", replace=False)
+        host_io.sync_directory(parent)
+        assert set(host_io.list_directory(parent)) == {"committed", "existing"}
+    finally:
+        os.close(parent)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["nested\\file", "file:stream", "name.", "name ", "NUL", "COM1.bin"],
+)
+def test_descriptor_relative_names_preserve_host_rules(name: str) -> None:
+    if os.name == "nt":
+        with pytest.raises(ValueError):
+            host_io.descriptor_relative_path(0, name)
+    else:
+        assert host_io.descriptor_relative_path(0, name).name == name
+
+
+@pytest.mark.parametrize("portable_spelling", [False, True], ids=["native", "portable"])
+def test_resource_components_accepts_native_and_portable_absolute_paths(
+    tmp_path: Path, portable_spelling: bool
+) -> None:
+    source = tmp_path / "nested" / "resource.bin"
+    path = source.as_posix() if portable_spelling else str(source)
+    root, components = host_io.resource_components(path, tmp_path, 4)
+    assert root == str(tmp_path)
+    assert components == ("nested", "resource.bin")
+
+
+@pytest.mark.parametrize("portable_spelling", [False, True], ids=["native", "portable"])
+def test_resource_components_refuses_traversal_before_normalization(
+    tmp_path: Path, portable_spelling: bool
+) -> None:
+    separator = "/" if portable_spelling else os.sep
+    path = separator.join(("nested", "..", "resource.bin"))
+    with pytest.raises(ValueError, match="traversal"):
+        host_io.resource_components(path, tmp_path, 4)
+
+
+def test_resource_components_refuses_trusted_root_traversal(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="traversal"):
+        host_io.resource_components("resource.bin", tmp_path / "nested" / "..", 4)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "https://example.invalid/resource",
+        "//server/share/file",
+        "\\\\server\\share\\file",
+    ],
+)
+def test_resource_components_refuses_network_paths(tmp_path: Path, path: str) -> None:
+    with pytest.raises(ValueError, match="Network"):
+        host_io.resource_components(path, tmp_path, 4)
+
+
+def test_opened_resource_set_reads_nested_manifest_names_on_each_host(
+    tmp_path: Path,
+) -> None:
+    nested = tmp_path / "dataset" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "resource.bin").write_bytes(b"nested payload")
+    with open_bounded_resource_set(
+        "dataset",
+        trusted_root=tmp_path,
+        limits=ResourceSetLimits(1024, 512, 2, 4),
+    ) as opened:
+        assert tuple(member.relative_path for member in opened.manifest.members) == (
+            "nested/resource.bin",
+        )
+        assert opened.read_member("nested/resource.bin") == b"nested payload"
 
 
 def test_resource_substrate_scenario_1() -> None:
@@ -367,6 +506,109 @@ def test_resource_publication_preflights_parent_directories_as_entries(
     assert not destination.exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX rename compatibility contract.")
+@pytest.mark.parametrize(
+    ("mode", "existing_empty"),
+    [
+        pytest.param("exclusive", False, id="exclusive-new"),
+        pytest.param("exclusive", True, id="exclusive-empty"),
+        pytest.param("atomic_replace", False, id="atomic-replace-new"),
+    ],
+)
+def test_posix_resource_publication_without_rename_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: publication.PublicationMode,
+    existing_empty: bool,
+) -> None:
+    destination = tmp_path / "bundle"
+    if existing_empty:
+        destination.mkdir()
+
+    def reject_rename_library(*args: Any, **kwargs: Any) -> None:
+        raise OSError(errno.EINVAL, "Filesystem rejects rename flags")
+
+    monkeypatch.setattr(host_io.ctypes, "CDLL", reject_rename_library)
+    limits = ResourceSetLimits(1024, 512, 4, 4)
+    receipt = publish_resource_set(
+        destination,
+        {"manifest.json": b"{}", "data/values.bin": b"123"},
+        limits=limits,
+        mode=mode,
+    )
+
+    assert (destination / "manifest.json").read_bytes() == b"{}"
+    assert (destination / "data" / "values.bin").read_bytes() == b"123"
+    assert receipt.total_size_bytes == 5
+    assert receipt.replaced_existing is existing_empty
+    assert {entry.name for entry in tmp_path.iterdir()} == {"bundle"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX rename compatibility contract.")
+@pytest.mark.parametrize("concurrent_nonempty", [False, True], ids=["empty", "nonempty"])
+def test_posix_resource_publication_preserves_concurrent_directory_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concurrent_nonempty: bool,
+) -> None:
+    destination = tmp_path / "bundle"
+    open_directory = publication.open_directory_at
+
+    def appear_after_absence(parent: int, name: str, *, create: bool = False) -> int:
+        try:
+            return open_directory(parent, name, create=create)
+        except FileNotFoundError:
+            if name == destination.name:
+                destination.mkdir()
+                if concurrent_nonempty:
+                    (destination / "existing.bin").write_bytes(b"existing generation")
+            raise
+
+    monkeypatch.setattr(publication, "open_directory_at", appear_after_absence)
+    limits = ResourceSetLimits(1024, 512, 4, 4)
+    if concurrent_nonempty:
+        with pytest.raises(FileExistsError) as raised:
+            publish_resource_set(destination, {"value.bin": b"new"}, limits=limits)
+        assert str(raised.value) == str(destination)
+        assert (destination / "existing.bin").read_bytes() == b"existing generation"
+        assert not (destination / "value.bin").exists()
+    else:
+        receipt = publish_resource_set(
+            destination, {"value.bin": b"new"}, limits=limits
+        )
+        assert not receipt.replaced_existing
+        assert (destination / "value.bin").read_bytes() == b"new"
+    assert {entry.name for entry in tmp_path.iterdir()} == {"bundle"}
+
+
+def test_resource_publication_empty_destination_flush_failure_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "bundle"
+    destination.mkdir()
+    failure = OSError(errno.EIO, "Empty destination removal synchronization failed")
+    sync = publication.sync_directory
+
+    def fail_after_empty_destination_removal(descriptor: int) -> None:
+        if not destination.exists():
+            raise failure
+        sync(descriptor)
+
+    monkeypatch.setattr(
+        publication, "sync_directory", fail_after_empty_destination_removal
+    )
+    with pytest.raises(OSError) as raised:
+        publish_resource_set(
+            destination,
+            {"value.bin": b"new"},
+            limits=ResourceSetLimits(1024, 512, 4, 4),
+        )
+
+    assert raised.value is failure
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path) -> None:
     destination = tmp_path / "artifact.bin"
     first = publish_bytes(destination, b"first", maximum_bytes=16)
@@ -397,6 +639,18 @@ def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path)
             {"manifest.json": b"{}"},
             limits=ResourceSetLimits(1024, 512, 4, 4),
         )
+    if os.name == "nt":
+        with pytest.raises(OSError, match="Atomic directory exchange is unsupported"):
+            publish_resource_set(
+                bundle,
+                {"manifest.json": b'{"generation": 2}'},
+                limits=ResourceSetLimits(1024, 512, 4, 4),
+                mode="atomic_replace",
+            )
+        assert (bundle / "manifest.json").read_bytes() == b"{}"
+        assert (bundle / "data" / "values.bin").read_bytes() == b"123"
+        assert {path.name for path in tmp_path.iterdir()} == {"artifact.bin", "bundle"}
+        return
     replacement = publish_resource_set(
         bundle,
         {"manifest.json": b'{"generation": 2}'},

@@ -843,6 +843,8 @@ def run(
     timeout: float | None = None,
 ) -> CommandEvidence:
     """Run one command in its own session, killing its process group afterwards."""
+    if os.name != "posix":
+        raise RuntimeError("Metal wheel process supervision requires a POSIX host.")
     with subprocess.Popen(
         list(command),
         cwd=cwd,
@@ -1298,6 +1300,9 @@ def run_file(
 ) -> tuple[FileEvidence, dict[str, str]]:
     report_path = suite / CASE_REPORT
     report_path.unlink(missing_ok=True)
+    # Invalidate evidence even when this host cannot launch a qualified child.
+    if os.name != "posix":
+        raise RuntimeError("Metal wheel process supervision requires a POSIX host.")
     environment = clean_environment(venv, required.kind)
     environment.update(
         PHYDRAX_METAL_QUALIFICATION_RUN=run_id,

@@ -22,6 +22,7 @@ from typing import final, get_args, Literal, TypeAlias
 import equinox as eqx
 import jax
 
+from .._cuda_capabilities import cuda_compiler_capabilities, selected_device
 from .._execution_device import device_platform
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -144,15 +145,13 @@ ATOMISTIC_KERNEL_LIMITS = AtomisticKernelLimits(
 
 
 def _cuda_device() -> tuple[jax.Device | None, str]:
-    if jax.default_backend() != "gpu":
-        return None, f"the active JAX backend is {jax.default_backend()!r}, not a GPU"
-    device = jax.devices()[0]
+    device = selected_device()
     if device_platform(device) != "cuda":
         return None, (
             f"the active GPU runtime is {device_platform(device)!r}; only NVIDIA CUDA "
             "is an implemented accelerated atomistic target"
         )
-    return device, "an NVIDIA CUDA device is the active JAX backend"
+    return device, "an NVIDIA CUDA device is selected"
 
 
 def _compute_capability(device: jax.Device, /) -> tuple[int, int]:
@@ -183,6 +182,10 @@ def pallas_atomistic_availability(
                         f"device {device.device_kind!r} has compute capability "
                         f"{capability[0]}.{capability[1]}, outside the admitted architecture set"
                     )
+                compiler = cuda_compiler_capabilities(device.client)
+                if not compiler.mosaic_gpu:
+                    available = False
+                    reason = f"Mosaic GPU is unavailable for the selected compiler: {compiler.reason}"
         case _:
             raise ValueError(f"Unsupported atomistic acceleration target {target_!r}.")
     return BackendAvailability(
@@ -206,6 +209,7 @@ class AtomisticKernelTarget(StrictModule):
     platform_version: str = eqx.field(static=True)
     jax_version: str = eqx.field(static=True)
     jaxlib_version: str = eqx.field(static=True)
+    compiler_id: str = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
     def __init__(self, target: AtomisticAccelerationTarget, /) -> None:
@@ -239,6 +243,17 @@ class AtomisticKernelTarget(StrictModule):
         self.platform_version = device.client.platform_version
         self.jax_version = jax.__version__
         self.jaxlib_version = version("jaxlib")
+        self.compiler_id = (
+            cuda_compiler_capabilities(device.client).identity
+            if target_ == "cuda"
+            else canonical_fingerprint(
+                {
+                    "lowering": lowering,
+                    "jax": self.jax_version,
+                    "jaxlib": self.jaxlib_version,
+                }
+            )
+        )
         self.target_id = canonical_fingerprint(
             {
                 "kind": "atomistic-kernel-target",
@@ -251,6 +266,7 @@ class AtomisticKernelTarget(StrictModule):
                 "platform_version": self.platform_version,
                 "jax": self.jax_version,
                 "jaxlib": self.jaxlib_version,
+                "compiler_id": self.compiler_id,
             }
         )
 

@@ -92,6 +92,8 @@ class SubprocessCommandExecutor:
     def run(
         self, argv: tuple[str, ...], /, *, stdin: bytes | None = None
     ) -> CommandResult:
+        if os.name != "posix":
+            raise OSError("Scheduler subprocess execution requires POSIX process groups.")
         if not argv or any(type(value) is not str or not value for value in argv):
             raise ValueError("Command argv must contain nonempty strings.")
         started = time.perf_counter()
@@ -182,6 +184,8 @@ class SubprocessCommandExecutor:
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes], /) -> None:
+    if os.name != "posix":
+        raise OSError("Scheduler subprocess teardown requires POSIX process groups.")
     process_group = process.pid
     try:
         os.killpg(process_group, signal.SIGTERM)

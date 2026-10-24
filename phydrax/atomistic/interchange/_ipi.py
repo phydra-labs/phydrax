@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import socket
 import struct
 from enum import IntEnum
@@ -168,7 +169,12 @@ class IPITransportPlan(StrictModule, NonTrainableState):
         return cls("tcp", host, port=port, **kwargs)
 
     def _socket(self) -> socket.socket:
-        family = socket.AF_UNIX if self.mode == "unix" else socket.AF_INET
+        if self.mode == "unix":
+            if os.name != "posix":
+                raise OSError("Unix i-PI socket transport requires a POSIX host.")
+            family = socket.AF_UNIX
+        else:
+            family = socket.AF_INET
         return socket.socket(family, socket.SOCK_STREAM)
 
     def _endpoint(self) -> str | tuple[str, int]:

@@ -234,18 +234,49 @@ else:
 ## CUDA environment
 
 `cuda_environment()` collects host facts, probes the JAX backend, and reports
-mapped CUDA libraries on Linux. `assess_cuda_environment(facts)` assesses an
-explicit immutable `CudaEnvironmentFacts` record without collecting host state
-or initializing a backend. A `CudaEnvironmentReport` contains `facts` and
-`issues`; `successful` means no issue has severity `"error"`.
+mapped CUDA libraries through the Linux or Windows observation owner.
+`assess_cuda_environment(facts)` assesses an explicit immutable
+`CudaEnvironmentFacts` record without collecting host state or initializing a
+backend. `CudaEnvironmentReport.successful` means no represented issue has
+severity `"error"`; it is not hardware or scientific qualification.
 
-Facts include host platform and machine, requested and installed plugin majors,
-foreign NVIDIA distributions, `wheel_library_majors` (realpath/major pairs),
-selected platforms, backend initialization and probe state, runtime and driver
-versions, `backend_error`, CUDA library-path directories, and mapped libraries.
-`MappedCudaLibrary` records `soname`, real `path`, and `major` (`None` when
-unknown). `CudaEnvironmentIssue` records `code`, `severity`, `message`, and
-related `paths`. `CudaIssueCode` is the closed set of issue codes;
+Facts contain `plugins: tuple[CudaPluginInstallation, ...]`, not a deduplicated
+tuple of major numbers. Each installation records its canonical distribution,
+version, and CUDA major, so two CUDA 13 implementations remain a conflict.
+The old `plugin_majors` field is removed without an alias. Facts also retain host
+platform/machine, requested major, foreign NVIDIA distributions, wheel library
+ownership, selected platforms, backend/probe state, driver/runtime versions,
+`backend_error`, `installation_error`, `inspection_error`, and mapped libraries.
+Missing inspection evidence is not a clean-library claim.
+
+On Windows, `compiled_cuda_major` identifies the admitted wheel stack, while
+`driver_compatibility_version` records the explicit driver API version query.
+`runtime_version` remains the JAX client's observed platform version, not a
+wheel-generation inference. A compatible newer driver is not foreign CUDA
+userland. Linux retains its shared-cudart runtime-major contract.
+
+Windows `runtime_identity` is an immutable tuple of text pairs (convert with
+`dict(...)`) holding `linkage="driver-hybrid"`, `owner="display-driver"`,
+`runtime_path`/`runtime_sha256`, `driver_path`/`driver_sha256`, and
+`driver_dispatch_path`/`driver_dispatch_sha256`. These identify the observed
+`nvcudart_hybrid64.dll`, actual `nvcuda64.dll`, and System32 `nvcuda.dll`,
+respectively. Observation checks driver ownership and cohort, then hashes mapped
+files; it does not call CUDA APIs. Empty identity means unobserved, never
+successful qualification. Missing or inconsistent inspection produces
+`native-inspection-unavailable`.
+
+The driver cohort is separate from `mapped_libraries` and
+`wheel_library_majors`, which describe NVIDIA userland dependencies.
+`unowned-cuda-library` refuses Windows userland DLLs without CUDA 13 wheel
+ownership, including same-major foreign paths. Other-major cudart/cuBLAS DLLs
+remain incompatible. Benchmark environment identity includes the observed driver
+cohort independently of the compiled stack/build identity; CPU-selected,
+uninitialized processes retain `runtime_identity=None` rather than loading CUDA.
+
+`MappedCudaLibrary.soname` is the loader name: an ELF SONAME or Windows DLL
+basename. Its `major` is `None` when unknown; math-library version digits are
+not CUDA-major identity. `CudaEnvironmentIssue` records `code`, `severity`,
+`message`, and related `paths`. `CudaIssueCode` remains closed and
 `CudaIssueSeverity` is `"error"` or `"warning"`.
 
 The mapped-library audit is diagnostic only; companion availability validates
@@ -311,6 +342,10 @@ poisons the partition so later admission cannot report clean reuse.
 
 ---
 
+::: phydrax.backends.CudaPluginInstallation
+
+---
+
 ::: phydrax.backends.MappedCudaLibrary
 
 ---
@@ -320,6 +355,13 @@ poisons the partition so later admission cannot report clean reuse.
 ---
 
 ::: phydrax.backends.CudaIssueSeverity
+
+`frontend_index_patch_identity()` returns detached source-qualified frontend
+evidence without initializing a device. It is diagnostic provenance, not proof
+of GPU execution.
+
+::: phydrax.backends.frontend_index_patch_identity
+
 
 ## Distributed and vendor execution capabilities
 
@@ -1154,13 +1196,14 @@ ordinary-JAX streamed route remains the portable reference.
 
 | Target | Lowering | Admission |
 | --- | --- | --- |
-| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, 10.3, 12.0, or 12.1. Other GPU clients, such as ROCm, and other architectures are refused. |
+| `"cuda"` | `"pallas_mosaic_gpu"` | Active NVIDIA CUDA client with the actual Mosaic compiler and an admitted compute capability: exactly 8.0, 9.0, 10.0, 10.3, 12.0, or 12.1. Hardware capability alone does not admit a runtime without Mosaic. |
 | `"cpu_interpret"` | `"pallas_mosaic_gpu_interpret"` | Always available. The CPU Mosaic GPU interpreter executes the same kernel bodies for semantic reference verification. |
 
 HIP/ROCm and TPU are not implemented targets. `AtomisticKernelTarget(target)`
-resolves and refuses an unavailable target at construction. It records the
-device kind, compute capability, platform version, and JAX/jaxlib versions in
-`target_id`.
+resolves and refuses an unavailable target at construction. `target_id` includes
+device kind, compute capability, platform version, JAX/jaxlib versions, and
+`compiler_id`, which binds the admitted runtime/compiler build and capabilities.
+Reprepare compiler-bound artifacts after this identity change.
 
 `AtomisticKernelAdmission(request, target, limits=ATOMISTIC_KERNEL_LIMITS)`
 admits one `AtomisticKernelRequest` before execution. Each of the following

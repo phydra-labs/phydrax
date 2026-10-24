@@ -1,0 +1,17 @@
+diff --git a/python/private/python_bootstrap_template.txt b/python/private/python_bootstrap_template.txt
+--- a/python/private/python_bootstrap_template.txt
++++ b/python/private/python_bootstrap_template.txt
+@@ -564,4 +564,9 @@
+-    # On Windows, symlinks have to be told whether they're
+-    # pointing to a file or directory. Python is supposed to auto-detect
+-    # this, but in practice, this doesn't reliably happen.
+-    os.symlink(to, from_, target_is_directory=os.path.isdir(to))
++    # Materialize real Windows venv contents without symlink privileges.
++    # Build inputs and temporary venvs share the profile-local volume.
++    if IS_WINDOWS:
++      if os.path.isdir(to):
++        shutil.copytree(to, from_)
++      else:
++        os.link(to, from_)
++    else:
++      os.symlink(to, from_, target_is_directory=os.path.isdir(to))

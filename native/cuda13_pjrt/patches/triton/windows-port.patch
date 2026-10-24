@@ -1,0 +1,52 @@
+diff --git a/BUILD b/BUILD
+--- a/BUILD
++++ b/BUILD
+@@ -53,6 +53,24 @@
+     },
+ )
+ 
++config_setting(
++    name = "compiler_is_clang_cl",
++    flag_values = {
++        "@bazel_tools" +  # copybara:comment
++        "//tools/cpp:compiler": "clang-cl",
++    },
++)
++
++# clang-cl defaults to MSVC-style delayed template parsing, under which MLIR
++# template bodies (e.g. TypeID::get) are parsed at the end of the TU. TUs that
++# re-open `namespace mlir` with `using namespace triton;` then make several
++# `detail` namespaces visible inside `mlir`, so unqualified `detail::` lookups
++# in MLIR headers become ambiguous. Restore standard two-phase lookup.
++_no_delayed_template_parsing = select({
++    ":compiler_is_clang_cl": ["-fno-delayed-template-parsing"],
++    "//conditions:default": [],
++})
++
+ # TODO(csigg): fix, enable error upstream, remove.
+ _no_unused_variable = select({
+     ":compiler_is_msvc": [],
+@@ -597,7 +615,7 @@
+             "-Wno-ctad-maybe-unsupported",
+             "-Wno-implicit-fallthrough",
+         ],
+-    }),
++    }) + _no_delayed_template_parsing,
+     includes = ["include"],
+     deps = [
+         ":Dump",
+diff --git a/lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionLoops.cpp b/lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionLoops.cpp
+--- a/lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionLoops.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionLoops.cpp
+@@ -489,7 +489,10 @@
+     return success();
+ 
+   auto numPartitions = partitions.getNumPartitions();
+-  auto defaultPartition = partitions.getPartition((int)0);
++  // Use an unsigned literal: under the Microsoft C++ ABI extension, `(int)0`
++  // is also a null pointer constant, making the call ambiguous with the
++  // `getPartition(Operation *)` overload.
++  auto defaultPartition = partitions.getPartition(0u);
+   auto loopVarCategories = classifyLoopVars(loop, defaultPartition, partitions);
+   auto [loopVarIndices, newResultIndices] =
+       getLoopVarIndicesToKeep(loop, defaultPartition, loopVarCategories);

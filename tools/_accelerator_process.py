@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Host-only process-group lifecycle and bounded retained command evidence."""
+"""Host-only owned-process lifecycle and bounded retained command evidence."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TYPE_CHECKING, TypedDict
 
 
 TEXT_LIMIT = 20_000
@@ -37,13 +37,15 @@ def _log_evidence(path: Path) -> tuple[str, str]:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
         stream.seek(max(0, path.stat().st_size - TEXT_LIMIT))
         text = stream.read(TEXT_LIMIT).decode("utf-8", errors="replace")
+        # Replacement characters can expand invalid UTF-8 beyond the byte bound.
+        text = text.encode("utf-8")[-TEXT_LIMIT:].decode("utf-8", errors="ignore")
     return text, digest
 
 
 def run(
     command: Sequence[str], *, cwd: Path, environment: Mapping[str, str], timeout: float
 ) -> CommandEvidence:
-    """Stream logs to disk; terminate the entire session on exit or timeout.
+    """Stream logs to disk; terminate the owned tree on exit or timeout.
 
     Evidence embeds at most TEXT_LIMIT bytes per stream and binds retained full
     logs by SHA-256. No unbounded PIPE buffering or orphaned compiler children.
@@ -57,30 +59,45 @@ def run(
         ) as stderr,
     ):
         stdout_path, stderr_path = Path(stdout.name), Path(stderr.name)
-        timed_out = False
-        with subprocess.Popen(
-            list(command),
-            cwd=cwd,
-            env=dict(environment),
-            stdout=stdout,
-            stderr=stderr,
-            start_new_session=True,
-        ) as process:
-            try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-            finally:
-                # Kill descendants even when their direct parent has exited.
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+        if os.name == "nt":
+            if TYPE_CHECKING or __package__:
+                from ._windows_process import run_in_job
+            else:
+                from _windows_process import run_in_job
+
+            returncode, timed_out = run_in_job(
+                command,
+                cwd=cwd,
+                environment=environment,
+                timeout=timeout,
+                stdout_fd=stdout.fileno(),
+                stderr_fd=stderr.fileno(),
+            )
+        else:
+            timed_out = False
+            with subprocess.Popen(
+                list(command),
+                cwd=cwd,
+                env=dict(environment),
+                stdout=stdout,
+                stderr=stderr,
+                start_new_session=True,
+            ) as process:
+                try:
+                    process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                finally:
+                    # Kill descendants even when their direct parent has exited.
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    returncode = process.wait()
     stdout_text, stdout_digest = _log_evidence(stdout_path)
     stderr_text, stderr_digest = _log_evidence(stderr_path)
     return {
         "command": list(command),
         "cwd": str(cwd),
-        "returncode": process.returncode,
+        "returncode": returncode,
         "timed_out": timed_out,
         "stdout": stdout_text,
         "stderr": stderr_text,

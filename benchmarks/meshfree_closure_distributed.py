@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import resource
 import subprocess
 import sys
 import time
@@ -32,6 +31,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
+
+
+if sys.platform != "win32":
+    import resource
 
 import equinox as eqx
 import jax
@@ -115,6 +118,10 @@ def run_forced_device_workloads(
     through ``python -m benchmarks.meshfree_closure``; the written record is
     returned with the subprocess wall time and child CPU time.
     """
+    if sys.platform == "win32":
+        raise RuntimeError(
+            "Forced-device subprocess measurements require POSIX resource.getrusage."
+        )
     if type(devices) is not int or devices < 1:
         raise ValueError("devices must be a positive forced CPU device count.")
     if not workloads:

@@ -1,0 +1,83 @@
+diff --git a/VERSION b/VERSION
+deleted file mode 100644
+index 5c33046..0000000
+--- a/VERSION
++++ /dev/null
+@@ -1 +0,0 @@
+-26.02.00
+diff --git a/cpp/include/raft/util/cudart_utils.hpp b/cpp/include/raft/util/cudart_utils.hpp
+index bf04ab2..4101b82 100644
+--- a/cpp/include/raft/util/cudart_utils.hpp
++++ b/cpp/include/raft/util/cudart_utils.hpp
+@@ -14,7 +14,11 @@
+ #include <cuda_fp16.h>
+ #include <cuda_runtime_api.h>
+ 
++// execinfo.h is a glibc extension; it is unused in this header and
++// unavailable on Windows. Match the guard used in <raft/core/error.hpp>.
++#if defined(__GNUC__) && __has_include(<execinfo.h>)
+ #include <execinfo.h>
++#endif
+ 
+ #include <chrono>
+ #include <cstdio>
+diff --git a/cpp/include/raft/util/device_atomics.cuh b/cpp/include/raft/util/device_atomics.cuh
+index 86e4ff5..ce7e396 100644
+--- a/cpp/include/raft/util/device_atomics.cuh
++++ b/cpp/include/raft/util/device_atomics.cuh
+@@ -239,6 +239,9 @@ struct genericAtomicOperationImpl<T, Op, 8> {
+ // those for unsigned binary numbers.
+ // Then, this computes as `unsigned long long int` with `atomicAdd`
+ // @sa https://en.wikipedia.org/wiki/Two%27s_complement
++// On LLP64 (Windows), long is 4 bytes; the 8-byte long specializations are
++// both invalid and unnecessary there.
++#ifndef _WIN32
+ template <>
+ struct genericAtomicOperationImpl<long int, DeviceSum, 8> {
+   using T = long int;
+@@ -262,6 +265,7 @@ struct genericAtomicOperationImpl<unsigned long int, DeviceSum, 8> {
+     return type_reinterpret<T, T_int>(ret);
+   }
+ };
++#endif  // !_WIN32
+ 
+ // CUDA natively supports `unsigned long long int` for `atomicAdd`,
+ // but doesn't supports `long long int`.
+@@ -282,6 +286,7 @@ struct genericAtomicOperationImpl<long long int, DeviceSum, 8> {
+   }
+ };
+ 
++#ifndef _WIN32
+ template <>
+ struct genericAtomicOperationImpl<unsigned long int, DeviceMin, 8> {
+   using T = unsigned long int;
+@@ -305,6 +310,7 @@ struct genericAtomicOperationImpl<unsigned long int, DeviceMax, 8> {
+     return type_reinterpret<T, T_int>(ret);
+   }
+ };
++#endif  // !_WIN32
+ 
+ template <typename T>
+ struct genericAtomicOperationImpl<T, DeviceAnd, 8> {
+diff --git a/cpp/include/raft/util/vectorized.cuh b/cpp/include/raft/util/vectorized.cuh
+index ee011fe..a6e474c 100644
+--- a/cpp/include/raft/util/vectorized.cuh
++++ b/cpp/include/raft/util/vectorized.cuh
+@@ -215,6 +215,9 @@ template <>
+ struct IOType<uint64_t, 2> {
+   typedef uint4 Type;
+ };
++// On LLP64 (Windows) uint64_t IS unsigned long long; these would redefine the
++// uint64_t specializations above.
++#ifndef _WIN32
+ template <>
+ struct IOType<unsigned long long, 1> {
+   typedef unsigned long long Type;
+@@ -223,6 +226,7 @@ template <>
+ struct IOType<unsigned long long, 2> {
+   typedef uint4 Type;
+ };
++#endif  // !_WIN32
+ template <>
+ struct IOType<double, 1> {
+   typedef double Type;

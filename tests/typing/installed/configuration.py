@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import assert_type, ClassVar
 
+from jax import Device
+
+from phydrax.backends import frontend_index_patch_identity
 from phydrax.config import (
     ConfigurationSnapshot,
     configure,
@@ -14,6 +17,7 @@ from phydrax.config import (
     snapshot,
     x64_enabled,
 )
+from phydrax.execution import default_device
 
 
 @dataclass(frozen=True)
@@ -42,3 +46,9 @@ def consumer_contract() -> None:
     configure(RuntimeConfig(), unknown=True)  # ty: ignore[unknown-argument]
     NumericsConfig(dtype_promotion="invalid")  # ty: ignore[invalid-argument-type]
     RuntimeConfig(cpu_collectives_implementation="invalid")  # ty: ignore[invalid-argument-type]
+
+
+def execution_contract(device: Device) -> None:
+    with default_device(device) as scope:
+        assert_type(scope, None)
+    assert_type(frontend_index_patch_identity(), dict[str, str] | None)

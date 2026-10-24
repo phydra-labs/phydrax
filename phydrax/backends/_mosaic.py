@@ -11,6 +11,8 @@ from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import ShardingContext, SPMDAxisContext
 from jax.interpreters import mlir
 
+from .._cuda_capabilities import cuda_compiler_capabilities
+
 
 def lower_mosaic_or_reference(
     native: Callable[..., tuple[Array, ...]],
@@ -19,7 +21,7 @@ def lower_mosaic_or_reference(
     *operands: ir.Value,
     **parameters: int | tuple[int, ...],
 ) -> Sequence[ir.Value]:
-    """Use Mosaic only for explicitly resolved Ampere-or-newer CUDA targets."""
+    """Use Mosaic only when the destination compiler and architecture support it."""
     axis_context = ctx.module_context.axis_context
     if isinstance(axis_context, ShardingContext):
         devices = axis_context.device_assignment
@@ -33,7 +35,9 @@ def lower_mosaic_or_reference(
             # Ordinary jit can omit an assignment while supplying its selected
             # compilation client. Every possible device must support the kernel.
             devices = tuple(backend.devices())
-    admitted = bool(devices)
+    admitted = bool(devices) and all(
+        cuda_compiler_capabilities(device.client).mosaic_gpu for device in devices or ()
+    )
     for device in devices or ():
         # Compute capability is an optional provider attribute, absent on CPU.
         capability = getattr(device, "compute_capability", None)

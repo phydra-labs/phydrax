@@ -18,12 +18,16 @@ if TYPE_CHECKING:
         CudaEnvironmentReport as CudaEnvironmentReport,
         CudaIssueCode as CudaIssueCode,
         CudaIssueSeverity as CudaIssueSeverity,
+        CudaPluginInstallation as CudaPluginInstallation,
         MappedCudaLibrary as MappedCudaLibrary,
     )
     from .._cuda_native import (
         cuda_native_resources as cuda_native_resources,
         CudaNativePartition as CudaNativePartition,
         CudaNativeResources as CudaNativeResources,
+    )
+    from .._jax_indexing_frontend import (
+        frontend_index_patch_identity as frontend_index_patch_identity,
     )
     from .._metal_environment import (
         assess_metal_environment as assess_metal_environment,
@@ -306,6 +310,7 @@ if TYPE_CHECKING:
 
 
 _EXPORTS = {
+    "frontend_index_patch_identity": ".._jax_indexing_frontend",
     "cuda_candidate_declarations": "._cuda_profiles",
     "cuda_candidate_profiles": "._cuda_profiles",
     "rocm_candidate_declarations": "._rocm_profiles",
@@ -360,6 +365,7 @@ _EXPORTS = {
     "CudaIssueSeverity": ".._cuda_environment",
     "CudaNativePartition": ".._cuda_native",
     "CudaNativeResources": ".._cuda_native",
+    "CudaPluginInstallation": ".._cuda_environment",
     "CudecompBackend": ".cudecomp",
     "CudssBackend": ".cudss",
     "HOMOTOPY_CONTINUATION_CAPABILITIES": ".homotopy_continuation",

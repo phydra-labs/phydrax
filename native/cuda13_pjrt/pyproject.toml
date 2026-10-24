@@ -1,0 +1,37 @@
+[build-system]
+# tools/build_cuda_pjrt_wheels.py owns compilation; this backend only packages.
+requires = []
+build-backend = "_build_backend"
+backend-path = ["."]
+
+[project]
+name = "phydrax-cuda13-pjrt"
+version = "0.2.2"
+description = "Windows x64 CUDA 13 PJRT runtime and CPython CUDA kernels for Phydrax."
+requires-python = ">=3.13,<3.14"
+authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
+license = {text = "Phydra Non-Production License (PNPL) for Phydrax-authored files; bundled JAX, XLA and Windows-port components under their own licenses (see licenses/)"}
+classifiers = [
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3.13",
+  "Environment :: GPU :: NVIDIA CUDA :: 13",
+]
+# Each exact release publishes a win_amd64 wheel. NVRTC is a runtime library;
+# nvcc, headers, CRT development packages and build tools are recipe-owned.
+dependencies = [
+  "jax==0.12.0",
+  "jaxlib==0.12.0",
+  "nvidia-cuda-runtime==13.4.92",
+  "nvidia-cublas==13.8.0.4",
+  "nvidia-cufft==12.4.0.43",
+  "nvidia-cusolver==12.3.5.3",
+  "nvidia-cusparse==12.8.6.72",
+  "nvidia-cudnn-cu13==9.27.0.42",
+  "nvidia-cuda-cupti==13.3.35",
+  "nvidia-nvjitlink==13.4.92",
+  "nvidia-curand==10.4.4.72",
+  "nvidia-cuda-nvrtc==13.4.92",
+]
+
+[project.entry-points.jax_plugins]
+cuda = "phydrax_cuda13_pjrt.plugin"

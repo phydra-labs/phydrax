@@ -1,19 +1,25 @@
 # Phydrax CUDA companion
 
 `phydrax-cuda13` is the lockstep, wheel-only CUDA 13 companion.
-It contains separate lazily loaded cuDSS, AmgX, QUDA, cuTENSOR, cuTensorNet,
-and cuEST wrapper libraries using the public JAX FFI C ABI. Optional vendor
-runtimes are not new mandatory core dependencies. NVIDIA runtime libraries come
-from their owning wheels; the cuEST C runtime has a separate optional
-`phydrax-cuest` wheel. The CUDA runtime is shared.
+On Linux it contains separate lazily loaded cuDSS, AmgX, QUDA, cuTENSOR,
+cuTensorNet, and cuEST wrapper libraries using the public JAX FFI C ABI.
+Windows x64 builds retain mandatory cuDSS, AmgX, and QUDA and support the optional
+cuTENSOR wrapper. cuTensorNet, cuEST, and site/distributed components are explicitly
+unavailable on Windows; requesting them fails configuration.
+Optional vendor runtimes are not new mandatory core dependencies. NVIDIA numerical
+libraries come from their owning wheels; the cuEST C runtime has a separate optional
+`phydrax-cuest` wheel. The CUDA runtime is shared: Linux uses the owning runtime
+wheel, while current Windows toolkits use NVIDIA's canonical hybrid loader and
+the display driver's shared runtime.
 
 ## Build
 
 Use a Python environment containing the companion's build requirements
 from `../cuda13/pyproject.toml`. Never build against a
-system CUDA toolkit. CMake assembles a symlink-only toolkit from installed NVIDIA
+system CUDA toolkit. On Linux, CMake assembles a symlink-only toolkit from installed NVIDIA
 wheel RECORDs inside its build tree without modifying site-packages. Matching
-toolkit symlinks are retained across reconfiguration. Downloads default to
+toolkit symlinks are retained across reconfiguration. Windows uses a copied,
+SHA256-verified RECORD view without privileged symlinks. Downloads default to
 `${CMAKE_BINARY_DIR}/downloads`; developers can pass
 `-DPHX_CUDA_DOWNLOAD_DIR=/path/to/shared-cache` to reuse archives across builds.
 The wheel sets omit driver stubs, so SHA256-pinned NVIDIA
@@ -22,10 +28,11 @@ The wheel sets omit driver stubs, so SHA256-pinned NVIDIA
 shipped. CPU-only builders need neither a GPU driver nor a system toolkit.
 A pinned `cuda_cuobjdump` redistributable supplies the matching major's binary
 inspection tool, which is also not shipped in the companion.
-The build host must be Linux x86-64 or aarch64. Support archives use NVIDIA's
-`linux-x86_64` or `linux-sbsa` platform respectively, never Jetson artifacts.
-Wheel audits verify native little-endian ELF64 machine identity for the
-companion and its NVIDIA dependencies.
+The build host must be Linux x86-64/aarch64 or Windows x64. Linux support archives
+use NVIDIA's `linux-x86_64` or `linux-sbsa` platform respectively, never Jetson
+artifacts. Windows support archives use `windows-x86_64`. Wheel audits verify
+native little-endian ELF64 or PE32+ x64 identity, respectively, for the companion
+and its NVIDIA dependencies.
 
 From the repository root, a development component build is:
 
@@ -100,6 +107,119 @@ the container platform follows the native host, not an emulated cross-build.
 Host development wheels receive the host-compatible manylinux tag and do not
 claim manylinux_2_28 compatibility unless their actual symbol requirements
 satisfy it. Source distributions are deliberately refused; publish wheels only.
+
+### Windows toolchain and audit
+
+Use standard CPython 3.13 x64, stock JAX/JAXlib 0.12.0, and the lockstep
+`phydrax-cuda13-pjrt` runtime. The companion stays a plain-C-ABI `py3` wheel;
+the separate PJRT/kernel wheel owns the CPython-specific Windows runtime.
+There is no end-user source-build or system CUDA discovery fallback.
+
+Provision the build environment from `native/cuda13/pyproject.toml` and provide
+these absolute paths as environment variables (or the corresponding CMake cache
+inputs):
+
+| Input | Requirement |
+| --- | --- |
+| `PHX_WINDOWS_CC`, `PHX_WINDOWS_CXX` | Explicit `clang-cl.exe` for host C/C++ and XLA FFI |
+| `PHX_WINDOWS_CUDA_HOST_COMPILER` | Supported MSVC `cl.exe` for nvcc host compilation |
+| `PHX_WINDOWS_NVCC` | Installed NVIDIA wheel's RECORD-owned `nvcc.exe` |
+| `PHX_WINDOWS_LIB` | Explicit `lib.exe` or `llvm-lib.exe` |
+| `PHX_WINDOWS_MSVC_ROOT` | Matching MSVC tree containing `include` and `lib/x64`, beneath the real `VC/Tools/MSVC/<version>` layout with authenticated `VC/Auxiliary/Build` files for nvcc discovery |
+| `PHX_WINDOWS_SDK_ROOT`, `PHX_WINDOWS_SDK_VERSION` | Explicit SDK with matching `Include`, `Lib`, and `bin` version directories, including x64 `rc.exe` and `mt.exe` |
+| `PHX_PATCH_EXECUTABLE` | Explicit patch executable supporting the existing binary-sensitive AmgX patch |
+| `PHX_WINDOWS_CMAKE`, `PHX_WINDOWS_NINJA` | Explicit build-tool executables for the build CLI |
+
+The CLI owns `INCLUDE`, `LIB`, and compiler/SDK executable search paths; a
+standalone CMake build must retain the same explicit compiler/SDK environment
+for both configure and build. All downloads, views, build outputs, logs, and
+caches must remain under the authorized user profile. The copied toolkit is
+fail-closed on stale/conflicting bytes: use a fresh toolkit view when changing
+installed vendor inputs, not a mutated site-packages tree.
+
+The view validates each selected file against its owning wheel RECORD. NVIDIA's
+SHA256-pinned Windows CUDA 13.0.2 support redistributables supply cuobjdump tooling
+and, only when the installed runtime wheel omits it, the driver link library.
+The mandatory QUDA NVML import library comes from the verified `nvidia-nvml-dev`
+wheel. `nvcuda.dll` and `nvml.dll` remain driver-owned and are never copied into
+the view or wheel. Their link libraries are classified as real DLL imports or
+canonical NVIDIA driver dispatch loaders. Existing vendor import libraries are
+preferred and checked against the corresponding DLL. When absent, the build
+generates a real import library from the canonical PE reader's validated DLL
+exports, using the explicit librarian. NVIDIA's Windows hybrid runtime loader
+is not a statically linked CUDA runtime: it dispatches to the shared runtime
+owned by the display driver. Its versioned dispatch must not be replaced by
+imports synthesized from the wheel's standalone runtime DLL. Neither vendor
+DLLs nor support-tool binaries are installed into the companion wheel.
+
+Host FFI uses clang-cl; actual CUDA sources use nvcc with MSVC cl, not nvcc with
+clang-cl as its host compiler. AmgX and QUDA remain internal static libraries.
+AmgX retains every numerical patch and has no independent exported AMGX DLL ABI.
+QUDA retains its pinned feature set and Windows ports of timers, filesystem,
+exclusive tune-cache locks, hostname/error diagnostics, and UTF-8 paths.
+`quda.cpp` owns the host FFI; `quda_kernels.cu` owns the two device kernels on
+every platform. Their 128-by-256 launches retain the legacy default stream,
+blocking ownership readback, and existing synchronization/error behavior.
+
+The Windows QUDA complex C ABI uses an explicit real-then-imaginary pair of
+doubles, with compile-time size, alignment, and field-offset checks. The Linux
+GNU complex representation is unchanged. Cross-compiler host roundtrips must
+cover nvcc/MSVC and clang-cl plus the `cuDoubleComplex` boundary; they do not
+replace complex64/complex128 GPU numerical qualification.
+
+MSVC cannot pass QUDA's 128-byte-aligned argument structs by value. Windows
+selects the existing GPU constant-argument kernels for those structs without
+weakening device alignment or changing formulas. A bounded owner keyed by
+device and actual constant-buffer address serializes host enqueue sequences:
+wait for the reused completion event, upload arguments, launch, then record the
+event. This protects QUDA internal streams and tuning as well as outer FFI calls.
+There is no per-launch allocation or host/device synchronization. Failed waits,
+uploads, launches, or completion fences poison the owner until safe teardown.
+The component's existing owning-device shutdown drain precedes event release;
+failed event destruction retains poisoned ownership. `quda_argument_transport`
+records the 128-byte alignment, 512-owner bound, and enqueue/teardown contract.
+Linux and ordinary by-value kernel arguments retain their existing paths.
+
+Every component and internal static dependency uses the dynamic release CRT
+(`/MD`) and shared cudart. The clean-install gate must inspect the actual
+MSVC/UCRT dependencies of CPython, JAX, PJRT, and the companion. A C ABI does not
+make mismatched CRT allocation, `FILE*`, exception, or environment ownership
+safe. Required system CRT/driver prerequisites must already be installed; no
+automatic machine-wide redistributable installer or driver changes are made.
+
+Windows hybrid builds record `runtime_linkage` with kind `driver-hybrid`, target
+`nvcudart_hybrid64.dll`, and owner `display-driver`. The canonical `cudart.lib`
+dispatches through the driver; `cudart_static.lib` is not linked. Build-time
+classification authenticates the vendor archive and records its members and
+dispatch ABI. Component link maps are packaged beside their DLLs and authenticated
+by wheel RECORD; `link_maps` records their relative paths. Build and installed
+audits share the canonical mapped-PE dispatch/static-runtime exclusion inspector
+rather than inventing a `cudart64_13.dll` PE import. Driver/runtime
+availability and loaded cohort identity remain installed-wheel qualification.
+No driver DLL is needed on a CPU-only builder or bundled into a wheel.
+
+The common C ABI exposes `phx_cuda_runtime_function(const char*)` for the fixed
+runtime-function whitelist used by lifecycle and qualification. It returns a
+borrowed pointer to the API compiled against the canonical NVIDIA loader, without
+initializing CUDA. Callers retain the component handle and use the CUDA runtime
+calling convention; null/unknown names return null and set `phx_cuda_last_error`.
+The hybrid DLL's private exports are not a substitute public CUDA API.
+
+Windows builds use the same build CLI without `--container`; release defaults
+retain the full architecture list. Audits do not invoke auditwheel, patchelf,
+or readelf. They inspect exact component DLLs and C exports, the PE import
+closure, shared cudart, source/build identity, and actual device code using
+cuobjdump. Installed `components.json` names the actual component assets;
+`phx_cuda_build.json` records compiler/runtime linkage, selected components,
+architectures, patch/source pins, and toolkit identity. Missing declared assets
+are corruption, distinct from a known component not shipped in that build.
+
+An sm120-only build is not a full release-architecture qualification. RTX 5090
+Laptop GPU results do not qualify a desktop RTX 5090. Neither a successful
+configure nor a packaged wheel is numerical/lifecycle qualification: run the
+mandatory cuDSS/AmgX/QUDA installed-wheel gates and selected cuTENSOR gates before
+publication.
+
 
 DGX Spark has an aarch64 host and GB10 compute capability 12.1. Build locally
 with `--architectures 121-real --components cudss,amgx,quda`; use

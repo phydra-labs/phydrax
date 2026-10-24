@@ -301,6 +301,12 @@ def _distribution_version(distribution: str, /) -> str | None:
 
 
 def _physical_memory_bytes() -> int | None:
+    if os.name == "nt":
+        from .._execution_sampling import _windows_host_memory
+
+        return _windows_host_memory()[0].value_bytes
+    if os.name != "posix":
+        return None
     try:
         pages = os.sysconf("SC_PHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")

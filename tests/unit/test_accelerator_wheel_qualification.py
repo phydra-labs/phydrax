@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 import zipfile
 from email.message import Message
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from unittest.mock import Mock
 from xml.etree import ElementTree
@@ -333,14 +336,16 @@ def test_cpu_recorder_satisfies_gate_only_for_its_own_runtime_and_run() -> None:
     import jax
     import jax.numpy as jnp
 
+    from phydrax.execution import default_device
     from tests._support.accelerator_qualification import compiled_region_evidence
 
     device = jax.devices("cpu")[0]
-    gradient, evidence = compiled_region_evidence(
-        jax.grad(lambda point: point[0] ** 3 * point[1] ** 2),
-        (jnp.asarray([0.5, 0.25], dtype=jnp.float32),),
-        device=device,
-    )
+    with default_device(device):
+        gradient, evidence = compiled_region_evidence(
+            jax.grad(lambda point: point[0] ** 3 * point[1] ** 2),
+            (jnp.asarray([0.5, 0.25], dtype=jnp.float32),),
+            device=device,
+        )
     np.testing.assert_array_equal(gradient, np.asarray([0.046875, 0.0625], np.float32))
     assert gradient.devices() == {device}
     runtime = {
@@ -714,7 +719,8 @@ def _add_bundle_fixture(payload: dict[str, object]) -> None:
             ).encode()
         ).hexdigest()
     provenance["rocm_bundle"] = {"manifest": text, "payloads": inventories}
-    site = Path(provenance["venv"]) / "site-packages"
+    # These are Linux producer records, not paths on the test runner's host.
+    site = PurePosixPath(provenance["venv"]) / "site-packages"
     facts.update(
         bundle_version="10.1.0",
         bundle_architectures=["gfx1250", "gfx942", "gfx950"],
@@ -750,6 +756,8 @@ def _add_bundle_fixture(payload: dict[str, object]) -> None:
         "mixed-runtime",
         "not-loaded",
         "external-sdk",
+        "windows-manifest-path",
+        "windows-compiler-path",
         "manual-loader-path",
         "missing-compiler",
         "missing-runtime",
@@ -799,6 +807,14 @@ def test_rocm_bundle_evidence_refuses_incomplete_or_foreign_runtime(
         facts["bundle_loaded"] = False
     elif failure == "external-sdk":
         facts["bundle_manifest"] = "/checkout/sdk/phydrax_rocm_runtime/runtime.json"
+    elif failure == "windows-manifest-path":
+        facts["bundle_manifest"] = (
+            r"\parser-input\venv\site-packages\phydrax_rocm_runtime\runtime.json"
+        )
+    elif failure == "windows-compiler-path":
+        environment["LLVM_PATH"] = (
+            r"\parser-input\venv\site-packages\_rocm_sdk_core\lib\llvm"
+        )
     elif failure == "manual-loader-path":
         environment["LD_LIBRARY_PATH"] = "/checkout/sdk/lib"
     elif failure == "missing-compiler":
@@ -1125,18 +1141,31 @@ def test_device_run_binds_resource_evidence_to_its_own_nonce(
     )
 
 
-def test_process_logs_are_bounded_without_losing_retained_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "payload", [b"x", b"\xff", "λ".encode()], ids=["ascii", "invalid-utf8", "utf8"]
+)
+def test_process_logs_are_bounded_without_losing_retained_output(
+    tmp_path: Path, payload: bytes
+) -> None:
+    source = (
+        f"import os; payload={payload!r} * {TEXT_LIMIT * 3}; "
+        "os.write(1,payload); os.write(2,payload)"
+    )
     result = run(
-        [sys.executable, "-c", f"print('x' * {TEXT_LIMIT * 3})"],
+        [sys.executable, "-c", source],
         cwd=tmp_path,
         environment=dict(os.environ),
         timeout=10,
     )
     assert result["returncode"] == 0 and not result["timed_out"]
-    full_log = Path(result["stdout_path"]).read_bytes()
-    assert len(result["stdout"].encode()) <= TEXT_LIMIT
-    assert len(full_log) > TEXT_LIMIT
-    assert hashlib.sha256(full_log).hexdigest() == result["stdout_sha256"]
+    for text, path, digest in (
+        (result["stdout"], result["stdout_path"], result["stdout_sha256"]),
+        (result["stderr"], result["stderr_path"], result["stderr_sha256"]),
+    ):
+        full_log = Path(path).read_bytes()
+        assert len(text.encode()) <= TEXT_LIMIT
+        assert full_log == payload * (TEXT_LIMIT * 3)
+        assert hashlib.sha256(full_log).hexdigest() == digest
 
 
 def test_process_timeout_is_not_a_success_or_hardware_refusal(tmp_path: Path) -> None:
@@ -1149,18 +1178,238 @@ def test_process_timeout_is_not_a_success_or_hardware_refusal(tmp_path: Path) ->
     assert result["timed_out"] and result["returncode"] != 0
 
 
-def test_process_group_cleanup_terminates_descendants_after_parent_exits(
-    tmp_path: Path,
+@pytest.mark.parametrize("parent_outcome", ["normal", "timeout", "crash"])
+def test_process_group_cleanup_terminates_descendants_without_touching_other_processes(
+    tmp_path: Path, parent_outcome: str
 ) -> None:
+    ready = tmp_path / "descendant-ready"
     marker = tmp_path / "orphan-ran"
-    child = f"import time; from pathlib import Path; time.sleep(0.5); Path({str(marker)!r}).write_text('orphan')"
-    source = f"import subprocess,sys; child=subprocess.Popen([sys.executable,'-c',{child!r}]); print(child.pid,flush=True)"
+    sentinel = tmp_path / "unrelated-ran"
+    child = (
+        "import time; from pathlib import Path; "
+        f"Path({str(ready)!r}).write_text('ready'); "
+        f"time.sleep(2); Path({str(marker)!r}).write_text('orphan'); time.sleep(30)"
+    )
+    ending = {
+        "normal": "pass",
+        "timeout": "time.sleep(30)",
+        "crash": "os._exit(23)",
+    }[parent_outcome]
+    source = (
+        "import os,subprocess,sys,time; from pathlib import Path; "
+        f"child=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+        f"ready=Path({str(ready)!r})\n"
+        "while not ready.exists(): time.sleep(0.01)\n"
+        "print(child.pid,flush=True)\n"
+        f"{ending}\n"
+    )
+    unrelated_source = (
+        "import time; from pathlib import Path; time.sleep(2); "
+        f"Path({str(sentinel)!r}).write_text('alive'); time.sleep(30)"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", unrelated_source], cwd=tmp_path
+    ) as unrelated:
+        try:
+            result = run(
+                [sys.executable, "-c", source],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=1.0 if parent_outcome == "timeout" else 10.0,
+            )
+            assert ready.exists(), "The descendant must actually start before cleanup"
+            assert result["stdout"].strip().isdigit()
+            assert result["timed_out"] is (parent_outcome == "timeout")
+            if parent_outcome == "normal":
+                assert result["returncode"] == 0
+            elif parent_outcome == "crash":
+                assert result["returncode"] == 23
+            else:
+                assert result["returncode"] != 0
+            time.sleep(2.2)
+            assert not marker.exists()
+            assert sentinel.read_text() == "alive"
+            assert unrelated.poll() is None
+        finally:
+            unrelated.kill()
+            unrelated.wait(timeout=10)
+
+
+@pytest.mark.parametrize("exitcode", [0, 37, 259])
+def test_process_exit_status_is_exact(tmp_path: Path, exitcode: int) -> None:
+    if exitcode > 255 and os.name != "nt":
+        pytest.skip("POSIX exit statuses contain only the low byte")
+    result = run(
+        [sys.executable, "-c", f"import os; os._exit({exitcode})"],
+        cwd=tmp_path,
+        environment=dict(os.environ),
+        timeout=10,
+    )
+    assert result["returncode"] == exitcode
+    assert not result["timed_out"]
+
+
+def test_process_crash_preserves_platform_status(tmp_path: Path) -> None:
+    if os.name == "nt":
+        source = (
+            "import ctypes; k=ctypes.WinDLL('kernel32'); "
+            "k.GetCurrentProcess.restype=ctypes.c_void_p; "
+            "k.TerminateProcess.argtypes=(ctypes.c_void_p,ctypes.c_uint32); "
+            "k.TerminateProcess(k.GetCurrentProcess(),0xC0000005)"
+        )
+        expected = 0xC0000005
+    else:
+        source = "import os,signal; os.kill(os.getpid(),signal.SIGKILL)"
+        expected = -signal.SIGKILL
     result = run(
         [sys.executable, "-c", source],
         cwd=tmp_path,
         environment=dict(os.environ),
         timeout=10,
     )
-    assert result["returncode"] == 0 and result["stdout"].strip().isdigit()
-    time.sleep(0.7)
-    assert not marker.exists()
+    assert result["returncode"] == expected
+    assert not result["timed_out"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object boundary")
+def test_windows_assignment_failure_never_runs_and_terminates_suspended_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools import _windows_process as windows
+
+    marker = tmp_path / "unassigned-child-ran"
+    kernel = windows._kernel32()
+    assign = windows._assign_job
+    processes: list[int] = []
+
+    def refuse_job(library: ctypes.CDLL, job: int, process: int) -> None:
+        processes.append(windows._duplicate(library, process, inherit=False))
+        # Exercise the real Win32 assignment refusal, not a fabricated status.
+        assign(library, 0, process)
+
+    monkeypatch.setattr(windows, "_assign_job", refuse_job)
+    try:
+        with pytest.raises(OSError):
+            run(
+                [
+                    sys.executable,
+                    "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).touch()",
+                ],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=10,
+            )
+        assert len(processes) == 1
+        assert kernel.WaitForSingleObject(processes[0], 0) == 0
+        assert not marker.exists()
+    finally:
+        for process in processes:
+            windows._close(kernel, process)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 inherited-handle allowlist")
+def test_windows_child_does_not_inherit_unlisted_handle(tmp_path: Path) -> None:
+    from tools import _windows_process as windows
+
+    kernel = windows._kernel32()
+    kernel.CreateEventW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_wchar_p,
+    )
+    kernel.CreateEventW.restype = ctypes.c_void_p
+    event = kernel.CreateEventW(None, True, False, None)
+    assert event
+    try:
+        inherited = windows._duplicate(kernel, event, inherit=True)
+        try:
+            source = (
+                "import ctypes; k=ctypes.WinDLL('kernel32'); "
+                "k.SetEvent.argtypes=(ctypes.c_void_p,); "
+                f"k.SetEvent({inherited})"
+            )
+            result = run(
+                [sys.executable, "-c", source],
+                cwd=tmp_path,
+                environment=dict(os.environ),
+                timeout=10,
+            )
+            assert result["returncode"] == 0 and not result["timed_out"]
+            # A numeric handle may be reused in the child; test the actual
+            # parent's event rather than mere validity of that integer there.
+            assert kernel.WaitForSingleObject(event, 0) == 258
+        finally:
+            windows._close(kernel, inherited)
+    finally:
+        windows._close(kernel, event)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 kill-on-close supervisor cleanup")
+def test_windows_supervisor_exit_closes_job_and_terminates_owned_tree(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "owned-child-ready"
+    orphan = tmp_path / "owned-child-survived"
+    child = (
+        "import time; from pathlib import Path; "
+        f"Path({str(ready)!r}).touch(); time.sleep(3); "
+        f"Path({str(orphan)!r}).touch(); time.sleep(30)"
+    )
+    source = (
+        "import os,sys,threading,time; from pathlib import Path; "
+        "from tools._accelerator_process import run\n"
+        "def exit_supervisor():\n"
+        f"    while not Path({str(ready)!r}).exists(): time.sleep(0.01)\n"
+        "    os._exit(17)\n"
+        "threading.Thread(target=exit_supervisor,daemon=True).start()\n"
+        f"run([sys.executable,'-c',{child!r}],cwd=Path({str(tmp_path)!r}),"
+        "environment=dict(os.environ),timeout=20)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=Path(__file__).resolve().parents[2],
+        env=dict(os.environ),
+        timeout=15,
+        capture_output=True,
+    )
+    assert completed.returncode == 17
+    assert ready.exists()
+    time.sleep(3.2)
+    assert not orphan.exists()
+
+
+def test_direct_script_runner_supervises_child_without_package_search_path(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "direct-command.py"
+    marker = tmp_path / "executed"
+    child = (
+        "import sys; from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text('executed'); sys.exit(37)"
+    )
+    script.write_text(
+        "import json,os,sys\n"
+        "from pathlib import Path\n"
+        "from _accelerator_process import run\n"
+        f"result=run([sys.executable,'-S','-c',{child!r}],"
+        f"cwd=Path({str(tmp_path)!r}),environment=dict(os.environ),timeout=10)\n"
+        "print(json.dumps(result))\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "tools")
+    completed = subprocess.run(
+        [sys.executable, "-S", str(script)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stderr
+    evidence = json.loads(completed.stdout)
+    assert evidence["returncode"] == 37
+    assert not evidence["timed_out"]
+    assert marker.read_text() == "executed"

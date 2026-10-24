@@ -2,7 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Crash-consistent publication of validated local files and resource sets."""
+"""Crash-consistent publication of validated local files and resource sets.
+
+Receipts require successful file and directory synchronization. On Windows the
+directory request is restricted to NTFS and requests metadata and storage-cache
+flushing; successful API completion is not a power-loss qualification of the
+filesystem/filter/storage stack. A failed post-commit flush can leave the new
+destination visible, but never returns a receipt. Cleanup failures are attached
+to the original operation error and do not prevent release of the held parent.
+"""
 
 from __future__ import annotations
 
@@ -13,21 +21,32 @@ import os
 import secrets
 import stat
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Literal, TypeAlias
 
 from ._fingerprint import canonical_fingerprint
-from ._host_io import descriptor_relative_path, open_parent_descriptor
+from ._host_io import (
+    create_directory_at,
+    descriptor_relative_path,
+    link_at,
+    list_directory,
+    open_directory_at,
+    open_file_at,
+    open_parent_descriptor,
+    rename_at,
+    stat_at,
+    sync_directory,
+    unlink_at,
+)
 from ._resource_set import ResourceSetLimits
 from .typing import parse
 
 
 PublicationMode: TypeAlias = Literal["exclusive", "atomic_replace"]
 _HASH_CHUNK_BYTES = 1_048_576
-_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-_FILE_FLAGS = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +82,47 @@ class ResourceSetPublicationReceipt:
     mode: PublicationMode
     replaced_existing: bool
     receipt_id: str
+
+
+@contextmanager
+def _preserve_publication_error() -> Iterator[None]:
+    """Keep the operation's original failure when releasing staging resources."""
+    original = sys.exception()
+    try:
+        yield
+    except BaseException as cleanup_error:
+        if original is None:
+            raise
+        original.add_note(f"Publication cleanup also failed: {cleanup_error!r}")
+
+
+def _cleanup_publication(
+    parent: int,
+    temporary_name: str,
+    descriptor: int,
+    *,
+    tree: bool,
+) -> None:
+    # Nested finally blocks release the held parent even if closing the staged
+    # descriptor or removing the staging entry fails. Cleanup failure on an
+    # otherwise successful operation still raises and prevents a receipt.
+    try:
+        if descriptor >= 0:
+            with _preserve_publication_error():
+                os.close(descriptor)
+    finally:
+        try:
+            with _preserve_publication_error():
+                try:
+                    if tree:
+                        _remove_tree_at(parent, temporary_name)
+                    else:
+                        unlink_at(parent, temporary_name)
+                except FileNotFoundError:
+                    pass
+        finally:
+            with _preserve_publication_error():
+                os.close(parent)
 
 
 def publish_bytes(
@@ -115,11 +175,8 @@ def publish_file(
     descriptor = -1
     replaced = False
     try:
-        descriptor = os.open(
-            temporary_name,
-            _FILE_FLAGS,
-            0o600,
-            dir_fd=parent_descriptor,
+        descriptor = open_file_at(
+            parent_descriptor, temporary_name, write=True, create=True, exclusive=True
         )
         with os.fdopen(descriptor, "w+b") as stream:
             descriptor = -1
@@ -131,33 +188,18 @@ def publish_file(
         if validator is not None:
             validator(staged)
         try:
-            existing = os.stat(
-                destination_name,
-                dir_fd=parent_descriptor,
-                follow_symlinks=False,
-            )
+            existing = stat_at(parent_descriptor, destination_name)
         except FileNotFoundError:
             existing = None
         if existing is not None and not stat.S_ISREG(existing.st_mode):
             raise ValueError("Publication destination must be absent or a regular file.")
         replaced = existing is not None
         if mode == "exclusive":
-            os.link(
-                temporary_name,
-                destination_name,
-                src_dir_fd=parent_descriptor,
-                dst_dir_fd=parent_descriptor,
-                follow_symlinks=False,
-            )
-            os.unlink(temporary_name, dir_fd=parent_descriptor)
+            link_at(parent_descriptor, temporary_name, destination_name)
+            unlink_at(parent_descriptor, temporary_name)
         else:
-            os.replace(
-                temporary_name,
-                destination_name,
-                src_dir_fd=parent_descriptor,
-                dst_dir_fd=parent_descriptor,
-            )
-        os.fsync(parent_descriptor)
+            rename_at(parent_descriptor, temporary_name, destination_name, replace=True)
+        sync_directory(parent_descriptor)
         payload = {
             "kind": "file-publication-receipt",
             "destination": str(destination),
@@ -175,13 +217,7 @@ def publish_file(
             canonical_fingerprint(payload),
         )
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            os.unlink(temporary_name, dir_fd=parent_descriptor)
-        except FileNotFoundError:
-            pass
-        os.close(parent_descriptor)
+        _cleanup_publication(parent_descriptor, temporary_name, descriptor, tree=False)
 
 
 def publish_resource_set(
@@ -192,7 +228,15 @@ def publish_resource_set(
     limits: ResourceSetLimits,
     mode: PublicationMode = "exclusive",
 ) -> ResourceSetPublicationReceipt:
-    """Publish one immutable resource-set generation with an explicit commit mode."""
+    """Publish one immutable resource-set generation with an explicit commit mode.
+
+    POSIX exclusive publication retains ordinary rename semantics: an observed
+    nonempty destination is refused, an observed empty directory is removed and
+    synchronized first, and a concurrently introduced empty directory may be
+    replaced. This is not an atomic no-replace guarantee against such a race.
+    Windows uses native atomic no-replace after the same destination admission.
+    Replacing an existing generation atomically requires directory exchange.
+    """
 
     if not isinstance(members, Mapping) or not members:
         raise ValueError("Published resource sets require a non-empty member mapping.")
@@ -202,12 +246,8 @@ def publish_resource_set(
     temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"
     temporary_descriptor = -1
     try:
-        os.mkdir(temporary_name, mode=0o700, dir_fd=parent_descriptor)
-        temporary_descriptor = os.open(
-            temporary_name,
-            _DIRECTORY_FLAGS,
-            dir_fd=parent_descriptor,
-        )
+        create_directory_at(parent_descriptor, temporary_name)
+        temporary_descriptor = open_directory_at(parent_descriptor, temporary_name)
         receipts: list[PublishedMemberReceipt] = []
         total = 0
         canonical_members: dict[str, bytes] = {}
@@ -265,11 +305,7 @@ def publish_resource_set(
                 aggregate.update(part)
         digest = aggregate.hexdigest()
         try:
-            existing_descriptor = os.open(
-                destination_name,
-                _DIRECTORY_FLAGS,
-                dir_fd=parent_descriptor,
-            )
+            existing_descriptor = open_directory_at(parent_descriptor, destination_name)
         except FileNotFoundError:
             existing_descriptor = -1
         except OSError as error:
@@ -280,9 +316,14 @@ def publish_resource_set(
         existing_empty = False
         if existing_descriptor >= 0:
             try:
-                existing_empty = not os.listdir(existing_descriptor)
+                existing_empty = not list_directory(existing_descriptor)
             finally:
                 os.close(existing_descriptor)
+        # Windows pins admitted directories against renaming. Release only the
+        # fully synchronized staged child; keep its parent held through commit.
+        if os.name == "nt":
+            os.close(temporary_descriptor)
+            temporary_descriptor = -1
         if replaced and mode == "atomic_replace":
             _atomic_exchange_directories(
                 parent_descriptor,
@@ -293,22 +334,25 @@ def publish_resource_set(
             if replaced:
                 if not existing_empty:
                     raise FileExistsError(destination)
-                os.rmdir(destination_name, dir_fd=parent_descriptor)
-                os.fsync(parent_descriptor)
+                unlink_at(parent_descriptor, destination_name, directory=True)
+                sync_directory(parent_descriptor)
             try:
-                os.rename(
+                rename_at(
+                    parent_descriptor,
                     temporary_name,
                     destination_name,
-                    src_dir_fd=parent_descriptor,
-                    dst_dir_fd=parent_descriptor,
+                    # POSIX retains its preexisting ordinary rename contract,
+                    # without adding a filesystem rename-flags requirement.
+                    replace=os.name != "nt",
                 )
             except OSError as error:
                 if error.errno in (errno.EEXIST, errno.ENOTEMPTY):
                     raise FileExistsError(destination) from error
                 raise
-        os.close(temporary_descriptor)
-        temporary_descriptor = -1
-        os.fsync(parent_descriptor)
+        if temporary_descriptor >= 0:
+            os.close(temporary_descriptor)
+            temporary_descriptor = -1
+        sync_directory(parent_descriptor)
         payload = {
             "kind": "resource-set-publication-receipt",
             "destination": str(destination),
@@ -328,13 +372,12 @@ def publish_resource_set(
             canonical_fingerprint(payload),
         )
     finally:
-        if temporary_descriptor >= 0:
-            os.close(temporary_descriptor)
-        try:
-            _remove_tree_at(parent_descriptor, temporary_name)
-        except FileNotFoundError:
-            pass
-        os.close(parent_descriptor)
+        _cleanup_publication(
+            parent_descriptor,
+            temporary_name,
+            temporary_descriptor,
+            tree=True,
+        )
 
 
 def _stream_identity(stream: BinaryIO, maximum_bytes: int, /) -> tuple[int, str]:
@@ -375,15 +418,16 @@ def _atomic_exchange_directories(
 ) -> None:
     """Atomically exchange two sibling directories on supported POSIX hosts."""
 
+    if sys.platform != "darwin" and not sys.platform.startswith("linux"):
+        raise OSError(errno.ENOTSUP, "Atomic directory exchange is unsupported.")
+
     library = ctypes.CDLL(None, use_errno=True)
     source = temporary_name.encode()
     destination = destination_name.encode()
     if sys.platform == "darwin":
         operation = library.renameatx_np
-    elif sys.platform.startswith("linux"):
-        operation = library.renameat2
     else:
-        raise OSError(errno.ENOTSUP, "Atomic directory exchange is unsupported.")
+        operation = library.renameat2
     operation.argtypes = (
         ctypes.c_int,
         ctypes.c_char_p,
@@ -402,7 +446,7 @@ def _atomic_exchange_directories(
     if result != 0:
         code = ctypes.get_errno()
         raise OSError(code, os.strerror(code))
-    os.fsync(parent_descriptor)
+    sync_directory(parent_descriptor)
 
 
 def _write_resource_member(
@@ -416,52 +460,50 @@ def _write_resource_member(
     try:
         for component in parts[:-1]:
             try:
-                os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                create_directory_at(descriptor, component)
             except FileExistsError:
                 pass
-            following = os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptor)
+            following = open_directory_at(descriptor, component)
             os.close(descriptor)
             descriptor = following
-        file_descriptor = os.open(parts[-1], _FILE_FLAGS, 0o600, dir_fd=descriptor)
+        file_descriptor = open_file_at(
+            descriptor, parts[-1], write=True, create=True, exclusive=True
+        )
         with os.fdopen(file_descriptor, "wb") as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.fsync(descriptor)
+        sync_directory(descriptor)
     finally:
         os.close(descriptor)
 
 
 def _fsync_tree(directory_descriptor: int, /) -> None:
-    for name in sorted(os.listdir(directory_descriptor)):
-        information = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    for name in sorted(list_directory(directory_descriptor)):
+        information = stat_at(directory_descriptor, name)
         if stat.S_ISDIR(information.st_mode):
-            child = os.open(name, _DIRECTORY_FLAGS, dir_fd=directory_descriptor)
+            child = open_directory_at(directory_descriptor, name)
             try:
                 _fsync_tree(child)
             finally:
                 os.close(child)
         elif not stat.S_ISREG(information.st_mode):
             raise ValueError("Published resource set contains a special file.")
-    os.fsync(directory_descriptor)
+    sync_directory(directory_descriptor)
 
 
 def _remove_tree_at(parent_descriptor: int, name: str, /) -> None:
-    directory_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_descriptor)
+    directory_descriptor = open_directory_at(parent_descriptor, name)
     try:
-        for child_name in os.listdir(directory_descriptor):
-            information = os.stat(
-                child_name,
-                dir_fd=directory_descriptor,
-                follow_symlinks=False,
-            )
+        for child_name in list_directory(directory_descriptor):
+            information = stat_at(directory_descriptor, child_name)
             if stat.S_ISDIR(information.st_mode):
                 _remove_tree_at(directory_descriptor, child_name)
             else:
-                os.unlink(child_name, dir_fd=directory_descriptor)
+                unlink_at(directory_descriptor, child_name)
     finally:
         os.close(directory_descriptor)
-    os.rmdir(name, dir_fd=parent_descriptor)
+    unlink_at(parent_descriptor, name, directory=True)
 
 
 __all__ = [

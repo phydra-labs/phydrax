@@ -1,5 +1,6 @@
 """Minimal shared objects encoded from the System V ELF64 external format."""
 
+import os
 import struct
 from pathlib import Path
 from typing import Literal
@@ -15,15 +16,24 @@ def write_shared_object(
     machine: Literal["x86_64", "aarch64"] = "x86_64",
 ) -> Path:
     """Write inspectable ELF metadata, not executable code or a loadable fixture."""
+
+    def loader_path(value: str) -> str:
+        # An ELF search list uses ':' separators, so a Windows drive cannot be
+        # encoded as an absolute entry. Keep fixture references archive-relative.
+        if os.name == "nt" and os.path.isabs(value) and os.path.splitdrive(value)[0]:
+            relative = os.path.relpath(value, path.parent).replace("\\", "/")
+            return "$ORIGIN" if relative == "." else f"$ORIGIN/{relative}"
+        return value
+
     strings = bytearray(b"\0")
     dynamic: list[tuple[int, int]] = []
     entries = [(1, name) for name in needed]
     if soname is not None:
         entries.append((14, soname))
     if rpath:
-        entries.append((15, ":".join(rpath)))
+        entries.append((15, ":".join(loader_path(value) for value in rpath)))
     if runpath:
-        entries.append((29, ":".join(runpath)))
+        entries.append((29, ":".join(loader_path(value) for value in runpath)))
     for tag, value in entries:
         dynamic.append((tag, len(strings)))
         strings.extend(value.encode() + b"\0")

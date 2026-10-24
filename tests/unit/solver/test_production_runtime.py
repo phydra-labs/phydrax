@@ -3,9 +3,12 @@
 #
 
 
+import errno
 import hashlib
 import json
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -15,6 +18,8 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
+import phydrax._host_io as host_io
+import phydrax.solver._production_runtime as production_runtime
 from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax.lifecycle._archive import migrate_configuration, rollback_configuration
 from phydrax.lifecycle._chunk_repository import CheckpointResourcePolicy
@@ -500,6 +505,8 @@ def _artifact_bindings(
     inventory: RuntimeIdentityInventory | None = None,
     maximum_output_backlog_bytes: Any = 8 * 1024 * 1024,
 ) -> Any:
+    if os.name != "posix":
+        pytest.skip("These bindings require the explicit POSIX artifact provider.")
     repository_policy = (
         _repository_policy() if repository_policy is None else repository_policy
     )
@@ -1021,9 +1028,171 @@ def test_repository_generation_is_independent_of_accepted_step(tmp_path: Any) ->
     assert repeated.accepted_step == 0
 
 
+@pytest.fixture
+def durable_checkpoint(
+    tmp_path: Path,
+) -> Iterator[tuple[phx.solver.DurableCheckpointStore, RuntimeCheckpointEnvelope]]:
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "checkpoint-publication",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(2),
+    )
+    try:
+        plan = phx.solver.ProductionRunPlan(
+            method,
+            phx.solver.RobustRetryPolicy(),
+            step_size=0.1,
+            end_time=0.1,
+            maximum_steps=1,
+            checkpoint_interval=1,
+        )
+        prepared = phx.solver.PreparedProductionRun(manifest, plan, store)
+        state = prepared.initial_state(jnp.asarray((3.0,), dtype=jnp.float64))
+        yield store, prepared._envelope(state)
+    finally:
+        store.close()
+
+
+def test_durable_checkpoint_commit_without_exclusive_rename_support(
+    durable_checkpoint: tuple[
+        phx.solver.DurableCheckpointStore, RuntimeCheckpointEnvelope
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, envelope = durable_checkpoint
+    unsupported = OSError(errno.EINVAL, "Filesystem rejects exclusive rename flags")
+    if os.name == "nt":
+        import phydrax._windows_host_io as native
+
+        rename = native.rename_at
+
+        def reject_exclusive_rename(
+            parent: int, source: str, destination: str, *, replace: bool
+        ) -> None:
+            if not replace:
+                raise unsupported
+            rename(parent, source, destination, replace=replace)
+
+        monkeypatch.setattr(native, "rename_at", reject_exclusive_rename)
+    else:
+
+        def reject_rename_library(*args: Any, **kwargs: Any) -> None:
+            raise unsupported
+
+        monkeypatch.setattr(host_io.ctypes, "CDLL", reject_rename_library)
+
+    receipt = store.commit(0, envelope)
+    archive = store.root / receipt.commit_locator
+    assert receipt.durable_size_bytes == archive.stat().st_size
+    assert receipt.durable_sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert store.verify_commit(receipt) == receipt
+    assert store.commit(0, envelope) == receipt
+    restored = store.latest(
+        jnp.asarray((0.0,), dtype=jnp.float64),
+        controller_template=envelope.controller_state,
+        observer_templates=envelope.observer_states,
+        rng_template=envelope.rng_state,
+        runtime_id=envelope.runtime_id,
+    )
+    np.testing.assert_array_equal(restored.state, envelope.state)
+    assert {path.name for path in store.root.iterdir()} == {
+        receipt.commit_locator,
+        "committed.json",
+    }
+
+
+@pytest.mark.parametrize("collision", ["existing", "during-staging"])
+def test_durable_checkpoint_collision_preserves_generation_and_pointer(
+    durable_checkpoint: tuple[
+        phx.solver.DurableCheckpointStore, RuntimeCheckpointEnvelope
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+    collision: str,
+) -> None:
+    store, envelope = durable_checkpoint
+    previous = store.commit(0, envelope)
+    pointer = (store.root / "committed.json").read_bytes()
+    target = store.root / "generation-00000001.phx"
+    sentinel = b"another immutable generation"
+    if collision == "existing":
+        target.write_bytes(sentinel)
+    else:
+        identity = production_runtime._regular_file_identity_at
+
+        def collide_after_staging(
+            directory: int, name: str, maximum_bytes: int, /
+        ) -> tuple[int, str]:
+            result = identity(directory, name, maximum_bytes)
+            if name.endswith(".archive"):
+                target.write_bytes(sentinel)
+            return result
+
+        monkeypatch.setattr(
+            production_runtime, "_regular_file_identity_at", collide_after_staging
+        )
+
+    with pytest.raises(FileExistsError) as raised:
+        store.commit(1, envelope)
+
+    if collision == "existing":
+        assert str(raised.value) == (
+            "Checkpoint generation already exists and is immutable."
+        )
+    else:
+        assert raised.value.errno == errno.EEXIST
+    assert target.read_bytes() == sentinel
+    assert (store.root / "committed.json").read_bytes() == pointer
+    assert store.verify_commit(previous) == previous
+    assert {path.name for path in store.root.iterdir()} == {
+        previous.commit_locator,
+        target.name,
+        "committed.json",
+    }
+
+
+def test_durable_checkpoint_flush_failure_preserves_previous_pointer(
+    durable_checkpoint: tuple[
+        phx.solver.DurableCheckpointStore, RuntimeCheckpointEnvelope
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, envelope = durable_checkpoint
+    previous = store.commit(0, envelope)
+    pointer = (store.root / "committed.json").read_bytes()
+    target = store.root / "generation-00000001.phx"
+    failure = OSError(errno.EIO, "Checkpoint directory synchronization failed")
+
+    def fail_directory_sync(descriptor: int) -> None:
+        assert descriptor == store._root_descriptor
+        assert target.is_file()
+        assert not any(path.name.endswith(".archive") for path in store.root.iterdir())
+        assert (store.root / "committed.json").read_bytes() == pointer
+        raise failure
+
+    monkeypatch.setattr(production_runtime, "sync_directory", fail_directory_sync)
+    with pytest.raises(OSError) as raised:
+        store.commit(1, envelope)
+
+    assert raised.value is failure
+    assert (store.root / "committed.json").read_bytes() == pointer
+    assert target.is_file()
+    assert store.verify_commit(previous) == previous
+    assert {path.name for path in store.root.iterdir()} == {
+        previous.commit_locator,
+        target.name,
+        "committed.json",
+    }
+
+
 def test_durable_checkpoint_store_rejects_symlink_root_and_fifo_pointer(
     tmp_path: Any,
 ) -> None:
+    if os.name != "posix":
+        pytest.skip("FIFO checkpoint rejection requires POSIX named pipes.")
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -1075,7 +1244,12 @@ def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path: Any)
     unrelated = tmp_path / "unrelated"
     unrelated.write_bytes(b"not a checkpoint")
     generation.unlink()
-    generation.symlink_to(unrelated)
+    try:
+        generation.symlink_to(unrelated)
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("File symlinks require Windows developer mode or privilege.")
+        raise
 
     with pytest.raises(ArrayArchiveCorruptionError):
         prepared.resume(state)

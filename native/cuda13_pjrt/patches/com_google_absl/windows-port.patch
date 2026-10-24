@@ -1,0 +1,19 @@
+diff --git a/absl/base/internal/per_thread_tls.h b/absl/base/internal/per_thread_tls.h
+index cf5e97a..478cdc7 100644
+--- a/absl/base/internal/per_thread_tls.h
++++ b/absl/base/internal/per_thread_tls.h
+@@ -42,7 +42,14 @@
+ #define ABSL_PER_THREAD_TLS_KEYWORD __thread
+ #define ABSL_PER_THREAD_TLS 1
+ #elif defined(_MSC_VER)
++#if defined(__CUDA_ARCH__)
++// clang rejects `__declspec(thread)` when compiling for a CUDA device target
++// (thread-local storage is not supported there). These variables are only
++// used from host code, so drop the keyword in the device compilation pass.
++#define ABSL_PER_THREAD_TLS_KEYWORD
++#else
+ #define ABSL_PER_THREAD_TLS_KEYWORD __declspec(thread)
++#endif
+ #define ABSL_PER_THREAD_TLS 1
+ #else
+ #define ABSL_PER_THREAD_TLS_KEYWORD

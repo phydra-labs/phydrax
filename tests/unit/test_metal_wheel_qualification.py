@@ -489,6 +489,20 @@ def test_stale_case_report_is_never_reused(tmp_path: Path) -> None:
     stale = _report(required, tmp_path)
     stale["run"] = "run-1"
     (suite / qualification.CASE_REPORT).write_text(json.dumps(stale))
+    if os.name != "posix":
+        with pytest.raises(RuntimeError, match="requires a POSIX host"):
+            qualification.run_file(
+                Path(sys.executable),
+                tmp_path,
+                suite,
+                PATH,
+                required,
+                run_id="run-1",
+                expected_runtime=RUNTIME,
+                timeout=60.0,
+            )
+        assert not (suite / qualification.CASE_REPORT).exists()
+        return
     false = shutil.which("false")
     assert false is not None
     record, coverage = qualification.run_file(
@@ -559,6 +573,10 @@ def test_imports_checkout(record_property):
 def test_case_plugin_reduces_real_pytest_sessions(
     tmp_path: Path, symlinked: bool
 ) -> None:
+    if os.name != "posix":
+        with pytest.raises(RuntimeError, match="requires a POSIX host"):
+            qualification.run([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=300.0)
+        return
     suite = tmp_path / "suite"
     checkout = tmp_path / "checkout"
     suite.mkdir()

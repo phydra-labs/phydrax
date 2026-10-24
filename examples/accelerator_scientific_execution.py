@@ -181,9 +181,13 @@ def main() -> int:
     import jax
     import numpy as np
 
-    from phydrax._jax_config import default_device
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
-    from phydrax.backends import oneapi_environment, rocm_environment, tpu_environment
+    from phydrax.backends import (
+        frontend_index_patch_identity,
+        oneapi_environment,
+        rocm_environment,
+        tpu_environment,
+    )
+    from phydrax.execution import default_device
 
     match args.accelerator:
         case "oneapi":

@@ -1,0 +1,15 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -128,1 +128,2 @@
+-        "//third_party/py:rules_python_windows_long_paths.patch",
++        "//third_party/py:rules_python_windows_long_paths.patch",
++        "//third_party/windows_port:rules_python.patch",
+@@ -137,1 +138,2 @@
+-        "//third_party/protobuf:protobuf_arena.patch",
++        "//third_party/protobuf:protobuf_arena.patch",
++        "//third_party/windows_port:com_google_protobuf.patch",
+@@ -147,1 +149,2 @@
+-        "//third_party/absl:raw_hash_set.patch",
++        "//third_party/absl:raw_hash_set.patch",
++        "//third_party/windows_port:com_google_absl.patch",

@@ -42,11 +42,15 @@ MemoryMeasurementMethod: TypeAlias = Literal[
     "sysconf_physical_pages",
     "procfs_meminfo_available",
     "mach_host_vm_statistics",
+    "win32_working_set",
+    "win32_memory_status",
     "jax_memory_stats",
     "jax_live_arrays",
     "interval_sampling",
 ]
-HostMemoryProvider: TypeAlias = Literal["linux_procfs", "darwin_mach", "unsupported"]
+HostMemoryProvider: TypeAlias = Literal[
+    "linux_procfs", "darwin_mach", "windows_psapi", "unsupported"
+]
 
 _MACH_TASK_BASIC_INFO = 20
 _HOST_VM_INFO64 = 4
@@ -142,7 +146,7 @@ class MemoryMeasurement:
         if self.value_bytes is None or self.scope != "peak":
             return False
         match self.method:
-            case "getrusage_max_rss" | "jax_memory_stats":
+            case "getrusage_max_rss" | "win32_working_set" | "jax_memory_stats":
                 return True
             case (
                 "interval_sampling"
@@ -151,6 +155,7 @@ class MemoryMeasurement:
                 | "sysconf_physical_pages"
                 | "procfs_meminfo_available"
                 | "mach_host_vm_statistics"
+                | "win32_memory_status"
                 | "jax_live_arrays"
             ):
                 return False
@@ -176,7 +181,9 @@ class HostMemorySample:
     guarantees ``VmRSS <= VmHWM``. Only providers whose peak measurement declares
     ``is_upper_bound`` can certify a phase RSS bound.
     ``host_available`` is the provider's reclaimable-memory estimate
-    (Linux ``MemAvailable``; Darwin free plus inactive pages).
+    (Linux ``MemAvailable``; Darwin free plus inactive pages; Windows standby,
+    free, and zero lists). Windows resident counters describe the working set,
+    not private committed bytes or GPU allocator capacity.
     """
 
     provider: HostMemoryProvider
@@ -553,15 +560,173 @@ def _darwin_system() -> ctypes.CDLL:
     return library
 
 
+class _ProcessMemoryCounters(ctypes.Structure):
+    _fields_ = (
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    )
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    _fields_ = (
+        ("dwLength", ctypes.c_uint32),
+        ("dwMemoryLoad", ctypes.c_uint32),
+        ("ullTotalPhys", ctypes.c_uint64),
+        ("ullAvailPhys", ctypes.c_uint64),
+        ("ullTotalPageFile", ctypes.c_uint64),
+        ("ullAvailPageFile", ctypes.c_uint64),
+        ("ullTotalVirtual", ctypes.c_uint64),
+        ("ullAvailVirtual", ctypes.c_uint64),
+        ("ullAvailExtendedVirtual", ctypes.c_uint64),
+    )
+
+
+class _SystemInfo(ctypes.Structure):
+    _fields_ = (
+        ("dwOemId", ctypes.c_uint32),
+        ("dwPageSize", ctypes.c_uint32),
+        ("lpMinimumApplicationAddress", ctypes.c_void_p),
+        ("lpMaximumApplicationAddress", ctypes.c_void_p),
+        ("dwActiveProcessorMask", ctypes.c_size_t),
+        ("dwNumberOfProcessors", ctypes.c_uint32),
+        ("dwProcessorType", ctypes.c_uint32),
+        ("dwAllocationGranularity", ctypes.c_uint32),
+        ("wProcessorLevel", ctypes.c_uint16),
+        ("wProcessorRevision", ctypes.c_uint16),
+    )
+
+
+@cache
+def _windows_system() -> ctypes.CDLL:
+    """Bind the documented Win32 ABI without opening another process."""
+    if sys.platform != "win32":
+        raise OSError("Win32 memory APIs are unavailable on this platform")
+    library = ctypes.WinDLL("kernel32", use_last_error=True, winmode=0x00000800)
+    library.GetCurrentProcess.argtypes = ()
+    library.GetCurrentProcess.restype = ctypes.c_void_p
+    library.K32GetProcessMemoryInfo.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(_ProcessMemoryCounters),
+        ctypes.c_uint32,
+    )
+    library.K32GetProcessMemoryInfo.restype = ctypes.c_int32
+    library.GlobalMemoryStatusEx.argtypes = (ctypes.POINTER(_MemoryStatusEx),)
+    library.GlobalMemoryStatusEx.restype = ctypes.c_int32
+    library.GetSystemInfo.argtypes = (ctypes.POINTER(_SystemInfo),)
+    library.GetSystemInfo.restype = None
+    return library
+
+
+def _windows_page_size(library: ctypes.CDLL) -> int:
+    info = _SystemInfo()
+    library.GetSystemInfo(ctypes.byref(info))
+    if info.dwPageSize <= 0:
+        raise OSError("GetSystemInfo did not report a positive page size")
+    return info.dwPageSize
+
+
+def _windows_resident() -> tuple[MemoryMeasurement, MemoryMeasurement]:
+    try:
+        library = _windows_system()
+        counters = _ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        # GetCurrentProcess returns a borrowed pseudo-handle; never CloseHandle it.
+        if not library.K32GetProcessMemoryInfo(
+            library.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        page = _windows_page_size(library)
+    except OSError as error:
+        reason = f"GetProcessMemoryInfo unavailable: {error}"
+        return (
+            MemoryMeasurement.unavailable("win32_working_set", "baseline", reason),
+            MemoryMeasurement.unavailable("win32_working_set", "peak", reason),
+        )
+    return (
+        MemoryMeasurement.measured(
+            "win32_working_set", "baseline", counters.WorkingSetSize, page
+        ),
+        MemoryMeasurement.measured(
+            "win32_working_set", "peak", counters.PeakWorkingSetSize, page
+        ),
+    )
+
+
+def _windows_host_memory() -> tuple[MemoryMeasurement, MemoryMeasurement]:
+    try:
+        library = _windows_system()
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(status)
+        if not library.GlobalMemoryStatusEx(ctypes.byref(status)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        page = _windows_page_size(library)
+    except OSError as error:
+        unavailable = MemoryMeasurement.unavailable(
+            "win32_memory_status",
+            "baseline",
+            f"GlobalMemoryStatusEx unavailable: {error}",
+        )
+        return unavailable, unavailable
+    return (
+        MemoryMeasurement.measured(
+            "win32_memory_status", "baseline", status.ullTotalPhys, page
+        ),
+        MemoryMeasurement.measured(
+            "win32_memory_status", "baseline", status.ullAvailPhys, page
+        ),
+    )
+
+
+def process_peak_memory() -> MemoryMeasurement:
+    """Observe the process high-water counter without querying a JAX backend.
+
+    POSIX retains getrusage's existing benchmark semantics: bytes on Darwin,
+    KiB on Linux. Windows uses PeakWorkingSetSize, never commit or GPU memory.
+    Failed and unsupported observations remain explicitly unavailable.
+    """
+    if sys.platform == "win32":
+        return _windows_resident()[1]
+    if sys.platform == "darwin" or sys.platform.startswith("linux"):
+        import resource
+
+        resolution = 1 if sys.platform == "darwin" else _KIB
+        try:
+            maximum = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        except OSError as error:
+            return MemoryMeasurement.unavailable(
+                "getrusage_max_rss", "peak", f"getrusage unavailable: {error}"
+            )
+        return MemoryMeasurement.measured(
+            "getrusage_max_rss", "peak", maximum * resolution, resolution
+        )
+    return MemoryMeasurement.unavailable(
+        "getrusage_max_rss",
+        "peak",
+        f"process high-water memory is not exposed on platform {sys.platform!r}",
+    )
+
+
 def _host_provider() -> HostMemoryProvider:
     if sys.platform.startswith("linux"):
         return "linux_procfs"
     if sys.platform == "darwin":
         return "darwin_mach"
+    if sys.platform == "win32":
+        return "windows_psapi"
     return "unsupported"
 
 
 def _page_size() -> int:
+    if os.name != "posix":
+        raise OSError("sysconf page-size measurements require a POSIX host.")
     return os.sysconf("SC_PAGE_SIZE")
 
 
@@ -603,7 +768,11 @@ def _resident_measurements(
     match provider:
         case "linux_procfs":
             return _linux_resident()
+        case "windows_psapi":
+            return _windows_resident()
         case "darwin_mach":
+            if sys.platform != "darwin":
+                raise OSError("Darwin resident measurements require a Darwin host.")
             import resource
 
             library = _darwin_system()
@@ -648,7 +817,13 @@ def _resident_measurements(
 
 def _host_total(provider: HostMemoryProvider, /) -> MemoryMeasurement:
     match provider:
+        case "windows_psapi":
+            return _windows_host_memory()[0]
         case "linux_procfs" | "darwin_mach":
+            if os.name != "posix":
+                raise OSError(
+                    "sysconf physical-memory measurements require a POSIX host."
+                )
             page = _page_size()
             return MemoryMeasurement.measured(
                 "sysconf_physical_pages",
@@ -725,6 +900,8 @@ def _host_available(provider: HostMemoryProvider, /) -> MemoryMeasurement:
             return _linux_available()
         case "darwin_mach":
             return _darwin_available()
+        case "windows_psapi":
+            return _windows_host_memory()[1]
         case "unsupported":
             return MemoryMeasurement.unavailable(
                 "procfs_meminfo_available",
@@ -742,14 +919,19 @@ def sample_host_memory() -> HostMemorySample:
     process = jax.process_index()
     timestamp = time.time_ns()
     resident, peak = _resident_measurements(provider)
+    total, available = (
+        _windows_host_memory()
+        if provider == "windows_psapi"
+        else (_host_total(provider), _host_available(provider))
+    )
     return HostMemorySample(
         provider,
         process,
         timestamp,
         resident,
         peak,
-        _host_total(provider),
-        _host_available(provider),
+        total,
+        available,
     )
 
 

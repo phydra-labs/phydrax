@@ -9,7 +9,7 @@ from importlib import import_module
 from typing import Any, TYPE_CHECKING
 
 from ._execution_bootstrap import runtime_info, RuntimeInfo
-from ._jax_config import process_numerics
+from ._jax_config import default_device, process_numerics
 
 
 if TYPE_CHECKING:
@@ -275,6 +275,7 @@ __all__ = (
     "ValuePlacement",
     "bind_execution_group",
     "evaluate_execution_worksets_grouped",
+    "default_device",
     "discover_resource_inventory",
     "make_global_array_from_process_local_data",
     "global_boolean_consensus",

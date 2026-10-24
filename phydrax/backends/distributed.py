@@ -17,6 +17,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from .._cuda_capabilities import windows_topology_refusal
 from .._fingerprint import canonical_fingerprint
 from ._availability import import_backend_module, module_native_libraries, probe_backend
 from ._types import (
@@ -201,6 +202,14 @@ MPI4JAX_CAPABILITIES = BackendCapabilities(
 
 
 def mpi4jax_availability() -> BackendAvailability:
+    refusal = windows_topology_refusal(site_mpi=True)
+    if refusal is not None:
+        return BackendAvailability(
+            capabilities=MPI4JAX_CAPABILITIES,
+            available=False,
+            requirement="a supported site MPI runtime",
+            reason=refusal,
+        )
     return probe_backend(
         MPI4JAX_CAPABILITIES,
         module="mpi4jax",

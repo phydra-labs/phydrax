@@ -2,15 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Qualify the CUDA 13 companion release in a clean environment on a real GPU.
+"""Qualify installed CUDA 13 wheels using an explicit interpreter and work root.
 
-The tool installs ``phydrax[cuda13]`` from a built Phydrax wheel plus a wheelhouse
-holding the companion and CUDA-major marker wheels (until they are published),
-runs the companion provider tests against the installed packages on exactly the
-first ``--required-gpus`` visible devices, audits the CUDA libraries mapped by a
-process that loaded every component (normally and under a hostile
-``LD_LIBRARY_PATH``), and writes JSON evidence. Required provider and teardown
-cases must pass and report every selected device; visibility alone is insufficient.
+``--mode hardware`` requires positive ``--required-gpus`` and complete mandatory
+cuDSS/AmgX/QUDA numerical and lifecycle coverage. Optional cuTENSOR executes its
+full precision/derivative profile. Windows cuTensorNet/cuEST requests refuse.
+The copied harness runs with ``-I`` against hash-bound installed wheel bytes.
+Windows hostile audits require an existing user-local DLL directory supplied
+through ``--hostile-library-path``; Linux retains its LD_LIBRARY_PATH audit.
+Windows hardware audits inspect every loaded companion DLL and its installed,
+RECORD-authenticated linker map through the shared PE policy. Binary hashes,
+mapped dispatch markers and static-runtime exclusion accompany driver identity;
+manifest declarations or matching version numbers alone never prove linkage.
+``--mode installation-refusal`` exercises CPU selection, default-platform
+no-GPU refusal and actual missing/corrupt installed files on Windows, and never
+sets hardware_qualified. It restores injected installed-file faults after each
+bounded child. Do not use that environment concurrently with other processes.
 """
 
 from __future__ import annotations
@@ -21,10 +28,14 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
+import shutil
+import stat
 import sys
 import tempfile
 import zipfile
+from collections.abc import Sequence
 from datetime import datetime, UTC
 from email.parser import BytesParser
 from pathlib import Path
@@ -32,7 +43,15 @@ from typing import TypedDict
 from xml.etree import ElementTree
 
 from tools._accelerator_process import CommandEvidence, run as run_bounded
-from tools._cuda_optional_qualification import LIBRARY_PROFILES, qualify_libraries
+from tools._cuda_optional_qualification import (
+    HOSTILE_BOOTSTRAP,
+    hostile_environment,
+    LIBRARY_PROFILES,
+    qualify_libraries,
+    unavailable_libraries,
+    validate_windows_runtime_evidence,
+    WINDOWS_LOADER_PROVENANCE,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,8 +80,12 @@ DEVICE_COVERAGE_TESTS = (
     ),
 )
 
-AUDIT = """
+AUDIT = (
+    HOSTILE_BOOTSTRAP
+    + WINDOWS_LOADER_PROVENANCE
+    + """
 import json, sys
+from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -109,10 +132,17 @@ mapped = [
     {"soname": library.soname, "path": library.path, "major": library.major}
     for library in report.facts.mapped_libraries
 ]
+owned = {os.path.normcase(str(Path(path).resolve())) for path, major in report.facts.wheel_library_majors if major == 13}
 failures = [
     entry for entry in mapped
-    if entry["major"] != 13 or entry["path"].startswith("/usr/local/cuda")
+    if entry["major"] != 13 or os.path.normcase(str(Path(entry["path"]).resolve())) not in owned
 ]
+runtime_identity = dict(report.facts.runtime_identity) if sys.platform == "win32" else None
+loader_provenance = windows_loader_provenance() if sys.platform == "win32" else None
+component_dispatch = windows_component_dispatch(loader_provenance) if sys.platform == "win32" else None
+runtime_observed = sys.platform != "win32" or bool(runtime_identity and component_dispatch)
+if sys.platform == "win32" and not set(components).issubset(component_dispatch):
+    raise RuntimeError("Loaded mandatory components lack binary dispatch evidence")
 hostile_candidates = competing_cuda_libraries(hostile_library_path, report.facts.mapped_libraries)
 hostile_challenged = not hostile_required or bool(hostile_candidates)
 print("AUDIT " + json.dumps({
@@ -137,10 +167,16 @@ print("AUDIT " + json.dumps({
         for device in devices
     ],
     "runtime_version": report.facts.runtime_version,
+    "compiled_cuda_major": report.facts.compiled_cuda_major,
+    "driver_compatibility_version": report.facts.driver_compatibility_version,
+    "runtime_identity": runtime_identity,
+    "loader_provenance": loader_provenance,
+    "component_dispatch": component_dispatch,
     "jax": jax.__version__,
 }), flush=True)
-sys.exit(0 if report.successful and bool(solved.successful) and not failures and residual < 1e-4 and hostile_challenged else 1)
+sys.exit(0 if report.successful and bool(solved.successful) and not failures and runtime_observed and residual < 1e-4 and hostile_challenged else 1)
 """
+)
 
 
 class Evidence(TypedDict):
@@ -162,6 +198,12 @@ class Evidence(TypedDict):
     extras_gate: CommandEvidence | None
     errors: list[str]
     successful: bool
+    mode: str
+    hardware_qualified: bool
+    work_root: str
+    harness: dict[str, str]
+    identity: dict[str, object]
+    installation_checks: list[CommandEvidence]
 
 
 def run(
@@ -210,30 +252,240 @@ def test_requirements(wheel: Path, *, required_extras: tuple[str, ...] = ()) -> 
     return requirements
 
 
-def clean_environment(*, library_path: str | None) -> dict[str, str]:
-    """Process environment without CUDA toolkit overrides or developer library paths."""
+def clean_environment(
+    *, library_path: str | None, work_root: Path | None = None
+) -> dict[str, str]:
+    """Remove manual CUDA overrides and keep all child-owned caches local."""
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key
+        if key.upper()
         not in (
             "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
             "CUDA_HOME",
             "CUDA_PATH",
             "CUDA_ROOT",
             "PYTHONPATH",
+            "PYTHONHOME",
             "JAX_PLATFORMS",
+            "JAX_PLATFORM_NAME",
+            "XLA_FLAGS",
+            "JAX_COMPILATION_CACHE_DIR",
+            "QUDA_RESOURCE_PATH",
         )
-        and not key.startswith("PHYDRAX_CUDA_")
+        and not key.upper().startswith(("PHYDRAX_CUDA_", "CUDA_PATH_V", "UV_", "PIP_"))
     }
     environment.update(
-        XLA_PYTHON_CLIENT_PREALLOCATE="false",
         OMP_NUM_THREADS="1",
         OPENBLAS_NUM_THREADS="1",
     )
-    if library_path is not None:
-        environment["LD_LIBRARY_PATH"] = library_path
-    return environment
+    environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    if work_root is not None:
+        for name, directory in (
+            ("TEMP", "tmp"),
+            ("TMP", "tmp"),
+            ("TMPDIR", "tmp"),
+            ("UV_CACHE_DIR", "uv-cache"),
+            ("UV_PYTHON_INSTALL_DIR", "uv-python"),
+            ("JAX_COMPILATION_CACHE_DIR", "jax-cache"),
+            ("QUDA_RESOURCE_PATH", "quda-cache"),
+            ("XDG_CACHE_HOME", "cache"),
+            ("CUDA_CACHE_PATH", "cuda-cache"),
+        ):
+            path = validate_work_path(work_root / directory, work_root)
+            path.mkdir(parents=True, exist_ok=True)
+            environment[name] = str(path)
+        environment["UV_PYTHON_DOWNLOADS"] = "never"
+    return hostile_environment(environment, library_path)
+
+
+def interpreter_path(venv: Path) -> Path:
+    return venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+
+def validate_work_path(path: Path, root: Path) -> Path:
+    """Reject links/reparse points before traversing any writable path component."""
+    candidate = Path(os.path.abspath(path))
+    boundary = Path(os.path.abspath(root))
+    if not candidate.is_relative_to(boundary):
+        raise ValueError(f"Writable path escapes work root: {path}")
+    for part in (*reversed(candidate.parents), candidate):
+        try:
+            details = part.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(details.st_mode) or (
+            getattr(details, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            raise ValueError(f"Writable path traverses a link/reparse point: {part}")
+    return candidate
+
+
+def copy_harness(destination: Path) -> dict[str, str]:
+    """Copy only harness bytes; never expose the checkout's scientific package."""
+    for directory in ("tests", "benchmarks", "tools"):
+        source = ROOT / directory
+        for path in source.rglob("*"):
+            validate_work_path(path, ROOT)
+        shutil.copytree(
+            source,
+            destination / directory,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+        )
+    shutil.copy2(
+        validate_work_path(ROOT / "pyproject.toml", ROOT), destination / "pyproject.toml"
+    )
+    return {
+        path.relative_to(destination).as_posix(): sha256(path)
+        for path in sorted(destination.rglob("*"))
+        if path.is_file()
+    }
+
+
+INSTALLED_BOOTSTRAP = """
+import sys
+from pathlib import Path
+import phydrax
+if not Path(phydrax.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()):
+    raise RuntimeError("Qualification did not import installed Phydrax bytes")
+sys.path.insert(0, sys.argv[1])
+"""
+
+
+def installed_command(
+    python: Path, harness: Path, module: str, args: Sequence[str]
+) -> list[str]:
+    return [
+        str(python),
+        "-I",
+        "-c",
+        INSTALLED_BOOTSTRAP
+        + "\nimport runpy\nmodule = sys.argv[2]\nsys.argv = [module, *sys.argv[3:]]\nrunpy.run_module(module, run_name='__main__')",
+        str(harness),
+        module,
+        *args,
+    ]
+
+
+IDENTITY = (
+    WINDOWS_LOADER_PROVENANCE
+    + """
+import hashlib, importlib.metadata as metadata, json, sys
+from pathlib import Path
+expected = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+observed = {}
+for name, record in expected.items():
+    distribution = metadata.distribution(name)
+    if distribution.version != record["version"]:
+        raise RuntimeError(f"Installed {name} version differs from selected wheel")
+    for member, digest in record["files"].items():
+        path = Path(distribution.locate_file(member)).resolve()
+        if not path.is_relative_to(Path(sys.prefix).resolve()):
+            raise RuntimeError(f"Installed asset escapes environment: {path}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise RuntimeError(f"Installed asset differs from selected wheel: {member}")
+    observed[name] = record | {"installed_root": str(Path(distribution.locate_file("")).resolve())}
+if sys.platform == "win32":
+    from phydrax_cuda13_pjrt.runtime import installation_record
+    if "jax" in sys.modules:
+        raise RuntimeError("Metadata-only runtime import initialized JAX")
+    runtime = installation_record()
+    if "jax" in sys.modules:
+        raise RuntimeError("Metadata-only runtime assessment initialized JAX")
+    if runtime.issues or runtime.cuda_major != 13:
+        raise RuntimeError(f"Invalid installed runtime: {runtime}")
+    versions = {metadata.version(name) for name in ("phydrax", "phydrax-cuda13", "phydrax-cuda13-pjrt")}
+    if len(versions) != 1 or runtime.version not in versions:
+        raise RuntimeError("Core, companion and PJRT versions are not lockstep")
+    if runtime.jax_version != "0.12.0" or runtime.jaxlib_version != "0.12.0":
+        raise RuntimeError("Runtime requires the stock JAX/JAXlib 0.12.0 pair")
+    if any(metadata.version(name) != "0.12.0" for name in ("jax", "jaxlib")):
+        raise RuntimeError("Installed JAX/JAXlib pair differs from runtime")
+    observed["runtime"] = runtime._asdict()
+    observed["loader_provenance"] = windows_loader_provenance()
+payload = json.dumps(observed, default=str, sort_keys=True).encode("utf-8")
+Path(sys.argv[2]).write_bytes(payload)
+print("IDENTITY " + hashlib.sha256(payload).hexdigest(), flush=True)
+"""
+)
+
+
+def selected_identity(core: Path, wheelhouse: Path) -> dict[str, object]:
+    wheels = [core]
+    for name in (
+        "phydrax_cuda13",
+        *(("phydrax_cuda13_pjrt",) if sys.platform == "win32" else ()),
+    ):
+        candidates = [
+            path
+            for path in wheelhouse.glob(f"{name}-*.whl")
+            if ("win_amd64" in path.name) == (sys.platform == "win32")
+            and (
+                sys.platform == "win32" or platform.machine().lower() in path.name.lower()
+            )
+        ]
+        if len(candidates) != 1:
+            raise ValueError(
+                f"Require exactly one selected {name} wheel, got {candidates}"
+            )
+        wheels.extend(candidates)
+    identity: dict[str, object] = {}
+    for wheel in wheels:
+        with zipfile.ZipFile(wheel) as archive:
+            metadata_path = next(
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            )
+            metadata = BytesParser(policy=email.policy.default).parsebytes(
+                archive.read(metadata_path)
+            )
+            identity[str(metadata["Name"])] = {
+                "version": str(metadata["Version"]),
+                "wheel_sha256": sha256(wheel),
+                "files": {
+                    name: hashlib.sha256(archive.read(name)).hexdigest()
+                    for name in archive.namelist()
+                    if not name.endswith("/") and not name.endswith(".dist-info/RECORD")
+                },
+            }
+    return identity
+
+
+def check_identity(
+    python: Path, core: Path, wheelhouse: Path, evidence: Evidence
+) -> None:
+    try:
+        expected = selected_identity(core, wheelhouse)
+    except (ValueError, OSError, zipfile.BadZipFile) as error:
+        evidence["errors"].append(f"Wheel identity refused: {error}")
+        return
+    root = Path(evidence["artifact_directory"])
+    path = root / "selected-wheel-identity.json"
+    observed = root / "installed-wheel-identity.json"
+    path.write_text(json.dumps(expected, sort_keys=True), encoding="utf-8")
+    result = run(
+        [str(python), "-I", "-c", IDENTITY, str(path), str(observed)],
+        cwd=root,
+        environment=clean_environment(
+            library_path=None, work_root=Path(evidence["work_root"])
+        ),
+        timeout=evidence["command_timeout_seconds"],
+    )
+    evidence["installation_checks"].append(result)
+    records = [
+        line[9:] for line in result["stdout"].splitlines() if line.startswith("IDENTITY ")
+    ]
+    if result["returncode"] or result["timed_out"] or len(records) != 1:
+        evidence["errors"].append("Installed wheel/runtime identity binding failed")
+        return
+    try:
+        if sha256(observed) != records[0]:
+            raise ValueError("Installed identity sidecar hash mismatch")
+        evidence["identity"] = json.loads(observed.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        evidence["errors"].append("Invalid installed identity evidence")
 
 
 def install(
@@ -258,6 +510,8 @@ def install(
         "install",
         # A consumer install never sees this repository's [tool.uv] settings.
         "--no-config",
+        "--only-binary",
+        ":all:",
         "--python",
         str(python),
         "--find-links",
@@ -266,11 +520,23 @@ def install(
         "phydrax",
         "--reinstall-package",
         "phydrax-cuda13",
+        *(
+            ["--reinstall-package", "phydrax-cuda13-pjrt"]
+            if sys.platform == "win32"
+            else []
+        ),
         f"phydrax[{','.join(extras)}] @ {phydrax_wheel.as_uri()}",
         *runners,
         *references,
     ]
-    result = run(command, timeout=evidence["command_timeout_seconds"])
+    result = run(
+        command,
+        timeout=evidence["command_timeout_seconds"],
+        cwd=Path(evidence["artifact_directory"]),
+        environment=clean_environment(
+            library_path=None, work_root=Path(evidence["work_root"])
+        ),
+    )
     evidence["install"].append(result)
     if result["returncode"] or result["timed_out"]:
         evidence["errors"].append(f"Installation failed: {result['stderr']}")
@@ -342,16 +608,20 @@ def run_tests(
     # Only the test package is importable from the tree; phydrax comes from the wheel.
     # One process owns the selected topology; the cuDSS race case owns its threads.
     # xdist workers must not concurrently initialize providers on the same GPU.
-    environment = clean_environment(library_path=None)
-    environment["PYTHONPATH"] = str(tests_root)
+    environment = clean_environment(
+        library_path=None, work_root=Path(evidence["work_root"])
+    )
     environment["PHYDRAX_CUDA_QUALIFICATION_GPUS"] = str(evidence["required_gpus"])
     environment[HOSTILE_LIBRARY_PATH_ENV] = hostile_library_path
     report_path = tests_root / "native-provider-results.xml"
     result = run(
         [
             str(python),
-            "-m",
-            "pytest",
+            "-I",
+            "-c",
+            INSTALLED_BOOTSTRAP
+            + "\nimport pytest\nraise SystemExit(pytest.main(sys.argv[2:]))",
+            str(tests_root),
             "-p",
             "no:cacheprovider",
             "-q",
@@ -363,10 +633,10 @@ def run_tests(
             "-o",
             "junit_family=legacy",
             "--rootdir",
-            str(ROOT),
+            str(tests_root),
             "-c",
-            str(ROOT / "pyproject.toml"),
-            *(str(ROOT / test) for test in TESTS),
+            str(tests_root / "pyproject.toml"),
+            *(str(tests_root / test) for test in TESTS),
         ],
         environment=environment,
         cwd=tests_root,
@@ -406,18 +676,26 @@ def audit(
     result = run(
         [
             str(python),
+            "-I",
             "-c",
             AUDIT,
             str(evidence["required_gpus"]),
             library_path or "",
             label,
         ],
-        environment=clean_environment(library_path=library_path),
-        cwd=Path(tempfile.gettempdir()),
+        environment=clean_environment(
+            library_path=library_path, work_root=Path(evidence["work_root"])
+        ),
+        cwd=Path(evidence["artifact_directory"]),
         timeout=evidence["command_timeout_seconds"],
     )
     lines = [line for line in result["stdout"].splitlines() if line.startswith("AUDIT ")]
-    report: object = json.loads(lines[-1].removeprefix("AUDIT ")) if lines else None
+    try:
+        report: object = (
+            json.loads(lines[0].removeprefix("AUDIT ")) if len(lines) == 1 else None
+        )
+    except json.JSONDecodeError:
+        report = None
     evidence["audits"][label] = {
         "library_path": library_path,
         "returncode": result["returncode"],
@@ -426,6 +704,33 @@ def audit(
         "timed_out": result["timed_out"],
         "command": result,
     }
+    if isinstance(report, dict) and report.get("refused") is not None:
+        evidence["errors"].append(
+            f"Mapped-library audit {label!r} refused: "
+            + json.dumps(report["refused"], sort_keys=True)
+        )
+        return
+    if sys.platform == "win32" and isinstance(report, dict):
+        try:
+            validate_windows_runtime_evidence(report)
+            if report["loader_provenance"] != evidence["identity"].get(
+                "loader_provenance"
+            ):
+                raise ValueError(
+                    "Loader provenance changed after installed-wheel identity check"
+                )
+            clean = evidence["audits"].get("clean")
+            if label != "clean" and isinstance(clean, dict):
+                clean_report = clean.get("report")
+                if not isinstance(clean_report, dict) or any(
+                    clean_report.get(key) != report[key]
+                    for key in ("runtime_identity", "component_dispatch")
+                ):
+                    raise ValueError(
+                        "Hostile audit changed the Windows driver cohort or component dispatch"
+                    )
+        except ValueError as error:
+            evidence["errors"].append(f"Mapped-library audit {label!r}: {error}")
     if result["returncode"] or result["timed_out"] or report is None:
         evidence["errors"].append(f"Mapped-library audit {label!r} failed")
     elif label == "clean" and isinstance(report, dict):
@@ -434,9 +739,214 @@ def audit(
         ]
 
 
+def installation_refusal_checks(python: Path, evidence: Evidence) -> None:
+    """CPU import and hidden-device refusal are not numerical qualification."""
+    root = Path(evidence["artifact_directory"])
+    checks = (
+        (
+            "cpu",
+            """
+import sys
+from pathlib import Path
+import phydrax, jax
+assert Path(phydrax.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+assert all(device.platform == "cpu" for device in jax.devices())
+if sys.platform == "win32":
+    from phydrax_cuda13_pjrt.plugin import bootstrap_state
+    state = bootstrap_state()
+    assert state.status in ("uninitialized", "cpu_selected"), state
+print("INSTALLATION_CHECK cpu passed", flush=True)
+""",
+        ),
+        *(
+            (
+                platform,
+                """
+try:
+    import phydrax, jax
+    devices = jax.devices()
+except (RuntimeError, ImportError) as error:
+    if not any(word in str(error).lower() for word in ("cuda", "gpu", "nvidia")):
+        raise
+    print("INSTALLATION_CHECK hidden CUDA refused: " + str(error), flush=True)
+else:
+    raise RuntimeError(f"Hidden-device CUDA request did not refuse: {devices}")
+""",
+            )
+            for platform in ("", "cuda")
+        ),
+        (
+            "",
+            """
+import jax
+from phydrax_cuda13_pjrt import plugin
+original = OSError("qualification injected native bootstrap failure")
+def fail_native(bridge):
+    raise original
+plugin._register_native = fail_native
+try:
+    plugin.initialize()
+except RuntimeError as error:
+    assert error.__cause__ is original
+else:
+    raise AssertionError("Injected native bootstrap unexpectedly succeeded")
+assert plugin.bootstrap_state().status == "failed"
+try:
+    jax.devices()
+except RuntimeError as error:
+    assert str(original) in str(error), str(error)
+    print("INSTALLATION_CHECK injected bootstrap failure refused", flush=True)
+else:
+    raise AssertionError("JAX selected CPU after injected CUDA bootstrap failure")
+""",
+        ),
+    )
+    for selected_platform, source in checks:
+        environment = clean_environment(
+            library_path=None, work_root=Path(evidence["work_root"])
+        )
+        environment["CUDA_VISIBLE_DEVICES"] = "-1"
+        if selected_platform:
+            environment["JAX_PLATFORMS"] = selected_platform
+        result = run(
+            [str(python), "-I", "-c", source],
+            cwd=root,
+            environment=environment,
+            timeout=evidence["command_timeout_seconds"],
+        )
+        evidence["installation_checks"].append(result)
+        if (
+            result["returncode"]
+            or result["timed_out"]
+            or "INSTALLATION_CHECK " not in result["stdout"]
+        ):
+            evidence["errors"].append(
+                f"Installation/refusal {selected_platform} check failed"
+            )
+    if not evidence["errors"]:
+        installed_fault_checks(python, evidence)
+
+
+def installed_fault_checks(python: Path, evidence: Evidence) -> None:
+    """Exercise real installed-file failures; restore bytes after each bounded child."""
+    identity = evidence["identity"]
+    runtime = identity.get("runtime")
+    if not isinstance(runtime, dict):
+        evidence["errors"].append("Missing runtime identity for installed fault checks")
+        return
+    root = Path(evidence["work_root"])
+    manifest = validate_work_path(Path(str(runtime["manifest_path"])), root)
+    faults: list[tuple[str, Path, bytes | None]] = [
+        ("missing-manifest", manifest, None),
+        ("corrupt-manifest", manifest, b"{"),
+    ]
+    for distribution in ("phydrax-cuda13", "phydrax-cuda13-pjrt"):
+        record = identity.get(distribution)
+        if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+            evidence["errors"].append(f"Missing identity for {distribution} refusal")
+            return
+        member = next(
+            name for name in record["files"] if name.endswith(".dist-info/METADATA")
+        )
+        path = validate_work_path(Path(str(record["installed_root"])) / member, root)
+        faults.append((f"missing-{distribution}-metadata", path, None))
+        original = path.read_bytes()
+        version = str(record["version"]).encode()
+        faults.append(
+            (
+                f"mismatched-{distribution}-version",
+                path,
+                original.replace(b"Version: " + version, b"Version: 0.0.0"),
+            )
+        )
+    assets = runtime.get("assets")
+    if not isinstance(assets, list):
+        evidence["errors"].append("Missing runtime assets for installed fault checks")
+        return
+    pjrt = next(
+        (
+            asset
+            for asset in assets
+            if isinstance(asset, list) and len(asset) == 4 and asset[3] == "pjrt"
+        ),
+        None,
+    )
+    if pjrt is None:
+        evidence["errors"].append("Missing PJRT asset identity")
+        return
+    faults.append(("missing-pjrt", validate_work_path(Path(pjrt[0]), root), None))
+    faults.append(
+        ("corrupt-pjrt", validate_work_path(Path(pjrt[0]), root), b"invalid PE")
+    )
+    script = """
+import json, sys
+try:
+    import phydrax, jax
+    devices = jax.devices()
+except (RuntimeError, ImportError, OSError, ValueError) as error:
+    if not any(word in str(error).lower() for word in json.loads(sys.argv[1])):
+        raise
+    print("INSTALLATION_FAULT_REFUSED " + repr(error), flush=True)
+else:
+    raise RuntimeError(f"Corrupt installed CUDA intent fell back or succeeded: {devices}")
+"""
+    for label, path, replacement in faults:
+        backup = path.with_name(path.name + ".qualification-backup")
+        validate_work_path(backup, root)
+        if backup.exists():
+            raise FileExistsError(f"Refuse overwriting existing backup: {backup}")
+        path.rename(backup)
+        try:
+            if replacement is not None:
+                path.write_bytes(replacement)
+            environment = clean_environment(library_path=None, work_root=root)
+            environment["CUDA_VISIBLE_DEVICES"] = "-1"
+            reasons = (
+                ["version", "0.0.0"]
+                if label.endswith("-version")
+                else [
+                    "metadata",
+                    label.removeprefix("missing-").removesuffix("-metadata"),
+                ]
+                if label.endswith("-metadata")
+                else [path.name.lower(), "manifest"]
+            )
+            result = run(
+                [str(python), "-I", "-c", script, json.dumps(reasons)],
+                cwd=Path(evidence["artifact_directory"]),
+                environment=environment,
+                timeout=evidence["command_timeout_seconds"],
+            )
+            evidence["installation_checks"].append(result)
+            if (
+                result["returncode"]
+                or result["timed_out"]
+                or "INSTALLATION_FAULT_REFUSED " not in result["stdout"]
+            ):
+                evidence["errors"].append(
+                    f"Installed {label} did not refuse with default platforms"
+                )
+        finally:
+            if path.exists():
+                path.unlink()
+            backup.rename(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--venv", type=Path, required=True, help="Qualification venv")
+    parser.add_argument(
+        "--python", type=Path, required=True, help="Explicit CPython 3.13 interpreter"
+    )
+    parser.add_argument(
+        "--work-root",
+        type=Path,
+        required=True,
+        help="Root for all writable qualification artifacts",
+    )
+    parser.add_argument(
+        "--mode", choices=("hardware", "installation-refusal"), default="hardware"
+    )
     parser.add_argument(
         "--required-gpus",
         type=int,
@@ -464,8 +974,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--hostile-library-path",
-        default=DEFAULT_HOSTILE_LIBRARY_PATH,
-        help="LD_LIBRARY_PATH pointing at a system CUDA toolkit for the hostile audit",
+        default=None,
+        help="Existing hostile CUDA library directory; Windows requires a work-root-local DLL directory",
     )
     parser.add_argument(
         "--extras-gate-work-dir",
@@ -488,6 +998,40 @@ def main() -> int:
         parser.error("--timeout must be finite and positive")
     if len(args.libraries) != len(set(args.libraries)):
         parser.error("--libraries must not repeat a provider")
+    try:
+        work_root = validate_work_path(args.work_root, args.work_root)
+        if sys.platform == "win32":
+            validate_work_path(work_root, Path.home())
+        for path in (args.venv, args.evidence, args.extras_gate_work_dir):
+            if path is not None:
+                validate_work_path(path, work_root)
+    except ValueError as error:
+        parser.error(str(error))
+    if not args.python.is_file():
+        parser.error("--python must name an existing interpreter")
+    if args.mode == "installation-refusal" and sys.platform != "win32":
+        parser.error("installation-refusal mode is the Windows no-GPU gate")
+    if args.mode == "hardware":
+        if sys.platform == "win32":
+            if args.hostile_library_path is None:
+                parser.error("Windows hardware mode requires --hostile-library-path")
+            try:
+                hostile = validate_work_path(Path(args.hostile_library_path), work_root)
+            except ValueError as error:
+                parser.error(str(error))
+            if not hostile.is_relative_to(work_root) or not hostile.is_dir():
+                parser.error("Windows hostile DLL directory must exist under --work-root")
+            try:
+                for path in hostile.rglob("*"):
+                    validate_work_path(path, work_root)
+            except ValueError as error:
+                parser.error(str(error))
+            args.hostile_library_path = str(hostile)
+        else:
+            args.hostile_library_path = (
+                args.hostile_library_path or DEFAULT_HOSTILE_LIBRARY_PATH
+            )
+    work_root.mkdir(parents=True, exist_ok=True)
     venv: Path = args.venv.resolve()
     phydrax_wheel: Path = args.phydrax_wheel.resolve()
     wheelhouse: Path = args.wheelhouse.resolve()
@@ -500,7 +1044,9 @@ def main() -> int:
         "selected_devices": [],
         "libraries": sorted(args.libraries),
         "library_qualification": None,
-        "artifact_directory": "",
+        "artifact_directory": str(
+            Path(tempfile.mkdtemp(prefix="wheel-qualification-", dir=work_root))
+        ),
         "coverage": {},
         "venv": str(venv),
         "wheels": {
@@ -513,35 +1059,56 @@ def main() -> int:
         "extras_gate": None,
         "errors": [],
         "successful": False,
+        "mode": args.mode,
+        "hardware_qualified": False,
+        "work_root": str(work_root),
+        "harness": {},
+        "identity": {},
+        "installation_checks": [],
     }
-    python = venv / "bin" / "python"
-    if not args.reuse_venv:
+    python = interpreter_path(venv)
+    unavailable = unavailable_libraries(tuple(evidence["libraries"]))
+    if unavailable:
+        evidence["library_qualification"] = {
+            "refused": list(unavailable),
+            "hardware_qualified": False,
+        }
+        evidence["errors"].extend(
+            f"{library} is unavailable on Windows; explicit request refused, not numerical qualification"
+            for library in unavailable
+        )
+    if not evidence["errors"] and not args.reuse_venv:
         if venv.exists():
             evidence["errors"].append(f"{venv} exists; pass --reuse-venv or remove it")
         else:
             created = run(
-                ["uv", "venv", "--python", "3.13", str(venv)], timeout=args.timeout
+                [
+                    "uv",
+                    "--no-config",
+                    "venv",
+                    "--python",
+                    str(args.python.resolve()),
+                    str(venv),
+                ],
+                timeout=args.timeout,
+                cwd=work_root,
+                environment=clean_environment(library_path=None, work_root=work_root),
             )
             evidence["install"].append(created)
             if created["returncode"] or created["timed_out"]:
                 evidence["errors"].append(f"venv creation failed: {created['stderr']}")
     if not evidence["errors"] and install(python, phydrax_wheel, wheelhouse, evidence):
+        check_identity(python, phydrax_wheel, wheelhouse, evidence)
+    if not evidence["errors"] and args.mode == "installation-refusal":
+        installation_refusal_checks(python, evidence)
+    if not evidence["errors"] and args.mode == "hardware":
         # Gate hardware availability before tests can skip.
         audit(python, "clean", None, evidence)
-    if not evidence["errors"]:
+    if not evidence["errors"] and args.mode == "hardware":
         evidence_path: Path = args.evidence.resolve()
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
-        tests_root = Path(
-            tempfile.mkdtemp(
-                prefix=evidence_path.stem + "-artifacts-", dir=evidence_path.parent
-            )
-        )
-        evidence["artifact_directory"] = str(tests_root)
-        for directory in ("tests", "benchmarks", "tools"):
-            (tests_root / directory).symlink_to(
-                ROOT / directory, target_is_directory=True
-            )
-        (tests_root / "pyproject.toml").symlink_to(ROOT / "pyproject.toml")
+        tests_root = Path(evidence["artifact_directory"])
+        evidence["harness"] = copy_harness(tests_root)
         run_tests(
             python,
             tests_root,
@@ -557,7 +1124,7 @@ def main() -> int:
                 tests_root,
                 tuple(evidence["libraries"]),
                 evidence["required_gpus"],
-                clean_environment(library_path=None),
+                clean_environment(library_path=None, work_root=work_root),
                 evidence["command_timeout_seconds"],
                 args.hostile_library_path,
             )
@@ -566,10 +1133,23 @@ def main() -> int:
         if not evidence["errors"]:
             audit(python, "hostile", args.hostile_library_path, evidence)
         if not evidence["errors"] and args.extras_gate_work_dir is not None:
+            markers = list(wheelhouse.glob("phydrax_cuda_major-13*.whl"))
+            if len(markers) != 1:
+                evidence["errors"].append(
+                    "Extras gate requires exactly one CUDA 13 marker wheel in the wheelhouse"
+                )
+        if not evidence["errors"] and args.extras_gate_work_dir is not None:
             gate = run(
                 [
-                    sys.executable,
-                    str(ROOT / "tools/check_cuda_extras.py"),
+                    str(args.python.resolve()),
+                    "-m",
+                    "tools.check_cuda_extras",
+                    "--python",
+                    str(args.python.resolve()),
+                    "--phydrax-wheel",
+                    str(phydrax_wheel),
+                    "--marker-wheel",
+                    str(markers[0]),
                     "--work-dir",
                     str(args.extras_gate_work_dir.resolve()),
                     "--evidence",
@@ -580,11 +1160,14 @@ def main() -> int:
                     args.linux_tag,
                 ],
                 timeout=args.timeout,
+                cwd=tests_root,
+                environment=clean_environment(library_path=None, work_root=work_root),
             )
             evidence["extras_gate"] = gate
             if gate["returncode"] or gate["timed_out"]:
                 evidence["errors"].append("CUDA extras gate failed")
     evidence["successful"] = not evidence["errors"]
+    evidence["hardware_qualified"] = evidence["successful"] and args.mode == "hardware"
     evidence["completed_at"] = datetime.now(UTC).isoformat()
     evidence_path: Path = args.evidence.resolve()
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
