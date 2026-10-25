@@ -8,6 +8,7 @@ cylinders, and the torus/plane circles ``R +- sqrt(r^2 - h^2)``.
 import math
 from collections.abc import Sequence
 from fractions import Fraction
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,9 +17,15 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.geometry.brep import _intersection as intersection_owner
-from phydrax.geometry.brep import OffsetSurface, TorusPatch
-from phydrax.geometry.brep._boolean_arrangement import arc_area_bounds, arc_area_bounds_batch
+from phydrax.geometry.brep import (
+    _intersection as intersection_owner,
+    OffsetSurface,
+    TorusPatch,
+)
+from phydrax.geometry.brep._boolean_arrangement import (
+    arc_area_bounds,
+    arc_area_bounds_batch,
+)
 from phydrax.geometry.brep._coordinate_request import coordinate_source_request
 from phydrax.geometry.brep._intersection import (
     BranchRootEndpoint,
@@ -27,8 +34,8 @@ from phydrax.geometry.brep._intersection import (
     NativePeriodEndpoint,
     original_curve_surface_root_preparation,
     TrimIntersectionRoot,
-    TripleSurfaceIntersectionRoot,
     TrimRootEndpoint,
+    TripleSurfaceIntersectionRoot,
 )
 from phydrax.geometry.brep._intersection_curve import (
     AffinePCurve,
@@ -37,6 +44,7 @@ from phydrax.geometry.brep._intersection_curve import (
     original_trim_intersection_preparation,
     PeriodicPCurve,
 )
+from phydrax.geometry.brep._intersection_kernel import approximate_inverses, krawczyk
 from phydrax.geometry.brep._patches import SurfaceIsoparametricCurve
 from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 
@@ -129,7 +137,7 @@ def test_spatial_root_request_reuses_exact_contractions(
     contract = intersection_owner._contract
     calls = []
 
-    def counted(*args, **kwargs):
+    def counted(*args: Any, **kwargs: Any) -> Any:
         calls.append(kwargs["maximum_steps"])
         return contract(*args, **kwargs)
 
@@ -140,7 +148,7 @@ def test_spatial_root_request_reuses_exact_contractions(
     np.testing.assert_array_equal(root.parameter_enclosure(preparations=request), expected)
     assert calls == [16]
     with pytest.raises(TypeError, match="maximum_steps"):
-        root.parameter_enclosure(maximum_steps=16.0, preparations=request)
+        root.parameter_enclosure(maximum_steps=16.0, preparations=request)  # ty: ignore[invalid-argument-type]
     assert calls == [16]
     root.parameter_enclosure(maximum_steps=8, preparations=request)
     assert calls == [16, 8]
@@ -160,7 +168,7 @@ def test_trim_arc_request_reuses_reverse_cover_without_recertification(
     enclosures = geometry.CurveTrimSegment.enclosures
     calls = []
 
-    def counted(self, *args, **kwargs):
+    def counted(self: geometry.CurveTrimSegment, *args: Any, **kwargs: Any) -> Any:
         calls.append(self)
         return enclosures(self, *args, **kwargs)
 
@@ -371,7 +379,7 @@ def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve(
         expression = TrimRootEndpoint._expression
         evaluated = []
 
-        def counted_expression(self, *args, **kwargs):
+        def counted_expression(self: TrimRootEndpoint, *args: Any, **kwargs: Any) -> Any:
             evaluated.append(kwargs["maximum_steps"])
             return expression(self, *args, **kwargs)
 
@@ -381,7 +389,7 @@ def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve(
         endpoint.parameter_enclosure(maximum_steps=8, preparations=preparations)
         assert evaluated == [8]
         with pytest.raises(TypeError, match="maximum_steps"):
-            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)
+            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)  # ty: ignore[invalid-argument-type]
         assert evaluated == [8]
     np.testing.assert_array_equal(segment.enclosure(0.0, 0.0), (lower, upper))
 
@@ -444,7 +452,7 @@ def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty(
         source_image = BranchRootEndpoint.source_image
         evaluated = []
 
-        def counted_image(self, *args, **kwargs):
+        def counted_image(self: BranchRootEndpoint, *args: Any, **kwargs: Any) -> Any:
             evaluated.append(kwargs["maximum_steps"])
             return source_image(self, *args, **kwargs)
 
@@ -454,8 +462,371 @@ def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty(
         endpoint.parameter_enclosure(maximum_steps=8, preparations=preparations)
         assert evaluated == [8]
         with pytest.raises(TypeError, match="maximum_steps"):
-            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)
+            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)  # ty: ignore[invalid-argument-type]
         assert evaluated == [8]
+
+
+def _plane_root_segment(
+    *, reversed_: bool = False
+) -> tuple[geometry.CurveTrimSegment, TrimRootEndpoint, CurveSurfaceIntersectionRoot]:
+    source = geometry.SurfaceRegion(
+        geometry.PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        ((0.0, -1.0), (1.0, 1.0)),
+    )
+    opposite = geometry.SurfaceRegion(
+        geometry.PlanePatch((0.3, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        ((-1.0, -1.0), (1.0, 1.0)),
+    )
+    curve = geometry.LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    pcurve = geometry.LineCurve((0.0, 0.0), (1.0, 0.0))
+    point = geometry.intersect_curve_region(
+        geometry.CurveRange(curve, 0.0, 1.0), opposite
+    ).points[0]
+    root = CurveSurfaceIntersectionRoot(
+        curve,
+        opposite,
+        parameter_lower=point.parameter_lower,
+        parameter_upper=point.parameter_upper,
+    )
+    endpoint = TrimRootEndpoint(
+        root, "first", source_pcurve=pcurve, source_surface=source
+    )
+    segment = geometry.CurveTrimSegment(
+        pcurve, endpoint.parameter, 1.0, reversed=reversed_, first_root=endpoint
+    )
+    return segment, endpoint, root
+
+
+@pytest.mark.parametrize("reversed_", [False, True])
+def test_request_admitted_segment_endpoints_return_fresh_request_bounds(
+    reversed_: bool,
+) -> None:
+    segment, _, root = _plane_root_segment(reversed_=reversed_)
+    root_lower, root_upper = root.parameter_lower.copy(), root.parameter_upper.copy()
+    # Boundary atoms, the full segment, a degenerate interior point and an
+    # interior subinterval each use the endpoint expression differently.
+    intervals = ((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5), (0.25, 0.75))
+    fresh = [
+        (
+            segment.carrier_parameter_enclosure(first, last),
+            segment.enclosure(first, last),
+        )
+        for first, last in intervals
+    ]
+    request = TrimRequestPreparations()
+    for _ in range(2):
+        for (first, last), (carrier, box) in zip(intervals, fresh, strict=True):
+            np.testing.assert_array_equal(
+                segment.carrier_parameter_enclosure(
+                    first, last, preparations=request
+                ),
+                carrier,
+            )
+            np.testing.assert_array_equal(
+                segment.enclosure(first, last, preparations=request), box
+            )
+    # A later request starts from no retained result and earns the same bounds.
+    later = TrimRequestPreparations()
+    for (first, last), (carrier, _) in zip(intervals, fresh, strict=True):
+        np.testing.assert_array_equal(
+            segment.carrier_parameter_enclosure(first, last, preparations=later),
+            carrier,
+        )
+    # Contracting the endpoint root never writes into the immutable source box.
+    np.testing.assert_array_equal(root.parameter_lower, root_lower)
+    np.testing.assert_array_equal(root.parameter_upper, root_upper)
+
+
+def test_request_endpoint_retention_is_admitted_once_to_the_live_budget() -> None:
+    segment, _, _ = _plane_root_segment()
+    expected = segment.carrier_parameter_enclosure(0.0, 1.0)
+    request = TrimRequestPreparations()
+    with coordinate_source_request((segment,)) as budget:
+        before = budget.retained_basis_bytes
+        first = segment.carrier_parameter_enclosure(
+            0.0, 1.0, preparations=request, budget=budget
+        )
+        retained = budget.retained_basis_bytes
+        # Entries and contracted endpoint/root values are charged as retained
+        # request storage when first earned ...
+        assert retained > before
+        repeated = segment.carrier_parameter_enclosure(
+            0.0, 1.0, preparations=request, budget=budget
+        )
+        # ... and a retained hit admits nothing new.
+        assert budget.retained_basis_bytes == retained
+    np.testing.assert_array_equal(first, expected)
+    np.testing.assert_array_equal(repeated, expected)
+
+
+def test_carrier_fingerprint_admission_excludes_request_preparation_contents() -> None:
+    from phydrax.geometry._embedding_state import MeshCertificateLimits
+    from phydrax.geometry.brep._carrier_pieces import (
+        admit_carrier_fingerprint,
+        carrier_payload,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    class Carrier(phx.StrictModule):
+        curve: geometry.LineCurve
+        preparations: TrimRequestPreparations
+
+    segment, _, _ = _plane_root_segment()
+    request = TrimRequestPreparations()
+    carrier = Carrier(geometry.LineCurve((0.0, 0.0), (1.0, 0.0)), request)
+    with coordinate_reference_budget() as budget:
+        admit_carrier_fingerprint(carrier, budget)
+        expected = carrier_payload(carrier)
+        required = budget.peak_bytes_upper
+
+    # Earn actual endpoint programs and enclosures in their owning request.
+    with coordinate_source_request((segment,)) as budget:
+        segment.enclosure(0.0, 1.0, preparations=request, budget=budget)
+        assert budget.retained_basis_bytes > 0
+
+    # The same scientific payload still fits the same fingerprint allowance;
+    # the numerical request cache is not another serialized source graph.
+    limits = MeshCertificateLimits(maximum_scratch_bytes=required)
+    with coordinate_reference_budget(limits) as budget:
+        admit_carrier_fingerprint(carrier, budget)
+        assert carrier_payload(carrier) == expected
+    different = Carrier(geometry.LineCurve((0.0, 1.0), (1.0, 0.0)), request)
+    assert carrier_payload(different) != expected
+
+
+def test_carrier_admission_follows_payload_occurrences_not_opaque_record_graphs() -> None:
+    import tracemalloc
+    from dataclasses import dataclass
+
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.geometry.brep._carrier_pieces import (
+        admit_carrier_fingerprint,
+        carrier_payload,
+    )
+
+    @dataclass(frozen=True)
+    class Record:
+        # Like retained chart records: a frozen non-PyTree leaf whose rooted
+        # segment and request mapping are not part of the serialized payload.
+        segment: object
+        preparations: TrimRequestPreparations
+
+    class Carrier(phx.StrictModule):
+        curve: geometry.LineCurve
+        records: tuple[Record, ...]
+
+    segment, _, _ = _plane_root_segment()
+    request = TrimRequestPreparations()
+    curve = geometry.LineCurve((0.0, 0.0), (1.0, 0.0))
+    carriers = {
+        count: Carrier(curve, tuple(Record(segment, request) for _ in range(count)))
+        for count in (1, 64)
+    }
+    with coordinate_source_request((segment,)) as budget:
+
+        def admitted(carrier: Carrier) -> int:
+            with budget.temporary_scope():
+                before = budget.temporary_bytes_upper
+                admit_carrier_fingerprint(carrier, budget)
+                return budget.temporary_bytes_upper - before
+
+        empty = {count: admitted(carrier) for count, carrier in carriers.items()}
+        # Filling the opaque request with endpoint programs and contracted
+        # roots changes neither the payload nor its admission.
+        payloads = {count: carrier_payload(carrier) for count, carrier in carriers.items()}
+        segment.enclosure(0.0, 1.0, preparations=request, budget=budget)
+        segment.enclosure(0.25, 0.75, preparations=request, budget=budget)
+        assert request.root_endpoints and request.curve_surface_roots
+        for count, carrier in carriers.items():
+            assert admitted(carrier) == empty[count]
+            assert carrier_payload(carrier) == payloads[count]
+            canonical_fingerprint(payloads[count])
+            tracemalloc.start()
+            canonical_fingerprint(carrier_payload(carrier))
+            _, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            # The allowance covers the real payload, including every record path.
+            assert peak <= empty[count]
+        assert empty[64] > empty[1]
+
+
+
+def test_carrier_admission_refuses_before_conversion_expansion_or_unbounded_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import (
+        CoordinateEnclosureBudget,
+        CoordinateEnclosureResourceError,
+    )
+    from phydrax.geometry.brep._carrier_pieces import admit_carrier_fingerprint
+
+    class Provider:
+        def __array__(self, dtype: Any = None, copy: Any = None) -> np.ndarray:
+            raise AssertionError("array-like leaf converted before admission")
+
+    class Loud:
+        def __repr__(self) -> str:
+            raise AssertionError("static metadata text built before admission")
+
+    class Leafy(phx.StrictModule):
+        value: object
+
+    class Static(phx.StrictModule):
+        value: object
+        meta: object = eqx.field(static=True)
+
+    segment, _, _ = _plane_root_segment()
+    with coordinate_source_request((segment,)) as budget:
+        with pytest.raises(TypeError, match="array conversion bound"):
+            admit_carrier_fingerprint(Leafy(Provider()), budget)
+        with pytest.raises(TypeError, match="representation bound"):
+            admit_carrier_fingerprint(Static(1.0, Loud()), budget)
+        memo = {}
+        # A callable's representation can change: admitted, never memoized.
+        mutable = Static(1.0, lambda value: value)
+        assert not admit_carrier_fingerprint(mutable, budget, memo=memo)
+        assert id(mutable) not in memo
+        fixed = Static(1.0, (1, "x"))
+        assert admit_carrier_fingerprint(fixed, budget, memo=memo)
+        assert memo[id(fixed)].owner is fixed
+
+    # A wide node is refused at its declared fanout before it is expanded.
+    wide = Leafy(tuple(float(index) for index in range(100_000)))
+    flattened = []
+    flatten = jax.tree_util.flatten_one_level_with_keys
+
+    def recorded(node: Any) -> Any:
+        flattened.append(id(node))
+        return flatten(node)
+
+    monkeypatch.setattr(jax.tree_util, "flatten_one_level_with_keys", recorded)
+    with HostBatchTicket(0, bytes_upper=1 << 20) as ticket:
+        limited = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=0, maximum_memory_bytes=1 << 20
+        )
+        with pytest.raises(CoordinateEnclosureResourceError):
+            admit_carrier_fingerprint(wide, limited)
+    assert id(wide) in flattened and id(wide.value) not in flattened
+
+
+def test_request_endpoint_admission_never_trusts_another_objects_entry() -> None:
+    segment, endpoint, root = _plane_root_segment()
+    expected = segment.carrier_parameter_enclosure(0.0, 1.0)
+    impostor_endpoint = TrimRootEndpoint(
+        root,
+        "first",
+        source_pcurve=endpoint.source_pcurve,
+        source_surface=endpoint.source_surface,
+    )
+    impostor_root = CurveSurfaceIntersectionRoot(
+        root.curve,
+        root.surface,
+        parameter_lower=root.parameter_lower,
+        parameter_upper=root.parameter_upper,
+    )
+    request = TrimRequestPreparations()
+    # Stale identity keys bound to other (equal-valued) objects with wrong
+    # retained bounds must neither be returned nor displaced into trust.
+    request.root_endpoints[id(endpoint)] = (impostor_endpoint, {16: (-5.0, 5.0)})
+    request.curve_surface_roots[id(root)] = (
+        impostor_root,
+        None,
+        {16: np.asarray(((-5.0, -5.0, -5.0), (5.0, 5.0, 5.0)))},
+    )
+    for _ in range(2):
+        np.testing.assert_array_equal(
+            segment.carrier_parameter_enclosure(0.0, 1.0, preparations=request),
+            expected,
+        )
+    assert request.root_endpoints[id(endpoint)][0] is impostor_endpoint
+    assert request.curve_surface_roots[id(root)][0] is impostor_root
+
+
+def test_krawczyk_batch_rows_equal_single_row_inclusions() -> None:
+    curve = geometry.LineCurve((-2.0, 0.2, 0.1), (1.0, 0.0, 0.0))
+    sphere = _sphere((0.0, 0.0, 0.0))
+    result = geometry.intersect_curve_region(geometry.CurveRange(curve, 0.0, 4.0), sphere)
+    assert result.complete and len(result.points) == 2
+    point = result.points[0]
+    root = CurveSurfaceIntersectionRoot(
+        curve,
+        sphere,
+        parameter_lower=point.parameter_lower,
+        parameter_upper=point.parameter_upper,
+    )
+    center = 0.5 * (root.parameter_lower + root.parameter_upper)
+    width = root.parameter_upper - root.parameter_lower
+    far = center + np.asarray((0.5, 0.0, 0.0))
+    lower = np.stack(
+        (
+            root.parameter_lower,  # certified uniqueness box
+            center - 4.0 * width,  # wider box around the same root
+            far - 1.0e-3,  # root-free box
+            center,  # degenerate point box
+        )
+    )
+    upper = np.stack(
+        (root.parameter_upper, center + 4.0 * width, far + 1.0e-3, center)
+    )
+    request = TrimRequestPreparations()
+    with coordinate_source_request((root,)) as budget:
+        prepared = intersection_owner._curve_surface_root_preparation(
+            root, preparations=request, budget=budget
+        )
+        batch = krawczyk(prepared, lower, upper, budget=budget, preparations=request)
+        assert bool(batch.certified[0])
+        for row in range(lower.shape[0]):
+            single = krawczyk(
+                prepared,
+                lower[row : row + 1],
+                upper[row : row + 1],
+                budget=budget,
+                preparations=request,
+            )
+            assert bool(single.certified[0]) == bool(batch.certified[row])
+            assert bool(single.excluded[0]) == bool(batch.excluded[row])
+            np.testing.assert_array_equal(single.lower[0], batch.lower[row])
+            np.testing.assert_array_equal(single.upper[0], batch.upper[row])
+            np.testing.assert_array_equal(
+                single.preconditioner[0], batch.preconditioner[row]
+            )
+            np.testing.assert_array_equal(single.contraction[0], batch.contraction[row])
+
+
+@pytest.mark.parametrize("dimension", [2, 3, 4, 6])
+@pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 16, 17, 64, 65, 130])
+def test_preconditioner_batches_equal_single_matrix_inverses(
+    dimension: int, count: int
+) -> None:
+    generator = np.random.default_rng(dimension * 1009 + count)
+    matrices = generator.normal(size=(count, dimension, dimension)) + 4.0 * np.eye(
+        dimension
+    )
+    matrices[count // 2] = 0.0  # singular row: a zero preconditioner, not padding
+    if count > 2:
+        matrices[-1, 0, 0] = np.nan  # nonfinite row stays isolated
+    inverses = approximate_inverses(matrices)
+    assert inverses.shape == matrices.shape and inverses.dtype == np.float64
+    assert np.all(np.isfinite(inverses))
+    np.testing.assert_array_equal(inverses[count // 2], 0.0)
+    for row in range(count):
+        np.testing.assert_array_equal(
+            approximate_inverses(matrices[row : row + 1])[0], inverses[row]
+        )
+    regular = [
+        row
+        for row in range(count)
+        if row != count // 2 and np.all(np.isfinite(matrices[row]))
+    ]
+    np.testing.assert_allclose(
+        matrices[regular] @ inverses[regular],
+        np.broadcast_to(np.eye(dimension), (len(regular), dimension, dimension)),
+        rtol=0.0,
+        atol=1.0e-10,
+    )
+    empty = approximate_inverses(np.zeros((0, dimension, dimension)))
+    assert empty.shape == (0, dimension, dimension)
 
 
 def test_tangent_line_circle_reports_tangent_contact() -> None:
@@ -711,10 +1082,13 @@ def test_rational_surface_intersection_binds_to_original_patch() -> None:
     )
 
 
-def test_rational_spline_branch_differentiates_through_live_source_leaves() -> None:
+def _rational_sheet_branch() -> tuple[
+    geometry.BSplineSurfacePatch, geometry.IntersectionCurve
+]:
+    """Biquadratic rational sheet with an interior u knot cut by a plane.
 
-    # Biquadratic rational sheet with an interior u knot: the branch crosses
-    # two Bernstein pieces, each pinned to its source knot span.
+    The branch crosses two Bernstein pieces, each pinned to its source span.
+    """
     heights = [[0.0, 0.1, 0.0], [0.2, 0.3, 0.1], [0.1, 0.4, 0.2], [0.0, 0.2, 0.1]]
     xs, ys = (0.0, 0.3, 0.7, 1.0), (0.0, 0.5, 1.0)
     points = [[[x, y, heights[i][j]] for j, y in enumerate(ys)] for i, x in enumerate(xs)]
@@ -732,6 +1106,12 @@ def test_rational_spline_branch_differentiates_through_live_source_leaves() -> N
         geometry.PlanePatch([-0.5, 0.4, -2.0], [2, 0, 0], [0, 0, 4]), [[0, 0], [1, 1]]
     )
     (curve,) = geometry.intersect_surface_regions(sheet, plane).curves
+    return patch, curve
+
+
+def test_rational_spline_branch_differentiates_through_live_source_leaves() -> None:
+
+    patch, curve = _rational_sheet_branch()
     assert curve.fully_certified
     parameters = jnp.linspace(0.0, float(curve.num_charts), 9)
 
@@ -1150,3 +1530,179 @@ def test_repeated_original_intersection_trim_bounds_preserve_affine_source_wrapp
             np.testing.assert_array_equal(actual[0], expected_jet[0])
             np.testing.assert_array_equal(actual[1], expected_jet[1])
     np.testing.assert_array_equal(trim.enclosure(*interval), expected_box)
+
+
+def _sphere_branch() -> geometry.IntersectionCurve:
+    (curve,) = geometry.intersect_surface_regions(
+        _plane([-2, -2, 0.5], [4, 0, 0], [0, 4, 0]), _sphere([0, 0, 0])
+    ).curves
+    return curve
+
+
+def _assert_identical_leaves(actual: Any, expected: Any) -> None:
+    actual_leaves = jax.tree_util.tree_leaves(actual)
+    expected_leaves = jax.tree_util.tree_leaves(expected)
+    assert len(actual_leaves) == len(expected_leaves)
+    for left, right in zip(actual_leaves, expected_leaves, strict=True):
+        left, right = np.asarray(left), np.asarray(right)
+        assert (left.dtype, left.shape) == (right.dtype, right.shape)
+        np.testing.assert_array_equal(left, right)
+
+
+@pytest.mark.parametrize("branch", ("sphere", "rational_sheet"))
+def test_request_chart_rows_reproduce_live_points_jets_and_bounds(branch: str) -> None:
+    curve = _sphere_branch() if branch == "sphere" else _rational_sheet_branch()[1]
+    charts = float(curve.num_charts)
+    parameters = np.linspace(0.0, charts, 23)
+    # A sub-range trim selects a narrower chart range of the same branch.
+    segment = geometry.CurveTrimSegment(
+        curve.p_curve("second"), 0.25 * charts, 0.75 * charts
+    )
+    local = jnp.linspace(0.0, 1.0, 7)
+    request = TrimRequestPreparations()
+    with coordinate_source_request((curve, parameters)) as budget:
+        live = curve.evaluate(parameters, budget=budget)
+        live_scalar = curve.evaluate(parameters[5], budget=budget)
+        live_segment = segment.evaluate(local, budget=budget)
+        live_jet = jax.jacfwd(lambda value: segment.evaluate(value, budget=budget))(local)
+        live_host = segment.host_points(np.asarray(local))
+        for _ in range(2):
+            _assert_identical_leaves(
+                curve.evaluate(parameters, preparations=request, budget=budget), live
+            )
+            _assert_identical_leaves(
+                curve.evaluate(parameters[5], preparations=request, budget=budget),
+                live_scalar,
+            )
+            _assert_identical_leaves(
+                segment.evaluate(local, preparations=request, budget=budget),
+                live_segment,
+            )
+            _assert_identical_leaves(
+                jax.jacfwd(
+                    lambda value: segment.evaluate(
+                        value, preparations=request, budget=budget
+                    )
+                )(local),
+                live_jet,
+            )
+            np.testing.assert_array_equal(
+                segment.host_points(
+                    np.asarray(local), preparations=request, budget=budget
+                ),
+                live_host,
+            )
+    assert request.chart_atlases[id(curve)].curve is curve
+    # A later budget of the same request admits its own retained rows.
+    with coordinate_source_request((curve, parameters)) as later:
+        _assert_identical_leaves(
+            curve.evaluate(parameters, preparations=request, budget=later), live
+        )
+        np.testing.assert_array_equal(
+            segment.host_points(np.asarray(local), preparations=request, budget=later),
+            live_host,
+        )
+
+
+def test_request_chart_rows_follow_caller_mutable_source_leaves() -> None:
+    patch, curve = _rational_sheet_branch()
+    # Writable host leaves are caller-owned: an in-place edit must reach the
+    # next query of the same request exactly as it reaches a fresh request.
+    weights = np.array(patch.weights)
+    moved = eqx.tree_at(lambda value: value.first.patch.weights, curve, weights)
+    pcurve = moved.p_curve("first")
+    parameters = np.linspace(0.0, float(moved.num_charts), 9)
+    request = TrimRequestPreparations()
+    with coordinate_source_request((moved, parameters)) as budget:
+        before = np.asarray(
+            pcurve.evaluate(parameters, preparations=request, budget=budget)
+        )
+        weights[1, 1] += 0.05
+        after = np.asarray(
+            pcurve.evaluate(parameters, preparations=request, budget=budget)
+        )
+        fresh = np.asarray(
+            pcurve.evaluate(
+                parameters, preparations=TrimRequestPreparations(), budget=budget
+            )
+        )
+        live = np.asarray(pcurve.evaluate(parameters, budget=budget))
+    np.testing.assert_array_equal(after, fresh)
+    np.testing.assert_array_equal(after, live)
+    assert not np.array_equal(after, before)
+
+
+def test_request_chart_rows_never_freeze_caller_mutable_banks() -> None:
+    curve = _sphere_branch()
+    chart_end = np.array(curve.chart_end)
+    moved = eqx.tree_at(lambda value: value.chart_end, curve, chart_end)
+    pcurve = moved.p_curve("first")
+    parameters = np.asarray([0.25, 0.5, 0.75])
+    request = TrimRequestPreparations()
+    with coordinate_source_request((moved, parameters)) as budget:
+        before = np.asarray(
+            pcurve.evaluate(parameters, preparations=request, budget=budget)
+        )
+        # Move the first chart's graph-coordinate representative in place.
+        axis = int(np.asarray(moved.chart_axes)[0])
+        start = float(np.asarray(moved.chart_start)[0, axis])
+        chart_end[0, axis] = start + 0.9 * (chart_end[0, axis] - start)
+        after = np.asarray(
+            pcurve.evaluate(parameters, preparations=request, budget=budget)
+        )
+        fresh = np.asarray(
+            pcurve.evaluate(
+                parameters, preparations=TrimRequestPreparations(), budget=budget
+            )
+        )
+    np.testing.assert_array_equal(after, fresh)
+    assert not np.array_equal(after, before)
+
+
+def test_request_chart_rows_keep_traced_queries_and_sources_live() -> None:
+    patch, curve = _rational_sheet_branch()
+    parameters = jnp.linspace(0.0, float(curve.num_charts), 9)
+    probe = jnp.linspace(1.0, -0.5, 27).reshape((9, 3))
+    request = TrimRequestPreparations()
+
+    def functional(
+        source: geometry.BSplineSurfacePatch,
+        preparations: TrimRequestPreparations | None,
+        budget: Any,
+    ) -> jax.Array:
+        moved = eqx.tree_at(lambda value: value.first.patch, curve, source)
+        point = moved.evaluate(parameters, preparations=preparations, budget=budget).point
+        return jnp.sum(probe * point)
+
+    with coordinate_source_request((curve, parameters)) as budget:
+        concrete = curve.evaluate(parameters, preparations=request, budget=budget)
+        traced = eqx.filter_jit(
+            lambda value, query: value.evaluate(
+                query, preparations=request, budget=budget
+            ).point
+        )(curve, parameters)
+        np.testing.assert_allclose(traced, concrete.point, rtol=0.0, atol=1e-13)
+        gradient = jax.grad(functional)(patch, request, budget)
+        expected = jax.grad(functional)(patch, None, budget)
+        _assert_identical_leaves(gradient, expected)
+        assert float(jnp.max(jnp.abs(gradient.control_points))) > 0.0
+        # Tracing leaves no traced row behind in the request.
+        _assert_identical_leaves(
+            curve.evaluate(parameters, preparations=request, budget=budget), concrete
+        )
+
+
+def test_request_chart_rows_refuse_changed_span_topology_on_every_query() -> None:
+    _, curve = _rational_sheet_branch()
+    merged = eqx.tree_at(
+        lambda value: value.first.patch.u_knots,
+        curve,
+        jnp.asarray([0, 0, 0, 0, 1, 1, 1.0]),
+    )
+    parameters = np.linspace(0.0, float(merged.num_charts), 5)
+    request = TrimRequestPreparations()
+    with coordinate_source_request((merged, parameters)) as budget:
+        for _ in range(2):
+            with pytest.raises(ValueError, match="knot-span topology"):
+                merged.evaluate(parameters, preparations=request, budget=budget)
+    assert not request.chart_atlases

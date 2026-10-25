@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import final, TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -19,6 +20,7 @@ from .._fingerprint import (
 from ._coordinate_operands import (
     ContainerOwners,
     coordinate_input_owner_fields,
+    CoordinateOperandProfile,
     OwnerFields,
     require_coordinate_input_containers,
     require_coordinate_input_owners,
@@ -65,7 +67,11 @@ def coordinate_scope_key(
 
 @dataclass(frozen=True, slots=True)
 class CoordinateIdentityInputs:
-    """Actual owners and banks authenticating a previously computed identity."""
+    """Actual owners and banks authenticating a previously computed identity.
+
+    ``shared`` is the separately captured rest of the owner graph; rechecking
+    these inputs always rechecks it as well.
+    """
 
     owner_fields: OwnerFields
     containers: ContainerOwners
@@ -73,6 +79,7 @@ class CoordinateIdentityInputs:
     mutable_banks: tuple[np.ndarray, ...]
     mutable_write_flags: tuple[bool, ...]
     mutable_content_id: str | None
+    shared: CoordinateIdentityInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +89,39 @@ class ElementIdentityAdmission:
     owner: object
     identity: tuple[str, str]
     inputs: CoordinateIdentityInputs
+
+
+@final
+class OperationElementAdmission:
+    """An element admission its authenticating pure operation carries to callees.
+
+    Only that operation constructs and closes it. A carried token proves an
+    unchanged owner only while the operation runs, for its exact owner, and
+    while it is still the budget's registered admission; otherwise callees
+    authenticate in full.
+    """
+
+    __slots__ = ("_admission", "_live")
+
+    def __init__(self, admission: ElementIdentityAdmission, /) -> None:
+        self._admission = admission
+        self._live = True
+
+    def close(self) -> None:
+        self._live = False
+
+    def identity(
+        self, owner: object, budget: CoordinateEnclosureBudget, /
+    ) -> tuple[str, str] | None:
+        """The authenticated identity of ``owner``, or ``None`` when not current."""
+        admission = self._admission
+        if (
+            self._live
+            and admission.owner is owner
+            and budget.element_identity_admission_cache.get(id(owner)) is admission
+        ):
+            return admission.identity
+        return None
 
 
 def _mutable_coordinate_banks_id(
@@ -101,14 +141,28 @@ def _mutable_coordinate_banks_id(
         )
 
 
-def coordinate_identity_inputs(
-    owner: object, budget: CoordinateEnclosureBudget, /
+def _coordinate_identity_inputs(
+    owner: object,
+    shared: CoordinateIdentityInputs | None,
+    budget: CoordinateEnclosureBudget,
+    /,
 ) -> CoordinateIdentityInputs | None:
-    """Capture the shared actual-field invariant, with no wrapper transparency."""
     arrays: list[jax.Array | np.ndarray] = []
     containers: list[tuple[list[object], tuple[object, ...]]] = []
+    known = (
+        ()
+        if shared is None
+        else (
+            CoordinateOperandProfile(
+                (),
+                MappingProxyType({id(item[0]): item[0] for item in shared.owner_fields}),
+                shared.owner_fields,
+                0,
+            ),
+        )
+    )
     owners = coordinate_input_owner_fields(
-        (owner,), budget, arrays=arrays, containers=containers
+        (owner,), budget, known=known, arrays=arrays, containers=containers
     )
     if owners is None:
         return None
@@ -124,13 +178,48 @@ def coordinate_identity_inputs(
         mutable,
         tuple(bank.flags.writeable for bank in mutable),
         _mutable_coordinate_banks_id(mutable, budget),
+        shared,
     )
 
 
+def coordinate_identity_inputs(
+    owner: object, budget: CoordinateEnclosureBudget, /
+) -> CoordinateIdentityInputs | None:
+    """Capture the shared actual-field invariant, with no wrapper transparency."""
+    return _coordinate_identity_inputs(owner, None, budget)
+
+
+def operation_coordinate_identity_inputs(
+    owner: object,
+    shared: CoordinateIdentityInputs,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> CoordinateIdentityInputs | None:
+    """Capture ``owner`` whose remaining graph ``shared`` this operation captured.
+
+    ``shared`` must have been captured by the same pure operation on the same
+    budget. Its owners are skipped by identity, not rescanned; the returned
+    inputs retain it, so any later reuse rechecks the complete graph.
+    """
+    return _coordinate_identity_inputs(owner, shared, budget)
+
+
 def require_coordinate_identity_inputs(
-    inputs: CoordinateIdentityInputs, budget: CoordinateEnclosureBudget, /
+    inputs: CoordinateIdentityInputs,
+    budget: CoordinateEnclosureBudget,
+    /,
+    *,
+    verified: dict[int, CoordinateIdentityInputs] | None = None,
 ) -> bool:
-    """Recheck complete current owners and NumPy content, and actual JAX liveness."""
+    """Recheck complete current owners and NumPy content, and actual JAX liveness.
+
+    ``verified`` belongs to one pure operation and is dropped with it. An
+    inputs graph (an owner's own capture or a shared one) that this operation
+    already rechecked successfully is not rechecked again; it is recorded only
+    after its complete recheck succeeds.
+    """
+    if verified is not None and verified.get(id(inputs)) is inputs:
+        return True
     if not (
         require_coordinate_input_owners(inputs.owner_fields, budget)
         and require_coordinate_input_containers(inputs.containers, budget)
@@ -139,9 +228,17 @@ def require_coordinate_identity_inputs(
     budget.reserve(len(inputs.immutable_banks))
     if any(bank.is_deleted() for bank in inputs.immutable_banks):
         raise ValueError("element_identity must retain live actual JAX banks")
-    return (
+    if not (
         tuple(bank.flags.writeable for bank in inputs.mutable_banks)
         == inputs.mutable_write_flags
         and _mutable_coordinate_banks_id(inputs.mutable_banks, budget)
         == inputs.mutable_content_id
-    )
+        and (
+            inputs.shared is None
+            or require_coordinate_identity_inputs(inputs.shared, budget, verified=verified)
+        )
+    ):
+        return False
+    if verified is not None:
+        verified[id(inputs)] = inputs
+    return True

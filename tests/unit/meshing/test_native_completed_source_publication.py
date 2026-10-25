@@ -32,6 +32,7 @@ from phydrax.meshing._native_preparation import (
     _completed_native_sources,
     _native_source_array_content,
     _native_source_budget,
+    _native_source_seal,
     _require_native_completed_source,
     _require_native_source_seal,
     continue_native_completed_source_issue,
@@ -235,10 +236,64 @@ def test_completed_source_continuation_uses_current_request_history(
     from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
 
     register_meshing_source_artifacts()
-    _require_execution_endpoint_extension(bound, continued)
+    # A completed request named as history is provenance only; it never
+    # authorizes rebinding an accepted endpoint's same-request receipt.
+    with pytest.raises(ValueError, match="continue the actual preceding receipt"):
+        _require_execution_endpoint_extension(bound, continued)
     with NativeExecutionScope(_limits()):
         assert continued.execution_evidence is not None
         _require_native_completed_source(continued, continued.execution_evidence)
+
+
+def test_large_live_publication_rebind_keeps_archive_limits(
+    source: CellMeshingResult,
+) -> None:
+    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+    from phydrax._model._structure import model_recipe_wire_json, model_structure_recipe
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+    from phydrax.lifecycle._meshing_field_records import (
+        _require_execution_endpoint_extension,
+    )
+    from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
+
+    provenance = phx.SemanticProvenance(
+        {
+            "kind": "large-live-publication",
+            "source": source.provenance.semantic_id,
+            "description": "x" * DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_bytes,
+        }
+    )
+    large = CellMeshingResult(
+        source.mesh, source.geometry, source.coordinate_contract, source.audit,
+        source.quality, source.compliance, source.trace, source.provider,
+        source.runtime, source.derivative_mode, provenance,
+        boundary=source.boundary, patches=source.patches,
+    )
+    bound, _ = _complete(large)
+    limits = phx.meshing.MeshingLimits(
+        maximum_work_units=10_000_000,
+        maximum_geometry_queries=100_000,
+        maximum_cavity_cells=100_000,
+        maximum_scratch_bytes=128 * 1024**2,
+        maximum_wall_seconds=120.0,
+    )
+
+    def consume(budget: CoordinateEnclosureBudget) -> None:
+        budget.reserve(1)
+
+    def fail(stage: str, message: str, data: dict[str, object]) -> ValueError:
+        return ValueError(f"{stage}: {message}; {data}")
+
+    continued = execute_native_consumer(
+        bound, limits, consume, failure_factory=fail,
+    ).result
+    register_meshing_source_artifacts()
+    _require_execution_endpoint_extension(bound, continued)
+    assert continued.result_id == bound.result_id
+    assert continued.execution_evidence is not bound.execution_evidence
+    with pytest.raises(ValueError, match=r"recipe\.bytes"):
+        model_recipe_wire_json(model_structure_recipe(continued))
 
 
 def test_constructor_replacement_refuses_staged_publication(
@@ -477,7 +532,7 @@ def test_combined_issue_retains_final_immutable_and_constructor_checks(
         issue.complete(bound)
 
 
-def test_combined_issue_removes_only_the_adjacent_recheck(
+def test_combined_issue_removes_only_the_recheck_and_duplicate_retention(
     source: CellMeshingResult,
 ) -> None:
     object.__setattr__(source.mesh, "coordinates", np.array(source.mesh.coordinates))
@@ -490,10 +545,24 @@ def test_combined_issue_removes_only_the_adjacent_recheck(
     with NativeExecutionScope(_limits()) as recheck:
         with _native_source_budget(recheck, None) as budget:
             _require_native_source_seal(source, seal, budget)
-    recheck_work = NativeExecutionRecord(recheck.completed_evidence()).total_work_units
+    # Separate staging also retains its seal on the ledger; the combined issue's
+    # own token covers that seal, so only that retention and the recheck vanish.
+    with NativeExecutionScope(_limits()) as staging:
+        stage_native_source_publication(staging, source)
+    with NativeExecutionScope(_limits()) as sealing:
+        with _native_source_budget(sealing, None) as budget:
+            _native_source_seal(source, budget)
+
+    def work(scope: NativeExecutionScope) -> int:
+        record = NativeExecutionRecord(scope.completed_evidence())
+        return int(np.asarray(record.total_work_units))
+
+    retention = work(staging) - work(sealing)
+    assert retention > 0
     assert int(np.asarray(separate.execution_evidence.total_work_units)) == (
         int(np.asarray(combined.execution_evidence.total_work_units))
-        + int(np.asarray(recheck_work))
+        + work(recheck)
+        + retention
     )
     separate_issue.close()
     combined_issue.close()
@@ -844,7 +913,7 @@ def test_continuation_prepared_graph_preserves_ids_and_skips_old_numerics(
         assert paid is not None and graph is not None
         assert graph.graph_id == canonical_fingerprint(paid.to_record())
         with pytest.raises(FrozenInstanceError):
-            setattr(graph, "graph_id", "changed")
+            setattr(graph, "phases", ())
         with NativeExecutionScope(_limits()) as root:
             issue, overlap = _prepare_continuation(root, bound)
         continued = _bind_continuation(root, bound, overlap)
@@ -1130,10 +1199,11 @@ def test_continuation_refuses_foreign_overlap_and_root(source: CellMeshingResult
             continue_native_completed_source_issue(
                 root, bound, receipt, overlap=NativePreparationOverlap(),
             )
+        overlap = ledger.overlap(root, receipt)
         with NativeExecutionScope(_limits()) as child:
             with pytest.raises(ValueError, match="root"):
                 continue_native_completed_source_issue(
-                    child, bound, receipt, overlap=ledger.overlap(root, receipt),
+                    child, bound, receipt, overlap=overlap,
                 )
 
 
@@ -1635,6 +1705,18 @@ def test_receipt_snapshot_work_and_only_pre_root_elapsed_are_imported(
     assert (graph is None) == mutable
     assert snapshot.seconds == 0.125
     assert snapshot.work > 0
+    # Retaining a prepared graph separately meters its owner traversal; that
+    # host work is not part of the imported snapshot work.
+    retention = 0
+    if not mutable:
+        with NativeExecutionScope(_limits()) as measured:
+            native_preparation_ledger(measured)._retain_storage(
+                measured, (receipt,), snapshot.bytes_upper
+            )
+            retention = (
+                measured.limits.maximum_work_units
+                - measured.remaining().remaining_work_units
+            )
     with NativeExecutionScope(_limits()) as root:
         ledger = native_preparation_ledger(root)
         ledger.retain_receipt_snapshot(
@@ -1646,7 +1728,7 @@ def test_receipt_snapshot_work_and_only_pre_root_elapsed_are_imported(
                 root, snapshot, preparation_outside_scope=outside
             )
         assert root.remaining().remaining_work_units == (
-            root.limits.maximum_work_units - snapshot.work
+            root.limits.maximum_work_units - snapshot.work - retention
         )
     evidence = root.completed_evidence()
     assert evidence.prior_elapsed_seconds == (0.125 if outside else 0.0)

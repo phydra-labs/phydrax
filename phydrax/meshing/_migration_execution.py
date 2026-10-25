@@ -10,17 +10,20 @@ mesh. Neither this backend nor its device handles belongs in an archive.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeAlias, TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jaxtyping import PyTree
 
 import phydrax
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import AdaptiveSimplexParts
+
 
 if TYPE_CHECKING:
     from ._migration_record import MigrationPlacement
@@ -65,13 +68,13 @@ MigrationParts: TypeAlias = AdaptiveSimplexParts | LogicalMigrationParts
 
 
 def partition_map(
-    function: Callable,
+    function: Callable[..., PyTree[Array]],
     *,
     parts: MigrationParts,
-    in_specs,
-    out_specs,
+    in_specs: PyTree[PartitionSpec],
+    out_specs: PyTree[PartitionSpec],
     check_vma: bool = True,
-) -> Callable:
+) -> Callable[..., PyTree[Array]]:
     """Run the same singleton-block kernel on physical or historical rank rows.
 
     Only the migration substrate's leading owner axis and replicated metadata
@@ -101,7 +104,7 @@ def partition_map(
     out_axes = jax.tree.map(axis, out_specs, is_leaf=is_spec)
     is_axis = lambda value: value is None or type(value) is int
 
-    def local(*rows):
+    def local(*rows: PyTree[Array]) -> PyTree[Array]:
         blocks = jax.tree.map(
             lambda index, value: jax.tree.map(lambda leaf: leaf[None], value)
             if index == 0
@@ -128,8 +131,8 @@ def partition_map(
         axis_size=parts.part_count,
     )
 
-    def execute(*arguments):
-        def check(index, value):
+    def execute(*arguments: PyTree[Array]) -> PyTree[Array]:
+        def check(index: int | None, value: PyTree[Array]) -> None:
             if index == 0 and any(
                 not leaf.ndim or leaf.shape[0] != parts.part_count
                 for leaf in jax.tree.leaves(value)

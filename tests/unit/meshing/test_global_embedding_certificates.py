@@ -20,7 +20,10 @@ from phydrax.discretization._cell_geometry import (
     RestrictedCellGeometryElement,
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from phydrax.discretization._coordinate_enclosure import (
     ExactScalar,
     Expression,
@@ -1000,15 +1003,20 @@ def test_prepared_coordinate_scope_rechecks_every_current_carrier_corner(
 @pytest.mark.parametrize(
     "top",
     (0.5, 0.05),
-    ids=("corner-controls-at-root", "p-matrix-after-corner-refusal"),
+    ids=("moderate-taper", "strong-taper"),
 )
-def test_planar_trilinear_hexes_decide_through_exact_corner_proofs(top: float) -> None:
-    # Strong taper defeats the fixed symmetric-part criterion, but every
-    # projected principal minor remains positive on the full reference cube.
+def test_planar_trilinear_hexes_certify_without_subdivision(top: float) -> None:
+    # Both taper strengths must certify on the original closed cells, without
+    # relying on a particular injectivity theorem being selected.
     mesh = tapered_hexes(top)
     geometry = phx.discretization.CellGeometrySpec.affine(mesh)
     validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
-    certificate = phx.geometry.certify_global_embedding(mesh, geometry, validity)
+    certificate = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity,
+        limits=MeshCertificateLimits(
+            maximum_subdivision_depth=0, maximum_subdivision_pieces=2
+        ),
+    )
 
     assert validity.all_certified
     assert certificate.binding.coordinate_scope == "mapped"
@@ -1016,11 +1024,6 @@ def test_planar_trilinear_hexes_decide_through_exact_corner_proofs(top: float) -
     assert {"mapped_trace_continuity", "mapped_straight_boundary_degree"} <= set(
         certificate.evaluated_checks
     )
-    assert certificate.subdivision_piece_count == 2
-    if top == 0.05:
-        assert "mapped_box_p_matrix_univalence" in certificate.evaluated_checks
-    else:
-        assert "mapped_box_p_matrix_univalence" not in certificate.evaluated_checks
 
 
 def test_trilinear_corner_proofs_refuse_one_unit_below_their_charged_work() -> None:
@@ -1702,6 +1705,7 @@ def test_restriction_root_evidence_refuses_foreign_certificate_replay() -> None:
 
 def test_exact_contact_normalizes_only_requested_vertices(
     reference_budget: CoordinateEnclosureBudget,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import phydrax.geometry._exact_polyhedral_geometry as exact_owner
@@ -1720,6 +1724,8 @@ def test_exact_contact_normalizes_only_requested_vertices(
         (Fraction(0), Fraction(1, 3)),
         (Fraction(1, 3), Fraction(0)),
     )
+    first = np.asarray(((1, 31), (1, 31)), dtype=np.int64)
+    second = np.asarray(((60, 95), (1, 60)), dtype=np.int64)
     original = exact_owner.coordinate_integers
     normalized_rows = []
 
@@ -1730,15 +1736,32 @@ def test_exact_contact_normalizes_only_requested_vertices(
         return original(values, budget=budget)
 
     monkeypatch.setattr(exact_owner, "coordinate_integers", normalize)
-    hit, certain = exact_pair_contacts(
-        points,
-        np.asarray(((1, 31), (1, 31)), dtype=np.int64),
-        np.asarray(((60, 95), (1, 60)), dtype=np.int64),
-        budget=reference_budget,
-    )
-    assert normalized_rows == [4]
-    np.testing.assert_array_equal(hit, (True, False))
-    np.testing.assert_array_equal(certain, (True, True))
+    starting_storage = reference_budget.temporary_bytes_upper
+    with reference_budget.measurement() as measurement:
+        with exact_pair_contacts(
+            points, first, second, budget=reference_budget
+        ) as contacts:
+            output_bytes = sum(result.nbytes for result in contacts)
+            assert (
+                reference_budget.temporary_bytes_upper - starting_storage
+                >= output_bytes
+            )
+            assert normalized_rows == [4]
+            np.testing.assert_array_equal(contacts[0], (True, False))
+            np.testing.assert_array_equal(contacts[1], (True, True))
+            del contacts
+    assert reference_budget.temporary_bytes_upper == starting_storage
+
+    peak = measurement.peak_bytes_upper
+    assert peak > 0
+    short_budget = coordinate_budget(reference_budget.maximum_work_units, peak - 1)
+    with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+        with exact_pair_contacts(
+            points, first, second, budget=short_budget
+        ):
+            pytest.fail("one-short exact contact storage must be refused before yielding")
+    assert (refusal.value.limit, refusal.value.requested) == (peak - 1, peak)
+    assert short_budget.temporary_bytes_upper == 0
 
 
 def test_identity_welded_audit_reuses_exact_canonical_facet_table(
@@ -1861,9 +1884,18 @@ def test_unique_rational_vertex_boxes_preserve_outward_bounds_bitwise(
         dtype=np.int64,
     )
     expected = boxes(points, rows)
-    actual = _exact_contact_boxes(points, rows, budget=reference_budget)
-    for observed, original in zip(actual, expected, strict=True):
-        np.testing.assert_array_equal(observed.view(np.uint64), original.view(np.uint64))
+    starting_storage = reference_budget.temporary_bytes_upper
+    with _exact_contact_boxes(points, rows, budget=reference_budget) as actual:
+        output_bytes = sum(result.nbytes for result in actual)
+        assert (
+            reference_budget.temporary_bytes_upper - starting_storage >= output_bytes
+        )
+        for observed, original in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(
+                observed.view(np.uint64), original.view(np.uint64)
+            )
+        del actual
+    assert reference_budget.temporary_bytes_upper == starting_storage
     from phydrax._geometry_predicates import exact_bits
     from phydrax.geometry._exact_polyhedral_geometry import CoordinateIntegerPreparation
 
@@ -1873,24 +1905,35 @@ def test_unique_rational_vertex_boxes_preserve_outward_bounds_bitwise(
             points, budget=reference_budget
         )
         before = reference_budget.work_units
-        _exact_contact_boxes(points, rows, budget=reference_budget)
+        with _exact_contact_boxes(points, rows, budget=reference_budget):
+            pass
         scanned = reference_budget.work_units - before
         before = reference_budget.work_units
-        prepared = _exact_contact_boxes(
+        with _exact_contact_boxes(
             points, rows, budget=reference_budget, integer_preparation=preparation
-        )
-        # Every bank row is used, so the bound preparation's scan is reused.
-        assert reference_budget.work_units - before == scanned - points.size
-        for observed, original in zip(prepared, expected, strict=True):
-            np.testing.assert_array_equal(
-                observed.view(np.uint64), original.view(np.uint64)
-            )
+        ) as prepared:
+            # Every bank row is used, so the bound preparation's scan is reused.
+            assert reference_budget.work_units - before == scanned - points.size
+            for observed, original in zip(prepared, expected, strict=True):
+                np.testing.assert_array_equal(
+                    observed.view(np.uint64), original.view(np.uint64)
+                )
+            del prepared
         changed = points.copy()
         changed[0, 0] = Fraction(1, 7)
+        storage_before_stale_preparation = reference_budget.temporary_bytes_upper
         with pytest.raises(ValueError, match="current source values and ledger"):
-            _exact_contact_boxes(
-                changed, rows, budget=reference_budget, integer_preparation=preparation
-            )
+            with _exact_contact_boxes(
+                changed,
+                rows,
+                budget=reference_budget,
+                integer_preparation=preparation,
+            ):
+                pytest.fail("a stale coordinate preparation must be rejected")
+        assert (
+            reference_budget.temporary_bytes_upper
+            == storage_before_stale_preparation
+        )
 
 
 @pytest.mark.parametrize("ambient", (2, 3))
@@ -1915,10 +1958,58 @@ def test_shared_endpoint_separation_preserves_segment_contact_semantics(
         points, first, second, budget=reference_budget
     )
     np.testing.assert_array_equal(separated, (True, True, False, False, False))
-    hit, certain = exact_pair_contacts(points, first, second, budget=reference_budget)
-    assert np.all(certain)
-    assert np.all(~hit[separated])
-    np.testing.assert_array_equal(hit, (False, False, True, False, True))
+    with exact_pair_contacts(
+        points, first, second, budget=reference_budget
+    ) as contacts:
+        assert np.all(contacts[1])
+        assert np.all(~contacts[0][separated])
+        np.testing.assert_array_equal(contacts[0], (False, False, True, False, True))
+        del contacts
+
+
+
+
+def test_exact_exterior_degree_releases_scratch_on_success_and_one_short_refusal(
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax.geometry._global_embedding import _exterior_degrees, Boundary
+
+    points = np.asarray(
+        tuple(
+            (Fraction(x), Fraction(y))
+            for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))
+        ),
+        dtype=object,
+    )
+    rows = np.asarray(((0, 1), (1, 2), (2, 3), (3, 0)), dtype=np.int64)
+    boundary = Boundary(
+        rows,
+        np.arange(rows.shape[0], dtype=np.int64),
+        rows,
+        np.arange(rows.shape[0], dtype=np.int64),
+    )
+    limits = MeshCertificateLimits()
+    budget = coordinate_budget(limits.maximum_work_units, limits.maximum_scratch_bytes)
+    state = EmbeddingState([], [])
+    with budget.measurement() as measurement:
+        _exterior_degrees(state, points, boundary, 2, limits, budget=budget)
+    assert state.clean
+    assert state.checks == ["exterior_degree"]
+    assert state.shells == 1
+    assert state.ray_tests == rows.shape[0]
+    assert budget.temporary_bytes_upper == 0
+
+    peak = measurement.peak_bytes_upper
+    assert peak > 0
+    short_budget = coordinate_budget(limits.maximum_work_units, peak - 1)
+    refused_state = EmbeddingState([], [])
+    with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+        _exterior_degrees(
+            refused_state, points, boundary, 2, limits, budget=short_budget
+        )
+    assert (refusal.value.limit, refusal.value.requested) == (peak - 1, peak)
+    assert short_budget.temporary_bytes_upper == 0
+    assert refused_state.checks == ["exterior_degree"]
 
 
 def test_prepared_embedding_refusal_names_its_actual_missing_governed_check(

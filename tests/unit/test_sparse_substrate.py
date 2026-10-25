@@ -284,6 +284,58 @@ def test_sparse_plans_reuse_global_structural_jacobian_and_hessian_patterns() ->
     assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))
 
 
+def test_route_replace_uses_prepared_injective_windows() -> None:
+    windows = phx.sparse.InjectiveRouteWindows(
+        np.asarray([[3, 3, 1], [0, 2, 2]], dtype=np.int32),
+        target_size=4,
+        valid=np.asarray([[True, False, True], [True, True, False]]),
+    )
+    destination = jnp.asarray([[1.0], [jnp.nan], [2.0], [jnp.inf]])
+    routes = jnp.asarray([[5.0], [7.0], [-3.0]])
+
+    replaced = phx.sparse.route_replace(windows, destination, routes)
+
+    # Valid rows are overwritten even when they held NaN or infinity; the
+    # masked lane naming row 3 again writes nothing.
+    assert jnp.array_equal(replaced, jnp.asarray([[1.0], [-3.0], [2.0], [5.0]]))
+    # A traced window index selects a prepared window without a runtime check.
+    scanned = jax.lax.scan(
+        lambda state, window: (
+            phx.sparse.route_replace(windows, state, routes, window=window),
+            None,
+        ),
+        destination,
+        jnp.arange(2),
+    )[0]
+    assert jnp.array_equal(scanned, jnp.asarray([[5.0], [-3.0], [7.0], [5.0]]))
+    tangent = jax.jvp(
+        lambda values: phx.sparse.route_replace(windows, destination, values),
+        (routes,),
+        (jnp.ones_like(routes),),
+    )[1]
+    assert jnp.array_equal(tangent, jnp.asarray([[0.0], [1.0], [0.0], [1.0]]))
+    with pytest.raises(ValueError, match="distinct rows"):
+        phx.sparse.InjectiveRouteWindows(np.asarray([2, 2]), target_size=4)
+    with pytest.raises(ValueError, match="outside"):
+        phx.sparse.InjectiveRouteWindows(np.asarray([4, 0]), target_size=4)
+    with pytest.raises(TypeError, match="host arrays"):
+        jax.jit(
+            lambda targets: phx.sparse.InjectiveRouteWindows(targets, target_size=4)
+        )(jnp.asarray([0, 1]))
+    with pytest.raises(ValueError, match="window must lie"):
+        phx.sparse.route_replace(windows, destination, routes, window=2)
+    with pytest.raises(Exception, match="window must lie"):
+        jax.jit(
+            lambda window: phx.sparse.route_replace(
+                windows, destination, routes, window=window
+            )
+        )(jnp.asarray(2)).block_until_ready()
+    # Cold reconstruction of padded windows keeps their invalid lanes invalid.
+    restored = phx.sparse.InjectiveRouteWindows.from_stored_fields(windows)
+    np.testing.assert_array_equal(restored.target_indices, windows.target_indices)
+    assert restored.target_size == windows.target_size
+
+
 def test_sparse_substrate_scenario_3() -> None:
     space = ArraySpace(
         (2,),

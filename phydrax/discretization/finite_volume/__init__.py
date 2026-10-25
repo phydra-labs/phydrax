@@ -286,6 +286,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "PreparedMetricLine": "._metric_line",
     "PreparedNonlinearFaceTrace": "._side_trace",
     "PreparedPolyhedralFiniteVolumeGeometry": "._polyhedral_types",
+    "PreparedRemapCSRView": "._unstructured_remap",
     "PreparedShallowWaterBathymetry": "._shallow_water",
     "PreparedTriangleFiniteVolumeDynamics": "._triangle_dynamics",
     "PreparedTriangleQuadratic": "._triangle_polynomial",
@@ -988,6 +989,7 @@ if TYPE_CHECKING:
         UnstructuredOversetReport as UnstructuredOversetReport,
     )
     from ._unstructured_remap import (
+        PreparedRemapCSRView as PreparedRemapCSRView,
         RemapCoverageLedger as RemapCoverageLedger,
         UnstructuredConservativeRemapPlan as UnstructuredConservativeRemapPlan,
         UnstructuredRemapLimiter as UnstructuredRemapLimiter,
@@ -1313,6 +1315,7 @@ __all__ = [
     "PreparedMetricLine",
     "PreparedNonlinearFaceTrace",
     "PreparedPolyhedralFiniteVolumeGeometry",
+    "PreparedRemapCSRView",
     "PreparedShallowWaterBathymetry",
     "PreparedTriangleFiniteVolumeDynamics",
     "PreparedTriangleQuadratic",

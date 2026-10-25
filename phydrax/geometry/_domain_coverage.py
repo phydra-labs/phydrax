@@ -288,7 +288,7 @@ Mesh certificate checks
   },
   {
     "owner": "phydrax.geometry._domain_coverage._execute_nested_coverage",
-    "checks": ["nested_domain_coverage"],
+    "checks": ["region_measure", "uncovered_boundary"],
     "premises": [
       {"tag": "X", "statement": "The complete oriented source coverage was actually issued for the current full source mesh, geometry, domain, material assignment, embedding and policy, and its complete report content is authenticated."},
       {"tag": "X", "statement": "The current explicit ledger earned the final target embedding after the existing exact contained-positive parent partition, complete lower-dimensional source stars, full facet cancellation and source-global boundary closure; reconstructed reports and other ledgers confer no authority."},
@@ -452,15 +452,13 @@ _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 
 
 def _overlap_column(value: object, dtype: type, rank: int, name: str) -> np.ndarray:
-    """Copy one exact-dtype host column into a read-only C-contiguous bank."""
+    """Snapshot one exact-dtype host column into an immutable C-contiguous bank."""
     array = np.asarray(value)
     if array.dtype != dtype or array.ndim != rank:
         raise TypeError(
             f"CoverageOverlapBank.{name} must be a rank-{rank} {np.dtype(dtype).name} array; got dtype={array.dtype}, shape={array.shape}"
         )
-    column = np.array(array, dtype=dtype, order="C", copy=True)
-    column.setflags(write=False)
-    return column
+    return host_storage_owner.immutable_host_array(np.ascontiguousarray(array, dtype=dtype))
 
 
 def _overlap_dictionary[Value: str](

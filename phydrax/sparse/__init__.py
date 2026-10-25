@@ -55,10 +55,11 @@ from ._ops import (
     linear_transpose_apply,
     mask_routes,
     route_reduce,
+    route_replace,
     RouteReduction,
 )
 from ._pattern import SparsePattern, SparsePatternOrigin
-from ._relation import EdgeRelation, RowRelation, SparseRelation
+from ._relation import EdgeRelation, InjectiveRouteWindows, RowRelation, SparseRelation
 from ._streamed import (
     PreparedStreamedRelation,
     StreamedDirection,
@@ -110,6 +111,7 @@ __all__ = [
     "LinearAction",
     "PreparedSparseDerivative",
     "EdgeRelation",
+    "InjectiveRouteWindows",
     "RouteReduction",
     "RowRelation",
     "SparseColoring",
@@ -139,6 +141,7 @@ __all__ = [
     "prepare_sparse_linearization",
     "scatter_local",
     "route_reduce",
+    "route_replace",
     "reduce_key_groups",
     "verify_sparse_derivative",
 ]

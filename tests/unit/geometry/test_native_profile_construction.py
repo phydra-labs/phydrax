@@ -34,10 +34,16 @@ from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
-from phydrax.geometry.brep import _correspondence as correspondence_owner
-from phydrax.geometry.brep import BRepQueryBudget, BRepQueryResourceError
+from phydrax.geometry.brep import (
+    _correspondence as correspondence_owner,
+    BRepQueryBudget,
+    BRepQueryResourceError,
+)
 from phydrax.geometry.brep._constructors import reversed_bspline
-from phydrax.geometry.brep._correspondence import certify_curve_surface
+from phydrax.geometry.brep._correspondence import (
+    certify_curve_surface,
+    CurveSurfaceCorrespondence,
+)
 from phydrax.geometry.brep._measure import (
     face_quadrature,
     green_nodes,
@@ -45,8 +51,9 @@ from phydrax.geometry.brep._measure import (
     surface_quadrature_u_breaks,
     trimmed_face_rules,
 )
-from phydrax.geometry.brep._patches import SurfaceIsoparametricCurve
+from phydrax.geometry.brep._patches import AbstractCurve, SurfaceIsoparametricCurve
 from phydrax.geometry.brep._placed import PlacedSurface
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 from phydrax.meshing.qualification import rational_ellipse_profile, revolved_ellipse
 from phydrax.units import METER, MILLIMETER, UnitDefinition
 from tests._support.cad_models import native_offset_plane
@@ -1282,9 +1289,19 @@ def test_native_correspondence_polls_deadline_before_return(
         if expired:
             raise TimeoutError("correspondence deadline")
 
-    def execute(*args, **kwargs):
+    def execute(
+        workset: correspondence_owner._CorrespondenceWorkset,
+        curve: AbstractCurve | None,
+        point: np.ndarray,
+        tolerance: float,
+        maximum_intervals: int,
+        preparations: TrimRequestPreparations,
+        budget: CoordinateEnclosureBudget,
+    ) -> CurveSurfaceCorrespondence:
         nonlocal expired
-        result = original_execute(*args, **kwargs)
+        result = original_execute(
+            workset, curve, point, tolerance, maximum_intervals, preparations, budget
+        )
         expired = True
         return result
 

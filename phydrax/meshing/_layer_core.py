@@ -21,6 +21,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._cell_mesh as _dependency_phydrax_discretization__cell_mesh
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
 import phydrax.geometry._domain_coverage as domain_coverage_owner
 import phydrax.meshing._association_state as association_state_owner
@@ -455,7 +456,7 @@ def _prepare_layer_carrier(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> LayerCoreCarrier:
     """Bind authored identity before admitting native fill."""
-    work.charge(0)
+    work.charge(_layer_identity_records(complex_, regions, cap_polygon_ids, source_binding))
     if source_binding is not None and (
         source_binding.layers.result_id != layers.result_id
         or source_binding.complex.complex_id != complex_.complex_id
@@ -521,6 +522,31 @@ def _prepare_layer_carrier(
         polygons,
         initial_points,
         ancestry,
+    )
+
+
+def _layer_identity_records(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    regions: np.ndarray,
+    cap_polygon_ids: ArrayLike,
+    source_binding: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource
+    | None,
+    /,
+) -> int:
+    """Bound source-binding comparisons and layer/core region identity rows."""
+    namespace = (
+        complex_.region_count if source_binding is None else len(source_binding.region_ids)
+    )
+    records = (
+        regions.size + complex_.facet_regions.size + complex_.region_count + namespace
+    )
+    if source_binding is None:
+        return records
+    return (
+        records
+        + complex_.vertices.shape[0]
+        + np.asarray(cap_polygon_ids).size
+        + regions.size
     )
 
 
@@ -626,6 +652,114 @@ def _composition_host_upper(
     return points + combined(2) + organization + labels + rebound + cap
 
 
+def _composition_pass_records(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    carrier: LayerCoreCarrier,
+    /,
+) -> int:
+    """Bound the composition passes charged outside face and organization records."""
+    return (
+        _topology_connectivity_records(layers, core)
+        + _topology_construction_work(layers, complex_, core, carrier)
+        + _canonical_work_upper(layers, complex_, core, carrier)
+        + _domain_walk_records(layers, complex_, carrier)
+        + 3 * (sum(block.cell_count for block in layers.mesh.blocks) + core.cell_regions.size)
+    )
+
+
+def _topology_connectivity_records(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    /,
+) -> int:
+    """Layer vertex identities and every layer and core connectivity entry."""
+    return (
+        layers.mesh.coordinates.shape[0]
+        + sum(block.vertices.size for block in layers.mesh.blocks)
+        + core.mesh.blocks[0].vertices.size
+    )
+
+
+def _domain_walk_records(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    carrier: LayerCoreCarrier,
+    /,
+) -> int:
+    """Cap keys and membership, every layer face, and every PLC polygon."""
+    return (
+        2 * carrier.cap_ids.size
+        + sum(
+            block.cell_count * len(reference_cell_topology(block.cell_kind).entities[2])
+            for block in layers.mesh.blocks
+        )
+        + complex_.polygon_facets.size
+    )
+
+
+def _topology_construction_work(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    carrier: LayerCoreCarrier,
+    /,
+) -> int:
+    """Construct every layer and core block and the combined plain mesh."""
+    shapes = (
+        *(
+            (block.cell_kind, block.cell_count, block.vertices.shape[1])
+            for block in layers.mesh.blocks
+        ),
+        ("tetrahedron", core.cell_regions.size, 4),
+    )
+    points = (
+        carrier.initial_points.shape[0]
+        + core.mesh.coordinates.shape[0]
+        - complex_.vertices.shape[0]
+    )
+    return sum(
+        _dependency_phydrax_discretization__cell_mesh.cell_block_construction_work(
+            count, arity
+        )
+        for _, count, arity in shapes
+    ) + _dependency_phydrax_discretization__cell_mesh.cell_mesh_construction_work(
+        points, 3, shapes
+    )
+
+
+def _canonical_work_upper(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    carrier: LayerCoreCarrier,
+    /,
+) -> int:
+    """Bound canonical reordering of the plain mesh from layer and core counts.
+
+    Shared cap edges and faces are counted on both sides; a face key has at
+    most four vertices.
+    """
+    points = (
+        carrier.initial_points.shape[0]
+        + core.mesh.coordinates.shape[0]
+        - complex_.vertices.shape[0]
+    )
+    shapes = (
+        *(
+            (block.cell_kind, block.cell_count, block.vertices.shape[1])
+            for block in layers.mesh.blocks
+        ),
+        ("tetrahedron", core.cell_regions.size, 4),
+    )
+    edges = layers.mesh.entity_set(1).count + core.mesh.entity_set(1).count
+    faces = layers.mesh.entity_set(2).count + core.mesh.entity_set(2).count
+    return _dependency_phydrax_meshing__canonical.canonical_reorder_work(
+        points, 3, shapes, ((edges, 2 * edges, 2), (faces, 4 * faces, 4))
+    )
+
+
 def _admit_layer_composition(
     layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
     complex_: plc_source_owner.PiecewiseLinearComplex,
@@ -660,6 +794,9 @@ def _admit_layer_composition(
             for block in layers.mesh.blocks
         )
         + _composition_host_upper(layers, complex_, core, carrier)
+        # Topology connectivity, combined-domain cap/polygon walk, and
+        # combined/block region concatenation and search passes.
+        + _composition_pass_records(layers, complex_, core, carrier)
     )
     host_bytes = (
         _dependency_phydrax_meshing__layer_core_resources.HOST_RECORD_BYTES * host_upper
@@ -723,6 +860,8 @@ def _compose_layer_topology(
         core_points.shape[0]
         + sum(block.cell_count for block in layers.mesh.blocks)
         + core.cell_regions.size
+        + _topology_connectivity_records(layers, core)
+        + _topology_construction_work(layers, complex_, core, carrier)
     )
     points = np.concatenate((initial_points, core_points[complex_.vertices.shape[0] :]))
     core_map = np.concatenate(
@@ -782,7 +921,10 @@ def _compose_layer_topology(
         plain = _dependency_phydrax_meshing__layer_core_periodic.bind_core_periodic(
             source_binding, plain, ancestry, budget=budget
         )
-    mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(plain)
+    work.charge(_dependency_phydrax_meshing__canonical.canonical_cell_mesh_work(plain))
+    mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(
+        plain, budget=budget
+    )
     return LayerCoreTopology(mesh, core_map)
 
 
@@ -1083,6 +1225,9 @@ def generate_layer_core(
                 source_binding, specification
             )
         ) + _reserve_storage_records(layers, complex_)
+        host_upper += _layer_identity_records(
+            complex_, regions, cap_polygon_ids, source_binding
+        )
         source_upper = (
             min(specification.limits.maximum_work_units, allowance.remaining_work_units)
             if layers.mesh.periodic_topology is not None
@@ -1160,6 +1305,9 @@ def generate_layer_core(
                 budget,
             )
             mesh, core_map = topology.mesh, topology.core_map
+        cell_total = regions.size + core.cell_regions.size
+        # Combined region vector, sorted cell IDs, and block-region search.
+        work.charge(3 * cell_total)
         combined_regions = np.concatenate((regions, core_regions[core.cell_regions]))
         domain, layer_faces, combined_faces = _compose_layer_domain(
             layers,

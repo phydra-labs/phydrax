@@ -296,6 +296,38 @@ def test_live_owner_survives_temporary_scope_and_releases_its_bound(
     assert budget.peak_bytes_upper == budget.ticket.managed_bytes == 384
 
 
+@pytest.mark.parametrize("primary_failure", [False, True], ids=["normal-exit", "body-error"])
+def test_out_of_order_temporary_close_preserves_inner_admission(
+    budget: CoordinateEnclosureBudget, primary_failure: bool,
+) -> None:
+    with budget.temporary_scope():
+        budget.reserve(0, 32)
+        outer = budget.temporary_scope()
+        outer_token = outer.__enter__()
+        budget.reserve(0, 128)
+        inner = budget.temporary_scope()
+        inner_token = inner.__enter__()
+        budget.reserve(0, 256)
+        if primary_failure:
+            primary = ValueError("source operation failed")
+            assert not outer.__exit__(type(primary), primary, None)
+            assert any("last-in-first-out" in note for note in primary.__notes__)
+        else:
+            with pytest.raises(RuntimeError, match="last-in-first-out"):
+                outer.__exit__(None, None, None)
+        assert budget.temporary_bytes_upper == 416
+        assert inner_token.available_bytes == 256
+        with pytest.raises(RuntimeError, match="closed scope"):
+            _ = outer_token.available_bytes
+        with budget.live_storage() as owner:
+            with pytest.raises(RuntimeError):
+                owner.promote_temporary_storage(outer_token, 64)
+            assert owner.bound == 0
+        inner.__exit__(None, None, None)
+        assert budget.temporary_bytes_upper == 160
+    assert budget.temporary_bytes_upper == 0
+
+
 def test_closed_live_owner_refuses_changes_without_reopening_storage(
     budget: CoordinateEnclosureBudget,
 ) -> None:

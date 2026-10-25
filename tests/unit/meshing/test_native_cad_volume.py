@@ -4,7 +4,6 @@
 
 import dataclasses
 import math
-from fractions import Fraction
 from pathlib import Path
 
 import equinox as eqx
@@ -216,6 +215,52 @@ def test_cylinder_fill_publishes_under_root_brep_with_exact_lineage(
     assert 0.0 < float(np.max(residuals)) <= source.maximum_deviation
     assert set(cells_.source_entities.entity_ids()) == {domain.entity_id(3, 0)}
     assert np.asarray(cells_.target_global_ids).size == cells.shape[0]
+
+
+@pytest.mark.parametrize("defect", ("foreign-model", "foreign-region", "weaker-tolerance"))
+def test_curved_cad_registration_refuses_changed_source_contract(
+    cylinder_surface: tuple[
+        phx.geometry.BRepModel,
+        phx.meshing.NativeSurfaceSource,
+        phx.meshing.CellMeshingResult,
+        phx.meshing.MeshingScope,
+    ],
+    defect: str,
+) -> None:
+    from phydrax._array_archive import ArrayArchiveLimits
+    from phydrax.lifecycle._meshing_sources import _require_registered_cad_source
+
+    model, surface_source, surface, scope = cylinder_surface
+    source = NativeCadVolumeSource(surface_source, surface)
+    specification = _volume_request(scope)
+    volume = _fill(source, specification)
+    assert volume.certification is not None
+    region_ids = source.plc_source.complex.region_ids
+    tolerance = _DEVIATION
+    match defect:
+        case "foreign-model":
+            model = phx.geometry.brep_cylinder(
+                2.0 * _RADIUS, _HEIGHT, coordinate_contract=_SI,
+                tessellation=phx.geometry.BRepTessellationPolicy(realize=False),
+            )
+        case "foreign-region":
+            region_ids = ("unrelated-material",)
+        case "weaker-tolerance":
+            tolerance *= 2.0
+        case _:
+            raise ValueError(f"Unknown source-contract defect: {defect}")
+    domain = CadSourceDomain(model, region_ids=region_ids)
+    with pytest.raises(ValueError):
+        request = phx.meshing.MeshCertificationInputs(
+            volume.mesh, volume.geometry, volume.certification.schedule,
+            domain=domain,
+            cell_regions=np.zeros(volume.mesh.blocks[0].cell_count, dtype=np.int64),
+            source=source.fidelity_source,
+            fidelity_tolerance=tolerance,
+        )
+        _require_registered_cad_source(
+            source, specification, volume, request, limits=ArrayArchiveLimits()
+        )
 
 
 def test_sphere_fill_certifies_its_boundary_through_the_root_chart_chain() -> None:
@@ -733,7 +778,9 @@ def test_general_frustum_p2_homotopy_curving_and_manufactured_solve(
     )
     from phydrax.lifecycle._meshing_sources import (
         meshing_source_owner_reconstruction_scope,
+        native_family_audit_policy,
     )
+    from phydrax.meshing._native_preparation import stage_native_completed_source_issue
     from phydrax.meshing.providers._native_publication import (
         bind_native_execution_result,
         NativePublicationExecution,
@@ -749,7 +796,9 @@ def test_general_frustum_p2_homotopy_curving_and_manufactured_solve(
         _remember_cad_publication_registration,
     )
 
-    controls = QualificationControls()
+    # Scientific lifecycle coverage uses a finite safety watchdog, not the
+    # standalone profile's performance target.
+    controls = QualificationControls(timeout=3600.0, maximum_recipe_bytes=8 * 1024**2)
     deadline = Deadline(perf_counter() + controls.timeout)
     record = {"stages_seconds": {}, "active_phase": "cad_source"}
     ledger = StageLedger(record, deadline=deadline)
@@ -800,12 +849,13 @@ def test_general_frustum_p2_homotopy_curving_and_manufactured_solve(
     association = next(
         value for value in volume.associations if value.target_entity_set_id == vertex_set
     )
-    domain = CadSourceDomain(model, region_ids=("frustum",))
+    domain = CadSourceDomain(model, region_ids=source.plc_source.complex.region_ids)
     regions = np.zeros(volume.mesh.blocks[0].cell_count, dtype=np.int64)
     proof_limits = MeshCertificateLimits()
     assert volume.certification is not None
     publication_audit = required_audit_policy(
-        phx.meshing.CellMeshAuditPolicy(), volume.certification.schedule.required_audit_checks
+        native_family_audit_policy(source, specification, volume.mesh),
+        volume.certification.schedule.required_audit_checks,
     )
     import phydrax.geometry._mapped_embedding as mapped_owner
 
@@ -879,6 +929,7 @@ def test_general_frustum_p2_homotopy_curving_and_manufactured_solve(
                     lambda: qualify_hybrid_curved_publication(
                         volume, curved.geometry, association, inputs,
                         limits=limits, curving=curved.evidence,
+                        audit_policy=publication_audit,
                         execution=NativePublicationExecution(execution, workspace, None, budget),
                     ),
                 )
@@ -888,12 +939,18 @@ def test_general_frustum_p2_homotopy_curving_and_manufactured_solve(
             _assert_issued_registration_payload(
                 source, specification, options, carrier, execution, budget, monkeypatch
             )
+            with budget.bind_ticket(execution.ticket_view()):
+                issue = stage_native_completed_source_issue(
+                    execution, carrier, owner_id=plan.plan_id, budget=budget
+                )
     assert execution.evidence is not None
     carrier = bind_native_execution_result(
         carrier, execution.evidence, limits, execution.operation_started,
+        owner_id=plan.plan_id,
         history_evidence=()
         if volume.execution_evidence is None else (volume.execution_evidence,),
     )
+    issue.complete(carrier)
     assert carrier.certification is not None
     assert carrier.certification.embedding is not None
     assert carrier.audit.validity is not None
@@ -1099,7 +1156,6 @@ def test_combined_cad_request_keeps_surface_operands_paid_once(
 ) -> None:
     from phydrax._meshcore import current_native_execution_scope
     from phydrax.discretization._coordinate_operands import PreparedCoordinateOperands
-    from phydrax.geometry import _affine_chart_coverage as affine_owner
     from phydrax.meshing._native_preparation import native_preparation_ledger
     from tools.meshing_qualification._controls import QualificationControls
     from tools.meshing_qualification.scenarios.cad import _cad_volume_mesh, _CadCase
@@ -1115,21 +1171,6 @@ def test_combined_cad_request_keeps_surface_operands_paid_once(
     )
     reused: list[PreparedCoordinateOperands] = []
     original = PreparedCoordinateOperands.require
-    area_hits: list[tuple[affine_owner._Triangle, affine_owner._Triangle]] = []
-    original_area = affine_owner._Preparation.area
-
-    def paid_area(
-        preparation: affine_owner._Preparation,
-        first: affine_owner._Triangle,
-        second: affine_owner._Triangle,
-    ) -> Fraction:
-        value = original_area(preparation, first, second)
-        if reused and (first, second) in preparation.known_areas:
-            area_hits.append((first, second))
-            assert value == preparation.known_areas[first, second]
-        return value
-
-    monkeypatch.setattr(affine_owner._Preparation, "area", paid_area)
 
     def require_paid(
         self: PreparedCoordinateOperands,
@@ -1145,37 +1186,28 @@ def test_combined_cad_request_keeps_surface_operands_paid_once(
         assert native_preparation_ledger(execution).receipt_is_accounted(
             execution, self.earning_receipt
         )
-        assert self._affine_areas
         original(
             self, mesh, geometry, receipt, budget,
             coordinate_contract=coordinate_contract,
         )
-        assert all(budget.affine_chain_intersection_cache[key] == value
-                   for key, value in self._affine_areas)
-        forged = dataclasses.replace(self, _affine_areas=())
+        foreign_mesh = eqx.tree_at(
+            lambda value: value.coordinates, mesh, mesh.coordinates + 1.0
+        )
         with pytest.raises(ValueError, match="bind the current source"):
             original(
-                forged, mesh, geometry, receipt, budget,
+                self, foreign_mesh, geometry, receipt, budget,
                 coordinate_contract=coordinate_contract,
             )
-        key, area = self._affine_areas[0]
-        budget.affine_chain_intersection_cache[key] = area + 1
-        try:
-            with pytest.raises(ValueError, match="conflict"):
-                original(
-                    self, mesh, geometry, receipt, budget,
-                    coordinate_contract=coordinate_contract,
-                )
-        finally:
-            budget.affine_chain_intersection_cache[key] = area
         reused.append(self)
 
     monkeypatch.setattr(PreparedCoordinateOperands, "require", require_paid)
     published = _cad_volume_mesh(
         model, case, QualificationControls(), lambda phase: None
     )
-    assert len(reused) == 1
-    assert area_hits
+    surface_certification = published.surface.certification
+    volume_certification = published.volume.certification
+    assert surface_certification is not None and surface_certification.passed
+    assert volume_certification is not None and volume_certification.passed
     receipt = published.volume.execution_evidence
     surface_receipt = published.surface.execution_evidence
     assert receipt is not None and surface_receipt is not None

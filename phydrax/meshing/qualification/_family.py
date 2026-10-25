@@ -100,14 +100,14 @@ def family_finite_volume_field_templates(
 
 
 def family_solver_field_templates(
-    cell_kind: str, /
+    cell_kind: str, /, *, degree: int = 1
 ) -> tuple[tuple[str, phx.discretization.FiniteElementFieldSpec], ...]:
-    """Return the scalar linear diffusion declaration for one cell family."""
+    """Return the scalar Lagrange diffusion declaration for one cell family."""
     return (
         (
             "solve:intensive",
             phx.discretization.FiniteElementFieldSpec(
-                "u", phx.discretization.lagrange_element(cell_kind, 1)
+                "u", phx.discretization.lagrange_element(cell_kind, degree)
             ),
         ),
     )
@@ -175,10 +175,12 @@ def prepare_family_finite_element_bindings(
     declarations: list[MeshingFieldDeclaration] = []
     arrays: dict[str, jax.Array | np.ndarray] = {}
     inverse_meter = phx.units.derived_unit("m^-1", ((phx.units.METER, -1),))
+    solver_kinds = {"Q1", "Q2", "Q3"}
     for kind, owner in spaces.items():
+        is_solver = kind in solver_kinds
         template_roles = (
             {}
-            if kind == "Q1"
+            if is_solver
             else {name: role for role, name in _family_transport_field_roles(kind)}
         )
         roles = []
@@ -186,7 +188,7 @@ def prepare_family_finite_element_bindings(
             (inverse_meter,) if kind in ("Hcurl", "Hdiv") else (phx.units.ONE,)
         )
         for index, field in enumerate(owner.field_spaces):
-            state = values if kind == "Q1" else fields[kind][:, index]
+            state = values if is_solver else fields[kind][:, index]
             binding = prepare_meshing_field_index_binding(
                 result, "field/global_coefficient_ids", field_space=field
             )
@@ -203,7 +205,7 @@ def prepare_family_finite_element_bindings(
                     index_binding=binding,
                 )
             )
-            if kind != "Q1":
+            if not is_solver:
                 history = (
                     state
                     if template_roles[field.name] == f"{kind}:material-history"
@@ -246,7 +248,7 @@ def prepare_family_finite_element_bindings(
                                 f"family.boundary_values must retain a single coefficient array; got {type(bank).__name__}",
                                 {"bank": bank},
                             )
-                    entry = f"Q1/{field.name}/{role_name}"
+                    entry = f"{kind}/{field.name}/{role_name}"
                     arrays[entry] = bank
                     roles.append(
                         MeshingFieldStateRole(

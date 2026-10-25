@@ -1238,6 +1238,44 @@ def test_region_renewal_borrows_actual_caller_budget(
     assert array_tree_fingerprint(result) == before
 
 
+def test_exact_image_preparation_uses_reserved_parent_allowance() -> None:
+    from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.meshing._compartments import prepare_compartment_complex
+
+    literal = _source(np.ones((1, 1, 1), dtype=np.int16))
+    source = CompartmentMeshingSource(
+        literal.labels,
+        literal.compartments,
+        literal.outer_surface,
+        literal.interfaces,
+        outer_geometry=phx.discretization.CellGeometrySpec.affine(
+            literal.outer_surface.mesh
+        ),
+    )
+    before = array_tree_fingerprint(source)
+    limits = phx.meshing.MeshingLimits()
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.ticket_view() as incoming:
+            parent = scope.batch(
+                incoming.remaining_work_units,
+                queries_upper=incoming.remaining_geometry_queries,
+                bytes_upper=incoming.remaining_managed_bytes,
+                cavity_upper=incoming.remaining_cavity_cells,
+            )
+        with parent, parent.native_target():
+            available = parent.remaining_work_units
+            prepared = prepare_compartment_complex(source, limits=limits, scope=scope)
+            assert parent.remaining_work_units < available
+            assert prepared.geometry is not None
+            assert prepared.geometry.exact_source is not None
+            np.testing.assert_array_equal(
+                sorted(map(tuple, prepared.vertices)),
+                sorted(map(tuple, np.asarray(source.outer_surface.mesh.coordinates))),
+            )
+    assert array_tree_fingerprint(source) == before
+
+
 def test_region_renewal_cannot_reset_exhausted_actual_caller_allowance() -> None:
     from phydrax._fingerprint import array_tree_fingerprint
     from phydrax._meshcore import NativeExecutionScope

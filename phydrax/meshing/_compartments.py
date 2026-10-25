@@ -730,10 +730,10 @@ def _prepare_compartment_complex_bound(
         queries_upper = limits.maximum_geometry_queries - budget.geometry_queries
         bytes_upper = limits.maximum_scratch_bytes
         if scope is not None:
-            remaining = scope.remaining()
-            work_upper = min(work_upper, remaining.remaining_work_units)
-            queries_upper = min(queries_upper, remaining.remaining_geometry_queries)
-            bytes_upper = min(bytes_upper, remaining.remaining_managed_bytes)
+            with scope.ticket_view() as incoming:
+                work_upper = min(work_upper, incoming.remaining_work_units)
+                queries_upper = min(queries_upper, incoming.remaining_geometry_queries)
+                bytes_upper = min(bytes_upper, incoming.remaining_managed_bytes)
         with _image_preparation_batch(
             limits, work_upper, queries_upper, bytes_upper, scope=scope
         ) as ticket:
@@ -2014,7 +2014,7 @@ def _prepare_renewed_region_source(
     source_preparation = None
     outer_domain = None
     if compartment_source is not None:
-        compartment_source.validate_source_integrity()
+        compartment_source.validate_source_integrity(budget=coordinate_budget)
         if (
             compartment_source.coordinate_contract.spatial_id
             != source.coordinate_contract.spatial_id

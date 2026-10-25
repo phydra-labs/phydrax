@@ -97,7 +97,7 @@ def associations(
         revision,
         face_set.entity_set_id,
         face_ids,
-        tuple(domain.entity_id(2, patch) for patch in patches.tolist()),
+        domain.entity_ids(np.full(patches.shape, 2, dtype=np.int64), patches),
         construction.triangle_deviations[rows],
         exact=False,
         parameters=charts,
@@ -127,7 +127,7 @@ def associations(
         revision,
         edge_set.entity_set_id,
         edge_ids,
-        tuple(domain.entity_id(1, curve) for curve in curves.tolist()),
+        domain.entity_ids(np.full(curves.shape, 1, dtype=np.int64), curves),
         construction.curve_edge_deviations[order],
         exact=False,
         orientations=np.sign(
@@ -159,13 +159,9 @@ def associations(
         revision,
         vertex_set.entity_set_id,
         vertex_ids,
-        tuple(
-            domain.entity_id(int(dimension), int(index))
-            for dimension, index in zip(
-                construction.vertex_source_dimensions,
-                construction.vertex_source_indices,
-                strict=True,
-            )
+        domain.entity_ids(
+            construction.vertex_source_dimensions,
+            construction.vertex_source_indices,
         ),
         np.zeros((vertex_ids.size,)),
         parameters=construction.vertex_parameters,

@@ -227,12 +227,15 @@ struct CurvedCollapseInspection {
 
 // One retained delegated host claim: a curved source row and its binding.
 // It is host evidence for a curved authority, never a planar PLC proof.
+// generation is the accepted state in which the row entered the source bank,
+// not the predecessor generation used to authenticate the proposed edit.
 struct CurvedRowClaim {
   int32_t row;
   int32_t source;
   double deviation;
   int64_t generation;
 };
+
 
 // A refused ancestry-backed construction on represented edge (v[0], v[1]):
 // the source row it would join and its certified deviation against the
@@ -582,6 +585,13 @@ class TetMesh {
 
   // Commits the prepared insertion; the new vertex gets `size`.
   Insertion commit(InsertKind kind, double size);
+  Insertion prepare_projected_edge_insertion(
+      int32_t a, int32_t b, const double* witness, const double* position,
+      double fraction, std::size_t cell_limit, int32_t source, InsertKind& kind);
+  std::span<const std::array<int32_t, 3>> projected_insertion_faces() const {
+    return retained_edit_.binding_.faces;
+  }
+  Insertion authenticate_projected_insertion(const CurvedCollapseClaims& claims);
 
   // Abandons a prepared insertion (nothing was written).
   void abandon() {
@@ -773,6 +783,8 @@ class TetMesh {
     NativeVector<std::array<int32_t, 3>> faces;
     NativeVector<Crossed> retired;
     NativeUnorderedMap<std::uint64_t, int32_t> segments;
+    int32_t projected_source = -1;
+    NativeVector<double> deviations;
   };
 
  public:
@@ -845,9 +857,17 @@ class TetMesh {
     if (edit_.staging_revision() == revision) edit_.rollback();
     pending_ = kNoPending;
     pending_edge_star_ = false;
+    pending_projected_source_ = -1;
   }
   bool reuse_curved_collapse(int32_t remove, int32_t keep, bool require_improvement,
                              const CurvedCollapseClaims& claims, bool& applied);
+  bool retained_curved_collapse(int32_t remove, int32_t keep, int64_t generation) const noexcept {
+    return retained_edit_.current() && accepted_generation_ == generation &&
+        retained_edit_.binding_.operation == PreparedBinding::Operation::kCollapse &&
+        retained_edit_.binding_.first == remove && retained_edit_.binding_.second == keep;
+  }
+  std::span<const int32_t> retained_removed() const { return edit_.removed(); }
+  std::span<const Tetrahedron> retained_proposed() const { return edit_.proposal(); }
   void bind_curved_collapse(bool require_improvement) noexcept {
     retained_edit_.binding_.require_improvement = require_improvement;
   }
@@ -856,7 +876,8 @@ class TetMesh {
                                   std::size_t cell_limit, InsertKind kind);
   bool reuse_edge_insertion(int32_t a, int32_t b, const double* witness,
                             const double* position, double fraction,
-                            std::size_t cell_limit, InsertKind& kind) const noexcept;
+                            std::size_t cell_limit, InsertKind& kind,
+                            int32_t projected_source = -1) const noexcept;
 
   // Replaces `removed` by `proposed` tetrahedra (region of the first removed
   // tetrahedron, no new constraints) through one validated transaction.
@@ -1162,6 +1183,7 @@ class TetMesh {
   SourceWitness pending_source_;
   bool pending_source_authored_ = false;
   bool pending_edge_star_ = false;
+  int32_t pending_projected_source_ = -1;
   int32_t split_a_ = -1;
   int32_t split_b_ = -1;
   std::size_t preparation_cell_limit_ = std::numeric_limits<std::size_t>::max();

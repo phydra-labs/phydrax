@@ -36,7 +36,9 @@ from ..discretization._cell_geometry import affine_geometry_construction_bounds
 from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
 from ..discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
 )
 from ..optim import (
     MinimizationResult,
@@ -281,21 +283,28 @@ def curve_values(
     curve = control.curve
     first, last = control.parameter_range
     count = control.intervals + 1
-    # One curve evaluation per sampled node.
+    # One parameter and one curve evaluation per sampled node.
     with (
-        scope.batch(count, queries_upper=count) as ticket,
+        scope.batch(2 * count, queries_upper=count) as ticket,
         scope.host_workspace() as workspace,
     ):
-        # The parameter vector is the one host temporary; sampled values remain
-        # in their JAX owner.
+        # The parameter vector and the evaluated samples' host transfer are the
+        # host temporaries; the returned samples live in a pooled bank.
         workspace.set_bound(8 * count + 4096)
+        ticket.consume(count)
         values = np.linspace(first, last, count, dtype=np.float64)
         if control.reversed:
             values = values[::-1]
         ticket.consume(count, geometry_queries=count)
-        return np.asarray(
-            curve.evaluate(jnp.asarray(values, dtype=jnp.float64)), dtype=np.float64
+        evaluated = curve.evaluate(jnp.asarray(values, dtype=jnp.float64))
+        workspace.set_bound(8 * count + 8 * np.size(evaluated) + 4096)
+        # One copy per sampled coordinate into the pooled bank.
+        scope.charge(work=np.size(evaluated))
+        sampled = _dependency_phydrax_meshing__host_banks.family_host_array(
+            np.shape(evaluated), np.float64, scope=scope
         )
+        sampled[...] = np.asarray(evaluated, dtype=np.float64)
+        return sampled
 
 
 def _face_values(
@@ -307,13 +316,16 @@ def _face_values(
     surface = control.surface
     shape = tuple(n + 1 for n in control.intervals)
     count = shape[0] * shape[1]
-    # One surface evaluation per node.
+    # Two logical spacings, three parameter passes per axis, and one surface
+    # evaluation per node.
     with (
-        scope.batch(count, queries_upper=count) as ticket,
+        scope.batch(9 * count, queries_upper=count) as ticket,
         scope.host_workspace() as workspace,
     ):
-        # The two logical spacing vectors are the only unpooled temporaries.
+        # The two logical spacing vectors and the evaluated samples' host
+        # transfer are the only unpooled temporaries.
         workspace.set_bound(8 * sum(shape) + 4096)
+        ticket.consume(8 * count)
         logical = _dependency_phydrax_meshing__host_banks.family_host_array(
             (*shape, 2), np.float64, scope=scope
         )
@@ -336,9 +348,15 @@ def _face_values(
             )
             np.add(coordinate, box[0, parameter_axis], out=coordinate)
         ticket.consume(count, geometry_queries=count)
-        return np.asarray(
-            surface.evaluate(jnp.asarray(parameters, dtype=jnp.float64)), dtype=np.float64
+        evaluated = surface.evaluate(jnp.asarray(parameters, dtype=jnp.float64))
+        workspace.set_bound(8 * sum(shape) + 8 * np.size(evaluated) + 4096)
+        # One copy per sampled coordinate into the pooled bank.
+        scope.charge(work=np.size(evaluated))
+        sampled = _dependency_phydrax_meshing__host_banks.family_host_array(
+            np.shape(evaluated), np.float64, scope=scope
         )
+        sampled[...] = np.asarray(evaluated, dtype=np.float64)
+        return sampled
 
 
 @checked
@@ -369,6 +387,13 @@ def boundary_lattice(
         )
     sizes = tuple(prod(values.shape[:-1]) for values in sampled)
     largest = max(sizes)
+    nodes = prod(shape)
+    # Both lattice banks are zero-filled; each face subtracts, squares, reduces
+    # and conditionally copies its coordinates, then takes root, maximum,
+    # vacancy and assignment passes over its nodes.
+    scope.charge(
+        work=nodes * (ambient + 1) + sum(sizes) * (4 * ambient + 4)
+    )
     lattice = _dependency_phydrax_meshing__host_banks.family_host_array(
         (*shape, ambient), np.float64, scope=scope
     )
@@ -489,10 +514,17 @@ def certify_constructed_mesh(
     A request-owned ``predecessor`` lets both certificates import its
     authenticated unchanged rows and root theorem (see their owners).
     """
+    cell_count = sum(cell_block.cell_count for cell_block in mesh.blocks)
     if geometry is None:
         mesh_shapes = tuple(
             (cell_block.cell_kind, cell_block.cell_count, cell_block.arity)
             for cell_block in mesh.blocks
+        )
+        # The affine constructor validates and copies every coordinate and
+        # route corner once.
+        scope.charge(
+            work=mesh.coordinates.size
+            + sum(cell_block.vertices.size for cell_block in mesh.blocks)
         )
         with scope.host_workspace() as workspace:
             workspace.set_bound(
@@ -514,18 +546,27 @@ def certify_constructed_mesh(
             budget=budget,
             predecessor=predecessor,
         )
-    bad = (
-        np.asarray(validity.status)
-        != _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
-    )
-    if np.any(bad):
-        ids = np.concatenate([np.asarray(b.global_ids) for b in mesh.blocks])
-        raise _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED,
-            f"structured.validity must certify mapped Jacobians; got {validity.invalid_count} invalid and {validity.unresolved_count} unresolved",
-            stage="structured_validity",
-            entity_ids=tuple(int(i) for i in ids[bad]),
+    # Status transfer, comparison and reduction per cell.
+    scope.charge(work=3 * cell_count)
+    with scope.host_workspace() as workspace:
+        # The host status copy and the rejection mask coexist.
+        workspace.set_bound(9 * cell_count + 4096)
+        bad = (
+            np.asarray(validity.status)
+            != _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
         )
+        if np.any(bad):
+            # Identity transfers, their concatenation, the rejected gather and
+            # its conversion per cell.
+            scope.charge(work=4 * cell_count)
+            workspace.set_bound(33 * cell_count + 4096)
+            ids = np.concatenate([np.asarray(b.global_ids) for b in mesh.blocks])
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED,
+                f"structured.validity must certify mapped Jacobians; got {validity.invalid_count} invalid and {validity.unresolved_count} unresolved",
+                stage="structured_validity",
+                entity_ids=tuple(int(i) for i in ids[bad]),
+            )
     with (
         family_execution_owner.coordinate_phase(scope=scope, budget=budget),
         budget.polynomial_preparation_scope(),
@@ -576,6 +617,7 @@ def construct_structured_block(
     shape = lattice.shape[:-1]
     ambient = lattice.shape[-1]
     # Declared boundary nodes keep their sampled coordinates exactly.
+    scope.charge(work=lattice.size)
     np.copyto(lattice, boundary, where=assigned[..., None])
     points = lattice.reshape(-1, ambient)
     optimization = None
@@ -586,8 +628,12 @@ def construct_structured_block(
             # unpooled host banks. JAX copies of the lattice and rows are device
             # memory outside managed bytes.
             workspace.set_bound(9 * nodes + 4096)
+            # One negation and one selection pass per node.
+            scope.charge(work=2 * nodes)
             free = np.flatnonzero(~assigned.reshape(-1))
             if free.size:
+                # The interior rows' host write-back copy joins them.
+                workspace.set_bound(9 * nodes + 8 * free.size * ambient + 4096)
                 method = NewtonTrustRegion()
                 edge_count = sum(
                     (n - 1) * prod(shape[:axis] + shape[axis + 1 :])
@@ -596,11 +642,14 @@ def construct_structured_block(
                 # Two objective/three gradient traversals and at most the
                 # declared CG actions plus its final model action per Newton
                 # step. Final value/gradient publication is separately included
-                # in admission.
-                work_upper = edge_count * (
+                # in admission, as are the lattice and row transfers, the
+                # free-row gather and the interior write-back.
+                transfer = points.size + free.size * (1 + 3 * ambient)
+                work_upper = transfer + edge_count * (
                     optimization_steps * (5 + method.subproblem.maximum_steps + 1) + 2
                 )
                 with scope.batch(work_upper) as ticket:
+                    ticket.consume(transfer)
                     base = jnp.asarray(points, dtype=jnp.float64)
                     rows = jnp.asarray(free, dtype=jnp.int32)
                     optimization = minimize(
@@ -633,6 +682,14 @@ def construct_structured_block(
     cells = logical_cell_bank(shape, scope=scope)
     vertex_count = points.shape[0]
     shapes = ((kind, cells.shape[0], cells.shape[1]),)
+    # The block and mesh constructors' priced passes; the affine-map
+    # constructor validates and copies every coordinate and corner once.
+    scope.charge(
+        work=cell_block_construction_work(*cells.shape)
+        + cell_mesh_construction_work(vertex_count, ambient, shapes)
+        + points.size
+        + cells.size
+    )
     # Each constructor's host temporaries end before the next one starts.
     with scope.host_workspace() as workspace:
         workspace.set_bound(cell_block_construction_bounds(*cells.shape))

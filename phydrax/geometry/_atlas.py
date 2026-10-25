@@ -22,7 +22,11 @@ from jax.typing import ArrayLike
 import phydrax
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import orient2d, PredicateMode, resolve_host_predicate_mode
+from .._geometry_predicates import (
+    orient2d_host,
+    PredicateMode,
+    resolve_host_predicate_mode,
+)
 from .._strict import StrictModule
 from .._validation import (
     canonical_identifier,
@@ -240,11 +244,21 @@ class AbstractTrimCurve(StrictModule, CoefficientEnclosureSource):
         """
         return None
 
-    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
+    def host_points(
+        self,
+        parameters: ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
         """Evaluate concrete parameters through one compiled program, on the host.
 
         Carriers whose own evaluation already runs a shape-stable compiled
-        program override this to avoid a per-carrier outer compilation.
+        program override this to avoid a per-carrier outer compilation, and
+        may reuse numerical inputs prepared in an explicit request
+        (``preparations`` with its ``budget``). This generic program retains
+        nothing in the request.
         """
         return np.asarray(jax.device_get(_trim_points(self, parameters)))
 
@@ -955,15 +969,35 @@ def _arc_enclosure(
     preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Enclosure of one arc, widened to contain its evaluated endpoints."""
-    box = np.asarray(
+    return _widened_arc_box(
+        curve,
         curve.enclosure(first, last, budget=budget, preparations=preparations),
-        dtype=np.float64,
+        last,
+        start,
+        preparations=preparations,
+        budget=budget,
     )
+
+
+def _widened_arc_box(
+    curve: AbstractTrimCurve,
+    source_box: npt.ArrayLike,
+    last: float,
+    start: np.ndarray,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Admit one source arc box and widen it by the arc's evaluated endpoints."""
+    box = np.asarray(source_box, dtype=np.float64)
     if box.shape != (2, 2) or not np.all(np.isfinite(box)):
         raise ValueError(
             f"AbstractTrimCurve.enclosure must return finite (2, 2) boxes; got shape {box.shape}"
         )
-    end = curve.host_points(np.asarray(last, dtype=np.float64))
+    end = type(curve).host_points(
+        curve, np.asarray(last, dtype=np.float64), preparations=preparations, budget=budget
+    )
     lower = np.minimum(box[0], np.minimum(start, end))
     upper = np.maximum(box[1], np.maximum(start, end))
     return np.stack((lower, upper)), end
@@ -1170,7 +1204,9 @@ def _certified_arcs(
 
     def points(parameters: Sequence[float]) -> np.ndarray:
         (values,) = _padded_call(
-            curve.host_points,
+            lambda rows: curve.host_points(
+                rows, preparations=preparations, budget=budget
+            ),
             np.asarray(parameters, dtype=np.float64),
             64,
         )
@@ -1372,8 +1408,10 @@ def _exact_winding(
     """Compute closed-polygon winding with exact predicates and on-edge detection."""
     start = chords
     end = np.roll(chords, -1, axis=0)
+    # Host classification: take the certified host signs directly instead of
+    # staging them on the device and reading them back for every query.
     signs = np.asarray(
-        orient2d(start, end, np.broadcast_to(point, start.shape), mode=mode).signs,
+        orient2d_host(start, end, np.broadcast_to(point, start.shape), mode=mode).signs,
         dtype=np.int8,
     )
     upward = (start[:, 1] <= point[1]) & (end[:, 1] > point[1])
@@ -1392,9 +1430,14 @@ def _refined_chords(
     /,
     *,
     budget: CoordinateEnclosureBudget,
-    preparations: TrimRequestPreparations | None = None,
+    preparations: TrimRequestPreparations,
 ) -> tuple[np.ndarray, bool, int]:
-    """Chord polygon whose arc enclosures exclude ``point`` where resolvable."""
+    """Chord polygon whose arc enclosures exclude ``point`` where resolvable.
+
+    Raw source boxes of the dyadic arc tree are the request's earned facts in
+    ``TrimArcRefinements`` (shared with ``classify_boxes``); each query still
+    widens them by its own evaluated endpoints and decides independently.
+    """
     chords: list[np.ndarray] = []
     # Junction boxes retain endpoint uncertainty; membership inside them remains
     # unresolved independently of numerical endpoint agreement.
@@ -1412,24 +1455,35 @@ def _refined_chords(
             chords.append(loop.source_chords[arc])
             continue
         curve = loop.curves[int(loop.arc_curves[arc])]
-        stack = [(float(loop.arc_first[arc]), float(loop.arc_last[arc]), 0)]
+        memo = _request_arc_refinements(
+            loop, arc, budget=budget, preparations=preparations
+        )
+        # Heap positions: one is the whole arc; 2p and 2p + 1 its halves.
+        stack = [(float(loop.arc_first[arc]), float(loop.arc_last[arc]), 0, 1)]
         start = loop.source_chords[arc]
         pieces: list[np.ndarray] = []
         while stack:
-            first, last, depth = stack.pop()
-            box, _ = _arc_enclosure(
-                curve, first, last, start, budget=budget, preparations=preparations
+            first, last, depth, position = stack.pop()
+            box, end = _widened_arc_box(
+                curve,
+                _arc_node_box(
+                    memo, curve, position, first, last, preparations=preparations
+                ),
+                last,
+                start,
+                preparations=preparations,
+                budget=memo.budget,
             )
             outside = np.any(point < box[0]) or np.any(point > box[1])
             middle = 0.5 * (first + last)
             if outside or depth >= maximum_depth or not first < middle < last:
                 unresolved |= not outside
                 pieces.append(start)
-                start = curve.host_points(np.asarray(last, dtype=np.float64))
+                start = end
                 continue
             refinements += 1
-            stack.append((middle, last, depth + 1))
-            stack.append((first, middle, depth + 1))
+            stack.append((middle, last, depth + 1, 2 * position + 1))
+            stack.append((first, middle, depth + 1, 2 * position))
         chords.extend(pieces)
     return np.asarray(chords, dtype=np.float64), unresolved, refinements
 
@@ -1459,8 +1513,16 @@ class _BoxLoopExclusion(StrictModule):
     refinements: int = eqx.field(static=True)
 
 
-def _disjoint_boxes(first: np.ndarray, second: np.ndarray, /) -> bool:
-    return bool(np.any(first[1] < second[0]) or np.any(second[1] < first[0]))
+def _disjoint_boxes(
+    query: np.ndarray, lower: np.ndarray, upper: np.ndarray, /
+) -> bool:
+    # Trim charts are two-dimensional; keep existing bounds separate without a tiny allocation.
+    return bool(
+        query[1, 0] < lower[0]
+        or query[1, 1] < lower[1]
+        or upper[0] < query[0, 0]
+        or upper[1] < query[0, 1]
+    )
 
 
 def _exclude_polygon_boundary(
@@ -1475,11 +1537,10 @@ def _exclude_polygon_boundary(
         )
     )
     for start, end in zip(loop.vertices, np.roll(loop.vertices, -1, axis=0), strict=True):
-        edge_box = np.stack((np.minimum(start, end), np.maximum(start, end)))
-        if _disjoint_boxes(query, edge_box):
+        if _disjoint_boxes(query, np.minimum(start, end), np.maximum(start, end)):
             continue
         signs = np.asarray(
-            orient2d(
+            orient2d_host(
                 np.broadcast_to(start, corners.shape),
                 np.broadcast_to(end, corners.shape),
                 corners,
@@ -1489,6 +1550,14 @@ def _exclude_polygon_boundary(
         if not (np.all(signs > 0) or np.all(signs < 0)):
             return _BoxLoopExclusion(loop.vertices, False, 0)
     return _BoxLoopExclusion(loop.vertices, True, 0)
+
+
+# Container metadata of one request arc tree: the slotted record (80 B), its
+# two empty mappings and set (344 B), the (loop, arc) key (120 B) and one
+# amortized request slot including table growth (96 B).
+_ARC_REFINEMENTS_BYTES = 640
+# One position-keyed slot of an arc tree mapping, amortized with table growth.
+_ARC_NODE_SLOT_BYTES = 96
 
 
 def _request_arc_refinements(
@@ -1501,7 +1570,8 @@ def _request_arc_refinements(
 ) -> TrimArcRefinements:
     key = (id(loop), arc)
     memo = preparations.trim_arc_refinements.get(key)
-    if memo is None or memo.budget is not budget:
+    if memo is None or memo.loop is not loop or memo.budget is not budget:
+        budget.retain_operand_metadata(_ARC_REFINEMENTS_BYTES)
         memo = TrimArcRefinements(loop, budget)
         preparations.trim_arc_refinements[key] = memo
     return memo
@@ -1517,13 +1587,27 @@ def _arc_node_box(
     *,
     preparations: TrimRequestPreparations,
 ) -> np.ndarray:
+    """One raw dyadic arc box; only finite ``(2, 2)`` boxes become request facts.
+
+    A retained box is a private read-only copy, so neither a provider nor a
+    consumer can change an earned fact after admission. Nonfinite provider
+    boxes are returned to the consuming query for its own refusal and never
+    retained.
+    """
     box = memo.boxes.get(position)
     if box is None:
-        box = np.asarray(
-            curve.enclosure(first, last, budget=memo.budget, preparations=preparations)
+        # Keep override dispatch without building an Eqx BoundMethod over the source DAG.
+        box = np.array(
+            type(curve).enclosure(
+                curve, first, last, budget=memo.budget, preparations=preparations
+            ),
+            dtype=np.float64,
         )
-        memo.budget.retain_basis((position, box))
-        memo.boxes[position] = box
+        if box.shape == (2, 2) and np.all(np.isfinite(box)):
+            box.setflags(write=False)
+            memo.budget.retain_operand_metadata(_ARC_NODE_SLOT_BYTES)
+            memo.budget.retain_basis((position, box))
+            memo.boxes[position] = box
     return box
 
 
@@ -1538,14 +1622,10 @@ def _arc_node_chord(
 ) -> np.ndarray:
     point = memo.chords.get(position)
     if point is None:
-        point = np.asarray(
-            jax.device_get(
-                curve.evaluate(
-                    jnp.asarray(first),
-                    budget=memo.budget,
-                    preparations=preparations,
-                )
-            )
+        point = type(curve).host_points(
+            curve, np.asarray(first, dtype=np.float64),
+            budget=memo.budget,
+            preparations=preparations,
         )
         memo.budget.retain_basis((position, point))
         memo.chords[position] = point
@@ -1571,7 +1651,7 @@ def _refine_arc_for_box(
     while pending:
         first, last, depth, position = pending.pop()
         box = _arc_node_box(memo, curve, position, first, last, preparations=preparations)
-        if _disjoint_boxes(query, box):
+        if _disjoint_boxes(query, box[0], box[1]):
             point = _arc_node_chord(
                 memo, curve, position, first, preparations=preparations
             )
@@ -1604,12 +1684,12 @@ def _exclude_curve_boundary(
     chords = []
     resolved = True
     used = 0
-    for lower, upper in zip(loop.junction_lower, loop.junction_upper, strict=True):
-        if not _disjoint_boxes(query, np.stack((lower, upper))):
+    junction_lower, junction_upper = loop.junction_lower, loop.junction_upper
+    for junction in range(junction_lower.shape[0]):
+        if not _disjoint_boxes(query, junction_lower[junction, :], junction_upper[junction, :]):
             return _BoxLoopExclusion(np.empty((0, 2), dtype=np.float64), False, 0)
     for arc in range(loop.source_chords.shape[0]):
-        arc_box = np.stack((loop.arc_lower[arc], loop.arc_upper[arc]))
-        if _disjoint_boxes(query, arc_box):
+        if _disjoint_boxes(query, loop.arc_lower[arc], loop.arc_upper[arc]):
             chords.append(loop.source_chords[arc])
             continue
         memo = _request_arc_refinements(

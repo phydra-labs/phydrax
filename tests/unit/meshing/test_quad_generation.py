@@ -49,6 +49,7 @@ from phydrax.discretization._coordinate_enclosure import (
     source_basis,
 )
 from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.geometry._domain_coverage import DomainCoverageCertificate
 from phydrax.geometry._surface_source_support import (
     SurfaceNativeRestrictionBoundarySource,
     SurfaceSourceRootAtlas,
@@ -493,6 +494,7 @@ def test_general_feature_quad_publication_preserves_concave_source_and_partition
     assert certification is not None and certification.passed
     coverage = certification.coverage
     assert coverage is not None
+    assert isinstance(coverage, DomainCoverageCertificate)
     measures = tuple(
         value for value in coverage.achieved_region_measures if value is not None
     )

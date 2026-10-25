@@ -323,3 +323,161 @@ def test_production_coarsened_projection_prefix(tmp_path: Any) -> None:
         results = [future.result() for future in futures]
     assert all(result["passed"] for result in results), results
     assert sum(result["retired_vertex_rows"] for result in results) > 0
+
+
+@pytest.mark.parametrize("defect", ("none", "inherited-error"))
+def test_production_graph_history_transport_and_scientific_refusal(
+    tmp_path: Any, defect: str,
+) -> None:
+    import json
+    import socket
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    from phydrax import config
+    from phydrax.linalg.krylov import KrylovBreakdownStatus
+    from tools.meshing_qualification._controls import _DISTRIBUTED_FIELD_ROLES
+
+    count = 2
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        coordinator = f"127.0.0.1:{listener.getsockname()[1]}"
+    with ThreadPoolExecutor(max_workers=count) as executor:
+        futures = [
+            executor.submit(
+                run_on_forced_devices,
+                "tests._support.distributed_meshing.field_history_proof",
+                "production_graph_history", (str(tmp_path / defect), defect),
+                devices=1, timeout_seconds=600,
+                env=config.environment(
+                    config.RuntimeConfig(
+                        bootstrap=config.RuntimeBootstrap(
+                            coordinator_address=coordinator, num_processes=count,
+                            process_id=rank, local_device_ids=(0,),
+                        ),
+                        cpu_collectives_implementation="gloo",
+                    ),
+                    base={},
+                ),
+            )
+            for rank in range(count)
+        ]
+        results = [future.result() for future in futures]
+    # Compact predecessor histories and allocator-owned RNG have different
+    # authorities. The RNG assertions below exercise its actual owner.
+    compact = {row[0] for row in _DISTRIBUTED_FIELD_ROLES if row[2] != "rng-counter"}
+    all_roles = {name for row in _DISTRIBUTED_FIELD_ROLES for name in row[:2]}
+    all_roles.update(("accepted-epoch", "rng-root-key"))
+    for result in results:
+        persisted = json.loads(Path(result["diagnostic_path"]).read_text(encoding="utf-8"))
+        assert persisted == result
+        assert result["fixture"] == {"processes": 2, "resolution": 3, "capacity": 256}
+        assert result["generation"]["tile_count"] == 4, result
+        assert result["generation"]["local_tiles"] > 0, result
+        assert result["generation"]["global_cells"] <= 32, result
+        assert result["generation"]["global_vertices"] <= 25, result
+        assert [epoch["operation"] for epoch in result["epochs"]] == [
+            "refine", "coarsen", "refine",
+        ], result
+        comparisons = result["comparisons"]
+        transport = [
+            item for item in comparisons
+            if item["comparison"] == "accepted-compact-transport"
+        ]
+        assert {item["role"] for item in transport} == compact, result
+        assert all(item["max_error"] == 0 for item in transport), result
+        assert {item["role"] for item in result["inventory"]} == all_roles, result
+        assert result["solvers"], result
+        for solver in result["solvers"].values():
+            assert solver["converged"], solver
+            status = KrylovBreakdownStatus(solver["breakdown_status"])
+            assert status in (KrylovBreakdownStatus.NONE, KrylovBreakdownStatus.HAPPY), solver
+            assert solver["breakdown_status_name"] == status.name, solver
+            assert solver["collectively_accepted"], solver
+            assert solver["affine_forward_max_error"] <= 1e-12, solver
+            assert 0 <= solver["true_residual_norm"] <= solver["residual_threshold"], solver
+            assert solver["residual_threshold"] > 0, solver
+            assert solver["iterations"] >= 0, solver
+            assert solver["forward_error_bound"] is None
+        assert "graph_restart_publication" in result["stages"], result
+        assert "graph_field_history_recovery" in result["stages"], result
+        if defect == "none":
+            assert result["completed"], result
+            assert result["migration"]["status"] == "accepted", result
+            rng = result["rng_graph"]
+            assert rng["saved_allocated_records"] == rng["allocated_records"], result
+            assert rng["saved_active_cells"] == rng["active_cells"], result
+            assert rng["saved_dtype"] == rng["repacked_dtype"] == rng["compact_dtype"], result
+            assert result["rng_dtype"] == rng["saved_dtype"] == "uint32", result
+            assert result["rng_future_agree"], result
+            before, after = result["rng_source_future"], result["rng_recovered_future"]
+            assert len(before) == len(after) == 2, result
+            for source, recovered in zip(before, after, strict=True):
+                assert source["draws"] == recovered["draws"], result
+                assert source["counters"] == recovered["counters"], result
+        else:
+            assert result["injection"]["boundary"] == (
+                "final-topology-epoch-before-all-field-projection"
+            ), result
+            assert result["injection"]["operation"] == "refine", result
+            assert 1e-12 < result["epochs"][-1]["h1_affine_transfer_error"] <= 1e-10, result
+            assert not result["completed"], result
+            assert result["migration"]["status"] == "published", result
+            assert result["migration"]["field_history_status"] == "refused", result
+            physical = [
+                item for item in comparisons
+                if item["comparison"] == "independent-physical-reference"
+                and item["role"] == "temperature"
+            ]
+            assert len(physical) == 1, result
+            assert physical[0]["max_error"] > 1e-12, result
+
+
+def test_distributed_measured_process_peak_exact_boundary() -> None:
+    from tools.meshing_qualification._runtime import (
+        peak_resident_bytes,
+        QualificationFailure,
+    )
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_process_memory_acceptance,
+    )
+
+    # Use one actual OS observation for both boundaries, not a guessed RSS.
+    measured = peak_resident_bytes()
+    assert measured is not None and measured > 0
+    processes = [
+        {"peak_process_resident_bytes": measured // 2},
+        {"peak_process_resident_bytes": measured},
+    ]
+    accepted = _distributed_process_memory_acceptance(measured, processes)
+    assert accepted["status"] == "accepted"
+    assert accepted["maximum_individual_peak_bytes"] == measured
+    assert accepted["scope"] == "maximum-individual-process-peak-not-simultaneous-total"
+    assert accepted["enforcement"] == "measured-acceptance-only"
+    with pytest.raises(QualificationFailure, match="exceeds its frozen ceiling"):
+        _distributed_process_memory_acceptance(measured - 1, processes)
+
+
+@pytest.mark.parametrize("peak", (None, float("nan"), float("inf"), -1, 0, True))
+def test_distributed_process_peak_unavailable_or_invalid_refuses(peak: Any) -> None:
+    from tools.meshing_qualification._runtime import QualificationFailure
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_process_memory_acceptance,
+    )
+
+    with pytest.raises(QualificationFailure, match="unavailable, invalid"):
+        _distributed_process_memory_acceptance(32 * 1024**3, [
+            {"peak_process_resident_bytes": 1},
+            {"peak_process_resident_bytes": peak},
+        ])
+
+
+def test_distributed_missing_process_peak_refuses() -> None:
+    from tools.meshing_qualification._runtime import QualificationFailure
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_process_memory_acceptance,
+    )
+
+    for processes in ([], [{}]):
+        with pytest.raises(QualificationFailure, match="unavailable, invalid"):
+            _distributed_process_memory_acceptance(32 * 1024**3, processes)

@@ -2,20 +2,28 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._physical import SpatialCoordinateContract
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.applications.foams import (
     FoamEquilibriumPlan,
     FoamMaterialPlan,
     PreparedFoamEquilibrium,
+)
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
 from phydrax.geometry.multiregion_surface import (
     LabelFieldSurfaceExtractionPlan,
     LabelFieldSurfaceExtractionResult,
     LabelFieldSurfaceExtractionStatus,
     LabelFieldSurfaceLineage,
+    LabelFieldVolumeBinding,
     MultiRegionSurfaceCapacityPlan,
     MultiRegionSurfaceStatus,
     MultiRegionSurfaceValidationPolicy,
 )
+from phydrax.geometry.multiregion_surface._geometry import PreparedMultiRegionSurface
 from phydrax.threshold_dynamics import LabelFieldState
 
 
@@ -250,3 +258,59 @@ def test_lineage_constructor_rejects_noncanonical_contract_identifier() -> None:
             prepared_id="prepared",
             candidate_seed_id=None,
         )
+
+
+def _budgeted_label_binding_request(
+    maximum_work_units: int, maximum_memory_bytes: int, /
+) -> tuple[int, int]:
+    ticket = HostBatchTicket(
+        maximum_work_units, bytes_upper=maximum_memory_bytes
+    )
+    budget = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=maximum_work_units,
+        maximum_memory_bytes=maximum_memory_bytes,
+    )
+    labels = np.zeros((2, 2, 2), dtype=np.int32)
+    labels[1] = 1
+    plan = LabelFieldSurfaceExtractionPlan(
+        ("left", "right"),
+        _capacity("budgeted-label-binding", 64),
+        spacing=(1.0, 1.0, 1.0),
+    )
+    with ticket, budget.activate():
+        prepared = plan.prepare(labels.shape, budget=budget)
+        extraction = prepared.extract(
+            _state(labels, ("left", "right")), budget=budget
+        )
+        assert extraction.accepted
+        original = extraction.surface
+        assert original is not None
+        assert sum(
+            type(value) is PreparedMultiRegionSurface
+            for value in budget.retained_owner_objects.values()
+        ) == 1
+
+        rebuilt = extraction.validate_source_integrity(budget=budget)
+        assert rebuilt is not None and rebuilt is not original
+        assert sum(
+            type(value) is PreparedMultiRegionSurface
+            for value in budget.retained_owner_objects.values()
+        ) == 2
+
+        binding = LabelFieldVolumeBinding(
+            extraction, SpatialCoordinateContract.si(), budget=budget
+        )
+        assert binding.extraction is extraction
+        assert sum(
+            type(value) is PreparedMultiRegionSurface
+            for value in budget.retained_owner_objects.values()
+        ) == 2
+    return budget.required_work_units, budget.peak_bytes_upper
+
+
+def test_label_binding_revalidation_uses_temporary_output_credit() -> None:
+    work, storage = _budgeted_label_binding_request(1 << 50, 1 << 40)
+    assert _budgeted_label_binding_request(work, storage) == (work, storage)
+    with pytest.raises(CoordinateEnclosureResourceError):
+        _budgeted_label_binding_request(work, storage - 1)

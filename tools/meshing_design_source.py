@@ -536,6 +536,7 @@ def consume(
         target=lambda _: carrier[0],
         failure_factory=qualification_failure,
         workflow_remaining_seconds=deadline.remaining(),
+        observe_managed_admission=True,
     )
     execution = renewed.result.execution_evidence
     if execution is None:

@@ -1159,6 +1159,68 @@ void admitting_parent_refusal(bool batch_admission) {
 void test_admitting_parent_batch() { admitting_parent_refusal(true); }
 void test_admitting_parent_native() { admitting_parent_refusal(false); }
 
+void test_ancestor_remaining() {
+  void* ended = nullptr;
+  {
+    Execution parent({100, 100, 100, 1 << 20});
+    ended = parent.scope;
+    Batch reservation(parent.scope, {80, 80, 80, 65536});
+    Target target(reservation.ticket);
+    const Counts pool = parent.remaining();
+    {
+      Execution child({50, 50, 50, 1 << 20});
+      // The inherited target also bounds the active allocator window.
+      const Counts window{pool[0], pool[1], pool[2], std::min(pool[3], uint64_t{65536})};
+      PHX_CHECK(parent.remaining() == window);
+      PHX_CHECK(child.remaining()[0] == 50 && child.remaining()[3] == 65536);
+      PHX_CHECK(phx_mc_execution_charge(parent.scope, 1, 0) == PHX_MC_INVALID_ARGUMENT);
+      PHX_CHECK(parent.remaining() == window);
+      Counts untouched{7, 11, 13, 17};
+      double seconds = 19;
+      PHX_CHECK(phx_mc_execution_remaining(reinterpret_cast<void*>(uintptr_t{1}), untouched.data(),
+                                           &seconds) == PHX_MC_INVALID_ARGUMENT);
+      PHX_CHECK((untouched == Counts{7, 11, 13, 17}) && seconds == 19);
+    }
+    {
+      Execution tighter({50, 50, 50, 16384});
+      PHX_CHECK(parent.remaining()[3] == std::min(pool[3], uint64_t{16384}));
+      PHX_CHECK(tighter.remaining()[3] == 16384);
+    }
+    PHX_CHECK(parent.remaining() == pool);
+    int32_t foreign_status = PHX_MC_OK;
+    std::thread worker([&] {
+      Counts remaining{};
+      double seconds = 0;
+      foreign_status = phx_mc_execution_remaining(parent.scope, remaining.data(), &seconds);
+    });
+    worker.join();
+    PHX_CHECK(foreign_status == PHX_MC_INVALID_ARGUMENT);
+  }
+  Counts untouched{7, 11, 13, 17};
+  double seconds = 19;
+  PHX_CHECK(phx_mc_execution_remaining(ended, untouched.data(), &seconds) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK((untouched == Counts{7, 11, 13, 17}) && seconds == 19);
+}
+
+void test_ancestor_deadline() {
+  Execution parent({100, 100, 100, 1 << 20});
+  const Counts before = parent.remaining();
+  void* child = nullptr;
+  PHX_CHECK(phx_mc_execution_begin(100, 100, 100, 1 << 20, 0.0, nullptr, &child) == PHX_MC_OK);
+  Counts remaining{};
+  double seconds = -1;
+  PHX_CHECK(phx_mc_execution_remaining(parent.scope, remaining.data(), &seconds) == PHX_MC_TIMEOUT);
+  PHX_CHECK(remaining == before);
+  PHX_CHECK(static_cast<phx::mc::NativeExecutionScope*>(parent.scope)->status() == PHX_MC_OK);
+  PHX_CHECK(phx_mc_execution_remaining(child, remaining.data(), &seconds) == PHX_MC_TIMEOUT);
+  PHX_CHECK(seconds == 0);
+  Receipt child_receipt;
+  PHX_CHECK(phx_mc_execution_end(child, child_receipt.work.data(), child_receipt.memory.data(),
+                                 &seconds) == PHX_MC_TIMEOUT);
+  PHX_CHECK(parent.remaining() == before);
+}
+
 struct Case {
   std::string_view name;
   void (*run)();
@@ -1192,6 +1254,8 @@ constexpr std::array cases = {
     Case{"real_mesh_creation", test_real_mesh_creation},
     Case{"admitting_parent_batch", test_admitting_parent_batch},
     Case{"admitting_parent_native", test_admitting_parent_native},
+    Case{"ancestor_remaining", test_ancestor_remaining},
+    Case{"ancestor_deadline", test_ancestor_deadline},
 };
 }  // namespace
 

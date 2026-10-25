@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
+from jax import Array
 
 import phydrax as phx
 
@@ -183,9 +184,14 @@ def test_dirichlet_constrained_exact_diagonal_restricts_the_structural_diagonal(
     basis = jnp.eye(free.size)
     columns = jnp.stack([system.operator.mv(column) for column in basis], axis=1)
 
+    diagonal = eager.diagonal
+    zero_mask, negative_mask = eager.zero_mask, eager.negative_mask
+    assert isinstance(diagonal, Array)
+    assert isinstance(zero_mask, Array) and isinstance(negative_mask, Array)
+
     assert free.size == 2
     assert eager.method == traced.method == "constrained-workset"
-    assert jnp.array_equal(eager.diagonal, traced.diagonal)
-    assert jnp.allclose(eager.diagonal, expected, rtol=1.0e-14, atol=0.0)
-    assert jnp.allclose(eager.diagonal, jnp.diag(columns), rtol=1.0e-14, atol=0.0)
-    assert not bool(jnp.any(eager.zero_mask | eager.negative_mask))
+    assert jnp.array_equal(diagonal, traced.diagonal)
+    assert jnp.allclose(diagonal, expected, rtol=1.0e-14, atol=0.0)
+    assert jnp.allclose(diagonal, jnp.diag(columns), rtol=1.0e-14, atol=0.0)
+    assert not bool(jnp.any(zero_mask | negative_mask))

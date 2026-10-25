@@ -156,6 +156,27 @@ def exact_cofactor_determinant_2(
     return u[0] * v[1] - u[1] * v[0]
 
 
+def exact_cofactor_action_2(
+    first: tuple[Fraction, Fraction],
+    second: tuple[Fraction, Fraction],
+    right: tuple[Fraction, Fraction],
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    """Solve two exact rows once; ``None`` proves singularity.
+
+    Like the exact cofactor determinants, this scalar primitive leaves work
+    and storage admission to its caller. No reusable factor is needed for
+    a single right-hand side.
+    """
+    determinant = exact_cofactor_determinant_2(first, second)
+    if determinant == 0:
+        return None
+    return (
+        (right[0] * second[1] - first[1] * right[1]) / determinant,
+        (first[0] * right[1] - right[0] * second[0]) / determinant,
+    )
+
+
 def exact_cofactor_determinant_3(
     u: tuple[Fraction, Fraction, Fraction],
     v: tuple[Fraction, Fraction, Fraction],
@@ -944,9 +965,22 @@ def exact_adjugate_action(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _Rational3:
-    """Return the exact solution ``adj(M) vector / det(M)`` of a proved adjugate."""
-    # Three three-term dot products and three exact quotients.
-    reserve_fraction_work(budget, 18, 16, 8 * adjugate.height + 64)
+    """Return the exact solution ``adj(M) vector / det(M)`` of a proved adjugate.
+
+    ``vector`` may carry denominators unrelated to the prepared columns.
+    """
+    numerator_bits, _ = fraction_matrix_profile(((tuple(vector),),), budget)
+    common = 1
+    for entry in vector:
+        common = math.lcm(common, entry.denominator)
+    height = numerator_bits + common.bit_length() + 1
+    # Three three-term dot products and three exact quotients. Cleared
+    # adjugate rows fit 2h bits over D**2 and det(M) is det(C)/D**3 with 3h
+    # bits, so every product, sum and quotient fits 3h + v + 4 bits for a
+    # cleared vector height v; 8h + 64 already covers v <= 5h + 60.
+    reserve_fraction_work(
+        budget, 18, 16, max(8 * adjugate.height, 3 * adjugate.height + height) + 64
+    )
     first, second, third = (
         _exact_dot_3(row, vector) / adjugate.determinant for row in adjugate.rows
     )

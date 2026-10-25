@@ -1119,10 +1119,11 @@ def test_public_regeneration_publication_keeps_actual_source_and_target_aliases(
     record = result.target.execution_evidence
     assert record.preparation_evidence is prepared.preparation_evidence
     assert record.history_evidence == (source.execution_evidence,)
-    assert {"vertices", "edges", "faces", "cells", "connectivity_entries", "data_bytes", "cavity_cells", "wall_seconds"} <= set(
-        result.target.runtime.enforced_limits
-    )
-    assert {"work_units", "scratch_bytes"} <= set(
+    assert {
+        "vertices", "edges", "faces", "cells", "connectivity_entries", "data_bytes",
+        "cavity_cells", "wall_seconds", "work_units", "geometry_queries", "scratch_bytes",
+    } <= set(result.target.runtime.enforced_limits)
+    assert not {"work_units", "geometry_queries", "scratch_bytes"} & set(
         result.target.runtime.unenforced_limits
     )
     assert record.total_managed_admission_peak_bytes_upper is not None
@@ -1339,8 +1340,8 @@ def test_public_regeneration_root_data_receipt_boundary(
         with pytest.raises(MeshingFailure) as failure:
             phx.meshing.execute_mesh_adaptation(prepared)
         assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
-        assert dict(failure.value.achieved)["required_data_bytes"] == required
-        assert dict(failure.value.achieved)["remaining_data_bytes"] == required - 1
+        assert dict(failure.value.achieved)["retained_data_bytes"] == required
+        assert dict(failure.value.requested)["maximum_data_bytes"] == required - 1
         assert not records
     else:
         result = phx.meshing.execute_mesh_adaptation(prepared)
@@ -1405,6 +1406,16 @@ def test_public_polyhedral_preparation_clock_includes_receipt_publication(
     source, limits = canonical_periodic_power_source
     original = owner._remember_power_witnesses
     clock = owner.time.monotonic
+    prior_live = set(owner._LIVE_POWER_WITNESSES)
+    prior_issued = set(owner._ISSUED_PLC_SOURCE_PROOFS)
+    storages = []
+    storage_init = owner._AdaptationPublicationStorage.__init__
+
+    def capture_storage(self: Any, scope: Any) -> None:
+        storage_init(self, scope)
+        storages.append(self)
+
+    monkeypatch.setattr(owner._AdaptationPublicationStorage, "__init__", capture_storage)
 
     def expire_before_publication(*args: Any, **kwargs: Any) -> Any:
         monkeypatch.setattr(
@@ -1424,6 +1435,10 @@ def test_public_polyhedral_preparation_clock_includes_receipt_publication(
             policy=_canonical_polyhedral_policy(limits),
         )
     assert failure.value.category is MeshingFailureCategory.TIMED_OUT
+    assert set(owner._LIVE_POWER_WITNESSES) <= prior_live
+    assert set(owner._ISSUED_PLC_SOURCE_PROOFS) <= prior_issued
+    assert storages
+    assert all(storage.workspace.bound == 0 for storage in storages)
 
 
 def test_public_polyhedral_execution_preserves_earlier_parent_expiry(
@@ -1779,9 +1794,9 @@ def test_live_preparation_clock_survives_without_periodic_receipt(
     native_limits, evidence = owner._preparation_execution_limits(prepared)
     assert native_limits.maximum_seconds == 0
     assert evidence is prepared.preparation_evidence
-    with pytest.raises(MeshcoreError) as refusal:
+    with pytest.raises(MeshingFailure) as refusal:
         phx.meshing.execute_mesh_adaptation(prepared)
-    assert refusal.value.status is MeshcoreStatus.TIMEOUT
+    assert refusal.value.category is phx.meshing.MeshingFailureCategory.TIMED_OUT
 
 
 @pytest.mark.parametrize("distributed", (False, True))
@@ -1837,7 +1852,12 @@ def test_polyhedral_runtime_keeps_unproved_variants_partial(
     assert ("wall_seconds" in enforced) is (not nested and not distributed)
     assert ("wall_seconds" in partial) is (nested or distributed)
     assert "data_bytes" in enforced and "data_bytes" not in partial
-    assert {"work_units", "geometry_queries", "scratch_bytes"} <= set(partial)
+    request_axes = {"work_units", "geometry_queries", "scratch_bytes"}
+    root = not nested and not distributed
+    if root:
+        assert request_axes <= set(enforced) and not request_axes & set(partial)
+    else:
+        assert request_axes <= set(partial)
     assert result.target.execution_evidence is not None
     if not nested:
         assert result.target.execution_evidence.total_managed_admission_peak_bytes_upper is not None
@@ -1895,3 +1915,121 @@ def test_adaptation_root_binding_admits_work_before_end(
         assert result.geometry is source.geometry
         assert result.execution_evidence is source.execution_evidence
         assert scope.completed_evidence().externally_charged_geometry_queries == 0
+
+
+@pytest.mark.parametrize(
+    ("axis", "evidence_field"),
+    (
+        ("maximum_work_units", "total_work_units"),
+        ("maximum_geometry_queries", "total_geometry_queries"),
+        ("maximum_managed_bytes", "total_managed_admission_peak_bytes_upper"),
+    ),
+)
+def test_regeneration_original_request_mechanical_root_boundary(
+    canonical_periodic_power_source: tuple[phx.meshing.CellMeshingResult, MeshingLimits],
+    monkeypatch: pytest.MonkeyPatch, axis: str, evidence_field: str,
+) -> None:
+    """Replay one real prepared regeneration without repricing its policy or source."""
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    from phydrax._meshcore import current_native_execution_scope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+
+    source, limits = canonical_periodic_power_source
+    authority, specification, _, _ = periodic_fv_public_inputs("translation")
+    request = PolyhedralMeshAdaptation(
+        PolyhedralAdaptationOperation.REGENERATE,
+        complex_=authority.complex,
+        sites=((0.5, 0.25, 0.5), (0.5, 0.75, 0.5)),
+        periodic_constraints=specification.periodic_constraints,
+    )
+    prepared = phx.meshing.prepare_mesh_adaptation(
+        source, request, policy=_canonical_polyhedral_policy(limits)
+    )
+    prepared_id = prepared.prepared_id
+    preparation = prepared.preparation_evidence
+    source_coordinates = np.asarray(source.mesh.coordinates).copy()
+    reference = phx.meshing.execute_mesh_adaptation(prepared)
+    receipt = reference.target.execution_evidence
+    assert receipt is not None
+    measured = getattr(receipt, evidence_field)
+    assert measured is not None
+    required = int(np.asarray(measured))
+    assert required > 0
+    constructor = NativeExecutionScope.__init__
+
+    for shortfall in (0, 1):
+        roots = []
+
+        def bounded(self: Any, native_limits: Any, /, **kwargs: Any) -> None:
+            if current_native_execution_scope() is None:
+                roots.append(self)
+                native_limits = replace(native_limits, **{axis: required - shortfall})
+            constructor(self, native_limits, **kwargs)
+
+        expectation = (
+            pytest.raises((MeshcoreError, MeshingFailure, CoordinateEnclosureResourceError))
+            if shortfall else nullcontext()
+        )
+        with monkeypatch.context() as patch, expectation:
+            patch.setattr(NativeExecutionScope, "__init__", bounded)
+            result = phx.meshing.execute_mesh_adaptation(prepared)
+            assert result.target.result_id == reference.target.result_id
+            assert result.target.mesh.topology_id == reference.target.mesh.topology_id
+            np.testing.assert_array_equal(
+                result.target.mesh.coordinates, reference.target.mesh.coordinates
+            )
+            np.testing.assert_array_equal(
+                result.target.mesh.vertex_global_ids, reference.target.mesh.vertex_global_ids
+            )
+            assert result.target.execution_evidence is not receipt
+        assert len(roots) == 1
+        assert prepared.prepared_id == prepared_id
+        assert prepared.preparation_evidence is preparation
+        np.testing.assert_array_equal(source.mesh.coordinates, source_coordinates)
+
+
+def test_preparation_transfers_live_storage_without_strong_publication_owners(
+    canonical_periodic_power_source: tuple[phx.meshing.CellMeshingResult, MeshingLimits],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gc
+    import weakref
+
+    from phydrax._meshcore import NativeHostStorageWorkspace
+
+    source, limits = canonical_periodic_power_source
+    adopted = []
+    original = NativeHostStorageWorkspace.adopt_retained_storage
+
+    def transfer(self: Any, ticket: Any, contributor: Any, owners: Any, logical: int) -> None:
+        children = tuple(ticket._workspaces.values())
+        handles = tuple((child._reservation.value, child.bound) for child in children)
+        original(self, ticket, contributor, owners, logical)
+        assert ticket.settled
+        assert tuple(self._adopted_workspaces) == children
+        assert tuple((child._reservation.value, child.bound) for child in children) == handles
+        adopted.append(self)
+
+    monkeypatch.setattr(NativeHostStorageWorkspace, "adopt_retained_storage", transfer)
+    prepared = phx.meshing.prepare_mesh_adaptation(
+        source,
+        PolyhedralMeshAdaptation(
+            PolyhedralAdaptationOperation.PLANE_SPLIT, planes=((1, 0, 0, 0.5),),
+        ),
+        policy=_canonical_polyhedral_policy(limits),
+    )
+    assert adopted
+    workspace = adopted[-1]
+    assert workspace.bound > 0
+    assert dict(workspace.retained_owner_objects) == {}
+    assert all(not child._retained_owners and not child._shared_owners for child in workspace._adopted_workspaces)
+    prepared_ref = weakref.ref(prepared)
+    record_ref = weakref.ref(prepared.preparation_evidence)
+    del prepared
+    gc.collect()
+    assert prepared_ref() is None
+    assert record_ref() is None
+    assert workspace.bound == 0
+    assert workspace._adopted_workspaces == []

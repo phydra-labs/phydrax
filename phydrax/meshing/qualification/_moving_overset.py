@@ -73,7 +73,6 @@ from phydrax.meshing import (
     MeshCertificationPreparedEvidence,
     MeshCertificationSchedule,
     MeshingComplianceReport,
-    MeshingDerivativeMode,
     MeshingLimits,
     MeshingScope,
     MeshingStageKind,
@@ -121,7 +120,7 @@ from phydrax.meshing.providers._native_publication import (
     NativePublicationOrganization,
     publish_native_result,
 )
-from phydrax.meshing.providers._native_route_policy import NativePublicationPolicy
+from phydrax.meshing.providers._native_route_policy import publication_policy
 from phydrax.meshing.providers._native_sources import source_entity_id
 from phydrax.typing import checked
 
@@ -898,19 +897,7 @@ def _publish_planar_motion(
         before.provider,
         identity,
         replace(request, prepared=prepared),
-        policy=NativePublicationPolicy(
-            audit_policy,
-            MeshingDerivativeMode.NONDIFFERENTIABLE,
-            (
-                "vertices",
-                "edges",
-                "faces",
-                "cells",
-                "connectivity",
-                "data_bytes",
-            ),
-            ("cavity_cells",),
-        ),
+        policy=replace(publication_policy("planar"), audit_policy=audit_policy),
         organization=NativePublicationOrganization(
             patches=patches, zones=zones, labels=labels, associations=associations
         ),
@@ -1159,7 +1146,12 @@ def rigid_planar_successor(
         )
     limits = plan.specification.limits
     with NativeExecutionScope(limits.native_limits()) as scope:
-        with scope.host_workspace() as workspace:
+        scope.observe_managed_admission()
+        with (
+            scope.ticket_view() as ticket,
+            ticket.native_target(),
+            scope.host_workspace() as workspace,
+        ):
             budget = coordinate_budget(limits)
             with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
                 inputs = _rigid_motion_inputs(part, offset, motion_id, plan.specification)
@@ -1285,11 +1277,16 @@ def deform_planar_interior(
         )
     limits = plan.specification.limits
     with NativeExecutionScope(limits.native_limits()) as scope:
-        if coordinate_operands is not None:
-            coordinate_operands.begin(
-                scope, None, native_preparation_ledger(scope).overlap(scope, None)
-            )
-        with scope.host_workspace() as workspace:
+        scope.observe_managed_admission()
+        with (
+            scope.ticket_view() as ticket,
+            ticket.native_target(),
+            scope.host_workspace() as workspace,
+        ):
+            if coordinate_operands is not None:
+                coordinate_operands.begin(
+                    scope, None, native_preparation_ledger(scope).overlap(scope, None)
+                )
             budget = coordinate_budget(limits)
             budget.capture_coordinate_operands = coordinate_operands is not None
             budget.capture_polynomial_operands = (

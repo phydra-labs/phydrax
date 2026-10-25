@@ -3,6 +3,7 @@
 #
 """Invariant straight-piece compatible moments against the generic integral."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from fractions import Fraction
 from typing import Literal
@@ -19,8 +20,10 @@ import phydrax.discretization as D
 import phydrax.discretization.fem._sphere_chart_transfer as sphere
 import phydrax.discretization.fem._surface_chart_compatible as compatible
 from phydrax._resource_ticket import HostBatchTicket
-from phydrax.discretization import prepare_sphere_chart_deformation
-from phydrax.discretization import _coordinate_enclosure as algebra
+from phydrax.discretization import (
+    _coordinate_enclosure as algebra,
+    prepare_sphere_chart_deformation,
+)
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._sphere_chart_records import (
     _SpherePieceGeometry,
@@ -46,6 +49,16 @@ from tests._support.sphere_material import accepted_sphere_material
 
 LIMIT = 10**10
 STORAGE = 10**11
+
+
+def _counted[**P, R](
+    function: Callable[P, R], calls: dict[str, int], key: str
+) -> Callable[P, R]:
+    def counted(*args: P.args, **kwargs: P.kwargs) -> R:
+        calls[key] += 1
+        return function(*args, **kwargs)
+
+    return counted
 
 
 @pytest.fixture(scope="module")
@@ -274,19 +287,16 @@ def test_nonconstant_or_interior_tests_keep_the_generic_rational_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = {"generic": 0, "charts": 0}
-    generic = compatible._generic_common_moments
-    charts = sphere._sphere_piece_charts
-
-    def counted_generic(*args, **kwargs):
-        calls["generic"] += 1
-        return generic(*args, **kwargs)
-
-    def counted_charts(*args, **kwargs):
-        calls["charts"] += 1
-        return charts(*args, **kwargs)
-
-    monkeypatch.setattr(compatible, "_generic_common_moments", counted_generic)
-    monkeypatch.setattr(sphere, "_sphere_piece_charts", counted_charts)
+    monkeypatch.setattr(
+        compatible,
+        "_generic_common_moments",
+        _counted(compatible._generic_common_moments, calls, "generic"),
+    )
+    monkeypatch.setattr(
+        sphere,
+        "_sphere_piece_charts",
+        _counted(sphere._sphere_piece_charts, calls, "charts"),
+    )
 
     # Order-two edge densities and interior tests reject the invariant rule.
     # Exercise their actual rational pullback on a whole projective triangle
@@ -337,13 +347,11 @@ def test_request_proof_shares_condition_and_invariant_moments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = {"condition": 0}
-    condition = sphere._sphere_projective_condition
-
-    def counted(*args, **kwargs):
-        calls["condition"] += 1
-        return condition(*args, **kwargs)
-
-    monkeypatch.setattr(sphere, "_sphere_projective_condition", counted)
+    monkeypatch.setattr(
+        sphere,
+        "_sphere_projective_condition",
+        _counted(sphere._sphere_projective_condition, calls, "condition"),
+    )
     source, target = _endpoints(
         sphere_chart, 1, (("curl", "untwisted"), ("flux", "twisted"))
     )
@@ -627,20 +635,17 @@ def test_edge_coverage_reuses_exact_partition_but_not_route_moments(
         first, _ = compatible._invariant_common_moments(
             (cell,), cell.basis, (piece,), cell.routes, work, plan
         )
-        calls = 0
-        original = compatible._invariant_edge_coverage
-
-        def counted(*args, **kwargs):
-            nonlocal calls
-            calls += 1
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(compatible, "_invariant_edge_coverage", counted)
+        calls = {"coverage": 0}
+        monkeypatch.setattr(
+            compatible,
+            "_invariant_edge_coverage",
+            _counted(compatible._invariant_edge_coverage, calls, "coverage"),
+        )
         moved = FormCell(cell.basis, cell.routes + 13, cell.transform)
         repeated, defect = compatible._invariant_common_moments(
             (moved,), moved.basis, (piece,), moved.routes, work, plan
         )
-        assert calls == 0
+        assert calls["coverage"] == 0
         assert defect == 0.0
         assert repeated is not first
         np.testing.assert_array_equal(repeated.value, first.value)
@@ -658,7 +663,7 @@ def test_edge_coverage_reuses_exact_partition_but_not_route_moments(
             compatible._invariant_common_moments(
                 (moved,), moved.basis, (partial,), moved.routes, work, plan
             )
-        assert calls > 0
+        assert calls["coverage"] > 0
 
 
 def test_validation_fan_areas_reuse_exact_directed_edges() -> None:

@@ -1304,11 +1304,11 @@
         "fiber_graph": true,
         "license": "LicenseRef-PHYDRA-Proprietary",
         "locator": "phydrax/meshing/qualification/_layer_source.py::prepare_corrected_periodic_layer_source",
-        "mapped_domain_id": "78c304f2b99052d26ca7f234cdd423da5ee59050d942dc38218ee29921a97c6d",
+        "mapped_domain_id": "625522a7dbb26e06810251bf7b65c9bb165cc0e146b5cd6b8c40c45901dd9d80",
         "media_type": "text/x-python",
-        "source_binding_id": "b5f3d366ae32ddcb7144334d9b381e1bb829403253dd13cd7f363784d23c2078"
+        "source_binding_id": "9dd657aba0370f5bdb09fd59fe5a633cc1acea8fb5e3d7645edeb550ed31c32b"
       },
-      "source_digest": "059b334cd5a016c500d608e1fce185b727874f055aefddbf618b6d69a7e5c3cf",
+      "source_digest": "48f2e87b82226182b2fb62927e40bf675092efe952fed4a8952009f416786f31",
       "source_id": "curved-periodic-narrow-gap-exact-x-orbits",
       "source_revision": "2afa0d240a29259b557d12f944cb39d3475327f89a75bd020459f1b0b863073c",
       "upper_construction": "Upper coefficients and every x=1 mate are translated from shared fundamental-domain representatives."
@@ -1330,5 +1330,5 @@
     "moving-overset",
     "design-learned-loop"
   ],
-  "registration_id": "66e55a59b5e5a6e01840875616844457ed87d3f8bd3df3d6e95ba8a7d730d3f0"
+  "registration_id": "21885704b0d7671e397d34f8fb40d4c40fae1e52d5a0b9b5be13a670b0c83c87"
 }

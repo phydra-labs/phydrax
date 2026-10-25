@@ -265,10 +265,13 @@ epochs are accepted through the shared `MotionValidityPlan` corner-Jacobian chec
 prescribes the level-zero grid boundary and every patch vertex interpolates the routed
 level-zero Q1 grid.
 
-`UnstructuredConservativeRemapPlan` is an explicit CSR common-refinement artifact. It
+`UnstructuredConservativeRemapPlan` is an explicit common-refinement artifact. It
 validates complete source/target coverage and applies conservative cell-integral
 transfer. A remesh is therefore a new topology and geometry plus an auditable remap,
-never an in-place mutation.
+never an in-place mutation. The volume-material route carries no CSR routes: it stores
+a factorized chronological operator over the material chain, and its rows exist only
+when `plan.prepare_csr_view(policy)` materializes them under a
+`phydrax.linalg.SparseAssemblyPolicy`.
 
 ## Embedded boundaries and VOF
 
@@ -288,6 +291,11 @@ conservative overlap maps. It provides deterministic fixed-capacity tagging,
 prolongation, volume restriction, temporal coarse/fine ghost filling, composite
 subcycling, and explicit accepted-step interface reflux. Reflux requires certified
 per-level interface route IDs; whole-cell ledger correction is rejected.
+A volume material prolongation stores no rows, so its one-parent admission reads
+the caller's explicit `prolongation_view` (the plan's `prepare_csr_view` under the
+caller's policy and budget); the hierarchy never materializes rows itself. It admits
+the view through `require_bound(prolongation)`, which recomputes the content
+fingerprints of the plan and rows, and binds the view's `view_id` into its identity.
 After an accepted composite step, a changed selection conservatively restricts departing
 fine ownership and prolongs newly activated fine cells, certifies the old/new composite
 integral, commits geometry-matching coarse and fine successor epochs atomically, and
@@ -398,7 +406,16 @@ stores one typed `.route`: `PreparedCommonRefinement`, `MappedNestedRemapEvidenc
 `MappedSurfaceChartRemapEvidence`, or `RemapPreparationFailure`. Its `.evidence`
 exposes the evidence for that route; `.status` is a `CommonRefinementStatus`, and
 `.reason` describes the result. Its `.plan` is an
-`UnstructuredConservativeRemapPlan` only on `SUCCESS`.
+`UnstructuredConservativeRemapPlan` only on `SUCCESS`. Volume-material plans keep their
+chain factorized and materialize final-route CSR rows only through
+`prepare_csr_view(policy, budget=...)` (a `PreparedRemapCSRView` derived from the plan
+alone), which refuses with `LinearCapabilityError` before contributions, workspace,
+nonzeros, or output bytes exceed the policy. The policy's `max_nnz` and `max_bytes`
+bound the CSR payload. `max_workspace_bytes` caps the simultaneous composition,
+host/device row-conversion, output, and fingerprint-staging workspace. Each phase
+admits its actual capacity before allocation; a large policy ceiling is not itself
+reserved. The coordinate budget retains the whole view graph, including its plan,
+and credits buffers already retained by that budget.
 Geometric failures, coverage gaps, double coverage, and resource refusal are returned
 as statuses without a plan; a certified refinement that does not cover the
 finite-volume cell volumes within tolerance reports `COVERAGE_GAP` or
@@ -443,7 +460,8 @@ redistributed content, whether the slack sufficed, and limiter activation count,
 fraction, and minimum factor. `apply` is pure JAX and differentiates with respect to
 the field values and the stored overlap/centroid geometry for fixed combinatorics.
 
-For a frozen route graph, the first-order `apply_fixed_combinatorics` accepts dynamic
+For a frozen route graph, `plan.prepare_csr_view(policy)` returns a
+`PreparedRemapCSRView` whose first-order `apply_fixed_combinatorics` accepts dynamic
 intersection measures and source/target volumes. JVP/VJP therefore cover smooth
 coordinate changes that preserve every intersection route. A changed intersection
 graph, remesh choice, or failed coverage certificate is a discrete event and has no

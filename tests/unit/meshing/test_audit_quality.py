@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._fingerprint import tree_content_equal
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 from tests._support.audit_fixtures import (
@@ -101,7 +103,9 @@ def test_affine_quality_preserves_metrics_with_admitted_differential_reuse(
         )
     geometry = phx.discretization.CellGeometrySpec.affine(mesh)
     elements, routes, coordinates = geometry.resolve(mesh, budget=reference_budget)
-    source = elements[0]
+    source = owner.cell_geometry_owner.require_scalar_coordinate_element(
+        elements[0], "Affine quality test"
+    )
     values = coordinates[routes[0]]
     rule = owner._MappedQualityPlan(
         owner._mapped_quality_rule(kind, source),
@@ -112,10 +116,11 @@ def test_affine_quality_preserves_metrics_with_admitted_differential_reuse(
     actual = owner._mapped_block_quality(
         kind, source, values, None, budget=reference_budget, rule=rule
     )
-    # One earned differential also feeds canonical P1 tetrahedral face probes;
-    # their original normal arithmetic is retained without re-querying the map.
+    # Volume samples run the one sampled executable, so the audit cannot depend
+    # on budget presence. One earned differential feeds boundary angles and
+    # canonical P1 tetrahedral face probes without re-querying the map.
     expected_queries = values.shape[0] * (
-        rule.query_count if rule.faces and kind != "tetrahedron" else 1
+        rule.query_count if rule.faces and kind != "tetrahedron" else rule.volume[0].shape[0]
     )
     assert reference_budget.ticket.geometry_queries - before == expected_queries
     measured = owner._mapped_sample_worksets(kind, source, values, None, rule.volume)
@@ -1943,3 +1948,34 @@ def test_periodic_vertex_links_reject_two_tori_pinched_at_one_quotient_vertex() 
     assert not rejected.passed
     assert rejected.issues == ("nonmanifold_vertices",)
     assert dict(rejected.check_counts)["nonmanifold_vertices"] == 1
+
+
+def test_affine_tetrahedral_audit_values_do_not_depend_on_its_budget(
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    # A perturbed Kuhn lattice: publication audits under a request budget and
+    # renewal audits without one; every scientific value must agree bitwise.
+    side = 4
+    axis = np.arange(side + 1, dtype=np.float64)
+    grid = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
+    points = grid + 0.2 * np.random.default_rng(7).uniform(-1.0, 1.0, grid.shape)
+    index = np.arange(grid.shape[0]).reshape((side + 1,) * 3)
+    kuhn = ((0, 1, 3, 7), (0, 1, 5, 7), (0, 2, 3, 7), (0, 2, 6, 7), (0, 4, 5, 7), (0, 4, 6, 7))
+    cells = []
+    for i, j, k in np.ndindex(side, side, side):
+        corners = index[i : i + 2, j : j + 2, k : k + 2].transpose(2, 1, 0).reshape(-1)
+        cells.extend(corners[list(row)] for row in kuhn)
+    tetrahedra = np.asarray(cells, dtype=np.int64)
+    a, b, c, d = (points[tetrahedra[:, corner]] for corner in range(4))
+    negative = np.einsum("ij,ij->i", np.cross(b - a, c - a), d - a) < 0.0
+    tetrahedra[negative] = tetrahedra[negative][:, [0, 2, 1, 3]]
+    mesh = phx.discretization.CellMesh.from_tetrahedra(points, tetrahedra)
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+
+    budgeted = phx.meshing.audit_cell_mesh(
+        mesh, geometry, budget=coordinate_budget(100_000_000, 256 * 1024 * 1024)
+    )
+    unbudgeted = phx.meshing.audit_cell_mesh(mesh, geometry)
+
+    assert budgeted.passed
+    assert tree_content_equal(budgeted, unbudgeted)

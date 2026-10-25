@@ -14,7 +14,7 @@ An empty list denotes a success obligation recorded after its hypotheses hold.
 Coverage applies to the closed `MeshCertificateCheck` finding/obligation selector,
 not arbitrary descriptive strings in a certificate's `evaluated_checks` field.
 
-Closed checks: 284.
+Closed checks: 290.
 
 ## `analytic_boundary_bernstein_capacity`
 
@@ -1593,13 +1593,13 @@ Documentation: `phydrax.geometry._boundary_degree_embedding`.
 
 Hypotheses:
 
-- **N** — The bound validity certificate proves positive orientation and each closed cell map is injective; boundary pair proofs admit only shared contacts.
-- **X** — Every shared entity has one exact restriction and every boundary shell is ridge-linked and balanced.
-- **T** — Cancellation of identical interior traces makes the positive cell preimage count equal to the oriented boundary winding degree.
+- **N** — The bound validity certificate proves strictly positive full closed-cell Jacobians; the whole boundary is independently proved injective, by the generic closed-cell/contact route or an issued complete CAD isotopy.
+- **X** — Every shared entity has one exact restriction, interior facets pair oppositely, and every boundary shell is ridge-linked and balanced.
+- **T** — Cancellation makes the positive regular preimage count equal to boundary winding; a locally closed interior star has positive degree, excluding exceptional skeleton collisions without requiring closed-cell injectivity.
 
 Conclusion: Zero shell exterior degrees prove global injectivity; a nonzero certified shell exterior degree contradicts degree-one embedding.
 
-Citation (mathematical): [Lipman, Bijective Mappings of Meshes with Boundary and the Degree in Mesh Processing](https://arxiv.org/abs/1310.0955), Theorems 1 and 4; Section 3, cycle degree.
+Citation (mathematical): [Lipman, Bijective Mappings of Meshes with Boundary and the Degree in Mesh Processing](https://arxiv.org/abs/1310.0955), Theorems 1 and 4; Section 3, cycle degree; positive closed-star degree argument in MappedBoundaryDegreeEvidence.
 
 Failure statuses for this contract: `violated`
 
@@ -1703,6 +1703,26 @@ Hypotheses:
 Conclusion: The projected map and, through its nonsingular constant frame, the source cell map are injective on the closed cube. Unsupported domains and nonpositive certified minor bounds do not satisfy this proof.
 
 Citation (mathematical): [Gale and Nikaido, The Jacobian matrix and global univalence of mappings (1965)](https://doi.org/10.1007/BF01360282), Theorem 4, p. 86 (closed rectangular P-matrix global univalence).
+
+Failure statuses for this contract: none (success obligation)
+
+## `mapped_cad_boundary_homotopy_reuse`
+
+Failure statuses: none (success obligation)
+
+### `phydrax.geometry._boundary_degree_embedding._decide`
+
+Documentation: `phydrax.geometry._boundary_degree_embedding`.
+
+Hypotheses:
+
+- **X** — The independent source-chart issuer retains this exact complete homotopy report on this mesh object and unchanged live mesh/geometry/topology/limits; its target facets equal the entire current boundary.
+- **N** — The issued interval homotopy proves every full facet and same-owner/different-owner pair injective, all boundary links and traces conforming, synchronized-time separation, and source domain-side orientation.
+- **T** — The endpoint of the proved whole-boundary isotopy is an embedding modulo exactly the shared target entities.
+
+Conclusion: Import only whole-boundary injectivity; current positive full-cell Jacobians, all skeleton conformity, facet pairing and shell exterior degrees remain independent obligations.
+
+Citation (mathematical): [Hatcher, Algebraic Topology](https://pi.math.cornell.edu/~hatcher/AT/AT.pdf), Section 2.2, degree invariance under homotopy and sum of local degrees.
 
 Failure statuses for this contract: none (success obligation)
 
@@ -2286,6 +2306,22 @@ Citation (mathematical): [Gale and Nikaido, The Jacobian matrix and global univa
 
 Failure statuses for this contract: none (success obligation)
 
+### `phydrax.geometry._mapped_embedding._quadratic_rank_injective`
+
+Documentation: `phydrax.geometry._mapped_embedding._quadratic_rank_injective`.
+
+Hypotheses:
+
+- **X** — Every actual source coordinate expression is a polynomial without denominator of total degree at most two in the reference variables of an interval, triangle, tetrahedron, quadrilateral, hexahedron or prism, all of which are convex.
+- **N** — On every piece of a reference subdivision covering the closed cell, some maximal minor of the exact source Jacobian has rational Bernstein controls that are all strictly positive or all strictly negative, so the Jacobian has full column rank on the whole closed cell.
+- **T** — For such a map F the Jacobian is affine, so F(x) - F(y) = J((x + y) / 2)(x - y) with the midpoint in the cell; full column rank there makes the difference nonzero whenever x and y differ.
+
+Conclusion: The closed source cell map is injective; every visited rank piece counts in subdivision_pieces.
+
+Citation (mathematical): [Mathlib, Fundamental Theorem of Calculus](https://leanprover-community.github.io/mathlib4_docs/Mathlib/MeasureTheory/Integral/IntervalIntegral/FundThmCalculus.html#intervalIntegral.integral_eq_sub_of_hasDerivAt), intervalIntegral.integral_eq_sub_of_hasDerivAt, applied along the segment from y to x; the affine Jacobian integrates to its midpoint value.
+
+Failure statuses for this contract: none (success obligation)
+
 ### `phydrax.geometry._mapped_embedding.injective`
 
 Documentation: `phydrax.geometry._mapped_embedding`.
@@ -2539,6 +2575,22 @@ Conclusion: The source coordinate action is well-defined on the shared vertex, e
 Citation (definition): Mapped embedding proof and resource contract, phydrax.geometry._boundary_degree_embedding._shared_entity_conformity.
 
 Failure statuses for this contract: none (success obligation)
+
+### `phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets`
+
+Documentation: `phydrax.geometry._boundary_degree_embedding`.
+
+Hypotheses:
+
+- **X** — A just-issued complete exact facet-trace proof binds this same mesh, actual polynomial coordinate laws, canonical tetrahedron charts, cell objects, state and live budget; the full coefficient and topology signature is authenticated again.
+- **T** — For each shared vertex or oriented edge, actual paired facets containing that entity connect its incident cells. Restriction of an exact facet identity to that entity preserves identity, and equality propagates along the connected star.
+- **X** — Every disconnected star component is compared with the first incident cell by the original exact vertex evaluation or full edge restriction. Unsupported, rational and composed coordinate laws retain the original full proof.
+
+Conclusion: All original shared vertex and edge conformity obligations are earned, with representative vertex images and unchanged incidence counts; no report status or source identifier substitutes for a trace proof.
+
+Citation (mathematical): [Lean Language Reference, Propositional Equality](https://lean-lang.org/doc/reference/latest/Basic-Propositions/Propositional-Equality/), congrArg applied to restriction of functions, followed by Eq.trans along each connected incidence path.
+
+Failure statuses for this contract: `violated`
 
 ## `mapped_shell_exterior_degree`
 
@@ -3344,6 +3396,90 @@ Citation (definition): phydrax.geometry._periodic_embedding.certify_periodic_map
 
 Failure statuses for this contract: `violated`
 
+## `periodic_mapped_restriction_common_subcomplex`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_mapped_restriction.certify_periodic_mapped_restriction`
+
+Documentation: `phydrax.geometry._periodic_mapped_restriction`.
+
+Hypotheses:
+
+- **X** — The complete current source quotient embedding and positive source validity bind the actual source mesh and full coordinate maps. Source and target have the identical exact isometry group; current full target facet traces are rechecked under its actual actions.
+- **X** — The canonical nested-reference owner proves every exact affine child map, full oriented parent tiling and zero whole-map deviation, with complete source and target cell coverage.
+- **X** — Exact corner-weight keys are bijective with fine vertex IDs, retain every old corner identity and occur in every coarse cell incident on their minimal source stratum. Every unpaired fine quotient facet is a subdivision of an actual physical coarse boundary facet, never an unmatched interior or periodic-cut facet.
+- **N** — Current target full-cell validity is positive. The source material assignment and exact namespace are independently proved by canonical whole-domain coverage; paired reference pieces derive a target assignment. The prepared-publication owner separately binds that derived assignment to the actual target request.
+
+Conclusion: The fine complex is a common conforming subdivision of the coarse complex under every group action. Refinement subsets, or inverse exact unions, inherit source-image interior disjointness and common-subcomplex contacts; the derived target material assignment preserves the proved source assignment.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: subdivisions and the common-face intersection property, with the canonical oriented reference-chain tiling proof.
+
+Failure statuses for this contract: `unresolved`
+
+## `periodic_mapped_restriction_derived_region_assignment`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_mapped_restriction.certify_periodic_mapped_restriction`
+
+Documentation: `phydrax.geometry._periodic_mapped_restriction`.
+
+Hypotheses:
+
+- **X** — The complete current source quotient embedding and positive source validity bind the actual source mesh and full coordinate maps. Source and target have the identical exact isometry group; current full target facet traces are rechecked under its actual actions.
+- **X** — The canonical nested-reference owner proves every exact affine child map, full oriented parent tiling and zero whole-map deviation, with complete source and target cell coverage.
+- **X** — Exact corner-weight keys are bijective with fine vertex IDs, retain every old corner identity and occur in every coarse cell incident on their minimal source stratum. Every unpaired fine quotient facet is a subdivision of an actual physical coarse boundary facet, never an unmatched interior or periodic-cut facet.
+- **N** — Current target full-cell validity is positive. The source material assignment and exact namespace are independently proved by canonical whole-domain coverage; paired reference pieces derive a target assignment. The prepared-publication owner separately binds that derived assignment to the actual target request.
+
+Conclusion: The fine complex is a common conforming subdivision of the coarse complex under every group action. Refinement subsets, or inverse exact unions, inherit source-image interior disjointness and common-subcomplex contacts; the derived target material assignment preserves the proved source assignment.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: subdivisions and the common-face intersection property, with the canonical oriented reference-chain tiling proof.
+
+Failure statuses for this contract: `unresolved`
+
+## `periodic_mapped_restriction_parent_partition`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_mapped_restriction.certify_periodic_mapped_restriction`
+
+Documentation: `phydrax.geometry._periodic_mapped_restriction`.
+
+Hypotheses:
+
+- **X** — The complete current source quotient embedding and positive source validity bind the actual source mesh and full coordinate maps. Source and target have the identical exact isometry group; current full target facet traces are rechecked under its actual actions.
+- **X** — The canonical nested-reference owner proves every exact affine child map, full oriented parent tiling and zero whole-map deviation, with complete source and target cell coverage.
+- **X** — Exact corner-weight keys are bijective with fine vertex IDs, retain every old corner identity and occur in every coarse cell incident on their minimal source stratum. Every unpaired fine quotient facet is a subdivision of an actual physical coarse boundary facet, never an unmatched interior or periodic-cut facet.
+- **N** — Current target full-cell validity is positive. The source material assignment and exact namespace are independently proved by canonical whole-domain coverage; paired reference pieces derive a target assignment. The prepared-publication owner separately binds that derived assignment to the actual target request.
+
+Conclusion: The fine complex is a common conforming subdivision of the coarse complex under every group action. Refinement subsets, or inverse exact unions, inherit source-image interior disjointness and common-subcomplex contacts; the derived target material assignment preserves the proved source assignment.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: subdivisions and the common-face intersection property, with the canonical oriented reference-chain tiling proof.
+
+Failure statuses for this contract: `unresolved`
+
+## `periodic_mapped_restriction_source_embedding`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_mapped_restriction.certify_periodic_mapped_restriction`
+
+Documentation: `phydrax.geometry._periodic_mapped_restriction`.
+
+Hypotheses:
+
+- **X** — The complete current source quotient embedding and positive source validity bind the actual source mesh and full coordinate maps. Source and target have the identical exact isometry group; current full target facet traces are rechecked under its actual actions.
+- **X** — The canonical nested-reference owner proves every exact affine child map, full oriented parent tiling and zero whole-map deviation, with complete source and target cell coverage.
+- **X** — Exact corner-weight keys are bijective with fine vertex IDs, retain every old corner identity and occur in every coarse cell incident on their minimal source stratum. Every unpaired fine quotient facet is a subdivision of an actual physical coarse boundary facet, never an unmatched interior or periodic-cut facet.
+- **N** — Current target full-cell validity is positive. The source material assignment and exact namespace are independently proved by canonical whole-domain coverage; paired reference pieces derive a target assignment. The prepared-publication owner separately binds that derived assignment to the actual target request.
+
+Conclusion: The fine complex is a common conforming subdivision of the coarse complex under every group action. Refinement subsets, or inverse exact unions, inherit source-image interior disjointness and common-subcomplex contacts; the derived target material assignment preserves the proved source assignment.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: subdivisions and the common-face intersection property, with the canonical oriented reference-chain tiling proof.
+
+Failure statuses for this contract: `unresolved`
+
 ## `periodic_mapped_self_image_embedding`
 
 Failure statuses: none (success obligation)
@@ -3446,13 +3582,14 @@ Documentation: `phydrax.geometry._periodic_restriction`.
 
 Hypotheses:
 
-- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
-- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
-- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — A complete current certified quotient embedding fully bound to source mesh, topology, geometry layout, geometry and positive source validity, with the same exact isometry group identification as the target; every source and target lifted cell is a closed convex full-dimensional polytope.
+- **X** — In the recorded partition direction (refinement or inverse agglomeration), each child lies in its declared parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent. The source supplies parents for refinement and children for inverse agglomeration.
+- **X** — Exact rational child volumes sum to each parent's exact volume, every partition parent has at least one child, and all partition children are included exactly once.
 - **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — For inverse agglomeration the target exact source is a pure vertex selection of the current source with matching global vertex IDs and exact source-query coordinates. In each declared group interior signed source-face loops cancel exactly and the remaining loops equal the complete target boundary subcomplex, with multiplicity one; association admission separately proves same-region source parents.
 - **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
 
-Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+Conclusion: The children partition every parent exactly in the recorded direction; refinement or inverse unions preserve source-image interior disjointness and quotient coverage. With independently proved strong boundary subdivisions and reciprocal lifted faces every target-image intersection is a common subcomplex, so the target quotient map is embedded without image-pair enumeration.
 
 Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
 
@@ -3468,13 +3605,14 @@ Documentation: `phydrax.geometry._periodic_restriction`.
 
 Hypotheses:
 
-- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
-- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
-- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — A complete current certified quotient embedding fully bound to source mesh, topology, geometry layout, geometry and positive source validity, with the same exact isometry group identification as the target; every source and target lifted cell is a closed convex full-dimensional polytope.
+- **X** — In the recorded partition direction (refinement or inverse agglomeration), each child lies in its declared parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent. The source supplies parents for refinement and children for inverse agglomeration.
+- **X** — Exact rational child volumes sum to each parent's exact volume, every partition parent has at least one child, and all partition children are included exactly once.
 - **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — For inverse agglomeration the target exact source is a pure vertex selection of the current source with matching global vertex IDs and exact source-query coordinates. In each declared group interior signed source-face loops cancel exactly and the remaining loops equal the complete target boundary subcomplex, with multiplicity one; association admission separately proves same-region source parents.
 - **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
 
-Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+Conclusion: The children partition every parent exactly in the recorded direction; refinement or inverse unions preserve source-image interior disjointness and quotient coverage. With independently proved strong boundary subdivisions and reciprocal lifted faces every target-image intersection is a common subcomplex, so the target quotient map is embedded without image-pair enumeration.
 
 Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
 
@@ -3490,13 +3628,14 @@ Documentation: `phydrax.geometry._periodic_restriction`.
 
 Hypotheses:
 
-- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
-- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
-- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — A complete current certified quotient embedding fully bound to source mesh, topology, geometry layout, geometry and positive source validity, with the same exact isometry group identification as the target; every source and target lifted cell is a closed convex full-dimensional polytope.
+- **X** — In the recorded partition direction (refinement or inverse agglomeration), each child lies in its declared parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent. The source supplies parents for refinement and children for inverse agglomeration.
+- **X** — Exact rational child volumes sum to each parent's exact volume, every partition parent has at least one child, and all partition children are included exactly once.
 - **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — For inverse agglomeration the target exact source is a pure vertex selection of the current source with matching global vertex IDs and exact source-query coordinates. In each declared group interior signed source-face loops cancel exactly and the remaining loops equal the complete target boundary subcomplex, with multiplicity one; association admission separately proves same-region source parents.
 - **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
 
-Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+Conclusion: The children partition every parent exactly in the recorded direction; refinement or inverse unions preserve source-image interior disjointness and quotient coverage. With independently proved strong boundary subdivisions and reciprocal lifted faces every target-image intersection is a common subcomplex, so the target quotient map is embedded without image-pair enumeration.
 
 Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
 
@@ -3752,6 +3891,7 @@ Hypotheses:
 
 - **N** — Outward field and gradient intervals cover each reference-triangle image; its distance bound is at most the requested tolerance and reach-tube radius, and its normal derivative lower bound is strictly positive.
 - **T** — For a sphere source f(y) = |y - c| - R, convexity of the Euclidean norm bounds f on an exact affine piece below by the center's distance to its plane and above by its largest corner distance; field intervals may intersect this with the coordinate-box enclosure.
+- **T** — For the current ring-torus f=|(rho-R,z)|-r, 0<L=r-band<U=r+band<R makes B_a=|p|^2+R^2-a^2 strictly positive. Thus F_U=B_U^2-4R^2*rho^2<=0 and F_L>=0 are equivalent to the full closed band L<=|(rho-R,z)|<=U; exact simplex Bernstein controls may prove both inequalities over an entire affine piece. This tightens field intervals only and does not establish normal orientation.
 - **N** — The source profile recomputes signed-distance and positive-reach bounds from the current sphere or ring-torus state; its tube radius is strictly below that reach.
 - **T** — Within positive reach, nearest-point projection is unique and continuous; the qualified smooth source tube has normal fibers and positive-normal surface maps give local covers.
 
@@ -4108,6 +4248,23 @@ Conclusion: Unequal known requested and achieved region integrals violate domain
 Citation (mathematical): [John K. Hunter, Notes on Partial Differential Equations](https://www.math.ucdavis.edu/~hunter/m218a_09/pde_notes.pdf), Theorems 1.38 (change of variables) and 1.40 (divergence theorem), sections 1.11-1.12.
 
 Failure statuses for this contract: `violated`
+
+### `phydrax.geometry._domain_coverage._execute_nested_coverage`
+
+Documentation: `phydrax.geometry._domain_coverage`.
+
+Hypotheses:
+
+- **X** — The complete oriented source coverage was actually issued for the current full source mesh, geometry, domain, material assignment, embedding and policy, and its complete report content is authenticated.
+- **X** — The current explicit ledger earned the final target embedding after the existing exact contained-positive parent partition, complete lower-dimensional source stars, full facet cancellation and source-global boundary closure; reconstructed reports and other ledgers confer no authority.
+- **X** — Source parents have the canonical P1 corner law; every current target cell names its actual ordered source parent and inherits exactly that parent's declared region.
+- **N** — Every exterior or material-interface target facet is bound on all incident sides to one actual source facet. Transported source relations retain only conservative candidate upper bounds, never measured child areas or final membership verdicts.
+
+Conclusion: The exact closed regional partition preserves every declared region and its oriented exterior/interface boundary, so the issued source integrals and complete source cover transfer to the current target with fresh work evidence and explicit source/partition premises. Every surviving regional boundary lies on a covered source-parent facet; source-supported child-face enumeration is therefore complete without traversing canceled same-region target interiors again.
+
+Citation (mathematical): [John K. Hunter, Notes on Partial Differential Equations](https://www.math.ucdavis.edu/~hunter/m218a_09/pde_notes.pdf), Theorems 1.38 and 1.40: change of variables and cancellation of oriented internal boundaries, with the existing closed-cell parent-partition theorem.
+
+Failure statuses for this contract: none (success obligation)
 
 ## `restriction_affine_root:boundary_contact`
 
@@ -4665,6 +4822,27 @@ Citation (definition): phydrax.geometry._restricted_embedding._straight_multi_af
 
 Failure statuses for this contract: `unresolved`
 
+## `restriction_parent_partition`
+
+Failure statuses: none (success obligation)
+
+### `phydrax.geometry._restricted_embedding.nested_parent_partition`
+
+Documentation: `phydrax.geometry._restricted_embedding`.
+
+Hypotheses:
+
+- **X** — The imported source embedding is authenticated as in root-union reuse, is certified with boundary contacts on an affine scope, and binds positive source validity; the source carries no restriction of its own.
+- **X** — Every target simplex is an exact degree-one barycentric chart of a declared source parent with matching ordered corner identities, nonnegative rows and positive determinant; each parent's child determinants sum to one.
+- **X** — Either parent-local facet pairing, outward source-facet containment and exact per-facet normalized measure one are proved explicitly, or an equal immutable source coefficient bank, identical cardinal roots and exact parent routes bind all child maps, a clean positive global chain cancels every paired full physical facet, and all unpaired facets are outward on source-global boundary facets with exact normalized boundary measure one. Source-parent interiors are connected.
+- **X** — Exact target vertex images equal their source barycentric-key images, by direct evaluation or by the bound shared bank and canonical whole-route corner coherence. Keys and target vertices correspond one to one. Every source edge/facet interior point belongs to its complete source star, explicitly or through the parent-local facet proof; these closed-cell obligations exclude contacts invisible to almost-everywhere volume multiplicity.
+
+Conclusion: By the degree-one argument the children tile each parent with disjoint interiors and the target tiles the embedded source conformingly, so every target boundary contact is a shared entity of a conforming subdivision of the certified source boundary. Any absent or failed premise retains the full pairwise boundary-contact proof.
+
+Citation (definition): Brouwer degree of an oriented simplicial chain, constant degree off the chain boundary; exact parent partition.
+
+Failure statuses for this contract: none (success obligation)
+
 ## `restriction_reference_domain`
 
 Failure statuses: `unresolved`
@@ -5206,6 +5384,8 @@ Documentation: `phydrax.geometry._source_fidelity`.
 Hypotheses:
 
 - **N** — Outward native source and exact target polynomial intervals certify continuous deviation including original-face-to-representative ribbon bounds, rank-two projected Jacobians, edge-atlas monotonicity, vertex-cone separation and synchronized-time separation of every nonadjacent pair throughout the closed-boundary homotopy.
+- **N** — A fixed separator on each vertex-pair time slab admits every closed reference leaf by strict one-sided directional derivatives or by a strict outward relative-image halfspace bound. Leaves containing the common vertex retain the derivative test; relative images subtract the actual completed moving vertex before time interpolation.
+- **T** — Along a segment from the common vertex, derivative-certified leaves increase signed displacement and image-certified leaves prove it positive directly. Absolute continuity across the finite convex cover propagates strict positivity away from the vertex; the authenticated trace supplies the same moving vertex on both cells.
 - **X** — Exact shared representative and target traces glue the complete oriented chart chain to the complete target boundary, without unidentified contacts or omitted authored patches; original nonzero incidences remain bounded ribbons under their unchanged import/model allowance.
 - **T** — A continuous family of embeddings of a closed oriented boundary preserves its degree off the swept image; oriented incidence ribbons preserve the represented region side off their support. Complete oriented chart boundaries and nonzero chart Jacobians give degree-one coverage of the bounded trimmed parameter domains.
 
@@ -5595,6 +5775,23 @@ Conclusion: Equal projected measure of contained compact images establishes cove
 Citation (mathematical): [John K. Hunter, Measure Theory (2011)](https://www.math.ucdavis.edu/~hunter/measure_theory/measure_notes.pdf), Definitions 1.1 and 1.9; sections 2.2 and 2.6 (rectangle measure and open-set rectangle covers).
 
 Failure statuses for this contract: `violated`
+
+### `phydrax.geometry._domain_coverage._execute_nested_coverage`
+
+Documentation: `phydrax.geometry._domain_coverage`.
+
+Hypotheses:
+
+- **X** — The complete oriented source coverage was actually issued for the current full source mesh, geometry, domain, material assignment, embedding and policy, and its complete report content is authenticated.
+- **X** — The current explicit ledger earned the final target embedding after the existing exact contained-positive parent partition, complete lower-dimensional source stars, full facet cancellation and source-global boundary closure; reconstructed reports and other ledgers confer no authority.
+- **X** — Source parents have the canonical P1 corner law; every current target cell names its actual ordered source parent and inherits exactly that parent's declared region.
+- **N** — Every exterior or material-interface target facet is bound on all incident sides to one actual source facet. Transported source relations retain only conservative candidate upper bounds, never measured child areas or final membership verdicts.
+
+Conclusion: The exact closed regional partition preserves every declared region and its oriented exterior/interface boundary, so the issued source integrals and complete source cover transfer to the current target with fresh work evidence and explicit source/partition premises. Every surviving regional boundary lies on a covered source-parent facet; source-supported child-face enumeration is therefore complete without traversing canceled same-region target interiors again.
+
+Citation (mathematical): [John K. Hunter, Notes on Partial Differential Equations](https://www.math.ucdavis.edu/~hunter/m218a_09/pde_notes.pdf), Theorems 1.38 and 1.40: change of variables and cancellation of oriented internal boundaries, with the existing closed-cell parent-partition theorem.
+
+Failure statuses for this contract: none (success obligation)
 
 ## `undecided_boundary_facet`
 

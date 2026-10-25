@@ -43,6 +43,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import nonnegative_integer
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...typing import checked
 from .._atlas import BoundaryAtlas
@@ -121,7 +122,10 @@ DISCOVERY_DIRECTIONS = np.asarray(
     ),
     dtype=np.float64,
 )
-_SMALL_BOX_CHUNK = 256
+# One padded evaluation extent compiles one interval program per field, so a
+# box's enclosure never depends on the batch that carried it. Retained
+# discovery values are therefore reproduced bit for bit by later reproofs.
+_BOX_EVALUATION_ROWS = 256
 _AXES = 3
 _STRUCTURAL = frozenset(
     {
@@ -1295,6 +1299,17 @@ class AbstractFieldBounds(StrictModule):
         """Whether the source expression establishes spatial continuity."""
         return False
 
+    def box_query_count(self, count: int, /) -> int:
+        """Count every field evaluation used by a batch of box enclosures."""
+        count = nonnegative_integer(count, "field_bounds.box_count")
+        match self.enclosure:
+            case "interval":
+                return 2 * count
+            case "lipschitz":
+                return count * ((1 << self.dimension) + 2)
+            case "sampled":
+                return count * ((1 << self.dimension) + 1)
+
     def boxes(
         self,
         lower: np.ndarray,
@@ -1304,14 +1319,9 @@ class AbstractFieldBounds(StrictModule):
         budget: CoordinateEnclosureBudget | None = None,
     ) -> BoxBounds:
         """Value and gradient bounds of an explicitly counted host query."""
-        match self.enclosure:
-            case "interval":
-                queries = 2 * lower.shape[0]
-            case "lipschitz":
-                queries = lower.shape[0] * ((1 << self.dimension) + 2)
-            case "sampled":
-                queries = lower.shape[0] * ((1 << self.dimension) + 1)
-        with query_budget(budget, work_upper=0, queries_upper=queries) as query:
+        with query_budget(
+            budget, work_upper=0, queries_upper=self.box_query_count(lower.shape[0])
+        ) as query:
             return self._boxes(lower, upper, budget=query)
 
     @abstractmethod
@@ -1704,12 +1714,10 @@ class IntervalFieldBounds(AbstractFieldBounds, NonTrainableState):
         count = lower.shape[0]
         consume_queries(budget, count)
         parts: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
-        for start in range(0, count, BOX_CHUNK):
-            stop = min(start + BOX_CHUNK, count)
+        for start in range(0, count, _BOX_EVALUATION_ROWS):
+            stop = min(start + _BOX_EVALUATION_ROWS, count)
             size = stop - start
-            # Two padded bucket extents bound the compiled program count.
-            bucket = _SMALL_BOX_CHUNK if size <= _SMALL_BOX_CHUNK else BOX_CHUNK
-            padding = ((0, bucket - size), (0, 0))
+            padding = ((0, _BOX_EVALUATION_ROWS - size), (0, 0))
             result = program.evaluate(
                 jnp.asarray(np.pad(lower[start:stop], padding, mode="edge")),
                 jnp.asarray(np.pad(upper[start:stop], padding, mode="edge")),

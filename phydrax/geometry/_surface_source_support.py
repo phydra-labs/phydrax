@@ -2473,7 +2473,9 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
 
         with (
             budget.activate(),
-            budget.bound_stage(self.maximum_support_queries, 256 * 1024**2),
+            budget.bound_stage(
+                self.maximum_support_queries, budget.maximum_memory_bytes
+            ),
         ):
             for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
                 if block.cell_kind not in ("triangle", "quadrilateral"):

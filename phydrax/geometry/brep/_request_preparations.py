@@ -19,7 +19,11 @@ if TYPE_CHECKING:
         TrimRootEndpoint,
         TripleSurfaceIntersectionRoot,
     )
-    from ._intersection_curve import IntersectionCurve, IntersectionJetPreparation
+    from ._intersection_curve import (
+        IntersectionCurve,
+        IntersectionJetPreparation,
+        PreparedChartAtlas,
+    )
     from ._query_types import FaceCertificate
 
 
@@ -64,3 +68,7 @@ class TrimRequestPreparations:
     trim_source_arcs: dict[tuple[object, ...], TrimSourceArcs] = field(
         default_factory=dict
     )
+    # Concrete chart rows per retained intersection curve (``id`` of the curve
+    # the record strongly references), reused only while that curve's bank
+    # objects and immutable layouts are unchanged.
+    chart_atlases: dict[int, PreparedChartAtlas] = field(default_factory=dict)

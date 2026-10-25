@@ -19,6 +19,7 @@ from jax.sharding import PartitionSpec
 import phydrax as phx
 from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
+from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._cell_mesh import CellMesh, CellMeshStorage
 from phydrax.discretization._distributed_field import (
     DistributedHaloPlan,
@@ -26,6 +27,9 @@ from phydrax.discretization._distributed_field import (
 )
 from phydrax.discretization._distributed_preparation import replicated_host_array
 from phydrax.discretization._reference_cell_types import CellBlock
+from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 from phydrax.discretization.finite_volume._unstructured_dynamics import (
     execute_owner_local_finite_volume_advance,
     OwnerLocalFiniteVolumeExecution,
@@ -184,7 +188,9 @@ def _closure(problem: _Problem, part: int, parts: int) -> CellMesh:
     }
     edge_boundary = {key: len(cells) == 1 for key, cells in edges.items()}
     vertex_lookup = {int(value): row for row, value in enumerate(vertex_ids)}
-    local_edges = np.asarray(probe.connectivity.edges)
+    connectivity = probe.connectivity
+    assert isinstance(connectivity, PolygonalConnectivity)
+    local_edges = np.asarray(connectivity.edges)
     local_ids = vertex_ids[local_vertices]
     edge_keys = [
         frozenset(vertex_lookup[int(local_ids[corner])] for corner in edge)
@@ -302,7 +308,11 @@ def _advance_and_compare(
     zero_density: bool,
 ) -> dict[str, Any]:
     """Advance, differentiate and refuse a zero density against the serial mesh."""
-    geometries = tuple(program.discretization for program in programs)
+    geometries: list[UnstructuredFiniteVolumeDiscretization] = []
+    for program in programs:
+        geometry = program.discretization
+        assert isinstance(geometry, UnstructuredFiniteVolumeDiscretization)
+        geometries.append(geometry)
     rows = tuple(
         np.asarray([problem.rows[int(value)] for value in np.asarray(g.cell_global_ids)])
         for g in geometries

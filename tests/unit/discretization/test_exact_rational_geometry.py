@@ -6,6 +6,7 @@ import sys
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
+from typing import NoReturn
 
 import equinox as eqx
 import jax
@@ -259,7 +260,7 @@ def test_geometry_restore_reproves_exact_source_on_actual_budget(
     source = geometry.exact_source
     assert isinstance(source, ExactRationalCellGeometrySource)
 
-    def forbid_preparation(*args, **kwargs):
+    def forbid_preparation(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("explicit restoration must not open a helper preparation")
 
     monkeypatch.setattr(

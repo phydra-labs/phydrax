@@ -418,7 +418,6 @@ def mapped_edge_evidence(
         lengths = family_host_array((edge_count,), np.float64, scope=scope)
         lower = family_host_array(lengths.shape, np.float64, scope=scope)
         upper = family_host_array(lengths.shape, np.float64, scope=scope)
-        lengths.fill(np.nan)
         remaining = scope.remaining()
         work = min(limits.maximum_work_units, remaining.remaining_work_units)
         scratch = min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes)
@@ -446,13 +445,42 @@ def mapped_edge_evidence(
                 ledger.bound_stage(work, scratch)
                 if ticket is not None
                 else nullcontext(),
+                scope.host_workspace() as rows_workspace,
             ):
+                # Coverage fill and check, edge-row transfer, and one key
+                # conversion, sort and insertion per edge.
+                count_geometry_queries(0, work_units=9 * edge_count, budget=ledger)
+                lengths.fill(np.nan)
                 edges = entities(mesh, 1)
                 lookup = {
                     tuple(sorted(pair.tolist())): row for row, pair in enumerate(edges)
                 }
                 elements, routes, _ = geometry.resolve(mesh, budget=ledger)
                 coefficients = geometry.source_coordinates(budget=ledger)
+                # Corner and route transfers and conversions, then one key sort,
+                # lookup and coverage test per cell-edge incidence.
+                count_geometry_queries(
+                    0,
+                    work_units=sum(
+                        2 * block.vertices.size
+                        + 2 * np.size(route)
+                        + 3
+                        * block.cell_count
+                        * len(reference_cell_topology(block.cell_kind).entities[1])
+                        for block, route in zip(mesh.blocks, routes, strict=True)
+                    ),
+                    budget=ledger,
+                )
+                # One block's host corner and route rows, under the active
+                # ticket's storage.
+                rows_workspace.set_bound(
+                    8
+                    * max(
+                        block.vertices.size + np.size(route)
+                        for block, route in zip(mesh.blocks, routes, strict=True)
+                    )
+                    + 4096
+                )
                 for block, element, route in zip(
                     mesh.blocks, elements, routes, strict=True
                 ):
@@ -570,6 +598,9 @@ def _compliance(
             # vertex ratio temporary.
             retained = 16 * edge_count
             workspace.set_bound(retained + 8 * vertex_count + 4096)
+            # Two vertex fills, four incident scatters, the ratio and its
+            # maximum, and the two bound extrema.
+            scope.charge(work=6 * edge_count + 4 * vertex_count)
             minimum = family_host_array((vertex_count,), np.float64, scope=scope)
             maximum = family_host_array(minimum.shape, np.float64, scope=scope)
             minimum.fill(np.inf)
@@ -602,12 +633,26 @@ def _compliance(
                 retained + 32 * edge_count * ambient + 16 * edge_count
                 + 48 * vertex_count + 4096
             )
+            # Edge-row and coordinate transfers; chord gathers, differences
+            # and norms; then length checks, incident scatters and the vertex
+            # extrema, masks, gathers and ratios of the growth evidence.
+            scope.charge(
+                work=edge_count * (5 * ambient + 13) + vertex_count * (ambient + 9)
+            )
             edges = np.asarray(source_edges, dtype=np.int64)
             lengths, growth = edge_size_evidence(
                 np.asarray(mesh.coordinates, dtype=np.float64), edges
             )
             lower, upper = lengths, lengths
         workspace.set_bound(retained + 16 * edge_count + 4096)
+        # Each evaluated length bank takes its extrema twice and one copy and
+        # selection per target statistic.
+        scope.charge(
+            work=len(specification.size_controls)
+            * (1 if lower is lengths else 3)
+            * edge_count
+            * (4 + 3 * len(specification.size_compliance.target_statistics))
+        )
         for control in specification.size_controls:
             match control:
                 case UniformSizeControl():
@@ -766,6 +811,8 @@ def _cell_regions(
         )
     regions = {name: index for index, name in enumerate(domain.region_ids)}
     cells = sum(block.cell_count for block in mesh.blocks)
+    # One region fill and one concatenation copy per cell.
+    scope.charge(work=2 * cells)
     with scope.host_workspace() as workspace:
         # Per-block region rows coexist until their concatenation.
         workspace.set_bound(8 * cells + 4096)
@@ -800,6 +847,12 @@ def _controlled_organization(
         )
     mesh = result.mesh
     cells = regions.size
+    region_count = len(domain.region_ids)
+    # Cell-ID transfer and conversion, one mask and one selection per region,
+    # and validation of every zone's selected rows.
+    scope.charge(
+        work=cells * (2 + 2 * region_count) + cells * (cells.bit_length() + 2)
+    )
     with scope.host_workspace() as workspace:
         # Converted cell IDs, one region mask and every zone's selected rows.
         workspace.set_bound(17 * cells + 4096)
@@ -814,12 +867,23 @@ def _controlled_organization(
         else 0
     )
     sources = tuple(
-        np.asarray(control.scope.entity_ids).size
-        for control in specification.patch_controls
+        np.size(control.scope.entity_ids) for control in specification.patch_controls
     )
     patch_rows = sum(
-        np.asarray(patch.scope.global_entity_ids).size for patch in result.patches
+        np.size(patch.scope.global_entity_ids) for patch in result.patches
     ) + overlaps * len(sources)
+    patch_count = len(result.patches) + len(sources)
+    # Overlap masks and face grouping; per control its source rows, incidences,
+    # one face-group scan, and the sorted, validated selection; per region one
+    # patch scan, and each patch's rows are united and sorted for at most its
+    # two adjacent regions.
+    scope.charge(
+        work=12 * overlaps
+        + sum(6 * size for size in sources)
+        + len(sources) * overlaps * (overlaps.bit_length() + 4)
+        + region_count * patch_count
+        + 2 * patch_rows * (patch_rows.bit_length() + 3)
+    )
     with scope.host_workspace() as workspace:
         # CPython face groups of at most 400 bytes per overlap row, source sets
         # of at most 72 bytes per source row, selected face rows, and one label
@@ -1167,6 +1231,14 @@ def execute_structured_route(
             for construction in constructions
         }
         largest = max(b.vertices.size for b in combined.mesh.blocks)
+        cell_count = sum(b.cell_count for b in combined.mesh.blocks)
+        # Per corner its transfer and conversion, two index operations per
+        # logical axis, the stack and the narrowing; each block's cell scope
+        # validates its identities.
+        scope.charge(
+            work=entries * (2 + 4 * rank)
+            + cell_count * (cell_count.bit_length() + 2)
+        )
         with scope.host_workspace() as attribute_workspace:
             # Converted corners, unravelled axes and their stacked bank coexist
             # per block; the narrowed attribute is admitted by the preflight.
@@ -1333,10 +1405,23 @@ def execute_sweep_route(
         profile_vertices_count = prepared.profile.coordinates.shape[0]
         measured = construction.measured_layer_thicknesses
         transient = 0
+        # Profile-ID transfer and conversion and the column-step minimum.
+        attribute_work = profile_vertices_count * (2 + layers)
         for profile_block in prepared.profile.blocks:
             cells = profile_block.cell_count
             corners = profile_block.vertices.size
             transient = max(transient, 16 * corners + 20 * layers + 8 * cells)
+            swept = layers * cells
+            # Corner transfer, conversion, gather and layered tiling; layer,
+            # cell-ID and station-pair banks; and the swept cell scope.
+            attribute_work += (
+                corners * (3 + 2 * layers)
+                + 3 * layers
+                + 2 * cells
+                + 4 * swept
+                + swept * (swept.bit_length() + 2)
+            )
+        scope.charge(work=attribute_work)
         with scope.host_workspace() as attribute_workspace:
             # Converted profile vertex IDs stay live; each block's converted and
             # gathered corners, layer range, station pairs and converted cell IDs

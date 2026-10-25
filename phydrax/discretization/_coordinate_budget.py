@@ -259,6 +259,40 @@ class CoordinateEnclosureResourceError(ValueError):
             )
 
 
+class CoordinateTemporaryStorage:
+    """Authentic unowned bytes admitted inside one active temporary scope."""
+
+    @checked
+    def __init__(self, budget: CoordinateEnclosureBudget, /) -> None:
+        self._budget = budget
+        self._starting_temporary = budget.temporary_bytes_upper
+        self._starting_live = budget._live_bytes_upper
+        self._closed = False
+
+    @property
+    def available_bytes(self) -> int:
+        if self._closed:
+            raise RuntimeError(
+                "CoordinateTemporaryStorage.available_bytes requires an active scope; "
+                "got a closed scope."
+            )
+        budget = self._budget
+        if (
+            not budget._temporary_scopes
+            or budget._temporary_scopes[-1] is not self
+        ):
+            raise RuntimeError(
+                "CoordinateTemporaryStorage.available_bytes requires the active "
+                "innermost scope."
+            )
+        return max(
+            0,
+            budget.temporary_bytes_upper
+            - self._starting_temporary
+            - (budget._live_bytes_upper - self._starting_live),
+        )
+
+
 class CoordinateLiveStorage:
     """Track a live storage bound until its explicit release."""
 
@@ -299,6 +333,61 @@ class CoordinateLiveStorage:
             if work:
                 budget.reserve(work)
             budget.release_temporary_storage(-delta)
+        budget._live_bytes_upper += delta
+        self.bound = total_bytes_upper
+
+    def promote_temporary_storage(
+        self,
+        source: CoordinateTemporaryStorage,
+        total_bytes_upper: int,
+        /,
+    ) -> None:
+        """Reclassify this scope's admitted temporary bytes as live, without readmission."""
+        if self._closed:
+            raise RuntimeError(
+                "CoordinateLiveStorage.promote_temporary_storage requires an open "
+                "destination owner."
+            )
+        if not isinstance(source, CoordinateTemporaryStorage):
+            raise TypeError(
+                "CoordinateLiveStorage.source must be an active "
+                f"CoordinateTemporaryStorage; got {source!r}."
+            )
+        if source._budget is not self._budget:
+            raise ValueError(
+                "CoordinateLiveStorage.source must belong to the destination budget."
+            )
+        budget = self._budget
+        if budget._storage_handed_over:
+            raise RuntimeError(
+                "CoordinateLiveStorage promotion must precede retained-storage handover."
+            )
+        if (
+            source._closed
+            or not budget._temporary_scopes
+            or budget._temporary_scopes[-1] is not source
+        ):
+            raise RuntimeError(
+                "CoordinateLiveStorage.source must be the active innermost temporary scope."
+            )
+        if isinstance(total_bytes_upper, bool) or not isinstance(total_bytes_upper, int):
+            raise TypeError(
+                "CoordinateLiveStorage.total_bytes_upper must be an explicit integer; "
+                f"got {total_bytes_upper!r}."
+            )
+        if total_bytes_upper < self.bound:
+            raise ValueError(
+                "CoordinateLiveStorage.total_bytes_upper must not shrink during "
+                "promotion; "
+                f"got {total_bytes_upper} < {self.bound}."
+            )
+        delta = total_bytes_upper - self.bound
+        available = source.available_bytes
+        if delta > available:
+            raise RuntimeError(
+                "CoordinateLiveStorage promotion must fit the current temporary "
+                f"source credit; got amount={delta}, available={available}."
+            )
         budget._live_bytes_upper += delta
         self.bound = total_bytes_upper
 
@@ -426,6 +515,7 @@ class CoordinateEnclosureBudget:
         self.retained_basis_bytes = 0
         self.temporary_bytes_upper = 0
         self._live_bytes_upper = 0
+        self._temporary_scopes: list[CoordinateTemporaryStorage] = []
         self.peak_bytes_upper = 0
         self._measurements: list[CoordinateEnclosureMeasurement] = []
         self._evidence_measurements: list[CoordinateEnclosureMeasurement] = []
@@ -572,8 +662,8 @@ class CoordinateEnclosureBudget:
         self.loop_triangulation_cache: dict[
             tuple[tuple[Fraction, ...], ...], tuple[tuple[int, int, int], ...]
         ] = {}
-        # Exact star tetrahedron corners -> signed cofactor determinant.
-        self.star_determinant_cache: dict[tuple[tuple[Fraction, ...], ...], Fraction] = {}
+        # Packed complete exact corners -> signed cofactor determinant.
+        self.star_determinant_cache: dict[bytes, Fraction] = {}
         self.exact_triangle_contact_preparation: TriangleContactPreparation | None = None
         self.affine_cell_corner_images_cache: MutableMapping[
             _AffineCellImageKey, CoordinateSourceBank
@@ -927,7 +1017,12 @@ class CoordinateEnclosureBudget:
             # The live scope owner preadmits this whole bound below, without
             # releasing its old leases or borrowing a fresh byte allowance.
             stage_storage = 0
-        if work > ticket.remaining_work_units or stage_storage > ticket.bytes_upper:
+        # The current contributor already owns its live bound. Rebinding creates
+        # a zero-bound contributor, so only growth needs another capacity query.
+        if work > ticket.remaining_work_units or (
+            stage_storage > self._work_storage.bound
+            and stage_storage > ticket.bytes_upper
+        ):
             ticket.refuse(work, bytes_upper=stage_storage)
 
     def reserve(
@@ -1109,6 +1204,53 @@ class CoordinateEnclosureBudget:
                 or completed_storage > storage_limit,
             )
         self._admit_ticket(maximum_work, proposed_storage)
+
+    @property
+    def remaining_work_units(self) -> int:
+        """Unspent work intersected with the current stage and actual ticket."""
+        limit = self.maximum_work_units
+        if self._stage_work_bounds:
+            limit = min(limit, self._stage_work_bounds[-1])
+        return max(0, min(limit - self.work_units, self._ticket.remaining_work_units))
+
+    @property
+    def remaining_memory_bytes(self) -> int:
+        """Additional coordinate storage allowed by the current stage."""
+        limit = self.maximum_memory_bytes
+        if self._stage_memory_bounds:
+            limit = min(limit, self._stage_memory_bounds[-1])
+        return max(0, limit - self.retained_basis_bytes - self.temporary_bytes_upper)
+
+    def record_native_work(self, work: int, /) -> None:
+        """Record a native operation's completed work without debiting it twice.
+
+        A native-backed caller must execute under ``ticket.native_target()``.
+        Its native operation already debits that ticket; a host-only ticket
+        instead receives its charge here. Callers pass the effective remaining
+        allowance before execution and record partial work on native refusal.
+        """
+        work = nonnegative_integer(work, "CoordinateEnclosureBudget.native_work")
+        if not self._ticket.native_accounting:
+            self.reserve(work)
+            return
+        if self._storage_handed_over:
+            raise RuntimeError(
+                "CoordinateEnclosureBudget.record_native_work must precede "
+                "retained-storage handover; got a detached ledger."
+            )
+        proposed = self.work_units + work
+        self.required_work_units = max(self.required_work_units, proposed)
+        for measurement in self._measurements:
+            measurement._observe_requirement(proposed)
+        limit = self.maximum_work_units
+        if self._stage_work_bounds:
+            limit = min(limit, self._stage_work_bounds[-1])
+        if proposed > limit:
+            raise CoordinateEnclosureResourceError(
+                "coefficient_work", limit, proposed, self.work_units
+            )
+        self.work_units = proposed
+        self.native_charged_work_units += work
 
     def degree_one_coordinate_element(self, cell_kind: str, /) -> FiniteElementSpec:
         """Retain one declared degree-one reference element per request and cell kind."""
@@ -1364,10 +1506,24 @@ class CoordinateEnclosureBudget:
                 )
         return seen, size
 
-    def live_object_storage_upper(self, value: object, /) -> int:
-        """Measure a live object graph without retaining it after traversal."""
+    def live_object_storage_upper(
+        self, value: object, /, *, include_retained: bool = False
+    ) -> int:
+        """Measure a live graph, optionally reusing already-retained owner identities."""
+        if not isinstance(include_retained, bool):
+            raise TypeError(
+                "CoordinateEnclosureBudget.include_retained must be a Boolean; "
+                f"got {include_retained!r}."
+            )
+        existing: Mapping[int, object] = (
+            ChainMap(self.retained_objects, self.retained_owner_objects)
+            if include_retained
+            else {}
+        )
         with self.temporary_scope():
-            _, size = self._object_storage_profile(value, {}, retained=False)
+            _, size = self._object_storage_profile(
+                value, existing, retained=False
+            )
         return size
 
     def retain_basis(
@@ -1938,26 +2094,48 @@ class CoordinateEnclosureBudget:
                 primary.add_note(f"Coordinate live-storage release also refused: {error}")
 
     @contextmanager
-    def temporary_scope(self) -> Iterator[None]:
+    def temporary_scope(self) -> Iterator[CoordinateTemporaryStorage]:
+        """Release scoped scratch, yielding its authentic unowned-byte credit."""
         prior = self.temporary_bytes_upper
         prior_live = self._live_bytes_upper
+        scope = CoordinateTemporaryStorage(self)
+        self._temporary_scopes.append(scope)
         primary: BaseException | None = None
         try:
-            yield
+            yield scope
         except BaseException as error:
             primary = error
             raise
         finally:
-            remaining = prior + self._live_bytes_upper - prior_live
-            try:
-                self._set_host_storage(self.retained_basis_bytes + remaining)
-                self.temporary_bytes_upper = remaining
-            except BaseException as error:
-                if primary is None:
-                    raise
-                primary.add_note(
-                    f"Coordinate temporary-storage release also refused: {error}"
+            if not self._temporary_scopes or self._temporary_scopes[-1] is not scope:
+                # A rejected outer close must not release a still-live inner
+                # scope. Its orphaned baseline stays conservatively admitted.
+                for index, active in enumerate(self._temporary_scopes):
+                    if active is scope:
+                        del self._temporary_scopes[index]
+                        break
+                scope._closed = True
+                error = RuntimeError(
+                    "CoordinateEnclosureBudget.temporary_scope must close in "
+                    "last-in-first-out order."
                 )
+                if primary is None:
+                    raise error
+                primary.add_note(f"Coordinate temporary-storage release also refused: {error}")
+            else:
+                remaining = prior + self._live_bytes_upper - prior_live
+                try:
+                    self._set_host_storage(self.retained_basis_bytes + remaining)
+                    self.temporary_bytes_upper = remaining
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        f"Coordinate temporary-storage release also refused: {error}"
+                    )
+                finally:
+                    self._temporary_scopes.pop()
+                    scope._closed = True
 
     @property
     def current_measurement(self) -> CoordinateEnclosureMeasurement:

@@ -31,6 +31,30 @@ def _bind_to_launcher(launcher: int, /) -> None:
         if libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
             error = ctypes.get_errno()
             raise OSError(error, f"prctl(PR_SET_PDEATHSIG) failed: {os.strerror(error)}")
+    elif sys.platform == "darwin":
+        import select
+        from threading import Thread
+
+        queue = select.kqueue()
+        queue.control(
+            [select.kevent(
+                launcher, filter=select.KQ_FILTER_PROC,
+                flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                fflags=select.KQ_NOTE_EXIT,
+            )],
+            0, 0,
+        )
+
+        def terminate_with_launcher() -> None:
+            try:
+                queue.control(None, 1, None)
+            finally:
+                queue.close()
+            os.kill(os.getpid(), signal.SIGKILL)
+
+        Thread(
+            target=terminate_with_launcher, name="cold-launcher-lifetime", daemon=True,
+        ).start()
     # The launcher may have died before the binding existed.
     if os.getppid() != launcher:
         raise RuntimeError(

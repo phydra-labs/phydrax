@@ -81,6 +81,7 @@ from ..geometry._chart_restriction import (
     validate_chart_restrictions,
 )
 from ..geometry._rational import fraction_down, fraction_up
+from ..geometry.brep._request_preparations import TrimRequestPreparations
 from ..typing import checked
 from ._measurements import (
     measure_phase,
@@ -620,8 +621,14 @@ def _measure_curve_ribbons(
     /,
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
 ) -> _CurveSplit:
-    """Measure new trim ribbons and refuse a repeatedly stagnant local bound."""
+    """Measure new trim ribbons and refuse a repeatedly stagnant local bound.
+
+    ``preparations`` is the curve request's mapping: endpoint-root contractions
+    and interval programs are deterministic functions of immutable sources, so
+    every round and incident use reuses them instead of re-deriving them.
+    """
     owner = constraints.owner
     points, known, ribbons = state.points, state.known, state.ribbons
     previous_ribbons, stagnant_ribbons = state.previous_ribbons, state.stagnant_ribbons
@@ -654,6 +661,7 @@ def _measure_curve_ribbons(
                 points[order],
                 intervals=values.size - 2 - measured if reversed_use else measured,
                 budget=budget,
+                preparations=preparations,
             )
         local = ribbons[use_row]
         local_split = local > ribbon_target
@@ -738,20 +746,23 @@ def _bisect_curve(
     *,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
 ) -> np.ndarray:
     """Bisect one shared curve until every incident source bound is met.
 
     Shared source edges cannot be changed by patch-local interior refinement.
     Each offending source interval is bisected here, before every incident
     patch reconnects through its CDT, so all uses retain one conforming curve
-    vertex and interval ledger. Trim-ribbon and normal-turn bounds of unsplit
-    intervals are retained; only bisected children are measured again.
+    vertex and interval ledger. Interpolation, trim-ribbon and normal-turn
+    bounds of unsplit intervals are retained; only bisected children are
+    measured again.
     """
     domain = compiled.domain
     constraints = _prepare_curve_constraints(
         compiled, curve, angular_required, maximum_normal_angle
     )
     fresh = np.ones((values.size - 1,), dtype=np.bool_)
+    interpolation = np.zeros((values.size - 1,), dtype=np.float64)
     ribbons = [np.zeros((values.size - 1,), dtype=np.float64) for _ in ribbon_targets]
     turns = [
         np.zeros((values.size - 1,), dtype=np.float64) for _ in constraints.angular_uses
@@ -769,16 +780,22 @@ def _bisect_curve(
         )
         measured = np.flatnonzero(fresh)
         with _source_bound_scope(
-            ledger, reserved_bytes + values.nbytes, scope=scope, budget=budget
+            ledger,
+            reserved_bytes + values.nbytes + interpolation.nbytes,
+            scope=scope,
+            budget=budget,
         ):
-            bounds = domain.curve_interpolation_bounds(curve, values, budget=budget)
-            if np.isfinite(target) and np.any(~np.isfinite(bounds)):
+            if measured.size:
+                interpolation[measured] = domain.curve_interpolation_bounds(
+                    curve, values, intervals=measured, budget=budget
+                )
+            if np.isfinite(target) and np.any(~np.isfinite(interpolation)):
                 raise _failure(
                     _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                     f"SurfaceConstruction.curve_interpolation must provide a continuous bound; got unbounded curve {curve}.",
                     entity_ids=(curve,),
                 )
-            split = bounds > target
+            split = interpolation > target
             if ribbon_targets:
                 split = _measure_curve_ribbons(
                     domain,
@@ -793,6 +810,7 @@ def _bisect_curve(
                     ledger,
                     split,
                     budget=budget,
+                    preparations=preparations,
                 ).split
             if constraints.angular_uses:
                 split = _measure_curve_turns(
@@ -822,6 +840,9 @@ def _bisect_curve(
             )
         value_rows, retained, fresh = _bisection_rows(split)
         values = np.sort(np.concatenate((values, middle)))
+        carried = np.empty((fresh.size,), dtype=np.float64)
+        carried[retained] = interpolation[~split]
+        interpolation = carried
         for banks in (ribbons, turns):
             for index, bank in enumerate(banks):
                 carried = np.empty((fresh.size,), dtype=np.float64)
@@ -1155,6 +1176,9 @@ def curve_vertices(
         _refine_source_loop_parameters(
             compiled, curve_parameters, ledger, started, budget=budget
         )
+        # One mapping for this curve request: shared endpoint roots are
+        # contracted once and admitted once to this request's budget.
+        preparations = TrimRequestPreparations()
         for curve_row, curve in enumerate(prepared.curves.tolist()):
             values = curve_parameters[curve]
             # Shared source edges cannot be changed by patch-local interior
@@ -1196,6 +1220,7 @@ def curve_vertices(
                     count,
                     scope=scope,
                     budget=budget,
+                    preparations=preparations,
                 )
             interior = values[1:-1]
             if count + interior.size > ledger.limits.maximum_vertices:
@@ -1637,7 +1662,7 @@ def _boundary(
         if position > 0:
             holes.append(
                 _dependency_phydrax_meshing_providers__native_planar.interior_point(
-                    points, local, local_limits
+                    points, local, local_limits, scope=scope
                 )
             )
         offset += points.shape[0]
@@ -2127,6 +2152,8 @@ def _triangulate_initial_chart(
     ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     record_phase: NativeMeshingPhaseRecorder | None,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> _InitialTopology:
     """Execute bounded CDT and retain its native refusal evidence."""
     charts, chart_segments, holes = (
@@ -2142,50 +2169,68 @@ def _triangulate_initial_chart(
         prepared.native_scratch,
     )
     topology_start = phase_started(record_phase)
-    try:
-        triangulation = ConstrainedDelaunayTriangulation(
-            charts,
-            chart_segments,
-            holes=holes if holes.shape[0] else None,
-            keep_convex_hull=False,
-            max_triangles=triangle_capacity,
-            max_cavity_cells=local_limits.maximum_cavity_cells,
-            maximum_work=ledger.limits.maximum_work_units - ledger.work,
-            max_scratch_bytes=native_scratch,
-        )
-    except MeshcoreError as error:
-        if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
-            raise
-        work = error.work_evidence if isinstance(error, NativeResourceFailure) else None
-        memory = error.memory_counters
-        record_elapsed(
-            record_phase,
-            "topology_construction",
-            topology_start,
-            work_units=None if work is None else int(work[0]),
-        )
-        if work is None or memory is None:
-            raise RuntimeError(
-                f"ConstrainedDelaunayTriangulation.refusal must carry native resource evidence; got work={work}, memory={memory}."
-            ) from error
-        ledger.observe_native(0, int(work[0]), MeshingStageKind.SURFACE_MESHING)
-        raise _failure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "SurfaceConstruction.initial_triangulation must fit the native resource budget; got exhausted constrained chart CDT.",
-            entity_ids=(patch,),
-            achieved=(
-                ("work_units", ledger.work),
-                ("peak_cavity_cells", int(work[6])),
-                ("native_peak_scratch_bytes", memory.peak_bytes),
-                (
-                    "simultaneous_scratch_bound",
-                    host_scratch
-                    + result_scratch
-                    + 8 * segments.shape[0]
-                    + memory.peak_bytes,
+    incoming = scope.ticket_view()
+    work_allowance = min(
+        ledger.limits.maximum_work_units - ledger.work, incoming.remaining_work_units
+    )
+    storage_allowance = min(
+        native_scratch + result_scratch + 8 * chart_segments.shape[0],
+        incoming.bytes_upper,
+    )
+    # CDT and extraction share the declared simultaneous bound. Admission of
+    # this mapped child target remains outside the CDT-specific refusal handler.
+    with (
+        scope.batch(
+            work_allowance,
+            bytes_upper=storage_allowance,
+            cavity_upper=local_limits.maximum_cavity_cells,
+        ) as ticket,
+        ticket.native_target(),
+    ):
+        try:
+            triangulation = ConstrainedDelaunayTriangulation(
+                charts,
+                chart_segments,
+                holes=holes if holes.shape[0] else None,
+                keep_convex_hull=False,
+                max_triangles=triangle_capacity,
+                max_cavity_cells=local_limits.maximum_cavity_cells,
+                maximum_work=work_allowance,
+                max_scratch_bytes=native_scratch,
+            )
+        except MeshcoreError as error:
+            if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
+                raise
+            work = error.work_evidence if isinstance(error, NativeResourceFailure) else None
+            memory = error.memory_counters
+            record_elapsed(
+                record_phase,
+                "topology_construction",
+                topology_start,
+                work_units=None if work is None else int(work[0]),
+            )
+            if work is None or memory is None:
+                raise RuntimeError(
+                    f"ConstrainedDelaunayTriangulation.refusal must carry native resource evidence; got work={work}, memory={memory}."
+                ) from error
+            ledger.observe_native(0, int(work[0]), MeshingStageKind.SURFACE_MESHING)
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "SurfaceConstruction.initial_triangulation must fit the native resource budget; got exhausted constrained chart CDT.",
+                entity_ids=(patch,),
+                achieved=(
+                    ("work_units", ledger.work),
+                    ("peak_cavity_cells", int(work[6])),
+                    ("native_peak_scratch_bytes", memory.peak_bytes),
+                    (
+                        "simultaneous_scratch_bound",
+                        host_scratch
+                        + result_scratch
+                        + 8 * segments.shape[0]
+                        + memory.peak_bytes,
+                    ),
                 ),
-            ),
-        ) from error
+            ) from error
     ledger.observe_native(
         0, int(triangulation.work_evidence[0]), MeshingStageKind.SURFACE_MESHING
     )
@@ -2357,7 +2402,7 @@ def _initial_patch(
         budget=budget,
     )
     topology = _triangulate_initial_chart(
-        prepared, patch, local_limits, ledger, record_phase
+        prepared, patch, local_limits, ledger, record_phase, scope=scope
     )
     charts, identities = prepared.charts, prepared.identities
     declared_poles = [
@@ -2420,8 +2465,8 @@ def _surface_capacity(
     candidates: int,
     limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
     /,
-) -> None:
-    """Reserve all live host/native surface buffers before materializing them."""
+) -> int:
+    """Validate the simultaneous surface envelope and return its byte bound."""
     scratch = 2048 * (vertices + candidates) + 4096 * (triangles + 2 * candidates)
     capacities = (
         ("vertices", vertices + candidates, limits.maximum_vertices),
@@ -2438,6 +2483,7 @@ def _surface_capacity(
                 requested=((f"maximum_{name}", maximum),),
                 achieved=((name, required),),
             )
+    return scratch
 
 
 def _restriction_collapsed_pole_cells(state: _Patch, /) -> np.ndarray:
@@ -3417,47 +3463,60 @@ def _reconnect_batch(
     )
     remaining = limits.maximum_work_units - ledger.work
     capacity = min(limits.maximum_faces, state.triangles.shape[0] + 2 * hints.size)
+    scratch = _surface_capacity(
+        state.points.shape[0], state.triangles.shape[0], hints.size, limits
+    )
+    incoming = scope.ticket_view()
+    remaining = min(remaining, incoming.remaining_work_units)
     reconnect_start = phase_started(record_phase)
-    try:
-        native = surface_reconnect(
-            state.charts,
-            state.points,
-            state.normals,
-            state.triangles,
-            state.constrained,
-            charts,
-            points,
-            normals,
-            spacing,
-            hints,
-            sweep=not np.any(restriction_required),
-            max_triangles=max(capacity, state.triangles.shape[0]),
-            work_limit=max(remaining, 0),
-            vertex_metrics=metrics.vertex_metrics,
-            insert_metrics=insert_metrics,
-            vertex_pole_ids=state.pole_ids,
-            insert_edges=insert_edges,
-        )
-    except MeshcoreError as error:
-        # The remaining allowance cannot pay mandatory source validation; the
-        # refused call spent no work and published nothing.
-        if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
-            raise
-        record_elapsed(record_phase, "refinement", reconnect_start, work_units=0)
-        raise _failure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            f"SurfaceConstruction.refinement must fit its work and face budgets; got exhausted source validation on patch {state.index}.",
-            entity_ids=(state.index,),
-            requested=(
-                ("maximum_work_units", limits.maximum_work_units),
-                ("maximum_faces", limits.maximum_faces),
-            ),
-            achieved=(
-                ("work_units", ledger.work),
-                ("faces", state.triangles.shape[0]),
-                ("unresolved_triangles", int(np.sum(unresolved))),
-            ),
-        ) from error
+    with (
+        scope.batch(
+            max(remaining, 0),
+            bytes_upper=scratch,
+            cavity_upper=min(state.triangles.shape[0], 4),
+        ) as ticket,
+        ticket.native_target(),
+    ):
+        try:
+            native = surface_reconnect(
+                state.charts,
+                state.points,
+                state.normals,
+                state.triangles,
+                state.constrained,
+                charts,
+                points,
+                normals,
+                spacing,
+                hints,
+                sweep=not np.any(restriction_required),
+                max_triangles=max(capacity, state.triangles.shape[0]),
+                work_limit=max(remaining, 0),
+                vertex_metrics=metrics.vertex_metrics,
+                insert_metrics=insert_metrics,
+                vertex_pole_ids=state.pole_ids,
+                insert_edges=insert_edges,
+            )
+        except MeshcoreError as error:
+            # The remaining allowance cannot pay mandatory source validation;
+            # the refused call spent no work and published nothing.
+            if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
+                raise
+            record_elapsed(record_phase, "refinement", reconnect_start, work_units=0)
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                f"SurfaceConstruction.refinement must fit its work and face budgets; got exhausted source validation on patch {state.index}.",
+                entity_ids=(state.index,),
+                requested=(
+                    ("maximum_work_units", limits.maximum_work_units),
+                    ("maximum_faces", limits.maximum_faces),
+                ),
+                achieved=(
+                    ("work_units", ledger.work),
+                    ("faces", state.triangles.shape[0]),
+                    ("unresolved_triangles", int(np.sum(unresolved))),
+                ),
+            ) from error
     triangles = native.triangles
     constrained = native.constrained
     ids = native.vertex_ids

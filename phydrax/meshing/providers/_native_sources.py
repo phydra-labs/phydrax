@@ -24,6 +24,7 @@ import phydrax.discretization._cell_mesh as cell_mesh_owner
 import phydrax.discretization._tensor_support as tensor_support_owner
 import phydrax.geometry._atlas as atlas_owner
 import phydrax.geometry._contracts as contracts_owner
+import phydrax.geometry.implicit._adaptive_discovery as adaptive_discovery_owner
 import phydrax.geometry.simplicial._regions as regions_owner
 from phydrax.geometry._source_boundary_records import SourceBoundaryQuery
 from phydrax.meshing._host_banks import family_host_array
@@ -136,6 +137,7 @@ class NativeImplicitSource(StrictModule, NonTrainableState):
 
     geometry: contracts_owner.CompiledGeometry
     grid: tensor_support_owner.PreparedTensorGrid
+    discovery: adaptive_discovery_owner.ImplicitVolumeQuery | None
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
 
@@ -147,12 +149,17 @@ class NativeImplicitSource(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
         /,
+        *,
+        discovery: adaptive_discovery_owner.ImplicitVolumeQuery | None = None,
     ) -> None:
         source = normalized_identifier(source_id, "source_id")
         self.geometry = geometry
         self.grid = grid
         self.source_id = source
         self.source_revision = normalized_identifier(source_revision, "source_revision")
+        if discovery is not None:
+            discovery.require_bound(geometry)
+        self.discovery = discovery
 
 
 @final

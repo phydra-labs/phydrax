@@ -264,14 +264,37 @@ def _earn_predecessor_content(
     budget: CoordinateEnclosureBudget,
     /,
 ) -> None:
-    """Seal supported current fields only after their original content proof."""
+    """Seal supported current fields only after their original content proof.
+
+    Reuse rechecks every sealed owner field. When that traversal provably
+    costs at least the exact content digest it would replace, no admission is
+    retained and every reuse keeps the digest route; both routes are exact.
+    """
     if _earned_predecessor_content(predecessor, mesh, geometry, budget):
+        return
+    digest = _predecessor_content_work(
+        predecessor.source_mesh, predecessor.source_geometry,
+        predecessor.source_embedding, mesh, geometry,
+    )
+    if _owner_traversal_floor(mesh, geometry, budget) >= digest:
         return
     owner_fields = _snapshot_immutable_owner_fields((predecessor, mesh, geometry), budget)
     if owner_fields is not None:
         admission = _PredecessorContentAdmission(predecessor, mesh, geometry, owner_fields)
         budget.retain_owner(admission)
         budget.predecessor_content_admission_cache[id(predecessor)] = admission
+
+
+def _owner_traversal_floor(
+    mesh: CellMesh, geometry: CellGeometrySpec, budget: CoordinateEnclosureBudget, /
+) -> int:
+    """Reuse revisits at least every distinct target block and element owner."""
+    budget.reserve(len(mesh.blocks) + len(geometry.elements))
+    owners = {id(owner): owner for owner in (*mesh.blocks, *geometry.elements)}
+    return sum(
+        1 + (len(fields(owner)) if is_dataclass(owner) else 0)
+        for owner in owners.values()
+    )
 
 
 def _snapshot_immutable_owner_fields(
@@ -327,6 +350,31 @@ def _snapshot_immutable_owner_fields(
         return result
 
 
+def _predecessor_content_work(
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    source_embedding: GlobalEmbeddingCertificate | None,
+    target_mesh: CellMesh,
+    target_geometry: CellGeometrySpec,
+    /,
+) -> int:
+    """The original full source-authentication scan charge."""
+    meshes = source_mesh, target_mesh
+    geometries = source_geometry, target_geometry
+    return (
+        sum(mesh.coordinates.size for mesh in meshes)
+        + sum(
+            block.vertices.size + block.global_ids.size
+            for mesh in meshes
+            for block in mesh.blocks
+        )
+        + sum(geometry.coordinates.size for geometry in geometries)
+        + sum(route.size for geometry in geometries for route in geometry.geometry_dofs)
+        + (0 if source_embedding is None else
+           len(source_embedding.evaluated_checks) + len(source_embedding.findings))
+    )
+
+
 def _reserve_predecessor_content(
     source_mesh: CellMesh,
     source_geometry: CellGeometrySpec,
@@ -337,19 +385,10 @@ def _reserve_predecessor_content(
     /,
 ) -> None:
     """Keep the original full source-authentication scan charge at its issuer."""
-    meshes = source_mesh, target_mesh
-    geometries = source_geometry, target_geometry
     budget.reserve(
-        sum(mesh.coordinates.size for mesh in meshes)
-        + sum(
-            block.vertices.size + block.global_ids.size
-            for mesh in meshes
-            for block in mesh.blocks
-        )
-        + sum(geometry.coordinates.size for geometry in geometries)
-        + sum(route.size for geometry in geometries for route in geometry.geometry_dofs)
-        + (0 if source_embedding is None else
-           len(source_embedding.evaluated_checks) + len(source_embedding.findings)),
+        _predecessor_content_work(
+            source_mesh, source_geometry, source_embedding, target_mesh, target_geometry
+        ),
         2048,
     )
 

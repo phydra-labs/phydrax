@@ -333,4 +333,76 @@ def _coalesced_route_count(relation: SparseRelation, /) -> int | None:
     return int(1 + np.count_nonzero(keys[1:] != keys[:-1]))
 
 
-__all__ = ["EdgeRelation", "RowRelation", "SparseRelation"]
+class InjectiveRouteWindows(StrictModule, NonTrainableState):
+    """Host-prepared route windows whose valid lanes name distinct destination rows.
+
+    ``target_indices[w, i]`` is the destination row of lane ``i`` in window
+    ``w``; invalid lanes hold ``target_size`` and write nothing. Construction is
+    host-only and validates bounds and per-window injectivity once, so
+    `route_replace` selects any window, including by a traced index, without
+    a runtime check or a caller promise.
+    """
+
+    target_indices: Array
+    target_size: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        target_indices: ArrayLike,
+        /,
+        *,
+        target_size: int,
+        valid: ArrayLike | None = None,
+    ) -> None:
+        if _traced(target_indices, valid):
+            raise TypeError("InjectiveRouteWindows must be prepared from host arrays.")
+        size = int(target_size)
+        if size < 0:
+            raise ValueError("InjectiveRouteWindows.target_size must be non-negative.")
+        host = np.asarray(jax.device_get(target_indices))
+        if not np.issubdtype(host.dtype, np.integer):
+            raise TypeError("InjectiveRouteWindows.target_indices must be integers.")
+        if host.ndim == 1:
+            host = host[None]
+        if host.ndim != 2:
+            raise ValueError(
+                f"InjectiveRouteWindows.target_indices must be (windows, lanes); got {host.shape}."
+            )
+        mask = (
+            np.ones(host.shape, dtype=np.bool_)
+            if valid is None
+            else np.asarray(jax.device_get(valid), dtype=np.bool_).reshape(host.shape)
+        )
+        if np.any(mask & ((host < 0) | (host >= size))):
+            raise ValueError(f"A valid window lane lies outside [0, {size}).")
+        # Invalid lanes take distinct keys above every row, so only two valid
+        # lanes of one window naming the same row can collide.
+        keys = np.where(
+            mask,
+            host.astype(np.int64),
+            size + np.arange(host.shape[1], dtype=np.int64),
+        )
+        ordered = np.sort(keys, axis=1)
+        if np.any(ordered[:, 1:] == ordered[:, :-1]):
+            raise ValueError("InjectiveRouteWindows must route valid lanes to distinct rows.")
+        if size > np.iinfo(np.int32).max:
+            raise ValueError("InjectiveRouteWindows.target_size must fit int32.")
+        self.target_indices = jax.device_put(np.where(mask, host, size).astype(np.int32))
+        self.target_size = size
+
+    @classmethod
+    def from_stored_fields(cls, value: InjectiveRouteWindows, /) -> InjectiveRouteWindows:
+        """Revalidate stored windows; lanes holding ``target_size`` are the invalid ones."""
+        indices = np.asarray(jax.device_get(value.target_indices))
+        return cls(indices, target_size=value.target_size, valid=indices != value.target_size)
+
+    @property
+    def windows(self) -> int:
+        return self.target_indices.shape[0]
+
+    @property
+    def capacity(self) -> int:
+        return self.target_indices.shape[1]
+
+
+__all__ = ["EdgeRelation", "InjectiveRouteWindows", "RowRelation", "SparseRelation"]

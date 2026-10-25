@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import assert_never, final
 
 import equinox as eqx
@@ -260,6 +261,139 @@ def _periodic_rebuild(
         numeric_version=lifted.numeric_version,
         budget=budget,
     )
+
+
+def _key_sort_work(entries: int, width: int, /) -> int:
+    # Sort ``entries`` values in rows of at most ``width``.
+    return entries * ((max(width, 2) - 1).bit_length() + 1)
+
+
+def _entity_key_shape(
+    mesh: cell_mesh_owner.CellMesh, dimension: int, /
+) -> tuple[int, int, int]:
+    """Rows, entries and maximum row width read by `entity_vertex_keys`."""
+    connectivity = mesh.connectivity
+    count = mesh.entity_set(dimension).count
+    match connectivity:
+        case cell_complex_owner.PolyhedralConnectivity() if dimension == 2:
+            offsets = np.asarray(connectivity.face_vertex_offsets)
+            lengths = np.diff(offsets)
+            width = int(np.max(lengths)) if lengths.size else 0
+            return count, int(offsets[-1]) if offsets.size else 0, width
+        case TetrahedralConnectivity() | HexahedralConnectivity() if dimension == 2:
+            width = np.asarray(connectivity.faces).shape[1]
+        case _:
+            width = 2
+    return count, count * width, width
+
+
+def _block_reorder_work(blocks: Sequence[tuple[str, int, int]], /) -> int:
+    """Identifier reads, then per block argsort, row gathers and rebuild."""
+    return sum(
+        2 * count
+        + count * ((max(count, 2) - 1).bit_length() + 1)
+        + 2 * count * arity
+        + count
+        + cell_mesh_owner.cell_block_construction_work(count, arity)
+        for _, count, arity in blocks
+    )
+
+
+@checked
+def canonical_reorder_work(
+    vertex_count: int,
+    ambient_dimension: int,
+    blocks: Sequence[tuple[str, int, int]],
+    entity_keys: Sequence[tuple[int, int, int]],
+    /,
+    *,
+    realized: cell_mesh_owner.CellMesh | None = None,
+) -> int:
+    """Price `canonicalize_cell_mesh` when it reorders a fixed-arity mesh.
+
+    ``blocks`` holds ``(cell_kind, cell_count, arity)``; ``entity_keys`` holds
+    ``(rows, entries, width)`` per entity dimension 1..d-1. Without
+    ``realized`` the rebuilt entity counts are the construction upper bounds.
+    """
+    work = _block_reorder_work(blocks)
+    # Plain rebuild and the conditional rebuild with explicit entity IDs.
+    work += 2 * cell_mesh_owner.cell_mesh_construction_work(
+        vertex_count, ambient_dimension, blocks, realized=realized
+    )
+    # Keys of both meshes (gather, row sort, tuple build), the key map,
+    # lookups, the ID array and its equality test.
+    return work + sum(
+        2 * (2 * entries + _key_sort_work(entries, width)) + 5 * rows
+        for rows, entries, width in entity_keys
+    )
+
+
+@checked
+def canonical_cell_mesh_work(mesh: cell_mesh_owner.CellMesh, /) -> int:
+    """Return the host element-visit work of `canonicalize_cell_mesh(mesh)`.
+
+    Early returns cost their identifier scans; otherwise every block is
+    sorted, gathered and rebuilt, and when the block order changes the mesh,
+    its entity key maps and its periodic descriptor are rebuilt. Exact
+    periodic descriptor preparation is charged by `PeriodicMeshTopology` on the
+    budget passed to `canonicalize_cell_mesh`.
+    """
+    if mesh.storage is not None:
+        return 0
+    cells = sum(block.cell_count for block in mesh.blocks)
+    if any(
+        isinstance(block, reference_cell_types_owner.PolyhedralBlock)
+        for block in mesh.blocks
+    ):
+        return 2 * cells
+    shapes = tuple(
+        (block.cell_kind, block.cell_count, block.arity) for block in mesh.blocks
+    )
+    # The ordering is unchanged exactly when every block's IDs ascend and the
+    # blocks already follow the canonical key; blocks are still rebuilt.
+    key = (
+        (lambda block: (block.arity, block.name))
+        if mesh.topological_dimension == 2
+        else (lambda block: block.name)
+    )
+    if all(
+        not np.any(
+            np.asarray(block.global_ids, dtype=np.int64)[:-1]
+            > np.asarray(block.global_ids, dtype=np.int64)[1:]
+        )
+        for block in mesh.blocks
+    ) and [key(block) for block in mesh.blocks] == sorted(
+        key(block) for block in mesh.blocks
+    ):
+        return _block_reorder_work(shapes)
+    vertices = mesh.coordinates.shape[0]
+    ambient = mesh.ambient_dimension
+    work = canonical_reorder_work(
+        vertices,
+        ambient,
+        shapes,
+        tuple(
+            _entity_key_shape(mesh, dimension)
+            for dimension in range(1, mesh.topological_dimension)
+        ),
+        realized=mesh,
+    )
+    periodic = mesh.periodic_topology
+    if periodic is not None:
+        quotient = sum(
+            periodic.quotient.entities(degree).count
+            for degree in range(1, periodic.topological_dimension)
+        )
+        # Both descriptors' relative-shift keys, the map, lookups and tests,
+        # then the periodic carrier rebuild.
+        work += (
+            2 * np.asarray(periodic.entity_key_values).size
+            + 5 * quotient
+            + cell_mesh_owner.cell_mesh_construction_work(
+                vertices, ambient, shapes, realized=mesh
+            )
+        )
+    return work
 
 
 @checked

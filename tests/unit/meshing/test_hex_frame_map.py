@@ -477,6 +477,9 @@ def test_block_extraction_capacity_refusal_preserves_prepared_and_requested_stat
 def sheared_hex_publication() -> Iterator[ShearedHexPublication]:
     source = sheared_mapped_hex_source()
     domain = source.domain
+    # Close the construction request before yielding: a module fixture that
+    # yields inside a live native scope nests every later test's request under
+    # it, so their remaining-work views and peaks include this request's ledger.
     with native_meshing_request(MeshingLimits()) as (
         execution_scope,
         coordinate_budget,
@@ -511,7 +514,8 @@ def sheared_hex_publication() -> Iterator[ShearedHexPublication]:
         plan = phx.meshing.NativeMeshingProvider(
             phx.meshing.NativeMeshingOptions("mapped_frame_grid_hex")
         ).plan(source, request, coordinate_contract=phx.SpatialCoordinateContract.si())
-        yield source, grid, mapped, plan.execute()
+        result = plan.execute()
+    yield source, grid, mapped, result
 
 
 def test_sheared_authored_reference_charts_do_not_need_one_orthogonal_grid_frame(
@@ -999,7 +1003,11 @@ def _long_lived_source_grid_proof(
     from phydrax.discretization._cell_geometry_validity import (
         _certify_restriction_cell_geometry_validity,
     )
-    from phydrax.discretization._cell_mesh import cell_mesh_construction_bounds, CellMesh
+    from phydrax.discretization._cell_mesh import (
+        cell_mesh_construction_bounds,
+        cell_mesh_construction_work,
+        CellMesh,
+    )
     from phydrax.meshing import _hex_generation as generation
     from phydrax.meshing._family_execution import coordinate_phase
 
@@ -1039,6 +1047,10 @@ def _long_lived_source_grid_proof(
         del prepared, grouped
         shapes = tuple((block.cell_kind, block.cell_count, block.arity)
                        for block in realized.blocks)
+        # Admitted exactly as certify_source_grid_restrictions admits its proof mesh.
+        budget.reserve(cell_mesh_construction_work(
+            mesh.coordinates.shape[0], mesh.ambient_dimension, shapes
+        ))
         with scope.host_workspace() as workspace:
             workspace.set_bound(cell_mesh_construction_bounds(
                 mesh.coordinates.shape[0], mesh.ambient_dimension, shapes
@@ -1852,7 +1864,9 @@ def test_compact_construction_observed_work_matches_static_projection(
     observed_banks = sum(ticket.consumed_work_units for ticket in tickets["banks"])
     observed_identity = sum(ticket.consumed_work_units for ticket in tickets["identity"])
     assert observed_banks == expected_node_work + 8 * cells
-    assert observed_identity == 48 * sum(prod(row) for row in set(counts))
+    # Construction and reauthentication each build one 24-entry numerator and
+    # one 24-entry denominator chunk per distinct partition cell.
+    assert observed_identity == 2 * 48 * sum(prod(row) for row in set(counts))
     proof_work, groups = proof_entries[-1]
     source_work_per_root = ceil((proof_work - 4 * root_count - 4 * groups) / root_count)
     assert 26 * source_work_per_root <= 8192

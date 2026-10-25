@@ -21,7 +21,6 @@ residuals; independent PLC coverage does not silently turn them into zero-residu
 
 from __future__ import annotations
 
-from itertools import chain
 from typing import final
 
 import equinox as eqx
@@ -55,7 +54,9 @@ from ..discretization import (
 )
 from ..discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
 )
 from ..optim import (
     Bounds,
@@ -200,8 +201,25 @@ def prepare_surface_cross_field(
         + 64 * mesh.coordinates.shape[0]
         + 4096
     )
+    features_ = None if feature_edges is None else np.asarray(feature_edges)
+    incidences_upper = 3 * face_count
     with scope.host_workspace() as workspace:
         workspace.set_bound(frame_bytes)
+        # Per vertex its padded copy; per face its corner gather, tangent
+        # differences, normal, lengths, checks, frame, initial angle and patch
+        # label; per edge its owner entry, incidence list and counts, offsets,
+        # link scan and patch adjacency; per face side its owner append,
+        # face/edge rows, basis and direction gathers (and mapped direction
+        # key and lookup), Gram system, right side, batched 2x2 solve and its
+        # status, angle, link visit, the two feature accumulations and its
+        # feature residual; and one row per explicit feature edge.
+        scope.charge(
+            work=mesh.coordinates.shape[0]
+            + 14 * face_count
+            + 8 * edge_count
+            + (16 if mapped else 14) * incidences_upper
+            + (0 if features_ is None else features_.size)
+        )
         triangles = _dependency_phydrax_meshing__host_banks.entities(mesh, 2)
         points = np.asarray(mesh.coordinates, dtype=np.float64)
         if points.shape[1] == 2:
@@ -239,10 +257,9 @@ def prepare_surface_cross_field(
         for row, triangle in enumerate(triangles.tolist()):
             for a, b in ((0, 1), (1, 2), (2, 0)):
                 owners[tuple(sorted((triangle[a], triangle[b])))].append(row)
-        if feature_edges is None:
+        if features_ is None:
             explicit: set[int] = set()
         else:
-            features_ = np.asarray(feature_edges)
             if features_.ndim != 1 or features_.dtype.kind not in "iu":
                 raise TypeError(
                     f"prepare_surface_cross_field.feature_edges must be an integer vector of source edge rows; got shape={features_.shape}, dtype={features_.dtype}."
@@ -732,6 +749,15 @@ def extract_surface_quads(
         )
         for layout in layouts
     )
+    # The larger layout's block and mesh construction, admitted beside its
+    # bytes: one block, or three corner blocks per composed source block.
+    construction_work = max(
+        cell_mesh_construction_work(vertex_count, source.ambient_dimension, layout)
+        + sum(
+            cell_block_construction_work(cells_, arity) for _, cells_, arity in layout
+        )
+        for layout in layouts
+    )
     # Allocate only after admitting the declared per-cell template work, its
     # host scratch envelope and every published entity count.
     with (
@@ -766,6 +792,7 @@ def extract_surface_quads(
         # Cell blocks and the mesh, including _composed_quad_mesh's, build one
         # at a time beside the phase scratch.
         workspace.set_bound(scratch + construction_bytes)
+        scope.charge(work=construction_work)
         geometry = None
         parent_cells = np.repeat(np.arange(count, dtype=np.int64), 3)
         if source_geometry is None:
@@ -785,6 +812,20 @@ def extract_surface_quads(
                 scope=scope,
                 budget=budget,
             )
+        # Post-template scans over the published entities (V' vertices, E'
+        # edges, 3F quads): support rows; ancestry keys over every source
+        # entity corner and every target entity's corner supports with their
+        # sorts; valences, child edges, source-side counts, boundary edges and
+        # vertices, and the singular selection.
+        output_vertices = original + added
+        output_edges = 2 * edge_count + 3 * count
+        scope.charge(
+            work=14 * output_vertices
+            + 19 * output_edges
+            + 93 * count
+            + 2 * original
+            + 5 * edge_count
+        )
         supports = _dependency_phydrax_meshing__host_banks.family_host_array(
             (coordinates.shape[0], 3), np.int64, scope=scope
         )
@@ -902,6 +943,19 @@ def _exact_parent_containment(
     across the child degrees of one ``memo``.
     """
 
+    child_count = int(np.size(child_rows))
+    corners = _ENTITY_CORNERS[child_dimension]
+    entries = child_count * corners
+    memo_count = 0 if memo is None else memo.keys.size
+    # Source and target entity-table copies, then per child corner its
+    # gather, validity, key and result rows, the pair sort with the memo
+    # search and ordered merge, and the decided-value scatters.
+    scope.charge(
+        work=source.topology.entities(parent_dimension).count * (parent_dimension + 1)
+        + target.topology.entities(child_dimension).count * corners
+        + 6 * entries
+        + (3 * entries + memo_count) * ((entries + memo_count).bit_length() + 1)
+    )
     parent_vertices = _dependency_phydrax_meshing__host_banks.entities(
         source, parent_dimension
     )
@@ -953,101 +1007,126 @@ def _contained_pairs(
     *,
     scope: NativeExecutionScope,
 ) -> np.ndarray:
-    """Exact closed-simplex containment of distinct (parent row, node) keys."""
+    """Exact closed-simplex containment of distinct (parent row, node) keys.
+
+    The pair banks, their gathers and every exact orientation predicate run
+    inside one ticket admitted before the first gather.
+    """
     vertex_count = target.coordinates.shape[0]
-    owners, owner_index = np.unique(pairs // vertex_count, return_inverse=True)
-    points = np.asarray(target.coordinates, dtype=np.float64)[pairs % vertex_count]
-    simplices = np.asarray(source.coordinates, dtype=np.float64)[
-        parent_vertices[owners]
-    ]
-    parents = simplices[owner_index]
-    # One unit per exact orientation predicate evaluated below.
-    count, ambient = pairs.size, points.shape[-1]
+    count, ambient = pairs.size, target.coordinates.shape[1]
+    width = parent_vertices.shape[1]
     planes = ambient * (ambient - 1) // 2
-    predicates = (
-        0,
-        planes * count,
-        planes * (owners.size + 3 * count) + (count if ambient == 3 else 0),
-        owners.size + 4 * count,
-    )[min(parent_dimension, 3)]
-    with scope.batch(predicates) as ticket:
-        ticket.consume(predicates)
-    if parent_dimension == 0:
-        contained = np.all(points == parents[:, 0, :], axis=-1)
-    elif parent_dimension == 1:
-        left, right = parents[:, 0, :], parents[:, 1, :]
-        contained = np.all(
-            (points >= np.minimum(left, right)) & (points <= np.maximum(left, right)),
-            axis=-1,
+
+    def predicate_count(owner_count: int, /) -> int:
+        # One unit per exact orientation predicate evaluated below.
+        return (
+            0,
+            planes * count,
+            planes * (owner_count + 3 * count) + (count if ambient == 3 else 0),
+            owner_count + 4 * count,
+        )[min(parent_dimension, 3)]
+
+    # Owner sort, row/node split, and the point, simplex and parent gathers;
+    # each predicate also carries four host units for its operand slices and
+    # sign combination. Distinct owners never exceed the pair count.
+    host = count * (count.bit_length() + 3 + ambient * (1 + 2 * width))
+    with (
+        scope.batch(host + 5 * predicate_count(count)) as ticket,
+        scope.host_workspace() as workspace,
+    ):
+        # Owner rows and inverse, gathered points, simplices and parents,
+        # per-plane operand slices, contiguous predicate operands, signs and
+        # masks.
+        workspace.set_bound(
+            8 * count * (4 + 2 * width + ambient * (5 + 2 * width)) + 4096
         )
-        for first in range(ambient):
-            for second in range(first + 1, ambient):
-                axes = (first, second)
+        owners, owner_index = np.unique(pairs // vertex_count, return_inverse=True)
+        points = np.asarray(target.coordinates, dtype=np.float64)[
+            pairs % vertex_count
+        ]
+        simplices = np.asarray(source.coordinates, dtype=np.float64)[
+            parent_vertices[owners]
+        ]
+        parents = simplices[owner_index]
+        ticket.consume(host + 5 * predicate_count(owners.size))
+        if parent_dimension == 0:
+            contained = np.all(points == parents[:, 0, :], axis=-1)
+        elif parent_dimension == 1:
+            left, right = parents[:, 0, :], parents[:, 1, :]
+            contained = np.all(
+                (points >= np.minimum(left, right))
+                & (points <= np.maximum(left, right)),
+                axis=-1,
+            )
+            for first in range(ambient):
+                for second in range(first + 1, ambient):
+                    axes = (first, second)
+                    contained &= (
+                        _owner_phydrax__meshcore.exact_orient2d(
+                            left[..., axes], right[..., axes], points[..., axes]
+                        )
+                        == 0
+                    )
+        elif parent_dimension == 2:
+            contained = np.zeros((count,), dtype=np.bool_)
+            for first in range(ambient):
+                for second in range(first + 1, ambient):
+                    axes = (first, second)
+                    triangle = simplices[..., axes]
+                    orientation = _owner_phydrax__meshcore.exact_orient2d(
+                        triangle[:, 0], triangle[:, 1], triangle[:, 2]
+                    )[owner_index]
+                    triangle, query = parents[..., axes], points[..., axes]
+                    inside = orientation != 0
+                    inside &= (
+                        orientation
+                        * _owner_phydrax__meshcore.exact_orient2d(
+                            triangle[:, 0], triangle[:, 1], query
+                        )
+                        >= 0
+                    )
+                    inside &= (
+                        orientation
+                        * _owner_phydrax__meshcore.exact_orient2d(
+                            triangle[:, 1], triangle[:, 2], query
+                        )
+                        >= 0
+                    )
+                    inside &= (
+                        orientation
+                        * _owner_phydrax__meshcore.exact_orient2d(
+                            triangle[:, 2], triangle[:, 0], query
+                        )
+                        >= 0
+                    )
+                    contained |= inside
+            if ambient == 3:
                 contained &= (
-                    _owner_phydrax__meshcore.exact_orient2d(
-                        left[..., axes], right[..., axes], points[..., axes]
+                    _owner_phydrax__meshcore.exact_orient3d(
+                        parents[:, 0], parents[:, 1], parents[:, 2], points
                     )
                     == 0
                 )
-    elif parent_dimension == 2:
-        contained = np.zeros((count,), dtype=np.bool_)
-        for first in range(ambient):
-            for second in range(first + 1, ambient):
-                axes = (first, second)
-                triangle = simplices[..., axes]
-                orientation = _owner_phydrax__meshcore.exact_orient2d(
-                    triangle[:, 0], triangle[:, 1], triangle[:, 2]
-                )[owner_index]
-                triangle, query = parents[..., axes], points[..., axes]
-                inside = orientation != 0
-                inside &= (
-                    orientation
-                    * _owner_phydrax__meshcore.exact_orient2d(
-                        triangle[:, 0], triangle[:, 1], query
-                    )
+        elif parent_dimension == 3:
+            orientation = _owner_phydrax__meshcore.exact_orient3d(
+                simplices[:, 0], simplices[:, 1], simplices[:, 2], simplices[:, 3]
+            )[owner_index]
+            a, b, c, d = parents[:, 0], parents[:, 1], parents[:, 2], parents[:, 3]
+            contained = orientation != 0
+            for corners in (
+                (points, b, c, d),
+                (a, points, c, d),
+                (a, b, points, d),
+                (a, b, c, points),
+            ):
+                contained &= (
+                    orientation * _owner_phydrax__meshcore.exact_orient3d(*corners)
                     >= 0
                 )
-                inside &= (
-                    orientation
-                    * _owner_phydrax__meshcore.exact_orient2d(
-                        triangle[:, 1], triangle[:, 2], query
-                    )
-                    >= 0
-                )
-                inside &= (
-                    orientation
-                    * _owner_phydrax__meshcore.exact_orient2d(
-                        triangle[:, 2], triangle[:, 0], query
-                    )
-                    >= 0
-                )
-                contained |= inside
-        if ambient == 3:
-            contained &= (
-                _owner_phydrax__meshcore.exact_orient3d(
-                    parents[:, 0], parents[:, 1], parents[:, 2], points
-                )
-                == 0
+        else:
+            raise RuntimeError(
+                f"DualExtraction.parent_dimension must be between 0 and 3; got {parent_dimension}."
             )
-    elif parent_dimension == 3:
-        orientation = _owner_phydrax__meshcore.exact_orient3d(
-            simplices[:, 0], simplices[:, 1], simplices[:, 2], simplices[:, 3]
-        )[owner_index]
-        a, b, c, d = parents[:, 0], parents[:, 1], parents[:, 2], parents[:, 3]
-        contained = orientation != 0
-        for corners in (
-            (points, b, c, d),
-            (a, points, c, d),
-            (a, b, points, d),
-            (a, b, c, points),
-        ):
-            contained &= (
-                orientation * _owner_phydrax__meshcore.exact_orient3d(*corners) >= 0
-            )
-    else:
-        raise RuntimeError(
-            f"DualExtraction.parent_dimension must be between 0 and 3; got {parent_dimension}."
-        )
     return contained
 
 
@@ -1108,6 +1187,17 @@ def remap_dual_metadata(
             + 8 * entities.count
             + 128 * (target_counts[dimension] + int(np.size(original.entity_ids)))
             + 1024
+        )
+        child_count = target_counts[dimension]
+        requested_count = int(np.size(original.entity_ids))
+        membership = child_count + requested_count
+        # Parent-ID copy; per child its parent dimension test, row clamp,
+        # parent-ID gather and selected-ID gather; the membership sort and the
+        # scope constructor's identifier sort.
+        scope.charge(
+            work=entities.count
+            + 4 * child_count
+            + 2 * membership * (membership.bit_length() + 1)
         )
         parent_ids = np.asarray(entities.entity_ids, dtype=np.int64)
         dimensions = extraction.entity_parent_dimensions[dimension]
@@ -1207,6 +1297,8 @@ def remap_dual_metadata(
         )
         new_associations = []
         storage.set_bound(retained_bytes + association_workspace)
+        # Source coordinate copy and the rounding scan.
+        scope.charge(work=2 * coordinate_entries)
         coordinates = np.asarray(source.coordinates, dtype=np.float64)
         rounding = (
             64.0
@@ -1236,6 +1328,21 @@ def remap_dual_metadata(
                     f"GeometryAssociation.target_entity_set_id must identify one source entity set; got {association.target_entity_set_id!r}, matches={len(source_dimensions)}."
                 )
             dimension = source_dimensions[0]
+            row_count = int(np.size(association.target_global_ids))
+            parent_count = source.topology.entities(dimension).count
+            membership = row_count + parent_count
+            # Binding scan; parent-ID copy; row map and source membership
+            # sort; per child entity of every inherited degree its parent
+            # dimension scan, row lookup and selection, orientation gathers
+            # and products, and its published association columns.
+            scope.charge(
+                work=source.topology.dimension
+                + 1
+                + parent_count
+                + 2 * row_count
+                + membership * (membership.bit_length() + 1)
+                + 29 * sum(target_counts[: dimension + 1])
+            )
             parent_ids = np.asarray(
                 source.topology.entities(dimension).entity_ids, dtype=np.int64
             )
@@ -1397,6 +1504,13 @@ def remap_dual_metadata(
         # tuples of source IDs, roles and paths (512 bytes per row).
         storage.set_bound(
             retained_bytes + 512 * generated_rows + 128 * len(new_associations)
+        )
+        # Binding groups; per generated row its concatenated ID, stable sort,
+        # uniqueness sort, three Python identity columns and ten gathered
+        # association columns.
+        scope.charge(
+            work=len(new_associations)
+            + generated_rows * (13 + 2 * (generated_rows.bit_length() + 1))
         )
         coalesced = _coalesce_generated_associations(tuple(new_associations))
         return new_zones, new_patches, new_labels, coalesced
@@ -1682,6 +1796,27 @@ def _complete_vertex_associations(
         + 4096
     )
     storage.set_bound(retained_bytes)
+    # Cell-coverage, source-ID and covered-ID sets; target IDs and per source
+    # vertex its incidence set; per source entity its ID copy, row map entry
+    # and corner row; per associated row its row lookup, keyed entry and
+    # corner incidences; and each association's binding test per degree.
+    scope.charge(
+        work=cell_rows
+        + source_counts[-1]
+        + covered_rows
+        + target_vertices
+        + source_vertices
+        + sum(
+            count * (2 + _ENTITY_CORNERS[degree])
+            for degree, count in zip(degrees, source_counts, strict=True)
+        )
+        + sum(
+            rows * (3 + _ENTITY_CORNERS[degree])
+            for degree, rows in original_rows
+            if degree >= 0
+        )
+        + len(originals) * len(degrees)
+    )
     incidence = _prepare_vertex_incidence(extraction, originals, outputs)
     if incidence is None:
         storage.set_bound(completed_bytes)
@@ -1693,8 +1828,27 @@ def _complete_vertex_associations(
     storage.set_bound(
         retained_bytes + 128 * target_vertices + 64 * widest + 400 * widest * shared
     )
+    support_width = extraction.vertex_supports.shape[1]
+    # Per target vertex its coverage test, support-row intersections, and per
+    # source degree its sorted candidates, values and identity set; then per
+    # inherited row its entry lists, gathers and published columns.
+    scope.charge(
+        work=target_vertices
+        * (
+            18
+            + support_width * widest
+            + len(degrees)
+            * (widest * (widest.bit_length() + 1) + 4 * widest * shared)
+        )
+    )
     inherited = _inherit_vertex_rows(extraction, originals, incidence)
     retained_bytes += 128 * target_vertices
+    group_count = len(inherited.entries)
+    # The group sort and each group's parent-ID table copy.
+    scope.charge(
+        work=group_count * (group_count.bit_length() + 1)
+        + sum(source_counts[dimension] for _, dimension in inherited.entries)
+    )
     groups = tuple(sorted(inherited.entries.items()))
     retained_bytes += sum(
         1600 * len(entries)

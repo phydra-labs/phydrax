@@ -9,6 +9,7 @@ import math
 import os
 import platform
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -28,6 +29,7 @@ import numpy as np
 
 import phydrax as phx
 from phydrax import canonical_fingerprint, StrictModule
+from phydrax._execution_sampling import sample_host_memory
 from phydrax._meshcore import NativeParallelExecution
 from phydrax.meshing import (
     load_meshcore,
@@ -208,6 +210,12 @@ def _runtime_identity() -> dict[str, object]:
         "numpy_release": np.__version__,
         "native_configuration": None if native is None else native["configuration"],
         "native_library_override": os.environ.get("PHYDRAX_MESHCORE_LIBRARY"),
+        "process_memory_measurement_scope": PEAK_RESIDENT_SCOPE,
+        "process_memory_acceptance": (
+            "approved-macos-measured-process-memory-no-hard-execution-group-cap"
+            if sys.platform == "darwin"
+            else "process-peak-measurement-with-separately-authored-external-enforcement"
+        ),
         "devices": [
             {
                 "platform": device.platform,
@@ -630,6 +638,8 @@ def _status_high_water(path: Path, /) -> int | None:
 PEAK_RESIDENT_SCOPE = (
     "post-exec-process-high-water:linux-procfs-VmHWM;descendants-excluded"
     if sys.platform == "linux"
+    else "post-exec-process-high-water:darwin-getrusage-bytes;descendants-excluded"
+    if sys.platform == "darwin"
     else f"unavailable:no-post-exec-high-water-source-on-{sys.platform}"
 )
 """Scope of ``peak_resident_bytes`` on this platform."""
@@ -638,14 +648,16 @@ PEAK_RESIDENT_SCOPE = (
 def peak_resident_bytes() -> int | None:
     """Return this process's post-exec peak resident bytes, or None if unavailable.
 
-    Linux ``VmHWM`` belongs to the address space created by exec. ``getrusage``
-    ``ru_maxrss`` is not used because Linux carries the pre-exec image's high water
-    into it, so a launched child would report its launcher's peak as a floor. Other
-    platforms publish no substitute (``PEAK_RESIDENT_SCOPE``).
+    Linux ``VmHWM`` belongs to the address space created by exec; its raw
+    ``getrusage`` counter retains pre-exec high water. Darwin's ``getrusage``
+    reports the current Mach task's resident high water in bytes and resets
+    across exec. Neither measurement includes descendants or enforces a cap.
     """
-    if sys.platform != "linux":
-        return None
-    return _status_high_water(Path("/proc/self/status"))
+    if sys.platform == "darwin":
+        return sample_host_memory().process_peak_resident.value_bytes
+    if sys.platform == "linux":
+        return _status_high_water(Path("/proc/self/status"))
+    return None
 
 
 def measured_peak_resident_bytes() -> int:
@@ -799,7 +811,11 @@ def serve_cold_worker(module: str, /, *, started: float, result_descriptor: int)
     decoded = _decode_cold_control_packet(packet, deadline)
     deadline.remaining()
     execute_started = perf_counter()
-    report = program(decoded)
+    from tools.meshing_qualification._progress import run_with_progress
+
+    report = run_with_progress(
+        {"module": module, **decoded.controls}, lambda: program(decoded), cold=True,
+    )
     execute_seconds = perf_counter() - execute_started
     if type(report) is not ColdWorkerReport:
         raise TypeError(
@@ -919,6 +935,58 @@ class ColdWorker:
             os.killpg(self._process.pid, signal.SIGKILL)
             self._process.wait()
 
+    def _retain_input(self, archive_path: Path, packet: bytes | None) -> None:
+        """Preserve the real archive even when a control packet is inadmissible."""
+        from tools.meshing_qualification._progress import evidence_path
+
+        control_path = evidence_path("cold-control.json", process_id=self.process_id)
+        if control_path is None:
+            return
+        archive_copy = control_path.with_name(
+            control_path.name.removesuffix("control.json") + "archive"
+        )
+        with archive_path.open("rb") as source, archive_copy.open("xb") as target:
+            shutil.copyfileobj(source, target, length=1 << 20)
+            target.flush()
+            os.fsync(target.fileno())
+        if packet is not None:
+            with control_path.open("xb") as control:
+                control.write(packet)
+                control.flush()
+                os.fsync(control.fileno())
+        self._ledger.record["cold_artifacts"] = {
+            "archive": str(archive_copy),
+            "control_packet": None if packet is None else str(control_path),
+            "original_archive": str(archive_path.resolve()),
+            "scientific_restart_authority": False,
+        }
+
+    def _retain_output(self, stdout: bytes) -> None:
+        """Keep raw child evidence even when decoding or scientific work refuses."""
+        from tools.meshing_qualification._progress import evidence_path
+
+        try:
+            output_path = evidence_path("cold.stdout", process_id=self.process_id)
+            if output_path is None:
+                return
+            self._stderr.seek(0)
+            for path, content in (
+                (output_path, stdout),
+                (output_path.with_suffix(".stderr"), self._stderr.read()),
+            ):
+                with path.open("xb") as stream:
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        except OSError as error:
+            # Reporting must not replace the child's first scientific failure.
+            self._ledger.record.setdefault("reporting_failures", []).append({
+                "phase": "cold-output-retention",
+                "type": type(error).__name__,
+                "message": str(error),
+            })
+            self._ledger.record["reporting_status"] = "failed"
+
     def execute(
         self, archive_path: Path, content_id: str, controls: dict[str, Any]
     ) -> dict[str, Any]:
@@ -945,9 +1013,22 @@ class ColdWorker:
             + "\n"
         ).encode()
         if len(packet) > COLD_CONTROL_PACKET_BYTES:
+            # The accepted checkpoint is independent of this transport refusal.
+            # Keep it replayable; never persist an oversized packet as admitted.
+            try:
+                self._retain_input(archive_path, None)
+            except OSError as error:
+                self._ledger.record["reporting_status"] = "failed"
+                self._ledger.record.setdefault("reporting_failures", []).append(
+                    {"phase": "cold_input_retention", "type": type(error).__name__, "message": str(error)}
+                )
+            self._ledger.record["cold_packet_refusal"] = {
+                "packet_bytes": len(packet), "maximum_packet_bytes": COLD_CONTROL_PACKET_BYTES
+            }
             raise ValueError(
                 f"ColdWorker.packet must not exceed {COLD_CONTROL_PACKET_BYTES} bytes; got {len(packet)}"
             )
+        self._retain_input(archive_path, packet)
         ledger = self._ledger
         phase = ledger.cold_phase or ledger.record.get("active_phase", "cold_worker")
 
@@ -960,12 +1041,14 @@ class ColdWorker:
             except (subprocess.TimeoutExpired, TimeoutError) as failure:
                 self._kill()
                 stdout, _ = self._process.communicate()
+                self._retain_output(stdout)
                 self._end("timeout")
                 raise ColdWorkerTimeout(
                     f"qualification.worker.deadline must allow completion; got module={self._module!r}, pid={self._process.pid}",
                     stdout.decode(errors="replace"),
                     self._stderr_text(),
                 ) from failure
+            self._retain_output(stdout)
             return sent, _monotonic(), stdout
 
         sent, returned, stdout = ledger.run(phase, collect)

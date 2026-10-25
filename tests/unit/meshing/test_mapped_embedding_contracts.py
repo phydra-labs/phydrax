@@ -4,25 +4,44 @@
 
 from dataclasses import dataclass, replace
 from fractions import Fraction
+from typing import Self
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometrySpec,
+    coordinate_lagrange_element,
+)
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
-from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from phydrax.discretization._coordinate_enclosure import (
     affine_arguments,
     coordinate_expressions,
-    expression_evaluate,
+    CoordinateCoefficients,
+    CoordinateSourceBank,
+    ExactScalar,
     Expression,
+    expression_evaluate,
     ExpressionComposition,
     Polynomial,
 )
-from phydrax.geometry._embedding_cells import BisectionWorklist, Cell, vertices
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.geometry import _restricted_embedding as restricted_embedding
+from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+from phydrax.geometry._embedding_cells import (
+    BisectionWorklist,
+    Cell,
+    IntervalBoundaryCell,
+    SurfaceMapEnclosures,
+    vertices,
+)
 from phydrax.geometry._embedding_state import (
     ContactDecision,
     ContactStatus,
@@ -31,8 +50,14 @@ from phydrax.geometry._embedding_state import (
     EmbeddingState,
     MeshCertificateLimits,
 )
-from phydrax.geometry._mapped_embedding import pair_decision, root_injective
-from phydrax.geometry import _restricted_embedding as restricted_embedding
+from phydrax.geometry._interval_enclosure import Interval
+from phydrax.geometry._mapped_embedding import (
+    _ParentPartition,
+    pair_decision,
+    root_injective,
+)
+from phydrax.geometry._source_boundary_records import SourceBoundaryChartCover
+from phydrax.geometry.brep._placed import PlacedSurface
 from tests._support.coordinate_references import coordinate_reference_budget
 from tests._support.mapped_embedding import complex_cube_map
 
@@ -141,9 +166,19 @@ def test_repeated_reference_box_contact_reuses_exact_proof(
     calls = []
     original = restricted_embedding.pair_decision
 
-    def decide(*args, **kwargs):
+    def decide(
+        first: Cell,
+        second: Cell,
+        limits: MeshCertificateLimits,
+        maximum_work: int,
+        *,
+        checks: list[str],
+        budget: CoordinateEnclosureBudget,
+    ) -> ContactDecision:
         calls.append(None)
-        return original(*args, **kwargs)
+        return original(
+            first, second, limits, maximum_work, checks=checks, budget=budget
+        )
 
     monkeypatch.setattr(restricted_embedding, "pair_decision", decide)
     limits = MeshCertificateLimits()
@@ -205,9 +240,16 @@ def test_candidate_ray_reuse_preserves_original_sum_planes(
     calls = []
     original = mapped._corner_plane_separates
 
-    def separate(*args, **kwargs):
+    def separate(
+        first: Cell,
+        second: Cell,
+        shared: set[int],
+        anchor: int | None,
+        left: list[ExactScalar],
+        right: list[ExactScalar],
+    ) -> bool:
         calls.append(None)
-        return original(*args, **kwargs)
+        return original(first, second, shared, anchor, left, right)
 
     monkeypatch.setattr(mapped, "_corner_plane_separates", separate)
     with coordinate_reference_budget() as budget:
@@ -219,6 +261,95 @@ def test_candidate_ray_reuse_preserves_original_sum_planes(
         assert len(calls) == 5
         assert budget.retained_basis_bytes == retained
         assert budget.temporary_bytes_upper == temporary
+
+
+@pytest.mark.parametrize("mismatch", (False, True))
+def test_bulk_contact_authenticates_trace_once_before_preparing_controls(
+    mismatch: bool,
+) -> None:
+    from phydrax.geometry import _mapped_embedding as mapped
+
+    limits = MeshCertificateLimits(maximum_subdivision_depth=0)
+    first = Cell(
+        ({(1,): Fraction(1), (2,): Fraction(1, 8)}, {}),
+        "box", "interval", 1, (10, 11), vertices("interval"),
+    )
+    second = Cell(
+        ({(0,): Fraction(int(mismatch)), (1,): Fraction(-1)}, {}),
+        "box", "interval", 1, (10, 12), vertices("interval"),
+    )
+    if mismatch:
+        # Admit precisely the real trace computation on a fresh ledger. There
+        # is no capacity left for a duplicate authentication or net preparation.
+        with coordinate_reference_budget(limits) as trace_budget:
+            with trace_budget.polynomial_preparation_scope():
+                assert not mapped.cell_traces_equal(first, second, budget=trace_budget)
+            trace_work = trace_budget.work_units
+        limits = MeshCertificateLimits(
+            maximum_subdivision_depth=0, maximum_work_units=trace_work,
+        )
+
+    state = EmbeddingState([], [])
+    with coordinate_reference_budget(limits) as budget, budget.live_storage() as live:
+        mapped._certify_embedding_pairs(
+            state, [first, second], np.asarray((20, 21)), limits,
+            np.asarray((0,)), np.asarray((1,)), np.asarray((-1, -1)), live,
+            budget=budget,
+        )
+    assert state.clean is (not mismatch)
+    if mismatch:
+        assert state.findings[0].check == "mapped_trace_mismatch"
+
+
+@pytest.mark.parametrize("remaining", (0, 1))
+def test_boundary_contact_retires_pair_polynomials_even_on_resource_refusal(
+    remaining: int,
+) -> None:
+    from phydrax.geometry._boundary_degree_embedding import (
+        _boundary_contact,
+        _DegreeCounts,
+    )
+
+    limits = MeshCertificateLimits(maximum_subdivision_depth=0)
+    first = Cell(
+        ({(1,): Fraction(1), (2,): Fraction(1, 8)}, {}),
+        "box", "interval", 1, (10, 11), vertices("interval"),
+    )
+    direction = -1 if remaining else 1
+    second = Cell(
+        ({(1,): Fraction(direction), (2,): Fraction(direction, 8)}, {}),
+        "box", "interval", 1, (10, 12), vertices("interval"),
+    )
+    with coordinate_reference_budget(limits) as budget:
+        with budget.polynomial_preparation_scope():
+            # Reference monomial supports and Bernstein lattice/weight tables
+            # are legitimate request-retained preparations. Earn those on a
+            # different pair first; physical source-polynomial nets must not
+            # accumulate when the next pair uses the same reference charts.
+            warm_first = replace(
+                first, coordinates=({(1,): Fraction(1), (2,): Fraction(1, 16)}, {}),
+            )
+            warm_second = replace(
+                second,
+                coordinates=(
+                    {(1,): Fraction(direction), (2,): Fraction(direction, 16)}, {},
+                ),
+            )
+            warm = _boundary_contact(
+                warm_first, warm_second, limits, remaining, _DegreeCounts(2), budget=budget,
+            )
+            assert warm.status == ("separated" if remaining else "unresolved")
+            retained = budget.retained_basis_bytes
+            temporary = budget.temporary_bytes_upper
+            before = budget.work_units
+            decision = _boundary_contact(
+                first, second, limits, remaining, _DegreeCounts(2), budget=budget,
+            )
+            assert budget.retained_basis_bytes == retained
+            assert budget.temporary_bytes_upper == temporary
+            assert budget.work_units > before
+            assert decision.work == remaining
+            assert decision.status == ("separated" if remaining else "unresolved")
 
 
 def test_false_locally_injective_hint_does_not_earn_jordan_contact_check() -> None:
@@ -646,12 +777,13 @@ class _AnalyticHomotopyTriangle:
     translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
     x_scale: float = 1.0
     authority: str = "authored-analytic-chart"
+    z_taper: float = 0.0
 
     @property
     def map_id(self) -> str:
         return canonical_fingerprint((
             self.authority, self.corners, self.vertices, self.amplitude,
-            self.translation, self.x_scale,
+            self.translation, self.x_scale, self.z_taper,
         ))
 
     @property
@@ -666,14 +798,46 @@ class _AnalyticHomotopyTriangle:
             self.authority,
             tuple(self.vertices[index] for index in local_vertices),
             self.corners[list(local_vertices)],
-            self.amplitude, self.translation, self.x_scale,
+            self.amplitude, self.translation, self.x_scale, self.z_taper,
         ))
 
-    @classmethod
-    def enclosures(cls, requests, /, *, image, jacobian, budget):
-        from phydrax.geometry._embedding_cells import SurfaceMapEnclosures
+    def _coordinates(
+        self, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[Polynomial, ...]:
+        if self.z_taper == 0.0:
+            return self.target
+        from phydrax.discretization._coordinate_enclosure import (
+            add,
+            constant,
+            multiply,
+            scale,
+        )
 
-        def stacked(rows):
+        amount = Fraction(self.z_taper)
+        factor = add(
+            constant(1 + amount, 2, budget=budget),
+            scale(add(self.target[0], self.target[1], budget=budget), -amount, budget=budget),
+            budget=budget,
+        )
+        return (
+            self.target[0], self.target[1],
+            multiply(self.target[2], factor, budget=budget),
+        )
+
+    @classmethod
+    def enclosures(
+        cls,
+        requests: list[tuple[Self, np.ndarray]],
+        /,
+        *,
+        image: bool,
+        jacobian: bool,
+        budget: CoordinateEnclosureBudget,
+    ) -> list[SurfaceMapEnclosures]:
+
+        def stacked(
+            rows: list[Interval],
+        ) -> tuple[np.ndarray, np.ndarray]:
             return np.stack([row[0] for row in rows]), np.stack([row[1] for row in rows])
 
         return [
@@ -685,7 +849,9 @@ class _AnalyticHomotopyTriangle:
             for source, references in requests
         ]
 
-    def _image(self, reference, /, *, budget):
+    def _image(
+        self, reference: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> Interval:
         from phydrax.geometry._interval_enclosure import (
             interval_add,
             interval_multiply,
@@ -694,7 +860,7 @@ class _AnalyticHomotopyTriangle:
         from phydrax.geometry._mapped_embedding import _homotopy_target_bounds
 
         budget.reserve_geometry_queries(1)
-        lower, upper = _homotopy_target_bounds(self.target, reference, budget=budget)
+        lower, upper = _homotopy_target_bounds(self._coordinates(budget=budget), reference, budget=budget)
         x = (lower[0], upper[0])
         amplitude = np.asarray(self.amplitude)
         lower[2], upper[2] = interval_add(
@@ -706,7 +872,9 @@ class _AnalyticHomotopyTriangle:
         translation = np.asarray(self.translation)
         return interval_add((lower, upper), (translation, translation))
 
-    def _jacobian(self, reference, /, *, budget):
+    def _jacobian(
+        self, reference: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
         from phydrax.discretization._coordinate_enclosure import expression_derivative
         from phydrax.geometry._interval_enclosure import (
             interval_add,
@@ -716,13 +884,14 @@ class _AnalyticHomotopyTriangle:
         from phydrax.geometry._mapped_embedding import _homotopy_target_bounds
 
         budget.reserve_geometry_queries(1)
+        coordinates = self._coordinates(budget=budget)
         jacobian = tuple(
             expression_derivative(value, axis, budget=budget)
-            for value in self.target for axis in range(2)
+            for value in coordinates for axis in range(2)
         )
         lower, upper = _homotopy_target_bounds(jacobian, reference, budget=budget)
         lower, upper = lower.reshape(3, 2), upper.reshape(3, 2)
-        x = _homotopy_target_bounds(self.target[:1], reference, budget=budget)
+        x = _homotopy_target_bounds(coordinates[:1], reference, budget=budget)
         amplitude = np.asarray(self.amplitude)
         factor = interval_multiply(
             (amplitude, amplitude), interval_cos((x[0][0], x[1][0]))
@@ -736,7 +905,9 @@ class _AnalyticHomotopyTriangle:
         )
         return lower, upper
 
-    def _orientation(self, reference, /, *, budget):
+    def _orientation(
+        self, reference: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
         return self._jacobian(reference, budget=budget)
 
 
@@ -749,8 +920,7 @@ def _analytic_homotopy_cell(
     translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
     x_scale: float = 1.0,
     orientation: int = 1,
-):
-    from phydrax.geometry._embedding_cells import IntervalBoundaryCell
+) -> IntervalBoundaryCell:
 
     corners = points[list(row)]
     coordinates: list[Polynomial] = []
@@ -768,7 +938,9 @@ def _analytic_homotopy_cell(
     return IntervalBoundaryCell(source, target, row, corners, entity, orientation)
 
 
-def _analytic_octahedron(*, amplitude=0.0, x_scale=1.0, reverse_chart=False):
+def _analytic_octahedron(
+    *, amplitude: float = 0.0, x_scale: float = 1.0, reverse_chart: bool = False
+) -> tuple[IntervalBoundaryCell, ...]:
     points = np.asarray((
         (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0),
         (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, -1.0),
@@ -822,8 +994,10 @@ def test_interval_boundary_homotopy_never_publishes_partial_proof(
         x_scale=-1.0 if mutation == "fold" else 1.0,
     )
     if mutation == "trace":
+        source = cells[0].source
+        assert isinstance(source, _AnalyticHomotopyTriangle)
         cells = (
-            replace(cells[0], source=replace(cells[0].source, authority="unrelated-source")),
+            replace(cells[0], source=replace(source, authority="unrelated-source")),
             *cells[1:],
         )
     elif mutation == "open":
@@ -903,6 +1077,7 @@ def test_interval_homotopy_authenticates_full_target_edge_not_just_corners() -> 
 
     cells = _analytic_octahedron()
     coordinates = list(cells[0].target)
+    assert isinstance(coordinates[2], dict)
     changed = dict(coordinates[2])
     # u(1-u-v) vanishes at all three corners but not along the 0--1 edge.
     for exponent, coefficient in (
@@ -954,12 +1129,14 @@ def test_interval_homotopy_accounts_for_authored_representative_distance(
 ) -> None:
     from phydrax.geometry._mapped_embedding import certify_interval_boundary_homotopy
 
-    cells = tuple(
-        replace(cell, source=_TranslatedAuthoredTriangle(
-            cell.anchor, cell.vertices, cell.target
+    def translated(cell: IntervalBoundaryCell) -> IntervalBoundaryCell:
+        source = cell.source
+        assert isinstance(source, _AnalyticHomotopyTriangle)
+        return replace(cell, source=_TranslatedAuthoredTriangle(
+            cell.anchor, cell.vertices, source.target
         ))
-        for cell in _analytic_octahedron()
-    )
+
+    cells = tuple(map(translated, _analytic_octahedron()))
     limits = MeshCertificateLimits()
     with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
         result = certify_interval_boundary_homotopy(
@@ -988,7 +1165,9 @@ class _ReflectedAuthoredTriangle(_AnalyticHomotopyTriangle):
         # These tests use the unit octahedron: |raw - representative|=2|x|<=2.
         return 2.0
 
-    def _orientation(self, reference, /, *, budget):
+    def _orientation(
+        self, reference: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
         lower, upper = self._jacobian(reference, budget=budget)
         raw_lower, raw_upper = lower.copy(), upper.copy()
         raw_lower[0], raw_upper[0] = -upper[0], -lower[0]
@@ -998,12 +1177,14 @@ class _ReflectedAuthoredTriangle(_AnalyticHomotopyTriangle):
 def test_interval_homotopy_requires_raw_authored_orientation_not_only_completion() -> None:
     from phydrax.geometry._mapped_embedding import certify_interval_boundary_homotopy
 
-    cells = tuple(
-        replace(cell, source=_ReflectedAuthoredTriangle(
-            cell.anchor, cell.vertices, cell.target
+    def reflected(cell: IntervalBoundaryCell) -> IntervalBoundaryCell:
+        source = cell.source
+        assert isinstance(source, _AnalyticHomotopyTriangle)
+        return replace(cell, source=_ReflectedAuthoredTriangle(
+            cell.anchor, cell.vertices, source.target
         ))
-        for cell in _analytic_octahedron()
-    )
+
+    cells = tuple(map(reflected, _analytic_octahedron()))
     limits = MeshCertificateLimits(maximum_subdivision_depth=2)
     with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
         result = certify_interval_boundary_homotopy(
@@ -1028,9 +1209,11 @@ def test_interval_homotopy_refuses_invalid_authored_distance_bound(
 
     cells = _analytic_octahedron()
     first = cells[0]
+    source = first.source
+    assert isinstance(source, _AnalyticHomotopyTriangle)
     cells = (
         replace(first, source=InvalidAuthoredBound(
-            first.anchor, first.vertices, first.target
+            first.anchor, first.vertices, source.target
         )),
         *cells[1:],
     )
@@ -1045,7 +1228,9 @@ def test_interval_homotopy_refuses_invalid_authored_distance_bound(
     assert np.isinf(result.distance_upper)
 
 
-def _native_homotopy_chart_source(budget):
+def _native_homotopy_chart_source(
+    budget: CoordinateEnclosureBudget,
+) -> MeshingDomainBoundarySource:
     """Build one complete, source-exact box-face chain without meshing."""
     import phydrax as phx
     from phydrax.geometry.brep._intersection_curve import exact_curve_parameter_point
@@ -1091,7 +1276,9 @@ def _native_homotopy_chart_source(budget):
     )
 
 
-def _native_homotopy_source_cell(budget):
+def _native_homotopy_source_cell(
+    budget: CoordinateEnclosureBudget,
+) -> IntervalBoundaryCell:
     """Issue real native maps from a source-exact box face, without meshing."""
     from phydrax.geometry._domain_chart_chain import prepare_source_chart_maps
 
@@ -1106,17 +1293,23 @@ def test_chart_source_preparation_reuses_only_complete_current_request_proofs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import equinox as eqx
+
     from phydrax.geometry import _source_fidelity as fidelity
 
     limits = MeshCertificateLimits()
     calls = []
-    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 
     original = MeshingDomainBoundarySource.boundary_chart_cover
 
-    def counted(source, *args, **kwargs):
+    def counted(
+        source: MeshingDomainBoundarySource,
+        maximum_patches: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> SourceBoundaryChartCover:
         calls.append(source)
-        return original(source, *args, **kwargs)
+        return original(source, maximum_patches, budget=budget)
 
     monkeypatch.setattr(MeshingDomainBoundarySource, "boundary_chart_cover", counted)
     with coordinate_reference_budget(
@@ -1156,6 +1349,7 @@ def test_chart_source_preparation_reuses_only_complete_current_request_proofs(
 def test_chart_source_proof_never_keeps_its_budget_alive() -> None:
     import gc
     import weakref
+
     from phydrax.geometry import _source_fidelity as fidelity
 
     limits = MeshCertificateLimits()
@@ -1172,13 +1366,18 @@ def test_chart_source_proof_never_keeps_its_budget_alive() -> None:
 
 
 def test_native_source_definition_memo_is_proof_local_and_reauthenticates_banks() -> None:
-    from phydrax.geometry._domain_chart_chain import SourceChartMapError, source_chart_enclosure_identity
     from dataclasses import fields, is_dataclass
+
     from phydrax._strict import StrictModule
-    from phydrax.geometry._domain_chart_chain import _source_atom
+    from phydrax.geometry._domain_chart_chain import (
+        _source_atom,
+        source_chart_enclosure_identity,
+        SourceChartMap,
+        SourceChartMapError,
+    )
     from phydrax.geometry.brep._carrier_pieces import carrier_payload
 
-    def canonical_definition(value):
+    def canonical_definition(value: object) -> object:
         if isinstance(value, StrictModule):
             return canonical_fingerprint(carrier_payload(value))
         if isinstance(value, Fraction):
@@ -1202,11 +1401,13 @@ def test_native_source_definition_memo_is_proof_local_and_reauthenticates_banks(
     ) as budget:
         cell = _native_homotopy_source_cell(budget)
         source = cell.source
+        assert isinstance(source, SourceChartMap)
         carriers = {}
         before = budget.work_units
         identity = source_chart_enclosure_identity(source, budget, carriers)
         first_work = budget.work_units - before
         assert identity is not None
+        assert source.enclosure_authority is not None
         assert identity == canonical_fingerprint({
             "map": source.map_id,
             "authority": source.enclosure_authority[:2],
@@ -1218,6 +1419,7 @@ def test_native_source_definition_memo_is_proof_local_and_reauthenticates_banks(
         assert budget.work_units - before < first_work
         assert source_chart_enclosure_identity(source, budget, {}) == identity
         # A new proof authenticates actual nested coefficients, not asserted map IDs.
+        assert isinstance(source.surface, PlacedSurface)
         original = source.surface.translation
         object.__setattr__(source.surface, "translation", original + jnp.asarray((0.0, 0.0, 0.25)))
         try:
@@ -1228,52 +1430,73 @@ def test_native_source_definition_memo_is_proof_local_and_reauthenticates_banks(
         with pytest.raises(SourceChartMapError, match="genuine_reprepare"):
             source_chart_enclosure_identity(source, budget, {})
         source = _native_homotopy_source_cell(budget).source
-        assert source_chart_enclosure_identity(source, budget, {}) == identity
+        assert isinstance(source, SourceChartMap)
     with coordinate_reference_budget(
         limits, queries_upper=limits.maximum_source_samples
     ) as cold:
         assert source_chart_enclosure_identity(source, cold, {}) is None
 
 
-def test_source_carrier_dag_preserves_owner_admission_and_mutable_leaf_checks() -> None:
-    from phydrax.geometry._domain_chart_chain import _admit_source_carrier_dag
-    from phydrax.geometry.brep._carrier_pieces import admit_carrier_fingerprint, carrier_payload
+def test_source_carrier_admission_bounds_real_payload_and_refuses_mutable_reuse() -> None:
+    import tracemalloc
+
     from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax.geometry._domain_chart_chain import SourceChartMap
+    from phydrax.geometry.brep._carrier_pieces import (
+        admit_carrier_fingerprint,
+        carrier_payload,
+    )
 
     limits = MeshCertificateLimits()
     with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
-        source = _native_homotopy_source_cell(budget).source.surface
+        source = _native_homotopy_source_cell(budget).source
+        assert isinstance(source, SourceChartMap)
+        source = source.surface
         canonical = canonical_fingerprint(carrier_payload(source))
-        roots = (source, source, (source,))
-        with budget.temporary_scope():
-            before = budget.temporary_bytes_upper
-            admit_carrier_fingerprint(roots, budget)
-            original_bytes = budget.temporary_bytes_upper - before
-        memo = {}
-        with budget.temporary_scope():
-            before = budget.temporary_bytes_upper
-            _admit_source_carrier_dag(roots, budget, memo)
-            assert budget.temporary_bytes_upper - before == original_bytes + 512 * len(memo)
+        tracemalloc.start()
         assert canonical_fingerprint(carrier_payload(source)) == canonical
+        _, payload_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        def admitted(value: object, memo: dict | None) -> tuple[bool, int]:
+            with budget.temporary_scope():
+                before = budget.temporary_bytes_upper
+                immutable = admit_carrier_fingerprint(value, budget, memo=memo)
+                return immutable, budget.temporary_bytes_upper - before
+
+        # The allowance covers the payload the fingerprint actually builds,
+        # both when first earned and when a proof reuses retained summaries.
+        memo = {}
+        fresh_immutable, fresh = admitted(source, None)
+        first_immutable, first = admitted(source, memo)
+        again_immutable, again = admitted(source, memo)
+        assert fresh_immutable and first_immutable and again_immutable
         assert memo[id(source)].owner is source
+        assert payload_peak <= again <= first and payload_peak <= fresh
+        # Every occurrence remains serialized, so a repeated carrier costs more.
+        _, repeated = admitted((source, source, (source,)), memo)
+        assert repeated > again
+        assert canonical_fingerprint(carrier_payload(source)) == canonical
+
+        # A public NumPy leaf can change in place: never memoized as immutable,
+        # and its changed content changes the scientific fingerprint.
         public = np.asarray((1.0, 2.0))
         mutable = (source, public)
-        with budget.temporary_scope():
-            first = _admit_source_carrier_dag(mutable, budget, memo)
-        assert not first[3] and id(public) not in memo and id(mutable) not in memo
+        mutable_immutable, _ = admitted(mutable, memo)
+        assert not mutable_immutable
+        assert id(public) not in memo and id(mutable) not in memo
         before_mutation = array_tree_fingerprint(public)
         public[0] = 3.0
-        with budget.temporary_scope():
-            changed = _admit_source_carrier_dag(mutable, budget, memo)
-        assert not changed[3] and id(public) not in memo
+        changed_immutable, _ = admitted(mutable, memo)
+        assert not changed_immutable and id(public) not in memo
         assert array_tree_fingerprint(public) != before_mutation
         cyclic = []
         cyclic.append(cyclic)
         with pytest.raises(ValueError, match="acyclic"):
-            _admit_source_carrier_dag(cyclic, budget, memo)
+            admit_carrier_fingerprint(cyclic, budget, memo=memo)
 
 
-def test_homotopy_reuses_only_native_source_rows_across_full_proof_work():
+def test_homotopy_reuses_only_native_source_rows_across_full_proof_work() -> None:
     from phydrax.geometry._mapped_embedding import _IntervalHomotopyWork
 
     limits = MeshCertificateLimits()
@@ -1289,9 +1512,15 @@ def test_homotopy_reuses_only_native_source_rows_across_full_proof_work():
             assert first.source_queries == 2
         source_bytes = budget._source_homotopy_enclosure_storage.bound
         assert source_bytes > 0 and budget.temporary_bytes_upper >= source_bytes
+        def translated_expression(expression: Expression) -> Polynomial:
+            assert isinstance(expression, dict)
+            return {
+                **expression,
+                (0, 0): expression.get((0, 0), Fraction(0)) + 2,
+            }
+
         moved = replace(cell, target=tuple(
-            {**expression, (0, 0): expression.get((0, 0), Fraction(0)) + 2}
-            for expression in cell.target
+            translated_expression(expression) for expression in cell.target
         ))
         with budget.live_storage() as live:
             second = _IntervalHomotopyWork(limits, budget, live, 8192)
@@ -1308,10 +1537,12 @@ def test_homotopy_reuses_only_native_source_rows_across_full_proof_work():
 
 
 @pytest.mark.parametrize("mutation", ("surface", "endpoint", "trim", "authority"))
-def test_homotopy_source_mutations_never_hit_asserted_map_identity(mutation):
+def test_homotopy_source_mutations_never_hit_asserted_map_identity(
+    mutation: str,
+) -> None:
     import phydrax as phx
+    from phydrax.geometry._domain_chart_chain import SourceChartMap, SourceChartMapError
     from phydrax.geometry._mapped_embedding import _IntervalHomotopyWork
-    from phydrax.geometry._domain_chart_chain import SourceChartMapError
 
     limits = MeshCertificateLimits()
     reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
@@ -1321,6 +1552,7 @@ def test_homotopy_source_mutations_never_hit_asserted_map_identity(mutation):
             first = _IntervalHomotopyWork(limits, budget, live, 8192)
             first.source_interval(cell, reference, jet=False)
         source = cell.source
+        assert isinstance(source, SourceChartMap)
         if mutation == "surface":
             changed = replace(source, surface=phx.geometry.PlanePatch(
                 (9.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
@@ -1342,22 +1574,146 @@ def test_homotopy_source_mutations_never_hit_asserted_map_identity(mutation):
             assert second.source_queries == 0
 
 
-def test_protocol_source_assertions_never_earn_crossproof_native_memo():
+def _source_chart_children() -> np.ndarray:
+    """The four closed children of one uniform reference-triangle split."""
+    corner = np.asarray(((0.0, 0.0), (0.5, 0.0), (0.0, 0.5)))
+    return np.stack((
+        corner,
+        corner + (0.5, 0.0),
+        corner + (0.0, 0.5),
+        np.asarray(((0.5, 0.0), (0.0, 0.5), (0.5, 0.5))),
+    ))
+
+
+@pytest.mark.parametrize("nested", (False, True))
+def test_source_chart_image_banks_equal_scalar_surface_rows(
+    monkeypatch: pytest.MonkeyPatch, nested: bool
+) -> None:
+    from phydrax.geometry._domain_chart_chain import SourceChartMap
+    from phydrax.geometry.brep._patches import AbstractSurfacePatch
+
+    angle = 0.3
+    rotation = np.asarray((
+        (np.cos(angle), -np.sin(angle), 0.0),
+        (np.sin(angle), np.cos(angle), 0.0),
+        (0.0, 0.0, 1.0),
+    ))
+    references = _source_chart_children()
+    limits = MeshCertificateLimits()
+
+    def enclosures() -> list[tuple[tuple[str, tuple[int, ...], bytes], ...]]:
+        with coordinate_reference_budget(
+            limits, queries_upper=limits.maximum_source_samples
+        ) as budget:
+            source = _native_homotopy_source_cell(budget).source
+            assert isinstance(source, SourceChartMap)
+            assert isinstance(source.surface, PlacedSurface)
+            if nested:
+                source = replace(
+                    source,
+                    surface=PlacedSurface(source.surface, rotation, (0.5, -0.25, 2.0)),
+                    memo={},
+                )
+            results = SourceChartMap.enclosures(
+                [(source, references[:1]), (source, references), (source, references[1:3])],
+                image=True,
+                jacobian=True,
+                budget=budget,
+            )
+        rows = []
+        for result in results:
+            parts = (result.image, result.jacobian, result.orientation)
+            assert all(part is not None for part in parts)
+            rows.append(tuple(
+                (bound.dtype.str, bound.shape, bound.tobytes())
+                for part in parts if part is not None
+                for bound in part
+            ))
+        return rows
+
+    batched = enclosures()
+    # The default bank evaluates the unchanged scalar placement row by row.
+    monkeypatch.setattr(PlacedSurface, "bounding_boxes", AbstractSurfacePatch.bounding_boxes)
+    assert enclosures() == batched
+
+
+def test_source_chart_image_refusal_stops_at_first_nonfinite_surface_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jax
+
+    from phydrax.geometry._domain_chart_chain import SourceChartMap, SourceChartMapError
+    from phydrax.geometry.brep._patches import AbstractSurfacePatch
+    from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
+
+    limits = MeshCertificateLimits()
+    calls = []
+    with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
+        source = _native_homotopy_source_cell(budget).source
+        assert isinstance(source, SourceChartMap)
+        assert isinstance(source.surface, PlacedSurface)
+        # A distinct definition object separates these rows from other map owners.
+        definition = jax.tree_util.tree_map(lambda leaf: leaf, source.surface.definition)
+        assert definition is not source.surface.definition
+        owner = type(definition)
+        original = owner.bounding_box
+
+        def counted(
+            surface: AbstractSurfacePatch,
+            parameter_box: np.ndarray,
+            /,
+            *,
+            preparations: TrimRequestPreparations | None = None,
+            budget: CoordinateEnclosureBudget | None = None,
+        ) -> np.ndarray:
+            if surface is definition:
+                calls.append(np.array(parameter_box, copy=True))
+            return original(
+                surface, parameter_box, preparations=preparations, budget=budget
+            )
+
+        monkeypatch.setattr(owner, "bounding_box", counted)
+        # The largest finite translation rounds every outward upper x bound to infinity.
+        overflow = replace(
+            source,
+            surface=PlacedSurface(
+                PlacedSurface(
+                    definition, source.surface.rotation, source.surface.translation
+                ),
+                np.eye(3),
+                (float(np.finfo(np.float64).max), 0.0, 0.0),
+            ),
+            memo={},
+        )
+        with pytest.raises(SourceChartMapError, match="source_surface_enclosure_unsupported"):
+            SourceChartMap.enclosures(
+                [(overflow, _source_chart_children())],
+                image=True,
+                jacobian=False,
+                budget=budget,
+            )
+    # Only the first row was enclosed; later rows were never evaluated.
+    assert len(calls) == 1
+
+
+def test_protocol_source_assertions_never_earn_crossproof_native_memo() -> None:
     from phydrax.geometry._mapped_embedding import _IntervalHomotopyWork
 
     class AssertedIdentity(_AnalyticHomotopyTriangle):
         @property
-        def map_id(self):
+        def map_id(self) -> str:
             return "same-untrusted-assertion"
 
     limits = MeshCertificateLimits()
     reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     original = _analytic_octahedron()[0]
+    original_source = original.source
+    assert isinstance(original_source, _AnalyticHomotopyTriangle)
     first_cell = replace(original, source=AssertedIdentity(
-        original.anchor, original.vertices, original.target
+        original.anchor, original.vertices, original_source.target
     ))
     second_cell = replace(original, source=AssertedIdentity(
-        original.anchor, original.vertices, original.target, translation=(0.0, 0.0, 1.0)
+        original.anchor, original.vertices, original_source.target, translation=(0.0, 0.0, 1.0)
     ))
     with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
         results = []
@@ -1370,7 +1726,7 @@ def test_protocol_source_assertions_never_earn_crossproof_native_memo():
         assert not np.array_equal(results[0], results[1])
 
 
-def test_native_source_lru_owns_only_copied_rows_and_releases_evicted_backing():
+def test_native_source_lru_owns_only_copied_rows_and_releases_evicted_backing() -> None:
     import weakref
 
     limits = MeshCertificateLimits()
@@ -1449,9 +1805,126 @@ def test_native_completed_source_points_keep_exact_immutable_host_bank() -> None
     np.testing.assert_array_equal(model.require_geometry().vertex_points, original)
 
 
-def _parent_surface_partition_case(*, homogeneous: bool = False):
+def test_split_cylinder_seam_authenticates_period_sheet_trim_roots() -> None:
+    import equinox as eqx
+
+    import phydrax as phx
+    from phydrax._fingerprint import tree_content_equal
+    from phydrax.geometry._domain_chart_chain import (
+        _root_spatial_carrier,
+        _source_endpoint_parameters_equal,
+        prepare_source_chart_domain,
+    )
+    from phydrax.geometry._meshing_domain import PatchCurveUse, PhysicalCurveMap
+    from phydrax.geometry.brep._intersection import RootEndpoint, TrimRootEndpoint
+    from phydrax.geometry.brep._intersection_curve import CurveTrimSegment, PeriodicPCurve
+    from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
+
+    # The registered quadric-routine operands: the intersection splits the
+    # vertical cylinder seam between faces on different period sheets.
+    contract = phx.SpatialCoordinateContract.si()
+    exact = phx.geometry.brep.BRepTessellationPolicy(realize=False)
+    vertical = phx.geometry.brep.brep_cylinder(
+        1.0,
+        2.4,
+        base_center=(0.0, 0.0, -1.2),
+        coordinate_contract=contract,
+        tessellation=exact,
+    )
+    transverse = phx.geometry.brep.brep_cylinder(
+        0.6,
+        3.0,
+        base_center=(-1.5, 0.0, 0.0),
+        axis=(1.0, 0.0, 0.0),
+        coordinate_contract=contract,
+        tessellation=exact,
+    )
+    model = phx.geometry.brep.boolean_brep(
+        vertical,
+        transverse,
+        "intersection",
+        policy=phx.geometry.brep.BRepBooleanPolicy(tessellation=exact),
+    ).model
+    domain = phx.geometry.MeshingDomain.from_brep(model)
+    physical = domain.curve_atlas.mapping
+    assert isinstance(physical, PhysicalCurveMap)
+    native = physical.endpoint_roots
+    sheet_pairs = [
+        use
+        for source in domain.patches
+        for loop in source.loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+        and isinstance(use.first_root, TrimRootEndpoint)
+        and isinstance(native[use.curve][0], TrimRootEndpoint)
+        and not tree_content_equal((use.first_root, use.last_root), native[use.curve])
+        and not tree_content_equal((use.last_root, use.first_root), native[use.curve])
+    ]
+    assert sheet_pairs
+    limits = MeshCertificateLimits()
+    with coordinate_reference_budget(
+        limits, queries_upper=limits.maximum_source_samples
+    ) as budget:
+        prepare_source_chart_domain(domain, budget=budget)
+
+        # Same root, side and affine chain on another period sheet is one
+        # scalar; every scalar-changing difference is still refused.
+        use = sheet_pairs[0]
+        row = np.asarray(physical.ranges)[use.curve]
+        native_range = (float(row[0]), float(row[1]))
+        roots = (use.first_root, use.last_root)
+        if (use.first, use.last) != native_range:
+            roots = roots[::-1]
+
+        def equal(coedge: tuple[RootEndpoint | None, RootEndpoint | None]) -> bool:
+            return _source_endpoint_parameters_equal(
+                native[use.curve],
+                coedge,
+                physical.curves[use.curve],
+                use.pcurve,
+                native_range,
+                preparations=TrimRequestPreparations(),
+                budget=budget,
+            )
+
+        first, last = roots
+        assert isinstance(first, TrimRootEndpoint)
+        assert equal(roots)
+        assert not equal((last, first))
+        assert not equal((first.affine(1.0, 2.0**-20), last))
+        lift = first.source_pcurve
+        assert isinstance(lift, PeriodicPCurve)
+        reparameterized = eqx.tree_at(
+            lambda endpoint: endpoint.source_pcurve,
+            first,
+            CurveTrimSegment(lift.source_curve, 0.0, 1.0),
+        )
+        assert not equal((reparameterized, last))
+        assert _root_spatial_carrier(reparameterized) is None
+
+        # A lifted native root keeps only its own spatial carrier.
+        geometry = model.require_geometry()
+        carriers = [geometry.curves[index] for index in geometry.edge_curves]
+        lifted = [
+            (edge, root)
+            for edge, ends in enumerate(geometry.edge_endpoint_roots)
+            for root in ends
+            if isinstance(root, TrimRootEndpoint) and root.source_pcurve is not None
+        ]
+        assert lifted
+        for edge, root in lifted:
+            spatial = _root_spatial_carrier(root)
+            assert tree_content_equal(spatial, carriers[edge])
+            assert not tree_content_equal(root.carrier, carriers[edge])
+
+
+def _parent_surface_partition_case(
+    *, homogeneous: bool = False
+) -> tuple[CellMesh, CellGeometrySpec, np.ndarray, np.ndarray, Fraction]:
     from phydrax.discretization._cell_geometry import (
-        BarycentricCellGeometryElement, CellGeometryRestrictionSource, FiniteElementSpec,
+        BarycentricCellGeometryElement,
+        CellGeometryRestrictionSource,
+        FiniteElementSpec,
     )
     from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 
@@ -1513,6 +1986,7 @@ def test_parent_surface_partition_batches_actual_root_corner_laws(
     homogeneous: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sys
+
     from phydrax.geometry import _mapped_embedding as mapped
 
     mesh, geometry, points, routes, fraction = _parent_surface_partition_case(
@@ -1522,15 +1996,30 @@ def test_parent_surface_partition_batches_actual_root_corner_laws(
     original_batch = mapped.coordinate_enclosure_owner.coordinate_vertex_images
     original_cell = mapped.coordinate_enclosure_owner.coordinate_corner_images
 
-    def batch(*args, **kwargs):
+    def batch(
+        blocks: tuple[tuple[CellGeometryElement, np.ndarray, np.ndarray], ...],
+        controls: CoordinateSourceBank,
+        vertex_count: int,
+        /,
+        *,
+        mismatch: str,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[tuple[ExactScalar, ...] | None, ...] | None:
         if sys._getframe(1).f_code.co_name == "_prepare_parent_partition":
-            batch_calls.append(args[0])
-        return original_batch(*args, **kwargs)
+            batch_calls.append(blocks)
+        return original_batch(
+            blocks, controls, vertex_count, mismatch=mismatch, budget=budget
+        )
 
-    def cell(*args, **kwargs):
+    def cell(
+        element: CellGeometryElement,
+        local: CoordinateCoefficients,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> CoordinateSourceBank | None:
         if sys._getframe(1).f_code.co_name == "_prepare_parent_partition":
-            cell_calls.append(args[0])
-        return original_cell(*args, **kwargs)
+            cell_calls.append(element)
+        return original_cell(element, local, budget=budget)
 
     monkeypatch.setattr(mapped.coordinate_enclosure_owner, "coordinate_vertex_images", batch)
     monkeypatch.setattr(mapped.coordinate_enclosure_owner, "coordinate_corner_images", cell)
@@ -1571,7 +2060,9 @@ def test_parent_surface_partition_does_not_alias_asserted_chart_ids() -> None:
 
 
 @pytest.mark.parametrize("mutation", ("coordinates", "routes", "chart", "carrier"))
-def test_parent_surface_partition_reauthenticates_stale_actual_owners(mutation) -> None:
+def test_parent_surface_partition_reauthenticates_stale_actual_owners(
+    mutation: str,
+) -> None:
     from phydrax.geometry import _mapped_embedding as mapped
 
     mesh, geometry, _, _, _ = _parent_surface_partition_case()
@@ -1586,6 +2077,7 @@ def test_parent_surface_partition_reauthenticates_stale_actual_owners(mutation) 
             new = (old[0].at[0, 0].set(1), *old[1:])
         elif mutation == "chart":
             owner, field = geometry.elements[0], "barycentric_weights"
+            assert isinstance(owner, BarycentricCellGeometryElement)
             old = owner.barycentric_weights
             new = old.at[2].set(jnp.asarray((0.25, 0.0, 0.75)))
         else:
@@ -1606,7 +2098,7 @@ def test_parent_surface_partition_exact_work_boundary_releases_refused_scratch()
 
     mesh, geometry, _, _, _ = _parent_surface_partition_case(homogeneous=True)
 
-    def run(budget):
+    def run(budget: CoordinateEnclosureBudget) -> _ParentPartition:
         with budget.temporary_scope():
             result = mapped._prepare_parent_partition(mesh, geometry, budget=budget)
         assert result is not None
@@ -1633,6 +2125,7 @@ def test_parent_surface_partition_keeps_unsupported_batch_corner_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sys
+
     from phydrax.geometry import _mapped_embedding as mapped
 
     mesh, geometry, _, _, _ = _parent_surface_partition_case(homogeneous=True)
@@ -1642,10 +2135,15 @@ def test_parent_surface_partition_keeps_unsupported_batch_corner_route(
     original = mapped.coordinate_enclosure_owner.coordinate_corner_images
     calls = []
 
-    def cell(*args, **kwargs):
+    def cell(
+        element: CellGeometryElement,
+        local: CoordinateCoefficients,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> CoordinateSourceBank | None:
         if sys._getframe(1).f_code.co_name == "_prepare_parent_partition":
-            calls.append(args[0])
-        return original(*args, **kwargs)
+            calls.append(element)
+        return original(element, local, budget=budget)
 
     monkeypatch.setattr(
         mapped.coordinate_enclosure_owner, "coordinate_vertex_images",
@@ -1663,8 +2161,12 @@ def test_parent_surface_partition_keeps_unsupported_batch_corner_route(
 
 def test_prepared_native_map_rejects_changed_public_source_and_old_local_caches() -> None:
     import equinox as eqx
+
     from phydrax.geometry._domain_chart_chain import (
-        prepare_source_chart_maps, SourceChartMapError, source_chart_enclosure_identity,
+        prepare_source_chart_maps,
+        source_chart_enclosure_identity,
+        SourceChartMap,
+        SourceChartMapError,
     )
     from phydrax.geometry._mapped_embedding import _IntervalHomotopyWork
 
@@ -1672,11 +2174,14 @@ def test_prepared_native_map_rejects_changed_public_source_and_old_local_caches(
     reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
         query = _native_homotopy_chart_source(budget)
-        public = np.array(query.domain.patches[0].surface.translation, copy=True)
+        surface = query.domain.patches[0].surface
+        assert isinstance(surface, PlacedSurface)
+        public = np.array(surface.translation, copy=True)
         public.setflags(write=False)
         query = eqx.tree_at(lambda value: value.domain.patches[0].surface.translation, query, public)
         data = query.chart_triangulations[0]
         source = prepare_source_chart_maps(query.domain, data, budget=budget)[0]
+        assert isinstance(source, SourceChartMap)
         cell = replace(_analytic_homotopy_cell(data[2], (0, 1, 2), 0), source=source)
         with budget.live_storage() as live:
             first = _IntervalHomotopyWork(limits, budget, live, 8192)
@@ -1700,3 +2205,239 @@ def test_prepared_native_map_rejects_changed_public_source_and_old_local_caches(
             source_chart_enclosure_identity(source, budget, {})
         fresh = prepare_source_chart_maps(query.domain, data, budget=budget)[0]
         assert source_chart_enclosure_identity(fresh, budget, {}) == old_identity
+
+
+@pytest.mark.parametrize("metadata", ["shape", "strides", "dtype"])
+def test_prepared_native_map_refuses_changed_layout_of_byte_backed_bank(metadata: str) -> None:
+    import warnings
+
+    import equinox as eqx
+
+    from phydrax.geometry._domain_chart_chain import (
+        prepare_source_chart_maps,
+        source_chart_enclosure_identity,
+        SourceChartMap,
+        SourceChartMapError,
+    )
+    from phydrax.geometry._mapped_embedding import _IntervalHomotopyWork
+
+    def assign(bank: np.ndarray, value: object) -> None:
+        # Supported NumPy releases may deprecate in-place metadata assignment.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            setattr(bank, metadata, value)
+
+    changed = {"shape": (1, 3), "strides": (0,), "dtype": np.dtype(np.int64)}[metadata]
+    try:
+        assign(np.frombuffer(bytes(24), dtype=np.float64), changed)
+    except AttributeError:
+        pytest.skip(f"this NumPy cannot assign ndarray.{metadata} in place")
+    limits = MeshCertificateLimits()
+    reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
+        query = _native_homotopy_chart_source(budget)
+        surface = query.domain.patches[0].surface
+        assert isinstance(surface, PlacedSurface)
+        # Immutable bytes fix the values; dtype, shape and strides stay assignable.
+        bank = np.frombuffer(
+            np.asarray(surface.translation, dtype=np.float64).tobytes(), dtype=np.float64
+        )
+        query = eqx.tree_at(lambda value: value.domain.patches[0].surface.translation, query, bank)
+        data = query.chart_triangulations[0]
+        source = prepare_source_chart_maps(query.domain, data, budget=budget)[0]
+        assert isinstance(source, SourceChartMap)
+        cell = replace(_analytic_homotopy_cell(data[2], (0, 1, 2), 0), source=source)
+        # An unchanged immutable map is reused within one proof at lower cost.
+        carriers = {}
+        before = budget.work_units
+        identity = source_chart_enclosure_identity(source, budget, carriers)
+        first_work = budget.work_units - before
+        before = budget.work_units
+        assert source_chart_enclosure_identity(source, budget, carriers) == identity
+        assert budget.work_units - before < first_work
+        original = getattr(bank, metadata)
+        with budget.live_storage() as live:
+            work = _IntervalHomotopyWork(limits, budget, live, 8192)
+            work.source_interval(cell, reference, jet=False)
+            assign(bank, changed)
+            # Same bank object and bytes in the same proof: the accepted
+            # enclosure is refused, never returned for the changed carrier.
+            with pytest.raises(SourceChartMapError, match="requires_reprepare"):
+                work.source_interval(cell, reference, jet=False)
+            with pytest.raises(SourceChartMapError, match="genuine_reprepare"):
+                source_chart_enclosure_identity(source, budget, carriers)
+        assign(bank, original)
+        # Restoring the layout does not restore the revoked preparation.
+        with pytest.raises(SourceChartMapError, match="genuine_reprepare"):
+            source_chart_enclosure_identity(source, budget, {})
+        fresh = prepare_source_chart_maps(query.domain, data, budget=budget)[0]
+        assert source_chart_enclosure_identity(fresh, budget, {}) == identity
+        with budget.live_storage() as live:
+            work = _IntervalHomotopyWork(limits, budget, live, 8192)
+            assert work.source_interval(replace(cell, source=fresh), reference, jet=False) is not None
+
+
+def test_interval_homotopy_perpendicular_crease_uses_balanced_edge_chart() -> None:
+    from phydrax.geometry._mapped_embedding import certify_interval_boundary_homotopy
+
+    # Edge 0-1 is a slightly obtuse crease between the x=0 face and a face whose
+    # target dips to z=-x/256 while its source z-x/256+0.01 sin(x) rises. A
+    # first-face tangent chart squashes that face to height 1/256, where the
+    # rising source reverses its transverse sign. The balanced edge chart keeps
+    # both faces at sin(phi/2) and proves the same embedded pair.
+    points = np.asarray((
+        (0.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.5, 1.0), (1.0, 0.5, -1.0 / 256.0),
+    ))
+    rows = ((0, 1, 2), (0, 3, 1), (0, 2, 3), (1, 3, 2))
+    cells = tuple(
+        _analytic_homotopy_cell(points, row, index, amplitude=0.01)
+        for index, row in enumerate(rows)
+    )
+    limits = MeshCertificateLimits()
+    with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
+        result = certify_interval_boundary_homotopy(cells, limits, tolerance=0.05, budget=budget)
+    assert result.complete
+    assert result.reason == ""
+    assert result.proof_id
+
+
+@pytest.mark.parametrize("translation", ((0.0, 0.0, 0.0), (0.0, 0.0, -0.5)), ids=("fixed-vertex", "moving-vertex"))
+def test_interval_homotopy_proves_nonmonotone_separated_vertex_displacement(
+    translation: tuple[float, float, float],
+) -> None:
+    from phydrax.geometry._mapped_embedding import certify_interval_boundary_homotopy
+
+    # F(x,y,z)=(x,y,z*(5/2-3*x/2-3*y/2)) is a diffeomorphism on this pyramid:
+    # x+y lies in [0,1], so its vertical scale is at least one. The two
+    # opposite apex faces have signed height q(s)=5*s/8-3*s*s/8>0 away from
+    # the apex, but q'(s)<0 for s>5/6. No fixed separator has positive
+    # directional derivatives on both faces everywhere.
+    points = np.asarray((
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.25), (0.0, 1.0, 0.25),
+        (1.0, 0.0, -0.25), (0.0, 1.0, -0.25),
+    ), dtype=np.float64)
+    rows = ((0, 1, 2), (0, 4, 3), (0, 3, 1), (0, 2, 4), (1, 3, 4), (1, 4, 2))
+    cells = []
+    for entity, row in enumerate(rows):
+        cell = _analytic_homotopy_cell(points, row, entity, translation=translation)
+        assert isinstance(cell.source, _AnalyticHomotopyTriangle)
+        cells.append(replace(cell, source=replace(cell.source, z_taper=1.5)))
+    limits = MeshCertificateLimits()
+    tolerance = 0.125 + abs(translation[2])
+    with coordinate_reference_budget(limits, queries_upper=limits.maximum_source_samples) as budget:
+        proof = certify_interval_boundary_homotopy(
+            tuple(cells), limits, tolerance=tolerance, budget=budget,
+        )
+    assert proof.complete
+    assert proof.distance_upper <= tolerance
+    assert proof.proof_id
+
+
+@pytest.mark.parametrize("layout", ("contiguous", "fortran", "strided"))
+@pytest.mark.parametrize("extended", (False, True), ids=("finite", "extended-real"))
+def test_homotopy_matrix_bounds_preserve_ordered_endpoint_bits(
+    layout: str, extended: bool
+) -> None:
+    from phydrax.geometry._interval_enclosure import interval_dot
+    from phydrax.geometry._mapped_embedding import _homotopy_linear
+
+    def arranged(value: np.ndarray) -> np.ndarray:
+        if layout == "fortran":
+            return np.asfortranarray(value)
+        if layout == "strided":
+            storage = np.empty((value.shape[0], 2 * value.shape[1]), dtype=np.float64)
+            storage[:, ::2] = value
+            return storage[:, ::2]
+        return value
+
+    left = np.asarray(((0.0, 1.0 / 3.0, -2.0), (3.0, -0.0, 1.0)), dtype=np.float64)
+    right = np.asarray(((0.0, 1.0), (2.0, -3.0), (-1.0, 4.0)), dtype=np.float64)
+    first = (left.copy(), left.copy())
+    second = (right - 0.125, right + 0.125)
+    if extended:
+        first[0][0, 0], first[1][0, 0] = -np.inf, np.inf
+        second[0][0, 0] = second[1][0, 0] = 0.0
+        first[0][1, 1] = first[1][1, 1] = np.nan
+    first = tuple(arranged(value) for value in first)
+    second = tuple(arranged(value) for value in second)
+    expected = (np.empty((2, 2), dtype=np.float64), np.empty((2, 2), dtype=np.float64))
+    with np.errstate(invalid="ignore", over="ignore"):
+        for row in range(2):
+            for column in range(2):
+                lower, upper = interval_dot(
+                    (first[0][row], first[1][row]),
+                    (second[0][:, column], second[1][:, column]),
+                )
+                expected[0][row, column], expected[1][row, column] = lower, upper
+        actual = _homotopy_linear((first[0], first[1]), (second[0], second[1]))
+    np.testing.assert_array_equal(actual[0].view(np.uint64), expected[0].view(np.uint64))
+    np.testing.assert_array_equal(actual[1].view(np.uint64), expected[1].view(np.uint64))
+
+
+@pytest.mark.parametrize(
+    ("diagonal_lower", "diagonal_upper", "off_diagonal", "positive"),
+    ((1.0, 1.0, 0.0, True), (0.0, 0.0, 0.0, False),
+     (-0.25, 1.0, 0.0, False), (1.0, 1.0, 2.0, False)),
+    ids=("positive", "semidefinite", "uncertain-sign", "indefinite"),
+)
+def test_homotopy_projected_minors_require_strict_positivity(
+    diagonal_lower: float, diagonal_upper: float, off_diagonal: float, positive: bool
+) -> None:
+    from phydrax.geometry._mapped_embedding import _homotopy_spd
+
+    lower = np.asarray(((1.0, off_diagonal), (off_diagonal, diagonal_lower), (0.0, 0.0)), dtype=np.float64)
+    upper = lower.copy()
+    upper[1, 1] = diagonal_upper
+    projection = np.asarray(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), dtype=np.float64)
+    identity = np.eye(2, dtype=np.float64)
+    assert _homotopy_spd((lower, upper), projection, (identity, identity)) is positive
+
+
+def test_homotopy_net_projection_preserves_cancellation_bounds() -> None:
+    from phydrax.geometry._interval_enclosure import interval_dot
+    from phydrax.geometry._mapped_embedding import _homotopy_net_range
+
+    direction = np.asarray((1.0, 1.0, -1.0), dtype=np.float64)
+    lower = np.asarray((
+        (1.0e16, 1.0, 1.0e16), (0.0, -0.0, 0.0), (1.0, 2.0, 4.0),
+        (-2.0, 0.25, 1.0), (0.5, 0.125, -0.25), (-1.0e16, -1.0, -1.0e16),
+    ), dtype=np.float64)
+    upper = lower.copy()
+    upper[2, 2] += 0.25
+    reference = [
+        interval_dot((direction, direction), (low, high))
+        for low, high in zip(lower, upper, strict=True)
+    ]
+    expected = np.asarray((
+        min(value[0] for value in reference), max(value[1] for value in reference),
+    ), dtype=np.float64)
+    actual = np.asarray(_homotopy_net_range(direction, (lower, upper)), dtype=np.float64)
+    np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
+
+
+@pytest.mark.parametrize("slack", (0, -1), ids=("S", "S-minus-one"))
+def test_homotopy_native_operands_obey_the_actual_scratch_limit(slack: int) -> None:
+    from phydrax import _meshcore
+    from phydrax.geometry._mapped_embedding import _homotopy_linear
+
+    if not _meshcore.meshcore_provider_installed():
+        pytest.skip("Optional meshcore provider is not installed.")
+    left = np.asarray(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)), dtype=np.float64)
+    right = np.asarray(((2.0, 1.0), (0.0, -1.0), (1.0, 3.0)), dtype=np.float64)
+    with _meshcore.NativeExecutionScope(
+        _meshcore.NativeExecutionLimits(0, 0, 0, 1 << 20, 60.0)
+    ) as observed:
+        expected = _homotopy_linear((left, left), (right, right))
+    required = observed.completed_evidence().memory_counters.peak_bytes
+    limits = _meshcore.NativeExecutionLimits(0, 0, 0, required + slack, 60.0)
+    if slack < 0:
+        with pytest.raises(_meshcore.MeshcoreError) as refused:
+            with _meshcore.NativeExecutionScope(limits):
+                _homotopy_linear((left, left), (right, right))
+        assert refused.value.status is _meshcore.MeshcoreStatus.CAPACITY_EXCEEDED
+        return
+    with _meshcore.NativeExecutionScope(limits):
+        actual = _homotopy_linear((left, left), (right, right))
+    np.testing.assert_array_equal(actual[0], expected[0])
+    np.testing.assert_array_equal(actual[1], expected[1])

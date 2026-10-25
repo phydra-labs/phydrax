@@ -1,6 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
@@ -23,6 +24,7 @@ from typing import (
     NamedTuple,
 )
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -52,6 +54,9 @@ from phydrax.lifecycle import (
     recertify_restored_meshing_source,
     validate_meshing_accepted_epochs,
     write_meshing_source_closure,
+)
+from phydrax.lifecycle._meshing_field_records import (
+    rebind_meshing_adaptation_execution_endpoints,
 )
 from phydrax.meshing import (
     NativeMeshingPhaseMeasurement,
@@ -1097,7 +1102,7 @@ def _implicit_adapt_epoch(
     )
     eigenvalues = np.linalg.eigvalsh(tensors)
     certificate = current.certification
-    if certificate is None or not isinstance(
+    if certificate is None or certificate.request.fidelity_tolerance is None or not isinstance(
         certificate.request.source, ImplicitProjectionBoundarySource
     ):
         raise ValueError(
@@ -1114,12 +1119,20 @@ def _implicit_adapt_epoch(
         association_transfer=phx.meshing.ImplicitAssociationTransfer(
             profile, maximum_queries=request.limits.maximum_geometry_queries
         ),
+        geometry_transition=phx.discretization.CellGeometryTransitionPolicy(
+            reconstruction="source_realization",
+            reconstruction_tolerance=2.0 * certificate.request.fidelity_tolerance,
+            maximum_evaluations=request.limits.maximum_work_units,
+        ),
     )
     prepared, timing = _ledger.run(
         record.get("active_phase", "prepare_mesh_adaptation"),
         lambda: _measured(
             lambda: phx.meshing.prepare_mesh_adaptation(
-                current, phx.meshing.MetricMeshAdaptation(metric), policy=policy
+                current,
+                phx.meshing.MetricMeshAdaptation(metric),
+                policy=policy,
+                observe_managed_admission=True,
             )
         ),
     )
@@ -1137,10 +1150,18 @@ def _implicit_adapt_epoch(
         "prepared_id": prepared.prepared_id,
     }
 
-    adaptation, timing = _ledger.run(
-        f"native_metric_execution_epoch_{epoch}",
-        lambda: _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared)),
-    )
+    try:
+        adaptation, timing = _ledger.run(
+            f"native_metric_execution_epoch_{epoch}",
+            lambda: _measured(
+                lambda: phx.meshing.execute_mesh_adaptation(
+                    prepared, observe_managed_admission=True
+                )
+            ),
+        )
+    except Exception as failure:
+        _implicit_record_cavity_failure(failure, record)
+        raise
     stages[record["active_phase"]] = timing["wall_seconds"]
     row["adaptation"] = {
         "result_id": adaptation.result_id,
@@ -1212,6 +1233,7 @@ def _implicit_transfer_epoch(
     deadline: Deadline,
 ) -> _ImplicitTransferredState:
     """Transport all fields/history, then query the prior prepared scalar owner."""
+    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
 
     _ledger = StageLedger(record, deadline=deadline)
     stages = record["stages_seconds"]
@@ -1219,25 +1241,34 @@ def _implicit_transfer_epoch(
     transferred, timing = _ledger.run(
         f"allfield_history_composition_rebind_epoch_{epoch}",
         lambda: _measured(
-            lambda: transition_envelope_state(
-                current,
-                adaptation,
-                problem,
-                values,
-                epoch,
-                auxiliary,
-                projection_policy=CommonRefinementPolicy(
-                    overlap_simplices=True,
-                    maximum_candidate_pairs=256 * args.capacity,
-                    maximum_accepted_pairs=256 * args.capacity,
-                    maximum_memory_bytes=args.maximum_memory_bytes,
+            lambda: execute_native_consumer(
+                adaptation.target,
+                adaptation.policy.limits,
+                lambda budget: transition_envelope_state(
+                    current,
+                    adaptation,
+                    problem,
+                    values,
+                    epoch,
+                    auxiliary,
+                    projection_policy=CommonRefinementPolicy(
+                        overlap_simplices=True,
+                        maximum_candidate_pairs=256 * args.capacity,
+                        maximum_accepted_pairs=256 * args.capacity,
+                        maximum_memory_bytes=args.maximum_memory_bytes,
+                        maximum_exact_work=adaptation.policy.limits.maximum_work_units,
+                    ),
+                    failure_factory=qualification_failure,
+                    material_error_tolerance=args.target_error,
+                    budget=budget,
                 ),
                 failure_factory=qualification_failure,
+                observe_managed_admission=True,
             )
         ),
     )
     stages[record["active_phase"]] = timing["wall_seconds"]
-    carried, auxiliary, row["transfer"] = transferred
+    carried, auxiliary, row["transfer"] = transferred.value
     row["transfer"]["state_L2_error"] = _physical_error(adaptation.target.mesh, carried)
 
     reconstruction, timing = _ledger.run(
@@ -1273,7 +1304,7 @@ def _implicit_transfer_epoch(
         "site": witness.tolist(),
     }
     return _ImplicitTransferredState(
-        current=adaptation.target, carried=carried, auxiliary=auxiliary
+        current=transferred.result, carried=carried, auxiliary=auxiliary
     )
 
 
@@ -1364,7 +1395,11 @@ def _implicit_qualification_epochs(
             transferred.carried,
             transferred.auxiliary,
         )
-        transition = adaptation
+        # The consumer extends the target's execution evidence only; the
+        # declared transition binds that exact accepted carrier.
+        transition = rebind_meshing_adaptation_execution_endpoints(
+            adaptation, adaptation.source, current
+        )
     role = _implicit_case(args).role
     minimum_order = None if role == "routine" else IMPLICIT_MINIMUM_PHYSICAL_ORDER
     convergence = _physical_error_convergence(
@@ -1584,7 +1619,7 @@ def _implicit_discover_source(
     record: dict[str, Any],
     *,
     deadline: Deadline,
-) -> None:
+) -> _ImplicitPreparedSource:
     """Certify discovery and independent inside/outside domain probes."""
 
     _ledger = StageLedger(record, deadline=deadline)
@@ -1696,6 +1731,14 @@ def _implicit_discover_source(
             ("Source-enclosed interior/exterior/genus volume probes were not certified."),
             {"classes": classes, "expected": expected, "names": names},
         )
+    retained_source = phx.meshing.NativeImplicitSource(
+        source.geometry,
+        source.grid,
+        source.source_id,
+        source.source_revision,
+        discovery=discovery.volume,
+    )
+    return eqx.tree_at(lambda value: value.source, prepared, retained_source)
 
 
 def _implicit_publish_level(
@@ -1878,8 +1921,52 @@ def _implicit_publish_volume(
     return current
 
 
+def _implicit_record_cavity_failure(
+    failure: BaseException, record: dict[str, Any]
+) -> None:
+    """Persist the already-paid exact cavity diagnostic without changing refusal.
+
+    Each refusal carries one edit snapshot note followed by its chart note.
+    """
+    from phydrax.geometry._implicit_cavity_atlas import (
+        CHART_NOTE_PREFIX,
+        SNAPSHOT_NOTE_PREFIX,
+    )
+
+    from .._progress import evidence_path
+
+    notes: list[tuple[str, str]] = []
+    seen: set[int] = set()
+    cause: BaseException | None = failure
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        snapshot: str | None = None
+        for note in getattr(cause, "__notes__", ()):
+            if note.startswith(SNAPSHOT_NOTE_PREFIX):
+                snapshot = note[len(SNAPSHOT_NOTE_PREFIX):]
+            elif note.startswith(CHART_NOTE_PREFIX) and snapshot is not None:
+                notes.append((snapshot, note[len(CHART_NOTE_PREFIX):]))
+        cause = cause.__cause__ if cause.__cause__ is not None else cause.__context__
+    if not notes:
+        return
+    try:
+        snapshots = [
+            {**json.loads(snapshot), **json.loads(chart)}
+            for snapshot, chart in dict.fromkeys(notes)
+        ]
+        record["implicit_cavity_failure_snapshots"] = snapshots
+        path = evidence_path("implicit-cavity-refusal.json")
+        if path is not None:
+            path.write_text(json.dumps(snapshots, indent=2) + "\n", encoding="utf-8")
+            record["implicit_cavity_failure_artifact"] = str(path)
+    except (OSError, ValueError, TypeError) as reporting_error:
+        record["implicit_cavity_failure_reporting_error"] = str(reporting_error)
+        failure.add_note(f"Implicit cavity diagnostic reporting failed: {reporting_error}")
+
+
 def _implicit_record_failure(failure: Exception, record: dict[str, Any]) -> None:
     """Record the failed positive attempt with native evidence when available."""
+    _implicit_record_cavity_failure(failure, record)
     detail = record_failure(record, failure, record["active_phase"])
     record["failed_positive_attempts"].append(detail)
 
@@ -1927,6 +2014,11 @@ def _completed_native_metric_epochs(epochs: list[dict[str, Any]]) -> int:
         evidence = adaptation.get("metric_evidence", {})
         transfer = row.get("transfer", {})
         field_transfers = transfer.get("field_transfers", [])
+        # The same-request consumer extends only the carrier's execution
+        # evidence; the continued epoch must keep its scientific identity.
+        execution = ("execution_evidence", "resource_binding")
+        scientific = {key: value for key, value in target.items() if key not in execution}
+        continued_result = continued.get("result", {})
         # Raw out-of-range edges include certified source-lower exemptions.
         # Native compliance uses the unmet count; keep both observations intact.
         if (
@@ -1935,7 +2027,14 @@ def _completed_native_metric_epochs(epochs: list[dict[str, Any]]) -> int:
             and evidence.get("unmet_metric_edges") == 0
             and target.get("audit_passed") is True
             and bool(target.get("result_id"))
-            and target == continued.get("result")
+            and scientific
+            == {
+                key: value
+                for key, value in continued_result.items()
+                if key not in execution
+            }
+            and target.get("resource_binding", {}).get("result_id")
+            == continued_result.get("resource_binding", {}).get("result_id")
             and bool(adaptation.get("acceptance"))
             and bool(continued.get("acceptance"))
             and bool(transfer.get("receipt_id"))
@@ -2264,7 +2363,7 @@ def _implicit_qualification_lifecycle(args: QualificationControls) -> dict[str, 
     }
     try:
         prepared = _implicit_prepare_source(args, record, deadline=deadline)
-        _implicit_discover_source(args, prepared, record, deadline=deadline)
+        prepared = _implicit_discover_source(args, prepared, record, deadline=deadline)
         current = _implicit_publish_volume(
             args, prepared, record, native, deadline=deadline
         )

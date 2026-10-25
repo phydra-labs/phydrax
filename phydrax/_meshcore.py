@@ -78,7 +78,7 @@ from .typing import checked, ConvertibleToArray
 # SHA-256 of ``native/meshcore/include/phydrax_meshcore.h`` with CRLF normalized
 # to LF: the public C declarations that ``_SIGNATURES`` binds. The native build
 # exports the same digest of the header it compiled.
-_ABI_CONTRACT = "0d11fb783adcc56eac4c7fd7b66e5b4598fd2cb994de177fca82211b067d8035"
+_ABI_CONTRACT = "f9cf043d91e2574194620fae38b6843987305a494c93d0cb31917d7669c4ed06"
 _EXECUTION_CLOCK_CAPABILITY = "execution_clocks=request-preparation+absolute-workflow"
 _MAX_POINTS = 2147483646
 _MAX_COUNTER_VALUE = (1 << 64) - 1
@@ -140,6 +140,96 @@ class MeshcoreStatus(IntEnum):
     REFINEMENT_LIMIT = 8
     INTERNAL_ERROR = 9
     TIMEOUT = 10
+
+
+class QuadraticTetrahedronValidityDecision(IntEnum):
+    """Exact root result codes returned by quadratic tetrahedron validity."""
+
+    NEEDS_SUBDIVISION = 0
+    ROOT_VALID = 1
+    ROOT_INVALID = 2
+    BERNSTEIN_NODE_LIMIT = 3
+    DEPTH_ZERO_UNRESOLVED = 4
+
+
+@final
+class QuadraticTetrahedronValidityResult(StrictModule):
+    """Private root decisions and outward bounds from the native exact kernel."""
+
+    decisions: NDArray[np.int32]
+    lower: NDArray[np.float64]
+    upper: NDArray[np.float64]
+    evidence: NDArray[np.int64]
+
+    def __init__(
+        self,
+        decisions: NDArray[np.int32],
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        evidence: NDArray[np.int64],
+        /,
+    ) -> None:
+        if not isinstance(decisions, np.ndarray):
+            raise TypeError("QuadraticTetrahedronValidityResult.decisions must be a NumPy array.")
+        if decisions.ndim != 1:
+            raise ValueError("QuadraticTetrahedronValidityResult.decisions must have rank one.")
+        count = decisions.shape[0]
+        for name, value, dtype, shape in (
+            ("decisions", decisions, np.int32, (count,)),
+            ("lower", lower, np.float64, (count,)),
+            ("upper", upper, np.float64, (count,)),
+            ("evidence", evidence, np.int64, (6,)),
+        ):
+            if not isinstance(value, np.ndarray):
+                raise TypeError(f"QuadraticTetrahedronValidityResult.{name} must be a NumPy array.")
+            if value.shape != shape or value.dtype != np.dtype(dtype):
+                raise ValueError(
+                    f"QuadraticTetrahedronValidityResult.{name} must have shape {shape} and dtype {np.dtype(dtype)}."
+                )
+        if (
+            any(evidence[index] < 0 for index in range(3))
+            or evidence[3] != count
+            or evidence[4] != -1
+            or evidence[5] != 0
+        ):
+            raise ValueError("QuadraticTetrahedronValidityResult.evidence must describe complete success.")
+        for cell, code in enumerate(decisions):
+            decision = QuadraticTetrahedronValidityDecision(int(code))
+            if decision is QuadraticTetrahedronValidityDecision.BERNSTEIN_NODE_LIMIT:
+                if not (math.isnan(float(lower[cell])) and math.isnan(float(upper[cell]))):
+                    raise ValueError("Bernstein-node refusal must retain unavailable determinant bounds.")
+            elif math.isnan(float(lower[cell])) or math.isnan(float(upper[cell])) or lower[cell] > upper[cell]:
+                raise ValueError("Quadratic tetrahedron determinant bounds must be ordered and non-NaN.")
+        for value in (decisions, lower, upper, evidence):
+            value.flags.writeable = False
+        self.decisions = decisions
+        self.lower = lower
+        self.upper = upper
+        self.evidence = evidence
+
+
+@final
+class QuadraticTetrahedronValidityError(MeshcoreError):
+    """Native execution refusal with its always-published six-slot evidence."""
+
+    evidence: NDArray[np.int64]
+
+    def __init__(
+        self,
+        status: MeshcoreStatus,
+        evidence: NDArray[np.int64],
+        /,
+    ) -> None:
+        if evidence.shape != (6,) or evidence.dtype != np.dtype(np.int64):
+            raise ValueError(
+                "QuadraticTetrahedronValidityError.evidence must have shape (6,) and dtype int64."
+            )
+        evidence.flags.writeable = False
+        super().__init__(
+            status,
+            "quadratic_tetrahedron_validity: native exact root evaluation failed",
+        )
+        self.evidence = evidence
 
 
 @final
@@ -1318,6 +1408,23 @@ class _RemainingValues(NamedTuple):
     status: MeshcoreStatus
 
 
+class _RemainingSnapshot(ctypes.Structure):
+    """Private C output storage; each observation owns its snapshot."""
+
+    work: int
+    queries: int
+    cavity: int
+    managed_bytes: int
+    seconds: float
+    _fields_ = [
+        ("work", ctypes.c_uint64),
+        ("queries", ctypes.c_uint64),
+        ("cavity", ctypes.c_uint64),
+        ("managed_bytes", ctypes.c_uint64),
+        ("seconds", ctypes.c_double),
+    ]
+
+
 def _free_host_array(
     library: MeshcoreLibrary,
     handle: int,
@@ -1671,14 +1778,22 @@ class NativeExecutionScope:
             return None
         return active
 
+    def _managed_request_root(self) -> NativeExecutionScope:
+        """Use one allocator-pool coordinate system across inherited targets."""
+        root = self
+        while root._parent is not None:
+            root = root._parent
+        return root
+
     def _managed_observation_used(self) -> int:
         owner = self._managed_observer_owner or self
         active = owner._managed_observation_active_scope()
         if active is None:
             return 0  # Incomplete observation is never published as this value.
+        request = active._managed_request_root()
         used = (
-            owner._managed_observation_capacity
-            - active.remaining().remaining_managed_bytes
+            active._managed_observation_capacity
+            - request._remaining_values().remaining_managed_bytes
         )
         borrowed = owner._borrowed_ticket
         if borrowed is not None:
@@ -2006,12 +2121,14 @@ class NativeExecutionScope:
             or self._managed_observation_peak < native_peak
         ):
             return None
-        # Native host settlement combines the then-live outside reservations
-        # with a phase's historical host upper. That conservative admission
-        # demand can exceed the synchronized event peak after storage releases.
-        # It is neither physical RSS nor a reason to discard complete coverage.
-        # Keep actual allocator counters separate and compose uppers by maximum.
-        return max(self._managed_observation_peak, host_peak)
+        request_limit = self._managed_request_root()._limits_record.maximum_managed_bytes
+        if self._managed_observation_peak > request_limit:
+            # A complete event envelope cannot exceed the enforced request pool.
+            return None
+        # Settlement's historical host upper may combine disjoint intervals.
+        # The enforced request quota independently bounds admitted managed demand;
+        # intersect only that conservative component, never a measured event.
+        return max(self._managed_observation_peak, min(host_peak, request_limit))
 
     def completed_evidence(self) -> NativeExecutionEvidence:
         """Return the completed scope's measured work and storage evidence."""
@@ -2169,9 +2286,10 @@ class NativeExecutionScope:
                 f"_meshcore.NativeExecutionScope.__enter__.self must satisfy the input contract (A native execution budget is single-use.); got {_input_summary(self)}."
             )
         self._parent = current_native_execution_scope()
+        request_root = self._managed_request_root()
         parent_remaining = None
         if self._parent is not None:
-            parent_remaining = self._parent.remaining().remaining_managed_bytes
+            parent_remaining = request_root.remaining().remaining_managed_bytes
             self._managed_observation_capacity = (
                 self._parent._managed_observation_capacity
             )
@@ -2187,11 +2305,11 @@ class NativeExecutionScope:
                 if self._mesh is not None:
                     owner._managed_observation_complete = False
                 elif self._borrowed_ticket is not None:
-                    root = self._borrowed_ticket
-                    while root.parent is not None:
-                        root = root.parent
+                    # Stop at this observer's admitted root, not an independently
+                    # observed ancestor's escrow above it.
+                    root = self._managed_observation_target()
                     self._managed_observation_covered = (
-                        root in owner._managed_observation_roots
+                        root is not None and root() in owner._managed_observation_roots
                     )
                 elif (
                     (self._parent is owner or self._parent._managed_observation_covered)
@@ -2239,7 +2357,7 @@ class NativeExecutionScope:
         _native_context_stack.set((*_native_context_stack.get(), self))
         if parent_remaining is not None:
             self._managed_observation_capacity -= (
-                parent_remaining - self.remaining().remaining_managed_bytes
+                parent_remaining - request_root.remaining().remaining_managed_bytes
             )
         if self._managed_observation_window_active:
             owner = self._managed_observer_owner
@@ -2326,23 +2444,23 @@ class NativeExecutionScope:
     def _remaining_values(self) -> _RemainingValues:
         """Read every native counter and clock afresh without a public-module copy."""
         library = self._active_native_library("NativeExecutionScope.remaining")
-        values = np.zeros((4,), dtype=np.uint64)
-        wall = np.zeros((1,), dtype=np.float64)
+        snapshot = _RemainingSnapshot()
+        address = ctypes.addressof(snapshot)
         status = MeshcoreStatus(
             library["phx_mc_execution_remaining"](
                 self._handle,
-                values.ctypes.data,
-                wall.ctypes.data,
+                address,
+                address + 4 * ctypes.sizeof(ctypes.c_uint64),
             )
         )
         if status == MeshcoreStatus.INVALID_ARGUMENT:
             _raise_for_call(status, "execution_remaining")
         return _RemainingValues(
-            int(values[0]),
-            int(values[1]),
-            int(values[2]),
-            int(values[3]),
-            float(wall[0]),
+            snapshot.work,
+            snapshot.queries,
+            snapshot.cavity,
+            snapshot.managed_bytes,
+            snapshot.seconds,
             status,
         )
 
@@ -2777,6 +2895,15 @@ class NativeScopeTicket:
     @property
     def remaining_geometry_queries(self) -> int:
         return self._remaining().remaining_geometry_queries
+
+    @property
+    def remaining_cavity_cells(self) -> int:
+        return self._remaining().remaining_cavity_cells
+
+    @property
+    def remaining_managed_bytes(self) -> int:
+        """Current unconsumed capacity, excluding this view's same-owner credit."""
+        return self._remaining().remaining_managed_bytes
 
     def _set_bytes(self, bound: int, /) -> None:
         self._active_scope()
@@ -4298,6 +4425,29 @@ class NativeHostStorageWorkspace:
         self._logical_unmanaged_bytes_upper = logical_total
         child._adopted_by = self
 
+    def forget_retained_owners_after_handover(self) -> None:
+        """Drop scientific owner indices after an ended weak publication handover.
+
+        The caller prepays this fixed owner-index pass while live and installs
+        its weak root/array leases first. Tokens, bounds and allocator ancestry
+        are unchanged: this is neither a release nor a new admission.
+        """
+        owners = (self, *self._adopted_workspaces)
+        if self._adopted_by is not None or any(
+            not owner._active
+            or owner._budget._thread is not None
+            or owner._budget.evidence is None
+            or owner._token is not None
+            or owner._covered_owners
+            or owner._adopted_reservations
+            or owner is not self and owner._adopted_workspaces
+            for owner in owners
+        ):
+            raise RuntimeError("Weak handover requires ended, unborrowed workspace tokens.")
+        for owner in owners:
+            owner._retained_owners.clear()
+            owner._shared_owners.clear()
+
     def retain_owner(
         self,
         value: object,
@@ -4621,6 +4771,7 @@ class _ClipReferenceTetrahedronExactRequest(ctypes.Structure):
     signs: int | None
     scratch_limit: int
     work_limit: int
+    plane_count: int
     vertex_capacity: int
     face_capacity: int
     entry_capacity: int
@@ -4640,6 +4791,7 @@ class _ClipReferenceTetrahedronExactRequest(ctypes.Structure):
         ("signs", _P),
         ("scratch_limit", ctypes.c_int64),
         ("work_limit", ctypes.c_int64),
+        ("plane_count", ctypes.c_int32),
         ("vertex_capacity", ctypes.c_int32),
         ("face_capacity", ctypes.c_int32),
         ("entry_capacity", ctypes.c_int32),
@@ -4653,6 +4805,58 @@ class _ClipReferenceTetrahedronExactRequest(ctypes.Structure):
         ("work_units", _P),
     ]
 
+
+@final
+class _ArrangeTetrahedraExactRequest(ctypes.Structure):
+    """Naturally aligned transport for phx_mc_arrange_tetrahedra_exact_request."""
+
+    point_count: int
+    plane_count: int
+    tetrahedron_count: int
+    job_count: int
+    cut_count: int
+    point_word_count: int
+    plane_word_count: int
+    point_words: int | None
+    point_offsets: int | None
+    point_signs: int | None
+    plane_words: int | None
+    plane_offsets: int | None
+    plane_signs: int | None
+    tetrahedra: int | None
+    tetrahedron_planes: int | None
+    parents: int | None
+    cut_offsets: int | None
+    cut_planes: int | None
+    scratch_limit: int
+    work_limit: int
+    evidence: int | None
+    result: int | None
+
+    _fields_ = [
+        ("point_count", ctypes.c_int64),
+        ("plane_count", ctypes.c_int64),
+        ("tetrahedron_count", ctypes.c_int64),
+        ("job_count", ctypes.c_int64),
+        ("cut_count", ctypes.c_int64),
+        ("point_word_count", ctypes.c_int64),
+        ("plane_word_count", ctypes.c_int64),
+        ("point_words", _P),
+        ("point_offsets", _P),
+        ("point_signs", _P),
+        ("plane_words", _P),
+        ("plane_offsets", _P),
+        ("plane_signs", _P),
+        ("tetrahedra", _P),
+        ("tetrahedron_planes", _P),
+        ("parents", _P),
+        ("cut_offsets", _P),
+        ("cut_planes", _P),
+        ("scratch_limit", ctypes.c_int64),
+        ("work_limit", ctypes.c_int64),
+        ("evidence", _P),
+        ("result", _P),
+    ]
 
 @final
 class _ClipBoxHalfspacesRequest(ctypes.Structure):
@@ -5254,6 +5458,12 @@ class _TetMeshCommitEdgeInsertionRequest(ctypes.Structure):
     target_size: float
     work_limit: int
     inserted_vertex: int | None
+    projected_source: int
+    claim_count: int
+    claim_digest: int | None
+    claim_faces: int | None
+    claim_coordinates: int | None
+    claim_deviations: int | None
 
     _fields_ = [
         ("mesh", _P),
@@ -5272,6 +5482,12 @@ class _TetMeshCommitEdgeInsertionRequest(ctypes.Structure):
         ("target_size", ctypes.c_double),
         ("work_limit", ctypes.c_int64),
         ("inserted_vertex", _P),
+        ("projected_source", _I32),
+        ("claim_count", _I64),
+        ("claim_digest", _P),
+        ("claim_faces", _P),
+        ("claim_coordinates", _P),
+        ("claim_deviations", _P),
     ]
 
 
@@ -5431,6 +5647,16 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_ClipReferenceTetrahedronExactRequest),),
     ),
+    "phx_mc_arrange_tetrahedra_exact": (
+        _I32,
+        (ctypes.POINTER(_ArrangeTetrahedraExactRequest),),
+    ),
+    "phx_mc_tetrahedra_arrangement_sizes": (_I32, (_P, _P)),
+    "phx_mc_tetrahedra_arrangement_export": (
+        _I32,
+        (_P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_tetrahedra_arrangement_free": (None, (_P,)),
     "phx_mc_clip_box_halfspaces": (_I32, (ctypes.POINTER(_ClipBoxHalfspacesRequest),)),
     "phx_mc_delaunay_2d": (_I32, (_I64, _P, _I64, _I64, _I64, _I64, _P, _P, _P)),
     "phx_mc_regular_2d": (_I32, (_I64, _P, _P, _I64, _I64, _I64, _I64, _P, _P, _P)),
@@ -5445,6 +5671,18 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
     "phx_mc_point_triangle_locations": (_I32, (_I64, _P, _P, _P, _P, _P)),
+    "phx_mc_simplex_quadratic_bounds": (
+        _I32,
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_quadratic_tetrahedron_validity": (
+        _I32,
+        (_I64, _P, _P, _F64, _I64, _I64, _I64, _I64, _P, _P, _P, _P),
+    ),
+    "phx_mc_interval_program_execute": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64),
+    ),
     "phx_mc_constrained_delaunay_2d": (
         _I32,
         (ctypes.POINTER(_ConstrainedDelaunay2DRequest),),
@@ -5582,6 +5820,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I32, _I32, _P, _P, _F64, _I64, _I64, _P, _P, _P),
     ),
+    "phx_mc_tet_mesh_inspect_projected_edge_insertion": (
+        _I32,
+        (_P, _I32, _I32, _P, _P, _F64, _I32, _I64, _I64, _P, _P, _P, _P),
+    ),
     "phx_mc_tet_mesh_commit_edge_insertion": (
         _I32,
         (ctypes.POINTER(_TetMeshCommitEdgeInsertionRequest),),
@@ -5590,6 +5832,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_tet_mesh_inspect_curved_collapse": (
         _I32,
         (_P, _I32, _I32, _I32, _I64, _I64, _P, _P, _P, _P),
+    ),
+    "phx_mc_tet_mesh_curved_collapse_cavity": (
+        _I32,
+        (_P, _I32, _I32, _I64, _I64, _I64, _I64, _P, _P, _P),
     ),
     "phx_mc_tet_mesh_collapse_curved_edge": (
         _I32,
@@ -5690,6 +5936,7 @@ _MANAGED_NATIVE_FREE = frozenset(
         "phx_mc_plc3d_free",
         "phx_mc_power_cells_free",
         "phx_mc_arrangement_free",
+        "phx_mc_tetrahedra_arrangement_free",
         "phx_mc_surface_envelope_free",
     )
 )
@@ -5888,6 +6135,23 @@ def meshcore_available() -> bool:
     """Whether the native meshcore library can be loaded."""
 
     return not isinstance(_current(), str)
+
+
+@functools.cache
+def _provider_installed(configured: str, /) -> bool:
+    return bool(configured) or importlib.util.find_spec("phydrax_meshcore") is not None
+
+
+def meshcore_provider_installed() -> bool:
+    """Whether a meshcore provider is configured or installed, loadable or not.
+
+    True when the library environment names a path (even a missing one) or the
+    ``phydrax_meshcore`` package is importable. Unlike :func:`meshcore_available`,
+    an ABI or load failure of a present provider still counts as installed, so
+    callers route to :func:`load_meshcore` and its error instead of a fallback.
+    """
+
+    return _provider_installed((library_input("meshcore") or "").strip())
 
 
 def load_meshcore() -> MeshcoreLibrary:
@@ -6130,6 +6394,382 @@ def symbolic_insphere(
     """Lifted-perturbation ``insphere``; zero only for five coplanar points."""
 
     return _predicate("phx_mc_insphere_sos", (a, b, c, d, e), 3, ids)
+
+
+# ------------------------------------------------- quadratic simplex bounds
+
+
+def simplex_quadratic_bounds(
+    q_lower: object,
+    q_upper: object,
+    barycentric_lower: object,
+    barycentric_upper: object,
+    /,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Outward enclosures of degree-two Bernstein forms on child simplices.
+
+    ``q_lower``/``q_upper`` ``(n, c, m, m)`` enclose symmetric matrices ``Q`` of
+    ``f(lambda) = lambda^T Q lambda`` over root barycentric coordinates (``Q_ij``,
+    ``i != j``, is the coefficient of ``2 lambda_i lambda_j``); a lower endpoint
+    may be ``-inf`` and an upper endpoint ``+inf``. ``barycentric_lower``/
+    ``barycentric_upper`` ``(n, m, m)`` enclose, row ``k``, the root barycentric
+    coordinates of child vertex ``k``. Returns ``(lower, upper)`` ``(n, c)``
+    enclosing ``f`` on each whole child for every enclosed ``Q`` and map; an
+    infinite endpoint is inconclusive on its side only. ``c`` in ``{1, 2, 3}``
+    and ``m`` in ``{2, 3, 4}`` are read only as the array layout.
+    """
+    library = load_meshcore()
+    names = ("q_lower", "q_upper", "barycentric_lower", "barycentric_upper")
+    values = (q_lower, q_upper, barycentric_lower, barycentric_upper)
+    lower_q, upper_q, lower_rows, upper_rows = (
+        _real_array(value, f"simplex_quadratic_bounds.{name}")
+        for value, name in zip(values, names, strict=True)
+    )
+    if (
+        lower_q.ndim != 4
+        or lower_q.shape[1] not in (1, 2, 3)
+        or lower_q.shape[2] not in (2, 3, 4)
+        or lower_q.shape[3] != lower_q.shape[2]
+    ):
+        raise ValueError(
+            f"_meshcore.simplex_quadratic_bounds.q_lower must have shape (n, c, m, m) with c in {{1, 2, 3}} and m in {{2, 3, 4}}; got {_input_summary(q_lower)}."
+        )
+    if upper_q.shape != lower_q.shape:
+        raise ValueError(
+            f"_meshcore.simplex_quadratic_bounds.q_upper must have shape {lower_q.shape}; got {_input_summary(q_upper)}."
+        )
+    count, components, vertices = lower_q.shape[:3]
+    for rows, name, value in (
+        (lower_rows, "barycentric_lower", barycentric_lower),
+        (upper_rows, "barycentric_upper", barycentric_upper),
+    ):
+        if rows.shape != (count, vertices, vertices):
+            raise ValueError(
+                f"_meshcore.simplex_quadratic_bounds.{name} must have shape {(count, vertices, vertices)}; got {_input_summary(value)}."
+            )
+    scope = current_native_execution_scope()
+    shape = (count, components)
+    lower, upper = (
+        (np.empty(shape, dtype=np.float64), np.empty(shape, dtype=np.float64))
+        if scope is None
+        else (
+            scope.allocate_host_array(shape, np.float64),
+            scope.allocate_host_array(shape, np.float64),
+        )
+    )
+    with ExitStack() as stack:
+        if scope is not None:
+            ticket = stack.enter_context(scope.ticket_view())
+            stack.enter_context(ticket.native_target())
+        status = library["phx_mc_simplex_quadratic_bounds"](
+            count,
+            vertices - 1,
+            components,
+            lower_q.ctypes.data,
+            upper_q.ctypes.data,
+            lower_rows.ctypes.data,
+            upper_rows.ctypes.data,
+            lower.ctypes.data,
+            upper.ctypes.data,
+        )
+        _raise_for_call(status, "simplex_quadratic_bounds")
+    return lower, upper
+
+
+def quadratic_tetrahedron_validity(
+    nodes: NDArray[np.float64],
+    derivative_weights: NDArray[np.integer],
+    relative_floor: float,
+    maximum_bernstein_nodes: int,
+    maximum_subdivision_depth: int,
+    maximum_work_units: int,
+    maximum_scratch_bytes: int,
+    /,
+) -> QuadraticTetrahedronValidityResult:
+    """Certify fresh P2 tetrahedron roots with the exact native flat ABI.
+
+    ``nodes`` is ``(count, 10, 3)`` binary64 and ``derivative_weights`` is
+    ``(3, 4, 10)`` integer power coefficients in constant, x, y, z order.
+    The returned evidence is ``(work, queries, peak bytes, completed, failing
+    cell, failure category)``. Native staging is admitted before any input copy.
+    """
+    operation = "quadratic_tetrahedron_validity"
+    if not isinstance(nodes, np.ndarray) or nodes.dtype != np.dtype(np.float64):
+        raise TypeError(
+            f"_meshcore.{operation}.nodes must be a float64 NumPy array; got {_input_summary(nodes)}."
+        )
+    if nodes.ndim != 3 or nodes.shape[1:] != (10, 3):
+        raise ValueError(
+            f"_meshcore.{operation}.nodes must have shape (count, 10, 3); got {_input_summary(nodes)}."
+        )
+    count = nodes.shape[0]
+    int64_max = (1 << 63) - 1
+    if count > int64_max // 30 or count * 30 * 8 > np.iinfo(np.intp).max:
+        raise ValueError(
+            f"_meshcore.{operation}.nodes must fit addressable int64 counts and binary64 storage; got {_input_summary(nodes)}."
+        )
+    if not isinstance(derivative_weights, np.ndarray):
+        raise TypeError(
+            f"_meshcore.{operation}.derivative_weights must be an integer NumPy array; got {_input_summary(derivative_weights)}."
+        )
+    if (
+        derivative_weights.shape != (3, 4, 10)
+        or derivative_weights.dtype.hasobject
+        or not np.issubdtype(derivative_weights.dtype, np.integer)
+        or np.issubdtype(derivative_weights.dtype, np.bool_)
+    ):
+        raise ValueError(
+            f"_meshcore.{operation}.derivative_weights must be an integer array with shape (3, 4, 10); got {_input_summary(derivative_weights)}."
+        )
+    if isinstance(relative_floor, (bool, np.bool_)) or not isinstance(
+        relative_floor, (int, float, np.integer, np.floating)
+    ):
+        raise TypeError(
+            f"_meshcore.{operation}.relative_floor must be a finite binary64 scalar; got {_input_summary(relative_floor)}."
+        )
+    floor = float(relative_floor)
+    if not math.isfinite(floor) or not 0.0 <= floor < 1.0:
+        raise ValueError(
+            f"_meshcore.{operation}.relative_floor must lie in [0, 1); got {_input_summary(relative_floor)}."
+        )
+    node_limit = bounded_integer(
+        maximum_bernstein_nodes,
+        f"_meshcore.{operation}.maximum_bernstein_nodes",
+        lower=1,
+        upper=int64_max,
+    )
+    depth_limit = bounded_integer(
+        maximum_subdivision_depth,
+        f"_meshcore.{operation}.maximum_subdivision_depth",
+        lower=0,
+        upper=int64_max,
+    )
+    work_limit = bounded_integer(
+        maximum_work_units,
+        f"_meshcore.{operation}.maximum_work_units",
+        lower=0,
+        upper=int64_max,
+    )
+    scratch_limit = bounded_integer(
+        maximum_scratch_bytes,
+        f"_meshcore.{operation}.maximum_scratch_bytes",
+        lower=0,
+        upper=int64_max,
+    )
+    for value in derivative_weights.flat:
+        integer = int(value)
+        if not -(1 << 31) <= integer < (1 << 31):
+            raise ValueError(
+                f"_meshcore.{operation}.derivative_weights must fit int32 coefficients; got {_input_summary(derivative_weights)}."
+            )
+
+    input_bytes = count * 30 * 8 + 3 * 4 * 10 * 4
+    output_bytes = count * (4 + 8 + 8) + 6 * 8
+    staging_upper = input_bytes + output_bytes + 6 * 256
+    if staging_upper > int64_max or scratch_limit > _MAX_COUNTER_VALUE - staging_upper:
+        raise MeshcoreError(
+            MeshcoreStatus.CAPACITY_EXCEEDED,
+            f"_meshcore.{operation}.inputs must fit the bounded native staging pool; got {_input_summary(nodes)}.",
+        )
+    library = load_meshcore()
+    execution = NativeExecutionScope(
+        NativeExecutionLimits(
+            work_limit,
+            count,
+            0,
+            staging_upper + scratch_limit,
+            math.inf,
+        )
+    )
+    with execution:
+        staged_nodes = execution.allocate_host_array((count, 10, 3), np.float64)
+        staged_weights = execution.allocate_host_array((3, 4, 10), np.int32)
+        decisions = execution.allocate_host_array((count,), np.int32)
+        lower = execution.allocate_host_array((count,), np.float64)
+        upper = execution.allocate_host_array((count,), np.float64)
+        evidence = execution.allocate_host_array((6,), np.int64)
+        np.copyto(staged_nodes, nodes, casting="no")
+        np.copyto(staged_weights, derivative_weights, casting="unsafe")
+        allowance = execution.remaining()
+        _raise_for_call(allowance.status, f"{operation}_allowance")
+        effective_work = min(work_limit, allowance.remaining_work_units)
+        effective_scratch = min(scratch_limit, allowance.remaining_managed_bytes)
+        native_status = MeshcoreStatus(
+            library["phx_mc_quadratic_tetrahedron_validity"](
+                count,
+                staged_nodes.ctypes.data,
+                staged_weights.ctypes.data,
+                floor,
+                node_limit,
+                depth_limit,
+                effective_work,
+                effective_scratch,
+                decisions.ctypes.data,
+                lower.ctypes.data,
+                upper.ctypes.data,
+                evidence.ctypes.data,
+            )
+        )
+        if native_status is not MeshcoreStatus.OK:
+            raise QuadraticTetrahedronValidityError(native_status, evidence)
+        result = QuadraticTetrahedronValidityResult(decisions, lower, upper, evidence)
+    return result
+
+
+# ------------------------------------------------- interval program execution
+
+
+class IntervalProgram(Protocol):
+    """Straight-line interval program over one float64 lower/upper workspace.
+
+    Structural view of ``phydrax.geometry._interval_native.NativeIntervalProgram``:
+    ``instructions`` int64 ``(rows, 8)``, ``indices`` int64 ``(k,)``,
+    ``parameters`` float64 ``(p,)`` and ``template_lower``/``template_upper``
+    float64 ``(workspace,)``, all C-contiguous; the input boxes occupy
+    ``input_size`` entries at ``input_offset`` and the result
+    ``prod(output_shape)`` entries at ``output_offset``.
+    """
+
+    @property
+    def instructions(self) -> np.ndarray: ...
+    @property
+    def indices(self) -> np.ndarray: ...
+    @property
+    def parameters(self) -> np.ndarray: ...
+    @property
+    def template_lower(self) -> np.ndarray: ...
+    @property
+    def template_upper(self) -> np.ndarray: ...
+    @property
+    def input_offset(self) -> int: ...
+    @property
+    def input_size(self) -> int: ...
+    @property
+    def output_offset(self) -> int: ...
+    @property
+    def output_shape(self) -> tuple[int, ...]: ...
+
+
+def _program_array(
+    value: object, dtype: type[np.int64] | type[np.float64], ndim: int, name: str, /
+) -> np.ndarray:
+    if (
+        not isinstance(value, np.ndarray)
+        or value.dtype != np.dtype(dtype)
+        or value.ndim != ndim
+        or (ndim == 2 and value.shape[1] != 8)
+        or not value.flags.c_contiguous
+    ):
+        layout = "(rows, 8)" if ndim == 2 else "(n,)"
+        raise ValueError(
+            f"_meshcore.interval_program_execute.program.{name} must be a C-contiguous "
+            f"{np.dtype(dtype).name} array of shape {layout}; got {_input_summary(value)}."
+        )
+    return value
+
+
+def _program_extent(value: object, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | np.integer) or value < 0:
+        raise ValueError(
+            f"_meshcore.interval_program_execute.program.{name} must be a nonnegative integer; got {_input_summary(value)}."
+        )
+    return int(value)
+
+
+def interval_program_execute(
+    program: IntervalProgram, lower: object, upper: object, /
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Execute ``program`` on input boxes ``[lower, upper]``.
+
+    ``lower``/``upper`` hold ``program.input_size`` float64 values in C order,
+    either in one array or an ordered tuple of float64 array blocks. Blocks
+    copy directly into the admitted workspace without an intermediate packed
+    allocation. All inputs are validated before that allocation; the kernel
+    validates every instruction before its first write. Returns bounds as views
+    of that private per-call workspace. Any native refusal raises, so a
+    workspace left partial by a deadline refusal is discarded, never returned.
+    An active execution scope owns and admits the workspace through its native
+    host allocator. Returned views retain that allocation after scope exit.
+    The kernel charges no execution work; it polls the original deadline and
+    recorded refusals on the current paid target.
+    """
+    library = load_meshcore()
+    instructions = _program_array(program.instructions, np.int64, 2, "instructions")
+    indices = _program_array(program.indices, np.int64, 1, "indices")
+    parameters = _program_array(program.parameters, np.float64, 1, "parameters")
+    template_lower = _program_array(program.template_lower, np.float64, 1, "template_lower")
+    template_upper = _program_array(program.template_upper, np.float64, 1, "template_upper")
+    workspace = template_lower.shape[0]
+    if template_upper.shape != template_lower.shape:
+        raise ValueError(
+            f"_meshcore.interval_program_execute.program.template_upper must have shape {template_lower.shape}; got {_input_summary(template_upper)}."
+        )
+    input_offset = _program_extent(program.input_offset, "input_offset")
+    input_size = _program_extent(program.input_size, "input_size")
+    output_offset = _program_extent(program.output_offset, "output_offset")
+    output_shape = program.output_shape
+    if not isinstance(output_shape, tuple):
+        raise ValueError(
+            f"_meshcore.interval_program_execute.program.output_shape must be a tuple of nonnegative integers; got {_input_summary(output_shape)}."
+        )
+    output_size = math.prod(
+        _program_extent(extent, "output_shape") for extent in output_shape
+    )
+    if input_offset + input_size > workspace or output_offset + output_size > workspace:
+        raise ValueError(
+            f"_meshcore.interval_program_execute.program must place its input and output inside the {workspace}-entry workspace; got input [{input_offset}, {input_offset + input_size}) and output [{output_offset}, {output_offset + output_size})."
+        )
+    boxes: list[tuple[np.ndarray, ...]] = []
+    for value, name in ((lower, "lower"), (upper, "upper")):
+        if isinstance(value, tuple) and value and all(
+            isinstance(part, np.ndarray) and part.dtype == np.float64 for part in value
+        ):
+            # The owning validation above establishes every block's kind and
+            # dtype; the checker cannot propagate the all(...) predicate.
+            arrays = cast(tuple[np.ndarray, ...], value)
+        else:
+            arrays = (np.asarray(value),)
+        if any(array.dtype != np.float64 for array in arrays) or sum(
+            array.size for array in arrays
+        ) != input_size:
+            raise ValueError(
+                f"_meshcore.interval_program_execute.{name} must be a float64 array of {input_size} values; got {_input_summary(value)}."
+            )
+        boxes.append(arrays)
+    scope = current_native_execution_scope()
+    with ExitStack() as stack:
+        if scope is None:
+            buffers = np.empty((2, workspace), dtype=np.float64)
+        else:
+            ticket = stack.enter_context(scope.ticket_view())
+            stack.enter_context(ticket.native_target())
+            buffers = scope.allocate_host_array((2, workspace), np.float64)
+        workspace_lower, workspace_upper = buffers
+        workspace_lower[:] = template_lower
+        workspace_upper[:] = template_upper
+        for destination, arrays in zip((workspace_lower, workspace_upper), boxes, strict=True):
+            offset = input_offset
+            for array in arrays:
+                stop = offset + array.size
+                destination[offset:stop].reshape(array.shape)[...] = array
+                offset = stop
+        status = library["phx_mc_interval_program_execute"](
+            instructions.ctypes.data,
+            instructions.shape[0],
+            indices.ctypes.data,
+            indices.shape[0],
+            parameters.ctypes.data,
+            parameters.shape[0],
+            workspace_lower.ctypes.data,
+            workspace_upper.ctypes.data,
+            workspace,
+        )
+        _raise_for_call(status, "interval_program_execute")
+        output = slice(output_offset, output_offset + output_size)
+        return (
+            workspace_lower[output].reshape(output_shape),
+            workspace_upper[output].reshape(output_shape),
+        )
 
 
 # ---------------------------------------------------------------- clipping
@@ -6639,21 +7279,32 @@ def clip_reference_tetrahedron_exact(
     maximum_scratch_bytes: int,
     maximum_work_units: int,
 ) -> ExactReferenceTetrahedronClip:
-    """Clip an input tetra reference chart with box-pullback planes.
+    """Clip the input reference tetrahedron with exact rational halfspaces.
 
-    The first four planes are positive multiples of (-1,0,0,0),
-    (0,-1,0,0), (0,0,-1,0), (1,1,1,-1). Six further input rational
-    halfspaces use a*x+b*y+c*z+d<=0. Output is scientific plane incidence,
-    never a rounded numerical replacement for input chart coefficients.
+    ``planes`` holds 4..16 rows of four Fractions ``(a, b, c, d)`` meaning
+    a*x+b*y+c*z+d<=0 in original reference coordinates. The first four rows
+    are positive multiples of (-1,0,0,0), (0,-1,0,0), (0,0,-1,0), (1,1,1,-1);
+    the remaining rows are arbitrary exact halfspaces. With F rows the result
+    has at most 2F-4 vertices, F faces and 6F-12 face entries: source support
+    triplets, incident plane masks (bit p = plane row p) and oriented face CSR
+    with face plane labels. Empty or lower-dimensional intersections return
+    zero vertices and faces. Output is scientific plane incidence, never a
+    rounded numerical replacement for input chart coefficients.
     """
 
-    if len(planes) != 10 or any(
-        len(row) != 4 or any(not isinstance(value, Fraction) for value in row)
-        for row in planes
+    if (
+        not 4 <= len(planes) <= 16
+        or any(
+            len(row) != 4 or any(not isinstance(value, Fraction) for value in row)
+            for row in planes
+        )
     ):
         raise TypeError(
-            f"_meshcore.clip_reference_tetrahedron_exact.planes must satisfy the input contract (tetra clipping requires ten four-Fraction input planes.); got {_input_summary(planes)}."
+            f"_meshcore.clip_reference_tetrahedron_exact.planes must satisfy the input contract (tetra clipping requires four to sixteen four-Fraction input planes.); got {_input_summary(planes)}."
         )
+    plane_count = len(planes)
+    vertex_capacity = 2 * plane_count - 4
+    entry_capacity = 6 * plane_count - 12
     maximum_scratch_bytes = _limit(maximum_scratch_bytes, 1, "maximum_scratch_bytes")
     maximum_work_units = _limit(maximum_work_units, 1, "maximum_work_units")
     input_bits = max(
@@ -6661,6 +7312,8 @@ def clip_reference_tetrahedron_exact(
         + max(value.numerator.bit_length() for value in row)
         for row in planes
     )
+    # Covers up to 64 cleared integers of this many 30-bit digits plus their
+    # lcm/product temporaries, so every admitted plane count fits.
     temporary_bytes = 64 * (256 + 8 * ((input_bits + 29) // 30))
     if temporary_bytes > maximum_scratch_bytes:
         raise MeshcoreError(
@@ -6690,9 +7343,16 @@ def clip_reference_tetrahedron_exact(
                     value.numerator * (denominator // value.denominator) for value in row
                 )
             sizes = [(abs(value).bit_length() + 31) // 32 for value in integers]
-            resident = 32768 + max(1, max(sizes)) * 65536
-            offsets = budget.allocate_host_array((41,), np.int64)
-            signs = budget.allocate_host_array((40,), np.int8)
+            # Native pre-allocation resident bound: 2048 + 4096*M bytes per
+            # bounded vertex slot (unchanged 32768 + 65536*M for ten planes).
+            resident = vertex_capacity * (2048 + 4096 * max(1, max(sizes)))
+            if resident > maximum_scratch_bytes:
+                raise MeshcoreError(
+                    MeshcoreStatus.CAPACITY_EXCEEDED,
+                    f"_meshcore.clip_reference_tetrahedron_exact.planes must satisfy the input contract (Input tetra predicates exceed native scratch before packing.); got {_input_summary(planes)}.",
+                )
+            offsets = budget.allocate_host_array((4 * plane_count + 1,), np.int64)
+            signs = budget.allocate_host_array((4 * plane_count,), np.int8)
             packed = budget.allocate_host_array((sum(sizes),), np.uint32)
             offsets[0] = 0
             cursor = 0
@@ -6705,12 +7365,12 @@ def clip_reference_tetrahedron_exact(
                     cursor += 1
                     magnitude >>= 32
                 offsets[row + 1] = cursor
-            supports = budget.allocate_host_array((16, 3), np.int32)
-            incidence = budget.allocate_host_array((16,), np.uint16)
-            face_offsets = budget.allocate_host_array((11,), np.int32)
+            supports = budget.allocate_host_array((vertex_capacity, 3), np.int32)
+            incidence = budget.allocate_host_array((vertex_capacity,), np.uint16)
+            face_offsets = budget.allocate_host_array((plane_count + 1,), np.int32)
             face_offsets[0] = 0
-            face_planes = budget.allocate_host_array((10,), np.int32)
-            face_vertices = budget.allocate_host_array((48,), np.int32)
+            face_planes = budget.allocate_host_array((plane_count,), np.int32)
+            face_vertices = budget.allocate_host_array((entry_capacity,), np.int32)
             counts = budget.allocate_host_array((2,), np.int32)
             work = budget.allocate_host_array((1,), np.int64)
             counts.fill(0)
@@ -6737,9 +7397,10 @@ def clip_reference_tetrahedron_exact(
                         signs=signs.ctypes.data,
                         scratch_limit=scratch,
                         work_limit=work_limit,
-                        vertex_capacity=16,
-                        face_capacity=10,
-                        entry_capacity=48,
+                        plane_count=plane_count,
+                        vertex_capacity=vertex_capacity,
+                        face_capacity=plane_count,
+                        entry_capacity=entry_capacity,
                         supporting_planes=supports.ctypes.data,
                         incident_planes=incidence.ctypes.data,
                         face_offsets=face_offsets.ctypes.data,
@@ -6763,6 +7424,354 @@ def clip_reference_tetrahedron_exact(
                 face_vertices[:entries],
                 int(work[0]),
             )
+        finally:
+            host.set_bound(starting)
+
+
+@final
+class ExactTetrahedronArrangement(StrictModule):
+    """Exact pooled arrangement of positive tetrahedra under a clipping DAG.
+
+    All geometry is in the single input frame. ``vertex_words``,
+    ``vertex_word_offsets`` (4V+1) and ``vertex_signs`` (4V) pack each
+    vertex's exact homogeneous integers (X, Y, Z, W), W > 0, as signed
+    little-endian uint32 magnitudes. Vertices are welded by exact projective
+    equality and numbered by first use; ``vertex_input_index`` is the
+    smallest input point proven equal to a vertex, else -1. Job j owns faces
+    ``cell_face_offsets[j]:cell_face_offsets[j+1]``; face f's outward,
+    strictly convex loop ``face_vertices[face_offsets[f]:face_offsets[f+1]]``
+    starts at its smallest vertex and ``face_planes[f]`` is the signed 1-based
+    plane reference whose <= 0 side holds the cell. Empty and zero-measure
+    jobs have no faces. ``reuse_counters`` (propagated empty jobs, sections,
+    side evaluations, side reuses, vertex constructions, construction reuses,
+    vertex welds, pool vertices) and ``evidence`` (work, primitive queries,
+    peak managed bytes, completed jobs, failure category, failure row) are
+    native evidence; ``work_units`` is the call's total native work. Numeric
+    vertex and plane ids carry no scientific identity.
+    """
+
+    vertex_words: NDArray[np.uint32]
+    vertex_word_offsets: NDArray[np.int64]
+    vertex_signs: NDArray[np.int8]
+    vertex_input_index: NDArray[np.int32]
+    cell_face_offsets: NDArray[np.int64]
+    face_offsets: NDArray[np.int64]
+    face_vertices: NDArray[np.int32]
+    face_planes: NDArray[np.int32]
+    reuse_counters: NDArray[np.int64]
+    evidence: NDArray[np.int64]
+    work_units: int = eqx.field(static=True)
+
+
+# Fixed record widths of phx_mc_arrange_tetrahedra_exact (phydrax_meshcore.h).
+_TETRAHEDRA_ARRANGEMENT_EVIDENCE = 6
+_TETRAHEDRA_ARRANGEMENT_SIZES = 5
+_TETRAHEDRA_ARRANGEMENT_COUNTERS = 8
+
+
+def _exact_arrangement_rows(rows: object, width: int, name: str, /) -> None:
+    if not isinstance(rows, tuple) or any(
+        not isinstance(row, tuple)
+        or len(row) != width
+        or any(not isinstance(value, Fraction) for value in row)
+        for row in rows
+    ):
+        raise TypeError(
+            f"_meshcore.arrange_tetrahedra_exact.{name} must be a tuple of {width}-Fraction tuples; got {_input_summary(rows)}."
+        )
+
+
+def _exact_arrangement_indices(
+    value: object, name: str, shape: tuple[int | None, ...], dtype: type[np.integer], /
+) -> np.ndarray:
+    array = _index_array(value, f"arrange_tetrahedra_exact.{name}")
+    limits = np.iinfo(dtype)
+    if (
+        array.ndim != len(shape)
+        or any(
+            size is not None and actual != size
+            for actual, size in zip(array.shape, shape, strict=True)
+        )
+        or (array.size and (array.min() < limits.min or array.max() > limits.max))
+    ):
+        raise ValueError(
+            f"_meshcore.arrange_tetrahedra_exact.{name} must have shape {shape} and fit {np.dtype(dtype).name}; got {_input_summary(value)}."
+        )
+    return array
+
+
+def arrange_tetrahedra_exact(
+    points: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    planes: tuple[tuple[Fraction, Fraction, Fraction, Fraction], ...],
+    tetrahedra: ArrayLike,
+    tetrahedron_planes: ArrayLike,
+    parents: ArrayLike,
+    cut_offsets: ArrayLike,
+    cut_planes: ArrayLike,
+    /,
+    *,
+    maximum_scratch_bytes: int,
+    maximum_work_units: int,
+) -> ExactTetrahedronArrangement:
+    """Arrange positive tetrahedra under a deterministic clipping DAG, exactly.
+
+    ``points`` are exact rational points and ``planes`` canonical exact rows
+    ``(a, b, c, d)`` of ``a*x+b*y+c*z+d = 0`` (nonzero normal, first nonzero
+    coefficient positive), both in ONE frame; each row is packed once to
+    integers (points over their positive lcm denominator, planes cleared and
+    divided by their gcd, which preserves orientation). Plane references are
+    signed 1-based: ``r > 0`` selects ``row <= 0`` and ``r < 0`` its
+    negation. ``tetrahedra`` (S, 4) are strictly positive point rows and
+    ``tetrahedron_planes`` (S, 4) slot k their outward face opposite corner
+    k. Job j starts at tetrahedron s for ``parents[j] = -(s+1)`` or at the
+    result of an earlier job ``parents[j] < j`` and intersects the halfspaces
+    ``cut_planes[cut_offsets[j]:cut_offsets[j+1]]``; each inherited chain has
+    at most 16 halfspaces. Children of empty jobs stay empty without
+    clipping. The native owner validates everything before publication,
+    charges one primitive query per job and pools exact plane sides,
+    crossings and welded points across jobs; a refusal publishes no result
+    and the nested execution scope keeps its partial work evidence.
+    """
+
+    _exact_arrangement_rows(points, 3, "points")
+    _exact_arrangement_rows(planes, 4, "planes")
+    tetrahedron_rows = _exact_arrangement_indices(
+        tetrahedra, "tetrahedra", (None, 4), np.int32
+    )
+    tetrahedron_count = tetrahedron_rows.shape[0]
+    face_rows = _exact_arrangement_indices(
+        tetrahedron_planes, "tetrahedron_planes", (tetrahedron_count, 4), np.int32
+    )
+    parent_rows = _exact_arrangement_indices(parents, "parents", (None,), np.int32)
+    job_count = parent_rows.shape[0]
+    offset_rows = _exact_arrangement_indices(
+        cut_offsets, "cut_offsets", (job_count + 1,), np.int64
+    )
+    cut_rows = _exact_arrangement_indices(cut_planes, "cut_planes", (None,), np.int32)
+    maximum_scratch_bytes = _limit(maximum_scratch_bytes, 1, "maximum_scratch_bytes")
+    maximum_work_units = _limit(maximum_work_units, 1, "maximum_work_units")
+    # Python integers, limb chunks and their joined buffer for every packed
+    # scalar: at most 320 + 16 bytes per 30-bit digit of the row bound.
+    temporary_bytes = 4096
+    for row in (*points, *planes):
+        row_bits = sum(value.denominator.bit_length() for value in row) + max(
+            value.numerator.bit_length() for value in row
+        )
+        temporary_bytes += (len(row) + 1) * (320 + 16 * ((row_bits + 29) // 30))
+    if temporary_bytes > maximum_scratch_bytes:
+        raise MeshcoreError(
+            MeshcoreStatus.CAPACITY_EXCEEDED,
+            f"_meshcore.arrange_tetrahedra_exact.points must satisfy the input contract (exact rows exceed host packing scratch before allocation.); got {_input_summary(points)}.",
+        )
+    with (
+        NativeExecutionScope(
+            NativeExecutionLimits(
+                maximum_work_units, job_count, 0, maximum_scratch_bytes, math.inf
+            )
+        ) as budget,
+        ExitStack() as preparation,
+    ):
+        host = current_native_host_workspace()
+        if host is None:
+            host = preparation.enter_context(budget.host_workspace())
+            host.retain_owner(
+                (
+                    points,
+                    planes,
+                    tetrahedra,
+                    tetrahedron_planes,
+                    parents,
+                    cut_offsets,
+                    cut_planes,
+                )
+            )
+        starting = host.bound
+        host.set_bound(starting + temporary_bytes)
+        try:
+
+            def pack(
+                integers: list[int],
+            ) -> tuple[NDArray[np.uint32], NDArray[np.int64], NDArray[np.int8]]:
+                offsets = budget.allocate_host_array((len(integers) + 1,), np.int64)
+                signs = budget.allocate_host_array((len(integers),), np.int8)
+                chunks: list[bytes] = []
+                cursor = 0
+                offsets[0] = 0
+                for scalar, value in enumerate(integers):
+                    if scalar % 1024 == 0:
+                        budget.charge(work=0)
+                    magnitude = abs(value)
+                    limbs = (magnitude.bit_length() + 31) // 32
+                    signs[scalar] = int(value > 0) - int(value < 0)
+                    if limbs:
+                        chunks.append(magnitude.to_bytes(4 * limbs, "little"))
+                    cursor += limbs
+                    offsets[scalar + 1] = cursor
+                words = budget.allocate_host_array((cursor,), np.uint32)
+                if cursor:
+                    words[:] = np.frombuffer(b"".join(chunks), dtype="<u4")
+                return words, offsets, signs
+
+            point_integers: list[int] = []
+            for index, (x, y, z) in enumerate(points):
+                if index % 1024 == 0:
+                    budget.charge(work=0)
+                scale = math.lcm(x.denominator, y.denominator, z.denominator)
+                point_integers.extend(
+                    (
+                        x.numerator * (scale // x.denominator),
+                        y.numerator * (scale // y.denominator),
+                        z.numerator * (scale // z.denominator),
+                        scale,
+                    )
+                )
+            plane_integers: list[int] = []
+            for index, row in enumerate(planes):
+                if index % 1024 == 0:
+                    budget.charge(work=0)
+                scale = math.lcm(*(value.denominator for value in row))
+                cleared = [
+                    value.numerator * (scale // value.denominator) for value in row
+                ]
+                divisor = math.gcd(*cleared) or 1
+                plane_integers.extend(value // divisor for value in cleared)
+            point_words, point_offsets, point_signs = pack(point_integers)
+            plane_words, plane_offsets, plane_signs = pack(plane_integers)
+            del point_integers, plane_integers
+            tetrahedron_buffer = budget.allocate_host_array(
+                (tetrahedron_count, 4), np.int32
+            )
+            tetrahedron_buffer[...] = tetrahedron_rows
+            face_buffer = budget.allocate_host_array((tetrahedron_count, 4), np.int32)
+            face_buffer[...] = face_rows
+            parent_buffer = budget.allocate_host_array((job_count,), np.int32)
+            parent_buffer[...] = parent_rows
+            offset_buffer = budget.allocate_host_array((job_count + 1,), np.int64)
+            offset_buffer[...] = offset_rows
+            cut_buffer = budget.allocate_host_array((cut_rows.shape[0],), np.int32)
+            cut_buffer[...] = cut_rows
+            evidence = budget.allocate_host_array(
+                (_TETRAHEDRA_ARRANGEMENT_EVIDENCE,), np.int64
+            )
+            evidence.fill(0)
+            allowance = budget.remaining()
+            _raise_for_call(allowance.status, "arrange_tetrahedra_exact_allowance")
+            scratch = min(maximum_scratch_bytes, allowance.remaining_managed_bytes)
+            work_limit = min(maximum_work_units, allowance.remaining_work_units)
+            if scratch <= 0 or work_limit <= 0:
+                raise MeshcoreError(
+                    MeshcoreStatus.CAPACITY_EXCEEDED,
+                    f"_meshcore.arrange_tetrahedra_exact.points must satisfy the input contract (no native scratch or work remains before arrangement.); got {_input_summary(points)}.",
+                )
+            budget.admit_work_bound(work_limit)
+            library = load_meshcore()
+            handle = ctypes.c_void_p()
+            call = library["phx_mc_arrange_tetrahedra_exact"](
+                ctypes.byref(
+                    _ArrangeTetrahedraExactRequest(
+                        point_count=len(points),
+                        plane_count=len(planes),
+                        tetrahedron_count=tetrahedron_count,
+                        job_count=job_count,
+                        cut_count=cut_rows.shape[0],
+                        point_word_count=point_words.size,
+                        plane_word_count=plane_words.size,
+                        point_words=point_words.ctypes.data,
+                        point_offsets=point_offsets.ctypes.data,
+                        point_signs=point_signs.ctypes.data,
+                        plane_words=plane_words.ctypes.data,
+                        plane_offsets=plane_offsets.ctypes.data,
+                        plane_signs=plane_signs.ctypes.data,
+                        tetrahedra=tetrahedron_buffer.ctypes.data,
+                        tetrahedron_planes=face_buffer.ctypes.data,
+                        parents=parent_buffer.ctypes.data,
+                        cut_offsets=offset_buffer.ctypes.data,
+                        cut_planes=cut_buffer.ctypes.data,
+                        scratch_limit=scratch,
+                        work_limit=work_limit,
+                        evidence=evidence.ctypes.data,
+                        result=ctypes.addressof(handle),
+                    )
+                )
+            )
+            try:
+                # Native decoding/predicates charge this scope themselves; a
+                # refusal leaves its work in the scope evidence.
+                _raise_for_call(
+                    call,
+                    "arrange_tetrahedra_exact"
+                    f"[failure category {int(evidence[4])} row {int(evidence[5])}"
+                    f" after {int(evidence[3])} jobs, work {int(evidence[0])}"
+                    f"/{work_limit}, native scratch peak {int(evidence[2])}"
+                    f"/{scratch} bytes]",
+                )
+                if not handle.value:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        f"_meshcore.arrange_tetrahedra_exact.points must satisfy the input contract (missing arrangement result); got {_input_summary(points)}.",
+                    )
+                sizes = budget.allocate_host_array(
+                    (_TETRAHEDRA_ARRANGEMENT_SIZES,), np.int64
+                )
+                _raise_for_call(
+                    library["phx_mc_tetrahedra_arrangement_sizes"](
+                        handle, sizes.ctypes.data
+                    ),
+                    "tetrahedra_arrangement_sizes",
+                )
+                vertices, words, jobs, faces, entries = (int(size) for size in sizes)
+                if jobs != job_count or min(vertices, words, faces, entries) < 0:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        f"_meshcore.arrange_tetrahedra_exact.points must satisfy the input contract (arrangement sizes disagree with the request); got {_input_summary(points)}.",
+                    )
+                result = ExactTetrahedronArrangement(
+                    budget.allocate_host_array((words,), np.uint32),
+                    budget.allocate_host_array((4 * vertices + 1,), np.int64),
+                    budget.allocate_host_array((4 * vertices,), np.int8),
+                    budget.allocate_host_array((vertices,), np.int32),
+                    budget.allocate_host_array((job_count + 1,), np.int64),
+                    budget.allocate_host_array((faces + 1,), np.int64),
+                    budget.allocate_host_array((entries,), np.int32),
+                    budget.allocate_host_array((faces,), np.int32),
+                    budget.allocate_host_array(
+                        (_TETRAHEDRA_ARRANGEMENT_COUNTERS,), np.int64
+                    ),
+                    evidence,
+                    int(evidence[0]),
+                )
+                _raise_for_call(
+                    library["phx_mc_tetrahedra_arrangement_export"](
+                        handle,
+                        result.vertex_words.ctypes.data,
+                        result.vertex_word_offsets.ctypes.data,
+                        result.vertex_signs.ctypes.data,
+                        result.vertex_input_index.ctypes.data,
+                        result.cell_face_offsets.ctypes.data,
+                        result.face_offsets.ctypes.data,
+                        result.face_vertices.ctypes.data,
+                        result.face_planes.ctypes.data,
+                        result.reuse_counters.ctypes.data,
+                    ),
+                    "tetrahedra_arrangement_export",
+                )
+            finally:
+                if handle.value:
+                    library["phx_mc_tetrahedra_arrangement_free"](handle)
+            for array in (
+                result.vertex_words,
+                result.vertex_word_offsets,
+                result.vertex_signs,
+                result.vertex_input_index,
+                result.cell_face_offsets,
+                result.face_offsets,
+                result.face_vertices,
+                result.face_planes,
+                result.reuse_counters,
+                result.evidence,
+            ):
+                array.flags.writeable = False
+            return result
         finally:
             host.set_bound(starting)
 
@@ -9113,6 +10122,8 @@ class TetMeshInsertionPlan(StrictModule):
     removed: NDArray[np.int32]
     proposed: NDArray[np.int32]
     buffer_bytes: int = eqx.field(static=True)
+    projected_source: int = eqx.field(static=True, default=-1)
+    projected_faces: NDArray[np.int32] | None = None
 
 
 @final
@@ -9185,6 +10196,8 @@ class TetMeshCurvedCollapsePlan(StrictModule):
     accepted_generation: int = eqx.field(static=True)
     require_improvement: bool = eqx.field(static=True)
     faces: NDArray[np.int32]
+    removed: NDArray[np.int32]
+    proposed: NDArray[np.int32]
 
 
 @final
@@ -9193,9 +10206,9 @@ class TetMeshCurvedClaims(StrictModule):
 
     Per claimed source row: ``rows`` (native face rows), scientific
     ``source_ids``, bitwise ``coordinates`` (k, 3, 3), host-certified
-    ``deviations`` and the accepted ``generations`` they were bound in. Initial
-    and committed claims are host evidence; publication recomputes them from
-    the original source.
+    ``deviations`` and the accepted ``generations`` in which the rows entered
+    the bank (initial zero; committed rows use the resulting accepted epoch).
+    Claims are host evidence; publication recomputes them from the original source.
     """
 
     rows: NDArray[np.int32]
@@ -10103,6 +11116,33 @@ class TetMesh3D:
         _raise_for_call(status, "tet_mesh_split_edge_relocate")
         return None if inserted[0] < 0 else int(inserted[0])
 
+    def inspect_projected_edge_insertion(
+        self,
+        first: int,
+        second: int,
+        split_position: object,
+        final_position: object,
+        source: int,
+        /,
+        *,
+        maximum_cavity_cells: int,
+        source_fraction: float,
+        work_limit: int | None = None,
+    ) -> TetMeshInsertionPlan | None:
+        """Inspect one curved-source physical chart over an exact material cavity.
+
+        The complete source-coordinate cavity is validated before its pending
+        point is projected. Every new constrained face then requires an explicit
+        whole-facet host claim at commit; no source tolerance is substituted for
+        exact material coverage.
+        """
+        return self.inspect_edge_insertion(
+            first, second, split_position, final_position,
+            maximum_cavity_cells=maximum_cavity_cells,
+            source_fraction=source_fraction, work_limit=work_limit,
+            projected_source=source,
+        )
+
     def inspect_edge_insertion(
         self,
         first: int,
@@ -10114,6 +11154,7 @@ class TetMesh3D:
         maximum_cavity_cells: int,
         work_limit: int | None = None,
         source_fraction: float | None = None,
+        projected_source: int | None = None,
     ) -> TetMeshInsertionPlan | None:
         """Inspect the expanded final insertion cavity without publishing.
 
@@ -10141,8 +11182,16 @@ class TetMesh3D:
             raise ValueError(
                 f"TetMesh3D.source_fraction must be finite and strictly between zero and one; got {source_fraction}."
             )
+        source_row = -1
+        if projected_source is not None:
+            if source_fraction is None:
+                raise ValueError("Projected insertion requires an explicit source fraction.")
+            source_row = int(_source_group_rows(
+                np.asarray([projected_source], dtype=np.int64),
+                self._face_source_ids, "projected source",
+            )[0])
         maximum = _budget(maximum_cavity_cells, "maximum_cavity_cells")
-        if maximum > np.iinfo(np.intp).max // (8 * np.dtype(np.int32).itemsize):
+        if maximum > np.iinfo(np.intp).max // ((8 if source_row < 0 else 20) * np.dtype(np.int32).itemsize):
             raise ValueError(
                 f"TetMesh3D.maximum_cavity_cells must be addressable; got {maximum}."
             )
@@ -10153,28 +11202,44 @@ class TetMesh3D:
         else:
             removed = budget.allocate_host_array((maximum, 4), np.int32)
             proposed = budget.allocate_host_array((maximum, 4), np.int32)
-        counts = np.zeros((4,), dtype=np.int64)
-        status = self._library["phx_mc_tet_mesh_inspect_edge_insertion"](
-            self._live(),
-            _node_id(first, "first"),
-            _node_id(second, "second"),
-            witness.ctypes.data,
-            position.ctypes.data,
-            fraction,
-            maximum,
-            _budget(work_limit, "work_limit"),
-            removed.ctypes.data,
-            proposed.ctypes.data,
-            counts.ctypes.data,
+        faces = None
+        counts = np.zeros((4 if source_row < 0 else 5,), dtype=np.int64)
+        arguments = (
+            self._live(), _node_id(first, "first"), _node_id(second, "second"),
+            witness.ctypes.data, position.ctypes.data, fraction,
         )
+        if source_row < 0:
+            status = self._library["phx_mc_tet_mesh_inspect_edge_insertion"](
+                *arguments, maximum, _budget(work_limit, "work_limit"),
+                removed.ctypes.data, proposed.ctypes.data, counts.ctypes.data,
+            )
+        else:
+            faces = (
+                np.empty((4 * maximum, 3), dtype=np.int32)
+                if budget is None
+                else budget.allocate_host_array((4 * maximum, 3), np.int32)
+            )
+            status = self._library["phx_mc_tet_mesh_inspect_projected_edge_insertion"](
+                *arguments, source_row, maximum, _budget(work_limit, "work_limit"),
+                removed.ctypes.data, proposed.ctypes.data, faces.ctypes.data, counts.ctypes.data,
+            )
         _raise_for_call(status, "tet_mesh_inspect_edge_insertion")
-        old_count, new_count, kind, generation = (int(value) for value in counts)
+        old_count, new_count, kind, generation = (int(value) for value in counts[:4])
         if old_count == 0 or new_count == 0:
             return None
         if old_count < 0 or new_count < 0 or old_count + new_count > maximum:
             raise RuntimeError(
                 f"_meshcore.TetMesh3D.inspect_edge_insertion.first must satisfy the input contract (Native insertion inspection exceeded its admitted cavity extent.); got {_input_summary(first)}."
             )
+        projected_faces = None
+        if faces is not None:
+            face_count = int(counts[4])
+            if not 0 < face_count <= faces.shape[0]:
+                raise RuntimeError("Native projected insertion exceeded its face extent.")
+            # Match arrays() and curved-collapse inspection's public outward order.
+            faces[:face_count, [1, 2]] = faces[:face_count, [2, 1]]
+            faces.setflags(write=False)
+            projected_faces = faces[:face_count]
         witness, position = witness.copy(), position.copy()
         for values in (witness, position, removed, proposed):
             values.setflags(write=False)
@@ -10196,7 +11261,10 @@ class TetMesh3D:
                 + counts.nbytes
                 + witness.nbytes
                 + position.nbytes
+                + (0 if faces is None else faces.nbytes)
             ),
+            source_row,
+            projected_faces,
         )
 
     @checked
@@ -10207,6 +11275,9 @@ class TetMesh3D:
         *,
         target_size: float = 0.0,
         work_limit: int | None = None,
+        claim_digest: bytes | None = None,
+        face_coordinates: object | None = None,
+        face_deviations: object | None = None,
     ) -> int | None:
         """Reprepare this final source construction record/cavity and commit once.
 
@@ -10221,26 +11292,69 @@ class TetMesh3D:
             raise ValueError(
                 f"TetMesh3D.target_size must be finite and nonnegative; got {target_size}."
             )
+        removed = _rows(plan.removed, "plan.removed", 4)
+        proposed = _rows(plan.proposed, "plan.proposed", 4)
+        witness = _real_array(plan.split_position, "plan.split_position")
+        position = _real_array(plan.position, "plan.position")
+        if witness.shape != (3,) or position.shape != (3,):
+            raise ValueError("Insertion plan positions must each have three coordinates.")
+        if not np.all(np.isfinite(witness)) or not np.all(np.isfinite(position)):
+            raise ValueError("Insertion plan positions must be finite.")
+        if np.any(removed < 0) or np.any(proposed < 0):
+            raise ValueError("Insertion plan finite tetrahedra require nonnegative vertex IDs.")
+        maximum = _budget(plan.maximum_cavity_cells, "plan.maximum_cavity_cells")
+        if removed.shape[0] == 0 or proposed.shape[0] == 0 or removed.shape[0] + proposed.shape[0] > maximum:
+            raise ValueError("Insertion plan rows must fit their nonempty cavity allowance.")
+        if not np.isfinite(plan.source_fraction) or not 0.0 <= plan.source_fraction < 1.0:
+            raise ValueError("Insertion plan source fraction is outside its admitted range.")
+        generation = _budget(plan.accepted_generation, "plan.accepted_generation")
+        source_row = bounded_integer(
+            plan.projected_source, "plan.projected_source", lower=-1,
+            upper=max(-1, self._face_source_ids.size - 1),
+        )
+        binding = corners = deviations = faces = None
+        if plan.projected_source >= 0:
+            if plan.projected_faces is None:
+                raise ValueError("Projected insertion plan requires its complete face bank.")
+            if not isinstance(claim_digest, bytes) or len(claim_digest) != 32:
+                raise ValueError("Projected insertion claim_digest must contain 32 bytes.")
+            corners = np.ascontiguousarray(_real_array(face_coordinates, "face_coordinates"))
+            deviations = np.ascontiguousarray(_real_array(face_deviations, "face_deviations"))
+            faces = _rows(plan.projected_faces, "plan.projected_faces", 3)
+            count = faces.shape[0]
+            if count == 0 or np.any(faces < 0) or corners.shape != (count, 3, 3) or deviations.shape != (count,):
+                raise ValueError("Projected insertion claims must align with all inspected faces.")
+            if not np.all(np.isfinite(corners)) or not np.all(np.isfinite(deviations)) or np.any(deviations < 0):
+                raise ValueError("Projected insertion coordinates and deviations must be finite and deviations nonnegative.")
+            binding = np.frombuffer(claim_digest, dtype=np.uint8)
+        elif claim_digest is not None or face_coordinates is not None or face_deviations is not None:
+            raise ValueError("Ordinary insertion does not accept projected face claims.")
         inserted = np.full((1,), -1, dtype=np.int32)
         status = self._library["phx_mc_tet_mesh_commit_edge_insertion"](
             ctypes.byref(
                 _TetMeshCommitEdgeInsertionRequest(
                     mesh=self._live(),
-                    first=plan.first,
-                    second=plan.second,
-                    split_position=plan.split_position.ctypes.data,
-                    final_position=plan.position.ctypes.data,
+                    first=_node_id(plan.first, "plan.first"),
+                    second=_node_id(plan.second, "plan.second"),
+                    split_position=witness.ctypes.data,
+                    final_position=position.ctypes.data,
                     source_fraction=plan.source_fraction,
-                    maximum_cavity_cells=plan.maximum_cavity_cells,
-                    insertion_kind=plan.insertion_kind,
-                    accepted_generation=plan.accepted_generation,
-                    removed_count=plan.removed.shape[0],
-                    removed_tetrahedra=plan.removed.ctypes.data,
-                    proposed_count=plan.proposed.shape[0],
-                    proposed_tetrahedra=plan.proposed.ctypes.data,
+                    maximum_cavity_cells=maximum,
+                    insertion_kind=bounded_integer(plan.insertion_kind, "plan.insertion_kind", lower=0, upper=2),
+                    accepted_generation=generation,
+                    removed_count=removed.shape[0],
+                    removed_tetrahedra=removed.ctypes.data,
+                    proposed_count=proposed.shape[0],
+                    proposed_tetrahedra=proposed.ctypes.data,
                     target_size=target_size,
                     work_limit=_budget(work_limit, "work_limit"),
                     inserted_vertex=inserted.ctypes.data,
+                    projected_source=source_row,
+                    claim_count=0 if faces is None else faces.shape[0],
+                    claim_digest=None if binding is None else binding.ctypes.data,
+                    claim_faces=None if faces is None else faces.ctypes.data,
+                    claim_coordinates=None if corners is None else corners.ctypes.data,
+                    claim_deviations=None if deviations is None else deviations.ctypes.data,
                 )
             )
         )
@@ -10587,6 +11701,31 @@ class TetMesh3D:
             raise RuntimeError(
                 f"_meshcore.TetMesh3D.inspect_curved_collapse.remove must satisfy the input contract (Native curved inspection exceeded its reported extent.); got {_input_summary(remove)}."
             )
+        counts = np.zeros((2,), dtype=np.int64)
+        cavity = self._library["phx_mc_tet_mesh_curved_collapse_cavity"]
+        arguments = (self._live(), int(remove), int(keep), int(generation[0]))
+        _raise_for_call(
+            cavity(*arguments, 0, 0, _budget(work_limit, "work_limit"),
+                   None, None, counts.ctypes.data),
+            "tet_mesh_curved_collapse_cavity",
+        )
+        old_count, new_count = (int(value) for value in counts)
+        if old_count <= 0 or new_count <= 0:
+            raise RuntimeError("Native curved collapse returned an empty finite cavity.")
+        budget = current_native_execution_scope()
+        if budget is None:
+            removed = np.empty((old_count, 4), dtype=np.int32)
+            proposed = np.empty((new_count, 4), dtype=np.int32)
+        else:
+            removed = budget.allocate_host_array((old_count, 4), np.int32)
+            proposed = budget.allocate_host_array((new_count, 4), np.int32)
+        _raise_for_call(
+            cavity(*arguments, old_count, new_count, _budget(work_limit, "work_limit"),
+                   removed.ctypes.data, proposed.ctypes.data, counts.ctypes.data),
+            "tet_mesh_curved_collapse_cavity",
+        )
+        removed.setflags(write=False)
+        proposed.setflags(write=False)
         # Native orients from the first material side; publish outward like arrays().
         outward = np.ascontiguousarray(faces[:size][:, (0, 2, 1)])
         outward.setflags(write=False)
@@ -10599,6 +11738,8 @@ class TetMesh3D:
             int(generation[0]),
             bool(require_improvement),
             outward,
+            removed,
+            proposed,
         )
 
     @checked
@@ -12324,6 +13465,8 @@ __all__ = [
     "clip_reference_triangle_exact",
     "ExactReferenceTetrahedronClip",
     "clip_reference_tetrahedron_exact",
+    "ExactTetrahedronArrangement",
+    "arrange_tetrahedra_exact",
     "polyhedron_corner_hexes",
     "arrange_triangles",
     "clip_box_halfspaces",
@@ -12339,6 +13482,7 @@ __all__ = [
     "meshcore_available",
     "meshcore_exact_domain",
     "meshcore_identity",
+    "meshcore_provider_installed",
     "periodic_delaunay",
     "point_triangle_locations",
     "polygon_intersection_moments",
@@ -12357,6 +13501,9 @@ __all__ = [
     "symbolic_incircle",
     "symbolic_insphere",
     "symbolic_orient2d",
+    "interval_program_execute",
+    "IntervalProgram",
+    "simplex_quadratic_bounds",
     "symbolic_orient3d",
     "surface_reconnect",
     "tetrahedron_intersection_moments",

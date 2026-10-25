@@ -678,9 +678,9 @@ def test_sphere_geodesic_seeds_meet_joint_hard_size_and_fidelity(
     )
     from tools.meshing_qualification._controls import QualificationControls
     from tools.meshing_qualification.scenarios.implicit import (
-        IMPLICIT_QUALIFICATION_CASES,
         _implicit_qualification_source,
         _implicit_volume_request,
+        IMPLICIT_QUALIFICATION_CASES,
     )
 
     args = QualificationControls(implicit_case="sphere-refinement", adaptation_rounds=2)
@@ -726,3 +726,58 @@ def test_sphere_geodesic_seeds_meet_joint_hard_size_and_fidelity(
         normals, axis=1
     )
     assert args.implicit_radius - np.min(plane_distances) <= fidelity
+
+
+@NATIVE
+@pytest.mark.parametrize("queries", (7, 6))
+def test_original_discovery_reproof_uses_complete_preparation_query_admission(
+    queries: int,
+) -> None:
+    from phydrax.meshing._implicit_volume import prepare_restricted_implicit_volume
+
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.371).compile(
+        coordinate_unit=METER
+    )
+    discovery = implicit_query(geometry)
+    assert discovery.reconstruction_query_count == 2
+    limits = MeshingLimits(maximum_geometry_queries=queries)
+    specification = implicit_specification(limits)
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        if queries == 6:
+            with pytest.raises(MeshingFailure) as failure:
+                prepare_restricted_implicit_volume(
+                    geometry, IMPLICIT_DOMAIN, specification, NativeVolumeSchedule(),
+                    phx.SpatialCoordinateContract.si(), scope=scope, discovery=discovery,
+                )
+            assert failure.value.evidence.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
+            assert scope.remaining().remaining_geometry_queries == queries
+        else:
+            prepared = prepare_restricted_implicit_volume(
+                geometry, IMPLICIT_DOMAIN, specification, NativeVolumeSchedule(),
+                phx.SpatialCoordinateContract.si(), scope=scope, discovery=discovery,
+            )
+            assert prepared.discovery is discovery
+            assert prepared.geometry_query_charge == queries
+            assert scope.remaining().remaining_geometry_queries == 0
+
+
+@NATIVE
+def test_original_discovery_publication_source_phase_pays_box_and_center() -> None:
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.371).compile(
+        coordinate_unit=METER
+    )
+    contract = phx.SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(geometry, contract)
+    discovery = implicit_query(geometry)
+    limits = MeshingLimits(maximum_geometry_queries=4)
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with implicit_source_budget(
+            limits, scope=scope, queries_upper=2 + discovery.reconstruction_query_count
+        ) as budget:
+            profile.require_bound(geometry, contract, budget=budget)
+            source = phx.geometry.ImplicitProjectionBoundarySource(
+                profile, discovery=discovery, budget=budget
+            )
+            assert source.discovery is discovery
+            assert budget.ticket.geometry_queries == 4
+        assert scope.remaining().remaining_geometry_queries == 0

@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import _supermesh as supermesh_owner
+from ...geometry._volume_material_map import VolumeMaterialChain
 from ...meshing._measurements import NativeExecutionRecord
 from ...typing import checked, parse
 from ..fem._surface_chart_transfer import PreparedSurfaceChartFiniteVolumeContents
@@ -88,6 +89,7 @@ type UnstructuredRemapRoute = (
     supermesh_owner.PreparedCommonRefinement
     | MappedNestedRemapEvidence
     | MappedSurfaceChartRemapEvidence
+    | VolumeMaterialChain
     | RemapPreparationFailure
 )
 
@@ -129,7 +131,12 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
         nested_id = None
         chart_id = None
         failure_id = None
+        volume_chain_id = None
         match route:
+            case VolumeMaterialChain():
+                if plan is None or plan.volume_material_chain is None or plan.volume_material_chain.chain_id != route.chain_id:
+                    raise ValueError("remap.route must bind the volume material chain plan")
+                volume_chain_id = route.chain_id
             case supermesh_owner.PreparedCommonRefinement():
                 if succeeded and not route.succeeded:
                     raise ValueError(
@@ -180,6 +187,7 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
                 "refinement": refinement_id,
                 "nested_witness": nested_id,
                 "surface_chart": chart_id,
+                "volume_material_chain": volume_chain_id,
                 "preparation_failure": failure_id,
                 "execution": None
                 if execution_evidence is None
@@ -219,6 +227,7 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
         supermesh_owner.CommonRefinementEvidence
         | MappedNestedRemapEvidence
         | MappedSurfaceChartRemapEvidence
+        | VolumeMaterialChain
         | RemapPreparationFailure
     ):
         match self.route:
@@ -227,6 +236,7 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
             case (
                 MappedNestedRemapEvidence()
                 | MappedSurfaceChartRemapEvidence()
+                | VolumeMaterialChain()
                 | RemapPreparationFailure()
             ) as route:
                 return route

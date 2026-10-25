@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 from phydrax._meshcore import meshcore_available, MeshcoreUnavailableError
 from phydrax.discretization import (
     prepare_unstructured_conservative_remap,
+    PreparedRemapCSRView,
     PreparedUnstructuredConservativeRemap,
     UnstructuredConservativeRemapPlan,
     UnstructuredFiniteVolumeDiscretization,
@@ -30,6 +31,7 @@ from phydrax.geometry import (
     CommonRefinementStatus,
     PreparedCommonRefinement,
 )
+from phydrax.linalg import SparseAssemblyPolicy
 
 
 requires_meshcore = pytest.mark.skipif(
@@ -49,6 +51,11 @@ def _require_plan(
             f"remap.plan must contain a successful plan; got {remap.status}: {remap.reason}"
         )
     return remap.plan
+
+
+def _rows(remap: PreparedUnstructuredConservativeRemap) -> PreparedRemapCSRView:
+    """The plan's explicit final-route rows, for scientific inspection."""
+    return _require_plan(remap).prepare_csr_view(SparseAssemblyPolicy())
 
 
 def _require_refinement(
@@ -150,14 +157,14 @@ def test_identical_meshes_remap_as_exact_jittable_identity() -> None:
     assert remap.status is CommonRefinementStatus.SUCCESS
     assert remap.succeeded
     np.testing.assert_array_equal(
-        _require_plan(remap).target_offsets,
+        _rows(remap).target_offsets,
         np.arange(source.cell_count + 1),
     )
     np.testing.assert_array_equal(
-        _require_plan(remap).source_indices, np.arange(source.cell_count)
+        _rows(remap).source_indices, np.arange(source.cell_count)
     )
     np.testing.assert_allclose(
-        _require_plan(remap).intersection_measures,
+        _rows(remap).intersection_measures,
         source.cell_volumes,
         rtol=1e-14,
     )
@@ -191,7 +198,7 @@ def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
         source, target, provenance="containment"
     )
     assert remap.succeeded
-    np.testing.assert_allclose(_require_plan(remap).intersection_measures, (1.0, 1.0))
+    np.testing.assert_allclose(_rows(remap).intersection_measures, (1.0, 1.0))
     np.testing.assert_allclose(
         _require_common_evidence(remap).source_coverage_defects,
         0.0,
@@ -221,7 +228,7 @@ def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
         mixed_source, target, provenance="mixed"
     )
     assert mixed.succeeded
-    np.testing.assert_allclose(np.sum(_require_plan(mixed).intersection_measures), 2.0)
+    np.testing.assert_allclose(np.sum(_rows(mixed).intersection_measures), 2.0)
 
 
 @pytest.mark.meshcore
@@ -237,7 +244,7 @@ def test_tetrahedron_identity_and_conservation() -> None:
     )
     assert remap.succeeded
     np.testing.assert_allclose(
-        _require_plan(remap).intersection_measures, geometry.cell_volumes
+        _rows(remap).intersection_measures, geometry.cell_volumes
     )
     values = jnp.asarray([[4.0]])
     np.testing.assert_allclose(_require_plan(remap).apply(values), values)
@@ -265,10 +272,10 @@ def test_coincident_faces_give_exact_complete_coverage() -> None:
     evidence = _require_common_evidence(remap)
     assert evidence.source_gap_count == evidence.target_gap_count == 0
     assert evidence.source_double_count == evidence.target_double_count == 0
-    np.testing.assert_array_equal(_require_plan(remap).target_offsets, (0, 1, 2, 3, 4))
-    np.testing.assert_array_equal(_require_plan(remap).source_indices, (0, 0, 1, 1))
+    np.testing.assert_array_equal(_rows(remap).target_offsets, (0, 1, 2, 3, 4))
+    np.testing.assert_array_equal(_rows(remap).source_indices, (0, 0, 1, 1))
     np.testing.assert_allclose(
-        _require_plan(remap).intersection_measures,
+        _rows(remap).intersection_measures,
         target.cell_volumes,
         rtol=1e-15,
     )

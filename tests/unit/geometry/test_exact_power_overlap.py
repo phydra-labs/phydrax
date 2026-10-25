@@ -8,6 +8,14 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import (
+    CoordinateSourceBank,
+    ExactScalar,
+    Polynomial,
+)
+from phydrax.geometry._affine_mapped_contact import _Intersection, Plane, Point
+from phydrax.geometry._embedding_cells import Cell
 from phydrax.geometry._exact_polyhedral_geometry import (
     convex_cell_overlap,
     convex_cells_disjoint,
@@ -326,11 +334,11 @@ def test_loop_triangulation_refuses_self_intersecting_bowtie() -> None:
         triangulate_loop(points, (0, 1, 2, 3), budget=budget)
 
 
-def _brute_force_vertices(planes, dimension):
+def _brute_force_vertices(planes: tuple[Plane, ...], dimension: int) -> set[Point]:
     """Independent oracle: every feasible solution of an independent plane tuple."""
     from itertools import combinations as choose
 
-    def det(rows):
+    def det(rows: list[list[ExactScalar]]) -> ExactScalar:
         if len(rows) == 2:
             return rows[0][0] * rows[1][1] - rows[0][1] * rows[1][0]
         return sum(
@@ -364,7 +372,7 @@ def _brute_force_vertices(planes, dimension):
     return found
 
 
-def _simplex(*rows):
+def _simplex(*rows: tuple[int | Fraction, ...]) -> tuple[tuple[Fraction, ...], ...]:
     return tuple(tuple(Fraction(value) for value in row) for row in rows)
 
 
@@ -430,7 +438,7 @@ def test_simplex_crossing_vertices_match_enumeration_on_degenerate_lattice_sweep
 
     generator = Random(20261020 + dimension)
 
-    def full_rank(rows) -> bool:
+    def full_rank(rows: tuple[tuple[Fraction, ...], ...]) -> bool:
         e = [[row[axis] - rows[0][axis] for axis in range(dimension)] for row in rows[1:]]
         if dimension == 2:
             return e[0][0] * e[1][1] - e[0][1] * e[1][0] != 0
@@ -440,7 +448,7 @@ def test_simplex_crossing_vertices_match_enumeration_on_degenerate_lattice_sweep
             + e[0][2] * (e[1][0] * e[2][1] - e[1][1] * e[2][0])
         ) != 0
 
-    def corners():
+    def corners() -> tuple[tuple[Fraction, ...], ...]:
         return tuple(
             tuple(Fraction(generator.randint(-2, 2), 2) for _ in range(dimension))
             for _ in range(dimension + 1)
@@ -516,7 +524,9 @@ def test_supporting_plane_refuses_flat_or_two_sided_vertices(height: Fraction) -
         assert _supporting_plane(points, (0, 1, 2), tuple(range(6)), budget=budget) is None
 
 
-def _affine_contact_cell(points, identifiers):
+def _affine_contact_cell(
+    points: tuple[tuple[Fraction, ...], ...], identifiers: tuple[int, ...]
+) -> Cell:
     from phydrax.geometry._embedding_cells import Cell
 
     dimension = len(points[0])
@@ -525,7 +535,7 @@ def _affine_contact_cell(points, identifiers):
         tuple(int(axis == column) for column in range(dimension))
         for axis in range(dimension)
     )
-    coordinates = tuple(
+    coordinates: tuple[Polynomial, ...] = tuple(
         {
             origin: points[0][coordinate],
             **{
@@ -577,11 +587,22 @@ def test_affine_contact_prepares_trace_authority_only_when_consumed(
     calls, intersections = [], []
     original = contact_owner._intersection_vertices
 
-    def counted(*args, **kwargs):
+    def counted(
+        first_points: tuple[Point, ...],
+        second_points: tuple[Point, ...],
+        planes: tuple[Plane, ...],
+        dimension: int,
+        maximum_work: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> _Intersection:
         intersections.append(None)
-        return original(*args, **kwargs)
+        return original(
+            first_points, second_points, planes, dimension, maximum_work, budget=budget
+        )
 
-    def traces():
+    def traces() -> tuple[tuple[int, ...], ...]:
         calls.append(None)
         return (tuple(range(dimension)),)
 
@@ -613,6 +634,7 @@ def test_lazy_affine_contact_refuses_invalid_authored_simplex_trace() -> None:
 
 def test_affine_corner_cache_binds_full_source_values_and_reference_points() -> None:
     from dataclasses import replace
+
     from phydrax.geometry._affine_mapped_contact import _cell_images
 
     points = _simplex(
@@ -627,7 +649,9 @@ def test_affine_corner_cache_binds_full_source_values_and_reference_points() -> 
         assert budget.work_units == work
         assert budget.retained_basis_bytes == retained
         delta = Fraction(1, 2**100)
-        cell.coordinates[0][(0, 0)] += delta
+        coordinate = cell.coordinates[0]
+        assert isinstance(coordinate, dict)
+        coordinate[(0, 0)] += delta
         changed = _cell_images(cell, budget=budget)
         assert changed == tuple((point[0] + delta, point[1]) for point in first)
         np.testing.assert_array_equal(
@@ -700,7 +724,7 @@ def test_inverse_candidate_bank_covers_exact_inverse_contacts(turns: int) -> Non
         _simplex((Fraction(-1, 2), 0), (Fraction(1, 2), 0), (0, 1)),
     )
 
-    def action(point, inverse=False):
+    def action(point: tuple[Fraction, ...], inverse: bool = False) -> tuple[Fraction, Fraction]:
         x, y = point
         for _ in range(turns):
             x, y = (
@@ -742,7 +766,9 @@ def test_inverse_candidate_bank_covers_exact_inverse_contacts(turns: int) -> Non
         ((Fraction(3, 5), Fraction(-4, 5), 0), (Fraction(4, 5), Fraction(3, 5), 0), (0, 0, 1)),
     ),
 )
-def test_earned_plane_transport_matches_independent_vertex_reconstruction(rotation) -> None:
+def test_earned_plane_transport_matches_independent_vertex_reconstruction(
+    rotation: tuple[tuple[int | Fraction, ...], ...],
+) -> None:
     from phydrax.geometry._periodic_embedding import (
         _transport_source_plane,
         source_polygon_plane,
@@ -791,7 +817,9 @@ def test_convex_source_containment_matches_full_concave_boundary_algorithm(rever
         _simplex((3, 0), (3, 1)),
     )
 
-    def reference(source, subject, budget):
+    def reference(
+        source: CoordinateSourceBank, subject: CoordinateSourceBank, budget: CoordinateEnclosureBudget
+    ) -> bool:
         if not all(owner._closed_polygon_point(source, point, budget=budget) for point in subject):
             return False
         for a, b in zip(subject, (*subject[1:], subject[0]), strict=True):

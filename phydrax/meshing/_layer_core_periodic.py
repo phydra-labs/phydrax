@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import phydrax.discretization._cell_mesh as _dependency_phydrax_discretization__cell_mesh
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
 import phydrax.discretization._periodic_topology as _dependency_phydrax_discretization__periodic_topology
 import phydrax.meshing._layer_core_resources as _dependency_phydrax_meshing__layer_core_resources
@@ -322,12 +323,35 @@ def bind_core_periodic(
             "NativeLayerCoreSource.layers must retain the accepted periodic identification; got compiled periodic core ancestry lost its accepted identification"
         )
     roots, shifts = ancestry
+    count = mesh.coordinates.shape[0]
+    rank = periodic.cell.rank
+    # The descriptor's exact preparation draws from this budget as it runs;
+    # its declared bound must fit before it starts.
+    work_upper, bytes_upper, _ = (
+        _dependency_phydrax_discretization__periodic_topology.periodic_preparation_bounds(
+            periodic.cell, count, np.asarray(shifts)
+        )
+    )
+    budget.admit_work_bound(work_upper, storage_upper=bytes_upper)
+    # Representative and shift extension, then the periodic carrier rebuild.
+    budget.reserve(
+        count * (1 + rank)
+        + _dependency_phydrax_discretization__cell_mesh.cell_mesh_construction_work(
+            count,
+            mesh.ambient_dimension,
+            tuple(
+                (block.cell_kind, block.cell_count, block.arity) for block in mesh.blocks
+            ),
+            realized=mesh,
+        ),
+        8 * count * (1 + rank),
+    )
     # Fixed PLC recovery forbids boundary Steiner vertices. Generated points
     # therefore belong to ordinary interior orbits with their own representatives.
-    extra = mesh.coordinates.shape[0] - roots.size
+    extra = count - roots.size
     roots = np.concatenate((roots, roots.size + np.arange(extra, dtype=np.int64)))
     shifts = np.concatenate(
-        (shifts, np.zeros((extra, periodic.cell.rank), dtype=np.int64))
+        (shifts, np.zeros((extra, rank), dtype=np.int64))
     )
     topology = _dependency_phydrax_discretization__periodic_topology.PeriodicMeshTopology(
         mesh, periodic.cell, roots, shifts, budget=budget

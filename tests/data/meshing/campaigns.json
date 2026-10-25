@@ -375,11 +375,24 @@
           "maximum_work_units": 8000000,
           "timeout": 600.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 25769803776
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 25769803776,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 25769803776
+            },
+            "maximum_bytes": 25769803776,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Distributed routine at work 8000000, 24 GiB and 300 seconds completed 4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield acceptance, then rearchive binding failed. Producer time was 148.9 seconds, consumer time 275.4 seconds and scenario time 425 seconds; memory was healthy. Finite whole timeout 600 seconds provides remaining workflow headroom; routine work 8000000, routine/larger memory 24/32 GiB and science are unchanged. This does not resolve the binding failure or establish successful workflow completion.",
         "requested": {
           "maximum_memory_bytes": 25769803776,
@@ -406,11 +419,24 @@
           "maximum_work_units": 32000000,
           "timeout": 600.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Distributed routine at work 8000000, 24 GiB and 300 seconds completed 4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield acceptance, then rearchive binding failed. Producer time was 148.9 seconds, consumer time 275.4 seconds and scenario time 425 seconds; memory was healthy. Finite whole timeout 600 seconds provides remaining workflow headroom; routine work 8000000, routine/larger memory 24/32 GiB and science are unchanged. This does not resolve the binding failure or establish successful workflow completion. Current larger 6-to-3 at work 8000000, 600 seconds and 32 GiB reached initial FE/FV and first refine, then all ranks exhausted about 7.99M work with next 6144. Storage/query/cavity/time/memory were healthy; checkpoint/cold had not started. Only larger authors finite work 32000000, four times the prior cap for its two-times resolution/six-rank topology and remaining lifecycle. Routine remains at 8000000; all other caps and science are unchanged.",
         "requested": {
           "maximum_memory_bytes": 34359738368,
@@ -445,11 +471,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -485,11 +524,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -525,11 +577,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -565,11 +630,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -605,11 +683,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -645,11 +736,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -685,11 +789,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -725,11 +842,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -765,11 +895,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -805,11 +948,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -845,11 +1001,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -885,11 +1054,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -925,11 +1107,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -965,11 +1160,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -1005,11 +1213,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -1045,11 +1266,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -1085,11 +1319,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -1125,11 +1372,24 @@
           "maximum_work_units": 128000000,
           "timeout": 2400.0
         },
-        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-        "external_cgroup_properties": {
-          "MemoryMax": 34359738368
-        },
         "policy": "finite-authored-whole-workflow-envelope",
+        "process_memory_acceptance": {
+          "darwin": {
+            "approval": "macOS measured-memory contract; scientific requirements unchanged",
+            "descendants_included": false,
+            "maximum_bytes": 34359738368,
+            "mode": "measured-process-high-water",
+            "required_execution_group_hard_cap": false
+          },
+          "linux": {
+            "external_cgroup_properties": {
+              "MemoryMax": 34359738368
+            },
+            "maximum_bytes": 34359738368,
+            "mode": "external-systemd-cgroup-wrapper",
+            "required_execution_group_hard_cap": true
+          }
+        },
         "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
         "requested": {
           "maximum_data_bytes": 40960000,
@@ -2390,7 +2650,7 @@
     "origin": "Deterministic qualification workflow, scenario, and profile tables",
     "owner": "tools/meshing_qualification/_campaign.py::campaign_registration_record"
   },
-  "registration_id": "571b4ba9511c56d5367a62c9d7f4f6b5820b166dc7166e2b983567813784712c",
+  "registration_id": "39bd2b58efe13be6c3ee031752b88e45561841c8d542ef82570409b9d4681c82",
   "required_result_fields": [
     "runtime",
     "frozen_controls",
@@ -2401,7 +2661,7 @@
     "positive_completion",
     "mandatory_workflow_completion"
   ],
-  "source_corpus_registration_id": "66e55a59b5e5a6e01840875616844457ed87d3f8bd3df3d6e95ba8a7d730d3f0",
+  "source_corpus_registration_id": "21885704b0d7671e397d34f8fb40d4c40fae1e52d5a0b9b5be13a670b0c83c87",
   "workflows": [
     {
       "expected_admission": "positive",

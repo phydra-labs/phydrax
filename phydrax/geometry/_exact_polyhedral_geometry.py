@@ -7,12 +7,13 @@ from typing import overload, TYPE_CHECKING
 
 
 if TYPE_CHECKING:
+    from .._meshcore import ExactTetrahedronArrangement
     from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
 
 import math
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
@@ -35,9 +36,15 @@ from phydrax.geometry._planar_primitives import (
     turn,
 )
 
-from .._geometry_predicates import bigint_bytes, exact_bits, exact_charge, exact_reserve
-from .._strict import StrictModule
+from .._geometry_predicates import (
+    bigint_bytes,
+    exact_bits,
+    exact_charge,
+    exact_fraction_rows_key,
+    exact_reserve,
+)
 from .._host_storage import declared_integer_storage_bytes
+from .._strict import StrictModule
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..linalg._small_batched import exact_cofactor_determinant_3
 from ..typing import checked
@@ -64,7 +71,12 @@ def determinant3(
     planar_primitives_owner.reserve_fraction_work(
         (first, second, third), 14, 1, 18, budget=budget
     )
-    return exact_cofactor_determinant_3(first, second, third)
+    return exact_cofactor_determinant_3(_triple(first), _triple(second), _triple(third))
+
+
+def _triple(point: Point, /) -> tuple[Fraction, Fraction, Fraction]:
+    """Return a three-coordinate point as the fixed-length owner row."""
+    return point[0], point[1], point[2]
 
 
 def exact_vertices(
@@ -187,7 +199,7 @@ def triangulate_loop(
         local = _triangulate_positions(vertices, budget=budget)
         budget.retain_basis((vertices, local))
         cache[vertices] = local
-    return tuple(tuple(row[index] for index in triangle) for triangle in local)
+    return tuple((row[a], row[b], row[c]) for a, b, c in local)
 
 
 def _triangulate_positions(
@@ -320,27 +332,30 @@ def _strictly_convex_fan(
 
 
 def star_determinant(tet: Tetrahedron, /, *, budget: CoordinateEnclosureBudget) -> Fraction:
-    """Return the signed edge cofactor determinant of one star tetrahedron.
+    """Reuse the signed determinant under complete, ordered exact corner values.
 
-    The value depends only on the four exact corners in order, so a completed
-    determinant is reused within the request under that full key; each lookup
-    charges hashing its twelve coordinates.
+    Packed keys avoid retaining every transient Fraction corner graph across
+    a long material history. They preserve all integer bits and row boundaries.
     """
     budget.reserve(12)
     cache = budget.star_determinant_cache
-    determinant = cache.get(tet)
-    if determinant is None:
-        budget.reserve(9)
-        determinant = determinant3(
-            *(
-                tuple(value - base for value, base in zip(point, tet[0], strict=True))
-                for point in tet[1:]
-            ),
-            budget=budget,
-        )
-        budget.retain_basis((tet, determinant))
-        cache[tet] = determinant
-    return determinant
+    with budget.temporary_scope():
+        key = exact_fraction_rows_key(tet, budget=budget)
+        if key is None:
+            raise TypeError("star_determinant corners must be tuples of exact Fractions.")
+        determinant = cache.get(key)
+        if determinant is None:
+            budget.reserve(9)
+            determinant = determinant3(
+                *(
+                    tuple(value - base for value, base in zip(point, tet[0], strict=True))
+                    for point in tet[1:]
+                ),
+                budget=budget,
+            )
+            budget.retain_basis((key, determinant))
+            cache[key] = determinant
+        return determinant
 
 
 def star_tetrahedra(
@@ -847,6 +862,224 @@ def tetrahedron_overlap(
         return ExactOverlapRefusal(error.resource, work.actual_work())
 
 
+# Host banks published by one native exact arrangement.
+_ARRANGEMENT_BANKS = (
+    "vertex_words",
+    "vertex_word_offsets",
+    "vertex_signs",
+    "vertex_input_index",
+    "cell_face_offsets",
+    "face_offsets",
+    "face_vertices",
+    "face_planes",
+    "reuse_counters",
+    "evidence",
+)
+
+
+def arrange_tetrahedra(
+    points: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    planes: tuple[tuple[Fraction, Fraction, Fraction, Fraction], ...],
+    tetrahedra: np.ndarray,
+    tetrahedron_planes: np.ndarray,
+    parents: np.ndarray,
+    cut_offsets: np.ndarray,
+    cut_planes: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> ExactTetrahedronArrangement:
+    """Clip one deterministic DAG of exact positive tetrahedra in one native pool.
+
+    Job ``j`` intersects initial tetrahedron ``-parents[j] - 1`` or the
+    immutable convex result of job ``parents[j] < j`` with the signed 1-based
+    plane references ``cut_planes[cut_offsets[j]:cut_offsets[j + 1]]``; a
+    positive reference keeps its canonical equation ``<= 0``, a negative one
+    its negation. Slot ``k`` of ``tetrahedron_planes`` is the outward face
+    opposite corner ``k``. Points, planes and published vertices share one
+    coordinate frame. The native pool welds exactly equal points and reuses
+    plane sides and edge/plane constructions across jobs; each nonempty job
+    publishes its outward, strictly convex face loops over global vertices.
+    The kernel runs as a child bounded by this request's remaining work,
+    scratch and ticket allowance; its actual work, including a refused
+    prefix, is recorded here once. No partial arrangement is published.
+    """
+    from .._meshcore import arrange_tetrahedra_exact, MeshcoreError
+
+    # Intersect every original stage limit before packing or native execution.
+    budget.admit_work_bound(1, storage_upper=1)
+    try:
+        with (
+            budget.ticket.native_target()
+            if budget.ticket.native_accounting
+            else nullcontext()
+        ):
+            arrangement = arrange_tetrahedra_exact(
+                points,
+                planes,
+                tetrahedra,
+                tetrahedron_planes,
+                parents,
+                cut_offsets,
+                cut_planes,
+                maximum_scratch_bytes=budget.remaining_memory_bytes,
+                maximum_work_units=budget.remaining_work_units,
+            )
+    except MeshcoreError as error:
+        if error.work_counters is not None:
+            budget.record_native_work(error.work_counters.construction_work)
+        raise
+    budget.record_native_work(arrangement.work_units)
+    # The published host banks belong to the caller's scope from here on.
+    budget.reserve(
+        0,
+        sum(
+            256 + np.asarray(getattr(arrangement, name)).nbytes
+            for name in _ARRANGEMENT_BANKS
+        ),
+    )
+    return arrangement
+
+
+class ArrangementVertices:
+    """Exact homogeneous arrangement vertices ``(X, Y, Z, W)``, ``W > 0``.
+
+    Each vertex's four packed little-endian 32-bit limb integers are decoded
+    at most once, on first use, charging one visit per scalar and per limb and
+    the decoded integers' storage; later uses are charged lookups. Binary64
+    roundings divide the exact integers once per requested vertex.
+    """
+
+    def __init__(
+        self,
+        arrangement: ExactTetrahedronArrangement,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
+        words = np.asarray(arrangement.vertex_words, dtype="<u4")
+        offsets = np.asarray(arrangement.vertex_word_offsets, dtype=np.int64)
+        signs = np.asarray(arrangement.vertex_signs, dtype=np.int8)
+        count = signs.shape[0] // 4
+        if (
+            words.ndim != 1
+            or signs.shape != (4 * count,)
+            or offsets.shape != (4 * count + 1,)
+            or int(offsets[0]) != 0
+            or int(offsets[-1]) != words.size
+            or np.any(np.diff(offsets) < 0)
+        ):
+            raise ValueError(
+                "ArrangementVertices.banks must hold four packed scalars per vertex; "
+                f"got words={words.shape}, offsets={offsets.shape}, signs={signs.shape}"
+            )
+        # One immutable byte copy of the limbs, sliced per scalar.
+        budget.reserve(0, 256 + words.nbytes)
+        self.budget = budget
+        self.count = count
+        self._bytes = words.tobytes()
+        self._offsets = offsets
+        self._signs = signs
+        self._decoded: dict[int, tuple[int, int, int, int]] = {}
+
+    def __getitem__(self, vertex: int) -> tuple[int, int, int, int]:
+        decoded = self._decoded.get(vertex)
+        if decoded is not None:
+            self.budget.reserve(1)
+            return decoded
+        if not 0 <= vertex < self.count:
+            raise ValueError(
+                f"ArrangementVertices.vertex must index the published bank; got {vertex}"
+            )
+        start = 4 * vertex
+        bounds = self._offsets[start : start + 5].tolist()
+        signs = self._signs[start : start + 4].tolist()
+        # Four scalars, their limbs, the tuple and its dictionary slot.
+        self.budget.reserve(
+            4 + bounds[4] - bounds[0],
+            256
+            + sum(bigint_bytes(32 * (bounds[k + 1] - bounds[k])) for k in range(4)),
+        )
+        values = tuple(
+            sign
+            * int.from_bytes(self._bytes[4 * bounds[k] : 4 * bounds[k + 1]], "little")
+            for k, sign in enumerate(signs)
+        )
+        if values[3] <= 0:
+            raise ValueError(
+                f"ArrangementVertices.weights must be positive; got vertex {vertex}"
+            )
+        decoded = (values[0], values[1], values[2], values[3])
+        self._decoded[vertex] = decoded
+        return decoded
+
+    def floats(self, vertices: np.ndarray, /) -> np.ndarray:
+        """Round-to-nearest binary64 coordinates ``X / W`` of ``vertices``, in bulk."""
+        count = vertices.size
+        # One float64 bank and bounded scalar temporaries, without an object
+        # array, an uncharged object-division result, or a copied index list.
+        self.budget.reserve(3 * count, 512 + count * 3 * 8)
+        values = np.empty((count, 3), dtype=np.float64)
+        for row, vertex in enumerate(vertices.flat):
+            x, y, z, weight = self[int(vertex)]
+            values[row] = x / weight, y / weight, z / weight
+        return values
+
+
+def loop_volume_contribution(
+    loop: tuple[tuple[int, int, int, int], ...],
+    plane: tuple[Fraction, Fraction, Fraction, Fraction],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction:
+    """Return six times the signed volume of the origin cone over one planar loop.
+
+    ``loop`` lists exact homogeneous vertices ``(X, Y, Z, W)``, ``W > 0``, of a
+    polygon on ``plane`` ``n . x + d = 0`` in boundary order; the sign follows
+    the loop's right-hand normal. Summed over a closed outward boundary it is
+    six times the enclosed volume, so the face of two neighbouring cells is
+    evaluated once and reused with opposite signs. The value is ``-d / n_k``
+    times the loop's shoelace area along the first axis ``k`` with
+    ``n_k != 0``: one exact 2-D cross product per edge, with no fan
+    determinant and no averaged center.
+    """
+    axis = next((index for index in range(3) if plane[index]), None)
+    if axis is None or len(loop) < 3:
+        raise ValueError(
+            "loop_volume_contribution.loop must be a polygon on a plane with nonzero normal; "
+            f"got {len(loop)} vertices"
+        )
+    first_axis, second_axis = (axis + 1) % 3, (axis + 2) % 3
+    count = len(loop)
+    # Each edge's cross product and weight product, plus the running sum,
+    # stay below twice the loop's coordinate and weight bits.
+    loop_bits = 2 * sum(
+        max(abs(point[first_axis]).bit_length(), abs(point[second_axis]).bit_length())
+        + point[3].bit_length()
+        for point in loop
+    ) + count.bit_length() + 2
+    plane_bits = sum(
+        value.numerator.bit_length() + value.denominator.bit_length()
+        for value in (plane[axis], plane[3])
+    )
+    # Two products, one difference, one weight product and one rational sum
+    # per edge; one ratio and one product finish the face.
+    budget.reserve(
+        5 * count + 2,
+        3 * 256 + 4 * bigint_bytes(loop_bits + plane_bits),
+    )
+    area = Fraction(0)
+    for index, point in enumerate(loop):
+        following = loop[(index + 1) % count]
+        area += Fraction(
+            point[first_axis] * following[second_axis]
+            - following[first_axis] * point[second_axis],
+            point[3] * following[3],
+        )
+    return -plane[3] / plane[axis] * area
+
+
 def tetrahedron_contact_vertices(
     first: Tetrahedron, second: Tetrahedron, /, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Point, ...]:
@@ -1047,12 +1280,12 @@ def _integrate_overlap_face(
     ordered = tuple(lookup[point] for point in hull)
     for index in range(1, len(ordered) - 1):
         corners = (center, ordered[0], ordered[index], ordered[index + 1])
-        columns = tuple(
-            tuple(value - base for value, base in zip(point, center, strict=True))
+        first, second, third = (
+            _triple(tuple(value - base for value, base in zip(point, center, strict=True)))
             for point in corners[1:]
         )
         work.visit(12 + 14)
-        signed = exact_cofactor_determinant_3(*columns)
+        signed = exact_cofactor_determinant_3(first, second, third)
         measure = abs(signed) / 6
         if measure == 0:
             continue
@@ -1213,7 +1446,10 @@ def exact_convex_cells(
         else:
             local = {vertex: index for index, vertex in enumerate(cell_vertices)}
             edges = {
-                tuple(sorted((local[row[index]], local[row[index - 1]])))
+                (
+                    min(local[row[index]], local[row[index - 1]]),
+                    max(local[row[index]], local[row[index - 1]]),
+                )
                 for row in rows
                 for index in range(len(row))
             }
@@ -1905,6 +2141,9 @@ def _contact_outside_shared(
 
 
 __all__ = [
+    "ArrangementVertices",
+    "arrange_tetrahedra",
+    "loop_volume_contribution",
     "exact_vertices",
     "triangulate_loop",
     "star_tetrahedra",

@@ -48,10 +48,21 @@ def test_published_route_guarantees_account_for_every_request_limit(
         name.partition(":")[0] for name in (enforced | unenforced) - _ROUTE_CAPABILITIES
     }
     assert bases == _LIMITS
-    # A bare enforced name is a full guarantee; partial coverage stays qualified.
-    assert not {name for name in enforced if ":" not in name} & {
-        name.partition(":")[0] for name in unenforced
-    }
+    # A qualified exclusion records a genuinely out-of-scope subresource; it
+    # may coexist with enforcement of the managed part of that axis.
+    unenforced_axes = {name for name in unenforced if ":" not in name}
+    assert not {name for name in enforced if ":" not in name} & unenforced_axes
+
+
+def test_planar_policy_covers_managed_construction_without_changing_curve() -> None:
+    planar = publication_policy("planar")
+    curve = publication_policy("curve")
+    assert {"cavity_cells", "scratch_bytes"} <= set(planar.enforced_limits)
+    assert planar.unenforced_limits == (
+        "scratch_bytes:unmanaged_host_device_compiler",
+    )
+    assert {"cavity_cells", "scratch_bytes"} <= set(curve.unenforced_limits)
+    assert not {"cavity_cells", "scratch_bytes"} & set(curve.enforced_limits)
 
 
 def _refine_all(

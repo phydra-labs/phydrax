@@ -19,6 +19,14 @@ hull. Primitives without a sound extension and unbounded control flow are
 refused. ``PreparedIntervalFunction.evaluate_host_points`` interprets the same
 prepared program with NumPy nominal arithmetic; ``device_interval_evaluation_error``
 retains JAX numerical leaves and admits known input intervals for rounding error.
+
+``prepare_interval_function`` also lowers the straight-line float64 subset of
+add/sub/mul/neg/sin/cos/short innermost sums (``_interval_native``) once into a
+``NativeIntervalProgram``. When the optional meshcore provider is installed,
+``evaluate`` executes that program with ``phx_mc_interval_program_execute``,
+whose element formulas are this module's, bit for bit, and load or execution
+refusals propagate; every other program, and every program when the provider
+is absent, is interpreted here.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ from __future__ import annotations
 import functools
 import math
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 import equinox as eqx
 import jax
@@ -37,6 +45,7 @@ from jax import Array
 from jax.core import ShapedArray
 from jax.extend import core as jax_core
 
+from .. import _meshcore as meshcore_owner
 from ..typing import checked, Float, VariadicDim
 
 
@@ -407,6 +416,12 @@ def interval_midpoint_radius(value: Interval, /) -> Interval:
         upper = _float64_endpoint(upper, np.inf)
         dtype = np.dtype(np.float64)
     shape = np.broadcast_shapes(np.shape(lower), np.shape(upper))
+    half = dtype.type(0.5) * np.finfo(dtype).max
+    if np.all(np.abs(lower) <= half) and np.all(np.abs(upper) <= half):
+        # These bounds cannot overflow their sum; retain the original operation order.
+        middle = np.asarray(dtype.type(0.5) * np.add(lower, upper))
+        radius = np.asarray(_step(np.maximum(middle - lower, upper - middle), np.inf))
+        return middle[()], radius[()]
     finite = np.isfinite(lower) & np.isfinite(upper)
     invalid = np.isnan(lower) | np.isnan(upper)
     unbounded = np.logical_not(finite | invalid)
@@ -2360,6 +2375,79 @@ def coefficient_interval(
     return value, value
 
 
+def _evaluate_equation(
+    equation: jax_core.JaxprEqn,
+    values: Sequence[Interval],
+    constant_bounds: Sequence[tuple[HostArray, HostArray, HostArray]],
+    /,
+) -> list[Interval]:
+    """Interval outputs of one equation, in the interpreter's admission order."""
+    name = equation.primitive.name
+    if name in _STRUCTURAL:
+        return _structural(equation, values)
+    if name in _CALL_PRIMITIVES:
+        return _evaluate_jaxpr(
+            _as_closed(_nested_jaxpr(equation)), values, constant_bounds
+        )
+    if name == "scan":
+        return _host_interval_scan(equation, values, constant_bounds)
+    if name == "cond":
+        return _host_interval_conditional(equation, values, constant_bounds)
+    if all(_degenerate(value) for value in values) and name in {
+        "iota",
+        "gather",
+        "dynamic_slice",
+        "pad",
+        "cumsum",
+        "argmax",
+        "argmin",
+        "sort",
+    }:
+        return _degenerate_bind(equation, values)
+    if name in {"argmax", "argmin"}:
+        return [_host_index_extremum(equation, values[0])]
+    if name in {"gather", "dynamic_slice"} and all(
+        _degenerate(value) for value in values[1:]
+    ):
+        return _structural(equation, values)
+    if name in {"gather", "dynamic_slice"}:
+        shape = _array_aval(equation.outvars[0]).shape
+        return [
+            (
+                np.full(shape, np.min(values[0][0]), dtype=values[0][0].dtype),
+                np.full(shape, np.max(values[0][1]), dtype=values[0][1].dtype),
+            )
+        ]
+    if name in {"scatter-mul", "scatter-add", "scatter-min", "scatter-max"}:
+        return _host_scatter_bounds(equation, values)
+    if name == "scatter" and _degenerate(values[1]):
+        return _structural(equation, values)
+    if name == "scatter":
+        if equation.params["update_jaxpr"] is not None:
+            raise IntervalExtensionError(
+                "interval.scatter must use overwrite updates; got a reduction update program"
+            )
+        minimum = np.minimum(np.min(values[0][0]), np.min(values[2][0]))
+        maximum = np.maximum(np.max(values[0][1]), np.max(values[2][1]))
+        shape = _array_aval(equation.outvars[0]).shape
+        return [
+            (
+                np.full(shape, minimum, dtype=values[0][0].dtype),
+                np.full(shape, maximum, dtype=values[0][1].dtype),
+            )
+        ]
+    if name == "pad" and _degenerate(values[1]):
+        return _structural(equation, values)
+    if name == "iota":
+        return _degenerate_bind(equation, values)
+    return [_arithmetic(equation, values)]
+
+
+def _literal_interval(atom: jax_core.Literal, /) -> Interval:
+    value = np.asarray(atom.val)
+    return value, value
+
+
 def _evaluate_jaxpr(
     closed: jax_core.ClosedJaxpr,
     arguments: Sequence[Interval],
@@ -2371,8 +2459,7 @@ def _evaluate_jaxpr(
     def read(atom: jax_core.Var | jax_core.Literal) -> Interval:
         match atom:
             case jax_core.Literal():
-                value = np.asarray(atom.val)
-                return value, value
+                return _literal_interval(atom)
             case _:
                 return environment[atom]
 
@@ -2383,80 +2470,49 @@ def _evaluate_jaxpr(
         environment[variable] = argument
     for equation in closed.jaxpr.eqns:
         values = [read(atom) for atom in equation.invars]
-        name = equation.primitive.name
-        if name in _STRUCTURAL:
-            outputs = _structural(equation, values)
-        elif name in _CALL_PRIMITIVES:
-            outputs = _evaluate_jaxpr(
-                _as_closed(_nested_jaxpr(equation)), values, constant_bounds
-            )
-        elif name == "scan":
-            outputs = _host_interval_scan(equation, values, constant_bounds)
-        elif name == "cond":
-            outputs = _host_interval_conditional(equation, values, constant_bounds)
-        elif all(_degenerate(value) for value in values) and name in {
-            "iota",
-            "gather",
-            "dynamic_slice",
-            "pad",
-            "cumsum",
-            "argmax",
-            "argmin",
-            "sort",
-        }:
-            outputs = _degenerate_bind(equation, values)
-        elif name in {"argmax", "argmin"}:
-            outputs = [_host_index_extremum(equation, values[0])]
-        elif name in {"gather", "dynamic_slice"} and all(
-            _degenerate(value) for value in values[1:]
-        ):
-            outputs = _structural(equation, values)
-        elif name in {"gather", "dynamic_slice"}:
-            shape = _array_aval(equation.outvars[0]).shape
-            outputs = [
-                (
-                    np.full(shape, np.min(values[0][0]), dtype=values[0][0].dtype),
-                    np.full(shape, np.max(values[0][1]), dtype=values[0][1].dtype),
-                )
-            ]
-        elif name in {"scatter-mul", "scatter-add", "scatter-min", "scatter-max"}:
-            outputs = _host_scatter_bounds(equation, values)
-        elif name == "scatter" and _degenerate(values[1]):
-            outputs = _structural(equation, values)
-        elif name == "scatter":
-            if equation.params["update_jaxpr"] is not None:
-                raise IntervalExtensionError(
-                    "interval.scatter must use overwrite updates; got a reduction update program"
-                )
-            minimum = np.minimum(np.min(values[0][0]), np.min(values[2][0]))
-            maximum = np.maximum(np.max(values[0][1]), np.max(values[2][1]))
-            shape = _array_aval(equation.outvars[0]).shape
-            outputs = [
-                (
-                    np.full(shape, minimum, dtype=values[0][0].dtype),
-                    np.full(shape, maximum, dtype=values[0][1].dtype),
-                )
-            ]
-        elif name == "pad" and _degenerate(values[1]):
-            outputs = _structural(equation, values)
-        elif name == "iota":
-            outputs = _degenerate_bind(equation, values)
-        else:
-            outputs = [_arithmetic(equation, values)]
+        outputs = _evaluate_equation(equation, values, constant_bounds)
         for variable, output in zip(equation.outvars, outputs, strict=True):
             environment[variable] = output
     return [read(atom) for atom in closed.jaxpr.outvars]
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class NativeIntervalProgram:
+    """Immutable straight-line native form of one prepared interval program.
+
+    ``instructions`` (rows of eight int64 fields), ``indices``, ``parameters``
+    and the float64 lower/upper workspace templates are immutable bytes-backed
+    banks (``immutable_host_array``) retained with the prepared program; no
+    view of them can be made writeable. Each execution copies the templates
+    into per-call scratch, places the ``(batch_capacity, n)`` input box at
+    ``input_offset`` and reads ``output_shape`` elements at ``output_offset``.
+    """
+
+    instructions: npt.NDArray[np.int64]
+    indices: npt.NDArray[np.int64]
+    parameters: npt.NDArray[np.float64]
+    template_lower: npt.NDArray[np.float64]
+    template_upper: npt.NDArray[np.float64]
+    input_offset: int
+    input_size: int
+    output_offset: int
+    output_shape: tuple[int, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedIntervalFunction:
-    """Interval extension of one traced map at a fixed batch capacity."""
+    """Interval extension of one traced map at a fixed batch capacity.
+
+    ``native`` is the program's native form when ``prepare_interval_function``
+    admitted it; directly constructed programs are always interpreted.
+    """
 
     closed_jaxpr: jax_core.ClosedJaxpr
     input_dimension: int
     output_shape: tuple[int, ...]
     batch_capacity: int
     constant_bounds: tuple[tuple[HostArray, HostArray, HostArray], ...] = ()
+    native: NativeIntervalProgram | None = field(default=None, repr=False, compare=False)
 
     def evaluate(
         self, lower: npt.ArrayLike, upper: npt.ArrayLike, /
@@ -2481,6 +2537,11 @@ class PreparedIntervalFunction:
         count = lower_.shape[0]
         output_lower = np.empty((count, *self.output_shape), dtype=np.float64)
         output_upper = np.empty_like(output_lower)
+        # Only a genuinely absent optional provider keeps the owner interpreter;
+        # an installed library's load, ABI and execution refusals propagate.
+        native = self.native
+        if native is not None and not meshcore_owner.meshcore_provider_installed():
+            native = None
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             padding = self.batch_capacity - (stop - start)
@@ -2490,9 +2551,14 @@ class PreparedIntervalFunction:
             chunk_upper = np.concatenate(
                 (upper_[start:stop], np.repeat(upper_[start : start + 1], padding, 0))
             )
-            (result,) = _evaluate_jaxpr(
-                self.closed_jaxpr, [(chunk_lower, chunk_upper)], self.constant_bounds
-            )
+            if native is None:
+                (result,) = _evaluate_jaxpr(
+                    self.closed_jaxpr, [(chunk_lower, chunk_upper)], self.constant_bounds
+                )
+            else:
+                result = meshcore_owner.interval_program_execute(
+                    native, chunk_lower, chunk_upper
+                )
             output_lower[start:stop] = np.asarray(result[0])[: stop - start]
             output_upper[start:stop] = np.asarray(result[1])[: stop - start]
         return output_lower, output_upper
@@ -2571,11 +2637,16 @@ def prepare_interval_function(
         closed, input_dimension, output_shape, batch_capacity, tuple(coefficient_bounds)
     )
     _admit_interval_program(closed)
-    return prepared
+    # The native form imports this owner's equation dispatch, so it is bound
+    # here rather than at module import.
+    from ._interval_native import lower_native_interval_program
+
+    return replace(prepared, native=lower_native_interval_program(prepared))
 
 
 __all__ = [
     "IntervalExtensionError",
+    "NativeIntervalProgram",
     "PreparedIntervalFunction",
     "device_interval_evaluation_error",
     "interval_add",

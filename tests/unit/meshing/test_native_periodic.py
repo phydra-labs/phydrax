@@ -2241,6 +2241,53 @@ def test_exact_periodic_profiles_preserve_original_authored_inputs(
         _periodic_binary64_exclusion(positive, exact_spec, exact_case)
 
 
+def test_periodic_binary64_refusal_requires_unchanged_source_bits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios import periodic
+
+    args = QualificationControls(periodic_case="skew-lattice", resolution=4)
+    unchanged = periodic._periodic_qualification_lifecycle(args)
+    assert unchanged["status"] == "expected-refusal"
+    assert unchanged["source_bits_preserved"] is True
+    witness = unchanged["source_preservation_witness"]
+    exclusion = unchanged["source_exclusion"]
+    assert isinstance(witness, dict) and isinstance(exclusion, dict)
+    assert witness["before"] == witness["after"]
+    assert witness["exclusion_evidence_id"] == exclusion["evidence_id"]
+
+    original_exclusion = periodic._periodic_binary64_exclusion
+    mutation_applied = False
+
+    def mutate_source_then_exclude(
+        source: phx.meshing.NativePeriodicSource,
+        specification: phx.meshing.SurfaceMeshingSpec,
+        case: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal mutation_applied
+        domain = source.domain
+        assert isinstance(domain, phx.meshing.PeriodicPointOrbits)
+        points = domain.points
+        original_coordinate = points[0, 0]
+        points.setflags(write=True)
+        points[0, 0] = np.nextafter(points[0, 0], np.inf)
+        points.setflags(write=False)
+        mutation_applied = bool(points[0, 0] != original_coordinate)
+        return original_exclusion(source, specification, case)
+
+    monkeypatch.setattr(
+        periodic, "_periodic_binary64_exclusion", mutate_source_then_exclude
+    )
+    mutated = periodic._periodic_qualification_lifecycle(args)
+    assert mutation_applied
+    assert mutated["status"] == "failed"
+    assert mutated["independent_scientific_certification"] != "passed"
+    assert "source_bits_preserved" not in mutated
+    assert "source_exclusion" not in mutated
+    assert mutated["case_contract_completion"] == "incomplete"
+
+
 def test_periodic_source_classification_releases_corner_scratch_before_coverage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

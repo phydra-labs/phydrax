@@ -318,6 +318,15 @@ def test_actual_native_ale_epoch_archive_retains_every_field_and_motion_proof(
     operands = accepted.prepared_operands
     assert operands._measure_snapshots
     assert motion.target.execution_evidence is not None
+    from phydrax.meshing._measurements import (
+        validate_native_execution_interchange,
+    )
+    assert (
+        validate_native_execution_interchange(
+            motion.target.execution_evidence.to_record()
+        )["managed_admission_peak_bytes_upper"]
+        is not None
+    )
     paid_receipt = motion.target.execution_evidence
     limits = _overset_archive_limits(controls.capacity)
 
@@ -356,6 +365,15 @@ def test_actual_native_ale_epoch_archive_retains_every_field_and_motion_proof(
         prepare_archive,
         failure_factory=qualification_failure,
         prepared_operands=accepted.prepared_operands,
+        observe_managed_admission=True,
+    )
+    consumer_receipt = prepared.result.execution_evidence
+    assert consumer_receipt is not None
+    assert (
+        validate_native_execution_interchange(consumer_receipt.to_record())[
+            "managed_admission_peak_bytes_upper"
+        ]
+        is not None
     )
     records, expected, publication = prepared.value
 
@@ -372,9 +390,18 @@ def test_actual_native_ale_epoch_archive_retains_every_field_and_motion_proof(
         assert content_equal(cold_records, records, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
         return cold_records
 
-    execute_native_consumer(
+    cold = execute_native_consumer(
         motion.target, plan.specification.limits, cold_checkpoint,
         failure_factory=qualification_failure,
+        observe_managed_admission=True,
+    )
+    cold_receipt = cold.result.execution_evidence
+    assert cold_receipt is not None
+    assert (
+        validate_native_execution_interchange(cold_receipt.to_record())[
+            "managed_admission_peak_bytes_upper"
+        ]
+        is not None
     )
     foreign_called: list[bool] = []
     with pytest.raises(ValueError):
@@ -753,7 +780,9 @@ def test_composite_actions_refuse_stale_source_binding_before_execution(
     # Missing numerical operands are intentional: source mismatch must refuse
     # before a compiled action or carried coefficient is consumed.
     with pytest.raises(QualificationFailure, match="current registration and field query"):
-        _overset_composite_update(connectivity, {}, solver, reused=True)  # ty: ignore[invalid-argument-type]
+        _overset_composite_update(
+            connectivity, {}, solver, reused=True, warm_repeats=0  # ty: ignore[invalid-argument-type]  # Deliberately incomplete stale-registration fixture.
+        )
 
 
 def _composite_queries(values: dict[str, Array]) -> dict[str, Array]:
@@ -870,6 +899,176 @@ def test_native_composite_solve_matches_independent_coupled_system() -> None:
     assert bool(corrected.successful)
     assert int(corrected.diagnostics.iterations) > 0
     np.testing.assert_allclose(corrected.value, reference, rtol=0.0, atol=1.0e-11)
+
+def test_overset_update_measures_bounded_real_executions_and_refuses_runtime_compile() -> None:
+    import jax
+
+    from phydrax.meshing.qualification import native_planar_part
+    from tools.meshing_qualification.scenarios.overset import (
+        _OversetJitEntry,
+        _OversetPartRows,
+        _OversetSolver,
+        _part_carrier,
+    )
+
+    parts = {
+        name: native_planar_part(name, 1.0, size=1.0)[0]
+        for name in ("a", "b")
+    }
+    connectivity = phx.meshing.prepare_overset_connectivity(
+        phx.meshing.MeshAssembly(tuple(parts.values())),
+        tuple(phx.meshing.OversetPartSpec(name) for name in parts),
+    )
+    point_count = np.asarray(_part_carrier(parts["a"]).mesh.coordinates).shape[0]
+    spaces = {
+        name: phx.linalg.ArraySpace((point_count,), dtype=jnp.float64)
+        for name in parts
+    }
+    local = tuple(
+        phx.linalg.FunctionLinearOperator(
+            lambda value: value,
+            source=spaces[name],
+            target=spaces[name],
+            operator_id=f"test-warm-{name}",
+        )
+        for name in ("a", "b")
+    )
+    identity = tuple(
+        phx.linalg.FunctionLinearOperator(
+            lambda value: value,
+            source=spaces[name],
+            target=spaces[name],
+        )
+        for name in ("a", "b")
+    )
+    output_space = phx.linalg.ArraySpace((1,), dtype=jnp.float64)
+    coupling = phx.linalg.FunctionLinearOperator(
+        _composite_queries,
+        source=phx.linalg.PyTreeSpace(
+            {name: spaces[name].structure() for name in ("a", "b")},
+            space_id="test-warm-donors",
+        ),
+        target=phx.linalg.PyTreeSpace(
+            {name: output_space.structure() for name in ("a", "b")},
+            space_id="test-warm-receptors",
+        ),
+        operator_id="test-warm-query",
+    )
+    zeros = tuple(jnp.zeros((point_count,), dtype=jnp.float64) for _ in parts)
+    composite = _OversetComposite(
+        local,
+        zeros,
+        identity,
+        zeros,
+        (jnp.asarray((0,)), jnp.asarray((0,))),
+        coupling,
+        ("a", "b"),
+        ("a", "b"),
+        (0, point_count, 2 * point_count),
+        "test-warm-composite",
+    )
+    seed = jnp.zeros((2 * point_count,), dtype=jnp.float64)
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.GMRES(restart=4),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=0.0, absolute=1.0e-11, max_steps=64,
+        ),
+    )
+    entry = _solve_overset_composite
+    assert isinstance(entry, _OversetJitEntry)
+    compiled = entry.lower(composite, seed, policy).compile()
+    calls: list[tuple[_OversetComposite, Array, phx.linalg.LinearSolvePolicy]] = []
+    outputs: list[tuple[dict[str, Array], phx.linalg.LinearSolveResult]] = []
+
+    def counted(
+        comp: _OversetComposite, value: Array, solve_policy: phx.linalg.LinearSolvePolicy,
+    ) -> tuple[dict[str, Array], phx.linalg.LinearSolveResult]:
+        calls.append((comp, value, solve_policy))
+        output = compiled(comp, value, solve_policy)
+        outputs.append(output)
+        return output
+
+    route = SimpleNamespace(
+        connectivity=connectivity,
+        transfer_id="test-warm-query",
+        donor_names=("a", "b"),
+        apply=_composite_queries,
+    )
+    rows = {
+        name: _OversetPartRows(
+            SimpleNamespace(constrained_dofs=np.asarray((point_count - 1,))),
+            np.arange(point_count, dtype=np.int64),
+            np.asarray((0,), dtype=np.int64),
+            np.asarray((point_count - 1,), dtype=np.int64),
+            jnp.zeros((1,), dtype=jnp.float64),
+            np.zeros(point_count, dtype=np.bool_),
+            np.empty((0,), dtype=np.int64),
+            np.empty((0,), dtype=np.int64),
+        )
+        for name in parts
+    }
+    problems = tuple(
+        SimpleNamespace(lift=jnp.zeros((point_count,), dtype=jnp.float64))
+        for _ in parts
+    )
+    solver = _OversetSolver(
+        composite,
+        policy,
+        counted,
+        rows,
+        {name: {"domain": 0.0, "wall_flux": None, "exterior_flux": None} for name in parts},
+        {},
+        {},
+        {"local_action_realization": "verified-native-sparse-part-blocks"},
+        {},
+        problems,
+        tuple(lambda problem, value: jnp.zeros_like(value) for _ in parts),
+        route,
+    )
+    initial = {
+        name: jnp.zeros((point_count,), dtype=jnp.float64)
+        for name in parts
+    }
+    values, report, _ = _overset_composite_update(
+        connectivity, initial, solver, reused=False, warm_repeats=2,
+    )
+    assert len(calls) == len(outputs) == 3
+    assert all(
+        comp is composite and value is calls[0][1] and solve_policy is policy
+        for comp, value, solve_policy in calls
+    )
+    assert all(
+        leaf.is_ready()
+        for output in outputs
+        for leaf in jax.tree_util.tree_leaves(output)
+    )
+    for name in parts:
+        np.testing.assert_array_equal(values[name], outputs[0][0][name])
+    assert report["passed"] is True
+    assert len(solver.compiler["warm_samples_seconds"]) == 2
+    assert all(
+        isinstance(seconds, float) and np.isfinite(seconds) and seconds >= 0.0
+        for seconds in solver.compiler["warm_samples_seconds"]
+    )
+    assert isinstance(solver.compiler["first_execution_seconds"], float)
+    assert solver.compiler["first_execution_compilation_count"] == 0
+    assert solver.compiler["warm_recompilation_count"] == 0
+
+    def compiling_at_execution(
+        comp: _OversetComposite, value: Array, solve_policy: phx.linalg.LinearSolvePolicy,
+    ) -> tuple[dict[str, Array], phx.linalg.LinearSolveResult]:
+        jax.jit(lambda operand: operand + 1)(
+            jnp.zeros((31,), dtype=jnp.float64)
+        ).block_until_ready()
+        return compiled(comp, value, solve_policy)
+
+    refusing_solver = solver._replace(compiled=compiling_at_execution)
+    with pytest.raises(
+        QualificationFailure, match="Composite execution must not compile at runtime"
+    ):
+        _overset_composite_update(
+            connectivity, initial, refusing_solver, reused=False, warm_repeats=0
+        )
 
 
 def _cold_remap_fixture(

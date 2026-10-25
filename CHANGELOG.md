@@ -3,6 +3,359 @@
 ## Unreleased
 
 ### Fixed
+
+- Native family PDE solves now use Lagrange order matching the independently authored
+  geometry, retaining physical-error checks and canonical exact rational-composed
+  coordinate tabulation. Embedded quad refinement requires its current source
+  embedding certificate; volume nested-field transfers use explicit witnesses and
+  full geometry proofs. Cold family archives honor the trusted manifest limit and
+  renew retained certification evidence without changing evaluated checks or
+  outcome identities.
+- Standalone layer-column geometry restoration now includes bounded identity
+  metadata headroom instead of failing on a polynomial-only estimate. Explicit
+  caller limits and restored-field validation remain unchanged.
+- Exact determinant caches retain complete, length-delimited rational values
+  instead of transient corner object graphs. The shared affine-measure encoding
+  remains byte-identical; orientation and changes below binary64 resolution
+  remain distinct. Numerical cache keys are not source-certification authority.
+- Coordinate admission reuses its existing contributor's paid storage bound for
+  no-growth updates instead of querying native capacity twice. Growth and ticket
+  rebinding retain their original checks, charges, and deadline checkpoints.
+- Serial planar preparation and publication observe their actual inherited
+  request target, retaining prepared-domain storage through execution. Planar
+  and planar-motion guarantees use the canonical cavity and managed-scratch
+  policy; unmanaged host, device, and compiler allocations remain excluded.
+  Cavity refusals retain the original requested cavity limit.
+- Moving-overset qualification measures real synchronized warm executions and
+  rejects runtime compilation. Its publication inventory binds every authored
+  part, motion, conservative checkpoint, and cold continuation to actual source
+  identities and receipt lineage; missing frozen controls remain blocking.
+  Planar trace authority is distinct from optional certificate fidelity sources.
+- Cold corpus checkpoint and continuation measurements use their own phase
+  names rather than overwriting the preceding solver-preparation timing.
+- PLC refinement resolves new multi-parent vertices through their actual source
+  edge, face, or cell instead of treating equal endpoint facet labels as a
+  convex geometric carrier. Retained and single-parent identities keep their
+  obligations, and exact support checks remain mandatory.
+- Whole-domain manufactured-diffusion qualification uses the existing native
+  exact-Jacobi preconditioner with unchanged authored tolerances and iteration
+  bounds. Native automatic selection records its actual solver method.
+  Region-restricted forms retain their supported authored policy; empty
+  constrained systems report absent diagonal extrema rather than fabricated values.
+- Independently observed native phases retain the nearest observer-owned
+  reservation when descendants borrow their target. Observed complete requests
+  map their original allowance before history admission and reconstruction;
+  unknown, foreign, late, and unscoped activity still fails observation closed.
+- Nested managed observation measures entry and consumption against the same
+  request-root pool, counting inherited escrow only once. Complete envelopes
+  intersect conservative historical host bounds with the enforced request
+  quota; impossible observed event peaks remain unavailable, not clipped.
+  Native remaining-resource queries accept live same-thread ancestors while
+  polling the active scope's deadline; mutation still requires the active scope.
+- Exact contact outputs stay admitted through their consumers, while
+  exterior-degree proof scratch retires at its actual local lifetime.
+  Coordinate/publication phases use the active parent's allowance, and
+  preflight work refusals retain their specific classification from actual
+  requested-versus-remaining evidence.
+- Image transport maps the complete warm native request before creating host
+  storage or nested generation scopes. Nested phases borrow that actual target,
+  so native entries and retained host growth produce a genuine managed
+  admission envelope without resetting observation guards.
+- Image source authoring and revalidation admit voxel, face, topology, and
+  variable Unicode metadata work/storage before allocation. Checkpoint budget
+  inputs remain non-persistent, and cold source validation borrows its original
+  request. Device-memory observations reach the qualification consumer unchanged.
+- Live source reconstruction keys admit recipe traversal, canonical JSON
+  workspace, and uncached numerical hashing against the caller's actual
+  coordinate budget. Aggregate dependency identities remain distinct from
+  archive manifests; archive size limits and canonical key bytes are unchanged.
+- Bulk artifact registration no longer requires absent optional OCCT projection
+  dependencies. Explicit projection access still requires its real provider,
+  and installed-provider import failures remain visible.
+- Budgeted label-field extraction keeps transient collision-proof rebuilds under
+  temporary credit unless a rebuilt surface escapes. Extraction and binding
+  admission include padded traversal, capacity-shaped topology, and variable
+  identity storage; archive restoration forwards the active native and source
+  owner budgets to image-plan revalidation.
+- Exact material-chain validation releases each edit's temporary proof storage
+  while retaining live endpoint keys, shared rational points, and history
+  outputs. Promotion transfers already admitted storage without a release and
+  readmission gap; numerical banks and retained output identities are unchanged.
+- Out-of-order coordinate temporary-scope cleanup now refuses before releasing
+  an inner scope's live storage, invalidates the rejected token, and preserves
+  the original exception when cleanup also fails.
+- Exact image preparation reads the active parent's remaining allowance during
+  cold source revalidation instead of treating escrowed work as unavailable.
+  The child still admits against the original request limits.
+- Native exact-arrangement refusals report consumed work alongside the actual
+  admitted work limit and native scratch peak alongside its limit, preserving
+  the original status and partial-work accounting.
+- Volume metric and adaptation phases read their actual active-parent allowance
+  through the shared scope view, rather than reserving the root's larger
+  unreserved capacity. Retained numerical storage keeps its same-owner credit;
+  temporary-phase storage still pays its actual metadata and payload demand.
+  Original memory ceilings and below-demand refusal remain enforced.
+- CAD cold-control packets bind the complete checkpoint identity by its
+  canonical digest instead of transmitting the potentially multi-megabyte
+  identity tree. The 1 MiB control-packet limit remains unchanged. If a packet
+  is refused, failure evidence retains the real checkpoint without treating
+  oversized controls as admitted or masking the primary refusal.
+- Parametric surface construction and reconnection now bind their native calls
+  to actual inherited request tickets with the declared simultaneous storage
+  envelope. Publication retains complete managed-admission evidence instead of
+  losing it at an unmapped native call. Work, memory and cavity allowances are
+  borrowed from the owning request; no observation flag or resource guard is
+  bypassed.
+- CAD checkpoint preparation and fresh cold continuation honor the explicit
+  `maximum_recipe_bytes` control through one shared qualification archive-policy
+  owner, also used by periodic workflows. Producer and cold policies must match
+  before archive reading. The CAD development allowance is explicitly 8 MiB;
+  the library's 1 MiB default and all other archive limits remain unchanged.
+  Live reconstruction-key preparation no longer misapplies an archive manifest
+  limit to its aggregate dependency tuple; numerical mutation authentication and
+  actual archive admission remain enforced.
+- Native exact material arrangement omits actual zero and positive-unit products
+  while retaining the original dense-operation prices, exact output bytes,
+  clipping order, and refusal evidence. Prepared Python face terms likewise
+  avoid repeated zero/unit Fraction arithmetic with pre-admitted metadata and
+  cache storage. This reduces work but does not establish the authored whole-bank
+  work-cap gate.
+- Homotopy matrix products, strict projected-minor checks, and Bernstein-net
+  projections reuse bounded native interval programs with the original outward
+  accumulation order. Native interval lowering supports structural stack and
+  concatenation without claiming unproved reduction layouts. Ordered input
+  blocks copy directly into the admitted program workspace, avoiding a second
+  packed allocation. Generic shapes and absent providers retain the NumPy route;
+  an installed native failure propagates.
+- Curved CAD and hybrid publication completes its actual source-owner issuance
+  before physical consumers run, with authenticated history on the same request.
+  Curved publication now requires an explicit audit policy and preserves the
+  source-bound generation-plan provenance instead of silently substituting a
+  default policy. CAD archive registration distinguishes the authored curved
+  solid from its straight PLC approximation, checks the exact model and region
+  identities, and refuses weaker deviation bounds. Approximate CAD coverage
+  reconstructs its physical premises through its canonical certificate owner.
+  Republishing geometry retains the original generation-plan receipt owner and
+  canonical plan/specification provenance, so cold control admission remains
+  source-bound. A fresh request also retains every historical dependency
+  discovered during restoration, without charging its work or queries again.
+- Warm CAD checkpoint writing composes live `MeshCertificationPreparedEvidence`
+  inside the accepted carrier's paid consumer request. The existing
+  reconstruction cache retains the newly earned report for normal archive
+  validation; supplied preparation is authenticated even on a cache hit.
+  The writer's completed receipt is recorded separately from the accepted epoch
+  snapshot. No prepared artifact or live issuance is serialized, and a fresh
+  process still independently earns its source proof.
+  Standalone recertification registers its own canonical artifact types before
+  preparing a reconstruction key.
+- Finite-element field-owner reuse binds the actual declaration, mesh, and
+  coordinate map instead of serializing unrelated publication certificates and
+  CAD histories into its preparation key. Every caller still validates its
+  actual field and index bindings, including cache hits. Receipt-only endpoint
+  continuation also recognizes unchanged declared scientific root fields by
+  object identity while retaining receipt validation and paid ancestry checks.
+  Archive size limits and scientific publication identities are unchanged.
+- Canonical full-dimensional P2 tetrahedral validity evaluates fresh root
+  Bernstein controls in native exact dyadic arithmetic. Actual polynomial
+  degree, corner and relative-floor decisions, outward binary64 endpoints,
+  statuses, and certificate identities are unchanged. Undecided roots retain
+  the existing subdivision path on the same ledger; noncanonical, embedded,
+  restricted, exact-source, periodic, and storage-backed maps retain their
+  existing proof routes. Native work and failure evidence are settled once.
+  The `cell-validity` benchmark measures fresh requests rather than cached
+  certificates, with independent exact cubic controls and capacity scaling.
+  Exact determinant and quotient-rounding primitives are shared with the
+  arrangement owner instead of duplicated in the validity kernel.
+- Placed B-Rep closest-point results retain the authored source revision when
+  world-model face and edge rows are mapped back to the definition namespace.
+  The world-query revision is checked before that identity transfer.
+- CAD qualification rejects the straight P2 negative control using a fresh,
+  resolved lower-distance witness for an assigned boundary node and source
+  occurrence. The record identifies this as a single-node bound, not a global
+  maximum. Accepted curved geometry still requires full validity, fidelity,
+  embedding, coverage, and independent validity recertification.
+- CAD projection and source-fidelity proofs avoid constructing temporary Equinox
+  bound-method trees for immediate source-geometry calls. Trim classification
+  compares two-dimensional lower and upper bounds directly instead of building
+  temporary boxes. Finite midpoint/radius evaluation avoids exceptional-lane
+  masks when the sum cannot overflow, while preserving operation order, outward
+  rounding, scalar kinds, and the extended-real path. Projection results,
+  refinement charges, and certificate thresholds are unchanged.
+  Source-homotopy prefetch also avoids authenticating one request twice.
+  Returned enclosure batches authenticate their source definition and bank
+  layouts before publication, once per batch rather than once per copied row;
+  subsequent requests still reauthenticate before using retained enclosures.
+- CAD trim evaluation reuses request-owned endpoint and arc preparations,
+  charges retained storage before publication, and passes host batches directly
+  to stable compiled preconditioners. Fixed batch shapes preserve the existing
+  bitwise enclosure contract; the `brep-preconditioners` benchmark separates
+  preparation, compilation, warmed execution, and compiler memory.
+- CAD seam authentication compares scalar endpoint roots independently of their
+  periodic UV lifts, while retaining root, parameter-chain, and spatial-carrier
+  checks. Intersection-jet preparations declare their full retained storage,
+  and intersection curves snapshot numerical host banks onto immutable bytes.
+  This permits proof-local identity reuse without trusting writable aliases or
+  treating a read-only flag as immutable storage. Reuse binds each bank's full
+  immutable-host layout, admitted before it is retained, and revalidates it
+  first; a changed layout revokes the prepared source map instead of
+  relabeling it.
+- Prepared straight-line float64 interval programs execute in meshcore instead
+  of dispatching each operation through NumPy. Preparation preserves the owner's
+  operation order and immutable coefficient bounds; unsupported programs retain
+  the interpreter. Installed-provider load, deadline, and execution refusals
+  propagate without retry. Active request scopes admit the private interval
+  workspace before allocation, and returned views retain its native owner.
+  Final partial blocks and long reductions retain deadline checkpoints; empty
+  reductions avoid signed overflow without restricting accepted lengths.
+  The `brep-interval-program` benchmark compares identical bounds and bounded
+  execution scaling with and without resource-scope overhead.
+- Tetrahedral material queries use chronological old/new-support indices and
+  prepared exact small linear actions instead of scanning every past chart.
+  Source tables are immutable snapshots; lookup leases release obsolete spatial
+  trees and retain removed-region and shared-trace refusals.
+- Projected native tetrahedral insertions store the host-certified outward
+  facet order in claim history. Inward claims are rejected before mutation, and
+  publication still independently reproves orientation and fidelity.
+- Native exact tetrahedra arrangements (`arrange_tetrahedra_exact`) clip a
+  deterministic DAG of positive tetrahedra in one coordinate frame with one
+  exact geometry pool per call. Plane rows are decoded once; exact plane sides,
+  edge and three-plane crossings are reused across jobs, and new crossings reuse
+  each facet pair's 2x2 minors. Each job first checks all its cuts against the
+  parent's vertices with pooled exact sides: a nonnegative cut empties the job
+  before any construction and nonpositive cuts are skipped. Points weld only by
+  exact projective equality (round-to-nearest coordinates choose candidates).
+  Pool tables track occupancy in a bitset, so growth zeroes one word per 64
+  slots and moves only stored entries. Section caps follow boundary edges
+  recorded during the facet walk instead of a second scan.
+  Jobs copy their immutable parent's bounded topology and share the reference
+  clipper's section engine and arbitrary-integer constructions. Results are
+  exact homogeneous vertices with smallest equal input indices and outward
+  per-job face CSR; every input is validated before publication, one primitive
+  query is charged per job, and refusals publish nothing while always reporting
+  work, queries, peak bytes, completed jobs and the failing row.
+- Exact native reference-tetrahedron clipping takes an explicit `plane_count`
+  of 4–16 exact rational halfspaces, so source ∩ cell ∩ pulled-back target
+  cuts run as one original-coordinate clip. Output capacities and scratch
+  admission scale with the convex-polytope bounds; ten-plane scratch admission
+  remains unchanged. Cut faces follow the oriented boundary edges of retained
+  convex facets instead of sorting and rebuilding an exact hull. Complete
+  plane incidence and outward closure remain independently checked.
+  Native work is recorded once on the original coordinate ticket, including
+  partial work on refusal, and intersects every active stage allowance.
+- Implicit cavity atlases triangulate each nonempty overlay polygon of the
+  old and new boundary patches with the exact `triangulate_loop` owner over the
+  polygon's own vertices instead of fanning it from an averaged center. Both
+  lifts are affine maps of the same planar polygon and the anchor lies strictly
+  off both face planes, so every triangle carries the same exact cone map:
+  cones per overlay polygon drop from `n` to `n - 2` (half of the captured
+  ring-torus charts) while the cone-wise material map, the coned-boundary
+  proof including collinear edge subdivisions, and every chart consumer are
+  unchanged. Chart IDs are recomputed from the new cones; cold reconstruction
+  reproves the retained cones.
+- Volume material pieces of each chain edit come from one shared exact
+  arrangement in the edit's old physical frame instead of one reference-chart
+  clip per piece. Each source/target or source/cone pair passing exact axis
+  bounds is one job clipping the source by all four outward faces of the
+  other cell; the native pool recognizes that cut set as the declared initial
+  tetrahedron, a geometric reuse that leaves routes distinct, and screens the
+  pair in both directions from exact plane sides at both cells' corners
+  instead of a duplicate Python screen: separated pairs publish nothing,
+  nested cells are published whole, and only cutting planes clip whichever
+  cell they cut fewer times. A curved edit clips each source cell by a cone
+  at most once, and each (target, image cone) pair is still decided once by
+  exact new-frame plane sides for every source under the cone: separated
+  pairs route nothing, a target containing the image cone routes `s ∩ C_k`
+  itself, and only target faces cutting the image cone are pulled back. All
+  jobs of an edit run in one `arrange_tetrahedra_exact` call, whose actual
+  work is recorded once on the coordinate ticket. Each exact vertex is decoded
+  once; a face's signed volume contribution is evaluated once per welded loop
+  and reused, negated, by the neighbouring piece; piece simplices are positive
+  pulling triangulations from an existing vertex, without averaged centers.
+  Native publication already canonicalizes each face loop; Python copies that
+  key without repeating its minimum-vertex search and rotation.
+  Every piece keeps its explicit `(target, source, chart)` route, and exact
+  per-source and mapped per-target partitions, piece volumes and the affine
+  material maps are unchanged; internal triangulations and vertex
+  numbering may differ. `VolumeMaterialChain` now publishes each edit's
+  rounded shared vertices (`piece_vertex_offsets`, `piece_vertices`) and
+  edit-local simplex rows (`piece_simplex_vertices`) in place of per-simplex
+  coordinate rows; local FE projection gathers simplices from them. Cold
+  reconstruction rebuilds every arrangement and bank from the retained edits
+  under the original limits. The Python reference-tetrahedron simplex
+  clipper, whose only consumer was this path, is removed.
+- The volume-material FV remap is a factorized chronological operator instead
+  of composed CSR rows. `VolumeMaterialChain` publishes each edit's exact
+  density weights grouped per (target, source) pair
+  (`weight_offsets`, `weight_targets`, `weight_sources`, `weight_mantissas`,
+  `weight_exponents`, `weight_mantissa_errors`; see
+  `volume_material_edit_weights`): every weight is an exactly power-of-two
+  scaled binary64 mantissa in [1/2, 1), an exact integer exponent and a
+  certified rounding bound, so no weight overflows or underflows. The composed
+  `content_*` banks, `volume_material_content_rows` and the binary64
+  composition are removed. `UnstructuredConservativeRemapPlan` for a material
+  chain stores no routes (`target_offsets`, `source_indices`,
+  `intersection_measures` and their bounds are `None`); its
+  `material_schedule` packs the edits by birth-token dependency level into
+  bounded chunks of reused live slots, and `apply`, `apply_content` and the
+  transpose run one compiled scan in exact mantissa/exponent arithmetic
+  (IEEE values split and composed bit-exactly, subnormals included), so
+  intermediates never overflow or underflow and the only rounding to the
+  value range is the final one. Derivatives with respect to values, weight
+  mantissas, chain target measures and the denominator and source-measure
+  overrides use one owning primitive closed under forward and reverse
+  differentiation; value-only derivatives cost one action. Reports derive
+  target content and source coverage from the forward and transpose actions
+  with static certified relative bounds, and the material route refuses
+  bounds that would exceed its coverage tolerance relative to each source
+  cell's volume or each target's carried content. Explicit final rows come
+  only from `PreparedRemapCSRView(plan, policy, budget=...)` (equivalently
+  `UnstructuredConservativeRemapPlan.prepare_csr_view(policy)`), which derives
+  its rows from the plan alone: `SparseAssemblyPolicy` `max_nnz`/`max_bytes`
+  bound the CSR payload and `max_workspace_bytes` the simultaneous composition,
+  host/device row conversion, output, and fingerprint-staging workspace, while
+  the coordinate budget retains the whole view graph, plan and chain
+  included, counting already retained buffers once. The view records content
+  fingerprints of its plan and rows; `require_bound(plan)` recomputes them at
+  host admission and refuses replaced leaves. `apply_fixed_combinatorics`
+  moved to the view for every route, keeping its physical-overlap checks;
+  material rows are old-frame content measures. `UnstructuredAMRHierarchyPlan`
+  takes a volume material prolongation only with its explicit
+  `prolongation_view`, admits it through `require_bound`, and binds its
+  `view_id` into the hierarchy's coverage and plan identities. Weight-mantissa
+  gradients replay in uniform blocks chosen by least logical peak
+  (checkpoints, recompute tape and carry, adjoint, weight gradients and
+  lanes); executed chunk updates are admitted before schedule preparation and
+  XLA's compiled temporaries for the replaying kernel (from
+  `compiled_memory_estimate`; the logical peak only where a backend reports
+  none) against the replay byte budget. Plans record the first-order logical
+  split as `material_replay_evidence`.
+  Replay preparation and execution use one stable compiled callable; compiled
+  memory evidence is shared across byte ceilings that do not change the replay
+  program, without retaining numerical operands in the evidence cache.
+  Report bounds are derived for the dtype the report actions run in (binary32 with
+  JAX x64 off, including exact casts of the stored weights and measures), so
+  the default 1e-10 tolerance refuses binary32 material plans while a looser
+  explicit tolerance admits them. Each edit's exact pieces, arrangement scratch and cavity
+  plane caches retire with that edit; per-edit binary64 blocks stay admitted
+  to one live bound and are concatenated once into the published bank with
+  their actual array bytes.
+- Mapped quadratic cells can prove whole-cell injectivity from freshly certified
+  exact Jacobian rank and the quadratic midpoint identity. Higher-degree and
+  rational maps retain their existing proof routes; caller-supplied validity
+  flags never substitute for the rank proof.
+- Native quadratic simplex bounds use outward interval arithmetic with scoped
+  floating-point-mode protection, bounded native resource admission, and exact
+  contact fallback. The `brep-quadratic-bounds` benchmark reports preparation,
+  execution scaling, retained bytes, and independently checked outward inclusion.
+- Native meshcore builds on Apple Silicon when `size_t` and `uint64_t` are
+  distinct C++ types; managed-memory peak aggregation retains its admitted byte semantics.
+- Meshing qualification measures Darwin post-exec resident high water through
+  the canonical host-memory sampler and terminates orphaned cold workers through
+  kernel process-exit events. The approved macOS contract retains measured-memory
+  ceilings without claiming hard execution-group enforcement.
+- All qualification CLI and cold-worker routes share durable per-process stage
+  reporting. Cold archives, control packets, and raw outputs survive refusal;
+  reporting failure blocks positive qualification without replacing scientific evidence.
 - Distributed graph field recovery retains role, epoch, dtype, maximum error,
   and deterministic first differing global ID/owner before collective refusal.
   Accepted compact transport comparisons remain separate from independent
@@ -3702,6 +4055,14 @@
   and ragged-series pooling selects inactive latent values before reduction.
 
 ### Added
+- `phydrax.sparse.InjectiveRouteWindows` holds host-prepared windows of lanes
+  that each name a distinct destination row; construction validates bounds and
+  per-window injectivity once and refuses traced topology.
+  `phydrax.sparse.route_replace(windows, destination, values, window=...)`
+  overwrites those rows (including NaN or infinity); invalid lanes write
+  nothing, a window may be selected by a traced index without a validation
+  sort (an out-of-range index is refused, not clamped), and work is
+  proportional to the window capacity, not the destination.
 - `phydrax.meshing.providers.native_provider_source_root(package)` returns the
   single wheel or checkout provider-source directory that provider lookup uses.
 - `MeshAdaptationPolicy(envelope_source=...)` anchors carried surface-envelope

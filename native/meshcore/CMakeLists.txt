@@ -58,12 +58,14 @@ set(PHX_MC_SOURCES
   src/hex_topology.cpp
   src/graph_partition.cpp
   src/intersections.cpp
+  src/interval_program.cpp
   src/periodic.cpp
   src/parallel.cpp
   src/parallel_capi.cpp
   src/mixed_refinement.cpp
   src/plc3d.cpp
   src/quad_topology.cpp
+  src/quadratic_bounds.cpp
   src/restricted_delaunay.cpp
   src/power_diagram.cpp
   src/predicates.cpp
@@ -95,6 +97,7 @@ set(PHX_MC_HEADERS
   src/expansion.hpp
   src/facet_coverage.hpp
   src/filtered.hpp
+  src/floating_point_mode.hpp
   src/intersections.hpp
   src/geometry3.hpp
   src/exact_scalar.hpp
@@ -106,6 +109,7 @@ set(PHX_MC_HEADERS
   src/plc3d.hpp
   src/predicates.hpp
   src/reference_tetrahedron_clip.inc
+  src/exact_tetrahedra_arrangement.inc
   src/source_construction.hpp
   src/spatial_sort.hpp
   src/triangulation2d.hpp
@@ -212,6 +216,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_clip)
   phx_mc_add_test(test_capi_guard)
+  phx_mc_add_test(test_tetrahedra_arrangement)
   phx_mc_add_test(test_graph_partition)
   phx_mc_add_test(test_intersections)
   phx_mc_add_test(test_cavity)
@@ -224,6 +229,9 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_curved_collapse)
   phx_mc_add_test(test_power_diagram)
   phx_mc_add_test(test_mixed_refinement)
+  phx_mc_add_test(test_quadratic_bounds)
+  phx_mc_add_test(test_quadratic_validity)
+  phx_mc_add_test(test_interval_program)
   add_executable(test_getters tests/test_getters.cpp)
   target_include_directories(test_getters PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_link_libraries(test_getters PRIVATE phydrax_meshcore_objects)
@@ -275,7 +283,8 @@ if(PHX_MC_BUILD_TESTS)
       child_scope child_scope_refusal borrowed_scope_batch invalid_lifetimes
       imported_evidence mapped_counter_reads retained_host_storage retained_host_refusal
       atomic_refusal_equivalence atomic_refusal_child atomic_refusal_estimate_defect
-      atomic_refusal_worker admitting_parent_batch admitting_parent_native)
+      atomic_refusal_worker admitting_parent_batch admitting_parent_native
+      ancestor_remaining ancestor_deadline)
     add_test(NAME test_execution_target_${case} COMMAND test_execution_target ${case})
   endforeach()
   if(PHX_MC_SANITIZE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU"

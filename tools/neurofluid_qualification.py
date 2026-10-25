@@ -320,8 +320,44 @@ def manifest(payload: bytes) -> Any:
     )
 
 
+def _qualified_label_volume(
+    values: np.ndarray,
+    affine: phx.imaging.ImageIndexAffine,
+    /,
+    *,
+    asset_id: str,
+    ontology_id: str,
+    label_definitions: tuple[phx.imaging.LabelDefinition, ...],
+    transformation_id: str,
+) -> phx.imaging.LabelVolume:
+    asset = phx.imaging.MedicalImageAsset(
+        asset_id,
+        "segmentation",
+        values,
+        affine,
+        phx.imaging.ImageFieldSpec.named(
+            "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
+        ),
+        phx.imaging.DeidentificationEvidence(
+            "qualification-deid", "subject-0", "synthetic", True, True, True
+        ),
+        (manifest(values.tobytes()),),
+        phx.measurement.DerivationRecord(
+            phx.measurement.DataOrigin.SYNTHETIC,
+            phx.measurement.DataStage.RECONSTRUCTED,
+            transformation_id=transformation_id,
+        ),
+    )
+    return phx.imaging.LabelVolume(
+        asset,
+        phx.imaging.LabelOntology(ontology_id, "synthetic", "1", label_definitions),
+    )
+
+
 def _segmentation(
     size: int,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     phx.SpatialCoordinateContract,
     phx.imaging.LabelVolume,
@@ -336,38 +372,55 @@ def _segmentation(
     affine = phx.imaging.ImageIndexAffine(
         np.eye(4), "voxels", contract, phx.imaging.ImageAxisConvention.LPS
     )
-    values = np.ones((size, size, size), dtype=np.int16)
-    values[size // 2 :] = 2
-    asset = phx.imaging.MedicalImageAsset(
-        "qualification-labels",
-        "segmentation",
-        values,
-        affine,
-        phx.imaging.ImageFieldSpec.named(
-            "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
-        ),
-        phx.imaging.DeidentificationEvidence(
-            "qualification-deid", "subject-0", "synthetic", True, True, True
-        ),
-        (manifest(values.tobytes()),),
-        phx.measurement.DerivationRecord(
-            phx.measurement.DataOrigin.SYNTHETIC,
-            phx.measurement.DataStage.RECONSTRUCTED,
+    label_definitions = (
+        phx.imaging.LabelDefinition(1, "first-label", "First"),
+        phx.imaging.LabelDefinition(2, "second-label", "Second"),
+    )
+    if coordinate_budget is None:
+        values = np.ones((size, size, size), dtype=np.int16)
+        values[size // 2 :] = 2
+        labels = _qualified_label_volume(
+            values,
+            affine,
+            asset_id="qualification-labels",
+            ontology_id="qualification-labels",
+            label_definitions=label_definitions,
             transformation_id="synthetic-qualification-generator",
-        ),
-    )
-    labels = phx.imaging.LabelVolume(
-        asset,
-        phx.imaging.LabelOntology(
-            "qualification-labels",
-            "synthetic",
-            "1",
-            (
-                phx.imaging.LabelDefinition(1, "first-label", "First"),
-                phx.imaging.LabelDefinition(2, "second-label", "Second"),
-            ),
-        ),
-    )
+        )
+    else:
+        voxel_count = size**3
+        # Raw int16 values, manifest payload, and LabelVolume's selected-value
+        # copy coexist; retained values plus validity mask remain charged.
+        scratch_bytes = 8 * voxel_count + 16384
+        result_bytes = 3 * voxel_count + 16384
+        work_units = 8 * voxel_count + 256
+        coordinate_budget.ticket.checkpoint()
+        with coordinate_budget.temporary_scope() as lifetime:
+            coordinate_budget.admit_work_bound(
+                work_units + 64,
+                storage_upper=scratch_bytes + result_bytes,
+            )
+            coordinate_budget.reserve(
+                work_units, scratch_bytes + result_bytes
+            )
+            values = np.ones((size, size, size), dtype=np.int16)
+            values[size // 2 :] = 2
+            labels = _qualified_label_volume(
+                values,
+                affine,
+                asset_id="qualification-labels",
+                ontology_id="qualification-labels",
+                label_definitions=label_definitions,
+                transformation_id="synthetic-qualification-generator",
+            )
+            with coordinate_budget.live_storage() as storage:
+                storage.promote_temporary_storage(lifetime, result_bytes)
+                coordinate_budget.retain_owner(
+                    labels, temporary_storage_credit=storage
+                )
+            del values
+            coordinate_budget.release_temporary_storage(scratch_bytes)
+            coordinate_budget.ticket.checkpoint()
     definitions = (
         phx.geometry.CompartmentDefinition(
             "first", ("first-label",), "material", allowed_neighbor_ids=("second",)
@@ -379,8 +432,12 @@ def _segmentation(
     interface = phx.geometry.CompartmentInterfaceDefinition(
         "first-second", "first", "second", "exchange"
     )
-    complex_ = phx.imaging.build_compartment_complex(labels, definitions, (interface,))
-    surfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
+    complex_ = phx.imaging.build_compartment_complex(
+        labels, definitions, (interface,), budget=coordinate_budget
+    )
+    surfaces = phx.imaging.extract_compartment_surfaces(
+        labels, complex_, budget=coordinate_budget
+    )
     return contract, labels, complex_, surfaces
 
 
@@ -508,64 +565,96 @@ def qualify() -> dict[str, object]:
 
 def _native_source(
     size: int,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     phx.geometry.CompartmentMeshingSource,
     phx.discretization.PreparedMetricNetwork,
 ]:
-    contract, labels, compartments, interfaces = _segmentation(size)
-    lower, upper = -0.5, size - 0.5
-    points = np.asarray(
-        (
-            (lower, lower, lower),
-            (upper, lower, lower),
-            (upper, upper, lower),
-            (lower, upper, lower),
-            (lower, lower, upper),
-            (upper, lower, upper),
-            (upper, upper, upper),
-            (lower, upper, upper),
-        ),
-        dtype=np.float64,
+    contract, labels, compartments, interfaces = _segmentation(
+        size, coordinate_budget=coordinate_budget
     )
-    triangles = np.asarray(
-        (
-            (0, 2, 1),
-            (0, 3, 2),
-            (4, 5, 6),
-            (4, 6, 7),
-            (0, 1, 5),
-            (0, 5, 4),
-            (3, 7, 6),
-            (3, 6, 2),
-            (0, 4, 7),
-            (0, 7, 3),
-            (1, 2, 6),
-            (1, 6, 5),
-        ),
-        dtype=np.int64,
-    )
-    outer = phx.geometry.SurfaceModel.from_triangles(
-        points,
-        triangles,
-        phx.geometry.SurfaceMetadata(
-            source_id="qualification-outer",
-            source_revision=labels.label_volume_id,
-            coordinate_contract=contract,
-            provenance=("synthetic",),
-        ),
-    )
-    source = phx.geometry.CompartmentMeshingSource(
-        labels, compartments, outer, interfaces
-    )
-    network = phx.discretization.MetricNetworkPlan.from_arrays(
-        np.asarray(((0.0, 0.0, 0.0), (size - 1.0,) * 3), dtype=np.float64),
-        np.asarray(((0, 1),), dtype=np.int64),
-        contract,
-        areas=np.asarray((0.01,), dtype=np.float64),
-        perimeters=np.asarray((0.2,), dtype=np.float64),
-        root_vertex_ids=np.asarray((0,), dtype=np.int64),
-        tip_vertex_ids=np.asarray((1,), dtype=np.int64),
-    ).prepare()
+
+    def author() -> tuple[
+        phx.geometry.CompartmentMeshingSource,
+        phx.discretization.PreparedMetricNetwork,
+    ]:
+        lower, upper = -0.5, size - 0.5
+        points = np.asarray(
+            (
+                (lower, lower, lower),
+                (upper, lower, lower),
+                (upper, upper, lower),
+                (lower, upper, lower),
+                (lower, lower, upper),
+                (upper, lower, upper),
+                (upper, upper, upper),
+                (lower, upper, upper),
+            ),
+            dtype=np.float64,
+        )
+        triangles = np.asarray(
+            (
+                (0, 2, 1),
+                (0, 3, 2),
+                (4, 5, 6),
+                (4, 6, 7),
+                (0, 1, 5),
+                (0, 5, 4),
+                (3, 7, 6),
+                (3, 6, 2),
+                (0, 4, 7),
+                (0, 7, 3),
+                (1, 2, 6),
+                (1, 6, 5),
+            ),
+            dtype=np.int64,
+        )
+        outer = phx.geometry.SurfaceModel.from_triangles(
+            points,
+            triangles,
+            phx.geometry.SurfaceMetadata(
+                source_id="qualification-outer",
+                source_revision=labels.label_volume_id,
+                coordinate_contract=contract,
+                provenance=("synthetic",),
+            ),
+        )
+        source = phx.geometry.CompartmentMeshingSource(
+            labels, compartments, outer, interfaces, budget=coordinate_budget
+        )
+        network = phx.discretization.MetricNetworkPlan.from_arrays(
+            np.asarray(((0.0, 0.0, 0.0), (size - 1.0,) * 3), dtype=np.float64),
+            np.asarray(((0, 1),), dtype=np.int64),
+            contract,
+            areas=np.asarray((0.01,), dtype=np.float64),
+            perimeters=np.asarray((0.2,), dtype=np.float64),
+            root_vertex_ids=np.asarray((0,), dtype=np.int64),
+            tip_vertex_ids=np.asarray((1,), dtype=np.int64),
+        ).prepare()
+        return source, network
+
+    if coordinate_budget is None:
+        return author()
+    # Eight outer vertices, twelve fixed facets, and a two-node metric edge.
+    work_units = 2048
+    scratch_bytes = 16384
+    result_bytes = 65536
+    coordinate_budget.ticket.checkpoint()
+    with coordinate_budget.temporary_scope() as lifetime:
+        coordinate_budget.admit_work_bound(
+            work_units + 128,
+            storage_upper=scratch_bytes + result_bytes,
+        )
+        coordinate_budget.reserve(work_units, scratch_bytes + result_bytes)
+        source, network = author()
+        with coordinate_budget.live_storage() as storage:
+            storage.promote_temporary_storage(lifetime, result_bytes)
+            coordinate_budget.retain_owner(
+                (source, network), temporary_storage_credit=storage
+            )
+        coordinate_budget.release_temporary_storage(scratch_bytes)
+        coordinate_budget.ticket.checkpoint()
     return source, network
 
 
@@ -749,45 +838,64 @@ def _junction_source(
     affine = phx.imaging.ImageIndexAffine(
         _JUNCTION_AFFINE, "voxels", contract, phx.imaging.ImageAxisConvention.LPS
     )
-    half = size // 2
-    rows, columns = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
-    quadrants = np.where(
-        rows < half, np.where(columns < half, 1, 2), np.where(columns < half, 3, 4)
+    plane_count = size * size
+    voxel_count = plane_count * _JUNCTION_DEPTH
+    raw_bytes = 2 * voxel_count
+    # meshgrid, nested where outputs, and their two predicates coexist.
+    quadrant_scratch = 48 * plane_count + 4096
+    # The serialized payload and LabelVolume selected-value scan are 2N each,
+    # beyond the still-live raw int16 image.
+    label_scratch = 4 * voxel_count + 8192
+    label_bytes = 3 * voxel_count + 16384
+    quadrant_work = 8 * plane_count + voxel_count
+    label_work = 8 * voxel_count + 256
+    label_definitions = tuple(
+        phx.imaging.LabelDefinition(value, f"{name}-label", name.capitalize())
+        for value, name in _JUNCTION_LABELS
     )
-    values = np.empty((size, size, _JUNCTION_DEPTH), dtype=np.int16)
-    values[:, :, :2] = quadrants[:, :, None]
-    values[:, :, 2:] = 5
-    values[size - 2, 1, 3] = 6
-    asset = phx.imaging.MedicalImageAsset(
-        "qualification-junction-labels",
-        "segmentation",
-        values,
-        affine,
-        phx.imaging.ImageFieldSpec.named(
-            "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
-        ),
-        phx.imaging.DeidentificationEvidence(
-            "qualification-deid", "subject-0", "synthetic", True, True, True
-        ),
-        (manifest(values.tobytes()),),
-        phx.measurement.DerivationRecord(
-            phx.measurement.DataOrigin.SYNTHETIC,
-            phx.measurement.DataStage.RECONSTRUCTED,
+    coordinate_budget.ticket.checkpoint()
+    with coordinate_budget.temporary_scope() as lifetime:
+        coordinate_budget.admit_work_bound(
+            quadrant_work + label_work + 64,
+            storage_upper=raw_bytes
+            + max(quadrant_scratch, label_scratch + label_bytes),
+        )
+        coordinate_budget.reserve(quadrant_work, raw_bytes + quadrant_scratch)
+        half = size // 2
+        rows, columns = np.meshgrid(
+            np.arange(size), np.arange(size), indexing="ij"
+        )
+        quadrants = np.where(
+            rows < half,
+            np.where(columns < half, 1, 2),
+            np.where(columns < half, 3, 4),
+        )
+        values = np.empty((size, size, _JUNCTION_DEPTH), dtype=np.int16)
+        values[:, :, :2] = quadrants[:, :, None]
+        values[:, :, 2:] = 5
+        values[size - 2, 1, 3] = 6
+        del rows, columns, quadrants
+        coordinate_budget.release_temporary_storage(quadrant_scratch)
+        coordinate_budget.ticket.checkpoint()
+        coordinate_budget.reserve(
+            label_work, label_scratch + label_bytes
+        )
+        labels = _qualified_label_volume(
+            values,
+            affine,
+            asset_id="qualification-junction-labels",
+            ontology_id="qualification-junction-labels",
+            label_definitions=label_definitions,
             transformation_id="synthetic-junction-qualification-generator",
-        ),
-    )
-    labels = phx.imaging.LabelVolume(
-        asset,
-        phx.imaging.LabelOntology(
-            "qualification-junction-labels",
-            "synthetic",
-            "1",
-            tuple(
-                phx.imaging.LabelDefinition(value, f"{name}-label", name.capitalize())
-                for value, name in _JUNCTION_LABELS
-            ),
-        ),
-    )
+        )
+        with coordinate_budget.live_storage() as storage:
+            storage.promote_temporary_storage(lifetime, label_bytes)
+            coordinate_budget.retain_owner(
+                labels, temporary_storage_credit=storage
+            )
+        del values
+        coordinate_budget.release_temporary_storage(raw_bytes + label_scratch)
+        coordinate_budget.ticket.checkpoint()
     definitions = tuple(
         phx.geometry.CompartmentDefinition(
             name,
@@ -811,54 +919,93 @@ def _junction_source(
         )
         for first, second in _JUNCTION_INTERFACES
     )
-    complex_ = phx.imaging.build_compartment_complex(labels, definitions, interfaces)
-    surfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
-    corners = np.asarray(tuple(product((0, 1), repeat=3)), dtype=np.float64)
-    corners = corners * np.asarray(values.shape, dtype=np.float64) - 0.5
-    triangles = (
-        _INDEX_BOX_TRIANGLES
-        if np.linalg.det(_JUNCTION_AFFINE[:3, :3]) > 0.0
-        else _INDEX_BOX_TRIANGLES[:, ::-1]
+    complex_ = phx.imaging.build_compartment_complex(
+        labels, definitions, interfaces, budget=coordinate_budget
     )
-    outer_geometry = affine_image_geometry(
-        phx.discretization.CellMesh.from_triangles(
-            np.asarray(affine.index_to_world(corners), dtype=np.float64), triangles
-        ),
-        _JUNCTION_AFFINE,
-        tuple(tuple(Fraction(float(value)) for value in row) for row in corners),
-        budget=coordinate_budget,
+    surfaces = phx.imaging.extract_compartment_surfaces(
+        labels, complex_, budget=coordinate_budget
     )
-    outer = phx.geometry.SurfaceModel.from_triangles(
-        np.asarray(outer_geometry.coordinates, dtype=np.float64),
-        triangles,
-        phx.geometry.SurfaceMetadata(
-            source_id="qualification-junction-outer-exact-affine",
-            source_revision=labels.label_volume_id,
-            coordinate_contract=contract,
-            provenance=("synthetic",),
-        ),
-    )
-    outer_geometry.resolve(outer.mesh, budget=coordinate_budget)
-    source = phx.geometry.CompartmentMeshingSource(
-        labels, complex_, outer, surfaces, outer_geometry=outer_geometry
-    )
-    # Root in the alpha quadrant, tip in the cap; both voxel centers are
-    # farther than the averaging radius from every material interface.
-    nodes = np.asarray(
-        affine.index_to_world(
-            np.asarray(((1.0, 1.0, 0.0), (size - 2.0, size - 2.0, 3.0)))
-        ),
-        dtype=np.float64,
-    )
-    network = phx.discretization.MetricNetworkPlan.from_arrays(
-        nodes,
-        np.asarray(((0, 1),), dtype=np.int64),
-        contract,
-        areas=np.asarray((0.01,), dtype=np.float64),
-        perimeters=np.asarray((0.2,), dtype=np.float64),
-        root_vertex_ids=np.asarray((0,), dtype=np.int64),
-        tip_vertex_ids=np.asarray((1,), dtype=np.int64),
-    ).prepare()
+
+    def author_outer() -> tuple[
+        phx.geometry.CompartmentMeshingSource,
+        phx.discretization.PreparedMetricNetwork,
+    ]:
+        corners = np.asarray(tuple(product((0, 1), repeat=3)), dtype=np.float64)
+        corners = corners * np.asarray(labels.asset.values.shape, dtype=np.float64) - 0.5
+        triangles = (
+            _INDEX_BOX_TRIANGLES
+            if np.linalg.det(_JUNCTION_AFFINE[:3, :3]) > 0.0
+            else _INDEX_BOX_TRIANGLES[:, ::-1]
+        )
+        outer_geometry = affine_image_geometry(
+            phx.discretization.CellMesh.from_triangles(
+                np.asarray(affine.index_to_world(corners), dtype=np.float64),
+                triangles,
+            ),
+            _JUNCTION_AFFINE,
+            tuple(tuple(Fraction(float(value)) for value in row) for row in corners),
+            budget=coordinate_budget,
+        )
+        outer = phx.geometry.SurfaceModel.from_triangles(
+            np.asarray(outer_geometry.coordinates, dtype=np.float64),
+            triangles,
+            phx.geometry.SurfaceMetadata(
+                source_id="qualification-junction-outer-exact-affine",
+                source_revision=labels.label_volume_id,
+                coordinate_contract=contract,
+                provenance=("synthetic",),
+            ),
+        )
+        outer_geometry.resolve(outer.mesh, budget=coordinate_budget)
+        source = phx.geometry.CompartmentMeshingSource(
+            labels,
+            complex_,
+            outer,
+            surfaces,
+            outer_geometry=outer_geometry,
+            budget=coordinate_budget,
+        )
+        # Root in the alpha quadrant, tip in the cap; both voxel centers are
+        # farther than the averaging radius from every material interface.
+        nodes = np.asarray(
+            affine.index_to_world(
+                np.asarray(
+                    ((1.0, 1.0, 0.0), (size - 2.0, size - 2.0, 3.0))
+                )
+            ),
+            dtype=np.float64,
+        )
+        network = phx.discretization.MetricNetworkPlan.from_arrays(
+            nodes,
+            np.asarray(((0, 1),), dtype=np.int64),
+            contract,
+            areas=np.asarray((0.01,), dtype=np.float64),
+            perimeters=np.asarray((0.2,), dtype=np.float64),
+            root_vertex_ids=np.asarray((0,), dtype=np.int64),
+            tip_vertex_ids=np.asarray((1,), dtype=np.int64),
+        ).prepare()
+        return source, network
+
+    # The independent outer box has eight corners, twelve facets and one
+    # two-node network edge; exact affine work is separately priced above.
+    work_units = 2048
+    scratch_bytes = 16384
+    result_bytes = 65536
+    coordinate_budget.ticket.checkpoint()
+    with coordinate_budget.temporary_scope() as lifetime:
+        coordinate_budget.admit_work_bound(
+            work_units + 512,
+            storage_upper=scratch_bytes + result_bytes,
+        )
+        coordinate_budget.reserve(work_units, scratch_bytes + result_bytes)
+        source, network = author_outer()
+        with coordinate_budget.live_storage() as storage:
+            storage.promote_temporary_storage(lifetime, result_bytes)
+            coordinate_budget.retain_owner(
+                (source, network), temporary_storage_credit=storage
+            )
+        coordinate_budget.release_temporary_storage(scratch_bytes)
+        coordinate_budget.ticket.checkpoint()
     return source, network
 
 
@@ -875,7 +1022,7 @@ def native_transport_case(
             f"transport.case must name a declared case {tuple(NATIVE_TRANSPORT_CASE_ROLES)!r}; got {case!r}"
         )
     if case == "two-slab":
-        source, network = _native_source(size)
+        source, network = _native_source(size, coordinate_budget=coordinate_budget)
         return NativeTransportCase(
             case,
             role,
@@ -2355,6 +2502,7 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
         target=lambda _: carrier[0],
         failure_factory=qualification_failure,
         workflow_remaining_seconds=packet.deadline.remaining(),
+        observe_managed_admission=True,
     )
     execution = renewed.result.execution_evidence
     if execution is None:
@@ -2386,7 +2534,7 @@ def _continue_cold_transport(
     checkpoint = records["accepted_data"]["neurofluid_transport"]
     source, result = checkpoint.source, checkpoint.result
     carrier.append(result)
-    source.validate_source_integrity()
+    source.validate_source_integrity(budget=budget)
     result.region_evidence.require_source(source.compartments)
     if result.certification is None:
         raise RuntimeError(
@@ -2561,6 +2709,7 @@ def _transport_lifecycle(
     loop: Any,
     reference: _TransportReference,
     *,
+    coordinate_budget: CoordinateEnclosureBudget,
     size: int,
     steps: int,
     dt: float,
@@ -2716,6 +2865,7 @@ def _transport_lifecycle(
         time=steps * dt,
         target_error=target_error,
         balance_tolerance=balance_tolerance,
+        budget=coordinate_budget,
     )
     return {
         "passed": True,
@@ -3318,6 +3468,7 @@ def _run_warm_native_transport(
         executable,
         loop,
         reference,
+        coordinate_budget=coordinate_budget,
         size=transport_case.size,
         steps=steps,
         dt=dt,
@@ -3375,6 +3526,9 @@ def _execute_native_transport(
     with ExitStack() as warm:
         warm.enter_context(NativeParallelExecution(None, deadline.remaining()))
         scope = warm.enter_context(NativeExecutionScope(limits.native_limits()))
+        scope.observe_managed_admission()
+        request_view = warm.enter_context(scope.ticket_view())
+        warm.enter_context(request_view.native_target())
         storage = warm.enter_context(scope.host_workspace())
         initial = scope.batch(0)
         initial.settle()

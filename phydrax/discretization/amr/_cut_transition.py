@@ -324,19 +324,21 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
                 "Target cotangent must begin with padded target component capacity."
             )
         target = target[: self.target.component_count]
+        measures = self.remap.intersection_measures
+        sources = self.remap.source_indices
+        routes = self.remap.target_routes
+        if measures is None or sources is None or routes is None:
+            raise ValueError(
+                "Cut-cell transitions transport through a routed common-refinement remap."
+            )
         trailing = (1,) * (target.ndim - 1)
-        weights = (
-            self.remap.intersection_measures
-            / self.remap.source_volumes[self.remap.source_indices]
-        )
-        contributions = target[self.remap.target_routes] * weights.reshape(
-            weights.shape + trailing
-        )
+        weights = measures / self.remap.source_volumes[sources]
+        contributions = target[routes] * weights.reshape(weights.shape + trailing)
         source = (
             jnp.zeros(
                 (self.source.component_count,) + target.shape[1:], dtype=target.dtype
             )
-            .at[self.remap.source_indices]
+            .at[sources]
             .add(contributions)
         )
         padded = jnp.zeros(

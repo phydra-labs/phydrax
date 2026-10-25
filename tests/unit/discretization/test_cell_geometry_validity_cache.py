@@ -1,21 +1,32 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Validity reuse identity at serial and owner-local host boundaries."""
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from fractions import Fraction
+from typing import NoReturn
 
 import numpy as np
 import pytest
 
 from phydrax._resource_ticket import HostBatchTicket
-from phydrax.discretization import _cell_geometry as geometry_owner
-from phydrax.discretization import _cell_geometry_validity as validity_owner
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
-from phydrax.discretization import CellGeometrySpec
+from phydrax.discretization import (
+    _cell_geometry as geometry_owner,
+    _cell_geometry_validity as validity_owner,
+    CellGeometrySpec,
+)
 from phydrax.discretization._cell_geometry_validity import (
     _validity_request_key,
     CellValidityPolicy,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import (
+    CoordinatePreparationKey,
+    CoordinateSourceBank,
+    Expression,
+    Polynomial,
+)
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from tests._support.cell_meshes import unit_square
 
 
@@ -30,7 +41,7 @@ def test_serial_validity_request_key_preserves_full_content_identity() -> None:
 
 
 @contextmanager
-def _proof_budget():
+def _proof_budget() -> Iterator[CoordinateEnclosureBudget]:
     work, memory = 2_000_000, 128 * 1024**2
     with HostBatchTicket(work, bytes_upper=memory) as ticket:
         with CoordinateEnclosureBudget(
@@ -103,7 +114,7 @@ def test_affine_composed_differential_reuses_exact_roots(
         for _ in range(12)
     )
 
-    def prepare():
+    def prepare() -> tuple[tuple[validity_owner._PolynomialDifferential, ...], int]:
         with _proof_budget() as budget:
             results = tuple(
                 validity_owner._prepare_polynomial_differential(
@@ -135,7 +146,7 @@ def test_constant_root_piece_needs_no_identity_composition(
     )
     assert reference is not None
 
-    def reject_identity(*args, **kwargs):
+    def reject_identity(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("The earned root polynomial must not be recomposed.")
 
     monkeypatch.setattr(
@@ -181,7 +192,7 @@ def test_constant_piece_decisions_match_general_bernstein_route(
     )
     assert reference is not None
 
-    def decide():
+    def decide() -> validity_owner._PolynomialPiece:
         with _proof_budget() as budget:
             return validity_owner._certify_polynomial_piece(
                 {(0, 0): value}, reference.domain, 2, reference.vertices,
@@ -274,7 +285,7 @@ def test_earned_corner_images_differentiate_affine_actions_exactly(
     )
     embedded = ambient != dimension
 
-    def reject_composition(*args):
+    def reject_composition(*args: object) -> NoReturn:
         raise AssertionError("Earned corners must not be recomposed through a chart.")
 
     with _proof_budget() as budget:
@@ -386,7 +397,13 @@ def test_affine_floor_filter_queries_only_distinct_exact_edge_frames(
     observed = []
     original = validity_owner._binary64_simplex_floor
 
-    def filtered(values, rows, floor, *, budget):
+    def filtered(
+        values: CoordinateSourceBank,
+        rows: np.ndarray,
+        floor: float,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
         observed.append(rows.shape[0])
         return original(values, rows, floor, budget=budget)
 
@@ -504,14 +521,16 @@ def test_rational_planar_floor_reuses_real_frames_without_changing_exact_endpoin
     assert filtered_work < exact_work
 
 
-def _signed_differential_fixture(degree: int, sign: int = 1):
+def _signed_differential_fixture(
+    degree: int, sign: int = 1
+) -> tuple[FiniteElementSpec, CoordinateSourceBank, Polynomial]:
     element = geometry_owner.coordinate_lagrange_element("triangle", degree)
     nodes = geometry_owner.coordinate_lagrange_reference_nodes("triangle", degree)
     bank = tuple(
         (x + (x * x / 4 if degree == 2 else 0), sign * y)
         for x, y in nodes
     )
-    expected = (
+    expected: Polynomial = (
         {(0, 0): Fraction(sign), (1, 0): Fraction(sign, 2)}
         if degree == 2 else {(0, 0): Fraction(sign)}
     ) if sign else {}
@@ -529,16 +548,43 @@ def test_signed_differential_issues_actual_numeric_output_before_escape(
     algebra = validity_owner.coordinate_enclosure_owner
     arithmetic = []
     issued = []
-    owner = validity_owner if degree == 1 else algebra
-    name = "_affine_edge_differential" if degree == 1 else "expression_determinant"
-    actual_arithmetic = getattr(owner, name)
+    if degree == 1:
+        actual_affine = validity_owner._affine_edge_differential
+
+        def compute_affine(
+            corners: CoordinateSourceBank,
+            dimension: int,
+            embedded: bool,
+            budget: CoordinateEnclosureBudget,
+        ) -> validity_owner._PolynomialDifferential | None:
+            arithmetic.append(True)
+            return actual_affine(corners, dimension, embedded, budget)
+
+        monkeypatch.setattr(validity_owner, "_affine_edge_differential", compute_affine)
+    else:
+        actual_determinant = algebra.expression_determinant
+
+        def compute_determinant(
+            matrix: tuple[tuple[Expression, ...], ...],
+            *,
+            variable_dimension: int | None = None,
+            budget: CoordinateEnclosureBudget,
+        ) -> Expression:
+            arithmetic.append(True)
+            return actual_determinant(
+                matrix, variable_dimension=variable_dimension, budget=budget
+            )
+
+        monkeypatch.setattr(algebra, "expression_determinant", compute_determinant)
     actual_issue = operands._remember_signed_determinant_operands
 
-    def compute(*args, **kwargs):
-        arithmetic.append(True)
-        return actual_arithmetic(*args, **kwargs)
-
-    def issue(key, kind, dimension, polynomial, budget):
+    def issue(
+        key: CoordinatePreparationKey,
+        kind: str,
+        dimension: int,
+        polynomial: Expression | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
         assert arithmetic
         assert kind == "triangle" and dimension == 2
         assert type(polynomial) is dict
@@ -548,7 +594,6 @@ def test_signed_differential_issues_actual_numeric_output_before_escape(
         issued.append((key, tuple(polynomial.items())))
         return actual_issue(key, kind, dimension, polynomial, budget)
 
-    monkeypatch.setattr(owner, name, compute)
     monkeypatch.setattr(operands, "_remember_signed_determinant_operands", issue)
     with _proof_budget() as budget:
         budget.capture_coordinate_operands = True
@@ -578,7 +623,7 @@ def test_signed_differential_issue_requires_both_operand_opt_ins(
 ) -> None:
     from phydrax.discretization import _coordinate_operands as operands
 
-    def unexpected_issue(*args, **kwargs):
+    def unexpected_issue(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("A noncapturing producer must not issue numeric operands.")
 
     monkeypatch.setattr(operands, "_remember_signed_determinant_operands", unexpected_issue)
@@ -604,7 +649,14 @@ def test_signed_differential_issue_preserves_current_mutable_source_binding(
     issued = []
     actual_issue = operands._remember_signed_determinant_operands
 
-    def issue(key, kind, dimension, polynomial, budget):
+    def issue(
+        key: CoordinatePreparationKey,
+        kind: str,
+        dimension: int,
+        polynomial: Expression | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
+        assert isinstance(polynomial, dict)
         issued.append((key, dict(polynomial)))
         return actual_issue(key, kind, dimension, polynomial, budget)
 
@@ -638,7 +690,7 @@ def test_signed_differential_issue_declines_unsupported_geometry(
 ) -> None:
     from phydrax.discretization import _coordinate_operands as operands
 
-    def unexpected_issue(*args, **kwargs):
+    def unexpected_issue(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("Unsupported geometry must retain its ordinary differential path.")
 
     monkeypatch.setattr(operands, "_remember_signed_determinant_operands", unexpected_issue)
@@ -707,7 +759,13 @@ def test_signed_differential_issue_refusal_keeps_paid_arithmetic_and_no_publicat
     actual_issue = operands._remember_signed_determinant_operands
     completed = []
 
-    def issue(key, kind, dimension, polynomial, budget):
+    def issue(
+        key: CoordinatePreparationKey,
+        kind: str,
+        dimension: int,
+        polynomial: Expression | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
         assert polynomial == expected
         assert budget.work_units > 0
         completed.append(budget.work_units)

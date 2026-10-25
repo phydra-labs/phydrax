@@ -63,8 +63,10 @@ refinement). ``bounded-reconstruction``: target maps approximate the source
 geometry with a reported relative coverage defect.
 ``topology-correspondence`` binds only the actual scientific endpoints of a
 topological content action. It makes no coordinate-map or physical-area claim.
-``source-realization`` binds a declared common reference complex with independently
-certified physical embeddings. It does not assert common physical coverage.
+``source-realization`` binds a declared common reference complex, directly or
+through independently covered paired virtual volume charts, with certified
+physical embeddings. It does not assert common physical coverage or unchanged
+physical cell measures.
 """
 
 

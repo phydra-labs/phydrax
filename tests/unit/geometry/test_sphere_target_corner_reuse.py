@@ -5,14 +5,40 @@ from fractions import Fraction
 import pytest
 
 import phydrax.discretization._sphere_chart_deformation as owner
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
-from phydrax.geometry._sphere_material_atlas import SphereProjectiveActionBank
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
+)
+from phydrax.geometry._sphere_material_atlas import (
+    SphereProjectiveActionBank,
+    SphereProjectiveReferenceMap,
+)
 from tests._support.coordinate_references import coordinate_reference_budget
 from tests._support.sphere_material import accepted_sphere_material
 
 
+type _Point = tuple[Fraction, Fraction]
+type _CornerKey = tuple[int, bytes]
+type _NativePolygon = tuple[
+    tuple[_Point, ...],
+    tuple[int, ...],
+    tuple[frozenset[frozenset[bytes]], ...],
+    tuple[int | None, ...],
+    int,
+]
+type _IncidentCorners = tuple[
+    SphereProjectiveReferenceMap,
+    tuple[frozenset[bytes], ...],
+    tuple[bytes, ...],
+    _CornerKey,
+    _Point,
+    _NativePolygon,
+]
+
+
 @pytest.fixture(scope="module")
-def incident_target_corners():
+def incident_target_corners() -> _IncidentCorners:
     """Find independently clipped cones sharing a ray but not its support pair."""
     _, _, source = accepted_sphere_material(0.4)
     _, _, target = accepted_sphere_material(0.32)
@@ -51,7 +77,15 @@ def incident_target_corners():
     raise AssertionError("fixture must contain incident target cones with distinct supports")
 
 
-def _polygon(fixture, budget, storage, cache, *, source_row=None, rays=None):
+def _polygon(
+    fixture: _IncidentCorners,
+    budget: CoordinateEnclosureBudget,
+    storage: CoordinateLiveStorage,
+    cache: dict[_CornerKey, _Point],
+    *,
+    source_row: int | None = None,
+    rays: tuple[bytes, ...] | None = None,
+) -> _NativePolygon:
     mapping, edges, original_rays, key, _, _ = fixture
     return owner._native_polygon(
         mapping, 10**8, 10**7, edges, {}, storage,
@@ -61,7 +95,9 @@ def _polygon(fixture, budget, storage, cache, *, source_row=None, rays=None):
     )
 
 
-def test_incident_target_cones_reuse_actual_point(incident_target_corners):
+def test_incident_target_cones_reuse_actual_point(
+    incident_target_corners: _IncidentCorners,
+) -> None:
     fixture = incident_target_corners
     _, _, _, key, previous_point, expected = fixture
     with coordinate_reference_budget() as budget, budget.live_storage() as storage:
@@ -77,7 +113,9 @@ def test_incident_target_cones_reuse_actual_point(incident_target_corners):
 
 
 @pytest.mark.parametrize("separation", ["source_row", "binary_ray"])
-def test_corner_reuse_does_not_merge_distinct_keys(incident_target_corners, separation):
+def test_corner_reuse_does_not_merge_distinct_keys(
+    incident_target_corners: _IncidentCorners, separation: str
+) -> None:
     fixture = incident_target_corners
     _, _, rays, key, _, expected = fixture
     poison = (Fraction(-1), Fraction(-1))
@@ -87,7 +125,9 @@ def test_corner_reuse_does_not_merge_distinct_keys(incident_target_corners, sepa
     assert result[:4] == expected[:4]
 
 
-def test_wrong_cached_point_still_requires_native_polygon_support(incident_target_corners):
+def test_wrong_cached_point_still_requires_native_polygon_support(
+    incident_target_corners: _IncidentCorners,
+) -> None:
     fixture = incident_target_corners
     key = fixture[3]
     # Feasible in the source triangle, but not the named target corner.
@@ -96,7 +136,9 @@ def test_wrong_cached_point_still_requires_native_polygon_support(incident_targe
             _polygon(fixture, budget, storage, {key: (Fraction(1, 7), Fraction(1, 11))})
 
 
-def test_corner_reuse_observed_work_boundary(incident_target_corners):
+def test_corner_reuse_observed_work_boundary(
+    incident_target_corners: _IncidentCorners,
+) -> None:
     fixture = incident_target_corners
     key, point = fixture[3:5]
     with coordinate_reference_budget() as budget, budget.live_storage() as storage:

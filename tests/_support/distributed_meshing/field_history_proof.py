@@ -1198,6 +1198,176 @@ def native_projection_collective() -> dict[str, Any]:
         jax.distributed.shutdown()
 
 
+def production_graph_history(root: str, defect: str) -> dict[str, Any]:
+    """Run the real native producer through topology epochs and graph recovery.
+
+    The negative case changes the final topology epoch's compact temperature
+    before its real all-field projection. Exact graph transport must pass while
+    independent science refuses it; no recovery, publication, or solver is replaced.
+    """
+    import json
+    import os
+    import traceback
+    from pathlib import Path
+
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios import distributed as scenario
+
+    class GraphComplete(BaseException):
+        pass
+
+    # Diagnostic fixture, not a registered qualification profile. With the
+    # production span-two schedule, r<=2 gives a single tile (one empty owner);
+    # r=3 is the first integer resolution with four tiles and an interior seam
+    # vertex. Bound the source to 32 cells/25 vertices below. The production
+    # allocator uses slack two * growth four, hence at most 256 slots per owner.
+    if jax.process_count() != 2:
+        raise ValueError("The bounded graph diagnostic requires two real processes.")
+    args = QualificationControls(
+        scenario="native-distributed-lifecycle", resolution=3, capacity=256,
+        timeout=600.0, maximum_work_units=32000000,
+        maximum_memory_bytes=34359738368,
+        repeats=1, adaptation_rounds=1,
+        distributed_halo_capacity=256, distributed_cavity_capacity=256,
+        distributed_host_packet_bytes=1024 * 1024,
+        distributed_parts=jax.process_count(), distributed_processes=jax.process_count(),
+        restart_parts=jax.process_count() // 2,
+        distributed_bisection_compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+        distributed_checkpoint_root=root,
+    )
+    os.environ[scenario._DISTRIBUTED_ROLE] = "producer"
+    os.environ[scenario._DISTRIBUTED_REQUEST] = json.dumps(
+        scenario._distributed_qualification_request(args)
+    )
+    graph = scenario._distributed_qualification_graph
+    projection = scenario._distributed_project_topology_epoch
+    generate = scenario._distributed_qualification_generate
+    failure_recorder = scenario.record_failure
+    observed: dict[str, Any] = {}
+    rank = jax.process_index()
+    if defect not in ("none", "inherited-error", "source-only"):
+        raise ValueError(f"Unknown graph witness defect: {defect}")
+
+    def failure(
+        record: dict[str, Any], error: Exception, phase: str,
+    ) -> dict[str, object]:
+        observed["failure_traceback"] = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__, chain=True)
+        )
+        return failure_recorder(record, error, phase)
+
+    def generation(
+        controls: Any, record: dict[str, Any], phases: Any, started: float,
+    ) -> Any:
+        observed["record"] = record
+        result = generate(controls, record, phases, started)
+        if defect == "source-only":
+            raise GraphComplete
+        return result
+
+    def project(
+        accepted: Any, baselines: Any, rng: Any, fe_fields: Any, precision: Any,
+        controls: Any, record: dict[str, Any], started: float,
+        mesh_epoch: int, epoch: int, operation: str,
+    ) -> Any:
+        observed["record"] = record
+        generation = record["generation"]
+        if generation["global_cells"] > 32 or generation["global_vertices"] > 25:
+            raise ValueError("Native diagnostic source exceeded its fixed 32-cell/25-vertex bound.")
+        if defect == "inherited-error" and epoch == 2 * controls.adaptation_rounds:
+            values = dict(accepted.values)
+            values["temperature"] = values["temperature"] + np.float64(2e-11)
+            accepted = replace(accepted, values=values)
+            observed["injection"] = {
+                "boundary": "final-topology-epoch-before-all-field-projection",
+                "epoch": epoch, "operation": operation, "temperature_offset": 2e-11,
+            }
+        return projection(
+            accepted, baselines, rng, fe_fields, precision, controls, record,
+            started, mesh_epoch, epoch, operation,
+        )
+
+    def observe(
+        controls: Any, accepted: Any, record: dict[str, Any], started: float, epoch: int
+    ) -> Any:
+        observed["record"] = record
+        # The predecessor owns allocator counters, not a compact RNG field.
+        # Draw from a copied immutable bank so the actual accepted bank is not
+        # advanced; compare those future events with the graph's compact owner.
+        bank = accepted.rng
+        future = []
+        stream = scenario._distributed_rng_stream()
+        for _ in range(2):
+            bank, probe = scenario._distributed_rng_draw(
+                stream, bank, accepted.current, accepted.fields["material-cell-average"]
+            )
+            future.append(probe)
+        observed["rng_source_future"] = future
+        result = graph(controls, accepted, record, started, epoch)
+        observed["roles"] = [role.entry_name for role in result.roles]
+        observed["rng_dtype"] = str(result.fields["rng-counter"].dtype)
+        recovered_future = scenario._distributed_rng_continue(
+            stream, result.results[0].target, result.fields, 2
+        )
+        observed["rng_recovered_future"] = recovered_future
+        observed["rng_future_agree"] = scenario._distributed_rng_agree(
+            future, recovered_future
+        )
+        raise GraphComplete
+
+    completed = False
+    try:
+        with (
+            patch.object(scenario, "record_failure", failure),
+            patch.object(scenario, "_distributed_qualification_generate", generation),
+            patch.object(scenario, "_distributed_project_topology_epoch", project),
+            patch.object(scenario, "_distributed_qualification_graph", observe),
+        ):
+            outcome = scenario._distributed_qualification_lifecycle(args)
+    except GraphComplete:
+        completed = True
+        outcome = {}
+    finally:
+        jax.distributed.shutdown()
+    # A refusal may precede the first projection observer. The lifecycle still
+    # returns its complete phase/resource record; never discard that attribution.
+    record = observed.get("record", outcome)
+    diagnostic = {
+        "completed": completed,
+        "diagnostic_only": True,
+        "requested_endpoint": "source-generation" if defect == "source-only" else "graph-history",
+        "failure": outcome.get("failure"),
+        "failure_traceback": observed.get("failure_traceback"),
+        "outcome": outcome,
+        "failure_phase": outcome.get("failure_phase"),
+        "requested": outcome.get("requested"),
+        "achieved": outcome.get("achieved"),
+        "injection": observed.get("injection"),
+        "epochs": record.get("epochs", []),
+        "fixture": {"processes": 2, "resolution": 3, "capacity": 256},
+        "generation": record.get("generation"),
+        "migration": record.get("migration", {}),
+        "comparisons": record.get("graph_field_comparisons", []),
+        "inventory": record.get("graph_field_inventory", []),
+        "roles": observed.get("roles", []),
+        "rng_dtype": observed.get("rng_dtype"),
+        "rng_graph": record.get("rng", {}).get("graph"),
+        "rng_source_future": observed.get("rng_source_future"),
+        "rng_recovered_future": observed.get("rng_recovered_future"),
+        "rng_future_agree": observed.get("rng_future_agree"),
+        "solvers": {
+            name: value for name, value in record.items() if name.endswith("_fe_solver")
+        },
+        "stages": list(record.get("stages_seconds", {})),
+    }
+    directory = Path(os.environ.get("PHYDRAX_MESHING_RECORD_DIRECTORY", root))
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"graph-history-{defect}-process-{rank}.json"
+    diagnostic["diagnostic_path"] = str(path)
+    path.write_text(json.dumps(diagnostic, indent=2, sort_keys=True), encoding="utf-8")
+    return diagnostic
+
+
 def production_projection_prefix(root: str) -> dict[str, Any]:
     """Exercise the real producer entry only through coarsened field projection."""
     import json

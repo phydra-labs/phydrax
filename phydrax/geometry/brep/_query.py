@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import heapq
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from math import pi
 from typing import final, Protocol, TYPE_CHECKING, TypeVar
@@ -2493,20 +2493,24 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             preparations=preparations,
             coordinate_budget=coordinate_budget,
         )
+        if result.source_revision != world.source_revision:
+            raise ValueError(
+                "PreparedBRepQuery.world_closest must retain its prepared world source revision."
+            )
         source_faces = jnp.asarray(self.world_face_sources, dtype=jnp.int32)
         source_edges = jnp.asarray(self.world_edge_sources, dtype=jnp.int32)
-        return eqx.tree_at(
-            lambda value: (value.faces, value.edge_indices, value.occurrences),
+        # Face and edge rows return to the authored definition namespace; the
+        # source revision must follow them, not name the expanded world model.
+        return replace(
             result,
-            (
-                source_faces[result.faces],
-                jnp.where(
-                    result.edge_indices >= 0,
-                    source_edges[jnp.maximum(result.edge_indices, 0)],
-                    -1,
-                ),
-                jnp.full(result.distances.shape, occurrence, dtype=jnp.int32),
+            faces=source_faces[result.faces],
+            edge_indices=jnp.where(
+                result.edge_indices >= 0,
+                source_edges[jnp.maximum(result.edge_indices, 0)],
+                -1,
             ),
+            occurrences=jnp.full(result.distances.shape, occurrence, dtype=jnp.int32),
+            source_revision=self.source_revision,
         )
 
     @property

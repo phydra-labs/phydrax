@@ -3,6 +3,7 @@
 #
 
 from copy import deepcopy
+from dataclasses import replace
 from itertools import product
 from typing import Any
 
@@ -28,6 +29,33 @@ from tools.meshing_qualification.scenarios.family import (
 
 def test_general_all_hex_gate_requires_a_declared_product_obstruction() -> None:
     assert general_all_hex_family_cases() == ("nonsweepable-dual-hex",)
+
+
+
+@pytest.mark.parametrize(
+    ("family_case", "degree"),
+    (
+        ("curved-nonsweepable-hex", 2),
+        ("curved-cavity-hex", 2),
+        ("curved-material-hex", 2),
+        ("curved-quarter-extrusion-quad", 3),
+    ),
+)
+def test_family_diffusion_order_matches_authored_geometry(
+    family_case: str, degree: int
+) -> None:
+    from phydrax.meshing.qualification import family_solver_field_templates
+    from tools.meshing_qualification.scenarios.family import (
+        _family_qualification_fixture,
+    )
+
+    _, request, _, case = _family_qualification_fixture(
+        QualificationControls(family_case=family_case)
+    )
+    field = family_solver_field_templates(case["family"], degree=degree)[0][1]
+
+    assert request.target.geometry_order == degree
+    assert field.elements[0].degree == degree
 
 
 def _voxel_mesh(occupied: set[tuple[int, int, int]]) -> CellMesh:
@@ -266,6 +294,7 @@ def _complete_record() -> dict[str, Any]:
         "allfield_transfer": {},
     }
     return {
+        "peak_process_resident_bytes": 1024,
         "initial_acceptance": _acceptance(),
         "epochs": [
             {**epoch, **transition, "operation": "refine", "seed_origin": "zero"},
@@ -280,6 +309,7 @@ def _complete_record() -> dict[str, Any]:
         "checkpoint": {
             "passed": True,
             "process_id": -1,
+            "peak_process_resident_bytes": 1024,
             "history_epochs": 3,
             "epoch_acceptance": [{}, {}, {}],
             "continued_physical": {"l2_error": 0.01},
@@ -317,6 +347,60 @@ def test_complete_evidence_satisfies_every_obligation() -> None:
     assert all(item["passed"] for item in obligations.values()), obligations
     assert "nonsweepable_topology_each_publication" in obligations
     assert "all_field_transfer_each_transition" in obligations
+
+
+def test_measured_memory_consumer_accepts_observed_peak_and_refuses_one_byte_less() -> None:
+    import json
+    import subprocess
+    import sys
+
+    from tools.meshing_qualification._runtime import measured_peak_resident_bytes
+
+    cold = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "import json, os; "
+                "from tools.meshing_qualification._runtime import "
+                "measured_peak_resident_bytes; "
+                "print(json.dumps({'process_id': os.getpid(), "
+                "'peak_process_resident_bytes': measured_peak_resident_bytes()}))",
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    record = _complete_record()
+    record["checkpoint"].update(cold)
+    warm = measured_peak_resident_bytes()
+    record["peak_process_resident_bytes"] = warm
+    observed = max(warm, cold["peak_process_resident_bytes"])
+    at_peak = _family_completion_obligations(
+        record, _CASE, replace(_ARGS, maximum_memory_bytes=observed), 3, 10.0
+    )
+    below_peak = _family_completion_obligations(
+        record, _CASE, replace(_ARGS, maximum_memory_bytes=observed - 1), 3, 10.0
+    )
+    assert all(item["passed"] for item in at_peak.values())
+    assert below_peak["measured_process_memory"]["passed"] is False
+    assert below_peak["measured_process_memory"]["hard_execution_group_cap"] is False
+    assert all(
+        item["passed"] for name, item in below_peak.items()
+        if name != "measured_process_memory"
+    )
+
+
+@pytest.mark.parametrize("value", (None, float("nan"), float("inf"), 0, -1, True))
+@pytest.mark.parametrize("process", ("warm", "cold"))
+def test_measured_memory_missing_or_invalid_evidence_fails_closed(
+    value: object, process: str
+) -> None:
+    record = _complete_record()
+    owner = record if process == "warm" else record["checkpoint"]
+    owner["peak_process_resident_bytes"] = value
+    obligations = _family_completion_obligations(record, _CASE, _ARGS, 3, 10.0)
+    assert obligations["measured_process_memory"]["passed"] is False
 
 
 @pytest.mark.parametrize(
@@ -379,8 +463,15 @@ def published_frame_source() -> tuple[Any, dict[str, Any]]:
         _family_qualification_fixture,
     )
 
+    # The registered native-family-lifecycle work envelope: this request
+    # measures 2.57M work units, including about 0.8M for the priced column
+    # CellMesh construction, beyond the 100-per-capacity default.
     source, request, options, case = _family_qualification_fixture(
-        QualificationControls(family_case="curved-frame-sweep-hex", resolution=4)
+        QualificationControls(
+            family_case="curved-frame-sweep-hex",
+            resolution=4,
+            maximum_work_units=128_000_000,
+        )
     )
     result = phx.meshing.NativeMeshingProvider(options).plan(
         source, request, coordinate_contract=phx.SpatialCoordinateContract.si()

@@ -104,28 +104,28 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, fields, is_dataclass
 from fractions import Fraction
-from typing import Callable, cast, final
+from typing import Callable, cast, final, Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
 import numpy as np
+from jax import Array
 
 import phydrax.geometry._domain_numerics as domain_numerics_owner
+import phydrax.geometry._domain_preparation as domain_preparation_owner
 import phydrax.geometry._embedding_state as embedding_state_owner
 import phydrax.geometry._meshing_domain as domain_owner
-import phydrax.geometry._domain_preparation as domain_preparation_owner
 import phydrax.geometry.brep._constructors as constructors_owner
 import phydrax.geometry.brep._intersection_curve as intersection_curve_owner
 
 from .._fingerprint import canonical_fingerprint, tree_content_equal
-from .._host_storage import declared_object_storage_bytes
 from .._issued_proofs import IssuedProofs
 from .._meshcore import exact_orient2d
 from .._strict import StrictModule
 from ..discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
 )
 from ._atlas import (
     AbstractTrimCurve,
@@ -135,13 +135,22 @@ from ._atlas import (
     TrimDomain,
     TrimLoop,
 )
-from ._embedding_cells import SurfaceMapEnclosures
-from ._interval_enclosure import Interval, interval_add, interval_multiply, interval_subtract
-from .brep import _correspondence as correspondence_owner
-from .brep import _model as model_owner
 from ._chart_restriction import validate_chart_restrictions
-from .brep._carrier_pieces import admit_carrier_fingerprint, carrier_payload
-from .brep._intersection import NativePeriodEndpoint
+from ._embedding_cells import SurfaceMapEnclosures
+from ._interval_enclosure import (
+    Interval,
+    interval_add,
+    interval_multiply,
+    interval_subtract,
+)
+from .brep import _correspondence as correspondence_owner, _model as model_owner
+from .brep._carrier_pieces import (
+    admit_carrier_fingerprint,
+    carrier_admission_current,
+    carrier_payload,
+    CarrierAdmission,
+)
+from .brep._intersection import NativePeriodEndpoint, TrimRootEndpoint
 from .brep._intersection_curve import (
     CurveTrimSegment,
     original_trim_intersection_preparation,
@@ -155,7 +164,7 @@ from .brep._patches import (
 from .brep._placed import PlacedCurve
 from .brep._request_preparations import TrimRequestPreparations
 from .brep._root_bindings import BRepVertexRoot
-from .brep._trim_helpers import PeriodOffset, period_scalar_bounds
+from .brep._trim_helpers import period_scalar_bounds, PeriodOffset
 
 
 def _polygon_sign(points: np.ndarray, /) -> int:
@@ -283,6 +292,19 @@ def trim_curve_interval_bounds(
     mapped_edges = domain.evaluate(
         np.full((2 * count,), patch), chart_edges.reshape((-1, 2)), budget=budget
     ).reshape((-1, 2, 3))
+    # Adjacent arcs share chord endpoints; each source point is enclosed once.
+    point_boxes: dict[tuple[int, str], np.ndarray] = {}
+
+    def point_box(curve: AbstractTrimCurve, value: float, /) -> np.ndarray:
+        key = (id(curve), float(value).hex())
+        box = point_boxes.get(key)
+        if box is None:
+            box = np.asarray(
+                curve.enclosure(value, value, budget=budget, preparations=preparations)
+            )
+            point_boxes[key] = box
+        return box
+
     result = []
     for arc, (curve, first_, last_) in enumerate(zip(curves, firsts, lasts, strict=True)):
         first, last = float(first_), float(last_)
@@ -296,28 +318,8 @@ def trim_curve_interval_bounds(
         )
         width = boxes[arc, 1] - boxes[arc, 0]
         endpoint_error = np.maximum(
-            np.max(
-                np.abs(
-                    np.asarray(
-                        curve.enclosure(
-                            first, first, budget=budget, preparations=preparations
-                        )
-                    )
-                    - chart_edges[arc, 0]
-                ),
-                axis=0,
-            ),
-            np.max(
-                np.abs(
-                    np.asarray(
-                        curve.enclosure(
-                            last, last, budget=budget, preparations=preparations
-                        )
-                    )
-                    - chart_edges[arc, 1]
-                ),
-                axis=0,
-            ),
+            np.max(np.abs(point_box(curve, first) - chart_edges[arc, 0]), axis=0),
+            np.max(np.abs(point_box(curve, last) - chart_edges[arc, 1]), axis=0),
         )
         chart_error = domain_numerics_owner.curve_chord_error(
             curve,
@@ -1308,12 +1310,14 @@ class _SourceTrimArc:
             _source_rational_interval(high)[1]
         )
 
-    def bounds(self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget):
+    def bounds(
+        self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget
+    ) -> Interval:
         if first == last and first in self.points:
             return self.points[first]
         low, high = self.interval(first, last)
-        box = self.carrier.enclosure(
-            low, high, preparations=self.preparations, budget=budget
+        box = type(self.carrier).enclosure(
+            self.carrier, low, high, preparations=self.preparations, budget=budget
         )
         if not np.all(np.isfinite(box)):
             raise SourceChartMapError("source_trim_enclosure_unsupported")
@@ -1322,10 +1326,12 @@ class _SourceTrimArc:
             self.points[first] = result
         return result
 
-    def derivative(self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget):
+    def derivative(
+        self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget
+    ) -> Interval:
         low, high = self.interval(first, last)
-        jet = self.carrier.derivative_bounds(
-            low, high, preparations=self.preparations, budget=budget
+        jet = type(self.carrier).derivative_bounds(
+            self.carrier, low, high, preparations=self.preparations, budget=budget
         )
         if not all(np.all(np.isfinite(value)) for value in jet):
             raise SourceChartMapError("source_trim_derivative_singular")
@@ -1340,7 +1346,7 @@ class _SourceChartVertex:
     parameter: Fraction = Fraction(0)
     parents: tuple[_SourceChartVertex, _SourceChartVertex] | None = None
 
-    def bounds(self, budget: CoordinateEnclosureBudget):
+    def bounds(self, budget: CoordinateEnclosureBudget) -> Interval:
         if self.arc is not None:
             return self.arc.bounds(self.parameter, self.parameter, budget)
         if self.parents is not None:
@@ -1380,7 +1386,7 @@ class _SourceAuthoredVertex:
         ):
             raise SourceChartMapError("source_authored_point_layout_changed")
 
-    def bounds(self, budget):
+    def bounds(self, budget: CoordinateEnclosureBudget) -> Interval:
         self.require_point_layout()
         if self.root is None:
             return self.point, self.point
@@ -1429,7 +1435,7 @@ class _SourceClosedEdge:
     def _native(
         self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget,
         *, derivative: bool = False,
-    ):
+    ) -> Interval:
         ends = self._parameter_ends(budget)
         span: Interval
         values: list[Interval]
@@ -1476,10 +1482,10 @@ class _SourceClosedEdge:
             raise SourceChartMapError("source_gap_native_edge_jet_unsupported")
         return result
 
-    def _offsets(self, budget):
+    def _offsets(self, budget: CoordinateEnclosureBudget) -> tuple[Interval, Interval]:
         if "offsets" in self.memo:
             return self.memo["offsets"]
-        result = []
+        result: list[Interval] = []
         for i, (vertex, bound) in enumerate(zip(self.vertices, self.endpoint_bounds, strict=True)):
             if bound == 0.0:
                 result.append((np.zeros(3), np.zeros(3)))
@@ -1494,7 +1500,9 @@ class _SourceClosedEdge:
         self.memo["offsets"] = result[0], result[1]
         return result[0], result[1]
 
-    def bounds(self, first, last, budget):
+    def bounds(
+        self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget
+    ) -> Interval:
         if first == last and first in (0, 1):
             return self.vertices[int(first)].bounds(budget)
         offsets = self._offsets(budget)
@@ -1505,7 +1513,9 @@ class _SourceClosedEdge:
         )
         return interval_add(self._native(first, last, budget), correction)
 
-    def derivative(self, first, last, budget):
+    def derivative(
+        self, first: Fraction, last: Fraction, budget: CoordinateEnclosureBudget
+    ) -> Interval:
         offsets = self._offsets(budget)
         return interval_add(
             self._native(first, last, budget, derivative=True),
@@ -1518,7 +1528,7 @@ class _SourceClosedEdgePoint:
     edge: _SourceClosedEdge
     parameter: Fraction
 
-    def bounds(self, budget):
+    def bounds(self, budget: CoordinateEnclosureBudget) -> Interval:
         return self.edge.bounds(self.parameter, self.parameter, budget)
 
 
@@ -1533,7 +1543,48 @@ class _SourceGapArc:
     surface: domain_owner.AbstractSurfacePatch
     distance_bound: float
 
-    def residuals(self, edge, cache, budget, *, value: bool, jacobian: bool):
+    @overload
+    def residuals(
+        self,
+        edge: _EdgeRows,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        value: Literal[True],
+        jacobian: Literal[True],
+    ) -> tuple[_ArrayInterval, Interval]: ...
+
+    @overload
+    def residuals(
+        self,
+        edge: _EdgeRows,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        value: Literal[True],
+        jacobian: bool,
+    ) -> tuple[_ArrayInterval, Interval | None]: ...
+
+    @overload
+    def residuals(
+        self,
+        edge: _EdgeRows,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        value: bool,
+        jacobian: bool,
+    ) -> tuple[_ArrayInterval | None, Interval | None]: ...
+
+    def residuals(
+        self,
+        edge: _EdgeRows,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        value: bool,
+        jacobian: bool,
+    ) -> tuple[_ArrayInterval | None, Interval | None]:
         """Native residual E-F(C) (M,3) and its derivative on the active rows."""
         count = len(edge.lower)
         if self.distance_bound == 0.0:
@@ -1599,6 +1650,37 @@ type _Barycentric = tuple[
     tuple[Fraction, Fraction, Fraction],
     tuple[Fraction, Fraction, Fraction],
     tuple[Fraction, Fraction, Fraction],
+]
+# Exact rational chart corners, or endpoint enclosures, and the affine columns.
+type _ChartConstants = tuple[
+    tuple[tuple[Fraction, Fraction], ...] | None,
+    tuple[Interval, ...] | None,
+    tuple[Interval, ...],
+]
+# Authored-vertex corner offsets and their affine columns.
+type _CornerOffsets = tuple[tuple[Interval, ...], tuple[Interval, ...]]
+type _EdgeRowCache = dict[tuple[int, int], _EdgeRows | None]
+type _ArcJetCache = dict[tuple[int, Fraction, Fraction], list]
+type _UseKey = tuple[int, int, int]
+type _EndpointKey = tuple[int, int]
+# One authenticated trim use: its carrier, native range and endpoint keys.
+type _SourceTrimUse = tuple[
+    constructors_owner.NormalizedTrimCurve,
+    tuple[float, float],
+    tuple[_EndpointKey, _EndpointKey],
+]
+# One original chart triangulation record from the boundary source.
+type _ChartTriangulation = tuple[
+    int,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]
 _GRADIENTS = ((-1, -1), (1, 0), (0, 1))
 
@@ -1849,11 +1931,11 @@ class SourceChartMap:
             raise SourceChartMapError("source_chart_reference_outside_simplex")
         return result
 
-    def _chart_constants(self, budget: CoordinateEnclosureBudget):
+    def _chart_constants(self, budget: CoordinateEnclosureBudget) -> _ChartConstants:
         """Exact rational corners or endpoint enclosures, and the affine columns."""
         constants = self.memo.get("chart")
         if constants is not None:
-            return constants
+            return cast(_ChartConstants, constants)
         rational: list[tuple[Fraction, Fraction]] = []
         for vertex in self.endpoints:
             coordinate = vertex.exact
@@ -1884,7 +1966,15 @@ class SourceChartMap:
         self.memo["chart"] = constants
         return constants
 
-    def _chart(self, barycentric, rows, cache, budget, *, jacobian: bool) -> tuple[_ArrayInterval, _ArrayInterval | None]:
+    def _chart(
+        self,
+        barycentric: list[_Barycentric],
+        rows: _EdgeRowCache,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        jacobian: bool,
+    ) -> tuple[_ArrayInterval, _ArrayInterval | None]:
         """Endpoint-corrected UV boxes (N,2) and chart jets (N,2,2) if requested."""
         count = len(barycentric)
         rational, endpoints, constant_columns = self._chart_constants(budget)
@@ -1911,7 +2001,7 @@ class SourceChartMap:
             corner_images = []
             for corner in range(3):
                 image: Interval = (np.zeros((count, 2)), np.zeros((count, 2)))
-                for vertex, point in enumerate(endpoints):
+                for vertex, point in enumerate(cast(tuple[Interval, ...], endpoints)):
                     image = interval_add(
                         image,
                         interval_multiply(
@@ -1973,11 +2063,11 @@ class SourceChartMap:
             np.stack([column[1] for column in columns], axis=2),
         )
 
-    def _corner_offsets(self, budget: CoordinateEnclosureBudget):
+    def _corner_offsets(self, budget: CoordinateEnclosureBudget) -> _CornerOffsets:
         """Request-constant authored-vertex offsets and their affine columns."""
         offsets = self.memo.get("offsets")
         if offsets is not None:
-            return offsets
+            return cast(_CornerOffsets, offsets)
         values: list[Interval] = []
         for endpoint, point, bound in zip(
             self.endpoints, self.gap_vertices, self.gap_vertex_bounds, strict=True
@@ -2000,7 +2090,15 @@ class SourceChartMap:
         self.memo["offsets"] = offsets
         return offsets
 
-    def _completion(self, barycentric, rows, cache, budget, *, jacobian: bool) -> tuple[_ArrayInterval, _ArrayInterval | None]:
+    def _completion(
+        self,
+        barycentric: list[_Barycentric],
+        rows: _EdgeRowCache,
+        cache: _ArcJetCache,
+        budget: CoordinateEnclosureBudget,
+        *,
+        jacobian: bool,
+    ) -> tuple[_ArrayInterval, _ArrayInterval | None]:
         """Affine corner correction plus homogeneous physical ribbon residuals."""
         count = len(barycentric)
         offsets, constant_columns = self._corner_offsets(budget)
@@ -2077,10 +2175,10 @@ class SourceChartMap:
         Every row is the outward enclosure of its own closed subtriangle: exact
         barycentric rows, the endpoint-corrected chart, native trim/edge/surface
         enclosures and the physical ribbon terms. Rows share only request-constant
-        chart columns/corner offsets, one native surface jet call per surface,
-        and, within one map, identical native trim intervals; nothing is
-        interpolated between rows. The orientation jet is the hull of the raw
-        authored and completed jets.
+        chart columns/corner offsets, one row-ordered surface image bank per map,
+        one native surface jet call per surface, and, within one map, identical
+        native trim intervals; nothing is interpolated between rows. The
+        orientation jet is the hull of the raw authored and completed jets.
         """
         if not image and not jacobian:
             raise SourceChartMapError("source_chart_request_empty")
@@ -2101,16 +2199,16 @@ class SourceChartMap:
                     )
                     charts.append((uv, chart_jet))
                     if image:
-                        lower, upper = np.empty((len(barycentric), 3)), np.empty((len(barycentric), 3))
-                        for row in range(len(barycentric)):
-                            box = source.surface.bounding_box(
-                                np.stack((uv[0][row], uv[1][row])),
-                                preparations=source.preparations, budget=budget,
-                            )
-                            if not np.all(np.isfinite(box)):
-                                raise SourceChartMapError("source_surface_enclosure_unsupported")
-                            lower[row], upper[row] = box[0], box[1]
-                        raw_images[index] = lower, upper
+                        budget.reserve(0, 128 + 32 * len(barycentric))
+                        boxes = source.surface.bounding_boxes(
+                            np.stack(uv, axis=1),
+                            preparations=source.preparations, budget=budget,
+                        )
+                        # The bank stops after its first nonfinite row.
+                        if not np.all(np.isfinite(boxes)):
+                            raise SourceChartMapError("source_surface_enclosure_unsupported")
+                        raw_images[index] = boxes[:, 0].copy(), boxes[:, 1].copy()
+                        del boxes
                 except (CoordinateEnclosureResourceError, SourceChartMapError):
                     raise
                 except (TypeError, ValueError, NotImplementedError) as error:
@@ -2189,7 +2287,14 @@ class SourceChartMap:
         return results
 
 
-def _source_use_signature(source, use, budget):
+def _source_use_signature(
+    source: domain_owner.MeshingSurfacePatch,
+    use: domain_owner.PatchCurveUse,
+    budget: CoordinateEnclosureBudget,
+) -> (
+    tuple[str, tuple[tuple[tuple[int, int], ...], ...]]
+    | tuple[str, domain_owner.AbstractSurfacePatch, AbstractCurve | AbstractTrimCurve]
+):
     """Exact native affine lift, or identical authored surface/pcurve expression."""
     coefficients = (
         intersection_curve_owner.affine_curve_coefficients(use.pcurve, np.zeros(2))
@@ -2325,7 +2430,11 @@ def _source_piecewise_trim_continuity(
     return True
 
 
-def _source_closed_edge_continuity(edge, budget, verified):
+def _source_closed_edge_continuity(
+    edge: _SourceClosedEdge,
+    budget: CoordinateEnclosureBudget,
+    verified: dict[int, intersection_curve_owner.IntersectionCurve],
+) -> None:
     """Prove AC of the native edge with its fixed, root-defined affine ends.
 
     Endpoint root enclosures are not point samples or new parameter choices:
@@ -2354,7 +2463,9 @@ def _source_closed_edge_continuity(edge, budget, verified):
         raise SourceChartMapError("source_gap_native_edge_jet_unsupported")
 
 
-def _source_gap_allowance(domain, patch, loop, position):
+def _source_gap_allowance(
+    domain: domain_owner.MeshingDomain, patch: int, loop: int, position: int
+) -> float:
     """Use declared native rows, or the unchanged original import allowance."""
     authority = domain.brep_authority
     geometry = authority.geometry if isinstance(authority, model_owner.BRepModel) else authority
@@ -2372,13 +2483,51 @@ def _source_gap_allowance(domain, patch, loop, position):
     return allowance
 
 
-def _source_endpoint_gap_bounds(geometry, points, edge, preparations, budget):
+def _root_spatial_carrier(
+    root: intersection_curve_owner.RootEndpoint, /
+) -> intersection_curve_owner.CurveEvaluator | intersection_curve_owner.IntersectionCurve | None:
+    """Return the native carrier on which ``root``'s scalar atom is a parameter.
+
+    A ``TrimRootEndpoint`` p-curve lift was proved at construction to trace its
+    spatial root curve at the same parameter. Affine/periodic UV layers do not
+    move the scalar, so such a lift keeps the unlifted spatial carrier. Lifts
+    that reparameterize (trim segments, intersection p-curves) have none here.
+    """
+    if isinstance(root, TrimRootEndpoint) and root.source_pcurve is not None:
+        lift = root.source_pcurve
+        while isinstance(
+            lift, (intersection_curve_owner.AffinePCurve, intersection_curve_owner.PeriodicPCurve)
+        ):
+            lift = (
+                lift.curve
+                if isinstance(lift, intersection_curve_owner.AffinePCurve)
+                else lift.source_curve
+            )
+        if isinstance(lift, (CurveTrimSegment, intersection_curve_owner.IntersectionPCurve)):
+            return None
+        root = TrimRootEndpoint(
+            root.root,
+            root.operand,
+            affine_parameter_offset=root.affine_parameter_offset,
+            affine_parameter_scale=root.affine_parameter_scale,
+            affine_transforms=root.affine_transforms,
+        )
+    return root.carrier
+
+
+def _source_endpoint_gap_bounds(
+    geometry: model_owner.BRepGeometry,
+    points: np.ndarray,
+    edge: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[float, float]:
     """Prove missing endpoint rows from literal/root source atoms, never samples."""
     curve = geometry.curves[geometry.edge_curves[edge]]
     roots = geometry.edge_endpoint_roots[edge]
     ranges = np.asarray(geometry.edge_ranges)[edge]
     vertices = geometry.edge_vertices[edge]
-    bounds = []
+    bounds: list[float] = []
     for end in (0, 1):
         budget.reserve(1, 512)
         parameter = float(ranges[end])
@@ -2396,7 +2545,7 @@ def _source_endpoint_gap_bounds(geometry, points, edge, preparations, budget):
                     root, curve, parameter, coedge=False,
                     preparations=preparations, budget=budget,
                 )
-            elif not tree_content_equal(root.carrier, curve):
+            elif not tree_content_equal(_root_spatial_carrier(root), curve):
                 raise SourceChartMapError("source_gap_endpoint_carrier_unproved")
             lower, upper = root.parameter_enclosure(preparations=preparations, budget=budget)
             if not lower <= parameter <= upper:
@@ -2454,7 +2603,29 @@ def _source_endpoint_gap_bounds(geometry, points, edge, preparations, budget):
     return bounds[0], bounds[1]
 
 
-def _source_identity_definition(carrier):
+@overload
+def _source_identity_definition(
+    carrier: domain_owner.AbstractSurfacePatch,
+) -> domain_owner.AbstractSurfacePatch: ...
+
+
+@overload
+def _source_identity_definition(
+    carrier: AbstractCurve | intersection_curve_owner.IntersectionCurve,
+) -> AbstractCurve | intersection_curve_owner.IntersectionCurve: ...
+
+
+def _source_identity_definition(
+    carrier: (
+        domain_owner.AbstractSurfacePatch
+        | AbstractCurve
+        | intersection_curve_owner.IntersectionCurve
+    ),
+) -> (
+    domain_owner.AbstractSurfacePatch
+    | AbstractCurve
+    | intersection_curve_owner.IntersectionCurve
+):
     """Remove only an exactly identity spatial operation, never a nearby pose."""
     identity = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     while isinstance(carrier, (PlacedCurve, domain_owner.PlacedSurface)):
@@ -2467,7 +2638,11 @@ def _source_identity_definition(carrier):
     return carrier
 
 
-def _source_identity_occurrences(domain, authority, budget):
+def _source_identity_occurrences(
+    domain: domain_owner.MeshingDomain,
+    authority: model_owner.BRepModel,
+    budget: CoordinateEnclosureBudget,
+) -> None:
     """Bind every requested stratum to canonical qualified identity placement."""
     geometry = authority.geometry
     if geometry is None or domain.source_revision != authority.source_revision:
@@ -2498,8 +2673,13 @@ def _source_identity_occurrences(domain, authority, budget):
 
 
 def _prepare_source_gap_completion(
-    domain, source_id, preparations, budget, proved_use_bounds, verified_intersections
-):
+    domain: domain_owner.MeshingDomain,
+    source_id: str,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+    proved_use_bounds: dict[_UseKey, float],
+    verified_intersections: dict[int, intersection_curve_owner.IntersectionCurve],
+) -> _SourceGapCompletion | None:
     """Revalidate native gap authority before constructing any closed ribbon."""
     authority = domain.brep_authority
     geometry = authority.geometry if isinstance(authority, model_owner.BRepModel) else authority
@@ -2516,7 +2696,8 @@ def _prepare_source_gap_completion(
     if not np.isfinite(tolerance) or tolerance < 0:
         raise SourceChartMapError("source_gap_original_tolerance_invalid")
     from ..discretization._coordinate_operands import (
-        _immutable_array_layout, seal_coordinate_operand_array,
+        _immutable_array_layout,
+        seal_coordinate_operand_array,
     )
 
     # One current-source host read and one genuine immutable backing copy.
@@ -2694,11 +2875,17 @@ def _source_period_scalar(
 
 
 def _source_endpoint_parameters_equal(
-    native_roots,
-    coedge_roots,
-    native_curve,
-    pcurve,
-    parameters,
+    native_roots: tuple[
+        intersection_curve_owner.RootEndpoint | None,
+        intersection_curve_owner.RootEndpoint | None,
+    ],
+    coedge_roots: tuple[
+        intersection_curve_owner.RootEndpoint | None,
+        intersection_curve_owner.RootEndpoint | None,
+    ],
+    native_curve: AbstractCurve | intersection_curve_owner.IntersectionCurve,
+    pcurve: AbstractCurve | AbstractTrimCurve,
+    parameters: tuple[float, float],
     /,
     *,
     preparations: TrimRequestPreparations,
@@ -2727,25 +2914,64 @@ def _source_endpoint_parameters_equal(
                 return False
             if native_scalar != coedge_scalar:
                 return False
-        elif not tree_content_equal(native, coedge):
+        elif not (
+            tree_content_equal(native, coedge)
+            or (
+                isinstance(native, TrimRootEndpoint)
+                and isinstance(coedge, TrimRootEndpoint)
+                and tree_content_equal(_trim_root_scalar(native), _trim_root_scalar(coedge))
+            )
+        ):
             return False
     return True
 
 
-def _source_native_uses(domain, budget, preparations, source_id, verified_intersections):
+def _trim_root_scalar(endpoint: TrimRootEndpoint, /) -> tuple[object, ...]:
+    """Return every field that ``TrimRootEndpoint`` reads to form its scalar atom.
+
+    Outer ``PeriodicPCurve`` lifts select only the UV period sheet of the
+    returned carrier; the scalar interval passes through them unchanged. The
+    same root, side, affine chain and remaining lift therefore define the same
+    exact scalar even when coedges sit on different seam sheets.
+    """
+    pcurve = endpoint.source_pcurve
+    while isinstance(pcurve, intersection_curve_owner.PeriodicPCurve):
+        pcurve = pcurve.source_curve
+    return (
+        endpoint.root,
+        endpoint.operand,
+        endpoint.affine_parameter_offset,
+        endpoint.affine_parameter_scale,
+        endpoint.affine_transforms,
+        pcurve,
+    )
+
+
+def _source_native_uses(
+    domain: domain_owner.MeshingDomain,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
+    source_id: str,
+    verified_intersections: dict[int, intersection_curve_owner.IntersectionCurve],
+) -> tuple[
+    str,
+    dict[_UseKey, _SourceTrimUse],
+    dict[_EndpointKey, str],
+    dict[_UseKey, float],
+]:
     """Authenticate continuous coedges and exact joins, not constructor samples."""
     physical = domain.curve_atlas.mapping
-    trims = {}
-    proved_use_bounds = {}
-    endpoint_parent = {}
+    trims: dict[_UseKey, _SourceTrimUse] = {}
+    proved_use_bounds: dict[_UseKey, float] = {}
+    endpoint_parent: dict[_EndpointKey, _EndpointKey] = {}
 
-    def find(key):
+    def find(key: _EndpointKey) -> _EndpointKey:
         endpoint_parent.setdefault(key, key)
         while endpoint_parent[key] != key:
             key = endpoint_parent[key]
         return key
 
-    def join(first, last):
+    def join(first: _EndpointKey, last: _EndpointKey) -> None:
         first, last = find(first), find(last)
         if first != last:
             endpoint_parent[max(first, last)] = min(first, last)
@@ -2878,8 +3104,10 @@ def _source_native_uses(domain, budget, preparations, source_id, verified_inters
                         # Prove correspondence over this outward scalar support
                         # without handing either carrier the other's root.
                         correspondence_roots = None
+                    # A native B-Rep domain's coedge uses carry its BRepPCurve lifts.
+                    native_pcurve = cast(model_owner.BRepPCurve, use.pcurve)
                     squared = model_owner._edge_face_gap_squared(
-                        curve, use.pcurve, source.surface, low, high, budget=budget
+                        curve, native_pcurve, source.surface, low, high, budget=budget
                     )
                     allowance = _source_gap_allowance(domain, patch, loop_index, position)
                     if squared is not None and squared > Fraction(allowance) ** 2:
@@ -2894,7 +3122,7 @@ def _source_native_uses(domain, budget, preparations, source_id, verified_inters
                         witness = None
                         for target in (allowance / 4.0, allowance) if allowance > 0.0 else (0.0,):
                             witness = correspondence_owner.certify_curve_surface(
-                                curve, use.pcurve, source.surface, box, low, high,
+                                curve, native_pcurve, source.surface, box, low, high,
                                 point=np.zeros(3), tolerance=target,
                                 endpoint_roots=correspondence_roots,
                                 preparations=preparations, budget=budget,
@@ -2913,7 +3141,10 @@ def _source_native_uses(domain, budget, preparations, source_id, verified_inters
                 else:
                     owner_patch, owner_loop, owner_position = domain.curve_owners[use.curve]
                     owner_source = domain.patches[owner_patch]
-                    owner = owner_source.loops[owner_loop][owner_position]
+                    owner = cast(
+                        domain_owner.PatchCurveUse,
+                        owner_source.loops[owner_loop][owner_position],
+                    )
                     native_range = (owner.first, owner.last)
                     forward = (use.first, use.last) == native_range
                     if (
@@ -2958,84 +3189,6 @@ class SourceChartPreparations:
     completion: _SourceGapCompletion | None
 
 
-@dataclass(frozen=True, slots=True)
-class _CarrierAdmission:
-    owner: object
-    nodes_bytes: int
-    depth_bytes: int
-    transfer_bytes: int
-
-
-def _admit_source_carrier_dag(
-    source: object,
-    budget: CoordinateEnclosureBudget,
-    memo: dict[int, _CarrierAdmission],
-    /,
-    ancestors: tuple[int, ...] = (),
-    *,
-    retain_memo: Callable[[], None] | None = None,
-) -> tuple[int, int, int, bool]:
-    """Preserve the carrier owner's exact byte admission over a shared DAG.
-
-    A subtree has sum(size), sum(relative_depth * size), and transfer bytes.
-    Reusing these three integers at a new depth reproduces every original
-    positive admission, without walking immutable descendants again. The
-    canonical PyTree/static metadata and full array fingerprint still come
-    from the unmodified carrier owner.
-    """
-    depth = len(ancestors) + 1
-    previous = memo.get(id(source))
-    if previous is not None and previous.owner is source:
-        budget.reserve(
-            0, 32 * (depth * previous.nodes_bytes + previous.depth_bytes)
-            + previous.transfer_bytes,
-        )
-        return previous.nodes_bytes, previous.depth_bytes, previous.transfer_bytes, True
-    size = declared_object_storage_bytes(source)
-    budget.reserve(0, 32 * depth * size)
-    if id(source) in ancestors:
-        raise ValueError("Correspondence fingerprint source must be acyclic.")
-    ancestors = (*ancestors, id(source))
-    children = ()
-    transfer = 0
-    immutable = type(source) in (type(None), bool, int, float, complex, str, bytes)
-    if isinstance(source, (Array, np.ndarray)):
-        transfer = source.nbytes
-        budget.reserve(0, transfer)
-        immutable = isinstance(source, Array)
-    elif is_dataclass(source) and not isinstance(source, type):
-        children = tuple(
-            child for member in fields(source)
-            for child in (member.name, getattr(source, member.name))
-        )
-        immutable = isinstance(source, StrictModule) or getattr(type(source), "__dataclass_params__").frozen
-    elif isinstance(source, dict):
-        children = tuple(child for pair in source.items() for child in pair)
-    elif isinstance(source, (tuple, list, set, frozenset)):
-        children = tuple(source)
-        immutable = isinstance(source, (tuple, frozenset))
-    elif isinstance(source, Fraction):
-        children = (source.numerator, source.denominator)
-        immutable = True
-    relative = 0
-    for child in children:
-        nodes, depths, transfers, child_immutable = _admit_source_carrier_dag(
-            child, budget, memo, ancestors, retain_memo=retain_memo,
-        )
-        size += nodes
-        relative += depths + nodes
-        transfer += transfers
-        immutable = immutable and child_immutable
-    if immutable:
-        # This bounded record contains no payload copy and is owned by the
-        # current pure proof. Mutable public arrays/containers never enter it.
-        budget.reserve(1, 512)
-        if retain_memo is not None:
-            retain_memo()
-        memo[id(source)] = _CarrierAdmission(source, size, relative, transfer)
-    return size, relative, transfer, immutable
-
-
 def require_source_chart_point_layouts(
     source: SourceChartMap, budget: CoordinateEnclosureBudget, /
 ) -> None:
@@ -3069,6 +3222,32 @@ _ISSUED_SOURCE_CHARTS: IssuedProofs[
     CoordinateEnclosureBudget, _SourceChartCreation
 ] = IssuedProofs()
 
+# One proof-local definition record: its dict slot and key, entry pair and
+# hexadecimal digest string.
+_SOURCE_DEFINITION_BYTES = 512
+# A bound receipt: its three-slot object and two reference-tuple headers, plus
+# one pointer per bank summary or nested receipt it references.
+_BOUND_SOURCE_BYTES = 256
+_BOUND_SOURCE_REFERENCE_BYTES = 8
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundSourceDefinition:
+    """A proof-local definition digest that depends on byte-backed host banks.
+
+    The values of an immutable byte-backed bank cannot change, but its NumPy
+    dtype, shape and strides remain assignable in place. The receipt retains
+    distinct bank admissions, in first-occurrence order, with their earned
+    layouts. Shared definition DAGs therefore validate each dependency once
+    per reuse, without a byte scan or a cache across identity checks.
+    """
+
+    owner: object
+    banks: tuple[CarrierAdmission, ...]
+
+    def current(self) -> bool:
+        return all(carrier_admission_current(bank) for bank in self.banks)
+
 
 def source_chart_enclosure_identity(
     source: SourceChartMap,
@@ -3076,8 +3255,9 @@ def source_chart_enclosure_identity(
     carriers: dict[int, tuple[object, str]],
     /,
     *,
-    admissions: dict[int, _CarrierAdmission] | None = None,
-    retain_admission: Callable[[], None] | None = None,
+    admissions: dict[int, CarrierAdmission] | None = None,
+    retain_admission: Callable[[int], None] | None = None,
+    retain_definition: Callable[[int], None] | None = None,
 ) -> str | None:
     if (
         type(source) is not SourceChartMap or source.enclosure_authority is None
@@ -3087,10 +3267,16 @@ def source_chart_enclosure_identity(
     creation = _ISSUED_SOURCE_CHARTS.get(budget, str(id(source)))
     if creation is None or creation.source is not source or creation.revoked:
         raise SourceChartMapError("source_chart_requires_genuine_reprepare")
-    current = _source_chart_current_identity(
-        source, budget, carriers, admissions=admissions,
-        retain_admission=retain_admission,
-    )
+    try:
+        current = _source_chart_current_identity(
+            source, budget, carriers, admissions=admissions,
+            retain_admission=retain_admission, retain_definition=retain_definition,
+        )
+    except SourceChartMapError:
+        # A changed bank layout or authored point revokes this preparation;
+        # its derived enclosures must never be relabelled as current.
+        creation.revoked = True
+        raise
     if current != creation.definition:
         # Derived gap/root/continuity caches belong to the original source.
         # A new digest must never relabel their old enclosures as current.
@@ -3105,8 +3291,9 @@ def _source_chart_current_identity(
     carriers: dict[int, tuple[object, str]],
     /,
     *,
-    admissions: dict[int, _CarrierAdmission] | None = None,
-    retain_admission: Callable[[], None] | None = None,
+    admissions: dict[int, CarrierAdmission] | None = None,
+    retain_admission: Callable[[int], None] | None = None,
+    retain_definition: Callable[[int], None] | None = None,
 ) -> str | None:
     """Bind reusable native enclosures to actual source state, not asserted IDs.
 
@@ -3114,7 +3301,15 @@ def _source_chart_current_identity(
     Every endpoint, trim, fixed root, placement, physical correction and native
     coefficient tree is included. Carrier and immutable definition-container
     digests are shared only within one proof and recomputed for the next proof,
-    so geometry mutations miss. No candidate or scientific verdict is retained.
+    so geometry mutations miss. A digest that depends on byte-backed host banks
+    is reused only through its ``_BoundSourceDefinition`` receipt, whose bank
+    layouts are rechecked first; a changed layout discards every bound receipt
+    of the proof and refuses, so the caller must reprepare. The receipt's bank
+    summaries live in ``admissions``; ``retain_admission`` and
+    ``retain_definition`` receive the bytes of each retained summary and
+    definition record before it is created. Without them, the caller owns the
+    storage of both dictionaries. No candidate or scientific verdict is
+    retained.
     """
     if (
         type(source) is not SourceChartMap
@@ -3126,7 +3321,46 @@ def _source_chart_current_identity(
     if admissions is None:
         admissions = {}
 
-    def payload(value, *, private_host: bool = False):
+    def remember(
+        value: object,
+        identity: str,
+        immutable: bool,
+        banks: list[CarrierAdmission] | tuple[()],
+        parts: tuple[_BoundSourceDefinition, ...],
+    ) -> tuple[str, bool, _BoundSourceDefinition | None]:
+        if not immutable:
+            return identity, False, None
+        if not banks and not parts:
+            if retain_definition is not None:
+                retain_definition(_SOURCE_DEFINITION_BYTES)
+            carriers[id(value)] = (value, identity)
+            return identity, True, None
+        with budget.temporary_scope():
+            count = sum(
+                1 if bank.layout is not None else len(bank.banks)
+                for bank in banks
+            ) + sum(len(part.banks) for part in parts)
+            budget.reserve(count, 512 + count * 256)
+            unique: dict[int, CarrierAdmission] = {}
+            for bank in banks:
+                for leaf in (bank,) if bank.layout is not None else bank.banks:
+                    unique.setdefault(id(leaf), leaf)
+            for part in parts:
+                for leaf in part.banks:
+                    unique.setdefault(id(leaf), leaf)
+            size = _SOURCE_DEFINITION_BYTES
+            if unique:
+                size += _BOUND_SOURCE_BYTES + _BOUND_SOURCE_REFERENCE_BYTES * len(unique)
+            if retain_definition is not None:
+                retain_definition(size)
+            bound = _BoundSourceDefinition(value, tuple(unique.values())) if unique else None
+            del unique
+            carriers[id(value)] = (value if bound is None else bound, identity)
+            return identity, True, bound
+
+    def payload(
+        value: object, *, private_host: bool = False
+    ) -> tuple[object, bool, _BoundSourceDefinition | None]:
         budget.reserve(1, 512)
         structured = (
             isinstance(value, (StrictModule, tuple))
@@ -3134,24 +3368,39 @@ def _source_chart_current_identity(
         )
         if structured:
             previous = carriers.get(id(value))
-            if previous is not None and previous[0] is value:
-                return previous[1], True
+            if previous is not None:
+                held = previous[0]
+                if held is value:
+                    return previous[1], True, None
+                if type(held) is _BoundSourceDefinition and held.owner is value:
+                    if held.current():
+                        return previous[1], True, held
+                    # A bank's dtype, shape or strides changed in place. Other
+                    # receipts may share it: none of them remains authority.
+                    for key in [
+                        key for key, (owner, _) in carriers.items()
+                        if type(owner) is _BoundSourceDefinition
+                    ]:
+                        del carriers[key]
+                    raise SourceChartMapError(
+                        "source_chart_definition_changed_requires_reprepare"
+                    )
         if isinstance(value, StrictModule):
+            banks: list[CarrierAdmission] = []
             with budget.temporary_scope():
-                _, _, _, immutable = _admit_source_carrier_dag(
-                    value, budget, admissions, retain_memo=retain_admission,
+                immutable = admit_carrier_fingerprint(
+                    value, budget, memo=admissions, retain_memo=retain_admission,
+                    banks=banks,
                 )
                 identity = canonical_fingerprint(carrier_payload(value))
-            if immutable:
-                carriers[id(value)] = (value, identity)
-            return identity, immutable
+            return remember(value, identity, immutable, banks, ())
         if isinstance(value, Fraction):
-            return _source_atom(value), True
+            return _source_atom(value), True, None
         if private_host:
             # Only genuine pre-proof private point-bank rows are eligible.
             # Their immutable bytes and full view layout were checked above.
             # Other public NumPy leaves still require fresh authentication.
-            return value, True
+            return value, True, None
         if is_dataclass(value) and not isinstance(value, type):
             members = tuple(
                 (item.name, payload(
@@ -3169,21 +3418,20 @@ def _source_chart_current_identity(
                 getattr(type(value), "__dataclass_params__").frozen
                 and all(child[1] for _, child in members)
             )
+            parts = tuple(child[2] for _, child in members if child[2] is not None)
         elif isinstance(value, tuple):
             children = tuple(payload(item) for item in value)
             definition = tuple(child[0] for child in children)
             immutable = all(child[1] for child in children)
+            parts = tuple(child[2] for child in children if child[2] is not None)
         else:
             return value, type(value) in (
                 type(None), bool, int, float, complex, str, bytes
-            ) or isinstance(value, Array)
-        identity = canonical_fingerprint(definition)
-        if immutable:
-            carriers[id(value)] = (value, identity)
-        return identity, immutable
+            ) or isinstance(value, Array), None
+        return remember(value, canonical_fingerprint(definition), immutable, (), parts)
 
     with budget.temporary_scope():
-        definition, _ = payload(source)
+        definition, _, _ = payload(source)
         return canonical_fingerprint({
             "map": source.map_id,
             "authority": source.enclosure_authority[:2],
@@ -3240,9 +3488,14 @@ def prepare_source_chart_domain(
 
 
 def _prepare_source_chart_maps(
-    domain, chart_data, /, *, budget: CoordinateEnclosureBudget,
+    domain: domain_owner.MeshingDomain,
+    chart_data: _ChartTriangulation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
     prepared: SourceChartPreparations,
-):
+    identity_memo: CoordinateLiveStorage,
+) -> tuple[SourceChartMap, ...]:
     """Prepare one endpoint-corrected native map per original chart cell.
 
     The caller first proves the full chain with boundary_chart_cover. This
@@ -3282,7 +3535,8 @@ def _prepare_source_chart_maps(
     recorded: dict[tuple[int, int, int], set[Fraction]] = {}
     for edge, record in zip(boundary, provenance, strict=True):
         loop, position = (int(x) for x in record[:2])
-        use = domain.patches[patch].loops[loop][position]
+        # Prepared native uses refused every pole use (source_chart_pole_singular).
+        use = cast(domain_owner.PatchCurveUse, domain.patches[patch].loops[loop][position])
         for vertex, parameter in zip(edge, record[2:], strict=True):
             recorded.setdefault((loop, position, int(vertex)), set()).add(
                 (Fraction(float(parameter)) - Fraction(use.first))
@@ -3334,7 +3588,7 @@ def _prepare_source_chart_maps(
         key = loop, position, vertex
         if key in restricted:
             return restricted[key]
-        use = domain.patches[patch].loops[loop][position]
+        use = cast(domain_owner.PatchCurveUse, domain.patches[patch].loops[loop][position])
         return (Fraction(float(value)) - Fraction(use.first)) / (
             Fraction(use.last) - Fraction(use.first)
         )
@@ -3356,7 +3610,7 @@ def _prepare_source_chart_maps(
     for edge, record in zip(boundary, provenance, strict=True):
         first, last = (int(x) for x in edge)
         loop, position = (int(x) for x in record[:2])
-        use = domain.patches[patch].loops[loop][position]
+        use = cast(domain_owner.PatchCurveUse, domain.patches[patch].loops[loop][position])
         carrier, native_range, ends = uses[patch, loop, position]
         use_start, use_finish = Fraction(use.first), Fraction(use.last)
         a = source_parameter(loop, position, first, record[2])
@@ -3480,6 +3734,14 @@ def _prepare_source_chart_maps(
             prepared_vertices[vertex] = _SourceChartVertex(identity, parameter=fraction, parents=parents)
     result = []
     creation_carriers: dict[int, tuple[object, str]] = {}
+    creation_admissions: dict[int, CarrierAdmission] = {}
+
+    def retain_creation_memo(size: int) -> None:
+        # Definition records, receipts and admission summaries shared by this
+        # preparation's maps stay live until all are issued; each is admitted
+        # before it is created.
+        identity_memo.set_bound(identity_memo.bound + size)
+
     for row, cell in enumerate(cells):
         indices = int(cell[0]), int(cell[1]), int(cell[2])
         endpoints = (
@@ -3595,7 +3857,12 @@ def _prepare_source_chart_maps(
             authored_bound, physical_points, physical_bounds, tuple(physical_arcs),
             enclosure_authority=(prepared.domain_identity, prepared.source_id, id(budget)),
         )
-        definition = _source_chart_current_identity(source_map, budget, creation_carriers)
+        definition = _source_chart_current_identity(
+            source_map, budget, creation_carriers,
+            admissions=creation_admissions,
+            retain_admission=retain_creation_memo,
+            retain_definition=retain_creation_memo,
+        )
         if definition is None:
             raise SourceChartMapError("source_chart_requires_genuine_reprepare")
         budget.reserve(1, 1024)
@@ -3607,9 +3874,13 @@ def _prepare_source_chart_maps(
 
 
 def prepare_source_chart_maps(
-    domain, chart_data, /, *, budget: CoordinateEnclosureBudget,
+    domain: domain_owner.MeshingDomain,
+    chart_data: _ChartTriangulation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
     preparations: SourceChartPreparations | None = None,
-):
+) -> tuple[SourceChartMap, ...]:
     """Return native source maps in unchanged original chart-cell vertex order.
 
     A supplied request preparation reuses all native coedge/root queries. Its
@@ -3626,9 +3897,12 @@ def prepare_source_chart_maps(
             ) != preparations.domain_identity
         ):
             raise SourceChartMapError("source_chart_preparation_authority_mismatch")
-        return _prepare_source_chart_maps(
-            domain, chart_data, budget=budget, prepared=preparations
-        )
+        # The creation identity memo lives only while these maps are issued.
+        with budget.live_storage() as identity_memo:
+            return _prepare_source_chart_maps(
+                domain, chart_data, budget=budget, prepared=preparations,
+                identity_memo=identity_memo,
+            )
     except (CoordinateEnclosureResourceError, SourceChartMapError):
         raise
     except (TypeError, ValueError, NotImplementedError) as error:

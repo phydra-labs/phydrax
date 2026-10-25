@@ -70,6 +70,12 @@ _TORUS_RADII = (0.32, 0.17)
 _ELLIPSOID_AXES = np.asarray((0.32, 0.24, 0.18), dtype=np.float64)
 
 
+def _coverage_distance(resolution: int) -> float:
+    """Use the declared surface sample spacing as its support radius."""
+
+    return 0.44 / resolution
+
+
 def _surface_sample_count(resolution: int, area: float) -> int:
     return int(round(_SAMPLES_PER_AREA * resolution * resolution * area))
 
@@ -219,7 +225,7 @@ def _reconstruction_qualification_domain(resolution: int) -> _ReconstructionDoma
             "closure": "native-screened-Poisson-indicator-isosurface",
             "incomplete_sampling": "close",
             "sample_spacing": 0.44 / resolution,
-            "coverage_distance": 0.44 / resolution,
+            "coverage_distance": _coverage_distance(resolution),
             "thin_feature_distance": 0.22 / resolution,
         },
         "acceptance": {
@@ -350,7 +356,7 @@ def _reconstruction_qualification_source(
         robustness=phx.geometry.ReconstructionRobustness(
             outlier_std_ratio=_OUTLIER_STD_RATIO,
             incomplete_sampling="close",
-            coverage_distance=0.44 / resolution,
+            coverage_distance=_coverage_distance(resolution),
             thin_feature_distance=0.22 / resolution,
         ),
         feature_id="qualification-native-underspecified-defective-samples",
@@ -388,9 +394,7 @@ def _reconstruction_qualification_source(
 
 def _reconstruction_qualification_request(
     source: phx.meshing.NativePlcSource,
-    capacity: int,
-    timeout: float,
-    adaptation_rounds: int,
+    args: QualificationControls,
 ) -> tuple[phx.meshing.VolumeMeshingSpec, phx.meshing.NativeMeshingOptions]:
     """Freeze the extracted PLC controls and explicit requested-adaptation schedule."""
 
@@ -414,7 +418,14 @@ def _reconstruction_qualification_request(
             ),
         ),
         limits=capacity_meshing_limits(
-            capacity, timeout, cells=5, work_units=1000, cavity_cells=None
+            args.capacity,
+            args.timeout,
+            cells=5,
+            work_units=1000,
+            cavity_cells=None,
+            maximum_work_units=args.maximum_work_units,
+            maximum_geometry_queries=args.maximum_geometry_queries,
+            scratch_bytes_limit=args.maximum_scratch_bytes,
         ),
     )
     return specification, phx.meshing.NativeMeshingOptions(
@@ -424,7 +435,7 @@ def _reconstruction_qualification_request(
             improvement_passes=1,
             minimum_dihedral_degrees=0.0,
             prepare_fixed_boundary_adaptation=(
-                source.complex.boundary == "fixed" and adaptation_rounds > 0
+                source.complex.boundary == "fixed" and args.adaptation_rounds > 0
             ),
         ),
     )
@@ -673,7 +684,9 @@ def _reconstruction_qualification_repair(
     bvh = TriangleBVH(TriangleMesh(vertices, faces))
     sample_distance = np.asarray(bvh.query(retained).distance, dtype=np.float64)
     removed_distance = np.asarray(bvh.query(points[removed]).distance, dtype=np.float64)
-    unsupported = centroid_distance > coverage.coverage_distance
+    unsupported = (centroid_distance > coverage.coverage_distance) & np.any(
+        vertex_distance[faces] > coverage.coverage_distance, axis=1
+    )
     unsupported_area = float(np.sum(areas[unsupported]))
     surface_area = float(np.sum(areas))
     patches = (
@@ -1224,9 +1237,7 @@ def _reconstruction_qualification_lifecycle(
 
         specification, options = _ledger.run(
             "reconstructed_request_preparation",
-            lambda: _reconstruction_qualification_request(
-                source, args.capacity, args.timeout, args.adaptation_rounds
-            ),
+            lambda: _reconstruction_qualification_request(source, args),
         )
         record["request_id"] = specification.specification_id
         record["native_options_id"] = options.options_id

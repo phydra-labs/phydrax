@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from benchmarks.publication_spatial_operands import fixture
 from phydrax._issued_proofs import IssuedProofs
 from phydrax._meshcore import MeshcoreError, NativeExecutionLimits, NativeExecutionScope
 from phydrax.discretization._coordinate_budget import (
@@ -21,8 +20,52 @@ from phydrax.discretization._coordinate_operands import (
     CoordinateOperandCollector,
     live_affine_area_operands,
 )
+from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry import _domain_coverage as coverage_owner, _planar_coverage as owner
+from tests._support.cell_meshes import kuhn_cube
 from tests._support.surface_metric import surface_resources
+
+
+def fixture(
+    resolution: int,
+) -> tuple[
+    phx.discretization.CellMesh,
+    phx.discretization.CellGeometrySpec,
+    phx.meshing.CellMeshAuditReport,
+    phx.geometry.PiecewiseLinearDomain,
+    np.ndarray,
+]:
+    """Independent coarse cube boundary and a refined positive tetrahedral carrier."""
+    source = kuhn_cube()
+    faces: dict[tuple[int, ...], tuple[tuple[int, ...], int]] = {}
+    local_faces = reference_cell_topology("tetrahedron").entities[2]
+    for row in np.asarray(source.blocks[0].vertices, dtype=np.int64):
+        for local in local_faces:
+            oriented = tuple(int(row[index]) for index in local)
+            key = tuple(sorted(oriented))
+            previous = faces.get(key)
+            faces[key] = (oriented, 1) if previous is None else (previous[0], previous[1] + 1)
+    boundary = np.asarray(
+        [oriented for _, (oriented, count) in sorted(faces.items()) if count == 1],
+        dtype=np.int64,
+    )
+    domain = phx.geometry.PiecewiseLinearDomain(
+        np.asarray(source.coordinates, dtype=np.float64),
+        boundary,
+        np.tile(np.asarray((0, -1), dtype=np.int64), (boundary.shape[0], 1)),
+        ("body",),
+        source_id="publication-operand-cube",
+    )
+    mesh = kuhn_cube(resolution)
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    audit = phx.meshing.audit_cell_mesh(
+        mesh, geometry,
+        policy=phx.meshing.CellMeshAuditPolicy(
+            watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT,
+        ),
+    )
+    regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int64)
+    return mesh, geometry, audit, domain, regions
 
 
 def _same_groups(first: Any, second: Any) -> None:

@@ -4,8 +4,10 @@
 """Canonical array storage for exact sphere-chart overlap rows.
 
 The bank is an artifact, not a proof. Every read authenticates all public array
-bytes. Only immutable, owned bytes and the exact atoms decoded from those bytes
-are cached; neither a scientific verdict nor a caller's mutable row is cached.
+bytes; arrays still backed by the exact immutable bytes a request already
+authenticated or published are rechecked by identity, not rehashed. Only
+immutable, owned bytes and the exact atoms decoded from those bytes are cached;
+neither a scientific verdict nor a caller's mutable row is cached.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import numpy as np
 from jax import Array
 from numpy.typing import NDArray
 
+from .._host_storage import immutable_host_array_layout
 from .._strict import mark_strict_initialized, StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._sphere_material_atlas import (
@@ -75,8 +78,37 @@ class _PieceBankAtoms:
 
 
 # The weak owner is not retained by its entry. The derived cache is never an
-# Equinox field, so cold recipes contain only the canonical public arrays.
-_ATOMS: dict[int, tuple[weakref.ReferenceType[SphereChartPieceBank], _PieceBankAtoms]] = {}
+# Equinox field, so cold recipes contain only the canonical public arrays. The
+# optional layouts bind public arrays that are views of exactly the cached,
+# already digested immutable bytes; any other array is copied and rehashed.
+_ATOMS: dict[
+    int,
+    tuple[
+        weakref.ReferenceType[SphereChartPieceBank],
+        _PieceBankAtoms,
+        tuple[tuple[object, ...], ...] | None,
+    ],
+] = {}
+
+
+def _register(bank: SphereChartPieceBank, atoms: _PieceBankAtoms) -> None:
+    layouts = tuple(
+        immutable_host_array_layout(getattr(bank, name)) for name, *_ in _ARRAY_SCHEMA
+    )
+    bound = (
+        None
+        if any(
+            layout is None or layout[-1] is not buffer
+            for layout, buffer in zip(layouts, atoms.buffers, strict=True)
+        )
+        else cast(tuple[tuple[object, ...], ...], layouts)
+    )
+    identifier = id(bank)
+    _ATOMS[identifier] = (
+        weakref.ref(bank, lambda _owner: _ATOMS.pop(identifier, None)),
+        atoms,
+        bound,
+    )
 
 
 def _digest(buffers: tuple[bytes, ...], shapes: tuple[tuple[int, ...], ...]) -> str:
@@ -312,18 +344,36 @@ class SphereChartPieceBank(StrictModule, NonTrainableState):
         return buffers, shapes, digest
 
     def _atoms(self, budget: CoordinateEnclosureBudget | None) -> _PieceBankAtoms:
+        entry = _ATOMS.get(id(self))
+        if entry is not None and entry[0]() is self:
+            candidate, layouts = entry[1], entry[2]
+        else:
+            candidate, layouts = None, None
+        # A request that already adopted these atoms may recheck public arrays
+        # that are still views of the exact digested immutable bytes by layout
+        # identity: no byte can have changed, so a copy and rehash would only
+        # repeat the digest. Any replaced, mutable or foreign array is rehashed.
+        if (
+            candidate is not None
+            and layouts is not None
+            and candidate.digest == self.bank_id
+            and (budget is None or budget.retained_objects.get(id(candidate)) is candidate)
+            and all(
+                immutable_host_array_layout(getattr(self, schema[0])) == layout
+                for schema, layout in zip(_ARRAY_SCHEMA, layouts, strict=True)
+            )
+        ):
+            if budget is not None:
+                budget.reserve(len(_ARRAY_SCHEMA))
+            return candidate
         scope = nullcontext() if budget is None else budget.temporary_scope()
         with scope:
             buffers, shapes, digest = self._snapshot(budget)
-            entry = _ATOMS.get(id(self))
-            candidate = (
-                entry[1]
-                if entry is not None and entry[0]() is self and entry[1].digest == digest
-                else None
-            )
+            if candidate is not None and candidate.digest != digest:
+                candidate = None
             # Artifact introspection cannot prime a new request with free
             # exact decoding. A ledger adopts/decodes its numerical inputs
-            # once; later accesses still copy and authenticate every byte.
+            # once; later accesses still authenticate every byte.
             if candidate is not None and (
                 budget is None
                 or budget.retained_objects.get(id(candidate)) is candidate
@@ -341,12 +391,12 @@ class SphereChartPieceBank(StrictModule, NonTrainableState):
                         index_count + (size + 63) // 64,
                         5 * size + 512 * shapes[1][0] + 128 * shapes[3][0] + 4096,
                     )
-                result = _decode(digest, buffers, shapes)
-                identifier = id(self)
-                _ATOMS[identifier] = (
-                    weakref.ref(self, lambda _owner: _ATOMS.pop(identifier, None)),
-                    result,
+                # Equal digests name equal bytes: decode the snapshot again, but
+                # keep the published immutable buffers its public views bind.
+                result = _decode(
+                    digest, buffers if candidate is None else candidate.buffers, shapes
                 )
+                _register(self, result)
             if budget is not None and budget.retained_objects.get(id(result)) is not result:
                 # This is retained numerical input storage, not a cached verdict.
                 budget.retain_basis((result,))
@@ -1251,10 +1301,37 @@ class SphereChartPieceBankBuilder:
             buffers = tuple(array.tobytes() for array in arrays)
             shapes = tuple(array.shape for array in arrays)
             identity = _digest(buffers, shapes)
+            # Publish read-only views of the digested immutable bytes. The
+            # exact atoms are this builder's own interned integer pairs, so
+            # they are reconstructed once here rather than reparsed from the
+            # bytes just encoded from them; canonical normal form is checked.
+            self._budget.reserve(
+                len(self._atom_offsets) + (len(self._atom_bytes) + 63) // 64,
+                512 * len(self._atom_offsets) + 128 * len(self._text_offsets) + 4096,
+            )
+            atoms = tuple(
+                Fraction(numerator, denominator)
+                for numerator, denominator in self._atom_index
+            )
+            if any(
+                atom.numerator != numerator or atom.denominator != denominator
+                for atom, (numerator, denominator) in zip(
+                    atoms, self._atom_index, strict=True
+                )
+            ):
+                raise _invalid()
             bank = SphereChartPieceBank(**dict(zip(
-                (schema[0] for schema in _ARRAY_SCHEMA), arrays, strict=True
+                (schema[0] for schema in _ARRAY_SCHEMA),
+                (
+                    np.frombuffer(buffer, dtype=array.dtype).reshape(array.shape)
+                    for array, buffer in zip(arrays, buffers, strict=True)
+                ),
+                strict=True,
             )), bank_id=identity)
-            bank.authenticate(budget=self._budget)
+            data = _PieceBankAtoms(identity, buffers, shapes, atoms, tuple(self._text_index))
+            _register(bank, data)
+            # Retained numerical input storage, not a cached verdict.
+            self._budget.retain_basis((data,))
             self._budget.retain_basis((bank,))
         self.close()
         return bank

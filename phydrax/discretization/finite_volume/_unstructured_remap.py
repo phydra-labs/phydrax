@@ -5,27 +5,38 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any, NamedTuple
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.dtypes import canonicalize_dtype
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_storage import retained_host_storage_profile
+from ..._meshcore import is_native_host_buffer
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
 from ...geometry import _supermesh as supermesh_owner
+from ...geometry._volume_material_map import (
+    volume_material_target_measures,
+    VolumeMaterialChain,
+)
 from ...linalg import (
     adjoint,
     FunctionLinearOperator,
+    LinearCapabilityError,
     SmallLinearSolvePlan,
     SmallLinearSolveResult,
     solve_small_linear,
+    SparseAssemblyPolicy,
     transpose,
 )
 from ...sparse import (
@@ -40,12 +51,20 @@ from .. import (
     _sphere_chart_records as sphere_chart_deformation_owner,
     _surface_chart_records as surface_chart_deformation_owner,
 )
+from .._cell_geometry import owned_coordinate_preparation
 from .._cell_mesh import CellMesh
 from .._coordinate_budget import CoordinateEnclosureBudget
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
 from ..fem import _surface_chart_transfer as surface_chart_transfer_owner
+from ._material_chain_action import (
+    material_chain_apply,
+    material_chain_replay_evidence,
+    material_chain_transpose,
+)
+from ._material_schedule import MaterialChainSchedule, prepare_material_chain_schedule
+from ._remap_csr_view import material_csr_rows
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
@@ -84,6 +103,18 @@ def _active_mask(value: ArrayLike | None, count: int, name: str, /) -> Array:
     return array
 
 
+def _execution_dtype(dtype: DTypeLike, /) -> np.dtype:
+    """Real floating dtype in which endpoint measures execute with values of ``dtype``.
+
+    Stored binary64 measures are cast to it for execution only (a binary32
+    run under JAX x64 off cannot carry binary64 operands); the plan keeps the
+    bound measures and their error bounds unchanged.
+    """
+    if jnp.issubdtype(dtype, jnp.inexact):
+        return np.dtype(jnp.finfo(dtype).dtype)
+    return np.dtype(canonicalize_dtype(np.float64))
+
+
 def _volume_array(
     value: ArrayLike | None, fallback: Array, count: int, name: str, /
 ) -> Array:
@@ -114,6 +145,38 @@ class RemapCoverageLedger(StrictModule):
     source_limit: np.ndarray
 
 
+# Relative floor of the coverage scale: the largest cell's measure times it.
+_COVERAGE_SCALE_FLOOR = 1e-14
+
+
+def coverage_scale(volumes: np.ndarray, /) -> np.ndarray:
+    """Per-cell magnitude a relative coverage tolerance multiplies."""
+    return np.maximum(volumes, np.max(volumes) * _COVERAGE_SCALE_FLOOR)
+
+
+def cell_coverage_ledger(
+    target_covered: np.ndarray,
+    source_covered: np.ndarray,
+    source_volumes: np.ndarray,
+    target_volumes: np.ndarray,
+    tolerance: float,
+    /,
+    *,
+    target_uncertainty: np.ndarray,
+    source_uncertainty: np.ndarray,
+) -> RemapCoverageLedger:
+    """Ledger of per-cell covered measures and their certified uncertainties.
+
+    Full coverage is admitted when every defect magnitude is at most its limit.
+    """
+    return RemapCoverageLedger(
+        target_covered - target_volumes,
+        source_covered - source_volumes,
+        tolerance * coverage_scale(target_volumes) + target_uncertainty,
+        tolerance * coverage_scale(source_volumes) + source_uncertainty,
+    )
+
+
 def coverage_ledger(
     target_routes: np.ndarray,
     source_indices: np.ndarray,
@@ -127,20 +190,7 @@ def coverage_ledger(
     source_error_bounds: np.ndarray | None = None,
     target_error_bounds: np.ndarray | None = None,
 ) -> RemapCoverageLedger:
-    """Return signed covered-minus-cell measures and their admissible magnitudes.
-
-    Full coverage is admitted when every defect magnitude is at most its limit.
-    """
-    target_defect = (
-        np.bincount(target_routes, weights=measures, minlength=target_volumes.size)
-        - target_volumes
-    )
-    source_defect = (
-        np.bincount(source_indices, weights=measures, minlength=source_volumes.size)
-        - source_volumes
-    )
-    target_scale = np.maximum(target_volumes, np.max(target_volumes) * 1e-14)
-    source_scale = np.maximum(source_volumes, np.max(source_volumes) * 1e-14)
+    """Ledger of CSR routes: per-cell route measure sums and summed route bounds."""
     errors = (
         np.zeros_like(measures)
         if intersection_error_bounds is None
@@ -156,11 +206,14 @@ def coverage_ledger(
         target_error += target_error_bounds
     if source_error_bounds is not None:
         source_error += source_error_bounds
-    return RemapCoverageLedger(
-        target_defect,
-        source_defect,
-        tolerance * target_scale + target_error,
-        tolerance * source_scale + source_error,
+    return cell_coverage_ledger(
+        np.bincount(target_routes, weights=measures, minlength=target_volumes.size),
+        np.bincount(source_indices, weights=measures, minlength=source_volumes.size),
+        source_volumes,
+        target_volumes,
+        tolerance,
+        target_uncertainty=target_error,
+        source_uncertainty=source_error,
     )
 
 
@@ -187,6 +240,43 @@ class _RemapIdentity(StrictModule):
     route_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
     coverage_id: str = eqx.field(static=True)
+
+
+def require_certified_material_accuracy(
+    target_content: np.ndarray,
+    target_bounds: np.ndarray,
+    source_bounds: np.ndarray,
+    source_volumes: np.ndarray,
+    source_volume_bounds: np.ndarray,
+    tolerance: float,
+    /,
+) -> None:
+    """Fail closed unless every cell's certified action error meets the coverage tolerance.
+
+    ``target_content``/``target_bounds`` are each target's carried old-frame
+    content and its certified absolute error; ``source_bounds`` certifies each
+    source cell's covered volume. A target
+    is judged against its certified carried content (the computed content less
+    its bound, rounded down), not its new physical volume under compression or
+    expansion; a source cell against its physical volume less its volume
+    bound, rounded down. The coverage scale and its tolerance product each
+    round one step down, so binary64 can only refuse a borderline cell.
+    """
+
+    def lower(value: np.ndarray) -> np.ndarray:
+        return np.nextafter(value, -np.inf)
+
+    for bounds, content in (
+        (target_bounds, lower(lower(target_content) - target_bounds)),
+        (source_bounds, lower(source_volumes - source_volume_bounds)),
+    ):
+        floor = lower(np.max(content, initial=0.0) * _COVERAGE_SCALE_FLOOR)
+        allowance = lower(tolerance * np.maximum(content, floor))
+        if np.any(~np.isfinite(bounds)) or np.any(bounds > allowance):
+            raise ValueError(
+                "remap.material_map content error bounds must meet the coverage tolerance; "
+                "got insufficient certified accuracy"
+            )
 
 
 def _prepare_remap_carrier(
@@ -405,42 +495,34 @@ def _bind_chart_contents(
 def _certify_remap_coverage(
     source: UnstructuredFiniteVolumeDiscretization,
     target: UnstructuredFiniteVolumeDiscretization,
-    carrier: _RemapCarrier,
+    coverage: RemapCoverageLedger,
+    target_errors: np.ndarray,
+    source_errors: np.ndarray,
     source_limit: np.ndarray,
     surface_chart_deformation: surface_chart_deformation_owner.PreparedSurfaceChartDeformation
     | sphere_chart_deformation_owner.PreparedSphereChartDeformation
     | None,
     tolerance_: float,
     require_complete: bool,
+    volume_material_chain: VolumeMaterialChain | None = None,
 ) -> _RemapCoveragePreparation:
-    target_routes, indices, errors = (
-        carrier.target_routes,
-        carrier.indices,
-        carrier.errors,
-    )
-    source_volumes, target_volumes = carrier.source_volumes, carrier.target_volumes
-    target_defect, source_defect = (
-        carrier.coverage.target_defect,
-        carrier.coverage.source_defect,
-    )
-    target_limit = carrier.coverage.target_limit
+    """Report one route's per-cell ledger; ``*_errors`` are per-cell certified uncertainties."""
+    source_volumes = np.asarray(source.cell_volumes)
+    target_volumes = np.asarray(target.cell_volumes)
+    target_defect, source_defect = coverage.target_defect, coverage.source_defect
+    target_limit = coverage.target_limit
     source_complete = np.all(np.abs(source_defect) <= source_limit)
     # Target coverage is a native UV tiling for chart deformation, not the
     # false assertion that old physical piece areas equal new physical areas.
     complete = source_complete and (
         surface_chart_deformation is not None
+        or volume_material_chain is not None
         or np.all(np.abs(target_defect) <= target_limit)
     )
     if require_complete and not complete:
         raise ValueError(
             "remap.coverage must completely cover source and target; got measure defects outside the certified limits."
         )
-    target_errors = np.bincount(
-        target_routes, weights=errors, minlength=target_volumes.size
-    ) + np.asarray(target.cell_volume_error_bounds)
-    source_errors = np.bincount(
-        indices, weights=errors, minlength=source_volumes.size
-    ) + np.asarray(source.cell_volume_error_bounds)
     if surface_chart_deformation is not None:
         source_errors = np.maximum(source_errors, source_limit)
     report = UnstructuredRemapReport(
@@ -457,7 +539,9 @@ def _certify_remap_coverage(
         maximum_source_coverage_error_bound=jnp.asarray(np.max(source_errors)),
         total_target_coverage_error_bound=jnp.asarray(np.sum(target_errors)),
         total_source_coverage_error_bound=jnp.asarray(np.sum(source_errors)),
-        measure_semantics="source-physical-chart-content"
+        measure_semantics="source-physical-volume-material-content"
+        if volume_material_chain is not None
+        else "source-physical-chart-content"
         if surface_chart_deformation is not None
         else "physical-cell-overlap",
     )
@@ -467,41 +551,26 @@ def _certify_remap_coverage(
 def _prepare_remap_identity(
     source: UnstructuredFiniteVolumeDiscretization,
     target: UnstructuredFiniteVolumeDiscretization,
-    carrier: _RemapCarrier,
+    coverage: RemapCoverageLedger,
+    routes: dict[str, Any],
+    layout: dict[str, Any],
     route_id: str | None,
     layout_id: str | None,
     require_complete: bool,
     tolerance_: float,
 ) -> _RemapIdentity:
-    target_routes, indices, offsets = (
-        carrier.target_routes,
-        carrier.indices,
-        carrier.offsets,
-    )
-    target_defect, source_defect = (
-        carrier.coverage.target_defect,
-        carrier.coverage.source_defect,
-    )
+    """Route, layout and coverage identities; ``routes``/``layout`` fingerprint the carrier."""
+    target_defect, source_defect = coverage.target_defect, coverage.source_defect
     route_ = (
         str(route_id)
         if route_id is not None
-        else canonical_fingerprint(
-            {
-                "kind": "unstructured-remap-route",
-                "target_routes": array_tree_fingerprint(target_routes),
-                "source_indices": array_tree_fingerprint(indices),
-            }
-        )
+        else canonical_fingerprint({"kind": "unstructured-remap-route", **routes})
     )
     layout_ = (
         str(layout_id)
         if layout_id is not None
         else canonical_fingerprint(
-            {
-                "kind": "unstructured-remap-layout",
-                "target_offsets": array_tree_fingerprint(offsets),
-                "component": "cell-content",
-            }
+            {"kind": "unstructured-remap-layout", **layout, "component": "cell-content"}
         )
     )
     if not route_ or not layout_:
@@ -522,13 +591,141 @@ def _prepare_remap_identity(
     return _RemapIdentity(route_, layout_, coverage_id)
 
 
+class _MaterialRoute(StrictModule):
+    schedule: MaterialChainSchedule
+    coverage: RemapCoverageLedger
+    target_errors: np.ndarray
+    source_errors: np.ndarray
+
+
+def material_replay_limits(chain: VolumeMaterialChain, /) -> tuple[int, int]:
+    """Replay checkpoint bytes and schedule operations derived from the chain's own limits."""
+    return chain.maximum_scratch_bytes, chain.maximum_work_units
+
+
+def _prepare_material_route(
+    source: UnstructuredFiniteVolumeDiscretization,
+    target: UnstructuredFiniteVolumeDiscretization,
+    chain: VolumeMaterialChain,
+    tolerance_: float,
+    budget: CoordinateEnclosureBudget | None,
+) -> _MaterialRoute:
+    """Bind the chain, schedule it and certify both report actions.
+
+    Target coverage is each target's carried content, the forward action on
+    unit densities times the bound target measures; source coverage is the
+    transpose action on those measures, each source cell's covered volume.
+    Both carry static certified relative bounds; neither materializes a
+    matrix. Without a caller budget, preparation owns one bounded by the
+    chain's own publishing limits.
+    """
+    if source.cell_geometry is None or target.cell_geometry is None:
+        raise ValueError("remap.material_map must bind actual endpoint geometry content")
+    chain.require_bound(source.mesh, source.cell_geometry, target.mesh, target.cell_geometry)
+    target_measures, rounding = volume_material_target_measures(chain)
+    target_volumes = np.asarray(target.cell_volumes, dtype=np.float64)
+    source_volumes = np.asarray(source.cell_volumes, dtype=np.float64)
+    target_bounds = np.asarray(target.cell_volume_error_bounds, dtype=np.float64)
+    source_bounds = np.asarray(source.cell_volume_error_bounds, dtype=np.float64)
+    if np.any(np.abs(target_volumes - target_measures) > target_bounds + rounding):
+        raise ValueError("remap.material_map must bind the target physical volumes")
+    # The report actions run in the active default floating dtype (binary32
+    # when JAX x64 is off); their certified bounds are derived for that dtype.
+    report = np.dtype(canonicalize_dtype(np.float64))
+
+    def prepare(owner: CoordinateEnclosureBudget) -> _MaterialRoute:
+        schedule, bounds = prepare_material_chain_schedule(
+            chain,
+            np.asarray(source.cell_global_ids, dtype=np.int64),
+            np.asarray(target.cell_global_ids, dtype=np.int64),
+            owner,
+            report,
+        )
+        # Both report actions: gather, weight, product, aligned sum and
+        # replacement over every padded lane, and their state banks.
+        lanes = schedule.chunk_count * (
+            2 * schedule.read_capacity + 12 * schedule.pair_capacity + 8 * schedule.write_capacity
+        )
+        owner.reserve(
+            2 * lanes + 4 * (schedule.source_count + schedule.target_count),
+            2 * 12 * (schedule.slot_count + schedule.pair_capacity + schedule.read_capacity)
+            + 64 * (schedule.source_count + schedule.target_count),
+        )
+        replay = material_replay_limits(chain)
+        content = np.asarray(
+            material_chain_apply(
+                schedule,
+                chain.weight_mantissas,
+                chain.target_measures,
+                jnp.ones((schedule.source_count, 1), dtype=report),
+                replay=replay,
+            ),
+            dtype=np.float64,
+        )[:, 0]
+        covered = np.asarray(
+            material_chain_transpose(
+                schedule,
+                chain.weight_mantissas,
+                chain.target_measures,
+                jnp.ones((schedule.target_count, 1), dtype=report),
+                replay=replay,
+            ),
+            dtype=np.float64,
+        )[:, 0]
+        content_error = np.nextafter(
+            np.nextafter(np.abs(content) * bounds.content, np.inf) + bounds.absolute, np.inf
+        )
+        covered_error = np.nextafter(
+            np.nextafter(np.abs(covered) * bounds.coverage, np.inf) + bounds.absolute, np.inf
+        )
+        require_certified_material_accuracy(
+            content, content_error, covered_error, source_volumes, source_bounds, tolerance_
+        )
+        coverage = cell_coverage_ledger(
+            content,
+            covered,
+            source_volumes,
+            target_volumes,
+            tolerance_,
+            target_uncertainty=content_error + target_bounds,
+            source_uncertainty=covered_error + source_bounds,
+        )
+        return _MaterialRoute(
+            schedule, coverage, content_error + target_bounds, covered_error + source_bounds
+        )
+
+    if budget is not None:
+        return prepare(budget)
+    with owned_coordinate_preparation(*reversed(material_replay_limits(chain))) as owned:
+        return prepare(owned)
+
+
+class _StoredRoutes(NamedTuple):
+    """A routed plan's CSR arrays: offsets, per-route source and target cells, measures and bounds."""
+
+    offsets: Array
+    sources: Array
+    targets: Array
+    measures: Array
+    errors: Array
+
+
 class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
-    """Prepare CSR conservative content transport between immutable epochs.
+    """Prepare conservative content transport between immutable epochs.
 
     ``physical-cell-overlap`` uses geometric intersections or nested reference tilings.
     ``source-physical-chart-content`` uses old physical density integrals over
     native UV overlap pieces and divides by new physical cell
     areas. It conserves content, not constants under area-changing deformation.
+    Both carry explicit CSR routes. ``source-physical-volume-material-content``
+    carries no expanded routes: ``material_schedule`` applies the chain's
+    per-edit exact density weights chronologically (the CSR fields are
+    ``None``), and `prepare_csr_view` materializes final rows only on request.
+    ``material_replay_evidence`` records the first-order mantissa-gradient
+    replay split ``(length, blocks, logical_peak, operations)`` of one channel
+    in the canonical binary64-or-narrower dtype under the chain's replay
+    limits; it is selection evidence, and execution admits the compiled
+    replay temporaries only when a gradient executes.
     ``apply`` consumes cell averages; ``apply_content`` consumes extensive content.
     """
 
@@ -538,11 +735,13 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
     target_geometry_id: str = eqx.field(static=True)
     source_cell_global_ids: Array
     target_cell_global_ids: Array
-    target_offsets: Array
-    source_indices: Array
-    target_routes: Array
-    intersection_measures: Array
-    intersection_error_bounds: Array
+    target_offsets: Array | None
+    source_indices: Array | None
+    target_routes: Array | None
+    intersection_measures: Array | None
+    intersection_error_bounds: Array | None
+    material_schedule: MaterialChainSchedule | None
+    material_source_limit: Array | None
     source_volumes: Array
     target_volumes: Array
     source_volume_error_bounds: Array
@@ -556,6 +755,8 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents | None
     )
     measure_semantics: str = eqx.field(static=True)
+    material_replay_evidence: tuple[int, int, int, int] | None = eqx.field(static=True)
+    volume_material_chain: VolumeMaterialChain | None
     method: str = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
     require_complete: bool = eqx.field(static=True)
@@ -570,9 +771,9 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         self,
         source: UnstructuredFiniteVolumeDiscretization,
         target: UnstructuredFiniteVolumeDiscretization,
-        target_offsets: ArrayLike,
-        source_indices: ArrayLike,
-        intersection_measures: ArrayLike,
+        target_offsets: ArrayLike | None,
+        source_indices: ArrayLike | None,
+        intersection_measures: ArrayLike | None,
         /,
         *,
         method: str,
@@ -588,6 +789,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         surface_chart_contents: surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents
         | None = None,
         budget: CoordinateEnclosureBudget | None = None,
+        volume_material_chain: VolumeMaterialChain | None = None,
     ) -> None:
         method_ = str(method)
         provenance_ = str(provenance)
@@ -596,34 +798,92 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 f"remap.metadata must contain non-empty method and provenance; got method={method_!r}, provenance={provenance_!r}."
             )
         tolerance_ = positive_finite_float(tolerance, "remap.tolerance")
-        carrier = _prepare_remap_carrier(
-            source,
-            target,
-            target_offsets,
-            source_indices,
-            intersection_measures,
-            intersection_error_bounds,
-            tolerance_,
+        routes_given = (
+            target_offsets is not None
+            or source_indices is not None
+            or intersection_measures is not None
+            or intersection_error_bounds is not None
         )
-        chart_binding = _bind_chart_contents(
-            source,
-            target,
-            carrier,
-            surface_chart_deformation,
-            surface_chart_contents,
-            budget,
-        )
+        carrier: _RemapCarrier | None = None
+        material: _MaterialRoute | None = None
+        if volume_material_chain is not None:
+            if routes_given:
+                raise ValueError(
+                    "remap.material_map carries no CSR routes; got explicit routes with a volume material chain"
+                )
+            if surface_chart_deformation is not None or surface_chart_contents is not None:
+                raise ValueError("remap.material_map must select exactly one material route")
+            material = _prepare_material_route(
+                source, target, volume_material_chain, tolerance_, budget
+            )
+            coverage_ledger_, target_errors, source_errors = (
+                material.coverage,
+                material.target_errors,
+                material.source_errors,
+            )
+            source_limit = material.coverage.source_limit
+            schedule_fingerprint = {
+                "material_chain": volume_material_chain.chain_id,
+                "material_schedule": array_tree_fingerprint(material.schedule),
+            }
+            routes_payload = dict(schedule_fingerprint)
+            layout_payload = dict(schedule_fingerprint)
+        else:
+            if target_offsets is None or source_indices is None or intersection_measures is None:
+                raise ValueError(
+                    "remap.csr must contain target offsets, source indices and measures; got a missing route array"
+                )
+            carrier = _prepare_remap_carrier(
+                source,
+                target,
+                target_offsets,
+                source_indices,
+                intersection_measures,
+                intersection_error_bounds,
+                tolerance_,
+            )
+            source_limit = _bind_chart_contents(
+                source,
+                target,
+                carrier,
+                surface_chart_deformation,
+                surface_chart_contents,
+                budget,
+            ).source_limit
+            coverage_ledger_ = carrier.coverage
+            target_errors = np.bincount(
+                carrier.target_routes, weights=carrier.errors, minlength=target.cell_count
+            ) + np.asarray(target.cell_volume_error_bounds)
+            source_errors = np.bincount(
+                carrier.indices, weights=carrier.errors, minlength=source.cell_count
+            ) + np.asarray(source.cell_volume_error_bounds)
+            routes_payload = {
+                "target_routes": array_tree_fingerprint(carrier.target_routes),
+                "source_indices": array_tree_fingerprint(carrier.indices),
+            }
+            layout_payload = {"target_offsets": array_tree_fingerprint(carrier.offsets)}
         coverage = _certify_remap_coverage(
             source,
             target,
-            carrier,
-            chart_binding.source_limit,
+            coverage_ledger_,
+            target_errors,
+            source_errors,
+            source_limit,
             surface_chart_deformation,
             tolerance_,
             require_complete,
+            volume_material_chain,
         )
         identity = _prepare_remap_identity(
-            source, target, carrier, route_id, layout_id, require_complete, tolerance_
+            source,
+            target,
+            coverage_ledger_,
+            routes_payload,
+            layout_payload,
+            route_id,
+            layout_id,
+            require_complete,
+            tolerance_,
         )
         self.source_topology_id = source.topology_id
         self.source_geometry_id = source.geometry_id
@@ -631,19 +891,41 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         self.target_geometry_id = target.geometry_id
         self.source_cell_global_ids = source.cell_global_ids
         self.target_cell_global_ids = target.cell_global_ids
-        self.target_offsets = jnp.asarray(carrier.offsets)
-        self.source_indices = jnp.asarray(carrier.indices)
-        self.target_routes = jnp.asarray(carrier.target_routes)
-        self.intersection_measures = jnp.asarray(carrier.measures)
-        self.intersection_error_bounds = jnp.asarray(carrier.errors)
+        self.target_offsets = None if carrier is None else jnp.asarray(carrier.offsets)
+        self.source_indices = None if carrier is None else jnp.asarray(carrier.indices)
+        self.target_routes = None if carrier is None else jnp.asarray(carrier.target_routes)
+        self.intersection_measures = (
+            None if carrier is None else jnp.asarray(carrier.measures)
+        )
+        self.intersection_error_bounds = (
+            None if carrier is None else jnp.asarray(carrier.errors)
+        )
+        self.material_schedule = None if material is None else material.schedule
+        self.material_source_limit = (
+            None if material is None else jnp.asarray(material.coverage.source_limit)
+        )
+        # First-order mantissa VJP replay of one channel in the canonical dtype.
+        self.material_replay_evidence = (
+            None
+            if material is None or volume_material_chain is None
+            else material_chain_replay_evidence(
+                material.schedule,
+                1,
+                canonicalize_dtype(np.float64),
+                material_replay_limits(volume_material_chain),
+            )
+        )
         self.source_volumes = source.cell_volumes
         self.target_volumes = target.cell_volumes
         self.source_volume_error_bounds = source.cell_volume_error_bounds
         self.target_volume_error_bounds = target.cell_volume_error_bounds
         self.surface_chart_deformation = surface_chart_deformation
         self.surface_chart_contents = surface_chart_contents
+        self.volume_material_chain = volume_material_chain
         self.measure_semantics = (
-            "source-physical-chart-content"
+            "source-physical-volume-material-content"
+            if volume_material_chain is not None
+            else "source-physical-chart-content"
             if surface_chart_deformation is not None
             else "physical-cell-overlap"
         )
@@ -661,6 +943,8 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 "source_geometry": source.geometry_id,
                 "target_topology": target.topology_id,
                 "target_geometry": target.geometry_id,
+                "volume_material_chain": None
+                if volume_material_chain is None else volume_material_chain.chain_id,
                 "surface_chart_deformation": None
                 if surface_chart_deformation is None
                 else surface_chart_deformation.deformation_id,
@@ -669,10 +953,14 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 else surface_chart_contents.contents_id,
                 "source_cell_global_ids": array_tree_fingerprint(source.cell_global_ids),
                 "target_cell_global_ids": array_tree_fingerprint(target.cell_global_ids),
-                "target_offsets": array_tree_fingerprint(carrier.offsets),
-                "source_indices": array_tree_fingerprint(carrier.indices),
-                "intersection_measures": array_tree_fingerprint(carrier.measures),
-                "intersection_error_bounds": array_tree_fingerprint(carrier.errors),
+                "routes": routes_payload,
+                "layout": layout_payload,
+                "intersection_measures": None
+                if carrier is None
+                else array_tree_fingerprint(carrier.measures),
+                "intersection_error_bounds": None
+                if carrier is None
+                else array_tree_fingerprint(carrier.errors),
                 "source_volume_error_bounds": array_tree_fingerprint(
                     source.cell_volume_error_bounds
                 ),
@@ -685,6 +973,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 "coverage_evidence_id": identity.coverage_id,
                 "route_id": identity.route_id,
                 "layout_id": identity.layout_id,
+                "material_replay_evidence": self.material_replay_evidence,
             }
         )
 
@@ -695,6 +984,32 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 f"remap.{name} must begin with the source cell count; got shape {value.shape}."
             )
         return value
+
+    def _routes(self) -> _StoredRoutes:
+        """Stored CSR routes of a routed plan; a material plan stores none."""
+        if (
+            self.target_offsets is None
+            or self.source_indices is None
+            or self.target_routes is None
+            or self.intersection_measures is None
+            or self.intersection_error_bounds is None
+        ):
+            raise ValueError(
+                "remap.csr routes are stored only by routed plans; got a volume material plan, whose rows come from prepare_csr_view"
+            )
+        return _StoredRoutes(
+            self.target_offsets,
+            self.source_indices,
+            self.target_routes,
+            self.intersection_measures,
+            self.intersection_error_bounds,
+        )
+
+    def _material(self) -> tuple[MaterialChainSchedule, VolumeMaterialChain] | None:
+        """The material schedule and its chain, or ``None`` for a routed plan."""
+        if self.material_schedule is None or self.volume_material_chain is None:
+            return None
+        return self.material_schedule, self.volume_material_chain
 
     def apply(
         self,
@@ -720,7 +1035,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             self.target_volumes,
             self.target_volumes.size,
             "target_volumes",
-        )
+        ).astype(_execution_dtype(value.dtype))
         denominator = eqx.error_if(
             denominator,
             jnp.any(target_active & (~jnp.isfinite(denominator) | (denominator <= 0.0))),
@@ -731,18 +1046,31 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             denominator,
             jnp.ones_like(denominator),
         )
-        # Each route carries its normalized overlap fraction m_e / V_t, so a
-        # route covering its whole target cell has weight exactly one and the
-        # identity common refinement reproduces the averages bit for bit.
-        weights = (
-            self.intersection_measures.astype(value.dtype)
-            / denominator.astype(value.dtype)[self.target_routes]
-        )
-        weighted = value[self.source_indices] * weights.reshape((-1,) + trailing)
-        target = jnp.zeros(
-            (self.target_volumes.size,) + value.shape[1:], dtype=value.dtype
-        )
-        target = target.at[self.target_routes].add(weighted)
+        material = type(self)._material(self)
+        if material is not None:
+            schedule, chain = material
+            target = material_chain_apply(
+                schedule,
+                chain.weight_mantissas,
+                chain.target_measures,
+                value,
+                denominators=denominator,
+                replay=material_replay_limits(chain),
+            ).astype(value.dtype)
+        else:
+            routes = type(self)._routes(self)
+            # Each route carries its normalized overlap fraction m_e / V_t, so a
+            # route covering its whole target cell has weight exactly one and the
+            # identity common refinement reproduces the averages bit for bit.
+            weights = (
+                routes.measures.astype(value.dtype)
+                / denominator.astype(value.dtype)[routes.targets]
+            )
+            weighted = value[routes.sources] * weights.reshape((-1,) + trailing)
+            target = jnp.zeros(
+                (self.target_volumes.size,) + value.shape[1:], dtype=value.dtype
+            )
+            target = target.at[routes.targets].add(weighted)
         return jnp.where(
             target_active.reshape(target_active.shape + trailing),
             target,
@@ -777,21 +1105,36 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             self.source_volumes,
             self.source_volumes.size,
             "source_volumes",
-        )
+        ).astype(_execution_dtype(content.dtype))
         source_measure = eqx.error_if(
             source_measure,
             jnp.any(~jnp.isfinite(source_measure) | (source_measure <= 0.0)),
             "Source remap volumes must be positive and finite.",
         )
         trailing = (1,) * (content.ndim - 1)
-        density = content / source_measure.astype(content.dtype).reshape((-1,) + trailing)
-        weighted = density[self.source_indices] * self.intersection_measures.astype(
-            content.dtype
-        ).reshape((-1,) + trailing)
-        target = jnp.zeros(
-            (self.target_volumes.size,) + content.shape[1:], dtype=content.dtype
-        )
-        target = target.at[self.target_routes].add(weighted)
+        material = type(self)._material(self)
+        if material is not None:
+            schedule, chain = material
+            target = material_chain_apply(
+                schedule,
+                chain.weight_mantissas,
+                chain.target_measures,
+                content,
+                source_measures=source_measure,
+                replay=material_replay_limits(chain),
+            ).astype(content.dtype)
+        else:
+            routes = type(self)._routes(self)
+            density = content / source_measure.astype(content.dtype).reshape(
+                (-1,) + trailing
+            )
+            weighted = density[routes.sources] * routes.measures.astype(
+                content.dtype
+            ).reshape((-1,) + trailing)
+            target = jnp.zeros(
+                (self.target_volumes.size,) + content.shape[1:], dtype=content.dtype
+            )
+            target = target.at[routes.targets].add(weighted)
         return jnp.where(
             target_active.reshape(target_active.shape + trailing),
             target,
@@ -809,7 +1152,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         target_active_mask: ArrayLike | None = None,
     ) -> Array:
         """Transfer a bounded scalar, failing for invalid source fractions."""
-        if self.surface_chart_deformation is not None:
+        if self.surface_chart_deformation is not None or self.volume_material_chain is not None:
             raise ValueError(
                 "remap.measure_semantics must support density bounds; got area-changing chart-content transport."
             )
@@ -839,75 +1182,19 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             "Bounded remap could not produce values in the requested interval.",
         )
 
-    def apply_fixed_combinatorics(
+    def prepare_csr_view(
         self,
-        source_cell_averages: ArrayLike,
-        intersection_measures: ArrayLike,
-        source_volumes: ArrayLike,
-        target_volumes: ArrayLike,
+        policy: SparseAssemblyPolicy,
         /,
-    ) -> Array:
-        """Differentiable remap for one frozen common-refinement route graph."""
-        source = self._validate_values(
-            source_cell_averages, "Fixed-combinatorics remap values"
-        )
-        measures = jnp.asarray(intersection_measures, dtype=source.dtype)
-        source_measure = jnp.asarray(source_volumes, dtype=source.dtype)
-        target_measure = jnp.asarray(target_volumes, dtype=source.dtype)
-        if measures.shape != self.intersection_measures.shape:
-            raise ValueError(
-                "remap.dynamic.intersection_measures must preserve overlap capacity; got a different shape."
-            )
-        if source_measure.shape != self.source_volumes.shape:
-            raise ValueError(
-                "remap.dynamic.source_volumes must preserve source capacity; got a different shape."
-            )
-        if target_measure.shape != self.target_volumes.shape:
-            raise ValueError(
-                "remap.dynamic.target_volumes must preserve target capacity; got a different shape."
-            )
-        measures = eqx.error_if(
-            measures,
-            jnp.any(~jnp.isfinite(measures) | (measures <= 0.0)),
-            "Fixed-combinatorics intersections must remain positive and finite.",
-        )
-        source_measure = eqx.error_if(
-            source_measure,
-            jnp.any(~jnp.isfinite(source_measure) | (source_measure <= 0.0)),
-            "Fixed-combinatorics source volumes must remain positive and finite.",
-        )
-        target_measure = eqx.error_if(
-            target_measure,
-            jnp.any(~jnp.isfinite(target_measure) | (target_measure <= 0.0)),
-            "Fixed-combinatorics target volumes must remain positive and finite.",
-        )
-        target_coverage = (
-            jnp.zeros_like(target_measure).at[self.target_routes].add(measures)
-        )
-        source_coverage = (
-            jnp.zeros_like(source_measure).at[self.source_indices].add(measures)
-        )
-        tolerance = self.report.tolerance.astype(source.dtype)
-        coverage_valid = jnp.all(
-            jnp.abs(target_coverage - target_measure)
-            <= tolerance * jnp.maximum(target_measure, 1.0)
-        ) & jnp.all(
-            jnp.abs(source_coverage - source_measure)
-            <= tolerance * jnp.maximum(source_measure, 1.0)
-        )
-        source = eqx.error_if(
-            source,
-            ~coverage_valid,
-            "Fixed-combinatorics remap lost complete geometric coverage.",
-        )
-        trailing = (1,) * (source.ndim - 1)
-        weighted = source[self.source_indices] * measures.reshape((-1,) + trailing)
-        target = (
-            jnp.zeros((target_measure.size,) + source.shape[1:], dtype=source.dtype)
-            .at[self.target_routes]
-            .add(weighted)
-        )
-        return target / target_measure.reshape((-1,) + trailing)
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> PreparedRemapCSRView:
+        """Explicit final-route CSR rows under ``policy``, the only materialization.
+
+        Equivalent to ``PreparedRemapCSRView(self, policy, budget=budget)``;
+        see that class for the admission and binding contract.
+        """
+        return PreparedRemapCSRView(self, policy, budget=budget)
 
     def conservation_defect(
         self, source_cell_averages: ArrayLike, target_cell_averages: ArrayLike, /
@@ -960,16 +1247,28 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
     def _transpose_averages(self, target_cotangent: Array, /) -> Array:
         """Algebraic transpose of `apply` for fully active cells."""
         value = jnp.asarray(target_cotangent)
+        material = type(self)._material(self)
+        if material is not None:
+            schedule, chain = material
+            return material_chain_transpose(
+                schedule,
+                chain.weight_mantissas,
+                chain.target_measures,
+                value,
+                denominators=self.target_volumes.astype(_execution_dtype(value.dtype)),
+                replay=material_replay_limits(chain),
+            ).astype(value.dtype)
+        routes = type(self)._routes(self)
         trailing = (1,) * (value.ndim - 1)
         weights = (
-            self.intersection_measures.astype(value.dtype)
-            / self.target_volumes.astype(value.dtype)[self.target_routes]
+            routes.measures.astype(value.dtype)
+            / self.target_volumes.astype(value.dtype)[routes.targets]
         )
-        weighted = value[self.target_routes] * weights.reshape((-1,) + trailing)
+        weighted = value[routes.targets] * weights.reshape((-1,) + trailing)
         source = jnp.zeros(
             (self.source_volumes.size,) + value.shape[1:], dtype=value.dtype
         )
-        return source.at[self.source_indices].add(weighted)
+        return source.at[routes.sources].add(weighted)
 
     @checked
     def epoch_transition(
@@ -985,7 +1284,8 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         The epochs must realize both topology and geometry identities.
         Positivity and conservative content have the certified source-piece
         bounds; constant preservation is claimed only for geometric-overlap
-        routes, not an area-changing chart deformation. Transpose uses CSR routing
+        routes, not an area-changing chart deformation or material map. Transpose
+        uses CSR routing (the reverse chronological action for a material map)
         and Hilbert adjoint uses the FV physical-area pairings.
         """
 
@@ -1013,15 +1313,16 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             self.method == "mapped-nested" and self.surface_chart_deformation is None
         )
         geometry_defect = 0.0
-        if not exact_restriction:
+        if not exact_restriction and self.material_schedule is None:
+            routes = type(self)._routes(self)
             covered = np.bincount(
-                np.asarray(self.target_routes),
-                weights=np.asarray(self.intersection_measures),
+                np.asarray(routes.targets),
+                weights=np.asarray(routes.measures),
                 minlength=self.target_volumes.size,
             )
             uncertainty = np.bincount(
-                np.asarray(self.target_routes),
-                weights=np.asarray(self.intersection_error_bounds),
+                np.asarray(routes.targets),
+                weights=np.asarray(routes.errors),
                 minlength=self.target_volumes.size,
             ) + np.asarray(self.target_volume_error_bounds)
             lower_measure = np.asarray(self.target_volumes) - np.asarray(
@@ -1045,39 +1346,43 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             geometry=TransferGeometryBinding(
                 self.source_geometry_id,
                 self.target_geometry_id,
-                "exact-restriction" if exact_restriction else "bounded-reconstruction",
+                "topology-correspondence" if self.volume_material_chain is not None
+                else "exact-restriction" if exact_restriction else "bounded-reconstruction",
                 source_topology_id=self.source_topology_id,
                 target_topology_id=self.target_topology_id,
-                coverage_defect=geometry_defect,
+                coverage_defect=None if self.volume_material_chain is not None else geometry_defect,
             ),
             properties=TransferProperties(
-                constant_preserving=self.surface_chart_deformation is None,
+                constant_preserving=self.surface_chart_deformation is None and self.volume_material_chain is None,
                 conservative=True,
                 positivity_preserving=True,
                 adjoint_paired=True,
                 differentiable_geometry=False,
-                exact_on=("constants",) if self.surface_chart_deformation is None else (),
+                exact_on=("constants",) if self.surface_chart_deformation is None and self.volume_material_chain is None else (),
             ),
         )
         source_volumes = np.asarray(self.source_volumes, dtype=np.float64)
         target_volumes = np.asarray(self.target_volumes, dtype=np.float64)
         components = primal.source.size // source_volumes.size
-        coverage = coverage_ledger(
-            np.asarray(self.target_routes),
-            np.asarray(self.source_indices),
-            np.asarray(self.intersection_measures, dtype=np.float64),
-            source_volumes,
-            target_volumes,
-            float(np.asarray(self.report.tolerance)),
-            intersection_error_bounds=np.asarray(self.intersection_error_bounds),
-            source_error_bounds=np.asarray(self.source_volume_error_bounds),
-            target_error_bounds=np.asarray(self.target_volume_error_bounds),
-        )
-        source_limit = coverage.source_limit
-        if self.surface_chart_contents is not None:
+        if self.material_source_limit is not None:
+            source_limit = np.asarray(self.material_source_limit, dtype=np.float64)
+        elif self.surface_chart_contents is not None:
             source_limit = np.asarray(
                 self.surface_chart_contents.source_content_defect_bounds, dtype=np.float64
             )
+        else:
+            routes = type(self)._routes(self)
+            source_limit = coverage_ledger(
+                np.asarray(routes.targets),
+                np.asarray(routes.sources),
+                np.asarray(routes.measures, dtype=np.float64),
+                source_volumes,
+                target_volumes,
+                float(np.asarray(self.report.tolerance)),
+                intersection_error_bounds=np.asarray(routes.errors),
+                source_error_bounds=np.asarray(self.source_volume_error_bounds),
+                target_error_bounds=np.asarray(self.target_volume_error_bounds),
+            ).source_limit
         return TopologyEpochTransition(
             source_epoch,
             target_epoch,
@@ -1086,6 +1391,365 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             np.repeat(target_volumes, primal.target.size // target_volumes.size),
             measure_defect_bound=np.repeat(source_limit, components),
         )
+
+
+# Structural allowance for the view object, its four array headers and their
+# containers when an owned preparation sizes its retention.
+_VIEW_STRUCTURE_BYTES = 8 * 1024
+_FINGERPRINT_ARRAY_HEADER_BYTES = 112
+_VIEW_DEVICE_ARRAY_HEADERS = 4 * 256
+
+
+def _fingerprint_staging(tree: Any, /) -> tuple[int, int]:
+    """Array leaves and newly staged host bytes for one array-tree fingerprint."""
+    leaves = [leaf for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf)]
+    staging = 0
+    for leaf in leaves:
+        if not isinstance(leaf, np.ndarray):
+            staging += (
+                int(np.prod(leaf.shape, dtype=np.int64)) * np.dtype(leaf.dtype).itemsize
+                + _FINGERPRINT_ARRAY_HEADER_BYTES
+            )
+    return len(leaves), staging
+
+
+def _plan_content(plan: UnstructuredConservativeRemapPlan, /) -> str:
+    """Content identity of a plan: its scientific endpoints and every array leaf."""
+    return canonical_fingerprint(
+        {
+            "kind": "unstructured-remap-plan-content",
+            "plan_id": plan.plan_id,
+            "source": (plan.source_topology_id, plan.source_geometry_id),
+            "target": (plan.target_topology_id, plan.target_geometry_id),
+            "arrays": array_tree_fingerprint(plan),
+        }
+    )
+
+
+def _view_identity(
+    plan_content: str,
+    policy: SparseAssemblyPolicy,
+    offsets: ArrayLike,
+    sources: ArrayLike,
+    routes: ArrayLike,
+    measures: ArrayLike,
+    /,
+) -> str:
+    """Identity of one view: its plan content, policy limits and actual CSR rows."""
+    return canonical_fingerprint(
+        {
+            "kind": "unstructured-remap-csr-view",
+            "plan_content": plan_content,
+            "policy": (
+                policy.max_nnz,
+                policy.max_bytes,
+                policy.max_contributions,
+                policy.max_workspace_bytes,
+            ),
+            "rows": array_tree_fingerprint(
+                {
+                    "target_offsets": np.asarray(jax.device_get(offsets)),
+                    "source_indices": np.asarray(jax.device_get(sources)),
+                    "target_routes": np.asarray(jax.device_get(routes)),
+                    "intersection_measures": np.asarray(jax.device_get(measures)),
+                }
+            ),
+        }
+    )
+
+
+class PreparedRemapCSRView(StrictModule, NonTrainableState):
+    """Explicit final-route CSR rows derived from one remap plan, the only materialization.
+
+    Rows always come from ``plan``: routed plans share their stored route
+    arrays; a volume material plan composes its chain's per-edit weights into
+    old-frame content measures ``|t| * A_to``, so a material row sums to the
+    target's carried content rather than its physical volume. Construction
+    never checks target coverage; `apply_fixed_combinatorics` keeps the
+    physical-overlap checks of the volume-preserving domain.
+
+    Bounds: ``policy.max_nnz``/``max_bytes`` cap the CSR payload (int32
+    offsets, sources and target routes, float64 measures) — for a material
+    plan the composed row capacity before exact-zero (complete underflow)
+    entries are dropped, with no exact-sparsity promise beyond that bound.
+    ``max_workspace_bytes`` caps simultaneous composition, row-conversion, output
+    and fingerprint staging. The coordinate budget retains the whole view graph,
+    including the retained plan and chain, with buffers it already retains
+    counted once. Without a caller budget, an owned preparation is bounded by
+    the policy plus the plan graph's own retained profile and fingerprint staging.
+
+    ``plan_content`` and ``view_id`` fingerprint the plan's endpoints and
+    arrays and the view's actual rows and policy; `require_bound` recomputes
+    them at host admission boundaries.
+    """
+
+    plan: UnstructuredConservativeRemapPlan
+    policy: SparseAssemblyPolicy
+    target_offsets: Array
+    source_indices: Array
+    target_routes: Array
+    intersection_measures: Array
+    plan_content: str = eqx.field(static=True)
+    view_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: UnstructuredConservativeRemapPlan,
+        policy: SparseAssemblyPolicy,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
+        if not isinstance(plan, UnstructuredConservativeRemapPlan):
+            raise TypeError("remap.csr_view.plan must be an UnstructuredConservativeRemapPlan")
+        if not isinstance(policy, SparseAssemblyPolicy):
+            raise TypeError("remap.csr_view.policy must be a SparseAssemblyPolicy")
+        if budget is not None:
+            type(self)._prepare(self, plan, policy, budget)
+            return
+        _, plan_storage, _, plan_visits = retained_host_storage_profile(
+            plan, {}, is_native_host_buffer
+        )
+        plan_leaves, plan_staging = _fingerprint_staging(plan)
+        # Composition scratch, host rows with their device banks and their
+        # fingerprint staging, the retained plan graph and its fingerprint
+        # staging, and the view structure.
+        with owned_coordinate_preparation(
+            8 * policy.max_contributions
+            + policy.max_contributions * max(policy.max_contributions, 1).bit_length()
+            + 16 * policy.max_nnz
+            + plan_visits
+            + plan_leaves
+            + 8,
+            policy.max_workspace_bytes
+            + 3 * policy.max_bytes
+            + plan_storage
+            + plan_staging
+            + _VIEW_STRUCTURE_BYTES,
+        ) as owned:
+            type(self)._prepare(self, plan, policy, owned)
+
+    def _prepare(
+        self,
+        plan: UnstructuredConservativeRemapPlan,
+        policy: SparseAssemblyPolicy,
+        budget: CoordinateEnclosureBudget,
+        /,
+    ) -> None:
+        material = type(plan)._material(plan)
+        _, plan_storage, _, _ = retained_host_storage_profile(
+            plan,
+            budget.retained_owner_objects,
+            is_native_host_buffer,
+        )
+        plan_leaves, plan_staging = _fingerprint_staging(plan)
+        with budget.live_storage() as live:
+            # Reserve dependencies and the view's fixed owner structure before
+            # staging, composing, or allocating view arrays.
+            live.set_bound(plan_storage + _VIEW_STRUCTURE_BYTES)
+            if material is None:
+                routes = type(plan)._routes(plan)
+                count = int(routes.measures.size)
+                output_bytes = 4 * (plan.target_volumes.size + 1) + 16 * count
+                if count > policy.max_nnz or output_bytes > policy.max_bytes:
+                    raise LinearCapabilityError(
+                        f"remap.csr_view requires {count} routes and {output_bytes} bytes; got a smaller policy"
+                    )
+                # The view shares the plan's route arrays; no bank is copied.
+                offsets, sources, targets, measures = (
+                    routes.offsets,
+                    routes.sources,
+                    routes.targets,
+                    routes.measures,
+                )
+                row_leaves, row_staging = _fingerprint_staging(
+                    (offsets, sources, targets, measures)
+                )
+                if max(plan_staging, row_staging) > policy.max_workspace_bytes:
+                    raise LinearCapabilityError(
+                        "remap.csr_view fingerprint staging exceeds "
+                        f"max_workspace_bytes={policy.max_workspace_bytes}."
+                    )
+            else:
+                schedule, chain = material
+                # Composition admits its returned host rows on ``live``.
+                host_offsets, host_sources, host_measures = material_csr_rows(
+                    schedule, chain.weight_mantissas, chain.target_measures, policy, budget, live
+                )
+                nnz = host_sources.size
+                rows = host_offsets.size
+                target_count = rows - 1
+                host_bytes = 4 * rows + 12 * nnz + 3 * _FINGERPRINT_ARRAY_HEADER_BYTES
+                device_bytes = 4 * rows + 16 * nnz
+                route_scratch = (
+                    8 * target_count + 4 * nnz + 3 * _FINGERPRINT_ARRAY_HEADER_BYTES
+                )
+                row_staging = (
+                    4 * rows
+                    + 16 * nnz
+                    + 4 * _FINGERPRINT_ARRAY_HEADER_BYTES
+                )
+                fingerprint_bytes = max(plan_staging, row_staging)
+                construction_workspace = (
+                    host_bytes + device_bytes + route_scratch + _VIEW_DEVICE_ARRAY_HEADERS
+                )
+                fingerprint_workspace = (
+                    host_bytes
+                    + device_bytes
+                    + fingerprint_bytes
+                    + _VIEW_DEVICE_ARRAY_HEADERS
+                )
+                workspace = max(construction_workspace, fingerprint_workspace)
+                if workspace > policy.max_workspace_bytes:
+                    raise LinearCapabilityError(
+                        f"remap.csr_view workspace {workspace} bytes exceeds "
+                        f"max_workspace_bytes={policy.max_workspace_bytes}."
+                    )
+                # Reserve the simultaneous host rows, device rows and route
+                # conversion arrays before the first device allocation.
+                live.set_bound(
+                    plan_storage
+                    + _VIEW_STRUCTURE_BYTES
+                    + construction_workspace,
+                    work=rows + 3 * nnz,
+                )
+                offsets = jax.device_put(host_offsets)
+                sources = jax.device_put(host_sources)
+                targets = jax.device_put(
+                    np.repeat(
+                        np.arange(host_offsets.size - 1, dtype=np.int32),
+                        np.diff(host_offsets),
+                    )
+                )
+                measures = jax.device_put(host_measures)
+                # The host route-conversion arrays are now gone; preserve the
+                # host rows only until owner retention completes.
+                live.set_bound(
+                    plan_storage
+                    + _VIEW_STRUCTURE_BYTES
+                    + host_bytes
+                    + device_bytes
+                )
+                row_leaves = 4
+            fingerprint_bytes = max(plan_staging, row_staging)
+            with budget.temporary_scope():
+                budget.reserve(plan_leaves + row_leaves, fingerprint_bytes)
+                content = _plan_content(plan)
+                view_id = _view_identity(content, policy, offsets, sources, targets, measures)
+            self.plan = plan
+            self.policy = policy
+            self.target_offsets = offsets
+            self.source_indices = sources
+            self.target_routes = targets
+            self.intersection_measures = measures
+            self.plan_content = content
+            self.view_id = view_id
+            budget.retain_owner(self, temporary_storage_credit=live)
+
+    def require_bound(self, plan: UnstructuredConservativeRemapPlan, /) -> None:
+        """Host admission: refuse unless these rows are ``plan``'s, as constructed.
+
+        Recomputes the content fingerprints of ``plan``, of the retained plan
+        and of the current rows; a numeric leaf replaced after construction
+        (for example by ``eqx.tree_at``) changes them. Called at consumer
+        admission and cold boundaries, never inside numerical execution.
+        """
+        content = _plan_content(plan)
+        if content != self.plan_content or (
+            self.plan is not plan and _plan_content(self.plan) != self.plan_content
+        ):
+            raise ValueError(
+                "remap.csr_view must be bound to the admitted plan's content; got another or a changed plan."
+            )
+        if (
+            _view_identity(
+                content,
+                self.policy,
+                self.target_offsets,
+                self.source_indices,
+                self.target_routes,
+                self.intersection_measures,
+            )
+            != self.view_id
+        ):
+            raise ValueError(
+                "remap.csr_view rows must be the rows derived from its plan; got changed rows."
+            )
+
+    def apply_fixed_combinatorics(
+        self,
+        source_cell_averages: ArrayLike,
+        intersection_measures: ArrayLike,
+        source_volumes: ArrayLike,
+        target_volumes: ArrayLike,
+        /,
+    ) -> Array:
+        """Differentiable remap for one frozen common-refinement route graph."""
+        source = jnp.asarray(source_cell_averages)
+        plan_sources = self.plan.source_volumes
+        plan_targets = self.plan.target_volumes
+        if source.ndim == 0 or source.shape[0] != plan_sources.size:
+            raise ValueError(
+                "remap.Fixed-combinatorics remap values must begin with the source "
+                f"cell count; got shape {source.shape}."
+            )
+        measures = jnp.asarray(intersection_measures, dtype=source.dtype)
+        source_measure = jnp.asarray(source_volumes, dtype=source.dtype)
+        target_measure = jnp.asarray(target_volumes, dtype=source.dtype)
+        if measures.shape != self.intersection_measures.shape:
+            raise ValueError(
+                "remap.dynamic.intersection_measures must preserve overlap capacity; got a different shape."
+            )
+        if source_measure.shape != plan_sources.shape:
+            raise ValueError(
+                "remap.dynamic.source_volumes must preserve source capacity; got a different shape."
+            )
+        if target_measure.shape != plan_targets.shape:
+            raise ValueError(
+                "remap.dynamic.target_volumes must preserve target capacity; got a different shape."
+            )
+        measures = eqx.error_if(
+            measures,
+            jnp.any(~jnp.isfinite(measures) | (measures <= 0.0)),
+            "Fixed-combinatorics intersections must remain positive and finite.",
+        )
+        source_measure = eqx.error_if(
+            source_measure,
+            jnp.any(~jnp.isfinite(source_measure) | (source_measure <= 0.0)),
+            "Fixed-combinatorics source volumes must remain positive and finite.",
+        )
+        target_measure = eqx.error_if(
+            target_measure,
+            jnp.any(~jnp.isfinite(target_measure) | (target_measure <= 0.0)),
+            "Fixed-combinatorics target volumes must remain positive and finite.",
+        )
+        target_coverage = (
+            jnp.zeros_like(target_measure).at[self.target_routes].add(measures)
+        )
+        source_coverage = (
+            jnp.zeros_like(source_measure).at[self.source_indices].add(measures)
+        )
+        tolerance = self.plan.report.tolerance.astype(source.dtype)
+        coverage_valid = jnp.all(
+            jnp.abs(target_coverage - target_measure)
+            <= tolerance * jnp.maximum(target_measure, 1.0)
+        ) & jnp.all(
+            jnp.abs(source_coverage - source_measure)
+            <= tolerance * jnp.maximum(source_measure, 1.0)
+        )
+        source = eqx.error_if(
+            source,
+            ~coverage_valid,
+            "Fixed-combinatorics remap lost complete geometric coverage.",
+        )
+        trailing = (1,) * (source.ndim - 1)
+        weighted = source[self.source_indices] * measures.reshape((-1,) + trailing)
+        target = (
+            jnp.zeros((target_measure.size,) + source.shape[1:], dtype=source.dtype)
+            .at[self.target_routes]
+            .add(weighted)
+        )
+        return target / target_measure.reshape((-1,) + trailing)
 
 
 class UnstructuredRemapLimiter(StrEnum):
@@ -1348,19 +2012,24 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "remap.second_order.source must bind the remap source geometry; got mismatched IDs."
             )
+        # A material plan stores no overlap routes, so no refinement realizes it.
+        routes = (
+            None if remap.material_schedule is not None else type(remap)._routes(remap)
+        )
         if (
-            refinement.dimension != source.cell_dimension
+            routes is None
+            or refinement.dimension != source.cell_dimension
             or refinement.source_cell_count != source.cell_count
             or refinement.target_cell_count != remap.target_volumes.size
             or not np.array_equal(
-                np.asarray(refinement.target_offsets), np.asarray(remap.target_offsets)
+                np.asarray(refinement.target_offsets), np.asarray(routes.offsets)
             )
             or not np.array_equal(
-                np.asarray(refinement.source_cells), np.asarray(remap.source_indices)
+                np.asarray(refinement.source_cells), np.asarray(routes.sources)
             )
             or not np.array_equal(
                 np.asarray(refinement.volumes),
-                np.asarray(remap.intersection_measures),
+                np.asarray(routes.measures),
             )
         ):
             raise ValueError(
@@ -1377,8 +2046,8 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
         gradient_id = prepared_gradient.gradient_id
         count = centroids.shape[0]
         overlap = EdgeRelation(
-            remap.source_indices,
-            remap.target_routes,
+            routes.sources,
+            routes.targets,
             source_size=count,
             target_size=remap.target_volumes.size,
         )
@@ -1424,7 +2093,7 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
         payload_shape = value.shape[1:]
         source = value.reshape((value.shape[0], -1))
         dtype = source.dtype
-        measures = remap.intersection_measures.astype(dtype)[:, None]
+        measures = type(remap)._routes(remap).measures.astype(dtype)[:, None]
         target_volumes = remap.target_volumes.astype(dtype)[:, None]
         source_content = remap.source_volumes.astype(dtype)[:, None] * source
         centroid_offsets = self.overlap_first_moments.astype(

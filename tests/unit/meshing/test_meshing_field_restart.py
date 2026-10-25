@@ -27,6 +27,7 @@ from phydrax.equations._hyperbolic_systems import EulerSystem
 from phydrax.lifecycle import (
     MeshingAcceptedEpoch,
     MeshingFieldDeclaration,
+    MeshingFieldIndexBinding,
     MeshingSourceClosure,
     prepare_meshing_field_dynamics,
     prepare_meshing_field_owner,
@@ -116,6 +117,10 @@ def published_field(
     assert declarations is not None
     declaration = declarations[declared_field.part.name]
     prepared, reconstruction = prepare_meshing_field_owner(declaration, carrier)
+    assert isinstance(
+        prepared,
+        (FiniteElementDiscretization, UnstructuredFiniteVolumeDiscretization),
+    )
     accepted_data = restored.accepted_data
     assert accepted_data is not None
     coefficients = accepted_data["fields"]["physical-coefficients"]
@@ -276,6 +281,7 @@ def test_cold_material_history_refuses_reordered_identity_bank(
     )
     history_binding = history_role.index_binding
     assert history_binding is not None
+    assert isinstance(history_binding, MeshingFieldIndexBinding)
     reordered_bank = replace(
         history_binding,
         index_values=np.asarray(history_binding.index_values)[::-1].copy(),
@@ -407,6 +413,10 @@ def published_single_field(
     assert declarations is not None
     declaration = declarations[native.part.name]
     prepared, reconstruction = prepare_meshing_field_owner(declaration, carrier)
+    assert isinstance(
+        prepared,
+        (FiniteElementDiscretization, UnstructuredFiniteVolumeDiscretization),
+    )
     accepted_data = restored.accepted_data
     assert accepted_data is not None
     return PublishedFieldState(
@@ -559,5 +569,6 @@ def test_accepted_epoch_refuses_bare_topology_transition(
     with pytest.raises(TypeError):
         MeshingAcceptedEpoch(
             carrier, (state.native.declaration,), state.native.fields,
-            transition=transition,
+            # A bare topology transition must be rejected at the public boundary.
+            transition=transition,  # ty: ignore[invalid-argument-type]
         )

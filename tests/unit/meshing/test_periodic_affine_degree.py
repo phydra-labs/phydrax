@@ -10,10 +10,15 @@ import pytest
 
 import phydrax as phx
 from phydrax.geometry._embedding_state import (
-    EmbeddingState, MeshCertificateLimits, PeriodicAffineTorusDegreeEvidence,
     coordinate_certificate_request,
+    EmbeddingState,
+    MeshCertificateLimits,
+    PeriodicAffineTorusDegreeEvidence,
 )
-from phydrax.geometry._periodic_affine_degree import _one_cycle, certify_affine_torus_degree
+from phydrax.geometry._periodic_affine_degree import (
+    _one_cycle,
+    certify_affine_torus_degree,
+)
 
 
 def _torus(degree: int = 1) -> phx.discretization.CellMesh:
@@ -41,7 +46,9 @@ def _torus(degree: int = 1) -> phx.discretization.CellMesh:
     )
 
 
-def _prove(mesh: phx.discretization.CellMesh, geometry: phx.discretization.CellGeometrySpec | None = None):
+def _prove(
+    mesh: phx.discretization.CellMesh, geometry: phx.discretization.CellGeometrySpec | None = None
+) -> tuple[PeriodicAffineTorusDegreeEvidence | bool, EmbeddingState, int]:
     geometry = phx.discretization.CellGeometrySpec.affine(mesh) if geometry is None else geometry
     state = EmbeddingState([], [])
     limits = MeshCertificateLimits(maximum_work_units=40_960_000, maximum_scratch_bytes=81_920_000)

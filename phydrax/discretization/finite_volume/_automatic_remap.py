@@ -29,11 +29,16 @@ from ... import (
     _meshcore as imported_meshcore,
     _resource_ticket as imported_resource_ticket,
 )
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._strict import StrictModule
 from ...geometry import _supermesh as imported_geometry__supermesh
 from ...geometry._supermesh import CommonRefinementPolicy
+from ...geometry._volume_material_map import VolumeMaterialChain
 from ...meshing import (
     _adaptation as imported_meshing__adaptation,
     _measurements as imported_meshing__measurements,
@@ -85,6 +90,7 @@ class _RemapRequest(StrictModule):
     surface_chart_deformation: (
         PreparedSurfaceChartDeformation | PreparedSphereChartDeformation | None
     )
+    volume_material_chain: VolumeMaterialChain | None
 
 
 @checked
@@ -104,6 +110,7 @@ def prepare_unstructured_conservative_remap(
     surface_chart_deformation: PreparedSurfaceChartDeformation
     | PreparedSphereChartDeformation
     | None = None,
+    volume_material_chain: VolumeMaterialChain | None = None,
     adaptation: imported_meshing__adaptation.MeshAdaptationResult | None = None,
     source_workspace: NativeHostStorageWorkspace | None = None,
     scope: imported_meshcore.NativeExecutionScope | None = None,
@@ -159,9 +166,11 @@ def prepare_unstructured_conservative_remap(
         parent_reference_homogeneous,
         geometry_transition,
         surface_chart_deformation,
+        volume_material_chain,
     )
     exact_request = (
         surface_chart_deformation is not None
+        or volume_material_chain is not None
         or parent_cells is not None
         or parent_reference_vertices is not None
         or parent_reference_homogeneous is not None
@@ -433,6 +442,7 @@ def bind_remap_execution(
         case (
             imported_geometry__supermesh.PreparedCommonRefinement()
             | MappedNestedRemapEvidence()
+            | VolumeMaterialChain()
         ) as route:
             bound_route = route
         case invalid:
@@ -468,6 +478,29 @@ def _prepare_unstructured_conservative_remap_state(
     if not provenance:
         raise ValueError(
             "prepare_unstructured_conservative_remap.provenance must be non-empty; got an empty string."
+        )
+    if request.volume_material_chain is not None:
+        chain = request.volume_material_chain
+        if request.surface_chart_deformation is not None or parent_cells is not None or parent_reference_vertices is not None or parent_reference_homogeneous is not None:
+            raise ValueError("remap.material_map must select only the volume material chain route")
+        for actual, expected in (
+            (source.cell_geometry, chain.source_geometry),
+            (target.cell_geometry, chain.target_geometry),
+            (source_geometry, chain.source_geometry),
+            (target_geometry, chain.target_geometry),
+        ):
+            if actual is not None and not tree_content_equal(actual, expected):
+                raise ValueError("remap.material_map must bind actual endpoint geometry content")
+        chain.require_bound(source.mesh, chain.source_geometry, target.mesh, chain.target_geometry)
+        plan = UnstructuredConservativeRemapPlan(
+            source, target, None, None, None,
+            method="volume-material-chain", provenance=provenance,
+            tolerance=policy_.coverage_tolerance, require_complete=True,
+            volume_material_chain=chain, budget=budget,
+        )
+        return PreparedUnstructuredConservativeRemap(
+            chain, plan, status=imported_geometry__supermesh.CommonRefinementStatus.SUCCESS,
+            reason="certified cavity-local volume material chain",
         )
     chart = _bound_remap_chart(request)
     if chart is not None:

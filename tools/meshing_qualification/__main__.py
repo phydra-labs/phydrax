@@ -24,6 +24,7 @@ from tools.meshing_qualification._controls import (
     SCENARIO_MODULES,
     SURFACE_CASES,
 )
+from tools.meshing_qualification._progress import evidence_path, run_with_progress
 from tools.meshing_qualification._records import _finalize_mandatory_cli_record
 from tools.meshing_qualification._runtime import (
     launch_deadline_expired,
@@ -135,7 +136,7 @@ def main() -> None:
         "tools.meshing_qualification." + SCENARIO_MODULES[args.scenario]
     )
     _IMPORT_SECONDS = perf_counter() - _IMPORT_STARTED
-    record = scenario_module.run(args)
+    record = run_with_progress(args.to_record(), lambda: scenario_module.run(args))
     science_returned_at = monotonic()
     expired = launch_deadline_expired()
     # The clock origin is process evidence only; it never enters controls or requests.
@@ -158,6 +159,12 @@ def main() -> None:
     record["import_seconds"] = _IMPORT_SECONDS
     record["peak_resident_unit"] = "bytes"
     record = _finalize_mandatory_cli_record(args, record)
+    result_path = evidence_path("result.json")
+    if result_path is not None:
+        with result_path.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, indent=2))
+            stream.flush()
+            os.fsync(stream.fileno())
     record_directory = os.environ.get("PHYDRAX_MESHING_RECORD_DIRECTORY")
     if args.scenario == "native-distributed-lifecycle" and record_directory is not None:
         # Persist this process's phase-resolved record before the shutdown
@@ -168,7 +175,7 @@ def main() -> None:
         jax.distributed.shutdown()
     else:
         print(json.dumps(record, indent=2))
-    if record.get("status") in ("failed", "timeout"):
+    if record.get("status") in ("failed", "timeout") or record.get("reporting_status") == "failed":
         raise SystemExit(1)
     if args.scenario == "native-corpus":
         counts = record["counts"]

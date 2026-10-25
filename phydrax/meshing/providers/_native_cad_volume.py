@@ -629,8 +629,12 @@ def _cad_associations(
         source.vertex_indices[np.where(boundary, rows, 0)],
         region_indices[np.where(boundary, 0, rows)],
     )
+    interior = rows[~boundary]
+    region_ids = iter(
+        domain.entity_ids(np.full(interior.shape, 3, dtype=np.int64), interior)
+    )
     entity_ids = tuple(
-        source.vertex_entity_ids[int(row)] if on_boundary else domain.entity_id(3, int(row))
+        source.vertex_entity_ids[int(row)] if on_boundary else next(region_ids)
         for row, on_boundary in zip(rows.tolist(), boundary.tolist(), strict=True)
     )
     paths = tuple(
@@ -698,7 +702,7 @@ def _cad_associations(
             source.source_revision,
             faces.target_entity_set_id,
             face_ids,
-            tuple(domain.entity_id(2, int(row)) for row in face_rows.tolist()),
+            domain.entity_ids(np.full(face_rows.shape, 2, dtype=np.int64), face_rows),
             source.face_residuals[face_polygons],
             exact=source.face_exact,
             orientations=np.asarray(faces.orientations, dtype=np.int64)[on_boundary_face],
@@ -714,7 +718,9 @@ def _cad_associations(
             source.source_revision,
             cells.target_entity_set_id,
             np.asarray(cells.target_global_ids, dtype=np.int64),
-            tuple(domain.entity_id(3, int(row)) for row in cell_regions.tolist()),
+            domain.entity_ids(
+                np.full(cell_regions.shape, 3, dtype=np.int64), cell_regions
+            ),
             np.zeros(cell_regions.shape, dtype=np.float64),
             exact=True,
             source_dimensions=np.full(cell_regions.shape, 3, dtype=np.int64),
@@ -823,10 +829,13 @@ def execute_cad_volume_route(
             receipt = source.surface.execution_evidence
             if receipt is None:
                 raise ValueError("CAD surface operands require their actual earning receipt.")
-            operands.require(
-                source.surface.mesh, source.surface.geometry, receipt, budget,
-                coordinate_contract=source.surface.coordinate_contract,
-            )
+            # This batch owns the remaining root allowance. Receipt ancestry
+            # checks must debit it, not the already-reserved root balance.
+            with ticket.native_target():
+                operands.require(
+                    source.surface.mesh, source.surface.geometry, receipt, budget,
+                    coordinate_contract=source.surface.coordinate_contract,
+                )
         with budget.activate():
             geometry = (
                 plc_geometry_owner.exact_plc_geometry(construction, plc, budget=budget)

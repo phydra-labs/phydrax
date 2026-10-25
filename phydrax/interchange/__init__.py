@@ -276,7 +276,12 @@ _DEFERRED_EXPORTS = {
 }
 
 
-__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
+__getattr__, __dir__ = deferred_exports(
+    __name__,
+    globals(),
+    _DEFERRED_EXPORTS,
+    optional_owners={"._cad_occt_projection": "OCP"},
+)
 
 
 if TYPE_CHECKING:

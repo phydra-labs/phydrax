@@ -61,6 +61,25 @@ def immutable_host_array_layout(array: np.ndarray, /) -> tuple[object, ...] | No
     )
 
 
+def immutable_host_array_layout_bytes(ndim: int, /) -> int:
+    """Admit a layout using the shared declared tuple/integer storage bounds.
+
+    The seven-slot record owns shape and strides tuples, their per-axis
+    integers, and three address/size/identity integers. Array dimensions and
+    addresses fit 64 bits; the dtype and backing bytes are shared with the
+    already-owned array rather than copied into the receipt.
+    """
+    if ndim < 0:
+        raise ValueError(
+            f"immutable_host_array_layout.ndim must be nonnegative; got {ndim}."
+        )
+    return (
+        3 * 256
+        + 16 * (7 + 2 * ndim)
+        + (3 + 2 * ndim) * declared_integer_storage_bytes(64)
+    )
+
+
 def immutable_host_array(array: np.ndarray, /) -> np.ndarray:
     """Snapshot a supported host bank once without changing its logical values.
 

@@ -533,7 +533,13 @@ from __future__ import annotations
 
 import math
 import sys
-from contextlib import AbstractContextManager, ExitStack, nullcontext
+from collections.abc import Iterator
+from contextlib import (
+    AbstractContextManager,
+    contextmanager,
+    ExitStack,
+    nullcontext,
+)
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import assert_never, cast, final, Literal
@@ -558,7 +564,6 @@ import phydrax.geometry._exact_power_certificates as exact_power_certificates_ow
 import phydrax.meshing._audit_topology as audit_topology_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._issued_proofs import IssuedProofs
 from .._geometry_predicates import (
     bigint_bytes,
     exact_bits,
@@ -572,6 +577,7 @@ from .._geometry_predicates import (
     segment_intersections_2d,
     SegmentIntersectionStatus,
 )
+from .._issued_proofs import IssuedProofs
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, nonnegative_integer
@@ -626,7 +632,6 @@ from ._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
 from ._periodic_restriction import PeriodicRestrictionPremise
 from ._polygon_triangulation import loop_triangles
 from ._rational import dyadic_integers, rational_vector
-
 from ._source_boundary_records import CadBoundaryClosureEvidence
 
 
@@ -2214,6 +2219,8 @@ def _segment_contacts(
 _EXACT_CONTACT_BATCH = 4096
 
 
+@contextmanager
+@checked
 def _exact_contact_boxes(
     points: np.ndarray,
     rows: np.ndarray,
@@ -2223,8 +2230,8 @@ def _exact_contact_boxes(
     integer_preparation: (
         exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
     ) = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build the same outward boxes while converting each used vertex once.
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Build outward boxes and keep their exact storage bound through consumption.
 
     Binary64 rounding is monotone, so taking minima/maxima after conversion
     yields the same rounded extrema as rational comparisons before conversion.
@@ -2249,7 +2256,15 @@ def _exact_contact_boxes(
         ):
             rounded = np.asarray(selected, dtype=np.float64)
             lower, upper = boxes(rounded, inverse.reshape(rows.shape))
-            return np.nextafter(lower, -np.inf), np.nextafter(upper, np.inf)
+            result = (
+                np.nextafter(lower, -np.inf),
+                np.nextafter(upper, np.inf),
+            )
+        del used, inverse, selected, bits, rounded, lower, upper
+        try:
+            yield result
+        finally:
+            del result
 
 
 def _exact_shared_edge_disjoint(
@@ -2410,6 +2425,7 @@ def _exact_triangle_axis_disjoint(
     return result
 
 
+@contextmanager
 @checked
 def exact_pair_contacts(
     points: np.ndarray,
@@ -2421,8 +2437,8 @@ def exact_pair_contacts(
     integer_preparation: (
         exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
     ) = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Decide contact on the integer scaling of rational source coordinates.
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Yield exact pair decisions while their output and working bound is live.
 
     One positive common denominator preserves every orientation sign, so the
     predicate algorithm decides contact with exact predicates and signs that
@@ -2434,55 +2450,80 @@ def exact_pair_contacts(
     index map preserves declared sharing while avoiding normalization of
     unrelated interior coordinates during a boundary-only contact proof.
     """
-
     slots = first.size + second.size
     with exact_charge(0, 1024 + 128 * slots, budget=budget):
-        if not slots:
-            return np.zeros(first.shape[0], dtype=np.bool_), np.ones(
-                first.shape[0], dtype=np.bool_
-            )
-        used = np.unique(np.concatenate((first.reshape(-1), second.reshape(-1))))
-        if integer_preparation is not None:
-            integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
-                points, budget=budget, preparation=integer_preparation
-            )
-            if used.size < points.shape[0]:
-                integers = integers[used]
-        else:
-            selected = points[used] if used.size < points.shape[0] else points
-            integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
-                selected, budget=budget
-            )
-        if used.size < points.shape[0]:
-            first = np.searchsorted(used, first)
-            second = np.searchsorted(used, second)
-        if first.shape[1] == 2:
-            with exact_charge(0, 8 * 8 * first.shape[0], budget=budget):
-                return _segment_contacts(integers, first, second, budget=budget)
-        bits = (
-            integer_preparation.integer_bits
-            if integer_preparation is not None
-            else exact_bits(integers, budget=budget)
+        result = _exact_pair_contact_values(
+            points,
+            first,
+            second,
+            slots=slots,
+            budget=budget,
+            integer_preparation=integer_preparation,
         )
-        hit = np.zeros((first.shape[0],), dtype=np.bool_)
-        certain = np.ones((first.shape[0],), dtype=np.bool_)
-        for start in range(0, first.shape[0], _EXACT_CONTACT_BATCH):
-            stop = min(start + _EXACT_CONTACT_BATCH, first.shape[0])
-            count = stop - start
-            left, right = first[start:stop], second[start:stop]
-            shared = np.sum(left[:, :, None] == right[:, None, :], axis=(1, 2))
-            # A welded vertex removes two plane-side inputs and four irrelevant
-            # edge/triangle preparations; a welded edge leaves only its fold test.
-            work = int(np.sum(np.where(shared == 2, 20, np.where(shared == 1, 28, 40))))
-            with exact_charge(
-                work, count * (36 * bigint_bytes(2 * bits + 3) + 8 * 128), budget=budget
-            ):
-                hit[start:stop], certain[start:stop] = (
-                    audit_topology_owner.triangle_pairs_intersect(
-                        integers, left, right, budget=budget
-                    )
+        try:
+            yield result
+        finally:
+            del result
+
+
+def _exact_pair_contact_values(
+    points: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    slots: int,
+    budget: CoordinateEnclosureBudget,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if not slots:
+        return np.zeros(first.shape[0], dtype=np.bool_), np.ones(
+            first.shape[0], dtype=np.bool_
+        )
+    used = np.unique(np.concatenate((first.reshape(-1), second.reshape(-1))))
+    if integer_preparation is not None:
+        integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
+            points, budget=budget, preparation=integer_preparation
+        )
+        if used.size < points.shape[0]:
+            integers = integers[used]
+    else:
+        selected = points[used] if used.size < points.shape[0] else points
+        integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
+            selected, budget=budget
+        )
+    if used.size < points.shape[0]:
+        first = np.searchsorted(used, first)
+        second = np.searchsorted(used, second)
+    if first.shape[1] == 2:
+        with exact_charge(0, 8 * 8 * first.shape[0], budget=budget):
+            return _segment_contacts(integers, first, second, budget=budget)
+    bits = (
+        integer_preparation.integer_bits
+        if integer_preparation is not None
+        else exact_bits(integers, budget=budget)
+    )
+    hit = np.zeros((first.shape[0],), dtype=np.bool_)
+    certain = np.ones((first.shape[0],), dtype=np.bool_)
+    for start in range(0, first.shape[0], _EXACT_CONTACT_BATCH):
+        stop = min(start + _EXACT_CONTACT_BATCH, first.shape[0])
+        count = stop - start
+        left, right = first[start:stop], second[start:stop]
+        shared = np.sum(left[:, :, None] == right[:, None, :], axis=(1, 2))
+        # A welded vertex removes two plane-side inputs and four irrelevant
+        # edge/triangle preparations; a welded edge leaves only its fold test.
+        work = int(np.sum(np.where(shared == 2, 20, np.where(shared == 1, 28, 40))))
+        with exact_charge(
+            work, count * (36 * bigint_bytes(2 * bits + 3) + 8 * 128), budget=budget
+        ):
+            hit[start:stop], certain[start:stop] = (
+                audit_topology_owner.triangle_pairs_intersect(
+                    integers, left, right, budget=budget
                 )
-        return hit, certain
+            )
+    return hit, certain
 
 
 @checked
@@ -2508,14 +2549,24 @@ def pairwise_contacts(
     state.checks.append(check)
     exact = points.dtype == object
     if exact:
-        lower, upper = _exact_contact_boxes(
+        with _exact_contact_boxes(
             points, items, budget=budget, integer_preparation=integer_preparation
-        )
+        ) as contact_boxes:
+            try:
+                first, second, exceeded = candidate_pairs(
+                    contact_boxes[0],
+                    contact_boxes[1],
+                    limits.maximum_candidate_pairs - state.candidate_pairs,
+                )
+            finally:
+                del contact_boxes
     else:
         lower, upper = boxes(points, items)
-    first, second, exceeded = candidate_pairs(
-        lower, upper, limits.maximum_candidate_pairs - state.candidate_pairs
-    )
+        first, second, exceeded = candidate_pairs(
+            lower,
+            upper,
+            limits.maximum_candidate_pairs - state.candidate_pairs,
+        )
     state.candidate_pairs += first.size
     if exceeded:
         state.add(f"{check}_capacity", "unresolved", "mesh")
@@ -2575,10 +2626,14 @@ def pairwise_contacts(
         else:
             pending = np.ones(first.shape, dtype=np.bool_)
         if np.any(pending):
-            hit[pending], certain[pending] = exact_pair_contacts(
+            with exact_pair_contacts(
                 points, items[first[pending]], items[second[pending]], budget=budget,
                 integer_preparation=integer_preparation,
-            )
+            ) as contact_results:
+                try:
+                    hit[pending], certain[pending] = contact_results
+                finally:
+                    del contact_results
     elif items.shape[1] == 2:
         hit, certain = _segment_contacts(
             points, items[first], items[second], budget=budget
@@ -2921,6 +2976,31 @@ def _exterior_degrees(
         exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
     ) = None,
 ) -> None:
+    with budget.temporary_scope():
+        _exterior_degrees_scoped(
+            state,
+            points,
+            boundary,
+            dimension,
+            limits,
+            budget=budget,
+            integer_preparation=integer_preparation,
+        )
+
+
+def _exterior_degrees_scoped(
+    state: EmbeddingState,
+    points: np.ndarray,
+    boundary: Boundary,
+    dimension: int,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
+) -> None:
     state.checks.append("exterior_degree")
     labels, unbalanced = boundary_shells(boundary, dimension)
     shells = unbalanced.size
@@ -3191,7 +3271,25 @@ def exact_source_predicate_view(
     The binary predicates use exact predicates with adaptive/dyadic signs. This is an
     equality-certified execution view of the source bank, not its mesh carrier.
     A nonrepresentable value retains the source bank's rational predicate path.
+    Rational-subfield algebraic scalars are unwrapped into a transient exact
+    Fraction view before rational predicates consume them. Genuine radicals
+    remain in their authored field for the mapped-field contact path.
     """
+    algebraic = False
+    for value in points.flat:
+        budget.reserve(1)
+        if isinstance(value, exact_algebraic_geometry_owner.RadicalElement):
+            algebraic = True
+            if any(radicand != 1 for radicand, _ in value.terms):
+                return points, False
+    if algebraic:
+        budget.reserve(points.size, 128 + points.size * np.dtype(object).itemsize)
+        rational = np.empty(points.shape, dtype=object)
+        for index, value in enumerate(points.flat):
+            rational.flat[index] = exact_algebraic_geometry_owner.rational_coefficient(
+                value, role="embedding.exact_source_predicate_view",
+            )
+        points = rational
     for value in points.flat:
         budget.reserve(2)
         try:
@@ -3218,7 +3316,8 @@ def source_bank_binary64_rows(
     identity-key recycling across this request's consumers.
     """
     from ..discretization._coordinate_operands import (
-        _immutable_array_layout, seal_coordinate_operand_array,
+        _immutable_array_layout,
+        seal_coordinate_operand_array,
     )
 
     cached = budget.source_binary64_rows_cache.get(id(bank))

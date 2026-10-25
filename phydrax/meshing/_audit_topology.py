@@ -1555,7 +1555,9 @@ def prepare_planar_audit_embedding(
         if any(
             not enclosure_owner.affine_simplex_source(element, budget=budget)
             or element.cell_kind != "triangle"
-            or element.degree != 1
+            or cell_geometry_owner.require_scalar_coordinate_element(
+                element, "planar audit embedding"
+            ).degree != 1
             for element in elements
         ):
             return None, None
@@ -1636,7 +1638,9 @@ def _completed_planar_audit_embedding(
     budget: CoordinateEnclosureBudget | None,
 ) -> bool:
     """Import only the actual completed theorem for this unchanged carrier."""
-    proof = None if budget is None else budget.planar_audit_embedding_proof
+    if budget is None:
+        return False
+    proof = budget.planar_audit_embedding_proof
     if proof is None or audit_policy_id != proof.policy.policy_id:
         return False
     policy = proof.policy

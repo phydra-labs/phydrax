@@ -198,6 +198,10 @@ with a linearization at a supplied state and no transpose.
 
 ---
 
+::: phydrax.discretization.PreparedRemapCSRView
+
+---
+
 ::: phydrax.discretization.prepare_unstructured_conservative_remap
 
 ---

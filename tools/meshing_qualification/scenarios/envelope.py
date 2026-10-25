@@ -48,6 +48,7 @@ from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.meshing.qualification._native_lifecycle import execute_native_request
 from tools.meshing_qualification._controls import (
     capacity_meshing_limits,
+    qualification_archive_limits,
     QualificationControls,
 )
 from tools.meshing_qualification._physics import (
@@ -145,11 +146,16 @@ def _envelope_qualification_fixture(
     )
 
 
-def _envelope_qualification_limits(
-    capacity: int, timeout: float
-) -> phx.meshing.MeshingLimits:
+def _envelope_qualification_limits(args: QualificationControls) -> phx.meshing.MeshingLimits:
     return capacity_meshing_limits(
-        capacity, timeout, cells=5, work_units=1000, cavity_cells=None
+        args.capacity,
+        args.timeout,
+        cells=5,
+        work_units=1000,
+        cavity_cells=None,
+        maximum_work_units=args.maximum_work_units,
+        maximum_geometry_queries=args.maximum_geometry_queries,
+        scratch_bytes_limit=args.maximum_scratch_bytes,
     )
 
 
@@ -206,7 +212,7 @@ def _prepare_envelope_volume(
         lambda: phx.meshing.qualification.prepare_envelope_source(
             soup,
             policy,
-            _envelope_qualification_limits(args.capacity, args.timeout),
+            _envelope_qualification_limits(args),
             failure_factory=qualification_failure,
             record_phase=phases.append,
             stages=_EnvelopePreparationStages(record=record, deadline=deadline),
@@ -500,7 +506,7 @@ def _envelope_qualification_epochs(
             record.get("active_phase", "prepare_mesh_adaptation"),
             lambda: _measured(
                 lambda: phx.meshing.prepare_mesh_adaptation(
-                    result, request, policy=policy
+                    result, request, policy=policy, observe_managed_admission=True
                 )
             ),
         )
@@ -508,7 +514,11 @@ def _envelope_qualification_epochs(
 
         adaptation, measured = _ledger.run(
             f"adaptation_execute_epoch_{epoch}",
-            lambda: _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared)),
+            lambda: _measured(
+                lambda: phx.meshing.execute_mesh_adaptation(
+                    prepared, observe_managed_admission=True
+                )
+            ),
         )
         stages[record["active_phase"]] = measured["wall_seconds"]
         if not adaptation.status.converged or adaptation.transition is None:
@@ -602,11 +612,12 @@ def _envelope_qualification_cold_request(
     target_error: float,
     budget: CoordinateEnclosureBudget,
     started: float,
+    archive_limits: ArrayArchiveLimits,
 ) -> tuple[phx.meshing.CellMeshingResult, ColdWorkerReport]:
     """Fresh-process source certification and continued solve from archived fields."""
 
     restored = _restore_meshing_source_archive(
-        archive, limits=ArrayArchiveLimits(), budget=budget
+        archive, limits=archive_limits, budget=budget
     )
     source = restored["generation_source"]
     result = restored["accepted_target"]
@@ -717,7 +728,7 @@ def _envelope_qualification_cold_reanalysis(
 
     _ledger = StageLedger(record, deadline=deadline)
 
-    limits = ArrayArchiveLimits()
+    limits = qualification_archive_limits(args)
     fields = tuple(history[-1].fields[name] for name in ("u", "density", "history"))
     report = result.certification
     if report is None:
@@ -777,6 +788,7 @@ def _envelope_qualification_cold_reanalysis(
                 receipt.content_id,
                 {
                     "expected": list(expected),
+                    "maximum_recipe_bytes": limits.max_manifest_bytes,
                     "repeats": args.repeats,
                     "target_error": args.target_error,
                 },
@@ -953,13 +965,19 @@ def _envelope_qualification_lifecycle(args: QualificationControls) -> dict[str, 
 def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
     """Run the scenario-owned cold consumer on its one control packet."""
     controls = packet.controls
+    archive_limits = ArrayArchiveLimits(
+        max_manifest_bytes=controls["maximum_recipe_bytes"]
+    )
     started = perf_counter()
     archive = _read_meshing_source_archive(
-        packet.archive_path, expected_content_id=packet.content_id
+        packet.archive_path,
+        expected_content_id=packet.content_id,
+        limits=archive_limits,
     )
     raw = read_meshing_source_execution_controls(
         packet.archive_path,
         expected_content_id=packet.content_id,
+        limits=archive_limits,
         _authenticated_archive=archive,
     )
     request = execute_native_request(
@@ -972,16 +990,22 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
             float(controls["target_error"]),
             budget,
             started,
+            archive_limits,
         ),
         target=lambda value: value[0],
         failure_factory=qualification_failure,
         workflow_remaining_seconds=packet.deadline.remaining(),
+        observe_managed_admission=True,
     )
     report = request.value[1]
     # The restored carrier's archived receipt is history. Only the ended fresh
     # request can bind complete cold restoration, preparation and physical work.
     return ColdWorkerReport(
-        record={**report.record, "restored_result": _result_identity(request.result)},
+        record={
+            **report.record,
+            "maximum_recipe_bytes": archive_limits.max_manifest_bytes,
+            "restored_result": _result_identity(request.result),
+        },
         read_seconds=report.read_seconds,
     )
 

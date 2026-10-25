@@ -5,7 +5,9 @@
 """White-box contracts for quotient ancestry and face-work accounting."""
 
 import math
+from collections.abc import Callable
 from fractions import Fraction
+from typing import Concatenate
 
 import numpy as np
 import pytest
@@ -143,20 +145,24 @@ def test_face_loop_and_classification_share_the_source_request(
     request = TrimRequestPreparations()
     observed = []
     with coordinate_source_request((trim,)) as budget:
+
+        def checked_context[S, **P, R](
+            original: Callable[Concatenate[S, P], R],
+        ) -> Callable[Concatenate[S, P], R]:
+            def checked(self: S, /, *args: P.args, **kwargs: P.kwargs) -> R:
+                assert kwargs["preparations"] is request
+                assert kwargs["budget"] is budget
+                observed.append(original)
+                return original(self, *args, **kwargs)
+
+            return checked
+
         for owner, name in (
             (CurveTrimSegment, "__init__"),
             (CurveTrimLoop, "__init__"),
             (TrimDomain, "classify_boxes"),
         ):
-            original = getattr(owner, name)
-
-            def checked_context(self, *args, _original=original, **kwargs):
-                assert kwargs["preparations"] is request
-                assert kwargs["budget"] is budget
-                observed.append(_original)
-                return _original(self, *args, **kwargs)
-
-            monkeypatch.setattr(owner, name, checked_context)
+            monkeypatch.setattr(owner, name, checked_context(getattr(owner, name)))
         work = _FaceCellWork(256)
         loop = _exact_loop(
             (Piece(arc, cuts[0], cuts[1], 1),),

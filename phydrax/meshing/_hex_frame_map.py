@@ -1062,6 +1062,9 @@ def _tensor_chart_fingerprint(
         for index in range(2)
     ]
     digest = hashlib.sha256()
+    # Hash both 24-entry chart streams of every cell and scan the partitions
+    # once more for the widest chunk; computed chunks meter themselves.
+    scope.charge(work=48 * total + len(counts))
     with scope.host_workspace() as workspace:
         largest = max(prod(int(n) for n in row) for row in counts)
         workspace.set_bound(6 * min(1024, largest) * 192 + 4096)
@@ -1069,11 +1072,11 @@ def _tensor_chart_fingerprint(
         @lru_cache(maxsize=4)
         def chunk(partition: tuple[int, ...], start: int, denominator: bool) -> bytes:
             size = min(1024, prod(partition) - start)
-            if denominator:
-                return pack("=qqq", *partition) * (8 * size)
-            payload = bytearray(size * 192)
             with scope.batch(24 * size) as ticket:
                 ticket.consume(24 * size)
+                if denominator:
+                    return pack("=qqq", *partition) * (8 * size)
+                payload = bytearray(size * 192)
                 _, ny, nz = partition
                 for local, index in enumerate(range(start, start + size)):
                     lower = (index // (ny * nz), (index // nz) % ny, index % nz)
@@ -1179,6 +1182,23 @@ def _assemble_source_integer_grid(
     # The root-node hash table is dead before this phase. Reuse its actual
     # workspace instead of retaining that envelope beside a second mesh one.
     workspace.set_bound(1024 * cell_count + 4096)
+    # One unit per element per host pass: the gather, row sort and dedupe of
+    # twelve edge and six face rows per cell, the region take, and the
+    # identity hashes of the materialized charts (48 entries per cell; the
+    # tensor stream meters itself), offsets, counts and materials.
+    chart_entries = (
+        48 * cell_count
+        if isinstance(banks, frame_records_owner.SourceIntegerGridBanks)
+        else 0
+    )
+    scope.charge(
+        work=3 * (12 + 6) * cell_count
+        + cell_count
+        + chart_entries
+        + source_connection.offsets.size
+        + admission.counts.size
+        + admission.material.size
+    )
     for dimension, bound in ((1, limits.maximum_edges), (2, limits.maximum_faces)):
         local_entities = np.asarray(_HEX_TOPOLOGY.entities[dimension], dtype=np.int64)
         entity_rows = np.sort(
@@ -1200,6 +1220,10 @@ def _assemble_source_integer_grid(
     )
     mesh_bytes = cell_mesh_owner.cell_mesh_construction_bounds(
         node_count, ambient, shapes
+    )
+    scope.charge(
+        work=cell_mesh_owner.cell_block_construction_work(cell_count, banks.cells.shape[1])
+        + cell_mesh_owner.cell_mesh_construction_work(node_count, ambient, shapes)
     )
     workspace.set_bound(block_bytes)
     block = reference_cell_types_owner.CellBlock(
@@ -1289,11 +1313,12 @@ def _extract_source_block_integer_grid(
 ) -> frame_records_owner.SourceBlockIntegerGrid | frame_records_owner._SourceBlockTensorGrid:
     """Extract source-supported integer maps with compatible root-axis counts."""
     started = phase_started(record_phase)
+    scope.charge(work=_source_authentication_work(prepared))
     if cell_geometry_id(prepared.geometry) != prepared.source_id:
         raise failure(
             "prepared.source_id must match source_geometry; got changed source coefficients"
         )
-    _validate_source_block_connection(prepared, source_connection)
+    _validate_source_block_connection(prepared, source_connection, scope=scope)
     if not np.array_equal(
         prepared.root_cells,
         np.concatenate(
@@ -1335,6 +1360,7 @@ def _extract_source_block_integer_grid(
     # The recorder is user supplied. Its callback may mutate borrowed source
     # atoms, so the closed construction/proof phase reauthenticates afterward.
     if record_phase is not None:
+        scope.charge(work=_source_authentication_work(prepared))
         if cell_geometry_id(prepared.geometry) != prepared.source_id:
             raise failure(
                 "prepared.source_id must match source_geometry after the phase callback"
@@ -1349,7 +1375,7 @@ def _extract_source_block_integer_grid(
             ]),
         ):
             raise failure("prepared.root_cells must match reference_mesh after the phase callback")
-        _validate_source_block_connection(prepared, source_connection)
+        _validate_source_block_connection(prepared, source_connection, scope=scope)
     started = phase_started(record_phase)
     if compact:
         banks = _prepare_source_tensor_banks(prepared, admission, scope=scope)
@@ -1431,6 +1457,14 @@ def _extract_source_tensor_frame_grid(
     association_inputs: list[_ConstructedTensorGrid] | None = None,
 ) -> MappedGridHexConstruction:
     """Reauthenticate callback-visible source owners before physical realization."""
+    # Besides the source identity, the grid identity rehashes the offsets,
+    # intervals and the int64 region copy; the chart stream meters itself.
+    scope.charge(
+        work=_source_authentication_work(prepared)
+        + grid.source_connection.offsets.size
+        + grid.root_intervals.size
+        + 2 * regions.size
+    )
     if cell_geometry_id(prepared.geometry) != prepared.source_id:
         raise failure("prepared.source_id must match source_geometry; got changed coefficients")
     if not np.array_equal(
@@ -1438,7 +1472,7 @@ def _extract_source_tensor_frame_grid(
         np.concatenate([np.asarray(block.vertices, dtype=np.int64) for block in prepared.reference_mesh.blocks]),
     ):
         raise failure("prepared.root_cells must match reference_mesh; got changed source topology")
-    _validate_source_block_connection(prepared, grid.source_connection)
+    _validate_source_block_connection(prepared, grid.source_connection, scope=scope)
     current_grid_id = canonical_fingerprint({
         "kind": "source-block-integer-extraction",
         "frame": prepared.frame_id,
@@ -1573,10 +1607,28 @@ def prepare_source_block_connection(
     )
 
 
+def _source_authentication_work(
+    prepared: frame_records_owner.PreparedSourceHexFrame, /
+) -> int:
+    """Host visits of one source-geometry identity and root-identity check."""
+    # Copy and hash every geometry leaf; copy, concatenate and compare the
+    # root connectivity.
+    leaves = sum(
+        1 + value.size
+        for value in jax.tree.leaves(
+            (prepared.geometry.elements, prepared.geometry.geometry_dofs, prepared.geometry.coordinates)
+        )
+        if isinstance(value, (jax.Array, np.ndarray))
+    )
+    return 2 * leaves + 3 * prepared.root_cells.size
+
+
 def _validate_source_block_connection(
     prepared: frame_records_owner.PreparedSourceHexFrame,
     connection: frame_records_owner.SourceBlockConnection,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> None:
     """Authenticate reused state without re-solving its prepared graph."""
     if (
@@ -1594,21 +1646,30 @@ def _validate_source_block_connection(
         raise failure(
             "source_connection.banks must contain one axis action per prepared face; got incompatible shapes"
         )
+    holonomy = connection.holonomy
+    evidence = (
+        holonomy.spanning_edges,
+        holonomy.cycle_edges,
+        holonomy.cycle_holonomy,
+        holonomy.singular_cycles,
+        holonomy.root_gauges,
+    )
+    # Copy and hash the connection pairs, then hash the transports and the
+    # holonomy evidence; each face trace then gathers, permutes, transforms,
+    # offsets and compares its four corners (24 entries per row).
+    scope.charge(
+        work=4 * rows
+        + connection.transports.size
+        + sum(value.size for value in evidence)
+        + 24 * rows
+    )
     expected = canonical_fingerprint(
         {
             "kind": "exact-source-frame-holonomy",
             "source": prepared.reference_mesh.mesh_id,
             "connections": array_tree_fingerprint(prepared.face_connections[:, (0, 2)]),
             "transports": array_tree_fingerprint(connection.transports),
-            "evidence": array_tree_fingerprint(
-                (
-                    connection.holonomy.spanning_edges,
-                    connection.holonomy.cycle_edges,
-                    connection.holonomy.cycle_holonomy,
-                    connection.holonomy.singular_cycles,
-                    connection.holonomy.root_gauges,
-                )
-            ),
+            "evidence": array_tree_fingerprint(evidence),
         }
     )
     if expected != connection.holonomy.connection_id:

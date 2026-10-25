@@ -14,6 +14,7 @@ import numpy as np
 
 import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
 import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._cell_mesh as _dependency_phydrax_discretization__cell_mesh
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
 import phydrax.discretization._coordinate_enclosure as _dependency_phydrax_discretization__coordinate_enclosure
 import phydrax.discretization._periodic_topology as _owner_phydrax_discretization__periodic_topology
@@ -273,6 +274,7 @@ class LayerReferenceRoots(StrictModule, NonTrainableState):
 
 
 def _prepare_layer_reference_roots(
+    reference_mesh: CellMesh,
     domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> LayerReferenceRoots:
@@ -283,6 +285,25 @@ def _prepare_layer_reference_roots(
     source_coordinates = domain.source_geometry.source_coordinates(budget=budget)
     reference_points = np.asarray(domain.reference_mesh.coordinates, dtype=np.float64)
     source_ids = np.asarray(domain.reference_mesh.vertex_global_ids, dtype=np.int64)
+    # Root inventory records, then per target cell its grouped record, sorted
+    # copy, stacked connectivity/route/ancestry rows and order entry, and one
+    # exact-image map entry per reference vertex.
+    root_count = sum(block.cell_count for block in domain.reference_mesh.blocks)
+    root_arity = max(
+        (block.vertices.shape[1] for block in domain.reference_mesh.blocks), default=0
+    )
+    route_width = max(
+        (np.asarray(route).shape[-1] for route in source_routes), default=0
+    )
+    target_arity = max((block.vertices.shape[1] for block in reference_mesh.blocks), default=0)
+    budget.reserve(
+        0,
+        4096
+        + 256 * root_count
+        + sum(block.cell_count for block in reference_mesh.blocks)
+        * (1024 + 16 * (target_arity + route_width + root_arity))
+        + 256 * reference_mesh.coordinates.shape[0],
+    )
     roots: list[tuple[CellBlock, CellGeometryElement, np.ndarray, int, int]] = []
     source_offset = 0
     for block, element, route in zip(
@@ -360,9 +381,29 @@ def _assemble_layer_reference_mesh(
         _dependency_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
     ],
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
 ) -> LayerReferenceComposition:
     """Publish sorted chart blocks with their root restriction ancestry."""
     points = np.asarray(reference_mesh.coordinates, dtype=np.float64)
+    shapes = tuple(
+        (elements[name].cell_kind, len(groups[name]), groups[name][0][1].size)
+        for name in sorted(groups)
+    )
+    # Chart blocks, the reference mesh, and its physical coordinate view.
+    work.charge(
+        sum(
+            _dependency_phydrax_discretization__cell_mesh.cell_block_construction_work(
+                count, arity
+            )
+            for _, count, arity in shapes
+        )
+        + _dependency_phydrax_discretization__cell_mesh.cell_mesh_construction_work(
+            points.shape[0], 3, shapes
+        )
+        + _dependency_phydrax_discretization__cell_mesh.cell_mesh_reuse_work(
+            points.shape[0], 3, shapes
+        )
+    )
     blocks, routes, parents, parent_vertices, order = [], {}, {}, {}, []
     for name in sorted(groups):
         cells = sorted(groups[name], key=lambda cell: cell[2])
@@ -438,7 +479,7 @@ def compose_layer_reference_mesh(
         raise ValueError(
             "compose_layer_reference_mesh.reference_mesh must bind every realized cell in block order; got incompatible Layer reference regions"
         )
-    inventory = _prepare_layer_reference_roots(domain, budget)
+    inventory = _prepare_layer_reference_roots(reference_mesh, domain, budget)
     roots, source_coordinates = inventory.cells, inventory.coordinates
     reference_points, source_ids = inventory.points, inventory.vertex_ids
     points = np.asarray(reference_mesh.coordinates, dtype=np.float64)
@@ -532,7 +573,7 @@ def compose_layer_reference_mesh(
             "compose_layer_reference_mesh.reference_mesh must retain a three-dimensional reference partition with region-bound root charts; got the reference partition has a vertex without an source-root chart"
         )
     return _assemble_layer_reference_mesh(
-        reference_mesh, domain, regions, physical_points, groups, elements, budget
+        reference_mesh, domain, regions, physical_points, groups, elements, budget, work
     )
 
 
@@ -702,6 +743,16 @@ def _compose_mapped_layer_carrier(
             reference_periodic.vertex_representatives,
             reference_periodic.vertex_shifts,
         )
+        work.charge(
+            _dependency_phydrax_discretization__cell_mesh.cell_mesh_construction_work(
+                mesh.coordinates.shape[0],
+                3,
+                tuple(
+                    (block.cell_kind, block.cell_count, block.vertices.shape[1])
+                    for block in mesh.blocks
+                ),
+            )
+        )
         mesh = CellMesh(
             mesh.coordinates,
             mesh.blocks,
@@ -710,7 +761,20 @@ def _compose_mapped_layer_carrier(
             periodic_topology=topology,
         )
 
-    _owner_phydrax_meshing__layer_curving.source_layer_cells(mesh, source.layers)
+    # Source cell and carrier vertex-row maps plus the inherited coordinate gather.
+    layer_mesh = source.layers.mesh
+    layer_cells = sum(block.cell_count for block in layer_mesh.blocks)
+    layer_vertices = layer_mesh.coordinates.shape[0]
+    work.charge(layer_cells + layer_vertices + mesh.coordinates.shape[0])
+    with budget.temporary_scope():
+        budget.reserve(
+            0,
+            4096
+            + 256 * layer_cells
+            + 128 * mesh.coordinates.shape[0]
+            + 64 * layer_vertices,
+        )
+        _owner_phydrax_meshing__layer_curving.source_layer_cells(mesh, source.layers)
     return LayerReferenceComposition(
         mesh,
         composed.geometry,

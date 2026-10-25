@@ -398,10 +398,11 @@ def prepare_plc_source(
         native_owner = ticket.native_target()
     else:
         remaining_work = _native_volume_remaining_work(limits, source_work_units, scope=scope)
-        remaining_queries = min(
-            limits.maximum_geometry_queries - source_geometry_queries,
-            scope.remaining().remaining_geometry_queries,
-        )
+        with scope.ticket_view() as incoming:
+            remaining_queries = min(
+                limits.maximum_geometry_queries - source_geometry_queries,
+                incoming.remaining_geometry_queries,
+            )
         native_owner = nullcontext()
     if remaining_work <= 0 or remaining_queries <= 0:
         _exhausted(
@@ -840,7 +841,8 @@ def _native_volume_remaining_work(
     scope: NativeExecutionScope,
 ) -> int:
     """Return the remaining cumulative allowance for an explicit producer."""
-    return min(limits.maximum_work_units - spent, scope.remaining().remaining_work_units)
+    with scope.ticket_view() as incoming:
+        return min(limits.maximum_work_units - spent, incoming.remaining_work_units)
 
 
 @checked
@@ -912,7 +914,12 @@ def _classify_native_volume_refusal(
             int(evidence.memory_counters.peak_bytes)
             + evidence.host_storage_peak_bytes_upper
         )
-        if total_work >= limits.maximum_work_units:
+        if total_work >= limits.maximum_work_units or (
+            isinstance(error, MeshcoreError)
+            and error.batch_requested_upper is not None
+            and error.batch_refusal_evidence is not None
+            and error.batch_requested_upper[0] > error.batch_refusal_evidence[0]
+        ):
             native_provider_code = "work_budget"
         elif peak_bytes >= limits.maximum_scratch_bytes:
             native_provider_code = "scratch_byte_budget"
@@ -1182,16 +1189,29 @@ def require_native_preparation_allowance(
     /,
 ) -> None:
     """Admit represented prior phases; native payload and host upper bounds stay distinct."""
-    receipt.require_valid()
+    scope = current_native_execution_scope()
+    if scope is None:
+        receipt.require_valid()
+    else:
+        native_preparation_ledger(scope).authenticate_receipt(scope, receipt)
+        scope.charge(work=25)
     peak_bytes_upper = 0
     peak_cavity = 0
     current: NativeExecutionRecord | None = receipt
     while current is not None:
-        peak_bytes_upper = max(
-            peak_bytes_upper,
+        if scope is not None:
+            scope.charge(work=5)
+        managed_peak = current.managed_admission_peak_bytes_upper
+        phase_peak = (
+            int(np.asarray(managed_peak))
+            if managed_peak is not None else
             int(np.asarray(current.memory_counters.peak_bytes))
-            + int(np.asarray(current.host_storage_peak_bytes_upper)),
+            + int(np.asarray(current.host_storage_peak_bytes_upper))
         )
+        # An observed simultaneous admission envelope is authoritative for
+        # this ended phase. The fallback remains conservative, not an exact
+        # boundary invented by summing independently measured peaks.
+        peak_bytes_upper = max(peak_bytes_upper, phase_peak)
         peak_cavity = max(
             peak_cavity, int(np.asarray(current.work_counters.peak_cavity_cells))
         )
@@ -1430,16 +1450,17 @@ def native_volume_coordinate_budget(
     _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
 ]:
     """Prepare one rational source phase before the independent native epoch."""
-    allowance = scope.remaining()
-    work = min(limits.maximum_work_units, allowance.remaining_work_units)
-    memory = min(limits.maximum_scratch_bytes, allowance.remaining_managed_bytes)
-    with scope.batch(
-        work,
-        queries_upper=min(
-            limits.maximum_geometry_queries, allowance.remaining_geometry_queries
-        ),
-        bytes_upper=memory,
-    ) as ticket:
+    with scope.ticket_view() as incoming:
+        work = min(limits.maximum_work_units, incoming.remaining_work_units)
+        memory = min(limits.maximum_scratch_bytes, incoming.remaining_managed_bytes)
+        ticket = scope.batch(
+            work,
+            queries_upper=min(
+                limits.maximum_geometry_queries, incoming.remaining_geometry_queries
+            ),
+            bytes_upper=memory,
+        )
+    with ticket:
         ledger = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
             ticket,
             maximum_work_units=limits.maximum_work_units,
@@ -1589,8 +1610,8 @@ def _optimize_uniform_background(
     fixed = np.zeros((snapshot.points.shape[0],), dtype=np.bool_)
     fixed[:original_vertex_count] = True
 
-    def retain_coordinate_storage(bytes_upper: int) -> NativeBatchTicket:
-        return scope.batch(0, bytes_upper=bytes_upper)
+    def retain_coordinate_storage(_bytes_upper: int) -> NativeScopeTicket:
+        return scope.ticket_view()
 
     with budget.retained_storage(retain_coordinate_storage):
         return _dependency_phydrax_meshing__tetra_metric.execute_native_tetra_metric(
@@ -3729,9 +3750,25 @@ def domain(
     sheets bound no region measure and are not domain facets.
     """
 
+    execution = current_native_execution_scope()
+    if execution is not None:
+        # Index conversion, polygon/facet gathers, region-pair gather and mask.
+        execution.charge(work=5 * input_polygons.size)
     polygons = input_polygons.astype(np.int64)
     incidence = complex_.facet_regions[complex_.polygon_facets[polygons]]
     kept = incidence[:, 0] != incidence[:, 1]
+    if execution is not None:
+        execution.charge(work=kept.size + len(complex_.region_ids))
+        kept_count = int(np.count_nonzero(kept))
+        # Actual retained facets own output copies, range/finite reductions,
+        # triangle corner/projection banks around native exact predicates, and
+        # streaming array fingerprints. Predicate queries are native counters,
+        # not evaluations of a coordinate source.
+        execution.charge(
+            work=120 * kept_count + 3 * complex_.vertices.size
+            + 2 * len(complex_.region_ids)
+            + sum(map(len, complex_.region_ids)) + len(source_id) + 512
+        )
     return domain_coverage_owner.PiecewiseLinearDomain(
         complex_.vertices,
         input_triangles[kept].astype(np.int64),

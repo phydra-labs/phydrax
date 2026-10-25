@@ -202,6 +202,33 @@ def test_barycentric_snapshot_reuse_preserves_dynamic_source_leaf(
 
 
 @pytest.mark.strict_jax
+def test_barycentric_snapshot_refuses_closed_or_foreign_carried_admission(
+    barycentric_source: BarycentricCellGeometryElement,
+) -> None:
+    from phydrax.discretization._coordinate_enclosure import element_identity
+    from phydrax.discretization._coordinate_identity import OperationElementAdmission
+
+    work, memory = coordinate_source_snapshot_preparation_bounds(barycentric_source)
+    with owned_coordinate_preparation(4 * work, 2 * memory) as budget:
+        element_identity(barycentric_source, budget=budget)
+        admission = budget.element_identity_admission_cache[id(barycentric_source)]
+        carried = OperationElementAdmission(admission)
+        assert carried.identity(barycentric_source, budget) == admission.identity
+        carried.close()
+        # A closed token no longer stands in for authentication.
+        assert carried.identity(barycentric_source, budget) is None
+        completed = budget.work_units
+        prepare_barycentric_source_snapshot(
+            barycentric_source, budget=budget, admission=carried
+        )
+        assert budget.work_units > completed
+        # A token for another owner is never accepted for this element.
+        foreign = OperationElementAdmission(admission)
+        assert foreign.identity(barycentric_source.source_element, budget) is None
+
+
+
+@pytest.mark.strict_jax
 def test_spline_snapshot_reuse_preserves_dynamic_source_leaves(
     spline_source: SplineCellGeometryElement,
 ) -> None:
@@ -1740,6 +1767,64 @@ def test_coordinate_identity_authenticates_actual_nested_dict_and_list_edges() -
         assert admission is not None
         nested["other"] = nested.pop("banks")
         assert not require_coordinate_identity_inputs(admission, budget)
+
+
+def test_operation_identity_recheck_skips_only_its_verified_shared_graph() -> None:
+    from phydrax.discretization._coordinate_identity import (
+        coordinate_identity_inputs,
+        CoordinateIdentityInputs,
+        operation_coordinate_identity_inputs,
+        require_coordinate_identity_inputs,
+    )
+
+    root = coordinate_lagrange_element("triangle", 1)
+    first, second = (
+        BarycentricCellGeometryElement(root, np.asarray(rows))
+        for rows in (
+            ((1.0, 0.0, 0.0), (0.5, 0.5, 0.0), (0.0, 0.0, 1.0)),
+            ((0.5, 0.5, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        )
+    )
+    entity_dofs = root.entity_dofs
+    try:
+        with coordinate_reference_budget() as budget:
+            shared = coordinate_identity_inputs(root, budget)
+            assert shared is not None
+            inputs = tuple(
+                operation_coordinate_identity_inputs(element, shared, budget)
+                for element in (first, second)
+            )
+            assert inputs[0] is not None and inputs[1] is not None
+            start = budget.work_units
+            assert require_coordinate_identity_inputs(inputs[1], budget)
+            complete = budget.work_units - start
+            # One operation rechecks the shared root once, after it succeeds.
+            verified: dict[int, CoordinateIdentityInputs] = {}
+            assert require_coordinate_identity_inputs(inputs[0], budget, verified=verified)
+            assert verified == {id(shared): shared, id(inputs[0]): inputs[0]}
+            start = budget.work_units
+            assert require_coordinate_identity_inputs(inputs[1], budget, verified=verified)
+            assert 0 < budget.work_units - start < complete
+            # A later operation still rechecks each element's own fields in full.
+            weights = second.barycentric_weights
+            object.__setattr__(
+                second, "barycentric_weights", jax.numpy.array(weights, copy=True)
+            )
+            later: dict[int, CoordinateIdentityInputs] = {}
+            assert require_coordinate_identity_inputs(inputs[0], budget, verified=later)
+            assert not require_coordinate_identity_inputs(inputs[1], budget, verified=later)
+            assert id(inputs[1]) not in later
+            object.__setattr__(second, "barycentric_weights", weights)
+            # A changed shared root is refused by every new operation, and a
+            # failed recheck is never recorded.
+            object.__setattr__(root, "entity_dofs", tuple(list(entity_dofs)))
+            fresh: dict[int, CoordinateIdentityInputs] = {}
+            assert not require_coordinate_identity_inputs(inputs[0], budget, verified=fresh)
+            assert not fresh
+            assert not require_coordinate_identity_inputs(inputs[1], budget)
+    finally:
+        object.__setattr__(root, "entity_dofs", entity_dofs)
+
 
 
 def test_element_identity_reauthenticates_actual_field_replacement(

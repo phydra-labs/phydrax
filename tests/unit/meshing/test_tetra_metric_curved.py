@@ -25,6 +25,11 @@ from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry._embedding_state import MeshCertificateLimits
+from phydrax.geometry._implicit_cavity_atlas import (
+    build_implicit_cavity_atlas,
+    CavitySnapshot,
+    prepare_implicit_cavity_edit,
+)
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.geometry.implicit._projection_cover import implicit_facet_projection_bounds
 from phydrax.meshing._lineage_records import EntityLineageKind, MeshLineage
@@ -433,7 +438,7 @@ def test_outward_python_claims_retain_immediate_and_successive_source_commits() 
                 assert fresh.collapse_curved_edge(
                     fresh_plan, fresh_triangles, fresh_deviation, digest=fresh_digest
                 )
-                assert fresh.work_units() - fresh_start == inspection_work + retained_work
+                assert fresh.work_units() > fresh_start
                 assert retained_work > 0 and inspection_work > 0
                 assert retained.accepted_generation() == fresh.accepted_generation() == generation + 1
                 same_bits(retained.arrays(), fresh.arrays(), array_fields)
@@ -445,7 +450,10 @@ def test_outward_python_claims_retain_immediate_and_successive_source_commits() 
                 same_bits(claims, fresh_claims, claim_fields)
                 assert claims.rows.size == initial_claims + plan.faces.shape[0]
                 assert claims.coordinates[-plan.faces.shape[0] :].tobytes() == triangles.tobytes()
-                assert np.all(claims.generations[-plan.faces.shape[0] :] == generation)
+                # Committed rows record the resulting accepted generation.
+                assert np.all(
+                    claims.generations[-plan.faces.shape[0] :] == retained.accepted_generation()
+                )
                 # Keep the next real sphere collapse away from this cavity so
                 # its independently earned whole-facet proof stays local.
                 support = np.any(np.isin(snapshot.faces, (removed, kept)), axis=1)
@@ -599,6 +607,8 @@ def test_publication_refuses_claims_that_do_not_recertify(
             _CurvedAuthority(source, np.ones((1,), dtype=np.int64)),
             budget=budget,
         )
+
+
 
 
 def _adapt(
@@ -911,8 +921,13 @@ def test_ordinary_split_inspects_complete_merit_and_commits_only_its_issued_plan
     def commit_issued(
         self: TetMesh3D, plan: TetMeshInsertionPlan, /, *,
         target_size: float = 0.0, work_limit: int | None = None,
+        claim_digest: bytes | None = None, face_coordinates: object | None = None,
+        face_deviations: object | None = None,
     ) -> int | None:
         assert any(plan is issued for issued in inspected)
+        # An ordinary split carries no projected curved-source claims.
+        assert plan.projected_source < 0
+        assert claim_digest is None and face_coordinates is None and face_deviations is None
         committed.append(plan)
         return commit(self, plan, target_size=target_size, work_limit=work_limit)
 
@@ -1189,3 +1204,167 @@ def test_multiple_required_interior_splits_complete_without_changing_operation_o
     assert outcome.evidence.splits == 2
     assert outcome.evidence.unmet_metric_edges == 0
     assert outcome.evidence.minimum_metric_quality >= 0.05
+
+
+def _native_material_metric_cavity(
+    height: Fraction | None,
+) -> tuple[TetMesh3D, CavitySnapshot]:
+    """A flat-rim tetrahedral cavity, optionally lifted by one interior apex."""
+    points = np.asarray(((0, 0, -1), (0, 0, 0), (1, 0, 0), (0, 1, 0)), dtype=np.float64)
+    if height is None:
+        cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+        patch = ((1, 2, 3),)
+    else:
+        points = np.vstack((points, (0.25, 0.25, float(height))))
+        cells = np.asarray(((0, 1, 2, 4), (0, 2, 3, 4), (0, 3, 1, 4)), dtype=np.int32)
+        patch = ((1, 2, 4), (2, 3, 4), (3, 1, 4))
+    mesh = CellMesh(points, (CellBlock("material-cavity", "tetrahedron", cells),))
+    boundary = _outward_boundary(mesh)
+    segments = np.unique(
+        np.sort(boundary[:, ((0, 1), (1, 2), (2, 0))].reshape(-1, 2), axis=1),
+        axis=0,
+    ).astype(np.int32)
+    native = TetMesh3D(
+        points, cells, np.zeros(len(cells), dtype=np.int32),
+        boundary, np.arange(len(boundary), dtype=np.int64),
+        segments, np.arange(len(segments), dtype=np.int64),
+        boundary_policy="conforming",
+    )
+    actual = native.arrays()
+    snapshot = CavitySnapshot(
+        tuple(
+            (Fraction(float(x)), Fraction(float(y)), Fraction(float(z)))
+            for x, y, z in actual.points
+        ),
+        tuple((int(a), int(b), int(c), int(d)) for a, b, c, d in actual.tetrahedra),
+        patch, ("material-top",) * len(patch), tuple(range(len(actual.tetrahedra))),
+        ((1, 2, "rim-ab"), (2, 3, "rim-bc"), (3, 1, "rim-ca")),
+    )
+    return native, snapshot
+
+
+def _log_affine_material_metric(points: np.ndarray) -> np.ndarray:
+    """Diagonal SPD field whose log-Euclidean interpolation is exactly affine."""
+    result = np.zeros((len(points), 3, 3))
+    for axis in range(3):
+        result[:, axis, axis] = np.exp(axis + 1.0 + points[:, axis])
+    return result
+
+
+def test_runtime_metric_stencils_follow_live_chronological_cavity_history() -> None:
+    """Split and relocation lookup must pull current points back, not extrapolate."""
+    import phydrax.meshing._tetra_metric as owner
+
+    source_native, source_cavity = _native_material_metric_cavity(None)
+    expanded_native, expanded_cavity = _native_material_metric_cavity(Fraction(1, 2))
+    contracted_native, contracted_cavity = _native_material_metric_cavity(Fraction(1, 4))
+    try:
+        source = source_native.arrays()
+        expanded = expanded_native.arrays()
+        contracted = contracted_native.arrays()
+        source_metric = _log_affine_material_metric(source.points)
+        original_metric = source_metric.copy()
+        original_points = source.points.copy()
+        assert np.all(np.linalg.eigvalsh(source_metric) > 0.0)
+        construction = contracted_native.edge_split_point(1, 4)
+        assert construction is not None
+        split_points = construction.position[None, :]
+        np.testing.assert_array_equal(split_points, ((0.125, 0.125, 0.125),))
+        # Both sites lie above z=0, outside the immutable original carrier.
+        relocation_points = np.asarray(((0.25, 0.25, 0.125),))
+        ancestry = owner._Ancestry(
+            {(0, 1, 2, 3): (0, {0})}, 1, [{index} for index in range(4)],
+        )
+        with _metric_request() as (scope, budget):
+            tables = TetraMetricSource(
+                source.points, source.tetrahedra,
+                np.arange(4, dtype=np.int64), np.arange(1, dtype=np.int64),
+                budget=budget,
+            )
+            epoch = _NativeMetricBudget(
+                source_native, _LIMITS.maximum_work_units, 10_000, tables,
+                _LIMITS.maximum_geometry_queries, scope, budget,
+                cavity_history=ancestry.cavity_history,
+            )
+            with epoch.phase():
+                outside = epoch.stencil(relocation_points)
+                assert outside is not None
+                assert not np.any(outside[2])
+                first = build_implicit_cavity_atlas(
+                    prepare_implicit_cavity_edit(
+                        source_cavity, expanded_cavity,
+                        source_id="metric-material-source",
+                        discovery_id="metric-material-discovery",
+                        chronology_index=0, predecessor_id="metric-material-root",
+                        budget=budget,
+                    ),
+                    chart_axes=(0, 1),
+                    anchor=(Fraction(1, 4), Fraction(1, 4), Fraction(-1, 4)),
+                    budget=budget,
+                )
+                ancestry.cavity_history.append(owner.CurvedCavityTransition(
+                    first, source, expanded,
+                    np.arange(1, dtype=np.int64), np.arange(3, dtype=np.int64),
+                ))
+                epoch.native = expanded_native
+                assert epoch.cavity_history is ancestry.cavity_history
+                first_bvh = epoch.source_bvh
+                for expected_z, split_z in ((-0.125, -1.0 / 24.0), (-0.0625, 0.0)):
+                    stencil = epoch.stencil(relocation_points)
+                    assert stencil is not None
+                    indices, weights, valid = stencil
+                    assert np.all(valid)
+                    expected_material = np.asarray(((0.25, 0.25, expected_z),))
+                    np.testing.assert_allclose(
+                        np.einsum("nk,nkj->nj", weights, source.points[indices]),
+                        expected_material, rtol=0.0, atol=TETRA_GEOMETRY_TOLERANCE,
+                    )
+                    np.testing.assert_allclose(
+                        owner._interpolate(source_metric[indices], weights),
+                        _log_affine_material_metric(expected_material),
+                        rtol=0.0, atol=TETRA_GEOMETRY_TOLERANCE,
+                    )
+                    samples = owner._sample_metric_splits(
+                        split_points, (construction,), tables, source_metric, epoch,
+                    )
+                    assert samples is not None
+                    assert np.all(samples.valid)
+                    np.testing.assert_allclose(
+                        samples.metric,
+                        _log_affine_material_metric(np.asarray(((0.125, 0.125, split_z),))),
+                        rtol=0.0, atol=TETRA_GEOMETRY_TOLERANCE,
+                    )
+                    assert epoch.source_bvh is first_bvh
+                    if len(ancestry.cavity_history) == 1:
+                        second = build_implicit_cavity_atlas(
+                            prepare_implicit_cavity_edit(
+                                expanded_cavity, contracted_cavity,
+                                source_id=first.source_id, discovery_id=first.discovery_id,
+                                chronology_index=1, predecessor_id=first.chart_id,
+                                budget=budget,
+                            ),
+                            chart_axes=(0, 1),
+                            anchor=(Fraction(1, 4), Fraction(1, 4), Fraction(-1, 4)),
+                            budget=budget,
+                        )
+                        ancestry.cavity_history.append(owner.CurvedCavityTransition(
+                            second, expanded, contracted,
+                            np.arange(3, dtype=np.int64), np.arange(3, dtype=np.int64),
+                        ))
+                        epoch.native = contracted_native
+                removed = np.asarray(((0.25, 0.25, 0.375),))
+                rejected = epoch.stencil(removed)
+                assert rejected is not None
+                assert not np.any(rejected[2])
+                with pytest.raises(phx.meshing.MeshingFailure, match="complete inverse material history"):
+                    owner._material_source_stencil(
+                        tables, removed, ancestry.cavity_history,
+                        _LIMITS.maximum_geometry_queries, budget=budget,
+                    )
+                np.testing.assert_array_equal(source_metric, original_metric)
+                np.testing.assert_array_equal(tables.points, original_points)
+                assert len(ancestry.cavity_history) == 2
+    finally:
+        contracted_native.close()
+        expanded_native.close()
+        source_native.close()

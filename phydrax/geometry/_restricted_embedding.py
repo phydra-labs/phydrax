@@ -324,10 +324,10 @@ End mesh certificate checks
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from fractions import Fraction
 from itertools import combinations
-from collections.abc import Iterable
 from typing import cast, final, Literal
 
 import numpy as np
@@ -357,8 +357,8 @@ from ..discretization._cell_geometry import (
     exact_barycentric_action,
     PolynomialComposedCellGeometryElement,
     RationalComposedCellGeometryElement,
-    RestrictedCellGeometryElement,
     require_p1_cardinal_source,
+    RestrictedCellGeometryElement,
 )
 from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
 from ..discretization._coordinate_budget import (
@@ -399,8 +399,8 @@ from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.fem._reference_types import FiniteElementSpec
 from ._embedding_cells import inside_reference, reference_constraints
 from ._mapped_embedding import (
-    root_injective,
     pair_decision,
+    root_injective,
     straight_boundary_images,
     tensor_component_injectivity,
     trace_continuity,
@@ -2628,16 +2628,19 @@ def _nested_closed_chain(
     if not state.clean or not state.closed_cell_orientation or "facet_pairing" not in state.checks:
         return "partial_proof"
     dimension, width = mesh.topological_dimension, mesh.topological_dimension + 1
-    used = _bound_nested_vertex_keys(
-        children, source_corners, source_vertex_ids,
-        np.asarray(mesh.vertex_global_ids, dtype=np.int64), dimension, budget=budget,
-    )
-    if isinstance(used, str):
-        return used
-    if not _nested_complete_source_stars(
-        used, source_corners, source_vertex_ids, dimension, budget=budget
-    ):
-        return "star"
+    with budget.temporary_scope():
+        used = _bound_nested_vertex_keys(
+            children, source_corners, source_vertex_ids,
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64), dimension, budget=budget,
+        )
+        if isinstance(used, str):
+            return used
+        complete_stars = _nested_complete_source_stars(
+            used, source_corners, source_vertex_ids, dimension, budget=budget
+        )
+        del used
+        if not complete_stars:
+            return "star"
     source_facets = embedding_state_owner.mesh_facets(
         predecessor.source_mesh, geometry=predecessor.source_geometry, budget=budget
     )
@@ -2795,9 +2798,11 @@ def nested_parent_partition(
         volumes[int(parent)] += children.determinants[int(block)]
     if any(value != 1 for value in volumes):
         return "volume"
-    if _nested_shared_root_bank(
-        mesh, geometry, points, children, predecessor, budget=budget
-    ):
+    with budget.temporary_scope():
+        shared_root = _nested_shared_root_bank(
+            mesh, geometry, points, children, predecessor, budget=budget
+        )
+    if shared_root:
         if _nested_closed_chain(
             state, mesh, geometry, children, predecessor, source_corners,
             source_vertex_ids, budget=budget,

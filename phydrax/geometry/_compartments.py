@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
@@ -16,10 +17,16 @@ import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_
 import phydrax.geometry.surface as surface_owner
 import phydrax.imaging as imaging_owner
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    _canonical_json_text_upper_bytes,
+    _retained_text_storage_upper_bytes,
+    array_tree_fingerprint,
+    canonical_fingerprint,
+)
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._validation import canonical_identifier
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..typing import checked, parse
 
 
@@ -354,6 +361,86 @@ class _CompartmentSourceBinding(StrictModule):
     source_id: str = eqx.field(static=True)
 
 
+def _compartment_source_text_bounds(
+    compartments: CompartmentComplex,
+    interpretation: CompartmentImageInterpretation,
+    coordinate_contract: SpatialCoordinateContract,
+    outer_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    /,
+) -> tuple[int, int, int]:
+    pair_work_upper = 0
+    pair_peak_upper = 0
+    for first, second in compartments.observed_adjacencies:
+        # Each observed pair can require a synthesized adjacency fingerprint.
+        pair_text_upper = _canonical_json_text_upper_bytes(
+            (
+                "kind",
+                "compartment-material-adjacency",
+                "regions",
+                first,
+                second,
+            )
+        )
+        pair_work_upper += pair_text_upper
+        pair_peak_upper = max(pair_peak_upper, pair_text_upper)
+
+    def source_texts() -> Iterator[str]:
+        # Source-binding identity recipe. Digest values have fixed 64-byte
+        # hex output; the variable interpretation value is counted directly.
+        yield from (
+            "kind",
+            "compartment-meshing-source",
+            "labels",
+            "complex",
+            "outer",
+            "interfaces",
+            "interpretation",
+        )
+        if isinstance(interpretation, str):
+            yield interpretation
+        yield "coordinates"
+        if outer_geometry is not None:
+            yield from (
+                "outer_geometry",
+                "outer_geometry_content",
+                "signature",
+                "sha256",
+                "path",
+                "shape",
+                "dtype",
+            )
+
+    def retained_texts() -> Iterator[str]:
+        # The binding owns its interface tuple and coordinate contract;
+        # retained_owner profiling deduplicates these shared source strings.
+        for definition in compartments.interfaces:
+            yield definition.interface_id
+            yield definition.first_compartment_id
+            yield definition.second_compartment_id
+        for first, second in compartments.observed_adjacencies:
+            yield first
+            yield second
+        yield coordinate_contract.length_coordinate_kind
+        yield coordinate_contract.coordinate_system
+        yield coordinate_contract.reference_frame
+        yield coordinate_contract.length_unit.symbol
+        yield coordinate_contract.length_unit.reference_system_id
+        yield from (
+            name for name, _, _ in coordinate_contract.length_unit.dimension.terms
+        )
+
+    # Five source hashes, plus the geometry and geometry-content hashes when
+    # present; each lowercase SHA-256 value is 64 characters plus JSON quotes.
+    digest_count = 5 + (2 if outer_geometry is not None else 0)
+    source_text_upper = (
+        _canonical_json_text_upper_bytes(source_texts()) + 66 * digest_count
+    )
+    text_work_upper = pair_work_upper + source_text_upper
+    text_scratch_upper = 2 * max(pair_peak_upper, source_text_upper)
+    retained_text_upper = _retained_text_storage_upper_bytes(retained_texts())
+    return text_work_upper, text_scratch_upper, retained_text_upper
+
+
 def _prepare_compartment_source(
     labels: imaging_owner.LabelVolume,
     compartments: CompartmentComplex,
@@ -363,6 +450,85 @@ def _prepare_compartment_source(
     /,
     *,
     outer_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget | None,
+) -> _CompartmentSourceBinding:
+    if budget is None:
+        return _prepare_compartment_source_core(
+            labels, compartments, outer_surface, interfaces, interpretation,
+            outer_geometry=outer_geometry, budget=None,
+        )
+    region_count = len(compartments.compartments)
+    interface_count = len(compartments.interfaces) + len(interfaces.surfaces)
+    geometry_array_size = (
+        0
+        if outer_geometry is None
+        else outer_geometry.coordinates.size
+        + sum(value.size for value in outer_geometry.geometry_dofs)
+    )
+    coordinate_contract = labels.asset.spatial_affine.coordinate_contract
+    text_work_upper, text_scratch_upper, retained_text_upper = (
+        _compartment_source_text_bounds(
+            compartments,
+            interpretation,
+            coordinate_contract,
+            outer_geometry,
+        )
+    )
+    # Coordinate equality and two content fingerprints traverse these arrays;
+    # metadata work sums every possible identity recipe.
+    work_upper = (
+        512
+        + 4 * geometry_array_size
+        + region_count * region_count
+        + 3 * interface_count
+        + text_work_upper
+    )
+    # Pair and source fingerprints run sequentially. Bound the larger JSON
+    # string and its encoded hash input; pair records cover fixed-length
+    # ``adjacency:<sha256>`` identifiers retained by the binding.
+    scratch_bytes = (
+        65536
+        + 8192
+        + 512 * (region_count * region_count + interface_count + 1)
+        + text_scratch_upper
+    )
+    result_bytes = (
+        8192
+        + 512 * (region_count * region_count + interface_count + 1)
+        + retained_text_upper
+    )
+    retained_work = 64 + 8 * (
+        region_count * region_count + interface_count + 1
+    )
+    budget.ticket.checkpoint()
+    with budget.temporary_scope() as lifetime:
+        budget.admit_work_bound(
+            work_upper + retained_work,
+            storage_upper=scratch_bytes + result_bytes,
+        )
+        budget.reserve(work_upper, scratch_bytes + result_bytes)
+        binding = _prepare_compartment_source_core(
+            labels, compartments, outer_surface, interfaces, interpretation,
+            outer_geometry=outer_geometry, budget=budget,
+        )
+        with budget.live_storage() as storage:
+            storage.promote_temporary_storage(lifetime, result_bytes)
+            budget.retain_owner(binding, temporary_storage_credit=storage)
+        budget.release_temporary_storage(scratch_bytes)
+        budget.ticket.checkpoint()
+    return binding
+
+
+def _prepare_compartment_source_core(
+    labels: imaging_owner.LabelVolume,
+    compartments: CompartmentComplex,
+    outer_surface: surface_owner.SurfaceModel,
+    interfaces: imaging_owner.CompartmentSurfaceResult,
+    interpretation: CompartmentImageInterpretation,
+    /,
+    *,
+    outer_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget | None,
 ) -> _CompartmentSourceBinding:
     interpretation_ = parse(
         interpretation, CompartmentImageInterpretation, "interpretation"
@@ -395,28 +561,11 @@ def _prepare_compartment_source(
             raise ValueError(
                 f"CompartmentMeshingSource.interfaces.source_revision must match labels; got {value.surface.metadata.source_revision!r} != {revision!r}"
             )
-    expected_complex = imaging_owner.build_compartment_complex(
-        labels, compartments.compartments, compartments.interfaces
+    import phydrax.imaging._segmentation as segmentation_owner
+
+    segmentation_owner._rebuild_compartment_source_facts(
+        labels, compartments, interfaces, budget=budget
     )
-    if expected_complex.complex_id != compartments.complex_id:
-        raise ValueError(
-            f"CompartmentMeshingSource.compartments must match image measures and adjacency; got {compartments.complex_id!r} != {expected_complex.complex_id!r}"
-        )
-    expected_interfaces = imaging_owner.extract_compartment_surfaces(labels, compartments)
-    if expected_interfaces.extraction_id != interfaces.extraction_id:
-        raise ValueError(
-            f"CompartmentMeshingSource.interfaces must represent the occupied image cells; got {interfaces.extraction_id!r} != {expected_interfaces.extraction_id!r}"
-        )
-    if tuple(
-        (value.definition.interface_id, value.surface.mesh.mesh_id)
-        for value in interfaces.surfaces
-    ) != tuple(
-        (value.definition.interface_id, value.surface.mesh.mesh_id)
-        for value in expected_interfaces.surfaces
-    ):
-        raise ValueError(
-            "CompartmentMeshingSource.interfaces.surfaces must match the extraction binding; got different interface or mesh IDs"
-        )
     definitions = complete_interface_definitions(compartments)
     if outer_geometry is not None:
         mesh = outer_surface.mesh
@@ -503,10 +652,11 @@ class CompartmentMeshingSource:
         interpretation: CompartmentImageInterpretation = "occupied-voxel-cells",
         *,
         outer_geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         binding = _prepare_compartment_source(
             labels, compartments, outer_surface, interfaces, interpretation,
-            outer_geometry=outer_geometry,
+            outer_geometry=outer_geometry, budget=budget,
         )
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "compartments", compartments)
@@ -519,7 +669,9 @@ class CompartmentMeshingSource:
         object.__setattr__(self, "coordinate_contract", binding.coordinate_contract)
         object.__setattr__(self, "source_id", binding.source_id)
 
-    def validate_source_integrity(self) -> None:
+    def validate_source_integrity(
+        self, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> None:
         """Re-admit the retained segmentation, complex and extracted interface source."""
         expected = CompartmentMeshingSource(
             self.labels,
@@ -528,6 +680,7 @@ class CompartmentMeshingSource:
             self.interfaces,
             self.interpretation,
             outer_geometry=self.outer_geometry,
+            budget=budget,
         )
         if (
             expected.source_id != self.source_id

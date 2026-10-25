@@ -32,6 +32,7 @@ from phydrax.discretization._cell_geometry import coordinate_lagrange_element
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
 from phydrax.discretization.fem._reference_types import FiniteElementSpec
+from phydrax.geometry.brep._query_projection import NativeBRepProjection
 from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 from phydrax.lifecycle import (
     MeshingAcceptedEpoch,
@@ -49,9 +50,15 @@ from phydrax.lifecycle._meshing_field_records import (
 )
 from phydrax.lifecycle._meshing_sources import (
     meshing_source_owner_reconstruction_scope,
+    MeshingSourceClosureReceipt,
+    native_family_audit_policy,
     require_same_source_evidence,
 )
+from phydrax.meshing import _curving as curving_owner
+from phydrax.meshing._association import RESOLVED_STATUS
+from phydrax.meshing._association_state import GeometryAssociation
 from phydrax.meshing._audit import required_audit_policy
+from phydrax.meshing._certification import MeshCertificationPreparedEvidence
 from phydrax.meshing._measurements import NativeExecutionRecord
 from phydrax.meshing.providers._native_publication import (
     bind_native_execution_result,
@@ -66,7 +73,9 @@ from phydrax.typing import parse
 from tools._meshing_cases import _strict_json_object, load_cad_fixture
 from tools.meshing_qualification._controls import (
     _cad_qualification_requirements,
+    archive_limit_values,
     capacity_meshing_limits,
+    qualification_archive_limits,
     QualificationControls,
 )
 from tools.meshing_qualification._physics import (
@@ -568,6 +577,7 @@ def _cad_qualification_epochs(
                     result, request.limits,
                     lambda budget: _cad_qualification_solver(result, budget=budget),
                     failure_factory=qualification_failure,
+                    observe_managed_admission=True,
                 )
             ),
         )
@@ -619,14 +629,20 @@ def _cad_qualification_epochs(
         prepared, timing = _ledger.run(
             record.get("active_phase", "prepare_mesh_adaptation"),
             lambda: _measured(
-                lambda: phx.meshing.prepare_mesh_adaptation(result, marked, policy=policy)
+                lambda: phx.meshing.prepare_mesh_adaptation(
+                    result, marked, policy=policy, observe_managed_admission=True
+                )
             ),
         )
         stages[record["active_phase"]] = timing["wall_seconds"]
 
         adaptation, timing = _ledger.run(
             f"adaptation_execute_epoch_{epoch}",
-            lambda: _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared)),
+            lambda: _measured(
+                lambda: phx.meshing.execute_mesh_adaptation(
+                    prepared, observe_managed_admission=True
+                )
+            ),
         )
         stages[record["active_phase"]] = timing["wall_seconds"]
         state_transfer = adaptation.transfer
@@ -2136,6 +2152,8 @@ def _cad_volume_acceptance(
 def _cad_curving(
     published: _CadVolume, model: phx.geometry.brep.BRepModel, case: _CadCase
 ) -> tuple[phx.meshing.CellMeshingResult, dict[str, object]]:
+    from phydrax.meshing._native_preparation import stage_native_completed_source_issue
+
     limits = published.generation_specification.limits
     with (
         NativeExecutionScope(limits.native_limits()) as scope,
@@ -2155,14 +2173,21 @@ def _cad_curving(
                 published, model, case,
                 NativePublicationExecution(scope, workspace, None, budget),
             )
+            with budget.bind_ticket(scope.ticket_view()):
+                issue = stage_native_completed_source_issue(
+                    scope, carrier, owner_id=published.generation_plan.plan_id, budget=budget
+                )
     if scope.evidence is None:
         raise RuntimeError("CAD curving must retain its complete request evidence")
-    return bind_native_execution_result(
+    bound = bind_native_execution_result(
         carrier, scope.evidence, limits, scope.operation_started,
+        owner_id=published.generation_plan.plan_id,
         history_evidence=()
         if published.volume.execution_evidence is None
         else (published.volume.execution_evidence,),
-    ), evidence
+    )
+    issue.complete(bound)
+    return bound, evidence
 
 
 def _remember_cad_publication_registration(
@@ -2189,6 +2214,177 @@ def _remember_cad_publication_registration(
         _remember_issued_native_generation_registration(
             plan.source, plan.specification, plan.options, carrier, budget=budget
         )
+
+def _cad_straight_rejection(
+    mesh: phx.discretization.CellMesh,
+    association: GeometryAssociation,
+    projection: NativeBRepProjection,
+    straight: phx.discretization.CellGeometrySpec,
+    curved: phx.discretization.CellGeometrySpec,
+    policy: phx.meshing.HighOrderCurvingPolicy,
+    budget: CoordinateEnclosureBudget,
+) -> dict[str, object]:
+    """Fresh lower-distance evidence for one failed straight-node obligation."""
+    query = projection.query
+    if not isinstance(query, phx.geometry.brep.PreparedBRepQuery):
+        raise TypeError("CAD rejection witness requires its prepared B-Rep query owner.")
+    if (
+        association.source_id != projection.source_id
+        or association.source_revision != projection.source_revision
+        or query.model.source_id != projection.source_id
+        or query.model.model_id != projection.model_id
+        or query.source_revision != projection.source_revision
+        or straight.geometry_layout_id != curved.geometry_layout_id
+        or straight.coordinates.shape != curved.coordinates.shape
+    ):
+        raise ValueError(
+            "CAD rejection witness must retain exact association, query, and "
+            "geometry-layout identity."
+        )
+    count, dimension = straight.coordinates.shape
+    with budget.temporary_scope():
+        # The class owner bounds its own temporary classification work. This
+        # reservation covers its returned node metadata and our host coordinate,
+        # candidate, displacement, and ordering arrays before any are materialized.
+        budget.reserve(
+            count * (4 * dimension + max(1, count.bit_length())),
+            4096 + count * (40 * dimension + 96),
+        )
+        classes = curving_owner._node_classes(mesh, straight, association, projection)
+        if (
+            classes.dimensions.shape != (count,)
+            or classes.indices.shape != (count,)
+            or classes.resolved.shape != (count,)
+            or classes.constrained.shape != (count,)
+            or len(classes.occurrence_paths) != count
+        ):
+            raise ValueError(
+                "CAD rejection node classes must align with the straight geometry layout."
+            )
+        straight_points = np.asarray(straight.coordinates, dtype=np.float64)
+        curved_points = np.asarray(curved.coordinates, dtype=np.float64)
+        candidate_mask = classes.constrained & classes.resolved
+        candidate_mask &= classes.dimensions == 2
+        candidates = np.flatnonzero(candidate_mask)
+        if not candidates.size:
+            raise qualification_failure(
+                "_cad_curving",
+                "Straight P2 rejection has no resolved lower-distance witness.",
+                {"candidates": 0, "statuses": {}},
+            )
+        displacement = curved_points - straight_points
+        squared = np.sum(displacement * displacement, axis=1)
+        del displacement
+        order = np.lexsort((candidates, -squared[candidates]))
+        preparations = TrimRequestPreparations()
+        statuses: dict[int, int] = {}
+        for rank, position in enumerate(order):
+            node = int(candidates[position])
+            face = int(classes.indices[node])
+            path = classes.occurrence_paths[node]
+            if face < 0 or face >= len(query.faces):
+                raise ValueError("CAD rejection witness must retain its assigned source face.")
+            expected_occurrence = -1
+            if path:
+                budget.reserve(len(query.occurrences))
+                expected_occurrence = next(
+                    (
+                        index
+                        for index, occurrence in enumerate(query.occurrences)
+                        if occurrence.path == path
+                    ),
+                    -1,
+                )
+                if expected_occurrence < 0:
+                    raise ValueError(
+                        "CAD rejection witness must retain its assigned face occurrence."
+                    )
+            point = straight_points[node : node + 1]
+            if path:
+                result = query.closest_point(
+                    point,
+                    faces=(face,),
+                    path=path,
+                    coordinate_budget=budget,
+                    preparations=preparations,
+                )
+            elif not query.occurrences:
+                result = query.closest_point(
+                    point,
+                    faces=(face,),
+                    coordinate_budget=budget,
+                    preparations=preparations,
+                )
+            else:
+                result = query.closest_definition(
+                    jnp.asarray(point, dtype=jnp.float64),
+                    (face,),
+                    coordinate_budget=budget,
+                    preparations=preparations,
+                )
+            if result.source_revision != projection.source_revision:
+                raise ValueError(
+                    "CAD rejection query must preserve the bound source revision."
+                )
+            result_face = int(result.faces[0])
+            occurrence = int(result.occurrences[0])
+            if result_face != face:
+                raise ValueError(
+                    "CAD rejection query must preserve the assigned source face."
+                )
+            if occurrence != expected_occurrence:
+                raise ValueError(
+                    "CAD rejection query must preserve the assigned face occurrence."
+                )
+            if path and query.occurrences[occurrence].path != path:
+                raise ValueError(
+                    "CAD rejection query must preserve the assigned face occurrence."
+                )
+            status = int(result.status[0])
+            statuses[status] = statuses.get(status, 0) + 1
+            lower = float(result.distance_lower_bounds[0])
+            upper = float(result.distances[0])
+            if (
+                status not in RESOLVED_STATUS
+                or bool(result.unresolved[0])
+                or not math.isfinite(lower)
+                or not math.isfinite(upper)
+                or lower > upper
+                or lower <= policy.residual_tolerance
+            ):
+                continue
+            budget.retain_operand_metadata(
+                4096 + sum(64 + 4 * len(part) for part in path)
+            )
+            # The fresh lower bound proves one failed nodal obligation, not a
+            # maximum-residual or global-fidelity certificate.
+            return {
+                "criterion": "constrained-node-distance",
+                "bound_scope": "single-node-lower-bound-not-global-maximum",
+                "node": node,
+                "entity_dimension": int(classes.dimensions[node]),
+                "entity_index": face,
+                "face": face,
+                "occurrence_path": list(path),
+                "query_point": straight_points[node].tolist(),
+                "query_occurrence": occurrence,
+                "query_status": status,
+                "distance_lower_bound": lower,
+                "distance_upper_bound": upper,
+                "residual_tolerance": policy.residual_tolerance,
+                "candidates_tried": rank + 1,
+                "source_id": projection.source_id,
+                "source_revision": result.source_revision,
+                "projection_id": projection.projection_id,
+                "query_id": query.query_id,
+                "geometry_layout_id": straight.geometry_layout_id,
+            }
+    raise qualification_failure(
+        "_cad_curving",
+        "Straight P2 rejection has no resolved lower-distance witness.",
+        {"candidates": candidates.size, "statuses": statuses},
+    )
+
 
 
 def _cad_curving_in_execution(
@@ -2228,7 +2424,10 @@ def _cad_curving_in_execution(
     )
     regions = np.zeros(mesh.blocks[0].cell_count, dtype=np.int64)
     publication_audit = required_audit_policy(
-        phx.meshing.CellMeshAuditPolicy(), certification.schedule.required_audit_checks
+        native_family_audit_policy(
+            published.generation_source, published.generation_specification, mesh
+        ),
+        certification.schedule.required_audit_checks,
     )
     curving_policy = phx.meshing.HighOrderCurvingPolicy(
         degree=2, fidelity_tolerance=tolerance,
@@ -2274,23 +2473,8 @@ def _cad_curving_in_execution(
             {"recertified": recertified.certificate_id},
         )
     with budget.bind_ticket(execution.scope.ticket_view()):
-        straight = phx.meshing.verify_curved_geometry(
-            curved.straight,
-            mesh,
-            association,
-            projection,
-            policy=curving_policy,
-            source=source,
-            domain=source_domain,
-            cell_regions=regions,
-            certificate_limits=certification.request.limits,
-            budget=budget,
-        )
-    if straight.accepted:
-        raise qualification_failure(
-            "_cad_curving",
-            "Straight P2 nodes cannot already meet the curved fidelity bound.",
-            {"straight": straight.maximum_residual},
+        straight_rejection = _cad_straight_rejection(
+            mesh, association, projection, curved.straight, curved.geometry, curving_policy, budget
         )
     inputs = phx.meshing.MeshCertificationInputs(
         mesh,
@@ -2310,6 +2494,7 @@ def _cad_curving_in_execution(
         association,
         inputs,
         limits=published.generation_specification.limits,
+        audit_policy=publication_audit,
         curving=evidence,
         execution=execution,
     )
@@ -2341,19 +2526,27 @@ def _cad_curving_in_execution(
             }
             for minimization in curved.minimizations
         ],
+        "curving_status": curved.status.value,
+        "curving_accepted": evidence.accepted,
         "geometry_layout_id": curved.geometry.geometry_layout_id,
         "fidelity_tolerance": tolerance,
         "fidelity_certificate": fidelity.certificate_id,
+        "fidelity_status": fidelity.status,
         "mesh_to_source_upper": fidelity.mesh_to_source_upper,
         "source_to_mesh_upper": fidelity.source_to_mesh_upper,
+        "coverage_certificate": coverage.certificate_id,
+        "coverage_status": coverage.status,
         "coverage_distance_upper": coverage.distance_upper,
         "cad_closure": None
         if fidelity.cad_closure is None
         else fidelity.cad_closure.to_record(),
         "maximum_node_residual": evidence.maximum_residual,
+        "residual_tolerance": evidence.residual_tolerance,
         "minimum_scaled_jacobian": evidence.minimum_scaled_jacobian,
         "maximum_distortion": evidence.maximum_distortion,
-        "straight_node_residual": straight.maximum_residual,
+        "global_embedding_certificate": evidence.embedding.certificate_id,
+        "global_embedding_status": evidence.embedding.status,
+        "straight_node_rejection": straight_rejection,
         "validity_certificate": recertified.certificate_id,
         "certified_valid_cells": recertified.certified_valid_count,
     }
@@ -2729,20 +2922,26 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
     """Earn restoration and physical continuation under one fresh cold request."""
     packet.deadline.remaining()
     started = perf_counter()
+    args = QualificationControls.from_record(packet.controls["controls"])
+    archive_limits = qualification_archive_limits(args)
+    if packet.controls["archive_limits"] != archive_limit_values(archive_limits):
+        raise ValueError("cad.cold archive limits must equal the producer's declared policy")
     controls = read_meshing_source_execution_controls(
         packet.archive_path,
         expected_content_id=packet.content_id,
-        limits=ArrayArchiveLimits(),
+        limits=archive_limits,
     )
     control_read_seconds = perf_counter() - started
-    continued = execute_native_request(
-        controls.execution_evidence,
-        controls.limits,
-        lambda budget: _cad_continue_restored(packet, budget),
-        target=lambda value: value[0],
-        failure_factory=qualification_failure,
-        workflow_remaining_seconds=packet.deadline.remaining(),
-    )
+    with meshing_source_owner_reconstruction_scope(archive_limits=archive_limits):
+        continued = execute_native_request(
+            controls.execution_evidence,
+            controls.limits,
+            lambda budget: _cad_continue_restored(packet, budget, archive_limits=archive_limits),
+            target=lambda value: value[0],
+            failure_factory=qualification_failure,
+            workflow_remaining_seconds=packet.deadline.remaining(),
+            observe_managed_admission=True,
+        )
     _, report = continued.value
     receipt = continued.result.execution_evidence
     if receipt is None:
@@ -2765,7 +2964,8 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
 
 
 def _cad_continue_restored(
-    packet: ColdControlPacket, budget: CoordinateEnclosureBudget
+    packet: ColdControlPacket, budget: CoordinateEnclosureBudget,
+    *, archive_limits: ArrayArchiveLimits,
 ) -> tuple[phx.meshing.CellMeshingResult, ColdWorkerReport]:
     """Restore the authenticated physical epoch and solve from its accepted arrays."""
     packet.deadline.remaining()
@@ -2773,12 +2973,12 @@ def _cad_continue_restored(
     records = read_meshing_source_closure(
         packet.archive_path,
         expected_content_id=packet.content_id,
-        limits=ArrayArchiveLimits(),
+        limits=archive_limits,
         budget=budget,
     )
     identity = _cad_checkpoint_identity(records)
     controls = packet.controls
-    if identity != controls["expected"]:
+    if canonical_fingerprint(identity) != controls["expected_identity_id"]:
         raise ValueError("cad.cold archive must match the producer's accepted source and field identities")
     epoch = validate_meshing_accepted_epochs(records)[-1]
     carrier = epoch.carrier
@@ -2793,7 +2993,7 @@ def _cad_continue_restored(
         carrier.mesh,
         carrier.geometry,
         carrier.audit,
-        archive_limits=ArrayArchiveLimits(),
+        archive_limits=archive_limits,
         budget=budget,
     )
     renewed.require_passed()
@@ -2803,7 +3003,7 @@ def _cad_continue_restored(
         carrier.mesh,
         carrier.geometry,
         carrier.audit,
-        limits=ArrayArchiveLimits(),
+        limits=archive_limits,
         budget=budget,
     )
     declaration = epoch.declarations[0]
@@ -2893,16 +3093,114 @@ def _cad_p2_checkpoint(
         "accepted_data": {"accepted_epochs": (accepted,)},
     }
     expected = _cad_checkpoint_identity(records)
-    with prepare_cold_worker(
-        "tools.meshing_qualification.scenarios.cad", deadline=deadline, ledger=ledger
-    ) as worker:
-        receipt = ledger.run(
-            "physical_accepted_epoch_checkpoint",
-            lambda: write_meshing_source_closure(
-                directory / "cad.physical.checkpoint.zip", records, limits=ArrayArchiveLimits()
-            ),
+    archive_limits = qualification_archive_limits(args)
+
+    def prepare_and_write(
+        budget: CoordinateEnclosureBudget,
+    ) -> MeshingSourceClosureReceipt:
+        deadline.remaining()
+        request = certificate.request
+        coverage = certificate.coverage
+        if (
+            certificate.embedding is None
+            or certificate.fidelity is None
+            or not isinstance(
+                coverage, phx.geometry.ApproximateSourceCoverageCertificate
+            )
+            or coverage.fidelity.cad_closure is None
+        ):
+            raise ValueError(
+                "cad.checkpoint must retain current validity, embedding, approximate coverage and issued CAD closure owners"
+            )
+        if (
+            not isinstance(request.domain, phx.geometry.CadSourceDomain)
+            or request.cell_regions is None
+            or not isinstance(request.source, phx.geometry.MeshingDomainBoundarySource)
+            or request.fidelity_tolerance is None
+            or request.junction_vertices is not None
+        ):
+            raise ValueError(
+                "cad.checkpoint prepared evidence must retain the complete original CAD certification request"
+            )
+        prepared = MeshCertificationPreparedEvidence(
+            carrier.mesh,
+            carrier.geometry,
+            carrier.audit.validity,
+            schedule=request.schedule,
+            domain=request.domain,
+            cell_regions=request.cell_regions,
+            embedding=certificate.embedding,
+            coverage=coverage,
+            limits=request.limits,
+            source=request.source,
+            fidelity_tolerance=request.fidelity_tolerance,
+            fidelity_sample_order=request.fidelity_sample_order,
+            scoped_fidelity=request.scoped_fidelity,
+            budget=budget,
+        )
+        renewed = recertify_restored_meshing_source(
+            request,
+            carrier.mesh,
+            carrier.geometry,
+            carrier.audit,
+            archive_limits=archive_limits,
+            prepared=prepared,
+            budget=budget,
+        )
+        require_same_source_evidence(
+            certificate,
+            renewed,
+            carrier.mesh,
+            carrier.geometry,
+            carrier.audit,
+            limits=archive_limits,
+            budget=budget,
         )
         deadline.remaining()
+        receipt = write_meshing_source_closure(
+            directory / "cad.physical.checkpoint.zip",
+            records,
+            limits=archive_limits,
+        )
+        deadline.remaining()
+        return receipt
+
+    def retain_carrier(
+        _: MeshingSourceClosureReceipt,
+    ) -> phx.meshing.CellMeshingResult:
+        return carrier
+
+    with (
+        meshing_source_owner_reconstruction_scope(archive_limits=archive_limits),
+        prepare_cold_worker(
+            "tools.meshing_qualification.scenarios.cad", deadline=deadline, ledger=ledger
+        ) as worker,
+    ):
+        consumed = ledger.run(
+            "physical_accepted_epoch_checkpoint",
+            lambda: execute_native_consumer(
+                carrier,
+                published.generation_specification.limits,
+                prepare_and_write,
+                failure_factory=qualification_failure,
+                target=retain_carrier,
+                observe_managed_admission=True,
+            ),
+        )
+        receipt = consumed.value
+        deadline.remaining()
+        warm_execution = consumed.result.execution_evidence
+        if warm_execution is None:
+            raise RuntimeError("CAD warm archive request must retain its native receipt")
+        warm_execution.require_valid()
+        warm_request = {
+            "owner_id": warm_execution.owner_id,
+            "work_units": int(np.asarray(warm_execution.total_work_units)),
+            "geometry_queries": int(np.asarray(warm_execution.total_geometry_queries)),
+            "receipt_fingerprint": array_tree_fingerprint(warm_execution),
+            "limits_id": published.generation_specification.limits.limits_id,
+            "execution_evidence": warm_execution.to_record(),
+        }
         try:
             restored = ledger.run(
                 "fresh_process_accepted_P2_continuation",
@@ -2910,7 +3208,11 @@ def _cad_p2_checkpoint(
                     receipt.path,
                     receipt.content_id,
                     {
-                        "expected": expected,
+                        # Bind the complete static/numerical identity without
+                        # copying a potentially multi-megabyte tree into IPC.
+                        "expected_identity_id": canonical_fingerprint(expected),
+                        "controls": args.to_record(),
+                        "archive_limits": archive_limit_values(archive_limits),
                         "manufactured_length": case.manufactured_length,
                         "compilation_id": solve["compilation_id"],
                         "seed_fingerprint": solve["continuation"]["seed_fingerprint"],
@@ -2951,7 +3253,10 @@ def _cad_p2_checkpoint(
         "prepared_fe_caches_serialized": False,
         "accepted_fields_bitwise_preserved": True,
         "field_names": sorted(accepted.fields),
+        "archive_limits": archive_limit_values(archive_limits),
+        "requested_maximum_recipe_bytes": args.maximum_recipe_bytes,
         "accepted_epoch_ids": expected["accepted_epoch_ids"],
+        "warm_archive_request": warm_request,
         "fresh_interpreter": restored,
         "cold_process": ledger.record["cold_process"],
     }
@@ -3081,6 +3386,7 @@ def _cad_case_resolution(
             ),
             target=lambda value: value[0].carrier,
             failure_factory=qualification_failure,
+            observe_managed_admission=True,
         ),
     )
     accepted, continued, section["solve"] = consumed.value

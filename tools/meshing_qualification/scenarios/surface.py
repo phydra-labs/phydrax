@@ -39,6 +39,7 @@ from phydrax.meshing import (
 from tools._meshing_cases import prepare_sphere_case
 from tools.meshing_qualification._controls import (
     capacity_meshing_limits,
+    qualification_archive_limits,
     QualificationControls,
 )
 from tools.meshing_qualification._physics import (
@@ -1187,6 +1188,7 @@ def _surface_qualification_restart(
                 "law": law,
                 "repeats": args.repeats,
                 "target_error": args.target_error,
+                "maximum_recipe_bytes": evidence["maximum_recipe_bytes"],
             },
         )
     except ColdWorkerTimeout as failure:
@@ -1252,11 +1254,13 @@ def _surface_qualification_checkpoint(
             ),
             {"history": history, "result": result},
         )
-    limits = ArrayArchiveLimits()
+    limits = qualification_archive_limits(args)
     policy = asdict(limits)
     policy["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
     evidence = {
         "archive_limits": policy,
+        "requested_maximum_recipe_bytes": args.maximum_recipe_bytes,
+        "maximum_recipe_bytes": limits.max_manifest_bytes,
         "prepared_fe_caches_serialized": False,
         "archives": [],
     }
@@ -1336,6 +1340,7 @@ def _surface_qualification_checkpoint(
             publication = {
                 "path": str(receipt.path),
                 "content_id": receipt.content_id,
+                "maximum_recipe_bytes": limits.max_manifest_bytes,
                 "fingerprint": array_tree_fingerprint(records),
                 "physical": physical,
                 "material": material_identity,
@@ -1365,6 +1370,7 @@ def _surface_qualification_renew_epoch(
     *,
     continue_solve: bool,
     budget: phx.discretization.CoordinateEnclosureBudget | None,
+    archive_limits: ArrayArchiveLimits,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Re-earn geometry and continue only from the archived accepted coefficients."""
     if budget is None:
@@ -1375,7 +1381,7 @@ def _surface_qualification_renew_epoch(
         carrier.mesh,
         carrier.geometry,
         carrier.audit,
-        archive_limits=ArrayArchiveLimits(),
+        archive_limits=archive_limits,
         budget=budget,
     )
     report.require_passed()
@@ -1468,6 +1474,7 @@ def _surface_qualification_restore_epoch(
     target_error: float,
     *,
     continue_solve: bool,
+    archive_limits: ArrayArchiveLimits,
     budget: phx.discretization.CoordinateEnclosureBudget,
 ) -> tuple[phx.meshing.CellMeshingResult, dict[str, Any], dict[str, Any] | None, float]:
     """Restore and consume one publication inside its already-open cold request."""
@@ -1475,7 +1482,7 @@ def _surface_qualification_restore_epoch(
     restored = read_meshing_source_closure(
         Path(publication["path"]),
         expected_content_id=publication["content_id"],
-        limits=ArrayArchiveLimits(),
+        limits=archive_limits,
         budget=budget,
     )
     if array_tree_fingerprint(restored) != publication["fingerprint"]:
@@ -1495,6 +1502,7 @@ def _surface_qualification_restore_epoch(
     renewed, continued = _surface_qualification_renew_epoch(
         restored, history[-1], publication, law, epoch, repeats, target_error,
         continue_solve=continue_solve,
+        archive_limits=archive_limits,
         budget=budget,
     )
     return history[-1].carrier, renewed, continued, read_seconds
@@ -1508,6 +1516,7 @@ def _surface_qualification_cold_worker(
     repeats: int,
     target_error: float,
     deadline: Deadline,
+    archive_limits: ArrayArchiveLimits,
 ) -> ColdWorkerReport:
     """Renew every retained native map and continue the final accepted PDE state."""
 
@@ -1524,11 +1533,20 @@ def _surface_qualification_cold_worker(
     read_seconds = 0.0
     continuation = None
     for epoch, publication in enumerate(publications):
+        if publication.get("maximum_recipe_bytes") != archive_limits.max_manifest_bytes:
+            raise qualification_failure(
+                "_surface_qualification_cold_worker",
+                "Surface publication recipe cap changed from the authenticated control.",
+                {
+                    "publication": publication,
+                    "maximum_recipe_bytes": archive_limits.max_manifest_bytes,
+                },
+            )
         control_started = perf_counter()
         controls = read_meshing_source_execution_controls(
             Path(publication["path"]),
             expected_content_id=publication["content_id"],
-            limits=ArrayArchiveLimits(),
+            limits=archive_limits,
         )
         read_seconds += perf_counter() - control_started
         restored_request = originals.execute_native_request(
@@ -1537,6 +1555,7 @@ def _surface_qualification_cold_worker(
             lambda budget: _surface_qualification_restore_epoch(
                 publication, law, epoch, repeats, target_error,
                 continue_solve=epoch == len(publications) - 1,
+                archive_limits=archive_limits,
                 budget=budget,
             ),
             target=lambda value: value[0],
@@ -1614,6 +1633,7 @@ def _surface_qualification_adapt(
     )
     policy = phx.meshing.MeshAdaptationPolicy(
         phx.meshing.MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
+        maximum_passes=64,
         limits=request.limits,
         association_transfer=SurfaceAssociationTransfer(support),
         geometry_transition=phx.discretization.CellGeometryTransitionPolicy(
@@ -1630,7 +1650,9 @@ def _surface_qualification_adapt(
                 metric, coordinate_contract=result.coordinate_contract
             ),
             policy=policy,
-        )
+            observe_managed_admission=True,
+        ),
+        observe_managed_admission=True,
     )
     if (
         adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
@@ -2220,6 +2242,9 @@ def qualify_native_surface(args: QualificationControls) -> dict[str, object]:
 def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
     """Run the scenario-owned cold consumer on its one control packet."""
     controls = packet.controls
+    archive_limits = ArrayArchiveLimits(
+        max_manifest_bytes=controls["maximum_recipe_bytes"]
+    )
     return _surface_qualification_cold_worker(
         packet.archive_path,
         packet.content_id,
@@ -2228,6 +2253,7 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
         int(controls["repeats"]),
         float(controls["target_error"]),
         packet.deadline,
+        archive_limits,
     )
 
 

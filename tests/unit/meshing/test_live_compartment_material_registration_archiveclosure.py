@@ -1,13 +1,15 @@
 """Authenticate real live image issuance without portable cold authority."""
 
-from copy import copy
 import gc
 import weakref
+from copy import copy
 
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import NativeExecutionScope
+from phydrax.discretization import CoordinateEnclosureBudget
 from phydrax.geometry._compartments import CompartmentMeshingSource
 from phydrax.lifecycle._meshing_registration import (
     _material_root,
@@ -21,8 +23,28 @@ from tests._support.coordinate_references import (
 from tests._support.image_sources import _execute, _source, image_specification
 
 
+type ColdMaterialPublication = tuple[
+    CompartmentMeshingSource,
+    phx.meshing.VolumeMeshingSpec,
+    phx.meshing.NativeMeshingOptions,
+    phx.meshing.CellMeshingResult,
+]
+type RegistrationOwner = (
+    CompartmentMeshingSource
+    | phx.meshing.CurveMeshingSpec
+    | phx.meshing.SurfaceMeshingSpec
+    | phx.meshing.VolumeMeshingSpec
+    | phx.meshing.NativeMeshingOptions
+    | phx.meshing.CellMeshingResult
+    | phx.meshing.MeshCertificationReport
+    | phx.meshing.RegionMeshingEvidence
+    | NativeExecutionScope
+    | CoordinateEnclosureBudget
+)
+
+
 @pytest.fixture(scope="module")
-def cold_material_publication():
+def cold_material_publication() -> ColdMaterialPublication:
     source = _source(np.ones((1, 1, 1), dtype=np.int16))
     specification = image_specification(source)
     options = phx.meshing.NativeMeshingOptions("image_material_tetrahedral")
@@ -35,7 +57,7 @@ def cold_material_publication():
 
 
 def test_cold_material_certificate_has_no_unbudgeted_authority(
-    cold_material_publication,
+    cold_material_publication: ColdMaterialPublication,
 ) -> None:
     assert not has_issued_compartment_material_registration(
         *cold_material_publication, budget=None
@@ -43,7 +65,7 @@ def test_cold_material_certificate_has_no_unbudgeted_authority(
 
 
 def test_host_ledger_cannot_authorize_material_registration(
-    cold_material_publication,
+    cold_material_publication: ColdMaterialPublication,
 ) -> None:
     _, specification, _, _ = cold_material_publication
     with coordinate_reference_budget(specification.limits) as budget:
@@ -58,7 +80,7 @@ def test_host_ledger_cannot_authorize_material_registration(
 
 
 def test_new_paid_root_cannot_promote_cold_material_publication(
-    cold_material_publication,
+    cold_material_publication: ColdMaterialPublication,
 ) -> None:
     _, specification, _, _ = cold_material_publication
     with native_meshing_request(specification.limits) as (scope, budget, _):
@@ -86,7 +108,7 @@ def test_new_paid_root_cannot_promote_cold_material_publication(
 
 
 def test_same_root_distinct_ledgers_still_cannot_adopt_cold_authority(
-    cold_material_publication,
+    cold_material_publication: ColdMaterialPublication,
 ) -> None:
     _, specification, _, _ = cold_material_publication
     with native_meshing_request(specification.limits) as (root, first, _):
@@ -207,7 +229,9 @@ def test_genuine_live_material_authority_reauthenticates_payload_and_context(
                 )
 
 
-def _genuine_registration_weak_owners():
+def _genuine_registration_weak_owners() -> tuple[
+    tuple[weakref.ref[RegistrationOwner], ...], tuple[int, int, int, int]
+]:
     source = _source(np.ones((1, 1, 1), dtype=np.int16))
     specification = image_specification(source)
     options = phx.meshing.NativeMeshingOptions("image_material_tetrahedral")

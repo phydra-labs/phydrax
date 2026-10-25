@@ -289,11 +289,11 @@ def qualify_native_image(args: QualificationControls) -> dict[str, object]:
                 "process_peak_scope": PEAK_RESIDENT_SCOPE,
                 "generation": {
                     "result_id": identities["result_id"],
-                    "mesh_id": identities["mesh_id"],
                     "resource_guarantees": record["publication_resource_guarantees"],
                     "resource_binding": record["publication_resource_binding"],
                     "execution_evidence": record["native_execution"],
                 },
+                "device_memory": memory["device"],
                 # One accepted transport epoch on the generated publication.
                 "epochs": [
                     {

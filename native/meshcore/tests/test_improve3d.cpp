@@ -71,6 +71,14 @@ void test_improvement_removes_slivers_preserving_constraints() {
   PHX_CHECK(phx_mc_tet_mesh_refine(mesh, nullptr, 2.0, 1 << 20, int64_t{1} << 40,
                                    refine_counters) == PHX_MC_OK);
   const Exported refined = phx::mc::test::export_mesh(mesh);
+  // The coupled optimizer can expand through these boundary rings. Their
+  // ghost closure must never become a physical optimization variable.
+  PHX_CHECK(refined.faces.size() >= 3);
+  phx::mc::NativeVector<int32_t> boundary_star, boundary_ring;
+  PHX_CHECK(mesh->mesh->edge_ring(
+      refined.faces[0], refined.faces[1], boundary_star, boundary_ring));
+  PHX_CHECK(std::find(boundary_ring.begin(), boundary_ring.end(), phx::mc::kGhostVertex) !=
+            boundary_ring.end());
   int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS];
   const int32_t status = phx_mc_tet_mesh_improve(mesh, 12.0, 0.0, 20, int64_t{1} << 40, counters);
   const Exported improved = phx::mc::test::export_mesh(mesh);

@@ -25,11 +25,12 @@ _ARTIFACT_RESTORE_VALIDATORS_BY_ID: dict[str, Callable[[Any], None]] = {}
 
 
 def _load_builtin_registrations() -> None:
-    """Import the complete package so that every built-in registration exists.
+    """Import available built-ins without requiring absent optional providers.
 
     The package loads lazily, so a cold restore cannot rely on a prior import of
     the owner of a serialized identity. The fixed public module list and the
-    facades' own re-exports, never the serialized identity, select what loads.
+    facades' declared owners and optional dependencies, never the serialized
+    identity, select what loads.
     """
     from .._deferred_exports import load_all, load_module
     from .._package_modules import PUBLIC_MODULES

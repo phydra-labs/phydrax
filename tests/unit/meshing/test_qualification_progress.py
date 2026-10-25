@@ -1,4 +1,4 @@
-"""Family reporting survives interruption without changing scientific work."""
+"""Qualification reporting survives interruption without changing scientific work."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
-from tools.meshing_qualification import _family_progress as owner
+from tools.meshing_qualification import _progress as owner
 from tools.meshing_qualification._runtime import Deadline, observe_stages, StageLedger
 
 
@@ -28,7 +28,7 @@ _COHORT = {
 
 def test_progress_records_entries_exits_and_immutable_first_failure(tmp_path: Path) -> None:
     path = tmp_path / "run-progress.json"
-    progress = owner.FamilyProgress(path, {"timeout": 60.0})
+    progress = owner.QualificationProgress(path, {"timeout": 60.0})
     record = {"runtime": _COHORT, "status": "running"}
     deadline = Deadline(perf_counter() + 60)
     try:
@@ -41,7 +41,7 @@ def test_progress_records_entries_exits_and_immutable_first_failure(tmp_path: Pa
                 ledger.run("later", lambda: (_ for _ in ()).throw(RuntimeError("later error")))
     finally:
         progress.close()
-    saved = owner.read_family_progress(path)
+    saved = owner.read_progress(path)
     assert saved["cohort"] == _COHORT
     assert [(event["phase"], event["event"]) for event in saved["events"]] == [
         ("accepted", "entry"), ("accepted", "exit"),
@@ -56,7 +56,7 @@ def test_progress_records_entries_exits_and_immutable_first_failure(tmp_path: Pa
 
 
 def test_progress_records_live_resource_semantics_without_charging(tmp_path: Path) -> None:
-    progress = owner.FamilyProgress(tmp_path / "live.json", {})
+    progress = owner.QualificationProgress(tmp_path / "live.json", {})
     record = {"runtime": _COHORT}
     try:
         with NativeExecutionScope(NativeExecutionLimits(100, 100, 10, 1000000, 60)) as scope:
@@ -70,7 +70,7 @@ def test_progress_records_live_resource_semantics_without_charging(tmp_path: Pat
             assert before.remaining_managed_bytes == after.remaining_managed_bytes
     finally:
         progress.close()
-    resources = owner.read_family_progress(progress.path)["latest"]["resources"]
+    resources = owner.read_progress(progress.path)["latest"]["resources"]
     assert resources["cumulative_admitted_or_consumed_work_units"] == 3
     assert resources["cumulative_admitted_or_consumed_geometry_queries"] == 2
     assert resources["simultaneous_admitted_managed_bytes"] == 0
@@ -89,7 +89,7 @@ def test_progress_does_not_retain_arrays_or_block_science(
         original(path, payload)
 
     monkeypatch.setattr(owner, "_atomic_snapshot", blocked)
-    progress = owner.FamilyProgress(tmp_path / "nonblocking.json", {})
+    progress = owner.QualificationProgress(tmp_path / "nonblocking.json", {})
     array = np.arange(8)
     reference = weakref.ref(array)
     try:
@@ -109,7 +109,7 @@ def test_atomic_writer_failure_preserves_prefix_and_scientific_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prefix = tmp_path / "report-failure"
-    monkeypatch.setenv("FAMILY_COMPACT_PROFILE_PREFIX", str(prefix))
+    monkeypatch.setenv("PHYDRAX_MESHING_EVIDENCE_PREFIX", str(prefix))
     original = owner.os.replace
     replacements = 0
 
@@ -127,11 +127,11 @@ def test_atomic_writer_failure_preserves_prefix_and_scientific_result(
         assert StageLedger(record).run("science", lambda: 23) == 23
         return record
 
-    assert owner.run_with_family_progress({}, science) is record
+    assert owner.run_with_progress({}, science) is record
     assert record["status"] == "passed"
     assert record["reporting_status"] == "failed"
     assert record["reporting_failures"][0]["message"] == "injected reporting failure"
-    saved = owner.read_family_progress(Path(str(prefix) + "-progress.json"))
+    saved = owner.read_progress(Path(f"{prefix}.process-{os.getpid()}-progress.json"))
     assert len(saved["events"]) == 1
     assert saved["latest"]["event"] == "entry"
     assert list(tmp_path.glob("*.tmp")) == []
@@ -142,9 +142,9 @@ def test_interrupted_process_has_readable_cohort_bound_stage_prefix(tmp_path: Pa
     script = """
 import os, sys
 from pathlib import Path
-from tools.meshing_qualification._family_progress import FamilyProgress
+from tools.meshing_qualification._progress import QualificationProgress
 from tools.meshing_qualification._runtime import StageLedger, observe_stages
-progress = FamilyProgress(Path(sys.argv[1]), {'timeout': 1200})
+progress = QualificationProgress(Path(sys.argv[1]), {'timeout': 1200})
 record = {'runtime': {'source_revision':'s', 'build_id':'b', 'backend':'cpu', 'meshcore_build':{'binary_digest':'n'}}}
 def interrupted():
     progress.flush()
@@ -157,8 +157,8 @@ with observe_stages(progress):
     reader = """
 import json, sys
 from pathlib import Path
-from tools.meshing_qualification._family_progress import read_family_progress
-print(json.dumps(read_family_progress(Path(sys.argv[1]))))
+from tools.meshing_qualification._progress import read_progress
+print(json.dumps(read_progress(Path(sys.argv[1]))))
 """
     restarted = subprocess.run(
         [sys.executable, "-c", reader, str(path)], check=True, text=True,
@@ -174,16 +174,37 @@ print(json.dumps(read_family_progress(Path(sys.argv[1]))))
 
 def test_cold_writer_uses_separate_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prefix = tmp_path / "cold"
-    monkeypatch.setenv("FAMILY_COMPACT_PROFILE_PREFIX", str(prefix))
+    monkeypatch.setenv("PHYDRAX_MESHING_EVIDENCE_PREFIX", str(prefix))
     record = {"runtime": _COHORT, "status": "passed"}
-    assert owner.run_with_family_progress({}, lambda: record, cold=True) is record
-    saved = owner.read_family_progress(Path(f"{prefix}.cold-{os.getpid()}-progress.json"))
+    assert owner.run_with_progress({}, lambda: record, cold=True) is record
+    saved = owner.read_progress(Path(f"{prefix}.process-{os.getpid()}-cold-progress.json"))
     assert saved["latest"]["event"] == "scenario_exit"
-    assert not Path(str(prefix) + "-progress.json").exists()
+    assert not Path(f"{prefix}.process-{os.getpid()}-progress.json").exists()
 
 
 def test_reader_rejects_noncontiguous_evidence(tmp_path: Path) -> None:
     path = tmp_path / "invalid.json"
-    path.write_text(json.dumps({"schema": "family-progress-v1", "events": [{"sequence": 1}]}))
+    path.write_text(json.dumps({"kind": "meshing-qualification-progress", "events": [{"sequence": 1}]}))
     with pytest.raises(ValueError, match="contiguous"):
-        owner.read_family_progress(path)
+        owner.read_progress(path)
+
+
+def test_reporting_failure_cannot_certify_a_completed_scientific_workflow() -> None:
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification._records import _finalize_mandatory_cli_record
+
+    record: dict[str, Any] = {
+        "status": "passed",
+        "independent_scientific_certification": "passed",
+        "mandatory_workflow_completion": "complete",
+        "case_contract_completion": "complete",
+        "reporting_status": "failed",
+        "reporting_failures": [{"type": "OSError", "message": "evidence disk full"}],
+    }
+    result = _finalize_mandatory_cli_record(
+        QualificationControls(scenario="native-family-lifecycle"), record,
+    )
+    assert result["independent_scientific_certification"] == "passed"
+    assert not result["positive_completion"]
+    assert not result["workflow_result"]["case_accepted"]
+    assert not result["workflow_result"]["reporting_complete"]

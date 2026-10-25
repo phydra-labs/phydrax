@@ -478,8 +478,42 @@ def extract_hex_dominant(
         workspace.set_bound(
             admission.selection_scratch + admission.scratch + max(block_bounds, default=0)
         )
+        # Each transition block is built once here and once more, compacted,
+        # below; the dual hex mesh's construction is metered by its owner.
+        construction_work = sum(
+            cell_mesh_owner.cell_block_construction_work(count, arity)
+            for count, arity in counts
+        )
+        scope.charge(work=construction_work)
         transition = _prepare_hex_transition_blocks(dual, pieces, policy, ticket)
         ticket.consume(admission.work)
+        cell_rows = sum(count for count, _ in counts)
+        entries = sum(count * arity for count, arity in counts)
+        points = dual.mesh.coordinates.shape[0]
+        # Faces and edges of the published hex/pyramid/tetrahedron cells.
+        face_upper = 6 * pieces.hexes.shape[0] + 5 * len(pieces.pyramids)
+        face_upper += 4 * len(pieces.tetrahedra)
+        edge_upper = 12 * pieces.hexes.shape[0] + 8 * len(pieces.pyramids)
+        edge_upper += 6 * len(pieces.tetrahedra)
+        # Compaction: the concatenated corners with their used-vertex sort and
+        # block remap, the compact map, coordinate, identity and support
+        # gathers, and the parent copy. Certification: ancestry keys over
+        # every source entity corner and every target entity's four-wide
+        # corner supports, then valences, boundary and singular selections.
+        scope.charge(
+            work=construction_work
+            + entries * (entries.bit_length() + 3)
+            + 10 * points
+            + cell_rows
+            + 2
+            * sum(
+                source.topology.entities(degree).count * (degree + 1)
+                for degree in range(4)
+            )
+            + 8 * (points + 2 * edge_upper + 4 * face_upper + 8 * cell_rows)
+            + 2 * entries
+            + 4 * points
+        )
         compact = _compact_hex_transition(
             dual, selection, transition, limits, scope=scope
         )

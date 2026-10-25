@@ -419,9 +419,14 @@ def test_native_motion_handover_authenticates_actual_source_and_target(
             source, coordinates, motion_id="issued-interior", plan=plan,
         )
     target = certified_carrier(moved)
+    from phydrax.meshing._measurements import (
+        validate_native_execution_interchange,
+    )
     receipt = target.execution_evidence
     previous = before.execution_evidence
     assert receipt is not None and previous is not None
+    observation = validate_native_execution_interchange(receipt.to_record())
+    assert observation["managed_admission_peak_bytes_upper"] is not None
     assert receipt is not previous
     assert receipt.preparation_evidence is None
     assert len(receipt.history_evidence) == 1

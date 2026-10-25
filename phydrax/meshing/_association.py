@@ -3264,8 +3264,8 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 protected |= unsupported
             return protected
 
+    @staticmethod
     def _inherit_target_strata(
-        self,
         source: result_owner.CellMeshingResult,
         lineage: lineage_records_owner.MeshLineage,
         target: cell_mesh_owner.CellMesh,
@@ -3331,6 +3331,15 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     np.minimum.reduceat(parent_indices, starts)
                     == np.maximum.reduceat(parent_indices, starts)
                 )
+                if dimension == 0:
+                    # Equal facet labels need not define a convex carrier.
+                    # New multi-parent vertices inherit from their source
+                    # edge/face/cell below, not from endpoint label agreement.
+                    one_parent = (
+                        np.minimum.reduceat(parents, starts)
+                        == np.maximum.reduceat(parents, starts)
+                    )
+                    same &= present[rows] | one_parent
                 agreed = rows[same]
                 dims[agreed] = parent_dimensions[starts[same]]
                 indices[agreed] = parent_indices[starts[same]]

@@ -54,7 +54,11 @@ from phydrax.geometry._source_boundary_records import (
 )
 
 from ..._bvh import prepare_bvh
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
@@ -76,14 +80,15 @@ from .._certified_implicit import (
 )
 from .._contracts import CompiledGeometry, GeometryKind
 from ..simplicial import TriangleMesh
+from ._analytic_profile import AnalyticDiscoveryShape
 from ._discovery import (
+    _admitted_batch,
+    _EDGE_ROOT_MAXIMUM_STEPS,
+    _QEF_REGULARIZATION_LEVELS,
     CORNER_OFFSETS,
     EDGE_AXIS,
     EDGE_LOWER,
     INCIDENT_CELL_OFFSETS,
-    _admitted_batch,
-    _EDGE_ROOT_MAXIMUM_STEPS,
-    _QEF_REGULARIZATION_LEVELS,
     isolate_roots,
     metered_self_overlap_pairs,
     qef_vertices,
@@ -97,7 +102,6 @@ from ._enclosure import (
     field_bounds,
     query_budget,
 )
-from ._analytic_profile import AnalyticDiscoveryShape
 from ._policy import (
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
@@ -1929,6 +1933,28 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             HostFloat64[Literal[2], Literal[3]],
             "domain",
         )
+        if (
+            lower.shape[0] == 0
+            or not np.all(np.isfinite(domain_))
+            or np.any(domain_[0] >= domain_[1])
+            or not np.all(np.isfinite(lower))
+            or not np.all(np.isfinite(upper))
+            or np.any(lower >= upper)
+            or np.any(lower < domain_[0])
+            or np.any(upper > domain_[1])
+            or np.any(np.isnan(value_lower))
+            or np.any(np.isnan(value_upper))
+            or np.any(value_lower > value_upper)
+            or isinstance(maximum_level, bool)
+            or not isinstance(maximum_level, int)
+            or not 0 <= maximum_level <= 20
+            or np.any(codes < 0)
+            or np.any(codes >= 1 << (3 * maximum_level))
+            or np.any(codes[1:] <= codes[:-1])
+        ):
+            raise ValueError(
+                "ImplicitVolumeQuery leaves must be finite ordered boxes in the declared domain with ordered Morton addresses and valid value enclosures"
+            )
         self.bounds = bounds
         self.leaf_lower = lower
         self.leaf_upper = upper
@@ -1943,6 +1969,14 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             {
                 "kind": "implicit-volume-query",
                 "enclosure": bounds.enclosure,
+                "source": array_tree_fingerprint((bounds.kernel, bounds.state)),
+                "kernel_type": (
+                    type(bounds.kernel).__module__,
+                    type(bounds.kernel).__qualname__,
+                ),
+                "domain": array_tree_fingerprint(domain_),
+                "leaf_code_starts": array_tree_fingerprint(codes),
+                "maximum_level": maximum_level,
                 "leaf_lower": array_tree_fingerprint(lower),
                 "leaf_upper": array_tree_fingerprint(upper),
                 "leaf_value_lower": array_tree_fingerprint(value_lower),
@@ -1950,10 +1984,30 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def reconstruction_query_count(self) -> int:
+        """The original enclosure owner's complete leaf-reproof query count."""
+        return self.bounds.box_query_count(self.leaf_lower.shape[0])
+
     @classmethod
     @checked
-    def from_stored_fields(cls: type[Self], value: ImplicitVolumeQuery, /) -> Self:
-        """Rebuild volume queries from the retained bounds and octree leaves."""
+    def from_stored_fields(
+        cls: type[Self],
+        value: ImplicitVolumeQuery,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
+        """Re-earn retained leaf classifications against the current field."""
+        current = value.bounds.boxes(
+            np.asarray(value.leaf_lower), np.asarray(value.leaf_upper), budget=budget
+        )
+        if np.any(current.value_lower < value.leaf_value_lower) or np.any(
+            current.value_upper > value.leaf_value_upper
+        ):
+            raise ValueError(
+                "ImplicitVolumeQuery stored leaf values must enclose current independent field bounds"
+            )
         return cls(
             value.bounds,
             value.leaf_lower,
@@ -1964,6 +2018,30 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             value.domain,
             maximum_level=value.maximum_level,
         )
+
+    def require_bound(
+        self,
+        geometry: CompiledGeometry,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
+        """Authenticate current discovery bytes and the original field owner."""
+        if not tree_content_equal(
+            (self.bounds.kernel, self.bounds.state), (geometry.kernel, geometry.state)
+        ):
+            raise ValueError(
+                "ImplicitVolumeQuery.bounds must identify the retained geometry and design state"
+            )
+        fresh = type(self).from_stored_fields(self, budget=budget)
+        if self.query_id != fresh.query_id or not np.array_equal(
+            self.leaf_classes, fresh.leaf_classes
+        ) or self.certified != fresh.certified:
+            raise ValueError(
+                "ImplicitVolumeQuery identity and classes must match current retained discovery values"
+            )
+        if budget is not None:
+            budget.retain_basis((self,))
 
     def classify_points(
         self, points: ArrayLike, /, *, budget: CoordinateEnclosureBudget | None = None

@@ -285,7 +285,7 @@ void test_inspected_curved_collapse_commits_only_exact_claims() {
   for (int64_t i = 2 * kRing; i < count; ++i) {
     PHX_CHECK(sources[static_cast<std::size_t>(i)] == 0);
     PHX_CHECK(deviations[static_cast<std::size_t>(i)] == 0.25);
-    PHX_CHECK(generations[static_cast<std::size_t>(i)] == generation);
+    PHX_CHECK(generations[static_cast<std::size_t>(i)] == generation + 1);
   }
   int64_t ancestors = -1;
   PHX_CHECK(phx_mc_tet_mesh_source_evidence(mesh, 0, &ancestors, nullptr, nullptr, nullptr,
@@ -634,7 +634,7 @@ void test_successive_same_source_collapses_preserve_raw_and_outward_claim_rows()
         const auto claims = handle->mesh->curved_claims();
         for (int64_t i = 0; i < plan.count; ++i) {
           const auto& claim = claims[claims.size() - static_cast<std::size_t>(plan.count) + i];
-          PHX_CHECK(claim.source == 0 && claim.generation == plan.generation);
+          PHX_CHECK(claim.source == 0 && claim.generation == plan.generation + 1);
           const auto& face = handle->mesh->original_faces()[claim.row];
           for (int k = 0; k < 3; ++k) {
             for (int axis = 0; axis < 3; ++axis) {
@@ -891,6 +891,173 @@ void test_rounded_interior_carrier_is_unconstrained_only() {
   phx_mc_tet_mesh_free(handle);
 }
 
+void test_projected_insertion_claims_and_history_are_atomic() {
+  const Domain domain = bicone(true);
+  const auto digest = digests();
+  const double split[3] = {0.5, 0.0, 0.125};
+  const double projected[3] = {0.5, 0.0, 0.15625};
+  constexpr int64_t capacity = 64;
+  int32_t status = -1;
+  auto* retained = create(domain, true, &status);
+  PHX_CHECK(status == PHX_MC_OK);
+  auto* fresh = create(domain, true, &status);
+  PHX_CHECK(status == PHX_MC_OK);
+  const auto before = phx::mc::test::export_mesh(retained);
+  std::vector<int32_t> removed(4 * capacity), proposed(4 * capacity), faces(12 * capacity);
+  int64_t counts[5]{};
+  PHX_CHECK(phx_mc_tet_mesh_inspect_projected_edge_insertion(
+      retained, kTop, kFirstRing, split, projected, 0.5, 0, capacity, INT64_MAX,
+      removed.data(), proposed.data(), faces.data(), counts) == PHX_MC_OK);
+  PHX_CHECK(counts[0] > 0 && counts[1] > 0 && counts[4] > 1);
+  PHX_CHECK(phx::mc::test::export_mesh(retained) == before);
+  faces.resize(static_cast<std::size_t>(3 * counts[4]));
+  Domain candidate = domain;
+  candidate.points.insert(candidate.points.end(), projected, projected + 3);
+  // Public outward rows retain exact ordered coordinate authentication.
+  for (std::size_t row = 0; row < faces.size(); row += 3) std::swap(faces[row + 1], faces[row + 2]);
+  auto corners = coordinates(candidate, faces);
+  std::vector<double> deviations(static_cast<std::size_t>(counts[4]), 0.25);
+  int32_t inserted = -1;
+  phx_mc_tet_mesh_commit_edge_insertion_request request{
+      .mesh = retained, .first = kTop, .second = kFirstRing,
+      .split_position = split, .final_position = projected, .source_fraction = 0.5,
+      .maximum_cavity_cells = capacity, .insertion_kind = static_cast<int32_t>(counts[2]),
+      .accepted_generation = counts[3], .removed_count = counts[0],
+      .removed_tetrahedra = removed.data(), .proposed_count = counts[1],
+      .proposed_tetrahedra = proposed.data(), .target_size = 0.0,
+      .work_limit = INT64_MAX, .inserted_vertex = &inserted,
+      .projected_source = 0, .claim_count = counts[4], .claim_digest = digest.data(),
+      .claim_faces = faces.data(), .claim_coordinates = corners.data(),
+      .claim_deviations = deviations.data(),
+  };
+  const auto expect_refusal = [&]() {
+    PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&request) == PHX_MC_OK);
+    PHX_CHECK(inserted == -1);
+    PHX_CHECK(phx::mc::test::export_mesh(retained) == before);
+    PHX_CHECK(claim_count(retained) == 2 * kRing);
+    PHX_CHECK(handle_audit(retained));
+  };
+  ++request.accepted_generation;
+  expect_refusal();
+  --request.accepted_generation;
+  request.claim_digest = digest.data() + 32;
+  expect_refusal();
+  request.claim_digest = digest.data();
+  const double coordinate = corners[0];
+  corners[0] = std::nextafter(coordinate, 2.0);
+  expect_refusal();
+  corners[0] = coordinate;
+  deviations.back() = 2 * kTolerance;
+  expect_refusal();
+  deviations.back() = 0.25;
+  --request.claim_count;
+  expect_refusal();
+  ++request.claim_count;
+  auto duplicate = faces;
+  std::copy_n(duplicate.begin(), 3, duplicate.begin() + 3);
+  auto duplicate_coordinates = coordinates(candidate, duplicate);
+  request.claim_faces = duplicate.data();
+  request.claim_coordinates = duplicate_coordinates.data();
+  expect_refusal();
+  request.claim_faces = faces.data();
+  request.claim_coordinates = corners.data();
+  // The material-side binding order is not the certified public outward row.
+  auto inward = faces;
+  for (std::size_t row = 0; row < inward.size(); row += 3) std::swap(inward[row + 1], inward[row + 2]);
+  auto inward_coordinates = coordinates(candidate, inward);
+  request.claim_faces = inward.data();
+  request.claim_coordinates = inward_coordinates.data();
+  expect_refusal();
+  request.claim_faces = faces.data();
+  request.claim_coordinates = corners.data();
+  // Re-inspection restores the retained route; the second owner has never
+  // inspected and must independently earn the identical material/physical edit.
+  std::vector<int32_t> inspection_faces(12 * capacity);
+  int64_t inspected[5]{};
+  PHX_CHECK(phx_mc_tet_mesh_inspect_projected_edge_insertion(
+      retained, kTop, kFirstRing, split, projected, 0.5, 0, capacity, INT64_MAX,
+      removed.data(), proposed.data(), inspection_faces.data(), inspected) == PHX_MC_OK);
+  PHX_CHECK(std::equal(counts, counts + 5, inspected));
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&request) == PHX_MC_OK);
+  PHX_CHECK(inserted == static_cast<int32_t>(domain.points.size() / 3));
+  request.mesh = fresh;
+  const int64_t fresh_start = fresh->mesh->work();
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&request) == PHX_MC_OK);
+  PHX_CHECK(inserted == static_cast<int32_t>(domain.points.size() / 3));
+  const int64_t fresh_work = fresh->mesh->work() - fresh_start;
+  PHX_CHECK(fresh_work > 0);
+  for (bool enough : {false, true}) {
+    auto* bounded = create(domain, true, &status);
+    PHX_CHECK(status == PHX_MC_OK);
+    request.mesh = bounded;
+    request.work_limit = fresh_work - (enough ? 0 : 1);
+    PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&request) ==
+        (enough ? PHX_MC_OK : PHX_MC_CAPACITY_EXCEEDED));
+    PHX_CHECK((inserted >= 0) == enough);
+    if (!enough) {
+      PHX_CHECK(phx::mc::test::export_mesh(bounded) == before);
+      PHX_CHECK(claim_count(bounded) == 2 * kRing);
+    }
+    PHX_CHECK(handle_audit(bounded));
+    phx_mc_tet_mesh_free(bounded);
+  }
+  request.work_limit = INT64_MAX;
+  PHX_CHECK(phx::mc::test::export_mesh(retained) == phx::mc::test::export_mesh(fresh));
+  for (auto* handle : {retained, fresh}) {
+    PHX_CHECK(handle_audit(handle));
+    PHX_CHECK(phx::mc::test::all_positive(phx::mc::test::export_mesh(handle)));
+    PHX_CHECK(claim_count(handle) == 2 * kRing + counts[4]);
+    const auto claims = handle->mesh->curved_claims();
+    for (std::size_t row = 2 * kRing; row < claims.size(); ++row) {
+      PHX_CHECK(claims[row].generation == counts[3] + 1);
+    }
+    // Exported delegated rows are the certified public outward corners.
+    const auto original = handle->mesh->original_faces();
+    for (std::size_t row = 0; row < static_cast<std::size_t>(counts[4]); ++row) {
+      const auto& face = original[static_cast<std::size_t>(claims[2 * kRing + row].row)];
+      for (std::size_t k = 0; k < 3; ++k) {
+        const double* corner = handle->mesh->original_point(face[k]);
+        PHX_CHECK(std::equal(corner, corner + 3, corners.begin() + 9 * row + 3 * k));
+      }
+    }
+    int64_t ancestors = -1;
+    PHX_CHECK(phx_mc_tet_mesh_source_evidence(handle, 0, &ancestors, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+    PHX_CHECK(ancestors > 0);
+    request.mesh = handle;
+    PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&request) == PHX_MC_OK);
+    PHX_CHECK(inserted == -1);
+    phx_mc_tet_mesh_free(handle);
+  }
+}
+
+void test_curved_collapse_reports_retained_complete_cavity() {
+  const Domain domain = bicone(true);
+  int32_t status = -1;
+  auto* handle = create(domain, true, &status);
+  PHX_CHECK(status == PHX_MC_OK);
+  const auto before = phx::mc::test::export_mesh(handle);
+  const auto plan = inspect(handle, kTop, kFirstRing);
+  int64_t counts[2]{};
+  PHX_CHECK(phx_mc_tet_mesh_curved_collapse_cavity(
+      handle, kTop, kFirstRing, plan.generation, 0, 0, INT64_MAX,
+      nullptr, nullptr, counts) == PHX_MC_OK);
+  PHX_CHECK(counts[0] > counts[1] && counts[1] > 0);
+  std::vector<int32_t> removed(static_cast<std::size_t>(4 * counts[0]));
+  std::vector<int32_t> proposed(static_cast<std::size_t>(4 * counts[1]));
+  PHX_CHECK(phx_mc_tet_mesh_curved_collapse_cavity(
+      handle, kTop, kFirstRing, plan.generation, counts[0], counts[1], INT64_MAX,
+      removed.data(), proposed.data(), counts) == PHX_MC_OK);
+  PHX_CHECK(std::find(proposed.begin(), proposed.end(), kTop) == proposed.end());
+  PHX_CHECK(std::find(removed.begin(), removed.end(), kTop) != removed.end());
+  PHX_CHECK(phx::mc::test::export_mesh(handle) == before);
+  PHX_CHECK(phx_mc_tet_mesh_curved_collapse_cavity(
+      handle, kTop, kFirstRing, plan.generation + 1, 0, 0, INT64_MAX,
+      nullptr, nullptr, counts) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(counts[0] == 0 && counts[1] == 0);
+  phx_mc_tet_mesh_free(handle);
+}
+
 }  // namespace
 
 int main() {
@@ -907,5 +1074,7 @@ int main() {
   test_boundary_point_lookup_keeps_first_closed_row();
   test_legacy_create_is_unchanged_by_absent_declaration();
   test_rounded_interior_carrier_is_unconstrained_only();
+  test_projected_insertion_claims_and_history_are_atomic();
+  test_curved_collapse_reports_retained_complete_cavity();
   return phx::mc::test::finish("test_curved_collapse");
 }

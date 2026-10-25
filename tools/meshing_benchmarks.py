@@ -83,8 +83,13 @@ from tools.meshing_qualification._runtime import (
 from tools.meshing_qualification.brep_performance import (
     benchmark_brep_containment,
     benchmark_brep_containment_campaign,
+    benchmark_brep_interval_program,
     benchmark_brep_moments,
     benchmark_brep_orientation_audit,
+    benchmark_brep_preconditioners,
+    benchmark_brep_quadratic_bounds,
+    benchmark_cell_validity,
+    benchmark_homotopy_arithmetic,
 )
 from tools.meshing_qualification.kernel_performance import (
     benchmark_fresh_imports,
@@ -2969,6 +2974,11 @@ _CASES = {
     "brep-containment": benchmark_brep_containment,
     "brep-moments": benchmark_brep_moments,
     "brep-orientation-audit": benchmark_brep_orientation_audit,
+    "brep-preconditioners": benchmark_brep_preconditioners,
+    "brep-quadratic-bounds": benchmark_brep_quadratic_bounds,
+    "brep-interval-program": benchmark_brep_interval_program,
+    "cell-validity": benchmark_cell_validity,
+    "homotopy-arithmetic": benchmark_homotopy_arithmetic,
     "native-meshing": lambda resolution, repeats: benchmark_native_meshing(
         resolution, repeats
     ),

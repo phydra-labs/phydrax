@@ -18,7 +18,9 @@ import phydrax as phx
 from phydrax.geometry.reconstruction._robustness import remove_statistical_outliers
 from phydrax.typing import parse
 from tools.meshing_qualification._controls import QualificationControls, ReconstructionCase
+from tools.meshing_qualification.scenarios.envelope import _envelope_qualification_limits
 from tools.meshing_qualification.scenarios.reconstruction import (
+    _coverage_distance,
     _CENTER,
     _MAXIMUM_DISCARDED_GENUINE_FRACTION,
     _NEIGHBORHOOD_SIZE,
@@ -932,7 +934,10 @@ def test_reconstruction_schedule_prepares_only_requested_fixed_adaptation(
         box_plc(boundary=boundary), "authored-reconstructed-source", "original-r1"
     )
     specification, options = _reconstruction_qualification_request(
-        source, 20_000, 120.0, rounds
+        source,
+        QualificationControls(
+            capacity=20_000, timeout=120.0, adaptation_rounds=rounds
+        ),
     )
     schedule = options.volume_schedule
     if schedule is None:
@@ -946,6 +951,57 @@ def test_reconstruction_schedule_prepares_only_requested_fixed_adaptation(
     assert specification.limits.maximum_work_units == 20_000_000
     assert specification.limits.maximum_cells == 100_000
     assert specification.limits.maximum_wall_seconds == 120.0
+
+
+def test_reconstruction_qualification_limits_honor_absolute_resource_controls() -> None:
+    source = phx.meshing.NativePlcSource(
+        box_plc(), "authored-reconstructed-source", "original-r1"
+    )
+    args = QualificationControls(
+        capacity=20_000,
+        timeout=120.0,
+        maximum_work_units=123_456,
+        maximum_geometry_queries=234_567,
+        maximum_scratch_bytes=345_678,
+    )
+    specification, _ = _reconstruction_qualification_request(source, args)
+
+    assert specification.limits.maximum_work_units == 123_456
+    assert specification.limits.maximum_geometry_queries == 234_567
+    assert specification.limits.maximum_scratch_bytes == 345_678
+    assert specification.limits.maximum_cells == 100_000
+    assert specification.limits.maximum_wall_seconds == 120.0
+
+
+def test_envelope_qualification_limits_honor_absolute_resource_controls() -> None:
+    args = QualificationControls(
+        capacity=20,
+        timeout=17.0,
+        maximum_work_units=123_456,
+        maximum_geometry_queries=234_567,
+        maximum_scratch_bytes=345_678,
+    )
+    limits = _envelope_qualification_limits(args)
+
+    assert limits.maximum_work_units == 123_456
+    assert limits.maximum_geometry_queries == 234_567
+    assert limits.maximum_scratch_bytes == 345_678
+    assert limits.maximum_cells == 100
+    assert limits.maximum_wall_seconds == 17.0
+
+
+def test_reconstruction_sparse_band_coverage_scales_with_sample_spacing() -> None:
+    resolution = 12
+    domain = _reconstruction_qualification_domain(resolution)
+    policy = domain["repair_policy"]
+
+    assert policy["sample_spacing"] == pytest.approx(0.44 / resolution)
+    assert _coverage_distance(resolution) == pytest.approx(
+        np.sqrt(2.0) * 0.44 / resolution
+    )
+    assert policy["coverage_distance"] == pytest.approx(
+        _coverage_distance(resolution)
+    )
 
 
 @pytest.mark.parametrize(

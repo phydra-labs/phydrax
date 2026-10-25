@@ -7,6 +7,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, final, Literal, TypedDict
 
+import numpy as np
+
 import phydrax as phx
 from phydrax import canonical_fingerprint
 from tools._meshing_cases import (
@@ -22,6 +24,7 @@ from tools.meshing_qualification._campaign import (
     corpus_phase_evidence,
 )
 from tools.meshing_qualification._controls import (
+    _overset_qualification_requirements,
     qualification_timeout,
     QualificationControls,
 )
@@ -159,6 +162,41 @@ def _corpus_phase_gaps(
             ):
                 if not _measured_seconds(record.get(field)):
                     phase_missing.append(f"{label}:{field}")
+    raw = sample.to_record()
+    child = raw.get("child_evidence")
+    controls = (
+        child.get("qualification_controls")
+        if isinstance(child, dict)
+        else raw.get("qualification_controls")
+    )
+    overset = raw.get("scenario") == "native-overset-lifecycle" or (
+        isinstance(child, dict)
+        and child.get("scenario") == "native-overset-lifecycle"
+    )
+    if overset and records:
+        repeats = controls.get("repeats") if isinstance(controls, dict) else None
+        if type(repeats) is not int or repeats < 1:
+            phase_missing.append("overset-compiler-phase-repeats")
+        for index, record in enumerate(records):
+            path = record.get("evidence_path", f"compiler-phase-{index}")
+            warm = record.get("warm_samples_seconds")
+            if (
+                type(repeats) is int
+                and isinstance(warm, (list, tuple))
+                and len(warm) != repeats
+            ):
+                phase_missing.append(f"{path}:warm-samples-count")
+            if record.get("compilation_count_scope") != "explicit-AOT-compile-invocations":
+                phase_missing.append(f"{path}:compilation_count_scope")
+            for field in (
+                "first_execution_compilation_count",
+                "warm_recompilation_count",
+            ):
+                count = record.get(field)
+                if type(count) is not int or count < 0:
+                    phase_missing.append(f"{path}:{field}")
+                elif count != 0:
+                    phase_missing.append(f"{path}:{field}:runtime-compilation")
     if not records and full_workflow and not refusal:
         phase_missing.append("accepted-epoch-phase-measurements")
     return phase_missing
@@ -221,6 +259,805 @@ class _CorpusResourceAssessment(TypedDict):
     source_prefix_resource_evidence: dict[str, Any] | None
 
 
+def _overset_publications(
+    child: dict[str, Any], *, full_workflow: bool, refusal: bool
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Discover every real overset native endpoint from its authored controls."""
+    publications: list[dict[str, Any]] = []
+    paths: list[str] = []
+    gaps: list[str] = []
+    required = full_workflow and not refusal
+    raw_controls = child.get("qualification_controls")
+    controls = raw_controls if isinstance(raw_controls, dict) else {}
+    if not isinstance(raw_controls, dict):
+        gaps.append("publication:overset-profile:qualification-controls")
+    for control_name in (
+        "overset_profile",
+        "overset_motion_steps",
+        "overset_wall_pairs",
+        "overset_donor_pairs",
+        "overset_overlap_pairs",
+        "maximum_work_units",
+        "maximum_geometry_queries",
+        "maximum_scratch_bytes",
+    ):
+        if control_name not in controls:
+            gaps.append(f"publication:overset-profile:missing-{control_name}")
+    for control_name in (
+        "overset_wall_pairs",
+        "overset_donor_pairs",
+        "overset_overlap_pairs",
+        "maximum_work_units",
+        "maximum_geometry_queries",
+        "maximum_scratch_bytes",
+    ):
+        if type(controls.get(control_name)) is not int or controls[control_name] <= 0:
+            gaps.append(f"publication:overset-profile:invalid-{control_name}")
+    profile_name = controls.get("overset_profile")
+    contract = _overset_qualification_requirements()
+    geometry = contract.get("geometry")
+    profile_contracts = geometry.get("profiles") if isinstance(geometry, dict) else None
+    profile = (
+        profile_contracts.get(profile_name)
+        if isinstance(profile_contracts, dict) and isinstance(profile_name, str)
+        else None
+    )
+    profile_bodies = profile.get("bodies") if isinstance(profile, dict) else None
+    body_names = (
+        [body["name"] for body in profile_bodies]
+        if isinstance(profile_bodies, list)
+        and all(
+            isinstance(body, dict)
+            and isinstance(body.get("name"), str)
+            and body["name"]
+            for body in profile_bodies
+        )
+        else None
+    )
+    if body_names is None or len(body_names) != len(set(body_names)):
+        gaps.append("publication:overset-profile:authenticated-profile-controls")
+        body_names = []
+
+    authored_bodies: dict[str, dict[str, Any]] = {}
+    if isinstance(profile_bodies, list):
+        for item in profile_bodies:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                authored_bodies[item["name"]] = item
+
+    def authored_offset(name: str, step: int) -> list[int | float] | None:
+        body = authored_bodies.get(name)
+        offsets = body.get("offsets") if isinstance(body, dict) else None
+        rule = body.get("offset_rule") if isinstance(body, dict) else None
+        if not isinstance(offsets, list) or not offsets:
+            return None
+        if rule == "cycle":
+            selected = offsets[step % len(offsets)]
+        elif rule == "first-then-repeat-last":
+            selected = offsets[min(step, len(offsets) - 1)]
+        else:
+            return None
+        if (
+            not isinstance(selected, list)
+            or len(selected) != 2
+            or any(
+                type(value) not in (int, float) or not isfinite(value)
+                for value in selected
+            )
+        ):
+            return None
+        return selected
+    if (
+        child.get("profile") != profile_name
+        or not isinstance(profile, dict)
+        or child.get("authored_profile") != profile
+    ):
+        gaps.append("publication:overset-profile:authored-profile-binding")
+    motion_steps = controls.get("overset_motion_steps")
+    if type(motion_steps) is not int or motion_steps < 2:
+        gaps.append("publication:overset-profile:requested-motion-steps")
+        motion_steps = None
+
+    capacities = child.get("control_capacities")
+    if not isinstance(capacities, dict):
+        gaps.append("publication:overset-profile:control-capacities")
+    else:
+        for capacity_name, control_name in (
+            ("overset_profile", "overset_profile"),
+            ("resolution", "resolution"),
+            ("entity_capacity", "capacity"),
+            ("motion_steps", "overset_motion_steps"),
+            ("maximum_wall_candidate_pairs", "overset_wall_pairs"),
+            ("maximum_donor_candidate_pairs", "overset_donor_pairs"),
+            ("maximum_overlap_candidate_pairs", "overset_overlap_pairs"),
+            ("maximum_overlap_accepted_pairs", "overset_overlap_pairs"),
+        ):
+            if capacities.get(capacity_name) != controls.get(control_name):
+                gaps.append(
+                    f"publication:overset-profile:control-capacity-{capacity_name}"
+                )
+        if capacities.get("fringe_layers") != (
+            profile.get("fringe_layers") if isinstance(profile, dict) else None
+        ):
+            gaps.append("publication:overset-profile:control-capacity-fringe_layers")
+
+    from phydrax.meshing._measurements import (
+        NativeExecutionInterchangeAssessment,
+        validate_native_execution_interchange,
+    )
+    from phydrax.meshing._trace import MeshingEvidenceBinding
+
+    receipt_graphs: dict[
+        int, tuple[dict[str, Any], NativeExecutionInterchangeAssessment] | None
+    ] = {}
+
+    def receipt_graph(
+        publication: dict[str, Any], path: str
+    ) -> tuple[dict[str, Any], NativeExecutionInterchangeAssessment] | None:
+        key = id(publication)
+        if key in receipt_graphs:
+            return receipt_graphs[key]
+        execution = publication.get("execution_evidence")
+        try:
+            observation = validate_native_execution_interchange(execution)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            gaps.append(f"publication:{path}:actual-ended-native-receipt")
+            receipt_graphs[key] = None
+            return None
+        if not isinstance(execution, dict) or not isinstance(observation, dict):
+            gaps.append(f"publication:{path}:actual-ended-native-receipt")
+            receipt_graphs[key] = None
+            return None
+        receipt_graphs[key] = (execution, observation)
+        return execution, observation
+
+    def root_receipt_id(publication: dict[str, Any], path: str) -> str | None:
+        graph = receipt_graph(publication, path)
+        if graph is None:
+            return None
+        value = graph[1].get("root_receipt_id")
+        return value if isinstance(value, str) else None
+
+    def root_edge_receipt_ids(
+        publication: dict[str, Any], path: str, edge_name: str
+    ) -> list[str] | None:
+        graph = receipt_graph(publication, path)
+        if graph is None:
+            return None
+        phases = graph[0].get("phases")
+        if not isinstance(phases, list) or not phases or not isinstance(phases[0], dict):
+            return None
+        root = phases[0]
+        if edge_name == "preparation_evidence":
+            predecessor = root.get(edge_name)
+            if predecessor is None:
+                return []
+            if type(predecessor) is not int or not 0 <= predecessor < len(phases):
+                return None
+            phase = phases[predecessor]
+            if not isinstance(phase, dict) or not isinstance(phase.get("receipt_id"), str):
+                return None
+            return [phase["receipt_id"]]
+        predecessors = root.get(edge_name)
+        if not isinstance(predecessors, list):
+            return None
+        receipts = []
+        for predecessor in predecessors:
+            if type(predecessor) is not int or not 0 <= predecessor < len(phases):
+                return None
+            phase = phases[predecessor]
+            if not isinstance(phase, dict) or not isinstance(phase.get("receipt_id"), str):
+                return None
+            receipts.append(phase["receipt_id"])
+        return receipts
+
+    def lineage_gaps(
+        source: dict[str, Any],
+        publication: dict[str, Any],
+        path: str,
+        *,
+        expected_step: int,
+        expected_body: str,
+        expected_motion: str,
+        expected_kind: str,
+        predecessor: dict[str, Any],
+        predecessor_path: str,
+        expected_certification_id: object = None,
+    ) -> None:
+        prefix = f"publication:{path}:"
+        lineage = source.get("publication_lineage")
+        if not isinstance(lineage, dict):
+            gaps.append(prefix + "actual-plan-source-certification-lineage")
+            return
+        specification = lineage.get("specification_identity")
+        plan = lineage.get("plan_identity")
+        certification = lineage.get("certification")
+        trace = lineage.get("trace_binding")
+        resource_binding = publication.get("resource_binding")
+        semantic = lineage.get("semantic_content")
+        semantic_resources = lineage.get("semantic_resource_ids")
+        if not isinstance(resource_binding, dict) or not all(
+            isinstance(item, dict)
+            for item in (specification, plan, certification, semantic, trace)
+        ):
+            gaps.append(prefix + "actual-plan-source-certification-lineage")
+            return
+        policies = trace.get("policy_ids")
+        if not isinstance(policies, list):
+            gaps.append(prefix + "actual-plan-source-certification-lineage")
+            return
+        try:
+            trace_binding = MeshingEvidenceBinding(
+                source_id=trace.get("source_id"),
+                source_revision=trace.get("source_revision"),
+                topology_id=trace.get("topology_id"),
+                geometry_id=trace.get("geometry_id"),
+                geometry_layout_id=trace.get("geometry_layout_id"),
+                policy_ids=tuple(policies),
+                runtime_id=trace.get("runtime_id"),
+            )
+        except (TypeError, ValueError):
+            gaps.append(prefix + "actual-plan-source-certification-lineage")
+            return
+        if (
+            not isinstance(semantic_resources, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or any(not isinstance(value, str) or not value for value in item)
+                for item in semantic_resources
+            )
+        ):
+            gaps.append(prefix + "semantic-provenance")
+            return
+        try:
+            specification_id = canonical_fingerprint(specification)
+            plan_id = canonical_fingerprint(plan)
+            semantic_id = canonical_fingerprint(
+                {
+                    "kind": "semantic-provenance",
+                    "content_id": canonical_fingerprint(
+                        {"kind": "semantic-content", "payload": semantic}
+                    ),
+                    "resource_ids": semantic_resources,
+                }
+            )
+        except (TypeError, ValueError, OverflowError):
+            gaps.append(prefix + "semantic-provenance")
+            return
+        semantic_items = semantic.get("items")
+        if (
+            set(semantic) != {"kind", "items"}
+            or semantic.get("kind") != "mapping"
+            or not isinstance(semantic_items, list)
+        ):
+            gaps.append(prefix + "semantic-provenance")
+            return
+        semantic_fields: dict[str, str] = {}
+        for item in semantic_items:
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or not isinstance(item[0], str)
+                or not isinstance(item[1], str)
+                or item[0] in semantic_fields
+            ):
+                gaps.append(prefix + "semantic-provenance")
+                return
+            semantic_fields[item[0]] = item[1]
+        if list(semantic_fields) != sorted(semantic_fields):
+            gaps.append(prefix + "semantic-provenance")
+            return
+        result_id = publication.get("result_id")
+        predecessor_id = predecessor.get("result_id")
+        source_binding = source.get("source_binding_id")
+        source_revision = source.get("source_revision")
+        request_id = source.get("request_id")
+        limits_id = source.get("limits_id")
+        prepared_id = source.get("prepared_id")
+        trace_stage_report_ids = lineage.get("trace_stage_report_ids")
+        if (
+            not isinstance(trace_stage_report_ids, list)
+            or any(not isinstance(item, str) or not item for item in trace_stage_report_ids)
+        ):
+            gaps.append(prefix + "trace-certification-stage")
+            trace_stage_report_ids = []
+        certificate_id = certification.get("report_id")
+        if (
+            source.get("step") != expected_step
+            or source.get("body") != expected_body
+            or source.get("predecessor_result_id") != predecessor_id
+            or lineage.get("result_id") != result_id
+            or lineage.get("source_id") != expected_body
+            or lineage.get("source_binding_id") != source_binding
+            or lineage.get("source_revision") != source_revision
+            or lineage.get("specification_id") != request_id
+            or lineage.get("compliance_specification_id") != request_id
+            or lineage.get("limits_id") != limits_id
+            or lineage.get("prepared_id") != prepared_id
+            or specification_id != request_id
+            or specification.get("limits") != limits_id
+            or plan_id != prepared_id
+            or plan.get("source_id") != lineage.get("source_id")
+            or plan.get("source_revision") != source_revision
+            or plan.get("specification") != request_id
+            or plan.get("prepared") != lineage.get("prepared_route_id")
+            # Planar source authority belongs to the trace binding. A coverage
+            # certificate's optional fidelity source is a different role.
+            or lineage.get("source_id") != trace_binding.source_id
+            or source_revision != trace_binding.source_revision
+            or trace.get("binding_id") != trace_binding.binding_id
+            or trace_binding.topology_id != publication.get("topology_id")
+            or trace_binding.geometry_id != certification.get("geometry_id")
+            or trace_binding.runtime_id != resource_binding.get("runtime_id")
+            or certification.get("passed") is not True
+            or not isinstance(certification.get("request_id"), str)
+            or not certification["request_id"]
+            or not isinstance(certification.get("limits_id"), str)
+            or not certification["limits_id"]
+            or not isinstance(certificate_id, str)
+            or not certificate_id
+            or (
+                expected_certification_id is not None
+                and certificate_id != expected_certification_id
+            )
+            or semantic_fields.get("audit") != lineage.get("audit_id")
+            or semantic_fields.get("certification") not in trace_stage_report_ids
+            or certification.get("mesh_id") != lineage.get("mesh_id")
+            or certification.get("topology_id") != lineage.get("topology_id")
+            or lineage.get("topology_id") != publication.get("topology_id")
+            or semantic_id != lineage.get("semantic_id")
+            or semantic_fields.get("kind") != expected_kind
+            or semantic_fields.get("plan") != prepared_id
+            or semantic_fields.get("motion") != expected_motion
+            or semantic_fields.get("source_result") != predecessor_id
+            or semantic_fields.get("mesh") != lineage.get("mesh_id")
+        ):
+            gaps.append(prefix + "crosslink-authored-source-plan-certification")
+        if expected_kind == "native-planar-rigid-motion" and (
+            semantic_fields.get("source") != source_binding
+        ):
+            gaps.append(prefix + "crosslink-source-binding")
+        predecessor_receipt = root_receipt_id(predecessor, predecessor_path)
+        history_receipts = root_edge_receipt_ids(publication, path, "history_evidence")
+        if (
+            predecessor_receipt is None
+            or history_receipts != [predecessor_receipt]
+        ):
+            gaps.append(prefix + "crosslink-immediate-predecessor-receipt")
+
+    def publish(
+        value: object,
+        path: str,
+        *,
+        expected_owner: object = None,
+        expected_result_id: object = None,
+    ) -> dict[str, Any] | None:
+        if value is None and not required:
+            return None
+        if not isinstance(value, dict) or not value:
+            gaps.append(f"publication:{path}:actual-native-publication")
+            return None
+        publications.append(value)
+        paths.append(path)
+        result_id = value.get("result_id")
+        binding = value.get("resource_binding")
+        graph = receipt_graph(value, path)
+        if not isinstance(result_id, str) or not result_id:
+            gaps.append(f"publication:{path}:crosslink-result-id")
+        if not isinstance(binding, dict):
+            gaps.append(f"publication:{path}:crosslink-resource-binding")
+        else:
+            if binding.get("result_id") != result_id:
+                gaps.append(f"publication:{path}:crosslink-bound-result-id")
+            if expected_owner is None or binding.get("request_id") != expected_owner:
+                gaps.append(f"publication:{path}:crosslink-request-owner")
+            if graph is not None and (
+                binding.get("request_id") != graph[1].get("owner_id")
+                or binding.get("root_receipt_id")
+                != graph[1].get("root_receipt_id")
+            ):
+                gaps.append(f"publication:{path}:crosslink-ended-receipt")
+        if expected_result_id is not None and result_id != expected_result_id:
+            gaps.append(f"publication:{path}:crosslink-result-id")
+        return value
+
+    parts = child.get("parts")
+    parts = parts if isinstance(parts, dict) else {}
+    part_names = ("background", *body_names)
+    recipes = child.get("generation_recipe_bindings")
+    recipes = recipes if isinstance(recipes, dict) else {}
+    if required and set(parts) != set(part_names):
+        gaps.append("publication:parts:expected-authored-part-set")
+    if required and set(recipes) != set(part_names):
+        gaps.append("publication:generation_recipe_bindings:expected-authored-part-set")
+    initial_results: dict[str, dict[str, Any] | None] = {}
+    for name in part_names:
+        part = parts.get(name)
+        part = part if isinstance(part, dict) else {}
+        recipe = recipes.get(name)
+        recipe = recipe if isinstance(recipe, dict) else {}
+        for field in (
+            "source_id",
+            "source_revision",
+            "source_binding_id",
+            "request_id",
+            "limits_id",
+        ):
+            if required and (
+                not isinstance(part.get(field), str) or not part[field]
+            ):
+                gaps.append(f"publication:parts.{name}:{field}")
+        for field, recipe_field in (
+            ("source_binding_id", "source_binding_id"),
+            ("request_id", "request_id"),
+            ("prepared_id", "plan_id"),
+        ):
+            if part.get(field) is None or part.get(field) != recipe.get(recipe_field):
+                gaps.append(f"publication:parts.{name}:crosslink-{field}")
+        prepared_id = part.get("prepared_id")
+        if required and (not isinstance(prepared_id, str) or not prepared_id):
+            gaps.append(f"publication:parts.{name}:crosslink-prepared-id")
+        initial_results[name] = publish(
+            part.get("generation"),
+            f"parts.{name}.generation",
+            expected_owner=prepared_id,
+        )
+
+    motion_source_items = child.get("motion_sources")
+    motion_source_items = (
+        motion_source_items
+        if isinstance(motion_source_items, (list, tuple))
+        else ()
+    )
+    motion_source_by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    observed_motion_sources: set[tuple[int, str]] = set()
+    if not isinstance(child.get("motion_sources"), (list, tuple)):
+        if required:
+            gaps.append("publication:motion_sources:expected-source-successors")
+    else:
+        for item in motion_source_items:
+            if not isinstance(item, dict):
+                gaps.append("publication:motion_sources:source-record")
+                continue
+            step_value, body_value = item.get("step"), item.get("body")
+            if type(step_value) is not int or not isinstance(body_value, str):
+                gaps.append("publication:motion_sources:invalid-step-body")
+                continue
+            key = step_value, body_value
+            if key in observed_motion_sources:
+                gaps.append("publication:motion_sources:duplicate-step-body")
+            observed_motion_sources.add(key)
+            motion_source_by_key.setdefault(key, item)
+    if required:
+        expected_motion_sources = (
+            set()
+            if motion_steps is None
+            else {(step, name) for step in range(motion_steps) for name in body_names}
+        )
+        if observed_motion_sources != expected_motion_sources:
+            gaps.append("publication:motion_sources:expected-step-body-set")
+    epochs = child.get("epochs")
+    epochs = epochs if isinstance(epochs, (list, tuple)) else ()
+    expected_epoch_count = None if motion_steps is None else motion_steps + 1
+    if required and expected_epoch_count is not None and len(epochs) != expected_epoch_count:
+        gaps.append(
+            f"publication:epochs:expected-{expected_epoch_count}-actual-{len(epochs)}"
+        )
+    previous_results = dict(initial_results)
+    previous_paths = {
+        name: f"parts.{name}.generation" for name in body_names
+    }
+    previous_source_bindings: dict[str, Any] = {}
+    for name in body_names:
+        part = parts.get(name)
+        if isinstance(part, dict):
+            previous_source_bindings[name] = part.get("source_binding_id")
+    for index, epoch in enumerate(epochs):
+        if not isinstance(epoch, dict):
+            gaps.append(f"publication:epochs[{index}]:epoch-record")
+            continue
+        if "result" in epoch:
+            gaps.append(f"publication:epochs[{index}].result:non-native-composition")
+        expected_epoch = index
+        if epoch.get("epoch") != expected_epoch:
+            gaps.append(f"publication:epochs[{index}]:epoch-index")
+        if index == 0:
+            continue
+        step = index - 1
+        if epoch.get("step") != step:
+            gaps.append(f"publication:epochs[{index}]:motion-step")
+        epoch_offsets = epoch.get("offsets")
+        if required and (
+            not isinstance(epoch_offsets, dict)
+            or set(epoch_offsets) != set(body_names)
+        ):
+            gaps.append(f"publication:epochs[{index}]:authored-motion-offsets")
+        successors = epoch.get("source_successors")
+        successors = successors if isinstance(successors, dict) else {}
+        if required and set(successors) != set(body_names):
+            gaps.append(f"publication:epochs[{index}].source_successors:authored-body-set")
+        for name in body_names:
+            source = motion_source_by_key.get((step, name))
+            predecessor = previous_results.get(name)
+            predecessor_path = previous_paths.get(name, f"parts.{name}.generation")
+            source = source if isinstance(source, dict) else {}
+            predecessor = predecessor if isinstance(predecessor, dict) else {}
+            expected_offset = authored_offset(name, step)
+            expected_motion = f"qualification-accepted-motion-{step}-{name}"
+            predecessor_source_binding = previous_source_bindings.get(name)
+            expected_source_revision = (
+                canonical_fingerprint(
+                    {
+                        "kind": "native-planar-rigid-pose",
+                        "source": predecessor_source_binding,
+                        "motion": expected_motion,
+                        "offset": phx.array_tree_fingerprint(
+                            np.asarray(expected_offset, dtype=np.float64)
+                        ),
+                    }
+                )
+                if isinstance(predecessor_source_binding, str)
+                and expected_offset is not None
+                else None
+            )
+            if required and (
+                expected_offset is None
+                or not isinstance(epoch_offsets, dict)
+                or epoch_offsets.get(name) != expected_offset
+                or source.get("source_revision") != expected_source_revision
+            ):
+                gaps.append(
+                    f"publication:epochs[{index}].source_successors.{name}:authored-motion-source-revision"
+                )
+            successor = successors.get(name)
+            successor = successor if isinstance(successor, dict) else {}
+            for field in (
+                "source_binding_id",
+                "source_revision",
+                "request_id",
+                "limits_id",
+                "prepared_id",
+                "predecessor_result_id",
+            ):
+                if required and (
+                    not isinstance(source.get(field), str) or not source[field]
+                ):
+                    gaps.append(
+                        f"publication:motion_sources[{step},{name}]:{field}"
+                    )
+            result = publish(
+                successor.get("result"),
+                f"epochs[{index}].source_successors.{name}.result",
+                expected_owner=successor.get("result_id"),
+            )
+            if result is not None:
+                result_id = result.get("result_id")
+                if (
+                    successor.get("result_id") != result_id
+                    or source.get("result_id") != result_id
+                ):
+                    gaps.append(
+                        f"publication:epochs[{index}].source_successors.{name}:crosslink-result-id"
+                    )
+                lineage_gaps(
+                    source,
+                    result,
+                    f"epochs[{index}].source_successors.{name}.result",
+                    expected_step=step,
+                    expected_body=name,
+                    expected_motion=expected_motion,
+                    expected_kind="native-planar-rigid-motion",
+                    predecessor=predecessor,
+                    predecessor_path=predecessor_path,
+                    expected_certification_id=successor.get("certification_id"),
+                )
+                previous_results[name] = result
+                previous_paths[name] = (
+                    f"epochs[{index}].source_successors.{name}.result"
+                )
+                source_binding_id = source.get("source_binding_id")
+                if isinstance(source_binding_id, str):
+                    previous_source_bindings[name] = source_binding_id
+            if required and not isinstance(successor.get("certification_id"), str):
+                gaps.append(
+                    f"publication:epochs[{index}].source_successors.{name}:certification-id"
+                )
+
+    conservative = child.get("conservative_profile")
+    conservative = conservative if isinstance(conservative, dict) else {}
+    background = initial_results.get("background")
+    background_id = background.get("result_id") if isinstance(background, dict) else None
+    background_part = parts.get("background")
+    background_part = background_part if isinstance(background_part, dict) else {}
+    motion_publication = conservative.get("motion_result")
+    if required and (
+        not isinstance(conservative.get("motion_prepared_id"), str)
+        or not conservative["motion_prepared_id"]
+    ):
+        gaps.append("publication:conservative_profile:motion-prepared-id")
+    motion_expected_owner = (
+        motion_publication.get("result_id")
+        if isinstance(motion_publication, dict)
+        else None
+    )
+    motion_result = publish(
+        motion_publication,
+        "conservative_profile.motion_result",
+        expected_owner=motion_expected_owner,
+    )
+    if (
+        required
+        and conservative.get("motion_result_id")
+        != (motion_result.get("result_id") if isinstance(motion_result, dict) else None)
+    ):
+        gaps.append("publication:conservative_profile:crosslink-motion-result-id")
+    if (
+        required
+        and conservative.get("source_result_id") != background_id
+    ):
+        gaps.append("publication:conservative_profile:crosslink-source-result-id")
+    motion_lineage_source = {
+        "step": 0,
+        "body": "background",
+        "source_binding_id": background_part.get("source_binding_id"),
+        "source_revision": background_part.get("source_revision"),
+        "request_id": background_part.get("request_id"),
+        "limits_id": background_part.get("limits_id"),
+        "prepared_id": conservative.get("motion_prepared_id"),
+        "predecessor_result_id": background_id,
+        "publication_lineage": conservative.get("motion_provenance"),
+    }
+    if motion_result is not None and isinstance(background, dict):
+        profile_motion = (
+            f"qualification-conservative-ale-{profile_name}"
+            if isinstance(profile_name, str)
+            else ""
+        )
+        lineage_gaps(
+            motion_lineage_source,
+            motion_result,
+            "conservative_profile.motion_result",
+            expected_step=0,
+            expected_body="background",
+            expected_motion=profile_motion,
+            expected_kind="native-planar-interior-motion",
+            predecessor=background,
+            predecessor_path="parts.background.generation",
+        )
+    checkpoint = child.get("checkpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    publication_execution = checkpoint.get("conservative_publication_execution")
+    publication_execution = (
+        publication_execution if isinstance(publication_execution, dict) else {}
+    )
+    consumer_result = publish(
+        checkpoint.get("conservative_publication_result"),
+        "checkpoint.conservative_publication_result",
+        expected_owner=publication_execution.get("owner_id"),
+    )
+    if (
+        consumer_result is not None
+        and publication_execution.get("result_id") != consumer_result.get("result_id")
+    ):
+        gaps.append("publication:checkpoint.conservative_publication_result:crosslink-result-id")
+    motion_root_id = (
+        root_receipt_id(motion_result, "conservative_profile.motion_result")
+        if isinstance(motion_result, dict)
+        else None
+    )
+    consumer_preparation_roots = (
+        root_edge_receipt_ids(
+            consumer_result,
+            "checkpoint.conservative_publication_result",
+            "preparation_evidence",
+        )
+        if isinstance(consumer_result, dict)
+        else None
+    )
+    if required and (
+        motion_root_id is None
+        or consumer_preparation_roots != [motion_root_id]
+    ):
+        gaps.append(
+            "publication:checkpoint.conservative_publication_result:crosslink-conservative-motion"
+        )
+
+    motion_binding = (
+        motion_result.get("resource_binding")
+        if isinstance(motion_result, dict)
+        else None
+    )
+    consumer_binding = (
+        consumer_result.get("resource_binding")
+        if isinstance(consumer_result, dict)
+        else None
+    )
+    if required and (
+        not isinstance(motion_result, dict)
+        or not isinstance(consumer_result, dict)
+        or consumer_result.get("result_id") != motion_result.get("result_id")
+        or not isinstance(motion_binding, dict)
+        or publication_execution.get("owner_id") != motion_binding.get("request_id")
+    ):
+        gaps.append(
+            "publication:checkpoint.conservative_publication_result:crosslink-conservative-motion"
+        )
+    if (
+        isinstance(motion_binding, dict)
+        and isinstance(consumer_binding, dict)
+        and motion_binding.get("root_receipt_id")
+        == consumer_binding.get("root_receipt_id")
+    ):
+        gaps.append(
+            "publication:checkpoint.conservative_publication_result:distinct-current-receipt"
+        )
+    restart = child.get("restart")
+    restart = restart if isinstance(restart, dict) else {}
+    cold_request = restart.get("cold_request")
+    cold_request = cold_request if isinstance(cold_request, dict) else {}
+    cold_result = publish(
+        restart.get("cold_request_result"),
+        "restart.cold_request_result",
+        expected_owner=cold_request.get("owner_id"),
+        expected_result_id=background_id,
+    )
+    background_binding = (
+        background.get("resource_binding") if isinstance(background, dict) else None
+    )
+    cold_background_root = (
+        root_receipt_id(background, "parts.background.generation")
+        if isinstance(background, dict)
+        else None
+    )
+    cold_history_roots = (
+        root_edge_receipt_ids(
+            cold_result, "restart.cold_request_result", "history_evidence"
+        )
+        if isinstance(cold_result, dict)
+        else None
+    )
+    expected_cold_history = (
+        sorted((cold_background_root, motion_root_id))
+        if isinstance(cold_background_root, str)
+        and isinstance(motion_root_id, str)
+        else None
+    )
+    if required and (
+        cold_request.get("original_limits_id") != background_part.get("limits_id")
+        or not isinstance(background_binding, dict)
+        or cold_request.get("history_owner_id")
+        != background_binding.get("request_id")
+        or cold_request.get("history_receipt_id") != cold_background_root
+        or cold_request.get("conservative_source_owner_id")
+        != background_binding.get("request_id")
+        or cold_request.get("conservative_source_receipt_id") != cold_background_root
+        or not isinstance(motion_binding, dict)
+        or cold_request.get("conservative_history_owner_id")
+        != motion_binding.get("request_id")
+        or cold_request.get("conservative_history_receipt_id") != motion_root_id
+    ):
+        gaps.append("publication:restart.cold_request:crosslink-original-controls")
+    if required and (
+        expected_cold_history is None
+        or cold_history_roots != expected_cold_history
+    ):
+        gaps.append(
+            "publication:restart.cold_request_result:crosslink-archived-source-roots"
+        )
+    if (
+        isinstance(background_binding, dict)
+        and isinstance(cold_result, dict)
+        and background_binding.get("root_receipt_id")
+        == (
+            cold_result.get("resource_binding", {}).get("root_receipt_id")
+            if isinstance(cold_result.get("resource_binding"), dict)
+            else None
+        )
+    ):
+        gaps.append("publication:restart.cold_request_result:distinct-current-receipt")
+    return publications, paths, gaps
+
+
 def _corpus_publications(
     sample: CampaignSample, *, full_workflow: bool, refusal: bool
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
@@ -229,6 +1066,17 @@ def _corpus_publications(
     paths = []
     gaps = []
     raw = sample.to_record()
+    child = raw.get("child_evidence")
+    overset = raw.get("scenario") == "native-overset-lifecycle" or (
+        isinstance(child, dict)
+        and child.get("scenario") == "native-overset-lifecycle"
+    )
+    if overset:
+        return _overset_publications(
+            child if isinstance(child, dict) else raw,
+            full_workflow=full_workflow,
+            refusal=refusal,
+        )
     polyhedral = raw.get("scenario") == "native-polyhedral-lifecycle"
 
     def publish(value: object, path: str) -> None:
@@ -383,6 +1231,88 @@ def _resource_sample_binding_gaps(sample: CampaignSample) -> list[str]:
             "warm_publications",
             "source_prefix_resources",
         )
+    if (
+        record.get("scenario") == "native-overset-lifecycle"
+        or child.get("scenario") == "native-overset-lifecycle"
+    ):
+        fields += (
+            "qualification_controls",
+            "profile",
+            "authored_profile",
+            "control_capacities",
+            "parts",
+            "generation_recipe_bindings",
+            "motion_sources",
+            "conservative_profile",
+            "restart",
+        )
+        launch = record.get("frozen_controls")
+        child_controls = child.get("qualification_controls")
+        scenario_controls = (
+            launch.get("scenario_controls") if isinstance(launch, dict) else None
+        )
+        if (
+            not isinstance(launch, dict)
+            or not isinstance(child_controls, dict)
+            or not isinstance(scenario_controls, dict)
+            or record.get("frozen_controls_id") != canonical_fingerprint(launch)
+            or sample.binding.get("frozen_controls_id")
+            != record.get("frozen_controls_id")
+        ):
+            return ["actual-child-resource-binding"]
+        required_scenario_controls = {
+            "overset_profile",
+            "overset_motion_steps",
+            "overset_wall_pairs",
+            "overset_donor_pairs",
+            "overset_overlap_pairs",
+            "maximum_work_units",
+            "maximum_geometry_queries",
+            "maximum_scratch_bytes",
+        }
+        if not required_scenario_controls <= scenario_controls.keys():
+            return ["actual-child-resource-binding"]
+        if (
+            not isinstance(scenario_controls.get("overset_profile"), str)
+            or type(scenario_controls.get("overset_motion_steps")) is not int
+            or scenario_controls["overset_motion_steps"] < 2
+            or any(
+                type(scenario_controls.get(name)) is not int
+                or scenario_controls[name] <= 0
+                for name in (
+                    "overset_wall_pairs",
+                    "overset_donor_pairs",
+                    "overset_overlap_pairs",
+                    "maximum_work_units",
+                    "maximum_geometry_queries",
+                    "maximum_scratch_bytes",
+                )
+            )
+        ):
+            return ["actual-child-resource-binding"]
+        launch_controls = {
+            "scenario": launch.get("scenario"),
+            "corpus_case": "planar-hole-feature",
+            "resolution": launch.get("resolution"),
+            "capacity": launch.get("entity_capacity"),
+            "timeout": launch.get("wall_seconds"),
+            "repeats": launch.get("solver_warm_repeats"),
+            "target_error": launch.get("target_error"),
+            "adaptation_rounds": launch.get("adaptation_rounds"),
+            "overset_profile": scenario_controls["overset_profile"],
+            "overset_motion_steps": scenario_controls["overset_motion_steps"],
+        }
+        if (
+            launch.get("scenario") != "native-overset-lifecycle"
+            or launch.get("case_name") != "native-overset-lifecycle"
+            or launch.get("engine") != "native"
+            or any(child_controls.get(name) != value for name, value in launch_controls.items())
+            or any(
+                child_controls.get(name) != value
+                for name, value in scenario_controls.items()
+            )
+        ):
+            return ["actual-child-resource-binding"]
     if any(record.get(name) != child.get(name) for name in fields):
         return ["actual-child-resource-binding"]
     if (
@@ -534,6 +1464,12 @@ def _corpus_runtime_measurement_gaps(
         gaps.append("runtime:process-peak-scope")
     else:
         limitations.append(f"process:{scope}")
+        if "darwin-getrusage-bytes" in scope:
+            limitations.append(
+                "Approved macOS contract measures individual post-exec process peaks "
+                "against authored ceilings; no hard execution-group memory cap "
+                "or simultaneous aggregate peak is claimed."
+            )
     devices = resources.get("device_memory")
     if not isinstance(devices, list) or not devices:
         gaps.append("runtime:device-memory")
@@ -885,8 +1821,10 @@ def _execute_corpus_profiles(
             else nullcontext()
         ) as checkpoint_directory:
             if checkpoint_directory is not None:
+                # Repository roots admit only real directory components; platform
+                # temporary roots may be reached through a symlink (/var on macOS).
                 controls["distributed_checkpoint_root"] = str(
-                    Path(checkpoint_directory) / "checkpoint"
+                    Path(checkpoint_directory).resolve(strict=True) / "checkpoint"
                 )
             sample = _native_campaign_sample(
                 profile["case_name"],

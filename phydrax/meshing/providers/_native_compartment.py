@@ -51,7 +51,6 @@ from .._volume_generation import (
 )
 from ._native_options import NativeMeshingOptions
 from ._native_publication import (
-    coordinate_budget,
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
@@ -215,6 +214,112 @@ def _image_source_facts(source: ImageVolumeSource, /) -> _ImageSourceFacts:
                 "compartment.source must be CompartmentMeshingSource or "
                 f"LabelFieldVolumeBinding; got {type(source).__name__}."
             )
+
+
+
+
+def _compartment_preparation_bounds(
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    schedule: NativeVolumeSchedule | None,
+    scope: NativeExecutionScope,
+    /,
+    *,
+    include_support: bool,
+) -> tuple[int, int]:
+    match source:
+        case CompartmentMeshingSource():
+            region_values = source.compartments.compartments
+            source_id = source.source_id
+        case LabelFieldVolumeBinding():
+            region_values = source.domain.region_ids
+            source_id = source.binding_id
+        case _:
+            raise TypeError(
+                "compartment.source must be CompartmentMeshingSource or "
+                f"LabelFieldVolumeBinding; got {type(source).__name__}."
+            )
+    region_count = len(region_values)
+    interfaces = source.interface_definitions
+    interface_count = len(interfaces)
+    specification_id = specification.specification_id
+    schedule_id = "" if schedule is None else schedule.schedule_id
+    control_groups = (
+        specification.region_controls,
+        specification.region_seeds,
+        specification.patch_controls,
+        specification.protected_features,
+    )
+    control_counts = tuple(len(values) for values in control_groups)
+    region_control_count, seed_count, patch_count, feature_count = control_counts
+    scope.charge(
+        work=1 + region_count + 3 * interface_count
+        + (sum(control_counts) if include_support else 0)
+    )
+    region_text_bytes = sum(
+        len(value) if isinstance(value, str) else len(value.compartment_id)
+        for value in region_values
+    )
+    region_text_bytes += sum(
+        len(value[0]) + len(value[1]) + len(value[2])
+        for value in interfaces
+    )
+    identifier_bytes = (
+        len(source_id)
+        + len(source.source_revision)
+        + len(specification_id)
+        + len(schedule_id)
+        + region_text_bytes
+    )
+    entity_entries = (
+        sum(
+            control.scope.entity_ids.size
+            for group in (
+                specification.region_controls,
+                specification.patch_controls,
+                specification.protected_features,
+            )
+            for control in group
+        )
+        if include_support
+        else 0
+    )
+    support_work = 128 + region_count + interface_count + identifier_bytes
+    scratch_entries = region_count + interface_count + 1
+    if include_support:
+        support_work += (
+            region_count * (region_control_count + seed_count)
+            + patch_count * (interface_count + 1)
+            + feature_count
+            + entity_entries
+            + sum(control_counts)
+        )
+        scratch_entries += sum(control_counts)
+    scope.charge(work=support_work)
+    scratch_bytes = (
+        4096
+        + 512 * scratch_entries
+        + 8 * entity_entries
+        + 4 * identifier_bytes
+        + (
+            (len(source_id) + 32)
+            * (region_control_count + patch_count + feature_count + 1)
+            if include_support
+            else 0
+        )
+    )
+    prepared_bytes = (
+        0
+        if schedule is None
+        else (
+            4096
+            + len(source_id)
+            + len(source.source_revision)
+            + len(specification_id)
+            + len(schedule_id)
+        )
+    )
+    return scratch_bytes, prepared_bytes
 
 
 @final
@@ -436,9 +541,35 @@ def _image_feature_support(
 
 @checked
 def compartment_support_issues(
-    source: ImageVolumeSource, specification: VolumeMeshingSpec, /
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    /,
+    *,
+    scope: NativeExecutionScope | None = None,
+    workspace: NativeHostStorageWorkspace | None = None,
 ) -> tuple[SupportIssue, ...]:
     """Return unmet image-route requirements in validation order."""
+    if scope is None and workspace is None:
+        return _compartment_support_issues_core(source, specification)
+    if scope is None or workspace is None:
+        raise ValueError(
+            "compartment_support_issues.scope and workspace must be supplied together."
+        )
+    scratch_bytes, _ = _compartment_preparation_bounds(
+        source, specification, None, scope, include_support=True
+    )
+    prior_storage = workspace.bound
+    workspace.set_bound(prior_storage + scratch_bytes)
+    try:
+        return _compartment_support_issues_core(source, specification)
+    finally:
+        workspace.set_bound(prior_storage)
+
+
+def _compartment_support_issues_core(
+    source: ImageVolumeSource, specification: VolumeMeshingSpec, /
+) -> tuple[SupportIssue, ...]:
+    """Compute route support facts after the owner admits their host work."""
     facts = _image_source_facts(source)
     issues = (
         *_image_request_support(source, specification).issues,
@@ -478,46 +609,85 @@ class PreparedCompartmentVolume(StrictModule, NonTrainableState):
         specification: VolumeMeshingSpec,
         schedule: NativeVolumeSchedule,
         /,
+        *,
+        scope: NativeExecutionScope,
+        workspace: NativeHostStorageWorkspace,
     ) -> None:
-        issues = compartment_support_issues(source, specification)
-        if issues:
-            raise ValueError(
-                "PreparedCompartmentVolume.specification must be supported by the image "
-                f"route; got {format_support_issues(issues)}."
-            )
-        self.schedule = schedule
-        self.source_binding_id = _image_source_facts(source).binding_id
-        self.source_revision = source.source_revision
-        self.specification_id = specification.specification_id
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "native-compartment-volume",
-                "source": self.source_binding_id,
-                "revision": source.source_revision,
-                "specification": specification.specification_id,
-                "schedule": schedule.schedule_id,
-            }
+        scratch_bytes, prepared_bytes = _compartment_preparation_bounds(
+            source, specification, schedule, scope, include_support=True
         )
+        prior_storage = workspace.bound
+        workspace.set_bound(prior_storage + scratch_bytes + prepared_bytes)
+        try:
+            issues = _compartment_support_issues_core(source, specification)
+            if issues:
+                raise ValueError(
+                    "PreparedCompartmentVolume.specification must be supported by the image "
+                    f"route; got {format_support_issues(issues)}."
+                )
+            facts = _image_source_facts(source)
+            self.schedule = schedule
+            self.source_binding_id = facts.binding_id
+            self.source_revision = source.source_revision
+            self.specification_id = specification.specification_id
+            self.prepared_id = canonical_fingerprint(
+                {
+                    "kind": "native-compartment-volume",
+                    "source": self.source_binding_id,
+                    "revision": source.source_revision,
+                    "specification": specification.specification_id,
+                    "schedule": schedule.schedule_id,
+                }
+            )
+        except BaseException:
+            workspace.set_bound(prior_storage)
+            raise
+        workspace.set_bound(prior_storage + prepared_bytes)
 
-    def validate_source_integrity(self) -> None:
-        """Authenticate the retained source/request/schedule preparation binding."""
+    def validate_source_integrity(
+        self,
+        source: ImageVolumeSource,
+        specification: VolumeMeshingSpec,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        workspace: NativeHostStorageWorkspace,
+    ) -> None:
+        """Authenticate restored preparation identity against the live route."""
         if not isinstance(self.schedule, NativeVolumeSchedule):
             raise TypeError(
                 "PreparedCompartmentVolume.schedule must be NativeVolumeSchedule; got a different restored schedule kind."
             )
-        expected = canonical_fingerprint(
-            {
-                "kind": "native-compartment-volume",
-                "source": self.source_binding_id,
-                "revision": self.source_revision,
-                "specification": self.specification_id,
-                "schedule": self.schedule.schedule_id,
-            }
+        scratch_bytes, _ = _compartment_preparation_bounds(
+            source, specification, self.schedule, scope, include_support=False
         )
-        if expected != self.prepared_id:
-            raise ValueError(
-                "PreparedCompartmentVolume.prepared_id must match its source/request/schedule binding; got stale preparation identity."
+        prior_storage = workspace.bound
+        workspace.set_bound(prior_storage + scratch_bytes)
+        try:
+            expected = canonical_fingerprint(
+                {
+                    "kind": "native-compartment-volume",
+                    "source": self.source_binding_id,
+                    "revision": self.source_revision,
+                    "specification": self.specification_id,
+                    "schedule": self.schedule.schedule_id,
+                }
             )
+            if expected != self.prepared_id:
+                raise ValueError(
+                    "PreparedCompartmentVolume.prepared_id must match its source/request/schedule binding; got stale preparation identity."
+                )
+            facts = _image_source_facts(source)
+            if (
+                self.source_binding_id != facts.binding_id
+                or self.source_revision != source.source_revision
+                or self.specification_id != specification.specification_id
+            ):
+                raise ValueError(
+                    "PreparedCompartmentVolume.source_binding_id must match the image request together with source_revision and specification_id; got a different source or request."
+                )
+        finally:
+            workspace.set_bound(prior_storage)
 
 
 @checked
@@ -558,15 +728,9 @@ def _execute_compartment_route(
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
-    prepared.validate_source_integrity()
-    if (
-        prepared.source_binding_id != _image_source_facts(source).binding_id
-        or prepared.source_revision != source.source_revision
-        or prepared.specification_id != specification.specification_id
-    ):
-        raise ValueError(
-            "PreparedCompartmentVolume.source_binding_id must match the image request together with source_revision and specification_id; got a different source or request."
-        )
+    prepared.validate_source_integrity(
+        source, specification, scope=scope, workspace=workspace
+    )
     if coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
         raise ValueError(
             "execute_compartment_route.coordinate_contract.spatial_id must match the image coordinate contract; got a different spatial identity."
@@ -636,7 +800,13 @@ def _execute_compartment_route(
         ),
         *volume.stages,
     )
-    publication_budget = coordinate_budget(specification.limits)
+    initial = scope.batch(0)
+    initial.settle()
+    publication_budget = CoordinateEnclosureBudget(
+        initial,
+        maximum_work_units=specification.limits.maximum_work_units,
+        maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
+    )
     result = publish_native_result(
         mesh,
         coordinate_contract,

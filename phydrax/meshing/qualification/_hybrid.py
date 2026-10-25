@@ -53,7 +53,11 @@ from phydrax.meshing._certification import MeshCertificationPreparedEvidence
 from phydrax.meshing._contracts import MeshingDerivativeMode
 from phydrax.meshing._curving import CurvedGeometryEvidence, straight_geometry
 from phydrax.meshing._measurements import NativeExecutionRecord
-from phydrax.meshing._native_preparation import native_preparation_ledger
+from phydrax.meshing._native_preparation import (
+    native_preparation_ledger,
+    stage_native_completed_source_issue,
+    stage_native_source_publication,
+)
 from phydrax.meshing._reference_root_composition import affine_reference_root_frame
 from phydrax.meshing._volume_generation import native_volume_source_execution_budget
 from phydrax.meshing.providers._native_publication import (
@@ -102,6 +106,8 @@ def _publish_in_request(
             raise ValueError(
                 "hybrid.publication.execution must own its active request and already-accounted preparation budget"
             )
+        for history in history_evidence:
+            native_preparation_ledger(scope).record_history(scope, history)
         with (
             budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size))
             if budget.storage_ticket is None else nullcontext(),
@@ -145,23 +151,56 @@ def _publish_in_request(
             result, provenance, certification, policy, organization, geometry, None,
             prepare=prepare,
             execution=NativePublicationExecution(scope, workspace, None, budget),
+            history_evidence=history_evidence,
         )
         overlap = (
             native_preparation_ledger(scope).overlap(scope, preparation_evidence)
             if preparation_evidence is not None else None
         )
+        publication_owner = (
+            preparation_evidence.owner_id
+            if preparation_evidence is not None
+            else published.execution_evidence.owner_id
+            if published.execution_evidence is not None
+            else result.execution_evidence.owner_id
+            if result.execution_evidence is not None
+            else published.result_id
+        )
+        with budget.bind_ticket(scope.ticket_view()):
+            if scope.parent is not None:
+                stage_native_source_publication(scope, published, budget=budget)
+            issue = (
+                stage_native_completed_source_issue(
+                    scope, published,
+                    owner_id=publication_owner,
+                    overlap=overlap, budget=budget,
+                )
+                if scope.parent is None else None
+            )
     if scope.evidence is None:
         raise RuntimeError(
             "hybrid.publication.execution must retain completed evidence; got None"
         )
-    return bind_native_execution_result(
+    bound = bind_native_execution_result(
         published,
         scope.evidence if overlap is None else overlap.normalize(scope.evidence),
         limits,
         scope.operation_started,
         preparation_evidence=preparation_evidence,
         history_evidence=history_evidence,
+        owner_id=publication_owner
+        if preparation_evidence is None and published.execution_evidence is None else None,
     )
+    if issue is not None:
+        issue.complete(bound)
+    if scope.parent is not None:
+        if bound.execution_evidence is None:
+            raise RuntimeError("Hybrid publication must retain its ended execution receipt.")
+        native_preparation_ledger(scope.parent).remember_receipt(
+            scope.parent, bound.execution_evidence
+        )
+        stage_native_source_publication(scope.parent, bound)
+    return bound
 
 
 @final
@@ -332,7 +371,7 @@ def qualify_hybrid_high_order_publication(
             "kind": "native-hybrid-high-order-publication",
             "plan": plan_id,
             "source_result_id": generated.result_id,
-            "specification_id": specification.specification_id,
+            "specification": specification.specification_id,
             "lifting_operation": (
                 "separate-source-limits-operation"
                 if prepared.execution_evidence is not None
@@ -422,6 +461,7 @@ def qualify_hybrid_curved_publication(
     inputs: MeshCertificationInputs,
     *,
     limits: MeshingLimits,
+    audit_policy: CellMeshAuditPolicy,
     curving: CurvedGeometryEvidence | None = None,
     execution: NativePublicationExecution | None = None,
 ) -> CellMeshingResult:
@@ -429,8 +469,8 @@ def qualify_hybrid_curved_publication(
 
     The inputs' certificate limits are used unchanged; certification runs on
     tickets of the outer request ``limits``. The audit executes the schedule's
-    required checks over the default cell policy, as retained-schedule
-    certification did. Accepted ``curving`` evidence for this exact geometry
+    required checks over the caller's explicit source-family policy. Accepted
+    ``curving`` evidence for this exact geometry
     supplies its earned validity and global embedding as prepared volume
     premises. CAD publication also retains its independently certified whole
     source-region coverage and fidelity; topology and quality are still audited.
@@ -461,7 +501,7 @@ def qualify_hybrid_curved_publication(
         certificate_limits=inputs.limits,
     )
     audit_policy = required_audit_policy(
-        CellMeshAuditPolicy(), certification.schedule.required_audit_checks
+        audit_policy, certification.schedule.required_audit_checks
     )
     prepare: Callable[[CoordinateEnclosureBudget], MeshCertificationPreparedEvidence] | None = None
     domain = inputs.domain
@@ -540,13 +580,21 @@ def qualify_hybrid_curved_publication(
             )
 
         prepare = prepare_curving
+    provenance: dict[str, object] = {
+        "kind": "native-hybrid-curved-publication",
+        "source_result_id": result.result_id,
+        "certificate_limits_id": inputs.limits.limits_id,
+    }
+    original = json.loads(result.provenance.content_json)
+    if original.get("kind") == "mapping":
+        original_items = dict(original["items"])
+        # Curving changes geometry, not the source-bound generation request.
+        for name in ("plan", "specification"):
+            if name in original_items:
+                provenance[name] = original_items[name]
     return _publish_in_request(
         result,
-        {
-            "kind": "native-hybrid-curved-publication",
-            "source_result_id": result.result_id,
-            "certificate_limits_id": inputs.limits.limits_id,
-        },
+        provenance,
         certification,
         publication_policy(
             "layer_core",

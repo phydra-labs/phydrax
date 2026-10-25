@@ -521,6 +521,31 @@ def test_intersection_stored_projection_round_trips(
     )
 
 
+def test_intersection_banks_are_immutable_snapshots_of_caller_storage(
+    branch: geometry.IntersectionCurve,
+) -> None:
+    from phydrax.geometry.brep._carrier_pieces import admit_carrier_fingerprint
+
+    caller = np.array(branch.chart_start, copy=True)
+    rebuilt = geometry.IntersectionCurve.from_stored_fields(
+        eqx.tree_at(lambda value: value.chart_start, branch, caller)
+    )
+    expected = caller.copy()
+    caller += 1.0
+    np.testing.assert_array_equal(rebuilt.chart_start, expected)
+    assert rebuilt.branch_id == branch.branch_id
+    assert array_tree_fingerprint(rebuilt) == array_tree_fingerprint(branch)
+    for bank in (rebuilt.chart_start, rebuilt.preconditioners, rebuilt.node_lower):
+        with pytest.raises(ValueError):
+            bank.setflags(write=True)
+    # A carrier is reusable only when every host bank is immutable; a caller's
+    # writable bank keeps its owner reauthenticated on every use.
+    foreign = eqx.tree_at(lambda value: value.chart_start, rebuilt, caller)
+    with coordinate_source_request((rebuilt, foreign)) as budget:
+        assert admit_carrier_fingerprint(rebuilt, budget)
+        assert not admit_carrier_fingerprint(foreign, budget)
+
+
 def test_intersection_stored_projection_refuses_invalid_chart_axis(
     branch: geometry.IntersectionCurve,
 ) -> None:

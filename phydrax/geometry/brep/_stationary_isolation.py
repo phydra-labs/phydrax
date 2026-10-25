@@ -690,11 +690,10 @@ def _search_stratum(
             > context.distance_upper + context.tolerance
         ):
             continue
-        match stratum:
-            case _FaceStratum() if _stratum_position(stratum, box, context) < 0:
-                continue
-            case _:
-                pass
+        # Equation exclusion and Krawczyk exclusion skip a box whatever its trim
+        # position, and neither consumes the box allowance. Deciding them before
+        # the exact trim classification therefore retains every decision while
+        # refining the trim only where the box can still hold a stationary root.
         low, high = evaluate_interval(
             equation.value,
             box[0][None],
@@ -713,6 +712,11 @@ def _search_stratum(
         )
         if result.excluded[0]:
             continue
+        match stratum:
+            case _FaceStratum() if _stratum_position(stratum, box, context) < 0:
+                continue
+            case _:
+                pass
         if result.certified[0]:
             root_box = np.stack(
                 (np.maximum(box[0], result.lower[0]), np.minimum(box[1], result.upper[0]))

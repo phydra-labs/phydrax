@@ -232,6 +232,8 @@ def prepare_layer_curving_nodes(
     geometry: CellGeometrySpec,
     layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> LayerCurvingNodes:
     """Bind nodal displacement groups by source cells and integer reference weights.
 
@@ -239,11 +241,27 @@ def prepare_layer_curving_nodes(
     apparent height. Every layer cell and column comes from the realized prepared
     layer source and must occur unchanged in the combined carrier.
     """
-    roots, depths = column_roots(layers)
-    source_cells, identifiers = source_layer_cells(mesh, layers)
-    collected = _collect_layer_node_groups(
-        mesh, geometry, roots, depths, source_cells, identifiers
-    )
+    cells = sum(block.cell_count for block in layers.mesh.blocks)
+    vertices = layers.mesh.coordinates.shape[0]
+    carrier_vertices = mesh.coordinates.shape[0]
+    with budget.temporary_scope():
+        # Column roots: wall seeds, directed prism pairs, and one amortized
+        # chain visit plus root/depth write per vertex. Source cells: the
+        # cell map, the carrier vertex-row map, and the inherited gather.
+        budget.reserve(
+            np.asarray(layers.wall_vertices).size
+            + 3 * vertices
+            + 6 * cells
+            + cells
+            + vertices
+            + carrier_vertices,
+            4096 + 448 * vertices + 256 * cells + 128 * carrier_vertices,
+        )
+        roots, depths = column_roots(layers)
+        source_cells, identifiers = source_layer_cells(mesh, layers)
+        collected = _collect_layer_node_groups(
+            mesh, geometry, roots, depths, source_cells, identifiers
+        )
     groups, owners, seen = collected.groups, collected.owners, collected.seen
     if seen != set(source_cells) or set(groups) != set(owners):
         raise ValueError(

@@ -23,6 +23,7 @@ import phydrax.discretization._cell_mesh as cell_mesh_owner
 import phydrax.discretization._topology as topology_owner
 
 from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
+from .._host_storage import immutable_host_array
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked, parse
@@ -1504,7 +1505,7 @@ def _host_scope_bank(value: Array, name: str, dtype: type, /) -> NDArray:
 
 
 def _read_only(value: NDArray, /) -> NDArray:
-    value = np.ascontiguousarray(value)
+    value = immutable_host_array(np.ascontiguousarray(value))
     value.flags.writeable = False
     return value
 

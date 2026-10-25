@@ -1584,27 +1584,69 @@ def _prepare_created_vertex_support(
     transported: bool,
 ) -> _CreatedSurfaceSupport:
     local_source_proof, weights = proof.source, proof.weights
-    if transported and (source_dimension < 1 or source_row < 0):
-        parents = {parent for parent, _ in weights[int(target_ids[row])]}
+    lineage_supported = source_dimension in (1, 2) and source_row >= 0
+    if not lineage_supported and transported:
+        parents = {parent for parent, _ in weights.get(int(target_ids[row]), ())}
         candidates = [
             cell
             for cell, vertices in enumerate(local_source_proof.vertex_ids)
-            if parents <= set(vertices)
+            if parents and parents <= set(vertices)
         ]
         if candidates:
             source_dimension, source_row = 2, candidates[0]
     identifier = int(target_ids[row])
-    if (
-        source_dimension not in (1, 2)
-        or source_row < 0
-        or (not transported and len(weights.get(identifier, ())) != source_dimension + 1)
-    ):
+    if source_dimension not in (1, 2) or source_row < 0:
         raise AssociationPropagationError(
             "SurfaceAssociation.created_vertices must retain source edge or cell lineage support; got missing source support",
             target_ids[row : row + 1],
         )
     return _CreatedSurfaceSupport(
         dimension=source_dimension, row=source_row, identifier=identifier
+    )
+
+
+def _created_edge_weights(
+    source: CellMeshingResult,
+    target: cell_mesh_owner.CellMesh,
+    source_row: int,
+    target_row: int,
+    /,
+) -> surface_boundary_operations_owner.SurfaceVertexWeights:
+    """Recover a born edge vertex's parameter from its explicit lineage edge."""
+    target_identifier = np.asarray(target.entity_set(0).entity_ids)[
+        target_row : target_row + 1
+    ]
+    pairs = incidence_pairs(source.mesh, 0, 1)
+    source_vertices = pairs[pairs[:, 1] == source_row, 0]
+    if source_vertices.shape != (2,):
+        raise AssociationPropagationError(
+            "SurfaceAssociation.created_vertices must bind one source edge with two endpoint vertices; got invalid edge incidence",
+            target_identifier,
+        )
+    coordinates = np.asarray(source.mesh.coordinates)[source_vertices]
+    direction = coordinates[1] - coordinates[0]
+    scale = float(direction @ direction)
+    point = np.asarray(target.coordinates)[target_row]
+    parameter = (
+        float((point - coordinates[0]) @ direction / scale)
+        if scale > 0.0
+        else np.nan
+    )
+    tolerance = 32.0 * np.finfo(np.float64).eps
+    if (
+        not np.isfinite(parameter)
+        or parameter < -tolerance
+        or parameter > 1.0 + tolerance
+    ):
+        raise AssociationPropagationError(
+            "SurfaceAssociation.created_vertices must lie on its explicit source edge parameter interval; got an exterior lineage point",
+            target_identifier,
+        )
+    parameter_fraction = Fraction(min(max(parameter, 0.0), 1.0))
+    identifiers = np.asarray(source.mesh.entity_set(0).entity_ids)[source_vertices]
+    return (
+        (int(identifiers[0]), Fraction(1) - parameter_fraction),
+        (int(identifiers[1]), parameter_fraction),
     )
 
 
@@ -1658,6 +1700,11 @@ def _prepare_created_surface_vertices(
                 continue
             if dims[row] == 1:
                 curve = int(indices[row])
+                functional_weights = weights.get(identifier)
+                if not functional_weights:
+                    functional_weights = _created_edge_weights(
+                        source, target, source_row, row
+                    )
                 parameters[row, 0] = _curve_parameter_from_functional(
                     support,
                     source.mesh,
@@ -1665,7 +1712,7 @@ def _prepare_created_surface_vertices(
                     old[0],
                     vertex_rows,
                     curve,
-                    weights[identifier],
+                    functional_weights,
                 )
             elif dims[row] == 2:
                 parameters[row] = _target_uv(
@@ -2340,6 +2387,12 @@ def successor_certification_inputs(
         case MeshingDomainBoundarySource():
             subdivision = surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource(
                 retained, support, (lineage,), (target,), geometry
+            )
+        case SurfaceNativeRestrictionBoundarySource() if (
+            retained.support.support_id == support.support_id
+        ):
+            subdivision = SurfaceNativeRestrictionBoundarySource(
+                retained.root, support, target, geometry
             )
         case surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource() if (
             retained.support.support_id == support.support_id

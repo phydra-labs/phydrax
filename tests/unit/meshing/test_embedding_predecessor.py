@@ -339,6 +339,7 @@ def test_predecessor_definition_filter_only_excludes_unequal_definitions(
         _cell_content_keys,
         _matching_definition_ids,
     )
+    from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
     mesh = CellMesh.from_triangles(
         np.asarray(((0, 0), (1, 0), (0, 1)), dtype=np.float64),
@@ -347,10 +348,12 @@ def test_predecessor_definition_filter_only_excludes_unequal_definitions(
     geometry = CellGeometrySpec.affine(mesh, budget=reference_budget)
     block = mesh.blocks[0]
     shared = np.asarray(block.global_ids)
+    source_element = geometry.elements[0]
+    assert isinstance(source_element, FiniteElementSpec)
     transformed = CellGeometrySpec(
         {
             block.name: BarycentricCellGeometryElement(
-                geometry.elements[0],
+                source_element,
                 np.asarray(((1, 0, 0), (0.5, 0.5, 0), (0, 0, 1)), dtype=np.float64),
             )
         },

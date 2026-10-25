@@ -2960,17 +2960,32 @@ def _require_execution_endpoint_extension(
         NativeExecutionRecord.require_valid(previous)
     if current is not None:
         NativeExecutionRecord.require_valid(current)
-    if content_equal(original, updated, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS):
+    # Receipt replacement retains every other declared root field by identity.
+    # Equality of that live graph does not require serializing its shared
+    # scientific subtrees through an unrelated archive-manifest limit.
+    shared_science = type(original) is type(updated) and all(
+        field.name == "execution_evidence"
+        or getattr(original, field.name) is getattr(updated, field.name)
+        for field in dataclasses.fields(original)
+    )
+    if (
+        shared_science and previous is current
+        or not shared_science
+        and content_equal(original, updated, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+    ):
         return
     if (
         previous is None
         or current is None
         or previous.owner_id is None
         or current.owner_id != previous.owner_id
-        or not content_equal(
-            CellMeshingResult.with_execution_evidence(original, current),
-            updated,
-            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        or (
+            not shared_science
+            and not content_equal(
+                CellMeshingResult.with_execution_evidence(original, current),
+                updated,
+                limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+            )
         )
     ):
         raise ValueError(
@@ -3893,8 +3908,17 @@ def prepare_meshing_field_owner(
         if budget is not None:
             scope.request_budgets[id(budget)] = budget
         source_owner.register_meshing_source_artifacts()
+        # FE preparation consumes the declared field, mesh, and coordinates,
+        # not publication certificates or CAD source histories. Bind only that
+        # preparation closure; field/index validation below still runs on every
+        # caller's actual carrier, including cache hits.
+        preparation_inputs = (
+            (declaration, mesh, geometry, id(budget))
+            if isinstance(declaration, MeshingFiniteElementFieldDeclaration)
+            else (declaration, carrier, index_source, id(budget))
+        )
         key = source_owner._source_owner_reconstruction_key(
-            (declaration, carrier, index_source, id(budget)),
+            preparation_inputs,
             scope.archive_limits,
             source_validation,
             prepare_meshing_field_owner,

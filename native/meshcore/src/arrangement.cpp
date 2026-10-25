@@ -208,36 +208,6 @@ Dyadic line_nearest_integer(const Dyadic& numerator, const Dyadic& denominator,
   return Dyadic::integer(quotient.data(), quotient.size(), numerator.sign() * denominator.sign());
 }
 
-  // The leading-integer quotient is a close candidate, not the correctly
-  // rounded rational. Exact residual signs locate its two neighboring values;
-  // their residual sum decides the midpoint, including ties to even.
-  static double nearest(const Dyadic& numerator, const Dyadic& denominator, double x) {
-    Dyadic residual = numerator - Dyadic(x) * denominator;
-    while (residual.sign() != 0) {
-      const int direction = residual.sign() * denominator.sign();
-      const double next = std::nextafter(
-          x, direction > 0 ? std::numeric_limits<double>::infinity()
-                           : -std::numeric_limits<double>::infinity());
-      if (!std::isfinite(next)) {
-        break;
-      }
-      Dyadic next_residual = numerator - Dyadic(next) * denominator;
-      if (next_residual.sign() == 0) {
-        return next;
-      }
-      if (next_residual.sign() == residual.sign()) {
-        x = next;
-        residual = std::move(next_residual);
-        continue;
-      }
-      const int closer = (residual + next_residual).sign() * residual.sign();
-      if (closer > 0 || (closer == 0 && (std::bit_cast<std::uint64_t>(next) & 1u) == 0)) {
-        x = next;
-      }
-      break;
-    }
-    return x;
-  }
 // ------------------------------------------------------------ implicit points
 
 
@@ -669,27 +639,16 @@ class Kernel {
   // from the exact residual, not a relative-error heuristic.
   void round(PoolPoint& point, std::int64_t id) {
     const Dyadic* exact = hom<Dyadic>(id);
-    std::int64_t w_exponent = 0;
-    const double w_fraction = exact[3].fraction(w_exponent);
     double bound = 0.0;
     for (int axis = 0; axis < 3; ++axis) {
-      std::int64_t exponent = 0;
-      const double fraction = exact[axis].fraction(exponent);
-      if (fraction == 0.0) {
+      if (exact[axis].sign() == 0) {
         point.x[axis] = 0.0;
         continue;
       }
-      const auto shift = std::clamp<std::int64_t>(
-          exponent - w_exponent, std::numeric_limits<int>::min(),
-          std::numeric_limits<int>::max());
-      const double candidate = std::ldexp(fraction / w_fraction, static_cast<int>(shift));
       // Outside-face intersections may exceed binary64. Their finite saturated
       // candidate and outward bound keep all rejection conservative until
       // exact clipping removes them.
-      const double initial = std::isfinite(candidate)
-                                 ? candidate
-                                 : std::copysign(std::numeric_limits<double>::max(), candidate);
-      const double x = nearest(exact[axis], exact[3], initial);
+      const double x = exact::rounded_quotient(exact[axis], exact[3]);
       point.x[axis] = x;
       const Dyadic residual = exact[axis] - Dyadic(x) * exact[3];
       bound = std::max(bound, quotient_bound(residual, exact[3]));
@@ -1664,6 +1623,7 @@ int32_t clip_reference_triangle_exact(
 }
 
 #include "reference_tetrahedron_clip.inc"
+#include "exact_tetrahedra_arrangement.inc"
 
 // Outcome of the exact predicate facet coverage proofs.
 enum class PredicateCover : std::uint8_t { kCovered, kRefused, kUnknown };
@@ -1858,7 +1818,7 @@ PredicateCover predicate_facet_cover(const double* coordinates,
 bool facet_coverage(const double* subject, const double* original_points,
                     std::span<const std::array<int32_t, 4>> original_faces,
                     std::span<const int32_t> rows, NativeVector<int32_t>& contributors,
-                    bool predicate_proof) {
+                    bool predicate_proof, std::span<const int64_t> epochs) {
   contributors.clear();
   native_execution_charge(1, 1);
   if (rows.empty()) return false;
@@ -1867,10 +1827,12 @@ bool facet_coverage(const double* subject, const double* original_points,
     native_execution_charge(1);
     return a < b;
   });
-  selected.erase(std::unique(selected.begin(), selected.end(), [](int32_t a, int32_t b) {
-    native_execution_charge(1);
-    return a == b;
-  }), selected.end());
+  if (std::adjacent_find(selected.begin(), selected.end()) != selected.end()) return false;
+  if (!epochs.empty() &&
+      (epochs.size() != rows.size() || !std::equal(rows.begin(), rows.end(), selected.begin()) ||
+       !std::is_sorted(epochs.begin(), epochs.end()) || epochs.front() < 0)) {
+    return false;
+  }
 
   // m supporting edges have at most m(m-1)/2 proper intersections.
   // A planar triangulation has fewer than twice as many triangles as vertices.
@@ -1903,7 +1865,7 @@ bool facet_coverage(const double* subject, const double* original_points,
       coordinates.insert(coordinates.end(), point, point + 3);
     }
   }
-  if (predicate_proof) {
+  if (predicate_proof && epochs.empty()) {
     NativeVector<std::size_t> covering;
     switch (predicate_facet_cover(coordinates.data(), triangles, selected.size(), covering)) {
       case PredicateCover::kCovered:
@@ -1948,19 +1910,42 @@ bool facet_coverage(const double* subject, const double* original_points,
     const Output& out = arranger.output();
     if (out.fragments.empty()) return false;
     NativeVector<int32_t> owners(out.fragments.size(), -1);
-    std::int64_t source_orientation = 0;
+    NativeVector<int64_t> owner_epochs(epochs.empty() ? 0 : out.fragments.size(), -1);
+    NativeVector<int64_t> owner_orientations(epochs.empty() ? 0 : out.fragments.size(), 0);
+    NativeSet<std::pair<std::size_t, int64_t>> epoch_owners;
+    int64_t source_orientation = 0;
     for (const auto& record : out.coplanar) {
       native_execution_charge(1);
-      if (record[2] == 0 ||
-          (source_orientation != 0 && record[2] != source_orientation)) return false;
-      source_orientation = record[2];
-      auto& owner = owners[static_cast<std::size_t>(record[0])];
-      if (owner >= 0) return false;  // positive-area overlap
-      owner = selected[static_cast<std::size_t>(record[1] - 1)];
+      if (record[2] == 0) return false;
+      const auto fragment = static_cast<std::size_t>(record[0]);
+      const auto index = static_cast<std::size_t>(record[1] - 1);
+      if (epochs.empty()) {
+        if (owners[fragment] >= 0 ||
+            (source_orientation != 0 && record[2] != source_orientation)) return false;
+        owners[fragment] = selected[index];
+        source_orientation = record[2];
+        continue;
+      }
+      const int64_t epoch = epochs.empty() ? 0 : epochs[index];
+      if (!epoch_owners.emplace(fragment, epoch).second) return false;
+      if (owner_epochs[fragment] > epoch) continue;
+      owners[fragment] = selected[index];
+      owner_epochs[fragment] = epoch;
+      owner_orientations[fragment] = record[2];
     }
-    for (int32_t owner : owners) {
+    source_orientation = 0;
+    for (std::size_t fragment = 0; fragment < owners.size(); ++fragment) {
       native_execution_charge(1);
-      if (owner < 0) return false;  // positive-area gap
+      if (owners[fragment] < 0) return false;
+      // Delegated rows permit public outward/native inward permutations:
+      // their material-side orientation was proved by the native edit, not
+      // by the host row ordering. Authored epoch-zero PLC rows retain the
+      // ordinary orientation requirement.
+      if (!epochs.empty() && owner_epochs[fragment] == 0) {
+        const int64_t orientation = owner_orientations[fragment];
+        if (source_orientation != 0 && orientation != source_orientation) return false;
+        source_orientation = orientation;
+      }
     }
     std::sort(owners.begin(), owners.end(), [](int32_t a, int32_t b) {
       native_execution_charge(1);
@@ -1984,14 +1969,22 @@ bool exact_facet_coverage(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
     std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
-  return facet_coverage(subject, original_points, original_faces, rows, contributors, true);
+  return facet_coverage(subject, original_points, original_faces, rows, contributors, true, {});
 }
 
 bool exact_facet_coverage_by_arrangement(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
     std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
-  return facet_coverage(subject, original_points, original_faces, rows, contributors, false);
+  return facet_coverage(subject, original_points, original_faces, rows, contributors, false, {});
+}
+
+bool exact_facet_history_coverage(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> rows, std::span<const int64_t> epochs,
+    NativeVector<int32_t>& contributors) {
+  return facet_coverage(subject, original_points, original_faces, rows, contributors, false, epochs);
 }
 
 int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,
@@ -2066,7 +2059,7 @@ static bool construct_exact_line_point_in_binade(
     std::int64_t ne = 0, de = 0;
     const double nf = n.fraction(ne), df = d.fraction(de);
     const double initial = std::ldexp(nf / df, static_cast<int>(ne - de));
-    return std::isfinite(initial) ? nearest(n, d, initial) : initial;
+    return std::isfinite(initial) ? exact::nearest_quotient(n, d, initial) : initial;
   };
   for (int axis = 0; axis < 3; ++axis) {
     if (!primitive[axis].sign()) continue;
@@ -2248,6 +2241,11 @@ struct phx_mc_arrangement {
   std::unique_ptr<phx::mc::Arranger> arranger;
   phx::mc::NativeVector<std::int64_t> fragment_components;
   phx::mc::NativeVector<std::int32_t> component_windings;
+};
+
+// The pooled tetrahedra arrangement record; banks keep their bounded owner.
+struct phx_mc_tetrahedra_arrangement : phx::mc::NativeAllocatedObject {
+  phx::mc::TetrahedraArrangementBanks banks;
 };
 
 namespace {
@@ -2841,6 +2839,7 @@ int32_t phx_mc_clip_reference_tetrahedron_exact(
   auto word_count = request->word_count;
   auto offsets = request->offsets;
   auto signs = request->signs;
+  auto plane_count = request->plane_count;
   auto scratch_limit = request->scratch_limit;
   auto work_limit = request->work_limit;
   auto vertex_capacity = request->vertex_capacity;
@@ -2856,11 +2855,70 @@ int32_t phx_mc_clip_reference_tetrahedron_exact(
   auto work_units = request->work_units;
   return phx::mc::guarded([&]() -> int32_t {
     return phx::mc::clip_reference_tetrahedron_exact(
-        words, word_count, offsets, signs, scratch_limit, work_limit,
+        words, word_count, offsets, signs, plane_count, scratch_limit, work_limit,
         vertex_capacity, face_capacity, entry_capacity, supporting_planes,
         incident_planes, face_offsets, face_planes, face_vertices,
         vertex_count, face_count, work_units);
   });
+}
+
+int32_t phx_mc_arrange_tetrahedra_exact(const phx_mc_arrange_tetrahedra_exact_request* request) {
+  return phx::mc::guarded([&]() -> int32_t {
+    return phx::mc::arrange_tetrahedra_exact(
+        request, [&](phx::mc::TetrahedraArrangementBanks&& banks) {
+          auto handle = phx::mc::make_native_unique<phx_mc_tetrahedra_arrangement>();
+          handle->banks = std::move(banks);
+          *request->result = handle.release();
+        });
+  });
+}
+
+int32_t phx_mc_tetrahedra_arrangement_sizes(const phx_mc_tetrahedra_arrangement* result,
+                                            int64_t* sizes) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const auto& banks = result->banks;
+    sizes[0] = static_cast<int64_t>(banks.vertex_input_index.size());
+    sizes[1] = static_cast<int64_t>(banks.vertex_words.size());
+    sizes[2] = static_cast<int64_t>(banks.cell_face_offsets.size()) - 1;
+    sizes[3] = static_cast<int64_t>(banks.face_planes.size());
+    sizes[4] = static_cast<int64_t>(banks.face_vertices.size());
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tetrahedra_arrangement_export(
+    const phx_mc_tetrahedra_arrangement* result, uint32_t* vertex_words,
+    int64_t* vertex_word_offsets, int8_t* vertex_signs, int32_t* vertex_input_index,
+    int64_t* cell_face_offsets, int64_t* face_offsets, int32_t* face_vertices,
+    int32_t* face_planes, int64_t* counters) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || counters == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const auto& banks = result->banks;
+    if (!phx::mc::output_bank_valid(banks.vertex_words, vertex_words) ||
+        !phx::mc::output_bank_valid(banks.vertex_word_offsets, vertex_word_offsets) ||
+        !phx::mc::output_bank_valid(banks.vertex_signs, vertex_signs) ||
+        !phx::mc::output_bank_valid(banks.vertex_input_index, vertex_input_index) ||
+        !phx::mc::output_bank_valid(banks.cell_face_offsets, cell_face_offsets) ||
+        !phx::mc::output_bank_valid(banks.face_offsets, face_offsets) ||
+        !phx::mc::output_bank_valid(banks.face_vertices, face_vertices) ||
+        !phx::mc::output_bank_valid(banks.face_planes, face_planes))
+      return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(banks.vertex_words, vertex_words);
+    phx::mc::copy_output_bank(banks.vertex_word_offsets, vertex_word_offsets);
+    phx::mc::copy_output_bank(banks.vertex_signs, vertex_signs);
+    phx::mc::copy_output_bank(banks.vertex_input_index, vertex_input_index);
+    phx::mc::copy_output_bank(banks.cell_face_offsets, cell_face_offsets);
+    phx::mc::copy_output_bank(banks.face_offsets, face_offsets);
+    phx::mc::copy_output_bank(banks.face_vertices, face_vertices);
+    phx::mc::copy_output_bank(banks.face_planes, face_planes);
+    std::copy(banks.counters.begin(), banks.counters.end(), counters);
+    return PHX_MC_OK;
+  });
+}
+
+void phx_mc_tetrahedra_arrangement_free(phx_mc_tetrahedra_arrangement* result) {
+  phx::mc::destroy_native_object(result);
 }
 
 }  // extern "C"

@@ -237,9 +237,11 @@ def combined_domain(
     dict[tuple[int, ...], list[LayerCoreFace]],
 ]:
     layer_faces = faces(layers.mesh, layer_regions, work=work)
+    work.charge(2 * cap_ids.size + len(layer_faces) + complex_.polygon_facets.size)
     cap_keys = {
         tuple(sorted(mapping[polygons[index]].tolist())): int(index) for index in cap_ids
     }
+    cap_indices = frozenset(cap_ids.tolist())
     facets: list[tuple[int, int, int]] = []
     incidence: list[tuple[int, int]] = []
     for key, incidents in layer_faces.items():
@@ -274,7 +276,7 @@ def combined_domain(
         positive = int(core_region_map[positive]) if positive >= 0 else -1
         negative = int(core_region_map[negative]) if negative >= 0 else -1
         mapped = tuple(mapping[polygon].tolist())
-        if index in cap_ids:
+        if index in cap_indices:
             negative = layer_faces[tuple(sorted(mapped))][0].region
         if positive != negative:
             facets.append((mapped[0], mapped[1], mapped[2]))

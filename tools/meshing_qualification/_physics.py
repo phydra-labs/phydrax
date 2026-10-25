@@ -139,8 +139,8 @@ class CorpusPreconditionerEvidence(TypedDict):
     diagonal_method: str
     diagonal_operator_id: str
     size: int
-    minimum_diagonal: float
-    maximum_diagonal: float
+    minimum_diagonal: float | None
+    maximum_diagonal: float | None
     positive_definite: str
 
 
@@ -231,8 +231,8 @@ def _corpus_solve_policy(
         "diagonal_method": diagonal.method,
         "diagonal_operator_id": diagonal.operator_id,
         "size": int(values.size),
-        "minimum_diagonal": float(values.min()),
-        "maximum_diagonal": float(values.max()),
+        "minimum_diagonal": float(values.min()) if values.size else None,
+        "maximum_diagonal": float(values.max()) if values.size else None,
         "positive_definite": "verified",
     }
 

@@ -46,7 +46,9 @@ from ..discretization._cell_geometry_predecessor import (
 )
 from ..discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
 )
 from ..discretization._coordinate_enclosure import (
     coordinate_polynomials,
@@ -420,14 +422,22 @@ def _bind_root_geometry(
     root_elements, root_routes, root_coordinates = domain.source_geometry.resolve(
         domain.reference_mesh, budget=budget
     )
-    root_values = np.asarray(root_coordinates, dtype=np.float64)
     root_cells = sum(block.cell_count for block in domain.reference_mesh.blocks)
     root_width = max((np.shape(routes)[1] for routes in root_routes), default=0)
+    root_size = np.size(root_coordinates)
     with scope.host_workspace() as workspace:
-        # CPython root entries (identifier, record tuple, route row view and
-        # dictionary slot) of at most 384 bytes per root cell.
-        retained = 384 * root_cells
-        workspace.set_bound(retained + 4096)
+        # The host root coordinate bank and CPython root entries (identifier,
+        # record tuple, route row view and dictionary slot) of at most 384
+        # bytes per root cell stay live; one block's identity and route
+        # transfers coexist with them.
+        retained = 8 * root_size + 384 * root_cells
+        workspace.set_bound(retained + 8 * root_cells * (1 + root_width) + 4096)
+        # The root coordinate transfer, then per root cell its identity and
+        # route transfers and conversions and one dictionary insertion.
+        family_execution_owner.count_geometry_queries(
+            0, work_units=root_size + root_cells * (3 + 2 * root_width), budget=budget
+        )
+        root_values = np.asarray(root_coordinates, dtype=np.float64)
         roots = {
             int(identifier): (
                 element,
@@ -442,15 +452,33 @@ def _bind_root_geometry(
             )
         }
         elements, routes, coordinates = geometry.resolve(mesh, budget=budget)
-        values = np.asarray(coordinates, dtype=np.float64)
         cells = sum(block.cell_count for block in mesh.blocks)
         width = max((np.shape(route)[1] for route in routes), default=0)
-        gathered = width * values.shape[1] + root_width * root_values.shape[1]
-        # Selected row slots and stacked root routes stay live; one cell's two
-        # coefficient gathers coexist.
-        workspace.set_bound(
-            retained + cells * (8 + 4 * root_width) + 8 * gathered + 4096
+        ambient = np.shape(coordinates)[1]
+        root_ambient = root_values.shape[1]
+        # The generated coordinate transfer, then per generated cell its
+        # identity, route and parent transfers, root lookup and family check,
+        # both coefficient gathers, the basis comparison and the stacked route.
+        family_execution_owner.count_geometry_queries(
+            0,
+            work_units=np.size(coordinates)
+            + cells
+            * (8 + width * (1 + ambient) + root_width * (1 + root_ambient)),
+            budget=budget,
         )
+        retained += 8 * np.size(coordinates)
+        gathered = width * ambient + root_width * root_ambient
+        # The host generated coordinates, selected row slots and stacked root
+        # routes stay live; one block's identity, route and parent transfers
+        # and one cell's two coefficient gathers coexist.
+        workspace.set_bound(
+            retained
+            + cells * (8 + 4 * root_width)
+            + 8 * cells * (2 + width)
+            + 8 * gathered
+            + 4096
+        )
+        values = np.asarray(coordinates, dtype=np.float64)
         bound_elements: dict[str, CellGeometryElement] = {}
         bound_routes: dict[str, np.ndarray] = {}
         for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
@@ -601,6 +629,12 @@ def construct_sweep(
         profile_shapes = tuple(
             (block.cell_kind, block.cell_count, block.arity) for block in profile.blocks
         )
+        # The affine constructor validates and copies every coordinate and
+        # route corner once.
+        scope.charge(
+            work=profile.coordinates.size
+            + sum(block.vertices.size for block in profile.blocks)
+        )
         with scope.host_workspace() as workspace:
             # The profile is not periodic (refused above).
             workspace.set_bound(
@@ -625,10 +659,13 @@ def construct_sweep(
         source_corners = _dependency_phydrax_geometry__mapped_reference_domain.mapped_source_corner_coordinates(
             profile, source_geometry, budget=budget
         )
-        # Corner equality compares every coordinate through one boolean
-        # temporary.
+        # Corner equality transfers both coordinate banks and compares them.
+        family_execution_owner.count_geometry_queries(
+            0, work_units=3 * profile.coordinates.size, budget=budget
+        )
         with scope.host_workspace() as workspace:
-            workspace.set_bound(profile.coordinates.size + 4096)
+            # Two host coordinate transfers and one boolean temporary.
+            workspace.set_bound(17 * profile.coordinates.size + 4096)
             corners_retained = np.array_equal(
                 source_corners, np.asarray(profile.coordinates)
             )
@@ -637,18 +674,18 @@ def construct_sweep(
             "sweep.profile_geometry must retain profile topology corners; got different coordinate-map corner images"
         )
     prepared_source = _require_sweep_elements(source_elements)
-    source_routes, source_coordinates = jax.device_get(
-        (source_routes, source_coordinates)
+    count, width = profile.coordinates.shape
+    # One transfer and copy per profile coordinate, and the zero height of a
+    # planar profile, into a pooled spatial bank.
+    scope.charge(work=2 * profile.coordinates.size + (count if width == 2 else 0))
+    points = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (count, 3), np.float64, scope=scope
     )
-    points = np.asarray(profile.coordinates, dtype=np.float64)
-    count = points.shape[0]
-    if points.shape[1] == 2:
-        # Planar profiles embed at zero height in a pooled spatial bank.
-        planar = points
-        points = _dependency_phydrax_meshing__host_banks.family_host_array(
-            (count, 3), np.float64, scope=scope
-        )
-        points[:, :2] = planar
+    with scope.host_workspace() as workspace:
+        # The profile coordinate transfer is the one unpooled temporary.
+        workspace.set_bound(8 * profile.coordinates.size + 4096)
+        points[:, :width] = np.asarray(profile.coordinates, dtype=np.float64)
+    if width == 2:
         points[:, 2] = 0.0
     mapped, stations = mapped_stations(points, control, scope=scope)
     layers = stations.size - 1
@@ -657,6 +694,9 @@ def construct_sweep(
             raise ValueError(
                 f"sweep.layers must have at least three layers when closed; got {layers}"
             )
+        # Per profile vertex: three coordinate differences, squares and sums,
+        # one root and one maximum, then the three-coordinate seam copy.
+        scope.charge(work=14 * count)
         seam = _dependency_phydrax_meshing__host_banks.family_host_array(
             (count, 3), np.float64, scope=scope
         )
@@ -686,11 +726,23 @@ def construct_sweep(
     )
     mesh_points = mapped[:-1] if control.closed else mapped
     mesh_vertices = mesh_points.shape[0] * mesh_points.shape[1]
+    profile_entries = max(block.vertices.size for block in profile.blocks)
+    # Profile corner transfer and conversion, one identity per column cell,
+    # and the column block and mesh constructors' priced passes.
+    scope.charge(
+        work=2 * sum(block.vertices.size for block in profile.blocks)
+        + column_cells
+        + sum(
+            cell_block_construction_work(column_count, arity)
+            for _, column_count, arity in column_shapes
+        )
+        + cell_mesh_construction_work(mesh_vertices, 3, column_shapes)
+    )
     # One identity range per column cell; device transfer may retain every
-    # range. Each column block and then the mesh are admitted before
-    # construction.
+    # range. One block's corner transfer and conversion join it. Each column
+    # block and then the mesh are admitted before construction.
     with scope.host_workspace() as workspace:
-        workspace.set_bound(8 * column_cells + 4096)
+        workspace.set_bound(8 * column_cells + 12 * profile_entries + 4096)
         for block, (kind, column_count, arity) in zip(
             profile.blocks, column_shapes, strict=True
         ):
@@ -700,6 +752,7 @@ def construct_sweep(
             )
             workspace.set_bound(
                 8 * column_cells
+                + 12 * profile_entries
                 + 4096
                 + cell_block_construction_bounds(column_count, arity)
             )
@@ -720,20 +773,28 @@ def construct_sweep(
             + cell_mesh_construction_bounds(mesh_vertices, 3, column_shapes)
         )
         mesh = CellMesh(mesh_points.reshape(-1, 3), tuple(blocks))
-    controls = np.asarray(source_coordinates, dtype=np.float64)
-    control_count = controls.shape[0]
-    if controls.shape[1] == 2:
-        planar = controls
-        controls = _dependency_phydrax_meshing__host_banks.family_host_array(
-            (control_count, 3), np.float64, scope=scope
-        )
-        controls[:, :2] = planar
+    control_count, control_width = np.shape(source_coordinates)
+    # One transfer and copy per source coordinate, and the zero height of a
+    # planar profile, into a pooled spatial bank.
+    scope.charge(
+        work=2 * np.size(source_coordinates)
+        + (control_count if control_width == 2 else 0)
+    )
+    controls = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (control_count, 3), np.float64, scope=scope
+    )
+    with scope.host_workspace() as workspace:
+        # The source coordinate transfer is the one unpooled temporary.
+        workspace.set_bound(8 * np.size(source_coordinates) + 4096)
+        controls[:, :control_width] = np.asarray(source_coordinates, dtype=np.float64)
+    if control_width == 2:
         controls[:, 2] = 0.0
     mapped_controls, _ = mapped_stations(controls, control, scope=scope)
     if control.closed:
         endpoint = mapped_controls[0].size
         # Closeness owns at most five coordinate-sized and five boolean
-        # temporaries.
+        # temporaries, one pass each.
+        scope.charge(work=10 * endpoint)
         with scope.host_workspace() as workspace:
             workspace.set_bound(48 * endpoint + 4096)
             controls_closed = np.allclose(
@@ -754,14 +815,20 @@ def construct_sweep(
                     source_element, budget=budget
                 )
             )
-    for block, source_route in zip(mesh.blocks, source_routes, strict=True):
-        geometry_routes[block.name] = column_connectivity(
-            np.asarray(source_route, dtype=np.int32),
-            layers,
-            control_count,
-            control.closed,
-            scope=scope,
-        )
+    route_entries = tuple(np.size(source_route) for source_route in source_routes)
+    # One transfer and conversion per source route entry.
+    scope.charge(work=2 * sum(route_entries))
+    with scope.host_workspace() as workspace:
+        # One block's route transfer and conversion.
+        workspace.set_bound(12 * max(route_entries) + 4096)
+        for block, source_route in zip(mesh.blocks, source_routes, strict=True):
+            geometry_routes[block.name] = column_connectivity(
+                np.asarray(source_route, dtype=np.int32),
+                layers,
+                control_count,
+                control.closed,
+                scope=scope,
+            )
     geometry_points = mapped_controls[:-1] if control.closed else mapped_controls
     predecessor: CellGeometryPredecessor | None = None
     with family_execution_owner.coordinate_phase(scope=scope, budget=budget):
@@ -797,9 +864,16 @@ def construct_sweep(
         )
     )
     node_layers = mapped.shape[0]
+    # Two identity ranges, layer offsets and their broadcast sum, the closed
+    # seam copy, and the source identity transfer and copy; then per column
+    # step three coordinate differences, squares and sums and one root.
+    scope.charge(
+        work=node_layers * (count + 2) + 4 * count + 10 * layers * count
+    )
     with scope.host_workspace() as workspace:
-        # Layer offsets and profile identities are the unpooled temporaries.
-        workspace.set_bound(8 * (2 * node_layers + count) + 4096)
+        # Layer offsets, profile identities and the source identity transfer
+        # are the unpooled temporaries.
+        workspace.set_bound(8 * (2 * node_layers + 2 * count) + 4096)
         layer_ids = _dependency_phydrax_meshing__host_banks.family_host_array(
             (node_layers, count), np.int64, scope=scope
         )
@@ -810,6 +884,10 @@ def construct_sweep(
         )
         if control.closed:
             layer_ids[-1] = layer_ids[0]
+        source_ids = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (count,), np.int64, scope=scope
+        )
+        source_ids[:] = np.asarray(profile.vertex_global_ids, dtype=np.int64)
     differences = _dependency_phydrax_meshing__host_banks.family_host_array(
         (layers, count, 3), np.float64, scope=scope
     )
@@ -823,7 +901,7 @@ def construct_sweep(
     return SweepConstruction(
         mesh,
         geometry,
-        np.asarray(profile.vertex_global_ids, dtype=np.int64),
+        source_ids,
         layer_ids,
         stations,
         measured,

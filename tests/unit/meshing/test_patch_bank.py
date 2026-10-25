@@ -3,16 +3,19 @@
 #
 """Canonical column banks for publication patches and their scopes."""
 
+from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
 from typing import NoReturn
 
 import equinox as eqx
+import jax
 import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._fingerprint import _NumpyArraySeal
 from phydrax._model._structure import (
     _canonical_recipe_payload,
     _restore_dataclass,
@@ -20,8 +23,8 @@ from phydrax._model._structure import (
 )
 from phydrax.lifecycle import read_meshing_source_closure, write_meshing_source_closure
 from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
-from phydrax.meshing._organization_records import MeshPatch, MeshPatchBank
 from phydrax.meshing import _scope as scope_owner
+from phydrax.meshing._organization_records import MeshPatch, MeshPatchBank
 from phydrax.meshing._scope import (
     mesh_entity_scope,
     MeshingEntityKind,
@@ -191,10 +194,22 @@ def test_scope_bank_digest_collision_does_not_erase_different_universes(
     )
     digest = scope_owner.logical_array_value_collection_digest
 
-    def collide(arrays, **kwargs):
+    def collide(
+        arrays: Mapping[str, jax.Array | np.ndarray],
+        /,
+        *,
+        maximum_chunk_bytes: int = 1 << 20,
+        logical_shapes: Mapping[str, tuple[int, ...]] | None = None,
+        _numpy_seals: dict[int, _NumpyArraySeal] | None = None,
+    ) -> str:
         if set(arrays).issubset({"0", "1", "2"}):
             return "placement-collision"
-        return digest(arrays, **kwargs)
+        return digest(
+            arrays,
+            maximum_chunk_bytes=maximum_chunk_bytes,
+            logical_shapes=logical_shapes,
+            _numpy_seals=_numpy_seals,
+        )
 
     monkeypatch.setattr(scope_owner, "logical_array_value_collection_digest", collide)
     bank = MeshingScopeBank((scope, changed))

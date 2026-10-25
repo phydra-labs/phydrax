@@ -4008,16 +4008,19 @@ def _nested_reference_use(
     route: _NestedFieldRoute,
     /,
     *,
+    surface_semantics: bool,
     parent_cells: ArrayLike | None,
     parent_reference_vertices: ArrayLike | None,
     parent_reference_homogeneous: ArrayLike | None,
     geometry_transition: CellGeometryTransition | None,
     coarsening_witnesses: NestedReferenceWitnesses | None,
 ) -> _NestedReferenceUse | None:
-    """The exact nested pieces and witnesses each route reads, if any.
+    """Select exact nested pieces by their reference-space semantics.
 
-    Mapped H(curl)/H(div) without form bases, the conformity refusal and the
-    physical-corner affine route read no nested pieces.
+    Rooted polynomial actions describe two-dimensional surface reference
+    semantics. Volume routes use explicit transition witnesses and certify the
+    complete source-to-target geometry maps; matching dimensions never imply
+    a shared coordinate space. Routes without nested pieces return ``None``.
     """
     refinement = (parent_cells, parent_reference_vertices, parent_reference_homogeneous)
     match route:
@@ -4032,10 +4035,16 @@ def _nested_reference_use(
                 False, True, *refinement, geometry_transition, None
             )
         case "mapped-dg":
-            return _NestedReferenceUse(True, True, *refinement, geometry_transition, None)
+            return _NestedReferenceUse(
+                surface_semantics, True, *refinement, geometry_transition, None
+            )
         case "mapped-form":
             return _NestedReferenceUse(
-                True, True, *refinement, geometry_transition, coarsening_witnesses
+                surface_semantics,
+                True,
+                *refinement,
+                geometry_transition,
+                coarsening_witnesses,
             )
         case "affine" | "mapped-compatible" | "mapped-conformity":
             return None
@@ -4078,6 +4087,7 @@ def _prepare_nested_field_transfer(
         nested_reference is not None
         and _nested_reference_use(
             dispatch.route,
+            surface_semantics=source.mesh.topological_dimension == 2,
             parent_cells=parent_cells,
             parent_reference_vertices=parent_reference_vertices,
             parent_reference_homogeneous=parent_reference_homogeneous,
@@ -4194,6 +4204,8 @@ def _prepare_projection_field_transfer(
     *,
     field_name: str,
     budget: CoordinateEnclosureBudget,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
 ) -> FiniteElementFieldTransfer:
     """Prepare a non-nested scalar or compatible vector projection.
 
@@ -4210,6 +4222,14 @@ def _prepare_projection_field_transfer(
     certificates refuse the route. Curved nonnested geometry is not admitted.
     """
 
+    source_map = bound_coordinate_spec(source, source_geometry, "source", budget=budget)
+    target_map = bound_coordinate_spec(target.discretization, target_geometry, "target", budget=budget)
+    if (
+        source_geometry is not None and _coordinate_geometry_id(source_map) != refinement.source_geometry_id
+    ) or (
+        target_geometry is not None and _coordinate_geometry_id(target_map) != refinement.target_geometry_id
+    ):
+        raise ValueError("projection geometry must bind the exact common-refinement coordinate sources")
     transfer, overlap = _assembled_projection(source, target, refinement, field_name)
     name = str(field_name)
     source_index = source.field_index(name)
@@ -4260,12 +4280,8 @@ def _prepare_projection_field_transfer(
         source.field_spaces[source_index],
         space.field_spaces[space.field_index(target.field_name)],
         TransferGeometryBinding(
-            _coordinate_geometry_id(
-                bound_coordinate_spec(source, None, "source", budget=budget)
-            ),
-            _coordinate_geometry_id(
-                bound_coordinate_spec(space, None, "target", budget=budget)
-            ),
+            _coordinate_geometry_id(source_map),
+            _coordinate_geometry_id(target_map),
             "bounded-reconstruction",
             source_topology_id=source.mesh.topology_id,
             target_topology_id=space.mesh.topology_id,
@@ -4553,7 +4569,7 @@ def _mapped_dg_input(
         parent_reference_vertices=parent_reference_vertices,
         parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
-        rooted=True,
+        rooted=source.mesh.topological_dimension == 2,
         certified=True,
         budget=budget,
     )
@@ -5117,7 +5133,8 @@ def prepare_mapped_nested_dg_transfer(
     charts), with explicit outward publication errors. Local masses are batched
     by represented field and geometry descriptors and solved by native SVD factors.
     The sparse primal and its algebraic transpose preserve all payload axes.
-    A supplied rooted ``nested_reference`` must bind these maps and witnesses.
+    A supplied ``nested_reference`` must bind these maps, witnesses, and the
+    explicit surface-rooted versus volume-reference semantics.
     """
     with budget.measurement(), budget.temporary_scope():
         try:
@@ -5625,7 +5642,7 @@ def _prepare_nested_compatible_field_transfers(
         parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
         coarsening_witnesses=coarsening_witnesses,
-        rooted=True,
+        rooted=source.mesh.topological_dimension == 2,
         certified=True,
         budget=budget,
     )
@@ -5683,7 +5700,7 @@ def _prepare_mapped_nested_compatible_transfer(
         parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
         coarsening_witnesses=coarsening_witnesses,
-        rooted=True,
+        rooted=source.mesh.topological_dimension == 2,
         certified=True,
         budget=budget,
     )
@@ -6443,6 +6460,10 @@ def _prepare_source_realization_field_transfer(
         source, target, realization, source_geometry, target_geometry, budget=budget
     )
     if meaning == "conservative-density":
+        if all(element.conformity == "H1" for element in source.elements[source.field_index(field_name)]):
+            return _realization_h1_density_transfer(
+                source, target, realization, binding, field_name, budget=budget,
+            )
         return _realization_density_forms(
             source,
             target,
@@ -6524,6 +6545,7 @@ def prepare_shared_nested_field_transfer(
     )
     use = _nested_reference_use(
         dispatch.route,
+        surface_semantics=source.mesh.topological_dimension == 2,
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
         parent_reference_homogeneous=parent_reference_homogeneous,
@@ -6854,6 +6876,8 @@ def prepare_projection_field_transfer(
     *,
     field_name: str,
     budget: CoordinateEnclosureBudget | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
 ) -> FiniteElementFieldTransfer:
     """Prepare projection and algebraic source bindings within one explicit host request."""
     if budget is not None:
@@ -6863,7 +6887,10 @@ def prepare_projection_field_transfer(
             refinement,
             field_name=field_name,
             budget=budget,
+            source_geometry=source_geometry, target_geometry=target_geometry,
         )
+    if source_geometry is not None or target_geometry is not None:
+        raise ValueError("exact-source projection requires an explicit owning coordinate budget")
     sources = []
     for space in (source, target.discretization):
         coordinates = np.asarray(space.default_runtime.coordinates, dtype=np.float64)
@@ -6906,3 +6933,83 @@ def field_transfer_query_upper(
         if geometry is not None and geometry.exact_source is not None
     )
     return source_queries * (maximum_work + 1)
+
+
+def _realization_h1_density_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    realization: SourceGeometryRealization,
+    binding: TransferGeometryBinding,
+    field_name: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    """Assemble global H1 density transport with the source Jacobian weight."""
+    si, ti = source.field_index(field_name), target.field_index(field_name)
+    _require_affine_simplices(source, "source", "material H1 density projection")
+    _require_affine_simplices(target, "target", "material H1 density projection")
+    # This owner authenticates equal reference elements, transformations, and
+    # the complete bijective global functional correspondence before assembly.
+    _realization_reference_field_transfer(source, target, binding, field_name, "intensive")
+    source_map, target_map = source.dof_maps[si], target.dof_maps[ti]
+    if any(element.conformity != "H1" for element in target.elements[ti]):
+        raise ValueError("material H1 density requires H1 at both endpoints")
+    count = sum(np.asarray(routes).size for routes in source_map.cell_dofs)
+    budget.reserve(count * 4, 1024 + count * 64)
+    correspondence = np.empty(source_map.global_dof_count, dtype=np.int32)
+    for old, new in zip(source_map.cell_dofs, target_map.cell_dofs, strict=True):
+        correspondence[np.asarray(old)] = np.asarray(new)
+    source_measures, triples = _cell_integrals(
+        source, si, mass=True,
+        cell_measures=np.asarray(realization.source_cell_measures),
+    )
+    if triples is None:
+        raise RuntimeError("material H1 density mass assembly returned no entries")
+    rows, columns, values = triples
+    mixed = coalesced_map(
+        correspondence[rows], columns, values,
+        target_size=target_map.global_dof_count,
+        source_size=source_map.global_dof_count,
+        properties=OperatorProperties(),
+        operator_id=canonical_fingerprint({
+            "kind": "material-h1-source-weighted-mass",
+            "realization": realization.realization_id,
+            "source": source.prepared_id, "target": target.prepared_id,
+            "field": field_name,
+        }),
+    )
+    prepared = prepare_l2_projection_target(target, field_name=field_name)
+    projection = FiniteElementL2Projection(
+        mixed, prepared,
+        operator_id=canonical_fingerprint({
+            "kind": "material-h1-conservative-density",
+            "mixed": mixed.operator_id, "target": prepared.target_id,
+        }),
+        _construction_token=_L2_ARTIFACT_TOKEN,
+    )
+    condition = max(1.0, float(prepared.mass_condition.value))
+    target_measures = np.asarray(prepared.dof_measures)
+    content_defect = np.asarray(projection.transpose_mv(target_measures)) - source_measures
+    content_bound = measure_defect_bound(
+        np.dtype(np.float64), condition, source_measures, target_measures,
+    ) + float(np.sum(np.asarray(realization.source_measure_errors))) + float(
+        np.sum(np.asarray(realization.target_measure_errors))
+    ) * condition
+    tolerance = condition * CLAIM_ULPS * np.finfo(np.float64).eps
+    evidence = FiniteElementTransferEvidence(
+        {"content": _relative(content_defect, source_measures)},
+        tolerance, bounds={"content": content_bound},
+    )
+    if not evidence.passed:
+        raise ValueError("material H1 density failed its all-column content certificate")
+    transfer = FiniteElementTopologyTransfer(
+        projection, source.mesh.topology_id, target.mesh.topology_id,
+        conservative=True, preserves_constants=False,
+        action_condition=condition, semantics="conservative-remap",
+        source_measures=source_measures, target_measures=target_measures,
+    )
+    return FiniteElementFieldTransfer(
+        transfer, source.field_spaces[si], target.field_spaces[ti], binding, evidence,
+        source_measures=source_measures, target_measures=target_measures,
+    )

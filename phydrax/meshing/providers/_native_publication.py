@@ -72,8 +72,8 @@ from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._surface_source_support import SurfaceSourceCharts
 from ...geometry.surface import SurfaceModel
 from ...typing import checked
-from .._audit import audit_cell_mesh, CellMeshAuditReport
 from .. import _audit_topology as audit_topology_owner
+from .._audit import audit_cell_mesh, CellMeshAuditReport
 from .._certification_inputs import MeshCertificationInputs
 from .._measurements import (
     _NATIVE_EXECUTION_RECORD_ARRAY_BYTES,
@@ -132,16 +132,19 @@ def coordinate_phase(
     /,
 ) -> Iterator[CoordinateEnclosureBudget]:
     """Bind a coordinate-source phase; settle before independent native operations."""
-    remaining = scope.remaining()
-    ticket = scope.batch(
-        min(
-            limits.maximum_work_units - budget.work_units, remaining.remaining_work_units
-        ),
-        queries_upper=min(
-            limits.maximum_geometry_queries, remaining.remaining_geometry_queries
-        ),
-        bytes_upper=min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes),
-    )
+    with scope.ticket_view() as incoming:
+        ticket = scope.batch(
+            min(
+                limits.maximum_work_units - budget.work_units,
+                incoming.remaining_work_units,
+            ),
+            queries_upper=min(
+                limits.maximum_geometry_queries, incoming.remaining_geometry_queries
+            ),
+            bytes_upper=min(
+                limits.maximum_scratch_bytes, incoming.remaining_managed_bytes
+            ),
+        )
     with budget.bind_ticket(ticket), ticket.native_target():
         yield budget
 
@@ -1091,12 +1094,19 @@ def bind_native_execution_result(
     preparation_seconds: float = 0.0,
     preparation_evidence: NativeExecutionRecord | None = None,
     history_evidence: tuple[NativeExecutionRecord, ...] = (),
+    owner_id: str | None = None,
 ) -> CellMeshingResult:
     """Bind completed execution-scope measurements without copying scientific arrays.
 
     ``preparation_evidence`` is this request's charged chain; ``history_evidence``
     names completed earlier requests retained as provenance only.
+    ``owner_id`` binds a fresh publication to its actual generation plan; it
+    cannot relabel an existing paid preparation or consumer chain.
     """
+    if owner_id is not None and (
+        preparation_evidence is not None or result.execution_evidence is not None
+    ):
+        raise ValueError("An explicit publication owner cannot relabel an existing execution chain.")
     _require_retained_bytes(
         model_array_bytes((result, preparation_evidence, history_evidence))
         + _NATIVE_EXECUTION_RECORD_ARRAY_BYTES
@@ -1120,7 +1130,9 @@ def bind_native_execution_result(
         consumer_evidence=result.execution_evidence,
         history_evidence=history_evidence,
         owner_id=(
-            preparation_evidence.owner_id
+            owner_id
+            if owner_id is not None
+            else preparation_evidence.owner_id
             if preparation_evidence is not None
             else (
                 result.execution_evidence.owner_id

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
 from fractions import Fraction
 from math import floor
 from pathlib import Path
@@ -45,8 +44,10 @@ from phydrax.meshing.qualification import (
 from tools.meshing_qualification._controls import (
     _periodic_qualification_profile_contracts,
     _periodic_qualification_requirements,
+    archive_limit_values,
     capacity_meshing_limits,
     meshing_limit_values,
+    qualification_archive_limits,
     QualificationControls,
 )
 from tools.meshing_qualification._physics import _compiled_solver_stages
@@ -1105,19 +1106,6 @@ def _periodic_qualification_solve(
     )
 
 
-def _periodic_archive_limits(args: QualificationControls) -> ArrayArchiveLimits:
-    """Lower the exact recipe control to the archive's existing metadata bound."""
-    return (
-        ArrayArchiveLimits()
-        if args.maximum_recipe_bytes is None
-        else ArrayArchiveLimits(max_manifest_bytes=args.maximum_recipe_bytes)
-    )
-
-
-def _periodic_archive_policy(limits: ArrayArchiveLimits) -> dict[str, Any]:
-    policy = asdict(limits)
-    policy["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
-    return policy
 
 
 def _periodic_qualification_cold_process(
@@ -1219,7 +1207,7 @@ def _periodic_qualification_cold_process(
     return ColdWorkerReport(
         record={
             "runtime": _runtime_identity(),
-            "archive_limits": _periodic_archive_policy(archive_limits),
+            "archive_limits": archive_limit_values(archive_limits),
             "requested_maximum_recipe_bytes": args.maximum_recipe_bytes,
             "maximum_recipe_bytes": archive_limits.max_manifest_bytes,
             "identities": identities,
@@ -1245,8 +1233,8 @@ def _periodic_qualification_checkpoint(
 
     _ledger = StageLedger(record, deadline=Deadline(started + args.timeout))
 
-    limits = _periodic_archive_limits(args)
-    policy = _periodic_archive_policy(limits)
+    limits = qualification_archive_limits(args)
+    policy = archive_limit_values(limits)
     result = epochs[-1].carrier
     certification = result.certification
     if certification is None:
@@ -1812,6 +1800,90 @@ def _periodic_binary64_exclusion(
     return {**evidence, "evidence_id": canonical_fingerprint(evidence)}
 
 
+def _periodic_binary64_exclusion_with_source_witness(
+    source: phx.meshing.NativePeriodicSource,
+    specification: phx.meshing.SurfaceMeshingSpec,
+    case: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind a binary64 exclusion to unchanged original source and request inputs."""
+
+    def input_state() -> dict[str, Any]:
+        return {
+            "source_id": source.source_id,
+            "source_revision": source.source_revision,
+            "source_binding_id": source.binding_id,
+            "source_array_tree_fingerprint": array_tree_fingerprint(source),
+            "specification_id": specification.specification_id,
+            "specification_array_tree_fingerprint": array_tree_fingerprint(
+                specification
+            ),
+            "limits_id": specification.limits.limits_id,
+            "size_control_ids": [
+                control.control_id for control in specification.size_controls
+            ],
+            "protected_feature_ids": [
+                feature.feature_id for feature in specification.protected_features
+            ],
+            "region_control_ids": [
+                control.control_id for control in specification.region_controls
+            ],
+            "size_compliance_policy_id": specification.size_compliance.policy_id,
+            "case_source_id": case["source_id"],
+            "case_source_revision": case["source_revision"],
+            "case_source_binding_id": case["source_binding_id"],
+            "authored_geometry_digest": case["authored_geometry_digest"],
+            "carrier_representation": case["carrier_representation"],
+        }
+
+    before = input_state()
+    exclusion = _periodic_binary64_exclusion(source, specification, case)
+    after = input_state()
+    if before != after:
+        raise ValueError(
+            "periodic.binary64_exclusion mutated the original source or request controls"
+        )
+    if (
+        before["case_source_id"] != before["source_id"]
+        or before["case_source_revision"] != before["source_revision"]
+        or before["case_source_binding_id"] != before["source_binding_id"]
+    ):
+        raise ValueError(
+            "periodic.binary64_exclusion case does not bind the original source"
+        )
+    if not isinstance(exclusion, dict) or exclusion.get("passed") is not True:
+        raise ValueError(
+            "periodic.binary64_exclusion did not produce a passing refusal witness"
+        )
+    evidence = {
+        key: value for key, value in exclusion.items() if key != "evidence_id"
+    }
+    expected_evidence = {
+        "source_id": before["source_id"],
+        "source_revision": before["source_revision"],
+        "source_binding_id": before["source_binding_id"],
+        "specification_id": before["specification_id"],
+        "authored_geometry_digest": before["authored_geometry_digest"],
+    }
+    if (
+        exclusion.get("evidence_id") != canonical_fingerprint(evidence)
+        or any(exclusion.get(name) != value for name, value in expected_evidence.items())
+    ):
+        raise ValueError(
+            "periodic.binary64_exclusion witness does not match the original source and request"
+        )
+    source_bits_preserved = (
+        before["source_binding_id"] == after["source_binding_id"]
+        and before["source_array_tree_fingerprint"]
+        == after["source_array_tree_fingerprint"]
+    )
+    return exclusion, {
+        "source_bits_preserved": source_bits_preserved,
+        "before": before,
+        "after": after,
+        "exclusion_evidence_id": exclusion["evidence_id"],
+    }
+
+
 def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, object]:
     """Run native source publication and accuracy-controlled conservative orbit cycles."""
 
@@ -1888,13 +1960,21 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
             }
         )
         if profile["expected_admission"] == "refusal":
-            exclusion = _ledger.run(
+            exclusion, preservation = _ledger.run(
                 "immutable_binary64_source_exclusion",
-                lambda: _periodic_binary64_exclusion(source, specification, case),
+                lambda: _periodic_binary64_exclusion_with_source_witness(
+                    source, specification, case
+                ),
             )
+            if preservation["source_bits_preserved"] is not True:
+                raise ValueError(
+                    "periodic.binary64_exclusion did not preserve source numerical bits"
+                )
             record.update(
                 status="expected-refusal",
                 source_exclusion=exclusion,
+                source_bits_preserved=preservation["source_bits_preserved"],
+                source_preservation_witness=preservation,
                 failure_evidence_id=exclusion["evidence_id"],
                 independent_scientific_certification="passed",
                 requested={"expected_admission": "refusal"},
@@ -2010,8 +2090,8 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
     """Run the scenario-owned cold consumer on its one control packet."""
     controls = packet.controls
     args = QualificationControls.from_record(controls["controls"])
-    limits = _periodic_archive_limits(args)
-    policy = _periodic_archive_policy(limits)
+    limits = qualification_archive_limits(args)
+    policy = archive_limit_values(limits)
     producer_policy = controls.get("archive_limits")
     if producer_policy != policy:
         raise qualification_failure(

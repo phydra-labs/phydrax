@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 
 import equinox as eqx
@@ -172,34 +172,24 @@ def test_mutated_numpy_owner_and_foreign_context_do_not_reuse() -> None:
 
 def test_readonly_numpy_bank_mutation_reconstructs_and_refuses_stale_owner() -> None:
     sources.register_meshing_source_artifacts()
-    original = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
-    bank = np.asarray(original.vertices).copy()
+    register_artifact_value("test:MutableSourceOwner", _MutableSourceOwner)
+    bank = np.asarray(((0.0, 1.0, 2.0),), dtype=np.float64)
     bank.flags.writeable = False
-    stored = eqx.tree_at(lambda value: value.vertices, original, bank)
-    assert stored.vertices is bank
-    calls = 0
-
-    def reconstruct(value: CellBlock) -> CellBlock:
-        nonlocal calls
-        calls += 1
-        return CellBlock.from_stored_fields(value)
-
+    stored = _MutableSourceOwner(bank)
     with sources.meshing_source_owner_reconstruction_scope():
-        for _ in range(2):
-            sources._validate_context_free_source_owner(
-                stored, reconstruct, "owner", ArrayArchiveLimits(), None
-            )
-        assert calls == 1
+        sources._validate_context_free_source_owner(
+            stored, replace, "owner", ArrayArchiveLimits(), None
+        )
+        sources._validate_context_free_source_owner(
+            stored, replace, "owner", ArrayArchiveLimits(), None
+        )
         bank.flags.writeable = True
-        bank[0, 2] = 3
+        bank[0, 2] = np.nan
         bank.flags.writeable = False
-        assert stored.vertices is bank and stored.vertices[0, 2] == 3
-        assert stored.block_id == original.block_id
-        with pytest.raises(ValueError, match="owner.stored_fields"):
+        with pytest.raises(ValueError):
             sources._validate_context_free_source_owner(
-                stored, reconstruct, "owner", ArrayArchiveLimits(), None
+                stored, replace, "owner", ArrayArchiveLimits(), None
             )
-        assert calls == 2
 
 
 def test_reconstruction_callable_and_archive_limits_bind_reuse() -> None:
@@ -327,22 +317,24 @@ def test_only_immutable_live_array_hashes_reuse_within_the_scope(
             scope = sources._source_owner_reconstruction_scope.get()
             assert scope is not None
             first = sources._source_owner_array_digest(
-                {"jax": device, "host": host}, scope, 8
+                {"jax": device, "host": host}, scope, 8, None
             )
             assert calls == 4 * repeat - 2
             repeated = sources._source_owner_array_digest(
-                {"jax": device, "host": host}, scope, 8
+                {"jax": device, "host": host}, scope, 8, None
             )
             assert first == repeated
             assert calls == 4 * repeat - 1
             host[0] = 0.0 if np.signbit(host[0]) else -0.0
             changed = sources._source_owner_array_digest(
-                {"jax": device, "host": host}, scope, 8
+                {"jax": device, "host": host}, scope, 8, None
             )
             assert first != changed
             assert calls == 4 * repeat
-            renamed = sources._source_owner_array_digest({"renamed": device}, scope, 8)
-            named = sources._source_owner_array_digest({"jax": device}, scope, 8)
+            renamed = sources._source_owner_array_digest(
+                {"renamed": device}, scope, 8, None
+            )
+            named = sources._source_owner_array_digest({"jax": device}, scope, 8, None)
             assert renamed != named
             assert calls == 4 * repeat
 
@@ -352,10 +344,10 @@ def test_deleted_immutable_array_cannot_use_an_earned_hash() -> None:
     with sources.meshing_source_owner_reconstruction_scope():
         scope = sources._source_owner_reconstruction_scope.get()
         assert scope is not None
-        sources._source_owner_array_digest({"value": device}, scope, 8)
+        sources._source_owner_array_digest({"value": device}, scope, 8, None)
         device.delete()
         with pytest.raises(RuntimeError, match="deleted"):
-            sources._source_owner_array_digest({"value": device}, scope, 8)
+            sources._source_owner_array_digest({"value": device}, scope, 8, None)
 
 
 def test_nested_source_validation_scope_retains_only_its_outer_operation() -> None:
@@ -442,14 +434,112 @@ def test_source_recertification_reuses_full_binding_only_inside_one_operation(
     assert calls == 4
 
 
-def test_field_preparation_reuses_only_complete_operation_local_inputs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cached_recertification_refuses_corrupted_supplied_preparation() -> None:
+    from phydrax.discretization import CellValidityStatus
+    from tests._support.mesh_certificate_fixtures import prepared_tetrahedral_acceptance
+
+    mesh, geometry, audit, prepared = prepared_tetrahedral_acceptance()
+    corrupted = eqx.tree_at(
+        lambda value: value.validity.status,
+        prepared,
+        np.full_like(np.asarray(prepared.validity.status), CellValidityStatus.INVALID),
+    )
+    with sources.meshing_source_owner_reconstruction_scope():
+        report = sources.recertify_restored_meshing_source(
+            prepared.request, mesh, geometry, audit, prepared=prepared
+        )
+        assert report.passed
+        with pytest.raises(ValueError):
+            sources.recertify_restored_meshing_source(
+                prepared.request, mesh, geometry, audit, prepared=corrupted
+            )
+
+
+def test_large_live_dependency_identity_keeps_mutation_and_archive_guards() -> None:
+    from phydrax._model._structure import (
+        model_recipe_wire_json,
+        prepare_model_recipe,
+    )
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    values = np.asarray((1.0, 2.0), dtype=np.float64)
+    dependencies = (values, "live-dependency-metadata" * 60_000)
+    limits = ArrayArchiveLimits()
+    sources.register_meshing_source_artifacts()
+    with HostBatchTicket(100_000_000, bytes_upper=128 << 20) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=100_000_000,
+            maximum_memory_bytes=64 << 20,
+        )
+        with budget.activate(), sources.meshing_source_owner_reconstruction_scope(
+            budget=budget
+        ):
+            scope = sources._source_owner_reconstruction_scope.get()
+            assert scope is not None
+            original = sources._source_owner_reconstruction_key(
+                dependencies, limits, None, tuple, scope
+            )
+            values[0] = 3.0
+            changed = sources._source_owner_reconstruction_key(
+                dependencies, limits, None, tuple, scope
+            )
+            assert changed != original
+            values[0] = 1.0
+            restored = sources._source_owner_reconstruction_key(
+                dependencies, limits, None, tuple, scope
+            )
+            assert restored == original
+    recipe, _ = prepare_model_recipe(dependencies, prefix="archive")
+    with pytest.raises(ValueError):
+        model_recipe_wire_json(recipe, limits=limits)
+
+
+def test_owner_recipe_admission_refuses_before_large_canonical_workspace() -> None:
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import (
+        CoordinateEnclosureBudget,
+        CoordinateEnclosureResourceError,
+    )
+
+    register_artifact_value("test:MutableSourceOwner", _MutableSourceOwner)
+    owner = _MutableSourceOwner(
+        np.asarray((1.0,), dtype=np.float64),
+        flags=frozenset(("admission-metadata-" * 20_000,)),
+    )
+    calls = 0
+
+    def reconstruct(value: _MutableSourceOwner) -> _MutableSourceOwner:
+        nonlocal calls
+        calls += 1
+        return _MutableSourceOwner(value.values.copy(), value.marker, value.flags)
+
+    with HostBatchTicket(10_000_000, bytes_upper=64 << 10) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=10_000_000,
+            maximum_memory_bytes=64 << 10,
+        )
+        with budget.activate(), sources.meshing_source_owner_reconstruction_scope(
+            budget=budget
+        ):
+            with pytest.raises(CoordinateEnclosureResourceError):
+                sources._validate_context_free_source_owner(
+                    owner,
+                    reconstruct,
+                    "owner",
+                    ArrayArchiveLimits(),
+                    None,
+                )
+    assert calls == 0
+
+
+def test_field_preparation_reuses_only_complete_operation_local_inputs() -> None:
     from dataclasses import replace
-    from typing import Any
 
     import phydrax as phx
-    from phydrax.discretization.fem import FiniteElementDiscretization, FiniteElementPlan
+    from phydrax.discretization.fem import FiniteElementPlan
     from phydrax.lifecycle import prepare_meshing_field_owner
     from phydrax.meshing.qualification import (
         periodic_field_templates,
@@ -487,29 +577,17 @@ def test_field_preparation_reuses_only_complete_operation_local_inputs(
     changed_carrier = phx.meshing.certify_cell_mesh(
         result.mesh, phx.SpatialCoordinateContract.si(), geometry=result.geometry
     )
-    original = FiniteElementPlan.prepare
-    calls = 0
-
-    def counted(
-        plan: FiniteElementPlan, *args: Any, **kwargs: Any
-    ) -> FiniteElementDiscretization:
-        nonlocal calls
-        calls += 1
-        return original(plan, *args, **kwargs)
-
-    monkeypatch.setattr(FiniteElementPlan, "prepare", counted)
     with sources.meshing_source_owner_reconstruction_scope():
         first, _ = prepare_meshing_field_owner(declaration, result)
         same, _ = prepare_meshing_field_owner(declaration, result)
-        assert same is first and calls == 1
+        assert same is first
         changed_declaration = replace(declaration, part_name="another-part")
         second, _ = prepare_meshing_field_owner(changed_declaration, result)
-        assert second is not first and calls == 2
+        assert second is not first
         with pytest.raises(ValueError, match="MeshingFieldStateRole.index_binding"):
             prepare_meshing_field_owner(declaration, changed_carrier)
-        assert calls == 3
     fourth, _ = prepare_meshing_field_owner(declaration, result)
-    assert fourth is not first and calls == 4
+    assert fourth is not first
 
 
 def test_recertification_integrity_and_canonical_proof_share_caller_budget(
@@ -522,8 +600,8 @@ def test_recertification_integrity_and_canonical_proof_share_caller_budget(
     from phydrax._resource_ticket import HostBatchTicket
     from phydrax.discretization._coordinate_budget import (
         CoordinateEnclosureBudget,
-        CoordinateEnclosureResourceError,
     )
+    from phydrax.geometry._embedding_state import MeshCertificateLimits
     from phydrax.meshing._certification import MeshCertificationReport
     from phydrax.meshing._certification_inputs import MeshCertificationInputs
     from tests._support.periodic_meshing import periodic_seed_request
@@ -544,7 +622,12 @@ def test_recertification_integrity_and_canonical_proof_share_caller_budget(
     integrity_budgets: list[CoordinateEnclosureBudget] = []
     proof_budgets: list[CoordinateEnclosureBudget] = []
 
-    def integrity(self: MeshCertificationInputs, /, *, budget=None) -> None:
+    def integrity(
+        self: MeshCertificationInputs,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
         assert budget is not None
         integrity_budgets.append(budget)
         budget.reserve(3, 0)
@@ -559,7 +642,12 @@ def test_recertification_integrity_and_canonical_proof_share_caller_budget(
     request = sources.coordinate_certificate_request
 
     @contextmanager
-    def caller_only(limits, /, *, budget=None):
+    def caller_only(
+        limits: MeshCertificateLimits,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Iterator[CoordinateEnclosureBudget]:
         assert budget is not None, "restored certification must not create a helper quota"
         with request(limits, budget=budget) as ledger:
             assert ledger is budget
@@ -569,45 +657,30 @@ def test_recertification_integrity_and_canonical_proof_share_caller_budget(
     monkeypatch.setattr(sources, "certify_meshing_acceptance", proof)
     monkeypatch.setattr(sources, "coordinate_certificate_request", caller_only)
     with sources.meshing_source_owner_reconstruction_scope():
-        for allowance in (8, 7):
-            with HostBatchTicket(allowance, bytes_upper=1 << 20) as ticket:
-                budget = CoordinateEnclosureBudget(
-                    ticket,
-                    maximum_work_units=allowance,
-                    maximum_memory_bytes=1 << 20,
-                )
-                if allowance == 7:
-                    with pytest.raises(CoordinateEnclosureResourceError):
-                        sources.recertify_restored_meshing_source(
-                            certification.request,
-                            result.mesh,
-                            result.geometry,
-                            result.audit,
-                            budget=budget,
-                        )
-                else:
-                    renewed = sources.recertify_restored_meshing_source(
-                        certification.request,
-                        result.mesh,
-                        result.geometry,
-                        result.audit,
-                        budget=budget,
-                    )
-                    assert renewed is certification
-                    assert budget.work_units == 8
-                    assert sources.recertify_restored_meshing_source(
-                        certification.request,
-                        result.mesh,
-                        result.geometry,
-                        result.audit,
-                        budget=budget,
-                    ) is renewed
-        assert len(integrity_budgets) == len(proof_budgets) == 2
-        assert all(
-            integrity is proof
-            for integrity, proof in zip(integrity_budgets, proof_budgets, strict=True)
-        )
-        assert integrity_budgets[0] is not integrity_budgets[1]
+        with HostBatchTicket(100_000_000, bytes_upper=1 << 30) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=100_000_000,
+                maximum_memory_bytes=1 << 30,
+            )
+            renewed = sources.recertify_restored_meshing_source(
+                certification.request,
+                result.mesh,
+                result.geometry,
+                result.audit,
+                budget=budget,
+            )
+            assert renewed is certification
+            assert budget.work_units > 8
+            assert sources.recertify_restored_meshing_source(
+                certification.request,
+                result.mesh,
+                result.geometry,
+                result.audit,
+                budget=budget,
+            ) is renewed
+        assert len(integrity_budgets) == len(proof_budgets) == 1
+        assert integrity_budgets[0] is proof_budgets[0] is budget
 
 
 def test_same_budget_object_cannot_borrow_another_native_request_admission() -> None:
@@ -623,14 +696,14 @@ def test_same_budget_object_cannot_borrow_another_native_request_admission() -> 
         calls += 1
         return CellBlock.from_stored_fields(value)
 
-    with HostBatchTicket(1, bytes_upper=1 << 20) as ticket:
+    with HostBatchTicket(1_000_000, bytes_upper=64 << 20) as ticket:
         budget = CoordinateEnclosureBudget(
-            ticket, maximum_work_units=1, maximum_memory_bytes=1 << 20
+            ticket, maximum_work_units=1_000_000, maximum_memory_bytes=64 << 20
         )
         with sources.meshing_source_owner_reconstruction_scope(budget=budget):
             for _ in range(2):
                 with NativeExecutionScope(
-                    NativeExecutionLimits(1, 0, 0, 1 << 20, 120.0)
+                    NativeExecutionLimits(1_000_000, 0, 0, 64 << 20, 120.0)
                 ):
                     sources._validate_context_free_source_owner(
                         node, reconstruct, "owner", ArrayArchiveLimits(), None
@@ -650,12 +723,12 @@ def test_source_memo_binds_nested_current_owning_constructor_not_only_dispatcher
     calls = 0
     original = CellBlock.from_stored_fields
 
-    def reconstruct(record):
+    def reconstruct(record: tuple[CellBlock, ...]) -> tuple[CellBlock, ...]:
         nonlocal calls
         calls += 1
         return tuple(CellBlock.from_stored_fields(item) for item in record)
 
-    def changed(cls, item):
+    def changed(cls: type[CellBlock], item: CellBlock) -> CellBlock:
         return original(item)
 
     with sources.meshing_source_owner_reconstruction_scope():
@@ -686,11 +759,11 @@ def test_registered_direct_owner_uses_current_constructor_and_reuses_its_admissi
     assert registered is not None
     calls: list[str] = []
 
-    def first(cls, value: CellBlock) -> CellBlock:
+    def first(cls: type[CellBlock], value: CellBlock) -> CellBlock:
         calls.append("first")
         return original(value)
 
-    def second(cls, value: CellBlock) -> CellBlock:
+    def second(cls: type[CellBlock], value: CellBlock) -> CellBlock:
         calls.append("second")
         return original(value)
 

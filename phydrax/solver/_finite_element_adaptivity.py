@@ -15,7 +15,11 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._array_archive import read_array_archive, write_array_archive
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from .._meshcore import (
     current_native_execution_scope,
     NativeExecutionScope,
@@ -49,9 +53,7 @@ from ..discretization.fem import (
     prepare_source_realization_field_transfer,
     SourceRealizationFieldSemantics,
 )
-from ..discretization.fem._topology_transfer import (
-    prepare_shared_nested_field_transfer,
-)
+from ..discretization.fem._topology_transfer import prepare_shared_nested_field_transfer
 from ..discretization.finite_volume._remap_evidence import (
     MappedSurfaceChartRemapEvidence,
     PreparedUnstructuredConservativeRemap,
@@ -1069,6 +1071,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
     ) -> tuple[FiniteElementFieldTransfer, ...] | str:
         """One transfer per declared field, or the refusal reason."""
 
+        if adaptation.transition is not None and adaptation.transition.volume_material_chain is not None:
+            return self._volume_material_field_transfers(source, target, adaptation, budget=budget)
         geometry_transition = adaptation.geometry_transition
         if isinstance(adaptation.request, GeometryRealizationMeshAdaptation):
             return self._source_realization_field_transfers(source, target, adaptation)
@@ -1181,6 +1185,54 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 field_name=field.name,
             )
             for field in self.fields
+        )
+
+    def _volume_material_field_transfers(
+        self,
+        source: FiniteElementDiscretization,
+        target: FiniteElementDiscretization,
+        adaptation: MeshAdaptationResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None,
+    ) -> tuple[FiniteElementFieldTransfer, ...] | str:
+        from ..meshing._projected_material_map import prepare_volume_material_fe_transfers
+
+        meanings = dict(self.surface_chart_semantics)
+        if set(meanings) != {field.name for field in self.fields}:
+            return "volume-material-field-semantics-required"
+        if budget is None:
+            limits = adaptation.policy.limits
+            with HostBatchTicket(
+                limits.maximum_work_units,
+                queries_upper=limits.maximum_geometry_queries,
+                bytes_upper=limits.maximum_scratch_bytes,
+            ) as ticket:
+                ledger = CoordinateEnclosureBudget(
+                    ticket, maximum_work_units=limits.maximum_work_units,
+                    maximum_memory_bytes=limits.maximum_scratch_bytes,
+                )
+                with ledger.activate():
+                    return self._volume_material_field_transfers(
+                        source, target, adaptation, budget=ledger,
+                    )
+        transition = adaptation.transition
+        chain = None if transition is None else transition.volume_material_chain
+        if transition is None or chain is None:
+            raise ValueError("volume material transfer requires an accepted material chain")
+        if (
+            transition.source_geometry is None
+            or not tree_content_equal(transition.source_geometry, source.coordinate_spec)
+            or not tree_content_equal(transition.target.geometry, target.coordinate_spec)
+        ):
+            raise ValueError("volume material transfer must bind actual transition geometry content")
+        return prepare_volume_material_fe_transfers(
+            chain, source, target,
+            semantics={
+                field.name: parse(meanings[field.name], SourceRealizationFieldSemantics, "volume_material_semantics")
+                for field in self.fields
+            },
+            budget=budget,
         )
 
     def _prepared_pair(

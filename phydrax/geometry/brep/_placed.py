@@ -31,6 +31,9 @@ from ._patches import (
     AbstractSurfacePatch,
     BernsteinRestrictionBank,
     MeridianOverlaps,
+    surface_box_bank_bytes,
+    SURFACE_BOX_FINITE_LIMIT,
+    surface_parameter_boxes,
 )
 from ._request_preparations import TrimRequestPreparations
 
@@ -111,6 +114,38 @@ def _placed_box(
     shift = np.asarray(translation)
     low, high = interval_add(bounds, (shift, shift))
     return np.stack((low, high))
+
+
+# Smallest caller margin for which rounding below the binary64 normal range
+# cannot matter in the definition stop derivation below.
+_DEFINITION_STOP_MARGIN = 2.0**-900
+
+
+def _definition_stop_magnitude(
+    rotation: np.ndarray, translation: np.ndarray, stop_magnitude: float, /
+) -> float:
+    """Definition magnitude whose finite boxes place strictly within ``stop_magnitude``.
+
+    With ``r = max|rotation|``, ``a = max|translation|`` and definition bounds at
+    most ``(stop_magnitude - 2a) / (8r)``, every rounded-out product, sum and
+    translation stays below ``(3 stop_magnitude / 8 + a / 4)(1 + 2**-47)``, which
+    is less than ``stop_magnitude``. Otherwise no definition row is admitted
+    before its own placement, so placed rows are enclosed one at a time.
+    """
+    margin = stop_magnitude - 2.0 * float(np.max(np.abs(translation)))
+    if not (np.isfinite(margin) and margin >= _DEFINITION_STOP_MARGIN):
+        return -1.0
+    return margin / (8.0 * float(np.max(np.abs(rotation))))
+
+
+def _placed_boxes_scratch_bytes(count: int, /) -> int:
+    """Bound the coordinate-first interval temporaries of ``count`` placed boxes.
+
+    Each of the at most 16 simultaneously live endpoint, product, minimum,
+    maximum, outward-step, sum and mask arrays holds at most ``3 * count``
+    binary64 values; the bank's ``(count, 2, 3)`` stop magnitudes occupy two.
+    """
+    return 4096 + 16 * (128 + 24 * count)
 
 
 def _bind_pose(
@@ -251,6 +286,79 @@ class PlacedSurface(AbstractSurfacePatch):
             ),
         )
 
+    def bounding_boxes(
+        self,
+        parameter_boxes: ConvertibleToArray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        stop_magnitude: float = SURFACE_BOX_FINITE_LIMIT,
+    ) -> np.ndarray:
+        """Place definition boxes with one host pose and the scalar operation order.
+
+        Definition rows stop at a magnitude whose finite boxes cannot reach
+        ``stop_magnitude`` after placement, so only that stopped row can end
+        this bank and no definition row after the first stopping placed row is
+        evaluated. Nested placements recurse in their authored order.
+        """
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_boxes,
+                )
+            ) as budget:
+                return self.bounding_boxes(
+                    parameter_boxes,
+                    preparations=preparations,
+                    budget=budget,
+                    stop_magnitude=stop_magnitude,
+                )
+        boxes = surface_parameter_boxes(parameter_boxes)
+        count = boxes.shape[0]
+        budget.reserve(0, surface_box_bank_bytes(count))
+        result = np.empty((count, 2, 3), dtype=np.float64)
+        definition_boxes = type(self.definition).bounding_boxes
+        with budget.temporary_scope():
+            budget.reserve(0, 512)
+            rotation = np.asarray(self.rotation)
+            translation = np.asarray(self.translation)
+            definition_stop = _definition_stop_magnitude(
+                rotation, translation, stop_magnitude
+            )
+            shift = translation[:, None]
+            start = 0
+            while start < count:
+                with budget.temporary_scope():
+                    definition = definition_boxes(
+                        self.definition, boxes[start:],
+                        preparations=preparations,
+                        budget=budget,
+                        stop_magnitude=definition_stop,
+                    )
+                    stop = start + definition.shape[0]
+                    budget.reserve(0, _placed_boxes_scratch_bytes(definition.shape[0]))
+                    low, high = interval_add(
+                        source_transform_bounds(
+                            rotation, definition[:, 0].T, definition[:, 1].T
+                        ),
+                        (shift, shift),
+                    )
+                    del definition
+                    result[start:stop, 0] = low.T
+                    result[start:stop, 1] = high.T
+                    del low, high
+                    stopped = np.flatnonzero(
+                        ~np.all(np.abs(result[start:stop]) <= stop_magnitude, axis=(1, 2))
+                    )
+                if stopped.size:
+                    return result[: start + int(stopped[0]) + 1]
+                start = stop
+        return result
+
     def derivative_bounds_batch(
         self,
         parameter_boxes: ConvertibleToArray,
@@ -279,8 +387,8 @@ class PlacedSurface(AbstractSurfacePatch):
                     meridian_jets=meridian_jets,
                     budget=budget,
                 )
-        low, high = self.definition.derivative_bounds_batch(
-            parameter_boxes,
+        low, high = type(self.definition).derivative_bounds_batch(
+            self.definition, parameter_boxes,
             order=order,
             preparations=preparations,
             budget=budget,

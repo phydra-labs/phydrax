@@ -1141,12 +1141,17 @@ def _design_qualification_native_event(
                     source, limits
                 ),
             ),
+            observe_managed_admission=True,
         )
     )
     trial["prepared_id"] = prepared.prepared_id
     phases["adaptation_preparation"] = timing["wall_seconds"]
     trial["active_phase"] = "native_event"
-    adaptation, timing = _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared))
+    adaptation, timing = _measured(
+        lambda: phx.meshing.execute_mesh_adaptation(
+            prepared, observe_managed_admission=True
+        )
+    )
     phases["native_event"] = timing["wall_seconds"]
     return adaptation, prepared, dict(phases), None, None
 

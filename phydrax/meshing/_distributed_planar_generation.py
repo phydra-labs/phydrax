@@ -31,13 +31,18 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from numpy.typing import NDArray
 
-import phydrax.geometry as triangulation_owner
-
 from .._execution_runtime import owner_execution_mesh, process_owner_devices
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import exact_orient2d, MeshcoreError, MeshcoreStatus, NativeExecutionScope
+from .._meshcore import (
+    exact_orient2d,
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..typing import checked
 from ._collective_failure import collective_failure_barrier
 from ._contracts import MeshingLimits, SurfaceMeshingSpec
@@ -45,13 +50,13 @@ from ._device_generation import DeviceGenerationLayout
 from ._failures import MeshingFailure, MeshingFailureCategory
 from ._measurements import NativeExecutionRecord
 from ._native_preparation import native_preparation_ledger
-from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ._trace import MeshingStageKind
 from .providers import _native_sources as sources_owner
 from .providers._native_planar_domain import (
-    _capacity_failure,
     _field_sizes,
+    planar_region_domain,
     PreparedPlanarDomain,
+    scoped_triangulation,
     source_arrays,
     split_constraints,
 )
@@ -234,12 +239,27 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
         specification: SurfaceMeshingSpec,
         schedule: PlanarTileSchedule,
         /,
+        *,
+        scope: NativeExecutionScope,
+    ) -> None:
+        with scope.host_workspace() as storage:
+            self._initialize(source, specification, schedule, scope, storage)
+
+    def _initialize(
+        self,
+        source: sources_owner.NativePlanarSource,
+        specification: SurfaceMeshingSpec,
+        schedule: PlanarTileSchedule,
+        scope: NativeExecutionScope,
+        storage: NativeHostStorageWorkspace,
+        /,
     ) -> None:
         limits = specification.limits
         # The canonical planar preparation owns the size field, hole seeds,
         # refinement controls and the uniform-median lattice admission; every
         # tile seeds the same canonical spacing natively.
-        prepared = PreparedPlanarDomain(source, specification, lattice=True)
+        prepared = PreparedPlanarDomain(source, specification, scope=scope, lattice=True)
+        storage.retain_owner(prepared)
         vertices, edges, loops = source_arrays(source)
         lower = np.min(vertices, axis=0)
         upper = np.max(vertices, axis=0)
@@ -261,6 +281,13 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
                 requested=(("maximum_cells", limits.maximum_cells),),
                 achieved=(("lattice_tiles", shape[0] * shape[1]),),
             )
+        # Admit the crossing, seam and source-piece passes below before they
+        # allocate, from upper bounds fixed by the source and lattice sizes.
+        skeleton_work, skeleton_bytes = _skeleton_bounds(
+            vertices.shape[0], edges.shape[0], (int(shape[0]), int(shape[1]))
+        )
+        storage.set_bound(skeleton_bytes)
+        scope.charge(work=skeleton_work)
         lines = tuple(
             lower[axis] + span * np.arange(1, shape[axis], dtype=np.float64)
             for axis in (0, 1)
@@ -464,7 +491,27 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
             prepared.patch_sizes,
             prepared.gradation_slope,
             limits,
+            scope=scope,
             lattice_spacing=prepared.lattice_spacing,
+        )
+        # Provenance banks, the per-split parameter loop, the four tile-minimum
+        # scatters and the fingerprint (four visits per element of the retained
+        # banks), admitted from the split sizes before any of them is built.
+        point_count, segment_count = points.shape[0], segments.shape[0]
+        tile_upper = keys.shape[0] + len(seam_tiles)
+        storage.set_bound(
+            skeleton_bytes
+            + 128 * point_count
+            + 128 * segment_count
+            + 64 * piece_rows.shape[0]
+            + 64 * tile_upper
+            + 4096
+        )
+        scope.charge(
+            work=96 * point_count
+            + 64 * segment_count
+            + 16 * piece_rows.shape[0]
+            + 32 * tile_upper
         )
         base = coordinates.shape[0]
         added = point_sources >= 0
@@ -673,9 +720,43 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
         low = self.origin + self.span * self.tiles[row].astype(np.float64)
         return low, low + self.span
 
+    @property
+    def tile_vertex_quota(self) -> int:
+        """Request vertices one tile may materialize, independent of owner count.
+
+        Every global vertex (constraint, agreed seam or tile-local point) is a
+        point of at least one tile, so tile point counts within this quota keep
+        the global count within ``limits.maximum_vertices``. Vertex rows take
+        half of each tile's ``limits.maximum_data_bytes`` share at 16 bytes
+        (two binary64 coordinates) per vertex.
+        """
+        limits = self.specification.limits
+        count = self.tiles.shape[0]
+        return min(limits.maximum_vertices // count, limits.maximum_data_bytes // count // 32)
+
+    @property
+    def tile_cell_quota(self) -> int:
+        """Request triangles one tile may materialize, independent of owner count.
+
+        Global cells are the sum of tile triangles; each triangle is one face,
+        contributes three connectivity entries, and at most three edges. Cell
+        rows take the other half of each tile's data share at 12 bytes (three
+        int32 corners) per cell.
+        """
+        limits = self.specification.limits
+        count = self.tiles.shape[0]
+        return min(
+            limits.maximum_cells // count,
+            limits.maximum_faces // count,
+            limits.maximum_edges // 3 // count,
+            limits.maximum_connectivity_entries // 3 // count,
+            limits.maximum_data_bytes // count // 24,
+        )
+
     def region_domain(self) -> PiecewiseLinearDomain:
-        """Authored region with outward source loops from the canonical preparation."""
-        return PreparedPlanarDomain(self.source, self.specification).domain(self.source)
+        """Authored region with outward source loops, under the request allowance."""
+        with NativeExecutionScope(self.specification.limits.native_limits()) as scope:
+            return planar_region_domain(self.source, scope=scope)
 
     def entity_set_id(self, degree: int, /) -> str:
         """Source entity set of planar vertices (0), edges (1) or the region (2)."""
@@ -695,7 +776,8 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
     @checked
     def from_stored_fields(cls: type[Self], value: PlanarTileComplex, /) -> Self:
         """Rebuild the complex from its stored source, request and schedule."""
-        rebuilt = cls(value.source, value.specification, value.schedule)
+        with NativeExecutionScope(value.specification.limits.native_limits()) as scope:
+            rebuilt = cls(value.source, value.specification, value.schedule, scope=scope)
         if rebuilt.compiled_id != value.compiled_id:
             raise ValueError(
                 "PlanarTileComplex.compiled_id must match its source, request and schedule; got changed stored content"
@@ -725,13 +807,93 @@ def _edge_parameter(
     )
 
 
-def _balanced_owners(weights: np.ndarray, partition_count: int, /) -> NDArray[np.int32]:
+def _skeleton_bounds(
+    vertex_count: int, edge_count: int, lattice_shape: tuple[int, int], /
+) -> tuple[int, int]:
+    """Work units and held host bytes of the tile-complex skeleton passes.
+
+    Upper bounds from the source and lattice sizes alone. A source edge off a
+    lattice line crosses it at most once and puts at most two stops on any
+    line, so a line has fewer than ``2 E`` inside intervals; the intervals of one
+    line are disjoint, so their corner cuts total at most the perpendicular
+    line count. Each source edge splits into at most one sub-piece per crossing
+    plus one.
+    """
+    vertical, horizontal = lattice_shape[0] - 1, lattice_shape[1] - 1
+    lines = vertical + horizontal
+    corners = vertical * horizontal
+    tile_count = lattice_shape[0] * lattice_shape[1]
+    crossings = edge_count * lines
+    stops = 2 * edge_count
+    intervals = lines * stops
+    skeleton_rows = vertex_count + crossings + corners
+    seam_pieces = intervals + 2 * corners
+    source_pieces = edge_count + crossings
+    pieces = seam_pieces + source_pieces
+    work = (
+        vertex_count
+        # Per line, one test per source edge and one exact orientation per
+        # perpendicular corner of each crossing edge.
+        + edge_count * (lines + 2 * corners)
+        # Per line, the stop sort; per interval, the collinear-cover scan and
+        # the inside test against every source edge.
+        + lines * stops * max(stops, 2).bit_length()
+        + 2 * intervals * edge_count
+        # Per interval, the perpendicular-corner mask; per seam piece, its rows.
+        + 2 * stops * corners
+        + seam_pieces
+        # Per source edge, the cut sort; per sub-piece, the on-line scans of
+        # both lattice line banks.
+        + crossings * max(lines, 2).bit_length()
+        + 2 * lines * source_pieces
+        # Tile keys and their sort, 31-bit Morton interleave (two lanes), piece
+        # tile rows, area weights and the region area.
+        + 4 * pieces
+        + tile_count * (max(tile_count, 2).bit_length() + 62)
+        + 12 * pieces
+        + 8 * edge_count
+    )
+    held = (
+        # Deduplicated skeleton rows: dict key and coordinate tuples, the three
+        # provenance list entries and the coordinate bank.
+        384 * skeleton_rows
+        # Per-edge (parameter, row) cut tuples.
+        + 128 * crossings
+        # Retained six-field seam interval tuples.
+        + 256 * intervals
+        # Piece list entries (seam pieces also fill the seam lists), the piece,
+        # piece-tile and endpoint banks, cross products and masks.
+        + 1024 * pieces
+        # Tile key set, sorted keys, tile-row dict, Morton codes, key and
+        # weight banks.
+        + 512 * tile_count
+        # Per-line endpoint and region banks, stop and collinear rows, and the
+        # per-edge loop orientation masks.
+        + 384 * edge_count
+        # Lattice line banks and one crossing's corner and orientation rows.
+        + 32 * lines
+        + 4096
+    )
+    return work, held
+
+
+
+def _balanced_owners(
+    weights: np.ndarray, partition_count: int, /, *, scope: NativeExecutionScope
+) -> NDArray[np.int32]:
     """Contiguous Morton blocks of tiles balanced by region area."""
-    total = float(np.sum(weights))
-    centers = np.cumsum(weights) - 0.5 * weights
-    owners = np.minimum(
-        np.floor(partition_count * centers / total).astype(np.int64), partition_count - 1
-    ).astype(np.int32)
+    count = weights.shape[0]
+    with scope.host_workspace() as storage:
+        # Sum, prefix sum, centers, scaled floor and the two casts (8 bytes per
+        # tile each, the int32 result four).
+        storage.set_bound(52 * count + 4096)
+        scope.charge(work=8 * count + 1)
+        total = float(np.sum(weights))
+        centers = np.cumsum(weights) - 0.5 * weights
+        owners = np.minimum(
+            np.floor(partition_count * centers / total).astype(np.int64),
+            partition_count - 1,
+        ).astype(np.int32)
     owners.flags.writeable = False
     return owners
 
@@ -827,16 +989,41 @@ def prepare_distributed_planar_generation(
 ) -> PreparedDistributedPlanarGeneration:
     """Fix the tile complex from source/request/schedule, then assign owners.
 
-    The complex is built inside its own request-limited native scope; the
-    ended record is retained as source-owned preparation evidence and, inside
-    a caller's scope, remembered by that scope's canonical preparation ledger.
+    The complex and owner assignment are built inside their own
+    request-limited native scope, which observes its managed-admission
+    envelope from entry; the ended record is retained as source-owned
+    preparation evidence and, inside a caller's scope, remembered by that
+    scope's canonical preparation ledger.
     """
+    partition_count = jax.process_count()
+    layout_key = (
+        layout.vertex_capacity,
+        layout.cell_capacity,
+        layout.candidate_capacity,
+        layout.maximum_work_units,
+        layout.neighborhood_depth,
+    )
     scope = NativeExecutionScope(specification.limits.native_limits())
-    with scope, scope.host_workspace() as storage:
-        storage.retain_owner(source)
-        storage.retain_owner(specification)
-        tiles = PlanarTileComplex(source, specification, schedule)
-        storage.retain_owner(tiles)
+    with scope:
+        scope.observe_managed_admission()
+        with scope.host_workspace() as storage:
+            storage.retain_owner(source)
+            storage.retain_owner(specification)
+            tiles = PlanarTileComplex(source, specification, schedule, scope=scope)
+            storage.retain_owner(tiles)
+            owners = _balanced_owners(tiles.tile_weights, partition_count, scope=scope)
+            storage.retain_owner(owners)
+            # Four visits per owner row and per fingerprinted identity field.
+            scope.charge(work=4 * owners.size + 64)
+            prepared_id = canonical_fingerprint(
+                {
+                    "kind": "prepared-distributed-planar-generation",
+                    "tiles": tiles.compiled_id,
+                    "layout": layout_key,
+                    "owners": array_tree_fingerprint(owners),
+                    "partition_count": partition_count,
+                }
+            )
     if scope.evidence is None:
         raise RuntimeError(
             "planar_generation.preparation must end with native execution evidence; got None"
@@ -849,23 +1036,7 @@ def prepare_distributed_planar_generation(
             ledger.remember_receipt(parent, receipt)
             ledger.remember_source(parent, source.source_id)
             storage.retain_owner(tiles)
-    partition_count = jax.process_count()
-    owners = _balanced_owners(tiles.tile_weights, partition_count)
-    prepared_id = canonical_fingerprint(
-        {
-            "kind": "prepared-distributed-planar-generation",
-            "tiles": tiles.compiled_id,
-            "layout": (
-                layout.vertex_capacity,
-                layout.cell_capacity,
-                layout.candidate_capacity,
-                layout.maximum_work_units,
-                layout.neighborhood_depth,
-            ),
-            "owners": array_tree_fingerprint(owners),
-            "partition_count": partition_count,
-        }
-    )
+            storage.retain_owner(owners)
     return PreparedDistributedPlanarGeneration(
         tiles, layout, owners, partition_count, prepared_id, receipt
     )
@@ -968,6 +1139,8 @@ def _triangulate_tile(
     limits: MeshingLimits,
     started: float,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> _TileMesh:
     """Refine one tile under its fixed constraints and the current seam points."""
     incident = (tiles.segment_tiles[:, 0] == row) | (tiles.segment_tiles[:, 1] == row)
@@ -1015,12 +1188,15 @@ def _triangulate_tile(
     extra = np.empty((0, 2), dtype=np.float64)
     uniform = tiles.patch_sizes.size == 0
     while True:
-        try:
-            triangulation = triangulation_owner.ConstrainedDelaunayTriangulation(
+        with scope.host_workspace() as joined_inputs:
+            # The joined input-point bank of this build.
+            joined_inputs.set_bound(16 * (inputs.shape[0] + extra.shape[0]) + 4096)
+            triangulation = scoped_triangulation(
                 np.concatenate((inputs, extra), axis=0),
                 segments,
+                scope=scope,
+                limits=limits,
                 holes=holes if holes.shape[0] else None,
-                keep_convex_hull=False,
                 min_angle=tiles.minimum_angle_degrees,
                 max_area=tiles.maximum_area,
                 max_edge_length=tiles.construction_size if uniform else math.inf,
@@ -1028,10 +1204,6 @@ def _triangulate_tile(
                 max_steiner=max(tiles.maximum_steiner - extra.shape[0], 0),
                 max_triangles=tiles.maximum_triangles,
             )
-        except MeshcoreError as error:
-            if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
-                raise
-            raise _capacity_failure(error, limits) from error
         check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
         points = np.asarray(triangulation.points, dtype=np.float64)
         triangles = np.asarray(triangulation.triangles, dtype=np.int64)
@@ -1329,7 +1501,7 @@ def execute_distributed_planar_initial(
             try:
                 for row in sorted(pending):
                     results[row] = _triangulate_tile(
-                        tiles, row, seam_points, limits, started
+                        tiles, row, seam_points, limits, started, scope=scope
                     )
             except (MeshingFailure, MeshcoreError, ValueError) as error:
                 failure = _owner_failure(error)

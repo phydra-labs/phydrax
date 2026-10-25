@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from phydrax._fingerprint import tree_content_equal
+from phydrax._host_storage import immutable_host_array
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._coordinate_budget import (
@@ -1029,10 +1030,12 @@ def test_nested_coverage_refuses_rebuilt_or_mutated_source_report(dimension: int
             )
             is None
         )
-        upper = case.source_coverage.facet_source_overlaps.upper
-        original = upper.copy()
-        upper.setflags(write=True)
-        upper[0] *= 2
+        overlaps = case.source_coverage.facet_source_overlaps
+        upper = overlaps.upper
+        changed = upper.copy()
+        changed[0] *= 2
+        # Issued banks are immutable bytes; a replaced owner is the attack.
+        object.__setattr__(overlaps, "upper", immutable_host_array(changed))
         try:
             assert (
                 owner._execute_nested_coverage(
@@ -1049,8 +1052,7 @@ def test_nested_coverage_refuses_rebuilt_or_mutated_source_report(dimension: int
                 is None
             )
         finally:
-            upper[:] = original
-            upper.setflags(write=False)
+            object.__setattr__(overlaps, "upper", upper)
 
 
 @pytest.mark.parametrize("dimension", (2, 3))
@@ -1241,10 +1243,11 @@ def test_held_issued_coverage_remains_authoritative_after_independent_reproof() 
             clone,
             budget=budget,
         )
-        upper = original.facet_source_overlaps.upper
-        prior = upper.copy()
-        upper.setflags(write=True)
-        upper[0] *= 2
+        overlaps = original.facet_source_overlaps
+        upper = overlaps.upper
+        changed = upper.copy()
+        changed[0] *= 2
+        object.__setattr__(overlaps, "upper", immutable_host_array(changed))
         try:
             assert not owner.is_issued_domain_coverage(
                 case.source_mesh,
@@ -1257,8 +1260,7 @@ def test_held_issued_coverage_remains_authoritative_after_independent_reproof() 
                 budget=budget,
             )
         finally:
-            upper[:] = prior
-            upper.setflags(write=False)
+            object.__setattr__(overlaps, "upper", upper)
 
 
 @pytest.mark.parametrize("permuted", (False, True))
@@ -1424,8 +1426,8 @@ def test_authenticate_issued_coverage_denies_changed_science_or_current_inputs(
         )
         regions = np.asarray((0, 1), dtype=np.int64)
         limits = case.limits
-        bank = case.source_coverage.facet_source_overlaps.upper
-        original = bank.copy()
+        overlaps = case.source_coverage.facet_source_overlaps
+        bank = overlaps.upper
         if changed == "science":
             measure = case.source_coverage.achieved_region_measures[0]
             assert measure is not None
@@ -1439,8 +1441,9 @@ def test_authenticate_issued_coverage_denies_changed_science_or_current_inputs(
         elif changed == "limits":
             limits = replace(limits, maximum_ray_tests=limits.maximum_ray_tests + 1)
         else:
-            bank.setflags(write=True)
-            bank[0] *= 2
+            changed_bank = bank.copy()
+            changed_bank[0] *= 2
+            object.__setattr__(overlaps, "upper", immutable_host_array(changed_bank))
         try:
             assert (
                 owner.authenticate_issued_domain_coverage(
@@ -1458,8 +1461,7 @@ def test_authenticate_issued_coverage_denies_changed_science_or_current_inputs(
             )
         finally:
             if changed == "current-bank":
-                bank[:] = original
-                bank.setflags(write=False)
+                object.__setattr__(overlaps, "upper", bank)
 
 
 def test_authenticate_issued_coverage_does_not_invent_a_cold_owner() -> None:

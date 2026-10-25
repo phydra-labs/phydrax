@@ -945,3 +945,98 @@ def test_boundary_equality_does_not_discard_required_target_projection() -> None
             embedding=target_embedding, limits=limits, budget=budget,
         )
         assert rejected_regions.status != "certified"
+
+
+def test_projection_source_retains_original_discovery_through_cold_archive(
+    projection_replay_context: tuple[
+        AnalyticImplicitProfile, ImplicitProjectionCoverageEvidence
+    ],
+    tmp_path: Path,
+) -> None:
+    from phydrax.geometry.implicit import (
+        AdaptiveImplicitSurfacePolicy,
+        discover_adaptive_implicit_surface,
+    )
+    from phydrax.lifecycle import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+
+    profile, _ = projection_replay_context
+    margin = profile.reach_lower / 4
+    domain = np.asarray(profile.boundary_bounds) + np.asarray(
+        ((-margin,) * 3, (margin,) * 3)
+    )
+    discovered = discover_adaptive_implicit_surface(
+        profile.geometry,
+        domain=domain,
+        policy=AdaptiveImplicitSurfacePolicy(
+            enclosure="interval",
+            initial_level=2,
+            minimum_surface_level=3,
+            maximum_level=5,
+            maximum_boxes=32768,
+            maximum_evaluations=2_097_152,
+            maximum_faces=32768,
+            maximum_intersection_pairs=1_048_576,
+        ),
+        source_id=profile.source_id,
+    )
+    source = ImplicitProjectionBoundarySource(profile, discovery=discovered.volume)
+    assert source.discovery is discovered.volume
+    receipt = write_meshing_source_closure(tmp_path / "original-discovery.npz", source)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert restored.discovery is not source.discovery
+    assert restored.discovery.query_id == discovered.volume.query_id
+    assert tree_content_equal(restored.discovery, discovered.volume)
+    np.testing.assert_array_equal(restored.discovery.domain, domain)
+    np.testing.assert_array_equal(
+        restored.discovery.classify_points(profile.center[None]).classes,
+        discovered.volume.classify_points(profile.center[None]).classes,
+    )
+
+
+@pytest.mark.parametrize("fault", ("foreign-source", "stale-domain", "false-enclosure"))
+def test_projection_source_refuses_foreign_or_changed_discovery(
+    projection_replay_context: tuple[
+        AnalyticImplicitProfile, ImplicitProjectionCoverageEvidence
+    ],
+    fault: str,
+) -> None:
+    from phydrax.geometry.implicit._adaptive_discovery import ImplicitVolumeQuery
+
+    profile, _ = projection_replay_context
+    domain = np.asarray(profile.boundary_bounds)
+    values = profile.field_bounds.boxes(domain[:1], domain[1:])
+    query = ImplicitVolumeQuery(
+        profile.field_bounds,
+        domain[:1],
+        domain[1:],
+        values.value_lower,
+        values.value_upper,
+        np.asarray((0,), dtype=np.int64),
+        domain,
+        maximum_level=1,
+    )
+    if fault == "foreign-source":
+        foreign = phx.geometry.Sphere(
+            tuple(np.asarray(profile.center) + 3.0 * profile.radius), profile.radius
+        ).compile(coordinate_unit=METER)
+        foreign_profile = AnalyticImplicitProfile(
+            foreign, profile.coordinate_contract
+        )
+        query = eqx.tree_at(lambda value: value.bounds, query, foreign_profile.field_bounds)
+    elif fault == "stale-domain":
+        query = eqx.tree_at(
+            lambda value: value.domain, query, query.domain + profile.radius
+        )
+    else:
+        query = eqx.tree_at(
+            lambda value: (value.leaf_value_lower, value.leaf_value_upper),
+            query,
+            (np.asarray((1.0,)), np.asarray((2.0,))),
+        )
+    with pytest.raises(ValueError, match="ImplicitVolumeQuery"):
+        ImplicitProjectionBoundarySource(profile, discovery=query)

@@ -27,6 +27,7 @@ from .._meshcore import (
     NativeExecutionMemoryCounters,
     NativeExecutionScope,
     NativeExecutionWorkCounters,
+    NativeHostStorageWorkspace,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -309,6 +310,37 @@ _NATIVE_EXECUTION_RECORD_ARRAY_BYTES = (
     + np.dtype(np.uint32).itemsize
     + (NATIVE_EXECUTION_IMPORT_CAPACITY + 1) * 32 * np.dtype(np.uint8).itemsize
 )
+
+# Host scratch for validating and canonically serializing ended receipts.
+# tracemalloc peaks of the actual CPython/NumPy/JAX temporaries (one phase
+# with 64 imported IDs and up to 256 history entries; graphs of 1 to 257
+# phases, in plain and pytest processes) are <= 37 KiB fixed per phase,
+# <= 0.45 KiB per imported/history identity, and <= 32 KiB per visited phase
+# including host array caches and collector-deferred temporaries (worst at
+# nine phases: 320 KiB). Each constant keeps headroom over those peaks.
+_RECEIPT_PHASE_SCRATCH_BYTES = 64 * 1024
+_RECEIPT_IDENTITY_SCRATCH_BYTES = 1024
+_RECEIPT_NODE_SCRATCH_BYTES = 32 * 1024
+_RECEIPT_EDGE_SCRATCH_BYTES = 512
+
+
+def native_receipt_validation_bytes_upper(
+    nodes: int, edges: int, history_count: int, owner_length: int, /
+) -> int:
+    """Bound graph validation with one phase's validation/serialization live.
+
+    The phase reserves the full imported-ID capacity, so no numerical leaf is
+    read before admission; ``owner_length`` is the host owner-ID length.
+    """
+    return (
+        1024
+        + _RECEIPT_NODE_SCRATCH_BYTES * nodes
+        + _RECEIPT_EDGE_SCRATCH_BYTES * edges
+        + _RECEIPT_PHASE_SCRATCH_BYTES
+        + _RECEIPT_IDENTITY_SCRATCH_BYTES
+        * (NATIVE_EXECUTION_IMPORT_CAPACITY + history_count)
+        + 16 * owner_length
+    )
 
 
 @final
@@ -737,9 +769,12 @@ def validate_native_execution_interchange(
 def _history_identities(
     history: tuple[NativeExecutionRecord, ...],
     preparation: NativeExecutionRecord | None,
-    /,
+    /, *, scope: NativeExecutionScope | None = None,
+    storage: NativeHostStorageWorkspace | None = None,
 ) -> None:
     """Require ordered unique completed requests disjoint from the charged chain."""
+    if scope is not None:
+        scope.charge(work=2 * len(history) * (33 + len(history).bit_length()))
     if type(history) is not tuple or any(
         type(record) is not NativeExecutionRecord for record in history
     ):
@@ -754,8 +789,17 @@ def _history_identities(
             f"got {identities!r}."
         )
     charged: set[str] = set()
+    visited: set[int] = set()
+    initial_storage = 0 if storage is None else storage.bound
     current = preparation
     while current is not None:
+        if scope is not None:
+            scope.charge(work=33)
+        if id(current) in visited:
+            raise ValueError("NativeExecutionRecord.preparation chain must be acyclic.")
+        if storage is not None:
+            storage.set_bound(initial_storage + 512 * (len(visited) + 1))
+        visited.add(id(current))
         charged.add(current.receipt_hex())
         current = current.preparation_evidence
     if charged.intersection(identities):
@@ -819,6 +863,7 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
         history_evidence: tuple[NativeExecutionRecord, ...] = (),
         owner_id: str | None = None,
         imports: NativeExecutionImports | None = None,
+        _predecessor_admission: object | None = None,
     ) -> None:
 
         owner = None if owner_id is None else parse(owner_id, Identifier, "owner_id")
@@ -834,6 +879,25 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
             )
         unique = {record.receipt_hex(): record for record in history_evidence}
         history = tuple(unique[identity] for identity in sorted(unique))
+        authenticated: frozenset[int] = frozenset()
+        if _predecessor_admission is not None:
+            from ._native_preparation import _NativeReceiptPrefix
+
+            if not isinstance(_predecessor_admission, _NativeReceiptPrefix):
+                raise TypeError("Receipt predecessor admission must be its staged prefix.")
+            authenticated = _predecessor_admission.authenticate_bindings(
+                preparation_evidence, consumer_evidence, history
+            )
+        else:
+            from ._native_preparation import _issued_native_receipt_graph
+
+            # Issued predecessors bind their once-validated immutable graphs;
+            # cold or unissued predecessors keep full validation below.
+            for predecessor in (preparation_evidence, consumer_evidence, *history):
+                if type(predecessor) is NativeExecutionRecord:
+                    graph = _issued_native_receipt_graph(predecessor)
+                    if graph is not None:
+                        authenticated |= {id(phase.receipt) for phase in graph.phases}
         _history_identities(history, preparation_evidence)
         imported_ids = () if imports is None else imports.receipt_ids
         count = len(imported_ids)
@@ -847,7 +911,8 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
                 raise TypeError(
                     f"NativeExecutionRecord.preparation_evidence must be NativeExecutionRecord; got {type(preparation_evidence).__name__}"
                 )
-            preparation_evidence.require_valid()
+            if id(preparation_evidence) not in authenticated:
+                preparation_evidence.require_valid()
             totals = jax.device_get(
                 (
                     preparation_evidence.total_work_units,
@@ -962,18 +1027,31 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
                 dtype=np.uint8,
             ).copy()
         )
-        self.require_valid()
+        self._require_graph_valid(authenticated)
 
     def require_valid(self) -> None:
         """Validate the ended host evidence graph outside numerical iteration."""
         self._require_graph_valid(frozenset())
 
-    def _require_graph_valid(self, authenticated: frozenset[int], /) -> None:
+    def require_valid_in_scope(self, scope: NativeExecutionScope, /) -> None:
+        """Authenticate cold/unissued receipt numerics under the receiving root."""
+        with NativeHostStorageWorkspace(scope) as storage:
+            storage.set_bound(1024)
+            scope.charge(work=1)
+            self._require_graph_valid(frozenset(), admission=(scope, storage))
+
+    def _require_graph_valid(
+        self, authenticated: frozenset[int], /, *,
+        admission: tuple[NativeExecutionScope, NativeHostStorageWorkspace] | None = None,
+    ) -> None:
         """Validate new phases after the caller authenticates exact private owners."""
         pending: list[tuple[NativeExecutionRecord, bool]] = [(self, False)]
         visiting: set[int] = set()
         complete: set[int] = set(authenticated)
+        admitted_nodes = admitted_edges = widest_history = longest_owner = 0
         while pending:
+            if admission is not None:
+                admission[0].charge(work=1)
             current, leaving = pending.pop()
             if type(current) is not NativeExecutionRecord:
                 raise ValueError(
@@ -991,6 +1069,24 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
                 )
             if identity in complete:
                 continue
+            if admission is not None:
+                scope, storage = admission
+                # A phase's identity is serialized when it is left, after its
+                # predecessors; keep the widest admitted phase live until then.
+                history_count = len(current.history_evidence)
+                admitted_nodes += 1
+                admitted_edges += 3 + history_count
+                widest_history = max(widest_history, history_count)
+                longest_owner = max(
+                    longest_owner,
+                    0 if current.owner_id is None else len(str(current.owner_id)),
+                )
+                storage.set_bound(
+                    native_receipt_validation_bytes_upper(
+                        admitted_nodes, admitted_edges, widest_history, longest_owner
+                    )
+                )
+                scope.charge(work=4096 + 64 * history_count)
             visiting.add(identity)
             current._require_phase_valid()
             previous = current.preparation_evidence
@@ -1010,7 +1106,11 @@ class NativeExecutionRecord(StrictModule, NonTrainableState):
                     raise ValueError(
                         "NativeExecutionRecord.preparation_aggregates must match the predecessor phase chain; got differing aggregates"
                     )
-            _history_identities(current.history_evidence, previous)
+            _history_identities(
+                current.history_evidence, previous,
+                scope=None if admission is None else admission[0],
+                storage=None if admission is None else admission[1],
+            )
             pending.append((current, True))
             for predecessor in (previous, current.consumer_evidence):
                 if predecessor is None:

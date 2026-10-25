@@ -862,7 +862,15 @@ bool coupled_ring_candidates(TetMesh& mesh, const Cell& cell, const CoupledCavit
   NativeVector<int32_t> ring_cells, ring;
   if (!mesh.edge_ring(edge[0], edge[1], ring_cells, ring) ||
       ring.size() < 3 || ring.size() > kMaxRing) return false;
-  candidates.assign(ring.begin(), ring.end());
+  // A boundary-edge ring contains the ghost closure vertex. It belongs to
+  // the topological ring, not the physical coordinate/degree-of-freedom bank.
+  // Remove it at this conversion boundary, before either eligibility lookup
+  // below or CoupledCavity::prepare can index per-vertex storage.
+  candidates.clear();
+  candidates.reserve(ring.size() + 2);
+  for (int32_t vertex : ring) {
+    if (vertex != kGhostVertex) candidates.push_back(vertex);
+  }
   candidates.push_back(edge[0]);
   candidates.push_back(edge[1]);
   std::sort(candidates.begin(), candidates.end());
@@ -3566,6 +3574,60 @@ int32_t phx_mc_tet_mesh_inspect_edge_insertion(
   });
 }
 
+int32_t phx_mc_tet_mesh_inspect_projected_edge_insertion(
+    phx_mc_tet_mesh* handle, int32_t first, int32_t second, const double* split_position,
+    const double* final_position, double source_fraction, int32_t source,
+    int64_t maximum_cavity_cells, int64_t work_limit, int32_t* removed_tetrahedra,
+    int32_t* proposed_tetrahedra, int32_t* projected_faces, int64_t* counts) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (handle == nullptr || handle->mesh == nullptr || split_position == nullptr ||
+        final_position == nullptr || counts == nullptr || source < 0 ||
+        maximum_cavity_cells < 0 || maximum_cavity_cells > INT64_MAX / 12 ||
+        !phx::mc::addressable(maximum_cavity_cells, 12, sizeof(int32_t)) ||
+        work_limit < 0 || !std::isfinite(source_fraction) ||
+        source_fraction <= 0.0 || source_fraction >= 1.0 ||
+        (maximum_cavity_cells > 0 && (removed_tetrahedra == nullptr ||
+         proposed_tetrahedra == nullptr || projected_faces == nullptr))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    std::fill_n(counts, 5, int64_t{0});
+    phx::mc::TetMesh& mesh = *handle->mesh;
+    const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
+    if (mesh.broken()) return PHX_MC_INTERNAL_ERROR;
+    phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
+    phx::mc::InsertKind kind = phx::mc::InsertKind::kInterior;
+    const auto prepared = mesh.prepare_projected_edge_insertion(
+        first, second, split_position, final_position, source_fraction,
+        static_cast<std::size_t>(maximum_cavity_cells), source, kind);
+    if (prepared != phx::mc::Insertion::kOk) {
+      mesh.abandon();
+      return insertion_status(mesh, prepared);
+    }
+    const auto finite = insertion_counts(mesh);
+    const auto faces = mesh.projected_insertion_faces();
+    if (finite[0] <= 0 || finite[1] <= 0 ||
+        finite[0] + finite[1] > maximum_cavity_cells ||
+        faces.size() > static_cast<std::size_t>(4 * maximum_cavity_cells)) {
+      mesh.abandon();
+      return PHX_MC_INTERNAL_ERROR;
+    }
+    if (!mesh.spend(4 * (finite[0] + finite[1]) + 3 * static_cast<int64_t>(faces.size()))) {
+      mesh.abandon();
+      return PHX_MC_CAPACITY_EXCEEDED;
+    }
+    insertion_rows(mesh, removed_tetrahedra, proposed_tetrahedra);
+    for (std::size_t row = 0; row < faces.size(); ++row) {
+      std::copy_n(faces[row].data(), 3, projected_faces + 3 * row);
+    }
+    counts[0] = finite[0];
+    counts[1] = finite[1];
+    counts[2] = static_cast<int32_t>(kind);
+    counts[3] = mesh.accepted_generation();
+    counts[4] = static_cast<int64_t>(faces.size());
+    return PHX_MC_OK;
+  });
+}
+
 int32_t phx_mc_tet_mesh_commit_edge_insertion(
     const phx_mc_tet_mesh_commit_edge_insertion_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
@@ -3594,6 +3656,10 @@ int32_t phx_mc_tet_mesh_commit_edge_insertion(
         !std::isfinite(source_fraction) || source_fraction < 0.0 || source_fraction >= 1.0 ||
         removed_tetrahedra == nullptr || proposed_tetrahedra == nullptr ||
         insertion_kind < 0 || insertion_kind > 2 || accepted_generation < 0 ||
+        request->claim_count < 0 ||
+        (request->claim_count > 0 && (request->projected_source < 0 ||
+         request->claim_digest == nullptr || request->claim_faces == nullptr ||
+         request->claim_coordinates == nullptr || request->claim_deviations == nullptr)) ||
         !std::isfinite(target_size) || target_size < 0.0 || work_limit < 0) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -3610,10 +3676,15 @@ int32_t phx_mc_tet_mesh_commit_edge_insertion(
     }
     phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
     phx::mc::InsertKind kind = phx::mc::InsertKind::kInterior;
+    const bool projected = request->claim_count > 0;
     const bool reused = mesh.reuse_edge_insertion(
         first, second, split_position, final_position, source_fraction,
-        static_cast<std::size_t>(maximum_cavity_cells), kind);
+        static_cast<std::size_t>(maximum_cavity_cells), kind,
+        projected ? request->projected_source : -1);
     const phx::mc::Insertion prepared = reused ? phx::mc::Insertion::kOk
+        : projected ? mesh.prepare_projected_edge_insertion(
+              first, second, split_position, final_position, source_fraction,
+              static_cast<std::size_t>(maximum_cavity_cells), request->projected_source, kind)
         : mesh.prepare_edge_insertion(
               first, second, split_position, final_position, source_fraction,
               static_cast<std::size_t>(maximum_cavity_cells), kind);
@@ -3634,6 +3705,17 @@ int32_t phx_mc_tet_mesh_commit_edge_insertion(
     if (!insertion_rows(mesh, nullptr, nullptr, removed_tetrahedra, proposed_tetrahedra)) {
       mesh.abandon();
       return PHX_MC_OK;
+    }
+    if (projected) {
+      const phx::mc::CurvedCollapseClaims claims{
+          request->projected_source, accepted_generation, request->claim_digest,
+          request->claim_count, request->claim_faces, request->claim_coordinates,
+          request->claim_deviations};
+      const auto admitted = mesh.authenticate_projected_insertion(claims);
+      if (admitted != phx::mc::Insertion::kOk) {
+        mesh.abandon();
+        return insertion_status(mesh, admitted);
+      }
     }
     const int32_t pending = static_cast<int32_t>(mesh.vertex_count());
     const phx::mc::Insertion committed = mesh.commit(kind, target_size);
@@ -3739,6 +3821,55 @@ int32_t phx_mc_tet_mesh_inspect_curved_collapse(phx_mc_tet_mesh* handle, int32_t
     *face_count = count;
     *source = inspection.source;
     *accepted_generation = inspection.generation;
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_curved_collapse_cavity(
+    phx_mc_tet_mesh* handle, int32_t remove, int32_t keep, int64_t generation,
+    int64_t removed_capacity, int64_t proposed_capacity, int64_t work_limit,
+    int32_t* removed, int32_t* proposed, int64_t* counts) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (handle == nullptr || handle->mesh == nullptr || counts == nullptr ||
+        removed_capacity < 0 || proposed_capacity < 0 || work_limit < 0 ||
+        !phx::mc::addressable(removed_capacity, 4, sizeof(int32_t)) ||
+        !phx::mc::addressable(proposed_capacity, 4, sizeof(int32_t)) ||
+        (removed_capacity > 0 && removed == nullptr) ||
+        (proposed_capacity > 0 && proposed == nullptr)) return PHX_MC_INVALID_ARGUMENT;
+    counts[0] = counts[1] = 0;
+    auto& mesh = *handle->mesh;
+    if (mesh.broken()) return PHX_MC_INTERNAL_ERROR;
+    if (!mesh.retained_curved_collapse(remove, keep, generation)) return PHX_MC_INVALID_INPUT;
+    const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
+    phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
+    int64_t old_count = 0, new_count = 0;
+    for (int32_t cell : mesh.retained_removed()) old_count += mesh.finite(cell);
+    for (const auto& cell : mesh.retained_proposed()) new_count += !phx::mc::is_ghost(cell);
+    if (!mesh.spend(static_cast<int64_t>(
+            mesh.retained_removed().size() + mesh.retained_proposed().size()))) {
+      mesh.cancel_prepared_edit();
+      return PHX_MC_CAPACITY_EXCEEDED;
+    }
+    if (removed_capacity == 0 && proposed_capacity == 0) {
+      counts[0] = old_count;
+      counts[1] = new_count;
+      return PHX_MC_OK;
+    }
+    if (old_count > removed_capacity || new_count > proposed_capacity ||
+        !mesh.spend(4 * (old_count + new_count))) {
+      mesh.cancel_prepared_edit();
+      return PHX_MC_CAPACITY_EXCEEDED;
+    }
+    int64_t row = 0;
+    for (int32_t cell : mesh.retained_removed()) {
+      if (mesh.finite(cell)) std::copy_n(mesh.tet(cell).v, 4, removed + 4 * row++);
+    }
+    row = 0;
+    for (const auto& cell : mesh.retained_proposed()) {
+      if (!phx::mc::is_ghost(cell)) std::copy_n(cell.v, 4, proposed + 4 * row++);
+    }
+    counts[0] = old_count;
+    counts[1] = new_count;
     return PHX_MC_OK;
   });
 }

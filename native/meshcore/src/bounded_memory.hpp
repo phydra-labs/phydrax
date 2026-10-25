@@ -239,6 +239,13 @@ class NativeExecutionScope final {
   NativeExecutionScope(const NativeExecutionScope&) = delete;
   NativeExecutionScope& operator=(const NativeExecutionScope&) = delete;
 
+  static bool is_active_or_ancestor(const NativeExecutionScope* candidate) noexcept {
+    for (auto* scope = active_execution_scope; scope != nullptr; scope = scope->previous_) {
+      if (scope == candidate) return true;
+    }
+    return false;
+  }
+
   bool admit(uint64_t work, uint64_t queries = 0) noexcept;
   bool charge(uint64_t work, uint64_t queries = 0) noexcept;
   bool charge_external(uint64_t work, uint64_t queries) noexcept;

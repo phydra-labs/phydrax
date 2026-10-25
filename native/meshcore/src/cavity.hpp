@@ -437,6 +437,9 @@ class CavityEdit {
 
   std::span<const int32_t> removed() const { return removed_; }
   std::span<const Tetrahedron> proposal() const { return created_; }
+  int32_t proposal_constraint(std::size_t cell, int slot) const {
+    return created_constraints_.empty() ? kNoConstraint : created_constraints_[4 * cell + slot];
+  }
 
   // Applies the staged edit.  Refusals (cell or slot limits) leave the complex
   // unchanged; std::bad_alloc can only escape before any change.  On success

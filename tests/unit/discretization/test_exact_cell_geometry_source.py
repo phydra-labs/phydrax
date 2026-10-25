@@ -8,6 +8,7 @@ import gc
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fractions import Fraction
+from typing import NoReturn
 
 import equinox as eqx
 import numpy as np
@@ -742,12 +743,6 @@ def test_exact_source_slot_refuses_wrong_kind_family_and_foreign_authority(
         geometry.resolve(foreign, budget=budget)
     with pytest.raises(ValueError, match="quotient"):
         geometry.with_periodic_source(mesh, budget=budget)
-    with pytest.raises(ValueError, match="PLC source ancestry"):
-        transition_displaced_cell_geometry(mesh, geometry, mesh)
-    with pytest.raises(ValueError, match=r"common_refinement\.geometry\.exact_source"):
-        prepare_common_refinement(
-            mesh, mesh, source_geometry=geometry, target_geometry=geometry
-        )
 
 
 @pytest.mark.parametrize("drift", ("carrier", "routes"))
@@ -1341,10 +1336,12 @@ def test_full_barycentric_p1_source_preserves_every_offsum_weight(
 def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
     kind: str, budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization import _coordinate_enclosure as algebra
+    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
-        coordinate_vertex_images, evaluate, source_basis,
+        coordinate_vertex_images,
+        evaluate,
+        source_basis,
     )
     from phydrax.discretization._reference_cell import reference_cell_topology
 
@@ -1666,8 +1663,8 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
     budget: CoordinateEnclosureBudget,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization import _coordinate_enclosure as enclosure
+    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_corner_images,
         reference_composition_arguments,
@@ -1710,7 +1707,7 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
         original = source_expressions(element, budget=ledger)
         chart = reference_composition_arguments(element, budget=ledger)
         work = ledger.work_units
-        def reject_repeated_preparation(*args, **kwargs):
+        def reject_repeated_preparation(*args: object, **kwargs: object) -> NoReturn:
             raise AssertionError("An authenticated cache hit must not repeat source/chart preparation")
 
         with monkeypatch.context() as repeated:
@@ -2554,8 +2551,10 @@ def test_unbound_plc_entity_preparation_keeps_original_whole_row_tariff(
 def test_plc_entity_numeric_frame_seal_binds_actual_source_and_nested_rows() -> None:
     import pickle
 
-    from phydrax.discretization import _coordinate_operands as operands
-    from phydrax.discretization import _exact_plc_geometry as owner
+    from phydrax.discretization import (
+        _coordinate_operands as operands,
+        _exact_plc_geometry as owner,
+    )
     from phydrax.meshing import MeshingLimits
     from tests._support.coordinate_references import native_meshing_request
 

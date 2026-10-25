@@ -188,10 +188,16 @@ def publication_policy(
                 "wall_seconds",
             )
             match route:
-                case "curve" | "planar":
+                case "curve":
                     # Host coordinate ledgers are bounded; no route-wide scratch
                     # proof covers native construction storage.
                     unenforced = ("cavity_cells", "scratch_bytes")
+                case "planar":
+                    enforced += ("cavity_cells", "scratch_bytes")
+                    # Python host scratch and native managed construction share
+                    # the inherited request allowance; external host/device/
+                    # compiler allocators remain outside that admission scope.
+                    unenforced = ("scratch_bytes:unmanaged_host_device_compiler",)
                 case "parametric_surface":
                     enforced += ("cavity_cells", "scratch_bytes")
                     unenforced = ()
@@ -277,16 +283,14 @@ def publication_policy(
                 "cells",
                 "connectivity_entries",
                 "data_bytes",
-                "work_units:native_and_metered_host",
-                "wall_seconds:native_and_host_boundaries",
-                "cavity_cells:native",
-                "geometry_queries:native_and_source_batches",
-                "scratch_bytes:managed_native_and_bounded_host",
+                "work_units",
+                "wall_seconds",
+                "cavity_cells",
+                "geometry_queries",
+                "scratch_bytes",
             )
             unenforced = (
                 "scratch_bytes:unmanaged_host_device_compiler",
-                "work_units:unmetered_host_device_compiler",
-                "wall_seconds:nonpreemptible_host_device_compiler",
             )
             audit = CellMeshAuditPolicy(
                 require_complete_association=True,

@@ -54,6 +54,14 @@ Mesh certificate checks
         "statement": "Outward native source and exact target polynomial intervals certify continuous deviation including original-face-to-representative ribbon bounds, rank-two projected Jacobians, edge-atlas monotonicity, vertex-cone separation and synchronized-time separation of every nonadjacent pair throughout the closed-boundary homotopy."
       },
       {
+        "tag": "N",
+        "statement": "A fixed separator on each vertex-pair time slab admits every closed reference leaf by strict one-sided directional derivatives or by a strict outward relative-image halfspace bound. Leaves containing the common vertex retain the derivative test; relative images subtract the actual completed moving vertex before time interpolation."
+      },
+      {
+        "tag": "T",
+        "statement": "Along a segment from the common vertex, derivative-certified leaves increase signed displacement and image-certified leaves prove it positive directly. Absolute continuity across the finite convex cover propagates strict positivity away from the vertex; the authenticated trace supplies the same moving vertex on both cells."
+      },
+      {
         "tag": "X",
         "statement": "Exact shared representative and target traces glue the complete oriented chart chain to the complete target boundary, without unidentified contacts or omitted authored patches; original nonzero incidences remain bounded ribbons under their unchanged import/model allowance."
       },
@@ -646,6 +654,7 @@ import phydrax.geometry._meshing_domain as meshing_domain_owner
 import phydrax.geometry._radial_source_fidelity as radial_source_fidelity_owner
 import phydrax.geometry._surface_source_support as surface_source_support_owner
 import phydrax.geometry.brep._patches as patches_owner
+import phydrax.geometry.implicit._adaptive_discovery as adaptive_discovery_owner
 import phydrax.geometry.implicit._analytic_profile as analytic_profile_owner
 from phydrax.discretization._coordinate_budget import RationalEnclosureError
 from phydrax.discretization._exact_algebraic_geometry import rational_coefficient
@@ -1551,6 +1560,7 @@ class ImplicitProjectionBoundarySource(StrictModule, NonTrainableState):
     """Nominal analytic source with independently recomputed projection coverage."""
 
     profile: analytic_profile_owner.AnalyticImplicitProfile
+    discovery: adaptive_discovery_owner.ImplicitVolumeQuery | None
 
     @checked
     def __init__(
@@ -1558,6 +1568,7 @@ class ImplicitProjectionBoundarySource(StrictModule, NonTrainableState):
         profile: analytic_profile_owner.AnalyticImplicitProfile,
         /,
         *,
+        discovery: adaptive_discovery_owner.ImplicitVolumeQuery | None = None,
         budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
 
@@ -1565,6 +1576,25 @@ class ImplicitProjectionBoundarySource(StrictModule, NonTrainableState):
             profile.geometry, profile.coordinate_contract, budget=budget
         )
         self.profile = profile
+        if discovery is not None:
+            discovery.require_bound(profile.geometry, budget=budget)
+            domain = np.asarray(discovery.domain)
+            if np.any(domain[0] > profile.boundary_bounds[0]) or np.any(
+                domain[1] < profile.boundary_bounds[1]
+            ):
+                raise ValueError(
+                    "ImplicitProjectionBoundarySource.discovery must enclose the complete analytic boundary"
+                )
+            if budget is not None:
+                budget.retain_basis((discovery,))
+        self.discovery = discovery
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls, value: ImplicitProjectionBoundarySource, /
+    ) -> ImplicitProjectionBoundarySource:
+        return cls(value.profile, discovery=value.discovery)
 
     @property
     def source_id(self) -> str:
@@ -4935,11 +4965,14 @@ def _analytic_planar_polygon(
         [(i, (i + 1) % len(outer)) for i in range(len(outer))], dtype=np.int64
     )
     first_pairs, last_pairs = np.triu_indices(len(outer), 1)
-    hit, certain = exact_pair_contacts(
+    with exact_pair_contacts(
         points, edges[first_pairs], edges[last_pairs], budget=budget
-    )
-    if np.any(hit) or not np.all(certain):
-        return None
+    ) as contacts:
+        try:
+            if np.any(contacts[0]) or not np.all(contacts[1]):
+                return None
+        finally:
+            del contacts
     area = sum(
         (first[0] * last[1] - first[1] * last[0] for first, last in outer), Fraction(0)
     )

@@ -26,6 +26,7 @@ from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
+    current_native_host_workspace,
     exact_orient2d,
     MeshcoreError,
     MeshcoreStatus,
@@ -54,7 +55,6 @@ from .._sizing import (
 from .._trace import MeshingStageKind
 from . import _native_sources as sources_owner
 from ._native_planar_construction import (
-    lattice_site_upper,
     lattice_spacing,
     uniform_construction_size,
     uniform_median_strategy,
@@ -64,12 +64,53 @@ from ._native_route_checks import check_deadline, unique_edges
 
 # Point-by-segment distance entries evaluated per chunk of size-field queries.
 _FIELD_WORKING_ENTRIES = 1 << 20
-# Host bytes one CDT output point costs: its coordinates, about two triangles
-# of vertex and segment-id rows, and the witness rows built from them.
-_CDT_BYTES_PER_POINT = 16 + 2 * 3 * 3 * 8 + 3 * 2 * 8
+# Host bytes the CDT wrapper allocates per possible output point before the
+# native build: the constraint-witness parent, segment and ratio rows.
+_CDT_WITNESS_BYTES = 20
+# Host bytes a CDT build may hold per output point after the native build:
+# output coordinates and vertex map, the frozen copy, the input-point unique
+# sort and the content fingerprints.
+_CDT_POINT_BYTES = 140
+# Host bytes per output triangle: cell and segment-id banks (48), their frozen
+# copies, the triangle-vertex unique sort, the minimum-angle scan temporaries
+# and the content fingerprints.
+_CDT_TRIANGLE_BYTES = 512
+# Every native output point holds 16 bytes of managed coordinates and every
+# triangle a 24-byte record, so the host output copies are at most
+# ceil(max(140 / 16, 512 / 24)) bytes per byte of the native window.
+_CDT_HOST_BYTES_PER_NATIVE_BYTE = 22
+# Fixed record, evidence and hole/segment-conversion allowance of one build.
+_CDT_FIXED_BYTES = 1 << 16
 # Default source-carrier fidelity bound in units of eps * coordinate scale.
 # Entity support uses rational ancestry, never this distance allowance.
 _CONSTRAINT_ROUNDING = 1024.0
+
+
+def _remaining_request_resources(
+    scope: NativeExecutionScope, /
+) -> tuple[int, int, int]:
+    """Read remaining capacities from the live request target, if present.
+
+    ``NativeExecutionScope.remaining`` excludes unused capacity escrowed by an
+    active ticket. Planar construction must size its next native call from that
+    original ticket's remainder rather than treating the escrow as available.
+    Direct owner-level use without a target retains the scope's own remainder.
+    """
+    target = scope._target_for_thread()
+    if target is None:
+        target = scope._borrowed_target_for_thread()
+    if target is not None:
+        return (
+            target.remaining_work_units,
+            target.remaining_cavity_cells,
+            target.remaining_managed_bytes,
+        )
+    remaining = scope.remaining()
+    return (
+        remaining.remaining_work_units,
+        remaining.remaining_cavity_cells,
+        remaining.remaining_managed_bytes,
+    )
 
 
 @checked
@@ -128,20 +169,111 @@ def size_control_issues(
     return issues
 
 
-def interior_point(
-    points: np.ndarray, loop: np.ndarray, limits: MeshingLimits, /
-) -> np.ndarray:
-    """A point strictly inside one simple loop: a centroid of its CDT."""
+@checked
+def scoped_triangulation(
+    points: np.ndarray,
+    segments: np.ndarray,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    limits: MeshingLimits,
+    holes: np.ndarray | None = None,
+    min_angle: float = 0.0,
+    max_area: float = math.inf,
+    max_edge_length: float = math.inf,
+    lattice_spacing: float = 0.0,
+    max_steiner: int = 0,
+    max_triangles: int | None = None,
+) -> triangulation_owner.ConstrainedDelaunayTriangulation:
+    """Build one CDT on a phase of the live request allowance.
 
-    local = np.arange(loop.size, dtype=np.int64)
+    Before the native call the native target is installed and every host byte
+    the build may hold is reserved: the wrapper's input copies and witness rows
+    (``points + max_steiner`` rows), and the output copies, bounded by the
+    output counts (at most ``min(max_triangles, 2 N)`` triangles by Euler's
+    formula) or, when smaller, by the native window, since every output point
+    and triangle also occupies managed native storage. Native work debits the
+    request as it runs; native allocation is bounded by the remaining window and
+    every insertion cavity by the remaining cavity allowance, and the measured
+    peak cavity is recorded on the request ledger. A capacity refusal keeps its
+    native demand evidence.
+    """
+    point_upper = points.shape[0] + max_steiner
+    triangle_upper = 2 * point_upper
+    if max_triangles is not None:
+        triangle_upper = min(triangle_upper, max_triangles)
+    inputs = (
+        _CDT_FIXED_BYTES
+        + 16 * points.shape[0]
+        + 16 * segments.shape[0]
+        + (0 if holes is None else 16 * holes.shape[0])
+        + _CDT_WITNESS_BYTES * point_upper
+    )
+    outputs = _CDT_POINT_BYTES * point_upper + _CDT_TRIANGLE_BYTES * triangle_upper
+    remaining_work, remaining_cavity, remaining_managed = (
+        _remaining_request_resources(scope)
+    )
+    managed = min(limits.maximum_scratch_bytes, remaining_managed)
+    cavity = min(limits.maximum_cavity_cells, remaining_cavity)
+    available = max(managed - inputs, 0)
+    native = available - outputs
+    if outputs > _CDT_HOST_BYTES_PER_NATIVE_BYTE * native:
+        native = available // (1 + _CDT_HOST_BYTES_PER_NATIVE_BYTE)
+        outputs = _CDT_HOST_BYTES_PER_NATIVE_BYTE * native
     try:
-        inside = triangulation_owner.ConstrainedDelaunayTriangulation(
-            points[loop], np.stack((local, np.roll(local, -1)), axis=1)
-        )
+        with (
+            scope.batch(
+                min(limits.maximum_work_units, remaining_work),
+                bytes_upper=managed,
+                cavity_upper=cavity,
+            ) as ticket,
+            ticket.native_target(),
+            scope.host_workspace() as storage,
+        ):
+            storage.set_bound(inputs + outputs)
+            triangulation = triangulation_owner.ConstrainedDelaunayTriangulation(
+                points,
+                segments,
+                holes=holes,
+                keep_convex_hull=False,
+                min_angle=min_angle,
+                max_area=max_area,
+                max_edge_length=max_edge_length,
+                lattice_spacing=lattice_spacing,
+                max_steiner=max_steiner,
+                max_triangles=max_triangles,
+                max_cavity_cells=cavity,
+                maximum_work=ticket.remaining_work_units,
+                max_scratch_bytes=native,
+            )
+            scope.admit_cavity(int(triangulation.work_evidence[6]))
     except MeshcoreError as error:
         if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
             raise
         raise _capacity_failure(error, limits) from error
+    return triangulation
+
+
+def interior_point(
+    points: np.ndarray,
+    loop: np.ndarray,
+    limits: MeshingLimits,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> np.ndarray:
+    """A point strictly inside one simple loop: a centroid of its CDT.
+
+    The loop CDT is built on the live request scope (``scoped_triangulation``).
+    """
+
+    local = np.arange(loop.size, dtype=np.int64)
+    inside = scoped_triangulation(
+        points[loop],
+        np.stack((local, np.roll(local, -1)), axis=1),
+        scope=scope,
+        limits=limits,
+    )
     return np.mean(inside.points[inside.triangles[0]], axis=0)
 
 
@@ -254,6 +386,7 @@ def split_constraints(
     limits: MeshingLimits,
     /,
     *,
+    scope: NativeExecutionScope,
     lattice_spacing: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Split source edges, retaining each point's binary64 rational parameter.
@@ -263,77 +396,111 @@ def split_constraints(
     first cuts each edge into ``ceil(length / spacing)`` equal pieces matching
     the native interior lattice; ``region_size`` is then the construction upper,
     above the spacing, so only binary64 rounding could subdivide further.
+    Every pass is charged and its host storage reserved on the live request
+    ``scope`` from its current piece count before it runs.
     """
 
-    start = vertices[edges[:, 0]]
-    direction = vertices[edges[:, 1]] - start
-    if lattice_spacing:
-        counts = np.minimum(
-            np.ceil(np.linalg.norm(direction, axis=1) / lattice_spacing),
-            limits.maximum_vertices + 1,
-        ).astype(np.int64)
-        point_count = vertices.shape[0] + int(np.sum(counts)) - edges.shape[0]
-        if point_count > limits.maximum_vertices:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "planar.constraints must respect limits.maximum_vertices; got excess vertices",
-                stage=MeshingStageKind.CURVE_MESHING.value,
-                requested=(("maximum_vertices", limits.maximum_vertices),),
-                achieved=(("constraint_vertices", point_count),),
+    vertex_count, edge_count = vertices.shape[0], edges.shape[0]
+    patch_count = patch_sizes.size
+    field_bytes = 128 * max(_FIELD_WORKING_ENTRIES, patch_count) if patch_count else 0
+    # Source gathers, directions, lattice counts and per-edge pieces.
+    base = 256 * (vertex_count + edge_count) + 4096
+    with scope.host_workspace() as storage:
+        storage.set_bound(base)
+        scope.charge(work=4 * (vertex_count + edge_count))
+        start = vertices[edges[:, 0]]
+        direction = vertices[edges[:, 1]] - start
+        if lattice_spacing:
+            counts = np.minimum(
+                np.ceil(np.linalg.norm(direction, axis=1) / lattice_spacing),
+                limits.maximum_vertices + 1,
+            ).astype(np.int64)
+            point_count = vertex_count + int(np.sum(counts)) - edge_count
+            if point_count > limits.maximum_vertices:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "planar.constraints must respect limits.maximum_vertices; got excess vertices",
+                    stage=MeshingStageKind.CURVE_MESHING.value,
+                    requested=(("maximum_vertices", limits.maximum_vertices),),
+                    achieved=(("constraint_vertices", point_count),),
+                )
+            pieces = int(np.sum(counts))
+            # Owner, bounds and per-edge parameter ranges before concatenation.
+            storage.set_bound(base + 64 * pieces)
+            scope.charge(work=4 * pieces + 2 * edge_count)
+            owner = np.repeat(np.arange(edge_count, dtype=np.int64), counts)
+            lower = np.concatenate([np.arange(count) / count for count in counts])
+            upper = np.concatenate([np.arange(1, count + 1) / count for count in counts])
+        else:
+            owner = np.arange(edge_count, dtype=np.int64)
+            lower = np.zeros((owner.size,), dtype=np.float64)
+            upper = np.ones((owner.size,), dtype=np.float64)
+        while True:
+            # Per piece: three corner gathers and their bank, three field
+            # samples, lengths, masks and the doubled successor banks (512
+            # bytes); one size-field chunk. Three samples against every patch.
+            rows = owner.size
+            storage.set_bound(base + 512 * rows + field_bytes)
+            scope.charge(work=rows * (24 + 3 * patch_count))
+            middle = 0.5 * (lower + upper)
+            corners = np.concatenate(
+                [
+                    start[owner] + t[:, None] * direction[owner]
+                    for t in (lower, middle, upper)
+                ]
             )
-        owner = np.repeat(np.arange(edges.shape[0], dtype=np.int64), counts)
-        lower = np.concatenate([np.arange(count) / count for count in counts])
-        upper = np.concatenate([np.arange(1, count + 1) / count for count in counts])
-    else:
-        owner = np.arange(edges.shape[0], dtype=np.int64)
-        lower = np.zeros((owner.size,), dtype=np.float64)
-        upper = np.ones((owner.size,), dtype=np.float64)
-    while True:
-        middle = 0.5 * (lower + upper)
-        corners = np.concatenate(
-            [start[owner] + t[:, None] * direction[owner] for t in (lower, middle, upper)]
-        )
-        size = np.min(
-            _field_sizes(
-                corners, region_size, patch_segments, patch_sizes, slope
-            ).reshape(3, -1),
-            axis=0,
-        )
-        long = (upper - lower) * np.linalg.norm(direction[owner], axis=1) > size
-        if not np.any(long):
-            break
-        point_count = vertices.shape[0] + owner.size + int(np.sum(long)) - edges.shape[0]
-        if point_count > limits.maximum_vertices:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "planar.constraints must respect limits.maximum_vertices; got excess vertices",
-                stage=MeshingStageKind.CURVE_MESHING.value,
-                requested=(("maximum_vertices", limits.maximum_vertices),),
-                achieved=(("constraint_vertices", point_count),),
+            size = np.min(
+                _field_sizes(
+                    corners, region_size, patch_segments, patch_sizes, slope
+                ).reshape(3, -1),
+                axis=0,
             )
-        owner = np.concatenate((owner[~long], owner[long], owner[long]))
-        lower, upper = (
-            np.concatenate((lower[~long], lower[long], middle[long])),
-            np.concatenate((upper[~long], middle[long], upper[long])),
+            long = (upper - lower) * np.linalg.norm(direction[owner], axis=1) > size
+            if not np.any(long):
+                break
+            point_count = vertex_count + owner.size + int(np.sum(long)) - edge_count
+            if point_count > limits.maximum_vertices:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "planar.constraints must respect limits.maximum_vertices; got excess vertices",
+                    stage=MeshingStageKind.CURVE_MESHING.value,
+                    requested=(("maximum_vertices", limits.maximum_vertices),),
+                    achieved=(("constraint_vertices", point_count),),
+                )
+            owner = np.concatenate((owner[~long], owner[long], owner[long]))
+            lower, upper = (
+                np.concatenate((lower[~long], lower[long], middle[long])),
+                np.concatenate((upper[~long], middle[long], upper[long])),
+            )
+            del middle, corners, size, long
+        # Lexsort, ordered gathers, endpoint ids and the output banks.
+        rows = owner.size
+        storage.set_bound(base + 512 * rows + 64 * vertex_count)
+        scope.charge(work=rows * (2 * max(rows, 2).bit_length() + 16) + 4 * vertex_count)
+        order = np.lexsort((lower, owner))
+        owner, lower, upper = owner[order], lower[order], upper[order]
+        split = lower > 0.0
+        index = np.full((owner.size,), -1, dtype=np.int64)
+        index[split] = vertex_count + np.arange(int(np.sum(split)), dtype=np.int64)
+        first = np.where(split, index, edges[owner, 0])
+        following = np.concatenate((first[1:], np.zeros((1,), dtype=np.int64)))
+        last = np.where(upper == 1.0, edges[owner, 1], following)
+        points = np.concatenate(
+            (vertices, start[owner[split]] + lower[split, None] * direction[owner[split]])
         )
-    order = np.lexsort((lower, owner))
-    owner, lower, upper = owner[order], lower[order], upper[order]
-    split = lower > 0.0
-    index = np.full((owner.size,), -1, dtype=np.int64)
-    index[split] = vertices.shape[0] + np.arange(int(np.sum(split)), dtype=np.int64)
-    first = np.where(split, index, edges[owner, 0])
-    following = np.concatenate((first[1:], np.zeros((1,), dtype=np.int64)))
-    last = np.where(upper == 1.0, edges[owner, 1], following)
-    points = np.concatenate(
-        (vertices, start[owner[split]] + lower[split, None] * direction[owner[split]])
-    )
-    point_sources = np.concatenate(
-        (np.full(vertices.shape[0], -1, dtype=np.int64), owner[split])
-    )
-    point_parameters = np.concatenate(
-        (np.zeros(vertices.shape[0], dtype=np.float64), lower[split])
-    )
-    return points, np.stack((first, last), axis=1), owner, point_sources, point_parameters
+        point_sources = np.concatenate(
+            (np.full(vertex_count, -1, dtype=np.int64), owner[split])
+        )
+        point_parameters = np.concatenate(
+            (np.zeros(vertex_count, dtype=np.float64), lower[split])
+        )
+        return (
+            points,
+            np.stack((first, last), axis=1),
+            owner,
+            point_sources,
+            point_parameters,
+        )
 
 
 def _loop_signs(source: sources_owner.NativePlanarSource, /) -> np.ndarray:
@@ -368,6 +535,10 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
     uniform median whose lattice mesh missed the median below its interval:
     source edges are cut at ``h / sqrt(2)`` and ``distribution_sites`` marks
     the interior square sites at ``0.55 h`` as charged input points.
+
+    Preparation runs on the live request ``scope``: every host pass is charged
+    and its storage reserved before it runs, and the loop interior-point CDTs
+    are built by ``scoped_triangulation``.
     """
 
     points: np.ndarray
@@ -402,107 +573,167 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
         specification: SurfaceMeshingSpec,
         /,
         *,
+        scope: NativeExecutionScope,
         lattice: bool = False,
         balanced: bool = False,
     ) -> None:
         limits = specification.limits
-        vertices, edges, loops = source_arrays(source)
-        offsets = np.asarray(source.region.loop_offsets, dtype=np.int64)
-        region_edges = np.asarray(source.region.edges, dtype=np.int64)
-        interior = [
-            interior_point(vertices, region_edges[offsets[k] : offsets[k + 1], 0], limits)
-            for k in range(offsets.size - 1)
-        ]
-        region_size, rows, sizes, slope, resolutions = _resolve_field(
-            specification, vertices, edges, interior[0]
-        )
-        patch_segments = np.stack((vertices[edges[rows, 0]], vertices[edges[rows, 1]]), 1)
-        construction_size = (
-            uniform_construction_size(specification, region_size)
-            if sizes.size == 0
-            else region_size
-        )
-        admitted = not sizes.size and uniform_median_strategy(specification, region_size)
-        spacing = (
-            lattice_spacing(specification, region_size)
-            if lattice and not balanced and not sizes.size
-            else 0.0
-        )
-        # The corrective construction matches its boundary spacing to a square
-        # interior lattice whose diagonals fit h.
-        boundary = region_size / math.sqrt(2.0) if balanced and admitted else spacing
-        points, segments, sources, point_sources, point_parameters = split_constraints(
-            vertices,
-            edges,
-            construction_size if boundary else region_size,
-            patch_segments,
-            sizes,
-            slope,
-            limits,
-            lattice_spacing=boundary,
-        )
-        holes = np.asarray(interior[1:], dtype=np.float64).reshape((-1, 2))
-        steiner = min(
-            limits.maximum_work_units, limits.maximum_vertices - points.shape[0]
-        )
-        quality = specification.quality_target
-        self.points = points
-        self.segments = segments
-        self.segment_sources = sources
-        self.point_sources = point_sources
-        self.point_parameters = point_parameters
-        self.source_edges = edges
-        self.source_points = vertices
-        source_bound = (
-            _CONSTRAINT_ROUNDING
-            * np.finfo(np.float64).eps
-            * max(float(np.max(np.abs(points))), 1.0)
-        )
-        bounds = np.full(edges.shape[0], source_bound, dtype=np.float64)
-        for feature in specification.protected_features:
-            if feature.hard and feature.feature_kind is not FeatureKind.CORNER:
-                rows = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-                bounds[rows] = np.minimum(bounds[rows], feature.maximum_deviation)
-        self.source_bounds = bounds
-        self.source_directions = vertices[edges[:, 1]] - vertices[edges[:, 0]]
-        self.source_loops = loops
-        self.loop_signs = _loop_signs(source)
-        self.holes = holes
-        self.patch_segments = patch_segments
-        self.patch_sizes = sizes
-        self.region_size = region_size
-        self.gradation_slope = slope
-        self.maximum_area = 0.25 * math.sqrt(3.0) * construction_size * construction_size
-        self.minimum_angle_degrees = (
-            0.0 if quality is None else math.degrees(quality.minimum_angle)
-        )
-        self.maximum_steiner = steiner
-        self.maximum_triangles = min(limits.maximum_cells, limits.maximum_faces)
-        self.construction_size = construction_size
-        self.lattice_spacing = spacing
-        self.distribution_sites = balanced and admitted
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-planar-domain",
-                "source": source.binding_id,
-                "specification": specification.specification_id,
-                "size_resolutions": resolutions,
-                "points": array_tree_fingerprint(self.points),
-                "segments": array_tree_fingerprint(self.segments),
-                "segment_sources": array_tree_fingerprint(self.segment_sources),
-                "point_sources": array_tree_fingerprint(self.point_sources),
-                "point_parameters": array_tree_fingerprint(self.point_parameters),
-                "source_bounds": array_tree_fingerprint(self.source_bounds),
-                "holes": array_tree_fingerprint(holes),
-                "minimum_angle_degrees": self.minimum_angle_degrees,
-                "construction_size": construction_size,
-                "lattice_spacing": spacing,
-                "distribution_sites": self.distribution_sites,
-                "maximum_area": self.maximum_area,
-                "maximum_steiner": steiner,
-                "maximum_triangles": self.maximum_triangles,
-            }
-        )
+        region = source.region
+        source_rows = region.vertices.shape[0] + region.edges.shape[0]
+        if source.embedded is not None:
+            source_rows += (
+                source.embedded.vertices.shape[0] + source.embedded.edges.shape[0]
+            )
+        controls = len(specification.size_controls)
+        with scope.host_workspace() as storage:
+            # Source banks, loop rows, orientations, directions, bounds and
+            # patch gathers (512 bytes per source row); size resolution keeps
+            # candidate, mask and report rows per control and sample.
+            storage.set_bound(
+                65536 + 512 * source_rows + 512 * controls * (source_rows + 2)
+            )
+            scope.charge(work=16 * source_rows)
+            vertices, edges, loops = source_arrays(source)
+            offsets = np.asarray(region.loop_offsets, dtype=np.int64)
+            region_edges = np.asarray(region.edges, dtype=np.int64)
+            interior = [
+                interior_point(
+                    vertices,
+                    region_edges[offsets[k] : offsets[k + 1], 0],
+                    limits,
+                    scope=scope,
+                )
+                for k in range(offsets.size - 1)
+            ]
+            # One region sample and at most one midpoint per source edge,
+            # each resolved against every control.
+            scope.charge(work=16 * controls * (edges.shape[0] + 2))
+            region_size, rows, sizes, slope, resolutions = _resolve_field(
+                specification, vertices, edges, interior[0]
+            )
+            patch_segments = np.stack(
+                (vertices[edges[rows, 0]], vertices[edges[rows, 1]]), 1
+            )
+            construction_size = (
+                uniform_construction_size(specification, region_size)
+                if sizes.size == 0
+                else region_size
+            )
+            admitted = not sizes.size and uniform_median_strategy(
+                specification, region_size
+            )
+            spacing = (
+                lattice_spacing(specification, region_size)
+                if lattice and not balanced and not sizes.size
+                else 0.0
+            )
+            # The corrective construction matches its boundary spacing to a
+            # square interior lattice whose diagonals fit h.
+            boundary = region_size / math.sqrt(2.0) if balanced and admitted else spacing
+            points, segments, sources, point_sources, point_parameters = (
+                split_constraints(
+                    vertices,
+                    edges,
+                    construction_size if boundary else region_size,
+                    patch_segments,
+                    sizes,
+                    slope,
+                    limits,
+                    scope=scope,
+                    lattice_spacing=boundary,
+                )
+            )
+            holes = np.asarray(interior[1:], dtype=np.float64).reshape((-1, 2))
+            fingerprinted = (
+                points,
+                segments,
+                sources,
+                point_sources,
+                point_parameters,
+                holes,
+            )
+            # Coordinate scale scan, protected-feature rows, and four visits
+            # per fingerprinted element with one serialized copy of each bank.
+            feature_rows = sum(
+                np.asarray(feature.scope.entity_ids).size
+                for feature in specification.protected_features
+            )
+            elements = sum(array.size for array in fingerprinted) + edges.shape[0]
+            storage.set_bound(
+                storage.bound
+                + 2 * sum(array.nbytes for array in fingerprinted)
+                + 64 * (edges.shape[0] + feature_rows)
+            )
+            scope.charge(work=points.size + 4 * feature_rows + 4 * elements)
+            steiner = min(
+                limits.maximum_work_units, limits.maximum_vertices - points.shape[0]
+            )
+            quality = specification.quality_target
+            self.points = points
+            self.segments = segments
+            self.segment_sources = sources
+            self.point_sources = point_sources
+            self.point_parameters = point_parameters
+            self.source_edges = edges
+            self.source_points = vertices
+            source_bound = (
+                _CONSTRAINT_ROUNDING
+                * np.finfo(np.float64).eps
+                * max(float(np.max(np.abs(points))), 1.0)
+            )
+            bounds = np.full(edges.shape[0], source_bound, dtype=np.float64)
+            for feature in specification.protected_features:
+                if feature.hard and feature.feature_kind is not FeatureKind.CORNER:
+                    rows = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+                    bounds[rows] = np.minimum(bounds[rows], feature.maximum_deviation)
+            self.source_bounds = bounds
+            self.source_directions = vertices[edges[:, 1]] - vertices[edges[:, 0]]
+            self.source_loops = loops
+            self.loop_signs = _loop_signs(source)
+            self.holes = holes
+            self.patch_segments = patch_segments
+            self.patch_sizes = sizes
+            self.region_size = region_size
+            self.gradation_slope = slope
+            self.maximum_area = (
+                0.25 * math.sqrt(3.0) * construction_size * construction_size
+            )
+            self.minimum_angle_degrees = (
+                0.0 if quality is None else math.degrees(quality.minimum_angle)
+            )
+            self.maximum_steiner = steiner
+            self.maximum_triangles = min(limits.maximum_cells, limits.maximum_faces)
+            self.construction_size = construction_size
+            self.lattice_spacing = spacing
+            self.distribution_sites = balanced and admitted
+            self.prepared_id = canonical_fingerprint(
+                {
+                    "kind": "prepared-planar-domain",
+                    "source": source.binding_id,
+                    "specification": specification.specification_id,
+                    "size_resolutions": resolutions,
+                    "points": array_tree_fingerprint(self.points),
+                    "segments": array_tree_fingerprint(self.segments),
+                    "segment_sources": array_tree_fingerprint(self.segment_sources),
+                    "point_sources": array_tree_fingerprint(self.point_sources),
+                    "point_parameters": array_tree_fingerprint(self.point_parameters),
+                    "source_bounds": array_tree_fingerprint(self.source_bounds),
+                    "holes": array_tree_fingerprint(holes),
+                    "minimum_angle_degrees": self.minimum_angle_degrees,
+                    "construction_size": construction_size,
+                    "lattice_spacing": spacing,
+                    "distribution_sites": self.distribution_sites,
+                    "maximum_area": self.maximum_area,
+                    "maximum_steiner": steiner,
+                    "maximum_triangles": self.maximum_triangles,
+                }
+            )
+        # The outer planning workspace owns the prepared output after its
+        # constructor's temporary source and size-field scratch is released.
+        workspace = current_native_host_workspace()
+        if workspace is not None:
+            workspace.retain_owner(self)
+
 
     def sizes(self, points: np.ndarray, /) -> np.ndarray:
         """Target size of the graded field at points."""
@@ -519,18 +750,60 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
         self, source: sources_owner.NativePlanarSource, /
     ) -> PiecewiseLinearDomain:
         """Return the authored planar region with outward-oriented source loops."""
-        loop = self.source_loops
-        on_loop = loop >= 0
-        facets = self.source_edges[on_loop]
-        wanted = np.where(loop[on_loop] == 0, 1, -1)
-        forward = self.loop_signs[loop[on_loop]] == wanted
-        facets = np.where(forward[:, None], facets, facets[:, ::-1])
-        return PiecewiseLinearDomain(
+        return _oriented_region_domain(
+            source,
             self.source_points,
-            facets,
-            np.tile(np.asarray(((0, -1),), dtype=np.int64), (facets.shape[0], 1)),
-            (sources_owner.source_entity_id(source.source_revision, "region", 0),),
-            source_id=source.source_id,
+            self.source_edges,
+            self.source_loops,
+            self.loop_signs,
+        )
+
+
+def _oriented_region_domain(
+    source: sources_owner.NativePlanarSource,
+    vertices: np.ndarray,
+    edges: np.ndarray,
+    loops: np.ndarray,
+    signs: np.ndarray,
+    /,
+) -> PiecewiseLinearDomain:
+    """Region facets with the outer loop counterclockwise and holes clockwise."""
+    on_loop = loops >= 0
+    facets = edges[on_loop]
+    wanted = np.where(loops[on_loop] == 0, 1, -1)
+    forward = signs[loops[on_loop]] == wanted
+    facets = np.where(forward[:, None], facets, facets[:, ::-1])
+    return PiecewiseLinearDomain(
+        vertices,
+        facets,
+        np.tile(np.asarray(((0, -1),), dtype=np.int64), (facets.shape[0], 1)),
+        (sources_owner.source_entity_id(source.source_revision, "region", 0),),
+        source_id=source.source_id,
+    )
+
+
+@checked
+def planar_region_domain(
+    source: sources_owner.NativePlanarSource,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> PiecewiseLinearDomain:
+    """Return the authored region of ``source`` without preparing its constraints.
+
+    The source gathers, loop orientations and oriented facet banks are charged
+    and their host storage reserved on the live request ``scope``.
+    """
+    region = source.region
+    rows = region.vertices.shape[0] + region.edges.shape[0]
+    if source.embedded is not None:
+        rows += source.embedded.vertices.shape[0] + source.embedded.edges.shape[0]
+    with scope.host_workspace() as storage:
+        storage.set_bound(256 * rows + 4096)
+        scope.charge(work=12 * rows)
+        vertices, edges, loops = source_arrays(source)
+        return _oriented_region_domain(
+            source, vertices, edges, loops, _loop_signs(source)
         )
 
 
@@ -1010,7 +1283,8 @@ def planar_compliance(
         corners = vertices[triangles]
         areas = 0.5 * np.abs(
             (corners[:, 1, 0] - corners[:, 0, 0]) * (corners[:, 2, 1] - corners[:, 0, 1])
-            - (corners[:, 1, 1] - corners[:, 0, 1]) * (corners[:, 2, 0] - corners[:, 0, 0])
+            - (corners[:, 1, 1] - corners[:, 0, 1])
+            * (corners[:, 2, 0] - corners[:, 0, 0])
         )
         maximum_area = float(np.max(areas))
     requested.extend(
@@ -1060,37 +1334,12 @@ def planar_compliance(
     )
 
 
-def _refinement_budget(
-    prepared: PreparedPlanarDomain, limits: MeshingLimits, inserted: int, /
-) -> None:
-    """Refuse a CDT build whose host scratch would exceed the declared budget.
-
-    Counted rows are the prepared and host-inserted points plus every lattice
-    site the native seeding may accept (bounded by the Steiner allowance).
-    """
-
-    sites = min(
-        prepared.maximum_steiner,
-        lattice_site_upper(
-            np.min(prepared.points, axis=0),
-            np.max(prepared.points, axis=0),
-            prepared.lattice_spacing,
-        ),
-    )
-    count = prepared.points.shape[0] + inserted + sites
-    scratch = count * _CDT_BYTES_PER_POINT
-    if scratch > limits.maximum_scratch_bytes:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "planar.refinement must respect limits.maximum_scratch_bytes; got excess scratch storage",
-            stage=MeshingStageKind.SURFACE_MESHING.value,
-            requested=(("maximum_scratch_bytes", limits.maximum_scratch_bytes),),
-            achieved=(("scratch_bytes", scratch), ("input_points", count)),
-        )
-
-
 def _distribution_seeds(
-    prepared: PreparedPlanarDomain, specification: SurfaceMeshingSpec, /
+    prepared: PreparedPlanarDomain,
+    specification: SurfaceMeshingSpec,
+    /,
+    *,
+    scope: NativeExecutionScope,
 ) -> np.ndarray:
     """Interior sites of the corrective construction, charged as refinement points.
 
@@ -1125,68 +1374,67 @@ def _distribution_seeds(
     # The output is a separately tracked native buffer, never kept+concatenated.
     fixed = 128 + 64 * (edges + boundary_count)
     per_point = 128 * (1 + edges + boundary_count)
-    with NativeExecutionScope(limits.native_limits()) as scope:
-        allowance = scope.remaining()
-        available = min(limits.maximum_scratch_bytes, allowance.remaining_managed_bytes)
-        minimum_scratch = fixed + retained + per_point
-        if minimum_scratch > available:
-            # Preserve the owner's raw refusal before any array allocation.
-            with scope.batch(0, bytes_upper=minimum_scratch):
-                pass
-        chunk = min(
-            proposals,
-            max(1, _FIELD_WORKING_ENTRIES // max(1, edges)),
-            max(1, (available - fixed - retained) // per_point),
+    _, _, remaining_managed = _remaining_request_resources(scope)
+    available = min(limits.maximum_scratch_bytes, remaining_managed)
+    minimum_scratch = fixed + retained + per_point
+    if minimum_scratch > available:
+        # Preserve the owner's raw refusal before any array allocation.
+        with scope.batch(0, bytes_upper=minimum_scratch):
+            pass
+    chunk = min(
+        proposals,
+        max(1, _FIELD_WORKING_ENTRIES // max(1, edges)),
+        max(1, (available - fixed - retained) // per_point),
+    )
+    scratch = fixed + chunk * per_point
+    with scope.batch(work, bytes_upper=scratch) as ticket:
+        output = scope.allocate_host_array((capacity, 2), np.float64)
+        boundary = prepared.source_edges[prepared.source_loops >= 0]
+        a = prepared.source_points[boundary[:, 0]]
+        b = prepared.source_points[boundary[:, 1]]
+        segments = np.stack(
+            (
+                prepared.source_points[prepared.source_edges[:, 0]],
+                prepared.source_points[prepared.source_edges[:, 1]],
+            ),
+            axis=1,
         )
-        scratch = fixed + chunk * per_point
-        with scope.batch(work, bytes_upper=scratch) as ticket:
-            output = scope.allocate_host_array((capacity, 2), np.float64)
-            boundary = prepared.source_edges[prepared.source_loops >= 0]
-            a = prepared.source_points[boundary[:, 0]]
-            b = prepared.source_points[boundary[:, 1]]
-            segments = np.stack(
-                (
-                    prepared.source_points[prepared.source_edges[:, 0]],
-                    prepared.source_points[prepared.source_edges[:, 1]],
-                ),
-                axis=1,
+        count = 0
+        for begin in range(0, proposals, chunk):
+            batch_size = min(chunk, proposals - begin)
+            ticket.consume(batch_size * (1 + boundary_count + edges))
+            index = np.arange(begin, begin + batch_size, dtype=np.int64)
+            points = np.asarray(lower) + step * np.stack(
+                (index // shape[1] + 1, index % shape[1] + 1), axis=1
             )
-            count = 0
-            for begin in range(0, proposals, chunk):
-                batch_size = min(chunk, proposals - begin)
-                ticket.consume(batch_size * (1 + boundary_count + edges))
-                index = np.arange(begin, begin + batch_size, dtype=np.int64)
-                points = np.asarray(lower) + step * np.stack(
-                    (index // shape[1] + 1, index % shape[1] + 1), axis=1
-                )
+            # The predicate's native arena belongs to this admitted ticket.
+            with ticket.native_target():
                 signs = exact_orient2d(a[None, :, :], b[None, :, :], points[:, None, :])
-                rising = (a[None, :, 1] <= points[:, None, 1]) & (
-                    points[:, None, 1] < b[None, :, 1]
+            rising = (a[None, :, 1] <= points[:, None, 1]) & (
+                points[:, None, 1] < b[None, :, 1]
+            )
+            falling = (b[None, :, 1] <= points[:, None, 1]) & (
+                points[:, None, 1] < a[None, :, 1]
+            )
+            inside = (
+                np.count_nonzero((rising & (signs > 0)) | (falling & (signs < 0)), axis=1)
+                % 2
+                == 1
+            )
+            clearance = np.min(_segment_distances(points, segments), axis=1)
+            selected = inside & (clearance > 0.2 * prepared.region_size)
+            end = count + int(np.count_nonzero(selected))
+            if end > capacity:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "planar.interior_sites must respect the refinement point budget; got excess sites",
+                    stage=MeshingStageKind.SURFACE_MESHING.value,
+                    requested=(("maximum_steiner_points", prepared.maximum_steiner),),
+                    achieved=(("interior_sites", end),),
                 )
-                falling = (b[None, :, 1] <= points[:, None, 1]) & (
-                    points[:, None, 1] < a[None, :, 1]
-                )
-                inside = (
-                    np.count_nonzero(
-                        (rising & (signs > 0)) | (falling & (signs < 0)), axis=1
-                    )
-                    % 2
-                    == 1
-                )
-                clearance = np.min(_segment_distances(points, segments), axis=1)
-                selected = inside & (clearance > 0.2 * prepared.region_size)
-                end = count + int(np.count_nonzero(selected))
-                if end > capacity:
-                    raise MeshingFailure(
-                        MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                        "planar.interior_sites must respect the refinement point budget; got excess sites",
-                        stage=MeshingStageKind.SURFACE_MESHING.value,
-                        requested=(("maximum_steiner_points", prepared.maximum_steiner),),
-                        achieved=(("interior_sites", end),),
-                    )
-                output[count:end] = points[selected]
-                count = end
-            return output[:count]
+            output[count:end] = points[selected]
+            count = end
+        return output[:count]
 
 
 def _capacity_failure(error: MeshcoreError, limits: MeshingLimits, /) -> MeshingFailure:
@@ -1234,10 +1482,11 @@ def _capacity_failure(error: MeshcoreError, limits: MeshingLimits, /) -> Meshing
         )
     return MeshingFailure(
         MeshingFailureCategory.RESOURCE_EXHAUSTED,
-        "planar.refinement must respect the declared work and scratch allowances; got excess resource demand",
+        "planar.refinement must respect the declared work, cavity, and scratch allowances; got excess resource demand",
         stage=MeshingStageKind.SURFACE_MESHING.value,
         requested=(
             ("maximum_work_units", limits.maximum_work_units),
+            ("maximum_cavity_cells", limits.maximum_cavity_cells),
             ("maximum_scratch_bytes", limits.maximum_scratch_bytes),
         ),
         achieved=tuple(achieved),
@@ -1250,11 +1499,12 @@ def triangulate(
     started: float,
     specification: SurfaceMeshingSpec,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> tuple[triangulation_owner.ConstrainedDelaunayTriangulation, int]:
-    """Retain one cumulative native allowance across every CDT build."""
+    """Retain the live request's cumulative allowance across every CDT build."""
     try:
-        with NativeExecutionScope(specification.limits.native_limits()):
-            return _triangulate(prepared, started, specification)
+        return _triangulate(prepared, started, specification, scope=scope)
     except MeshcoreError as error:
         if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
             raise
@@ -1266,6 +1516,8 @@ def _triangulate(
     started: float,
     specification: SurfaceMeshingSpec,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> tuple[triangulation_owner.ConstrainedDelaunayTriangulation, int]:
     """Refined CDT whose unconstrained edges respect the local target size.
 
@@ -1276,65 +1528,101 @@ def _triangulate(
     still measures every published edge, statistic and angle. A graded field
     keeps the host post-check: an unconstrained edge longer than the field at
     either end or its midpoint contributes a midpoint before the next rebuild.
-    Inserted points and native refinement sites share the caller's work bound.
+    Inserted points and native refinement sites share the caller's work bound;
+    every native build (``scoped_triangulation``) and host post-check runs
+    under the live request scope.
     """
 
     limits = specification.limits
     uniform = prepared.patch_sizes.size == 0
-    extra = _distribution_seeds(prepared, specification)
+    extra = _distribution_seeds(prepared, specification, scope=scope)
     while True:
-        _refinement_budget(prepared, limits, extra.shape[0])
-        triangulation = triangulation_owner.ConstrainedDelaunayTriangulation(
-            np.concatenate((prepared.points, extra), axis=0),
-            prepared.segments,
-            holes=prepared.holes if prepared.holes.shape[0] else None,
-            keep_convex_hull=False,
-            min_angle=prepared.minimum_angle_degrees,
-            max_area=prepared.maximum_area,
-            max_edge_length=prepared.construction_size if uniform else math.inf,
-            lattice_spacing=prepared.lattice_spacing,
-            max_steiner=max(prepared.maximum_steiner - extra.shape[0], 0),
-            max_triangles=prepared.maximum_triangles,
-        )
+        with scope.host_workspace() as inputs:
+            # The joined input-point bank of this build.
+            inputs.set_bound(16 * (prepared.points.shape[0] + extra.shape[0]) + 4096)
+            joined = np.concatenate((prepared.points, extra), axis=0)
+            triangulation = scoped_triangulation(
+                joined,
+                prepared.segments,
+                scope=scope,
+                limits=limits,
+                holes=prepared.holes if prepared.holes.shape[0] else None,
+                min_angle=prepared.minimum_angle_degrees,
+                max_area=prepared.maximum_area,
+                max_edge_length=prepared.construction_size if uniform else math.inf,
+                lattice_spacing=prepared.lattice_spacing,
+                max_steiner=max(prepared.maximum_steiner - extra.shape[0], 0),
+                max_triangles=prepared.maximum_triangles,
+            )
+            del joined
         check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
         if uniform:
             return triangulation, extra.shape[0]
-        points = np.asarray(triangulation.points, dtype=np.float64)
-        triangles = np.asarray(triangulation.triangles, dtype=np.int64)
-        edges = unique_edges(triangles, "triangle")
-        constrained, _ = constrained_edges(
-            triangles,
-            np.asarray(triangulation.segment_ids, dtype=np.int64),
-            prepared.segment_sources,
-        )
-        width = np.int64(points.shape[0])
-        free = ~np.isin(
-            edges[:, 0] * width + edges[:, 1],
-            constrained[:, 0] * width + constrained[:, 1],
-        )
-        a = points[edges[:, 0]]
-        b = points[edges[:, 1]]
-        lengths = np.linalg.norm(b - a, axis=1)
-        local = np.min(
-            prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1),
-            axis=0,
-        )
-        long = free & (lengths > local)
-        if not np.any(long):
-            return triangulation, extra.shape[0]
-        midpoints = 0.5 * (a[long] + b[long])
-        if extra.shape[0] + midpoints.shape[0] > prepared.maximum_steiner:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "planar.refinement must respect limits.maximum_work_units; got excess edge-length work",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-                requested=(("maximum_steiner_points", prepared.maximum_steiner),),
-                achieved=(
-                    ("maximum_edge_to_local_size", float(np.max(lengths / local))),
-                    ("steiner_points", extra.shape[0] + midpoints.shape[0]),
-                ),
+        triangle_count = triangulation.triangles.shape[0]
+        point_count = triangulation.points.shape[0]
+        edge_upper = 3 * triangle_count
+        depth = edge_upper.bit_length() + 2
+        with scope.host_workspace() as storage:
+            # Point and triangle copies (16 per point, 48 per triangle), the
+            # sort-based unique and constrained edge banks (300 per triangle at
+            # their transient peak), endpoint/midpoint gathers, lengths, keys,
+            # masks and sampled sizes (at most 140 per edge), and one size-field
+            # chunk per controlled patch.
+            storage.set_bound(
+                16 * point_count
+                + 768 * triangle_count
+                + 128 * max(_FIELD_WORKING_ENTRIES, prepared.patch_sizes.size)
+                + 4096
             )
-        extra = np.concatenate((extra, midpoints), axis=0)
+            # Point and triangle copies; unique-edge, constrained-edge and
+            # free-edge membership sorts over at most 3T sides (and as many
+            # constrained keys); per edge two endpoint gathers, one length, three
+            # size-field samples against every controlled patch edge and their
+            # minimum, and the long-edge selection.
+            scope.charge(
+                work=point_count
+                + triangle_count
+                + 4 * edge_upper * depth
+                + edge_upper * (6 + 3 * prepared.patch_sizes.size)
+            )
+            points = np.asarray(triangulation.points, dtype=np.float64)
+            triangles = np.asarray(triangulation.triangles, dtype=np.int64)
+            edges = unique_edges(triangles, "triangle")
+            constrained, _ = constrained_edges(
+                triangles,
+                np.asarray(triangulation.segment_ids, dtype=np.int64),
+                prepared.segment_sources,
+            )
+            width = np.int64(points.shape[0])
+            free = ~np.isin(
+                edges[:, 0] * width + edges[:, 1],
+                constrained[:, 0] * width + constrained[:, 1],
+            )
+            a = points[edges[:, 0]]
+            b = points[edges[:, 1]]
+            lengths = np.linalg.norm(b - a, axis=1)
+            local = np.min(
+                prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1),
+                axis=0,
+            )
+            long = free & (lengths > local)
+            if not np.any(long):
+                return triangulation, extra.shape[0]
+            midpoints = 0.5 * (a[long] + b[long])
+            if extra.shape[0] + midpoints.shape[0] > prepared.maximum_steiner:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "planar.refinement must respect limits.maximum_work_units; got excess edge-length work",
+                    stage=MeshingStageKind.SURFACE_MESHING.value,
+                    requested=(("maximum_steiner_points", prepared.maximum_steiner),),
+                    achieved=(
+                        ("maximum_edge_to_local_size", float(np.max(lengths / local))),
+                        ("steiner_points", extra.shape[0] + midpoints.shape[0]),
+                    ),
+                )
+            extra = np.concatenate((extra, midpoints), axis=0)
+            del points, triangles, edges, constrained, free, a, b, lengths, local
+            del long, midpoints
 
 
 @checked
@@ -1423,28 +1711,14 @@ def corrective_domain(
     Feature-forced quality refinement (a thin channel, say) can outnumber the
     coarse lattice edges and pull an otherwise compliant median below its
     interval; only then is this construction prepared, charged to the same
-    request. Its preparation identity is emitted by execution's source and
-    meshing stages; the plan keeps its own.
+    request by its own pre-admitted passes. Its preparation identity is emitted
+    by execution's source and meshing stages; the plan keeps its own.
     """
     check_deadline(started, specification.limits, MeshingStageKind.SURFACE_MESHING)
-    spacing = prepared.region_size / math.sqrt(2.0)
-    # One extra piece per edge conservatively covers final-bit norm rounding.
-    pieces = sum(
-        math.ceil(math.hypot(float(dx), float(dy)) / spacing) + 1
-        for dx, dy in prepared.source_directions
-    )
-    vertices, edges = prepared.source_points.shape[0], prepared.source_edges.shape[0]
-    preparation_work = vertices + edges + pieces * (8 + pieces.bit_length())
-    preparation_bytes = 512 + 256 * (vertices + edges + pieces)
     try:
-        with scope.batch(
-            scope.remaining().remaining_work_units, bytes_upper=preparation_bytes
-        ) as ticket:
-            if preparation_work > ticket.remaining_work_units:
-                ticket.refuse(preparation_work)
-            ticket.consume(preparation_work)
-            with ticket.native_target():
-                corrective = PreparedPlanarDomain(source, specification, balanced=True)
+        corrective = PreparedPlanarDomain(
+            source, specification, scope=scope, balanced=True
+        )
     except MeshcoreError as error:
         if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
             raise

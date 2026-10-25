@@ -413,7 +413,7 @@ def test_stage_ledger_accumulates_compile_evidence_and_failed_stages(
 
 
 @pytest.mark.skipif(
-    sys.platform != "linux", reason="post-exec high water is published only on Linux"
+    sys.platform not in ("linux", "darwin"), reason="post-exec high water is unavailable"
 )
 def test_child_peak_resident_bytes_excludes_launcher_high_water() -> None:
     # Raise this launcher's high water well above anything the child needs.
@@ -435,6 +435,29 @@ def test_child_peak_resident_bytes_excludes_launcher_high_water() -> None:
     )
     child_peak = int(child.stdout)
     assert 0 < child_peak < launcher_peak - (256 << 20)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin getrusage exec semantics")
+def test_darwin_peak_resident_bytes_resets_after_same_process_exec() -> None:
+    after = (
+        "import json,os;"
+        "from tools.meshing_qualification._runtime import peak_resident_bytes;"
+        "print(json.dumps([os.getpid(),peak_resident_bytes()]))"
+    )
+    before = (
+        "import json,os,sys;"
+        "from tools.meshing_qualification._runtime import peak_resident_bytes;"
+        "allocation=b'x'*(512<<20);"
+        "print(json.dumps([os.getpid(),peak_resident_bytes()]),flush=True);"
+        f"os.execv(sys.executable,[sys.executable,'-c',{after!r}])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", before], check=True, capture_output=True,
+        text=True, timeout=60, cwd=Path(__file__).resolve().parents[3],
+    )
+    old, new = (json.loads(line) for line in result.stdout.splitlines())
+    assert old[0] == new[0]
+    assert 0 < new[1] < old[1] - (256 << 20)
 
 
 def test_campaign_timeout_kills_descendants_without_cli_receipt(tmp_path: Path) -> None:
@@ -532,6 +555,12 @@ _COLD_PROGRAMS = "tests._support.cold_worker_programs"
 
 def _process_alive(pid: int) -> bool:
     """Whether ``pid`` is a running (not exited or zombie) process."""
+    if sys.platform == "darwin":
+        status = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+        return bool(status) and not status.startswith("Z")
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
     except FileNotFoundError:
@@ -597,6 +626,81 @@ def test_cold_worker_executes_one_bound_packet_after_publication(
     assert not _process_alive(worker.process_id)
 
 
+def test_cold_failure_retains_archive_packet_and_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefix = tmp_path / "evidence" / "run"
+    monkeypatch.setenv("PHYDRAX_MESHING_EVIDENCE_PREFIX", str(prefix))
+    archive = tmp_path / "temporary-archive"
+    archive.write_bytes(b"accepted scientific source")
+    record: dict[str, Any] = {}
+    deadline = Deadline(perf_counter() + 120.0)
+    with prepare_cold_worker(
+        _COLD_PROGRAMS, deadline=deadline, ledger=StageLedger(record, deadline=deadline),
+    ) as worker:
+        with pytest.raises(QualificationFailure, match="must refuse"):
+            worker.execute(archive, "accepted-content", {"mode": "fail"})
+    archive.unlink()
+    artifacts = record["cold_artifacts"]
+    assert Path(artifacts["archive"]).read_bytes() == b"accepted scientific source"
+    packet = json.loads(Path(artifacts["control_packet"]).read_bytes())
+    assert packet["content_id"] == "accepted-content"
+    assert packet["controls"] == {"mode": "fail"}
+    assert packet["archive_path"] == str(archive.resolve())
+    stderr = Path(f"{prefix}.process-{worker.process_id}-cold.stderr").read_text()
+    assert "ValueError: cold_worker_programs.mode must refuse; got fail" in stderr
+    assert record["cold_process"]["status"] == "refused"
+
+
+def test_oversized_cold_packet_preserves_checkpoint_without_admitting_packet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools.meshing_qualification._runtime import COLD_CONTROL_PACKET_BYTES
+
+    monkeypatch.setenv("PHYDRAX_MESHING_EVIDENCE_PREFIX", str(tmp_path / "evidence" / "run"))
+    archive = tmp_path / "temporary-source"
+    source_bytes = b"published checkpoint input"
+    archive.write_bytes(source_bytes)
+    record: dict[str, Any] = {}
+    deadline = Deadline(perf_counter() + 120.0)
+    with prepare_cold_worker(
+        _COLD_PROGRAMS, deadline=deadline, ledger=StageLedger(record, deadline=deadline)
+    ) as worker:
+        with pytest.raises(ValueError):
+            worker.execute(
+                archive, "accepted-content",
+                {"mode": "echo", "oversized": "x" * COLD_CONTROL_PACKET_BYTES},
+            )
+    archive.unlink()
+    assert not _process_alive(worker.process_id)
+    assert Path(record["cold_artifacts"]["archive"]).read_bytes() == source_bytes
+    assert record["cold_artifacts"]["control_packet"] is None
+    assert record["cold_packet_refusal"]["packet_bytes"] > COLD_CONTROL_PACKET_BYTES
+    assert record["cold_packet_refusal"]["maximum_packet_bytes"] == COLD_CONTROL_PACKET_BYTES
+
+
+def test_cold_reporting_failure_preserves_original_scientific_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefix = tmp_path / "run"
+    monkeypatch.setenv("PHYDRAX_MESHING_EVIDENCE_PREFIX", str(prefix))
+    archive = tmp_path / "source"
+    archive.write_text("accepted source", encoding="utf-8")
+    record: dict[str, Any] = {}
+    deadline = Deadline(perf_counter() + 120.0)
+    with prepare_cold_worker(
+        _COLD_PROGRAMS, deadline=deadline, ledger=StageLedger(record, deadline=deadline),
+    ) as worker:
+        previous = Path(f"{prefix}.process-{worker.process_id}-cold.stdout")
+        previous.write_bytes(b"previous evidence")
+        with pytest.raises(QualificationFailure, match="must refuse"):
+            worker.execute(archive, "accepted-content", {"mode": "fail"})
+    assert previous.read_bytes() == b"previous evidence"
+    assert record["reporting_status"] == "failed"
+    assert record["reporting_failures"][0]["type"] == "FileExistsError"
+    assert "ValueError: cold_worker_programs.mode must refuse" in record["cold_process_refusal"]["stderr"]
+
+
 def test_cold_worker_archive_failure_kills_prepared_session() -> None:
     record: dict[str, Any] = {}
     with pytest.raises(OSError, match="archive write failed"):
@@ -656,7 +760,7 @@ def test_cold_worker_refusal_retains_child_evidence(
     assert record["cold_process"]["process_id"] == worker.process_id
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="parent-death binding is Linux")
+@pytest.mark.skipif(sys.platform not in ("linux", "darwin"), reason="parent-death binding unavailable")
 def test_cold_worker_dies_with_killed_launcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1865,7 +1969,16 @@ def test_family_epoch_reuses_explicit_actual_allfield_owners(
                 inventory[kind]["physical_content"], expected, rtol=1e-11, atol=1e-12
             )
     accepted = family._family_accepted_epoch(
-        result, space, problem, values, fields, 0, None, field_spaces=owners, fv=fv
+        result,
+        space,
+        problem,
+        values,
+        fields,
+        0,
+        None,
+        field_spaces=owners,
+        solver_kind=f"Q{int(case.get('geometry_order', 1))}",
+        fv=fv,
     )
     assert set(inventory) == {*owners, "material_content"}
     for kind, owner in owners.items():

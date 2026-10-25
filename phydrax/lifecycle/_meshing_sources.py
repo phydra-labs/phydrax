@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
@@ -36,11 +36,6 @@ from phydrax.meshing._association_state import (
     GeometryAssociationSourceIdentities,
     GeometrySourceEntityRole,
 )
-from phydrax.meshing._certification import (
-    certify_meshing_acceptance,
-    MeshCertificationOutcome,
-    MeshCertificationReport,
-)
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 
 from .._array_archive import (
@@ -56,12 +51,14 @@ from .._fingerprint import (
     canonical_fingerprint,
     canonical_json,
     logical_array_value_collection_digest,
+    tree_content_equal,
 )
 from .._frozendict import frozendict
 from .._geometry_predicates import PredicateMode
 from .._identity import SemanticProvenance
 from .._meshcore import (
     current_native_execution_scope,
+    current_native_host_workspace,
     NativeExecutionMemoryCounters,
     NativeExecutionScope,
     NativeExecutionWorkCounters,
@@ -76,6 +73,7 @@ from .._model._artifacts import (
     registered_artifact_value_id,
 )
 from .._model._structure import (
+    _canonical_recipe_payload,
     _model_owner_children,
     _with_children,
     model_array_catalog,
@@ -87,6 +85,7 @@ from .._model._structure import (
     model_recipe_wire_json,
     model_structure_recipe,
     ModelRecipeArray,
+    prepare_model_recipe,
     prepare_model_recipe_catalog,
     RecipeTable,
     restore_nodes,
@@ -131,6 +130,7 @@ from ..discretization._chart_reconstruction import SurfaceGeometryReconstruction
 from ..discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosurePhaseEvidence,
+    CoordinateEnclosureResourceError,
 )
 from ..discretization._coordinate_enclosure import PreparedCoordinateLatticeExecution
 from ..discretization._distributed_field import DistributedHaloPlan
@@ -196,6 +196,7 @@ from ..discretization.fem._topology_transfer import (
     FiniteElementTransferEvidence,
     TransferGeometryBinding,
 )
+from ..discretization.finite_volume._material_schedule import MaterialChainSchedule
 from ..discretization.finite_volume._remap_evidence import (
     MappedNestedRemapEvidence,
     MappedSurfaceChartRemapEvidence,
@@ -203,6 +204,7 @@ from ..discretization.finite_volume._remap_evidence import (
     RemapPreparationFailure,
 )
 from ..discretization.finite_volume._unstructured_remap import (
+    PreparedRemapCSRView,
     UnstructuredConservativeRemapPlan,
     UnstructuredRemapReport,
 )
@@ -275,6 +277,7 @@ from ..geometry._surface_source_support import (
     SurfaceSourceRootAtlas,
 )
 from ..geometry._validity import GeometryValidityEvidence
+from ..geometry._volume_material_map import VolumeMaterialChain, VolumeMaterialEdit
 from ..geometry.analytic import (
     _expressions,
     _extended,
@@ -331,7 +334,9 @@ from ..imaging import (
     _core as _image_core,
     _segmentation as _image_segmentation,
 )
+from ..linalg._assembly import SparseAssemblyPolicy
 from ..linalg._distributed import DistributedPairing
+from ..linalg._materialization import MaterializationPolicy
 from ..linalg._pairings import EuclideanPairing
 from ..linalg._properties import OperatorCapabilities, OperatorProperties
 from ..linalg._small_batched import SmallLinearSolvePlan
@@ -390,6 +395,14 @@ from ..meshing._association import (
 )
 from ..meshing._association_composition import ComposedAssociationTransfer
 from ..meshing._audit import CellMeshAuditReport
+from ..meshing._certification import (
+    certify_meshing_acceptance,
+    MeshCertificationOutcome,
+    MeshCertificationPreparedEvidence,
+    MeshCertificationReport,
+    PreparedBoundaryAcceptance,
+    PreparedVolumeAcceptance,
+)
 from ..meshing._certification_inputs import MeshCertificationInputs
 from ..meshing._compartments import revalidate_region_evidence
 from ..meshing._device_adaptation import validate_partitioned_mesh_evidence
@@ -459,7 +472,7 @@ from ..optim._iterative import _types as _optim_types
 from ..qualification._reference import ReferenceArtifactManifest
 from ..solver._finite_element_schedule import FiniteElementAcceptedState
 from ..sparse._linear import SparseLinearMap
-from ..sparse._relation import EdgeRelation, RowRelation
+from ..sparse._relation import EdgeRelation, InjectiveRouteWindows, RowRelation
 from ..typing import checked, parse, validate
 from ..units._dimension import DimensionSignature
 from ..units._unit import UnitDefinition
@@ -827,6 +840,8 @@ _SOURCE_ARTIFACT_GROUPS = (
                 CommonRefinementEvidence,
                 CommonRefinementStatus,
                 PreparedCommonRefinement,
+                VolumeMaterialChain,
+                VolumeMaterialEdit,
                 _simplicial_bvh.SegmentBVH,
             ),
         ),
@@ -1238,6 +1253,8 @@ _SOURCE_ARTIFACT_GROUPS = (
                 RemapPreparationFailure,
                 UnstructuredConservativeRemapPlan,
                 UnstructuredRemapReport,
+                MaterialChainSchedule,
+                PreparedRemapCSRView,
                 _periodic_cell.PeriodicCell,
                 PeriodicIsometryGroup,
                 _periodic_topology.PeriodicMeshTopology,
@@ -1267,7 +1284,7 @@ _SOURCE_ARTIFACT_GROUPS = (
                 _simplicial_topology.TriangleTopology,
             ),
         ),
-        ("phydrax.sparse", (EdgeRelation,)),
+        ("phydrax.sparse", (EdgeRelation, InjectiveRouteWindows)),
         ("phydrax.graph", (GraphPartitionEvidence, GraphPartitionWork)),
         (
             "phydrax.linear",
@@ -1280,6 +1297,8 @@ _SOURCE_ARTIFACT_GROUPS = (
                 BlockSpace,
                 SparseLinearMap,
                 SmallLinearSolvePlan,
+                SparseAssemblyPolicy,
+                MaterializationPolicy,
                 RowRelation,
             ),
         ),
@@ -1373,6 +1392,7 @@ def _source_admissions() -> dict[type, _SourceAdmission]:
         _bisection.BisectionHierarchy: _bisection.BisectionHierarchy.from_stored_fields,
         _periodic.PeriodicRefinement: _reconstruct_bounded_replay,
         _lineage.CellMeshTransition: _reconstruct_bounded_replay,
+        VolumeMaterialChain: _reconstruct_bounded_replay,
         lineage_records_owner.VertexInterpolationStencil: _reconstruct_bounded_replay,
         _mixed_adaptation.MixedLayerColumns: _mixed_adaptation.MixedLayerColumns.from_stored_fields,
         _mixed_adaptation.MixedAdaptationHierarchy: _mixed_adaptation.MixedAdaptationHierarchy.from_stored_fields,
@@ -1417,11 +1437,12 @@ def _source_admissions() -> dict[type, _SourceAdmission]:
         SphereMaterialCellAtlas: SphereMaterialCellAtlas.from_stored_fields,
         SmallLinearSolvePlan: SmallLinearSolvePlan.from_stored_fields,
         source_fidelity_owner.ImplicitBoundarySource: source_fidelity_owner.ImplicitBoundarySource.from_stored_fields,
+        source_fidelity_owner.ImplicitProjectionBoundarySource: _restore_implicit_projection_source,
         source_fidelity_owner.ParametricCurveBoundarySource: source_fidelity_owner.ParametricCurveBoundarySource.from_stored_fields,
         _adaptive_discovery.AdaptiveImplicitSurface: _adaptive_discovery.AdaptiveImplicitSurface.from_stored_fields,
         _adaptive_discovery.AdaptiveImplicitSurfaceEvidence: _adaptive_discovery.AdaptiveImplicitSurfaceEvidence.from_stored_fields,
         _adaptive_discovery.AdaptiveImplicitBoundarySource: _adaptive_discovery.AdaptiveImplicitBoundarySource.from_stored_fields,
-        _adaptive_discovery.ImplicitVolumeQuery: _adaptive_discovery.ImplicitVolumeQuery.from_stored_fields,
+        _adaptive_discovery.ImplicitVolumeQuery: _restore_implicit_volume_query,
         FiniteElementTransferEvidence: FiniteElementTransferEvidence.from_stored_fields,
         PreparedUnstructuredConservativeRemap: PreparedUnstructuredConservativeRemap.from_stored_fields,
         MeshCertificationInputs: None,
@@ -2144,32 +2165,54 @@ def _reconstruct_source_record[T](
     )
 
 
-def _source_owner_static_sort_key(value: Any) -> tuple[str, str]:
+def _source_owner_static_sort_key(
+    value: Any,
+    /,
+    *,
+    admission: Callable[[int, int], None] | None = None,
+) -> tuple[bytes, str]:
+    recipe = model_structure_recipe(value, admission=admission)
     return (
-        canonical_json(model_structure_recipe(value)),
-        _source_owner_static_scalar_bits(value) or "",
+        _canonical_recipe_payload(recipe, admission=admission),
+        _source_owner_static_scalar_bits(value, admission=admission) or "",
     )
 
 
-def _source_owner_static_scalar_bits(node: Any) -> str | None:
-    """Snapshot scalar payload bits along declared owner fields.
-
-    Opaque codecs retain ordinary reconstruction when normalized nonfinite
-    recipe tokens cannot authenticate their scalar bytes.
-    """
+def _source_owner_static_scalar_bits(
+    node: Any,
+    /,
+    *,
+    admission: Callable[[int, int], None] | None = None,
+) -> str | None:
+    """Snapshot scalar payload bits along declared owner fields."""
+    if admission is not None:
+        admission(1, 256)
     pending: list[tuple[tuple[int, ...], Any]] = [((), node)]
     seen: set[int] = set()
     records: list[tuple[tuple[int, ...], str, str]] = []
     while pending:
+        if admission is not None:
+            admission(1, 128)
         path, value = pending.pop()
         match value:
             case jax.Array() | np.ndarray():
                 continue
             case float() | complex() | np.generic():
+                size = (
+                    value.nbytes
+                    if isinstance(value, np.generic)
+                    else 16
+                    if isinstance(value, complex)
+                    else 8
+                )
+                if admission is not None:
+                    admission(1 + size, 256 + 4 * size + 16 * len(path))
                 scalar = np.asarray(value)
                 records.append((path, scalar.dtype.str, scalar.tobytes().hex()))
                 continue
             case FormType() | FormValueSpec():
+                if admission is not None:
+                    admission(1, 1024)
                 pending.append((path, value.to_dict()))
                 continue
             case (
@@ -2186,26 +2229,52 @@ def _source_owner_static_scalar_bits(node: Any) -> str | None:
                 continue
             case _:
                 pass
-        if id(value) in seen:
+        identity = id(value)
+        if identity in seen:
             continue
-        seen.add(id(value))
+        if admission is not None:
+            admission(1, 128)
+        seen.add(identity)
         if is_dataclass(value):
+            owner_fields = fields(value)
+            if admission is not None:
+                admission(len(owner_fields), 128 + 64 * len(owner_fields))
             children = tuple(
-                object.__getattribute__(value, member.name) for member in fields(value)
+                object.__getattribute__(value, member.name) for member in owner_fields
             )
         elif isinstance(value, Mapping):
+            if admission is not None:
+                admission(len(value), 128 + 64 * len(value))
             children = tuple(child for pair in value.items() for child in pair)
         elif isinstance(value, (tuple, list)):
+            if admission is not None:
+                admission(len(value), 64 + 16 * len(value))
             children = tuple(value)
         elif isinstance(value, (set, frozenset)):
-            children = tuple(sorted(value, key=_source_owner_static_sort_key))
+            if admission is not None:
+                admission(len(value), 128 + 64 * len(value))
+            children = tuple(
+                sorted(
+                    value,
+                    key=lambda child: _source_owner_static_sort_key(
+                        child, admission=admission
+                    ),
+                )
+            )
         else:
             return None
+        if admission is not None:
+            admission(
+                len(children),
+                128 + len(children) * (96 + 16 * len(path)),
+            )
         pending.extend(
             (path + (index,), child)
             for index, child in reversed(tuple(enumerate(children)))
         )
-    return canonical_json(records)
+    if admission is not None:
+        admission(len(records), 128 + 64 * len(records))
+    return _canonical_recipe_payload(records, admission=admission).decode("ascii")
 
 
 def _source_owner_array_digest(
@@ -2213,10 +2282,17 @@ def _source_owner_array_digest(
     scope: _SourceOwnerReconstructionScope,
     maximum_chunk_bytes: int,
     source_validation: MeshingSourceValidation | None,
+    /,
+    *,
+    admission: Callable[[int, int], None] | None = None,
 ) -> str:
     """Authenticate current named leaves, reusing only live immutable objects."""
+    if admission is not None:
+        admission(len(arrays), 256 + 128 * len(arrays))
     records: list[tuple[str, str]] = []
     for name, value in sorted(arrays.items()):
+        if admission is not None:
+            admission(1, 128 + len(name))
         if (
             source_validation is not None
             and isinstance(value, jax.Array)
@@ -2226,19 +2302,17 @@ def _source_owner_array_digest(
             # This is only a process-local constructor memo key, never a
             # scientific content identity. The shared bank has already earned
             # its full canonical scan; bind the exact immutable live object.
-            records.append(
+            if admission is not None:
+                admission(8, 512)
+            digest = canonical_fingerprint(
                 (
-                    name,
-                    canonical_fingerprint(
-                        (
-                            "admitted-immutable-source-object",
-                            id(value),
-                            str(value.sharding),
-                            source_validation.source_logical_content_digest,
-                        )
-                    ),
+                    "admitted-immutable-source-object",
+                    id(value),
+                    str(value.sharding),
+                    source_validation.source_logical_content_digest,
                 )
             )
+            records.append((name, digest))
             continue
         if isinstance(value, jax.Array) and not value.is_deleted():
             key = (id(value), maximum_chunk_bytes)
@@ -2246,53 +2320,96 @@ def _source_owner_array_digest(
             if prior is not None and prior[0] is value:
                 digest = prior[1]
             else:
+                if admission is not None:
+                    admission(
+                        max(1, value.nbytes),
+                        4096 + 2 * min(value.nbytes, maximum_chunk_bytes),
+                    )
                 digest = logical_array_value_collection_digest(
                     {"value": value}, maximum_chunk_bytes=maximum_chunk_bytes
                 )
+                if admission is not None:
+                    admission(1, 256)
                 scope.array_digests[key] = (value, digest)
         else:
+            if admission is not None:
+                admission(
+                    max(1, value.nbytes),
+                    4096 + 2 * min(value.nbytes, maximum_chunk_bytes),
+                )
             digest = logical_array_value_collection_digest(
                 {"value": value}, maximum_chunk_bytes=maximum_chunk_bytes
             )
         records.append((name, digest))
-    return canonical_fingerprint(records)
+    if admission is not None:
+        admission(len(records), 128 + 64 * len(records))
+    return sha256(_canonical_recipe_payload(records, admission=admission)).hexdigest()
 
 
 def _source_owner_current_constructors(
-    node: Any, scope: _SourceOwnerReconstructionScope, /
+    node: Any,
+    scope: _SourceOwnerReconstructionScope,
+    /,
+    *,
+    admission: Callable[[int, int], None] | None = None,
 ) -> tuple[tuple[int, str, int], ...]:
     """Bind current owning constructors, not only a stable generic dispatcher."""
     from inspect import getattr_static
 
     from .._model._structure import _model_owner_children
 
+    if admission is not None:
+        admission(1, 384)
     pending = [node]
     seen: set[int] = set()
     owners: dict[int, type] = {}
     admissions = _source_admissions()
     while pending:
+        if admission is not None:
+            admission(1, 128)
         value = pending.pop()
         if id(value) in seen or isinstance(value, (jax.Array, np.ndarray)):
             continue
+        if admission is not None:
+            admission(1, 64)
         seen.add(id(value))
         owner = type(value)
         if is_dataclass(value) and not isinstance(value, type):
+            if admission is not None:
+                child_count = len(fields(value))
+                admission(child_count, 128 + 64 * child_count)
+                admission(1, 96)
             owners[id(owner)] = owner
             pending.extend(_model_owner_children(value))
         elif isinstance(value, (Mapping, tuple, list, set, frozenset)):
+            if admission is not None:
+                child_count = (
+                    2 * len(value) if isinstance(value, Mapping) else len(value)
+                )
+                admission(child_count, 128 + 64 * child_count)
             pending.extend(_model_owner_children(value))
         elif owner in admissions:
+            owner_values = vars(value) if hasattr(value, "__dict__") else None
+            if admission is not None:
+                child_count = 0 if owner_values is None else len(owner_values)
+                admission(1, 96 + 64 * child_count)
             owners[id(owner)] = owner
-            if hasattr(value, "__dict__"):
-                pending.extend(vars(value).values())
+            if owner_values is not None:
+                pending.extend(owner_values.values())
     records: list[tuple[int, str, int]] = []
+    if admission is not None:
+        admission(0, 128 + 256 * len(owners))
     for owner in owners.values():
         for name in ("__init__", "from_stored_fields", "validate_restored"):
             function = getattr_static(owner, name, None)
             function = getattr(function, "__func__", function)
             if callable(function):
+                if admission is not None:
+                    admission(1, 128)
                 scope.constructors[id(function)] = function
                 records.append((id(owner), name, id(function)))
+    if admission is not None:
+        admission(len(records), 128 + 64 * len(records))
     return tuple(sorted(records))
 
 
@@ -2303,55 +2420,91 @@ def _source_owner_reconstruction_key(
     reconstruct: Callable[..., Any],
     scope: _SourceOwnerReconstructionScope,
 ) -> tuple[type, int, int, str, str, str] | None:
-    request = current_native_execution_scope()
-    if request is not None:
-        while request.parent is not None:
-            request = request.parent
-        scope.request_roots[id(request)] = request
-    recipe, _, arrays = prepare_model_recipe_catalog(
-        node, prefix="source-owner", limits=limits
+    budget = scope.budget
+    admission = None if budget is None else budget.reserve
+    temporary_scope = (
+        nullcontext() if budget is None else budget.temporary_scope()
     )
-    serialized = canonical_json(recipe)
-    if '"nonfinite_float"' in serialized:
-        scalar_bits = _source_owner_static_scalar_bits(node)
-        if scalar_bits is None:
-            return None
-        serialized = canonical_json((serialized, scalar_bits))
-    return (
-        type(node),
-        id(
-            getattr(reconstruct, "__func__", reconstruct)
-            if getattr(reconstruct, "__self__", None) is type(node)
-            else reconstruct
-        ),
-        id(source_validation),
-        canonical_fingerprint(
-            {
-                "limits": {
-                    member.name: sorted(value) if isinstance(value, frozenset) else value
-                    for member in fields(limits)
-                    for value in (getattr(limits, member.name),)
+    with temporary_scope:
+        request = current_native_execution_scope()
+        if request is not None:
+            while request.parent is not None:
+                request = request.parent
+            scope.request_roots[id(request)] = request
+        # This is a live request-local identity, not a serialized archive. Its
+        # full dependency tuple may exceed an archive manifest even when each
+        # admitted owner does. Read/write boundaries retain their original limits.
+        recipe, arrays = prepare_model_recipe(
+            node, prefix="source-owner", admission=admission
+        )
+        serialized = _canonical_recipe_payload(recipe, admission=admission)
+        if b'"nonfinite_float"' in serialized:
+            scalar_bits = _source_owner_static_scalar_bits(
+                node, admission=admission
+            )
+            if scalar_bits is None:
+                return None
+            if admission is not None:
+                admission(0, len(serialized) + 64)
+            serialized = _canonical_recipe_payload(
+                (serialized.decode("ascii"), scalar_bits), admission=admission
+            )
+        limit_fields = fields(limits)
+        if admission is not None:
+            admission(1, 1024 + 256 * len(limit_fields))
+        limit_values: dict[str, Any] = {}
+        for member in limit_fields:
+            value = getattr(limits, member.name)
+            if isinstance(value, frozenset):
+                if admission is not None:
+                    admission(len(value), 128 + 64 * len(value))
+                value = sorted(value)
+            limit_values[member.name] = value
+        if admission is not None:
+            admission(1, 1024)
+        configuration = configuration_snapshot().to_record()
+        constructors = _source_owner_current_constructors(
+            node, scope, admission=admission
+        )
+        if admission is not None:
+            admission(1, 512)
+        context_digest = sha256(
+            _canonical_recipe_payload(
+                {
+                    "limits": limit_values,
+                    "configuration": configuration,
+                    "coordinate_budget": id(budget),
+                    "native_request": id(request),
+                    "constructors": constructors,
                 },
-                "configuration": configuration_snapshot().to_record(),
-                "coordinate_budget": id(scope.budget),
-                "native_request": id(request),
-                "constructors": _source_owner_current_constructors(node, scope),
-            }
-        ),
-        sha256(serialized.encode("utf-8")).hexdigest(),
-        _source_owner_array_digest(
+                admission=admission,
+            )
+        ).hexdigest()
+        maximum_chunk_bytes = (
+            1 << 20
+            if source_validation is None
+            or source_validation.maximum_chunk_bytes is None
+            else source_validation.maximum_chunk_bytes
+        )
+        array_digest = _source_owner_array_digest(
             arrays,
             scope,
-            (
-                1 << 20
-                if source_validation is None
-                or source_validation.maximum_chunk_bytes is None
-                else source_validation.maximum_chunk_bytes
-            ),
+            maximum_chunk_bytes,
             source_validation,
-        ),
-    )
-
+            admission=admission,
+        )
+        return (
+            type(node),
+            id(
+                getattr(reconstruct, "__func__", reconstruct)
+                if getattr(reconstruct, "__self__", None) is type(node)
+                else reconstruct
+            ),
+            id(source_validation),
+            context_digest,
+            sha256(serialized).hexdigest(),
+            array_digest,
+        )
 
 def _validate_context_free_source_owner(
     node: Any,
@@ -2376,6 +2529,8 @@ def _validate_context_free_source_owner(
             key = _source_owner_reconstruction_key(
                 node, limits, source_validation, reconstruct, scope
             )
+        except CoordinateEnclosureResourceError:
+            raise
         except (TypeError, ValueError):
             # Snapshot admission cannot replace the constructor's refusal.
             key = None
@@ -2509,8 +2664,26 @@ def reconstruct_meshing_source(
         case mapped_reference_coverage_owner.MappedReferenceSourceEvidence():
             return _restore_mapped_source_evidence(node, limits, source_validation)
         case NativeMeshingPlan():
+            image_source = isinstance(
+                node.source,
+                (CompartmentMeshingSource, _label_extraction.LabelFieldVolumeBinding),
+            )
+            reconstruction = _source_owner_reconstruction_scope.get()
+            actual_scope = (
+                current_native_execution_scope()
+                if image_source
+                and reconstruction is not None
+                and reconstruction.process_id == getpid()
+                else None
+            )
+            actual_workspace = (
+                current_native_host_workspace() if actual_scope is not None else None
+            )
             support = NativeMeshingProvider(node.options).validate(
-                node.source, node.specification
+                node.source,
+                node.specification,
+                native_execution_scope=actual_scope,
+                workspace=actual_workspace,
             )
             return NativeMeshingPlan(
                 node.source,
@@ -3928,7 +4101,13 @@ def validate_neurofluid_transport_role(records: Mapping[str, Any], /) -> None:
         raise TypeError(
             "source_closure.accepted_data.neurofluid_transport must retain its declared source type and fields; got Neurofluid transport requires the registered physical checkpoint"
         )
-    rebuilt = replace(checkpoint)
+    scope = _source_owner_reconstruction_scope.get()
+    budget = (
+        scope.budget
+        if scope is not None and scope.process_id == getpid()
+        else None
+    )
+    rebuilt = replace(checkpoint, budget=budget)
     if not source_content_equal(checkpoint, rebuilt, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS):
         raise ValueError(
             "source_closure.accepted_data.neurofluid_transport must match its retained source binding; got Neurofluid checkpoint differs from its reconstruction"
@@ -4979,29 +5158,47 @@ def recertify_restored_meshing_source(
     /,
     *,
     archive_limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    prepared: MeshCertificationPreparedEvidence | PreparedBoundaryAcceptance | None = None,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> MeshCertificationReport:
     """Reestablish restored source evidence on the caller's complete request."""
+    register_meshing_source_artifacts()
 
     scope = _source_owner_reconstruction_scope.get()
     if budget is None and scope is not None and scope.process_id == getpid():
         budget = scope.budget
-    binding = (
-        _source_owner_reconstruction_key(
-            (inputs, mesh, geometry, audit),
-            archive_limits,
-            None,
-            certify_meshing_acceptance,
-            scope,
-        )
-        if scope is not None and scope.process_id == getpid()
-        else None
-    )
+    if scope is not None and scope.process_id == getpid():
+        with meshing_source_owner_reconstruction_scope(budget=budget):
+            active_scope = _source_owner_reconstruction_scope.get()
+            assert active_scope is scope
+            binding = _source_owner_reconstruction_key(
+                (inputs, mesh, geometry, audit),
+                archive_limits,
+                None,
+                certify_meshing_acceptance,
+                active_scope,
+            )
+    else:
+        binding = None
     key = None if binding is None else (binding, id(budget))
     if key is not None and scope is not None:
         retained = scope.certifications.get(key)
         if retained is not None and retained[0] is budget:
-            return retained[1]
+            if prepared is None:
+                return retained[1]
+            if isinstance(prepared, MeshCertificationPreparedEvidence):
+                with coordinate_certificate_request(
+                    inputs.limits, budget=budget
+                ) as validation_budget:
+                    prepared.require(
+                        mesh, geometry, inputs, budget=validation_budget
+                    )
+                    if not tree_content_equal(audit.validity, prepared.validity):
+                        raise ValueError(
+                            "certify_meshing_acceptance.audit.validity must use the prepared validity certificate; "
+                            f"got audit_id={audit.validity.certificate_id!r}, prepared_id={prepared.validity.certificate_id!r}"
+                        )
+                return retained[1]
     # Standalone callers get one ledger for integrity and certification together;
     # an explicit request never receives a helper quota or a replacement ledger.
     with (
@@ -5022,6 +5219,13 @@ def recertify_restored_meshing_source(
             fidelity_sample_order=inputs.fidelity_sample_order,
             limits=inputs.limits,
             junction_vertices=inputs.junction_vertices,
+            prepared=(
+                None
+                if prepared is None
+                else PreparedVolumeAcceptance(prepared)
+                if isinstance(prepared, MeshCertificationPreparedEvidence)
+                else prepared
+            ),
             scoped_fidelity=inputs.scoped_fidelity,
             budget=ledger,
         )
@@ -7456,7 +7660,11 @@ def _require_registered_compartment(
 ) -> None:
     "Replay the occupied-image/material and independently authored outer source."
 
-    source.validate_source_integrity()
+    scope = _source_owner_reconstruction_scope.get()
+    budget = (
+        scope.budget if scope is not None and scope.process_id == getpid() else None
+    )
+    source.validate_source_integrity(budget=budget)
     evidence = result.region_evidence
     if evidence is None or result.certification is None:
         raise ValueError(
@@ -7479,10 +7687,7 @@ def _require_registered_compartment(
         raise ValueError(
             "source_closure.report.request.domain must match its retained source binding; got Image certificate lost its cell-to-material assignments"
         )
-    scope = _source_owner_reconstruction_scope.get()
-    budget = (
-        scope.budget if scope is not None and scope.process_id == getpid() else None
-    )
+
     if options is not None:
         from ._meshing_registration import has_issued_compartment_material_registration
 
@@ -7767,6 +7972,12 @@ def _reconstruct_source_evidence(
             rebuilt = domain_coverage_owner.DomainCoverageCertificate.from_stored_fields(
                 value, supplied["domain"]
             )
+        case approximate_source_coverage_owner.ApproximateSourceCoverageCertificate():
+            rebuilt = (
+                approximate_source_coverage_owner.ApproximateSourceCoverageCertificate.from_stored_fields(
+                    value, budget=context.budget
+                )
+            )
         case source_fidelity_owner.SourceFidelityCertificate():
             rebuilt = source_fidelity_owner.SourceFidelityCertificate.from_stored_fields(
                 value
@@ -7830,7 +8041,10 @@ def _validate_coverage_evidence(
     if coverage is None:
         return
     if (
-        type(coverage) is not domain_coverage_owner.DomainCoverageCertificate
+        type(coverage) not in (
+            domain_coverage_owner.DomainCoverageCertificate,
+            approximate_source_coverage_owner.ApproximateSourceCoverageCertificate,
+        )
         or report.embedding is None
     ):
         raise TypeError(
@@ -7848,7 +8062,12 @@ def _validate_coverage_evidence(
     )
     for finding in coverage.findings:
         _reconstruct_source_evidence(finding, context)
-    if coverage.embedding_certificate_id != report.embedding.certificate_id:
+    embedding_certificate_id = (
+        coverage.embedding_certificate_id
+        if isinstance(coverage, domain_coverage_owner.DomainCoverageCertificate)
+        else coverage.embedding.certificate_id
+    )
+    if embedding_certificate_id != report.embedding.certificate_id:
         raise ValueError(
             "MeshCertificationReport.coverage.embedding_certificate_id must match its embedding evidence; got a different dependency"
         )
@@ -8387,7 +8606,7 @@ def _require_registered_cad_source(
     *,
     limits: ArrayArchiveLimits,
 ) -> None:
-    """Bind the retained B-Rep authority and its certified PL approximation."""
+    """Bind the retained B-Rep authority and its PL or curved certified domain."""
     rebuilt = _native_cad_volume.NativeCadVolumeSource.from_stored_fields(source)
     if not source_content_equal(source, rebuilt, limits=limits):
         raise ValueError(
@@ -8401,6 +8620,26 @@ def _require_registered_cad_source(
         (feature.maximum_deviation for feature in specification.protected_features),
         default=source.maximum_deviation,
     )
+    if isinstance(request.domain, domain_planar_boundary_owner.CadSourceDomain):
+        if (
+            request.domain.embedding is not None
+            or request.domain.region_ids != source.plc_source.complex.region_ids
+            or not source_content_equal(
+                request.domain.model, source.domain.brep_authority, limits=limits
+            )
+        ):
+            raise ValueError(
+                "source_closure.cad_source must bind its whole B-Rep solid and "
+                "authored regions; got another curved source domain"
+            )
+        if request.fidelity_tolerance is None or request.fidelity_tolerance > tolerance:
+            raise ValueError(
+                "source_closure.cad_source must meet its requested continuous "
+                "deviation; got a weaker curved fidelity tolerance"
+            )
+        # Curved coverage binds the actual CAD solid, not its straight PLC.
+        # The source/report/association checks still own all scientific proofs.
+        return
     if request.fidelity_tolerance != tolerance:
         raise ValueError(
             "source_closure.cad_source must retain its requested continuous deviation; got another fidelity tolerance"
@@ -8441,6 +8680,31 @@ def _require_registered_plc_source(
         case _ as invalid:
             assert_never(invalid)
 
+def _restore_implicit_volume_query(
+    value: _adaptive_discovery.ImplicitVolumeQuery, /
+) -> _adaptive_discovery.ImplicitVolumeQuery:
+    scope = _source_owner_reconstruction_scope.get()
+    return _adaptive_discovery.ImplicitVolumeQuery.from_stored_fields(
+        value,
+        budget=scope.budget
+        if scope is not None and scope.process_id == getpid()
+        else None,
+    )
+
+
+def _restore_implicit_projection_source(
+    value: source_fidelity_owner.ImplicitProjectionBoundarySource, /
+) -> source_fidelity_owner.ImplicitProjectionBoundarySource:
+    scope = _source_owner_reconstruction_scope.get()
+    return source_fidelity_owner.ImplicitProjectionBoundarySource(
+        value.profile,
+        discovery=value.discovery,
+        budget=scope.budget
+        if scope is not None and scope.process_id == getpid()
+        else None,
+    )
+
+
 
 def _require_registered_implicit_source(
     source: NativeImplicitSource,
@@ -8462,6 +8726,12 @@ def _require_registered_implicit_source(
                 if scope is not None and scope.process_id == getpid()
                 else None,
             )
+            if not source_content_equal(
+                source.discovery, query.discovery, limits=limits
+            ):
+                raise ValueError(
+                    "source_closure.implicit_source must retain the original discovery query without replacement"
+                )
             geometry = query.profile.geometry
         case source_fidelity_owner.ImplicitBoundarySource():
             geometry = query.geometry
@@ -8601,8 +8871,20 @@ def _renew_registered_generation(
         audit,
         limits=limits,
     )
+    prepared = (
+        PreparedBoundaryAcceptance(
+            context.report.embedding, context.report.fidelity
+        )
+        if context.report.embedding is not None or context.report.fidelity is not None
+        else None
+    )
     fresh = recertify_restored_meshing_source(
-        request, result.mesh, result.geometry, audit, archive_limits=limits
+        request,
+        result.mesh,
+        result.geometry,
+        audit,
+        archive_limits=limits,
+        prepared=prepared,
     )
     return require_same_source_evidence(
         context.report,

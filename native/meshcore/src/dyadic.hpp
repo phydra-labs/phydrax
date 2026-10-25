@@ -158,6 +158,11 @@ class Dyadic {
     }
   }
 
+  bool is_zero() const { return magnitude_.empty(); }
+
+  bool is_positive_one() const {
+    return !negative_ && exponent_ == 0 && magnitude_.size() == 1 && magnitude_[0] == 1;
+  }
 
   int sign() const {
     if (magnitude_.empty()) {
@@ -174,9 +179,15 @@ class Dyadic {
     return result;
   }
 
+  // Combine signed operands in one exact addition/subtraction. Sign flags let
+  // a term negation be absorbed into an existing signed sum without changing
+  // its operand order or charging it as a separate operation.
+  static Dyadic signed_sum(const Dyadic& a, bool negate_a, const Dyadic& b, bool negate_b) {
+    return combine_signed(a, negate_a, b, negate_b);
+  }
+
   friend Dyadic operator+(const Dyadic& a, const Dyadic& b) { return combine(a, b, false); }
   friend Dyadic operator-(const Dyadic& a, const Dyadic& b) { return combine(a, b, true); }
-
   friend Dyadic operator*(const Dyadic& a, const Dyadic& b) {
     Dyadic result;
     if (a.magnitude_.empty() || b.magnitude_.empty()) {
@@ -212,10 +223,18 @@ class Dyadic {
 
  private:
   static Dyadic combine(const Dyadic& a, const Dyadic& b, bool negate_b) {
-    if (b.magnitude_.empty()) {
-      return a;
-    }
+    return combine_signed(a, false, b, negate_b);
+  }
+
+  static Dyadic combine_signed(const Dyadic& a, bool negate_a, const Dyadic& b, bool negate_b) {
+    const bool a_negative = a.negative_ != negate_a;
     const bool b_negative = b.negative_ != negate_b;
+    if (b.magnitude_.empty()) {
+      if (!negate_a || a.magnitude_.empty()) return a;
+      Dyadic result = a;
+      result.negate();
+      return result;
+    }
     if (a.magnitude_.empty()) {
       Dyadic result = b;
       result.negative_ = b_negative;
@@ -226,9 +245,9 @@ class Dyadic {
     const Limbs right = shift_left(b.magnitude_, b.exponent_ - exponent);
     Dyadic result;
     result.exponent_ = exponent;
-    if (a.negative_ == b_negative) {
+    if (a_negative == b_negative) {
       result.magnitude_ = add_magnitude(left, right);
-      result.negative_ = a.negative_;
+      result.negative_ = a_negative;
     } else {
       const int order = compare_magnitude(left, right);
       if (order == 0) {
@@ -236,7 +255,7 @@ class Dyadic {
       }
       result.magnitude_ = order > 0 ? subtract_magnitude(left, right)
                                     : subtract_magnitude(right, left);
-      result.negative_ = order > 0 ? a.negative_ : b_negative;
+      result.negative_ = order > 0 ? a_negative : b_negative;
     }
     result.normalize();
     return result;

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-import inspect
 from fractions import Fraction
 
 import numpy as np
@@ -111,6 +109,19 @@ def test_source_metric_work_is_charged_once_and_cached_cells_reuse_bounds() -> N
         assert budget.temporary_bytes_upper == before_temporary
         assert budget.ticket.settled
     assert budget.storage_ticket is None
+
+
+def test_surface_generation_retains_complete_bounded_native_admission() -> None:
+    domain = accounting_spline_domain()
+    limits = MeshingLimits()
+    result = surface_mesh(domain, surface_specification(domain, 0.35, limits=limits))
+    assert result.certification is not None and result.certification.passed
+    receipt = result.execution_evidence
+    assert receipt is not None
+    receipt.require_valid()
+    peak = receipt.total_managed_admission_peak_bytes_upper
+    assert peak is not None
+    assert 0 < int(np.asarray(peak)) <= limits.maximum_scratch_bytes
 
 
 def test_coarse_hard_equilateral_target_does_not_seed_undersized_edges() -> None:
@@ -626,21 +637,3 @@ def test_all_rejected_native_refinement_round_retains_carrier_and_refuses_hard_s
     assert request.specification_id == request_id
 
 
-def test_surface_cold_epoch_requests_observe_actual_managed_admission() -> None:
-    from tools.meshing_qualification.scenarios import surface
-
-    tree = ast.parse(inspect.getsource(surface._surface_qualification_cold_worker))
-    calls = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "execute_native_request"
-    ]
-    assert len(calls) == 1
-    observation = [
-        keyword.value for keyword in calls[0].keywords
-        if keyword.arg == "observe_managed_admission"
-    ]
-    assert len(observation) == 1
-    assert isinstance(observation[0], ast.Constant)
-    assert observation[0].value is True

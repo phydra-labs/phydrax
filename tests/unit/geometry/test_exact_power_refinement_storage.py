@@ -2,23 +2,32 @@
 """Exercise real exact-power outputs and pre-operation request admission."""
 
 from fractions import Fraction
+from typing import NoReturn
 
 import numpy as np
 import pytest
 
-import phydrax.geometry._exact_power_refinement as owner
 import phydrax.geometry._exact_polyhedral_geometry as overlap_owner
+import phydrax.geometry._exact_power_refinement as owner
 from phydrax._meshcore import NativeExecutionScope
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
+)
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._exact_polyhedral_geometry import (
-    ExactConvexCell, TetrahedronPlanePreparation,
+    ExactConvexCell,
+    TetrahedronPlanePreparation,
 )
 from phydrax.geometry._supermesh import CommonRefinementPolicy, CommonRefinementStatus
 from phydrax.meshing import MeshingLimits
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._polyhedral_generation import (
-    generate_polyhedral_volume, NativePolyhedralSchedule,
+    generate_polyhedral_volume,
+    NativePolyhedralSchedule,
+    PolyhedralConstruction,
 )
 from tests._support.coordinate_references import coordinate_reference_budget
 from tests._support.polyhedral_meshes import periodic_adaptation_source
@@ -45,7 +54,14 @@ def _box(low: Fraction = Fraction(0)) -> ExactConvexCell:
     return ExactConvexCell(vertices, edges, planes, (low,) * 3, (low + 1,) * 3)
 
 
-def _pair(first, second, policy, budget, storage, workspace):
+def _pair(
+    first: ExactConvexCell,
+    second: ExactConvexCell,
+    policy: CommonRefinementPolicy,
+    budget: CoordinateEnclosureBudget,
+    storage: CoordinateLiveStorage,
+    workspace: CoordinateLiveStorage,
+) -> owner._PowerPair:
     return owner._power_pair(
         (), (), first, second, policy, 0, 0,
         budget=budget, preparation=TetrahedronPlanePreparation(budget),
@@ -56,15 +72,15 @@ def _pair(first, second, policy, budget, storage, workspace):
 @pytest.mark.parametrize("denominator", (3, (1 << 521) - 1))
 @pytest.mark.parametrize("shortfall", (0, 1))
 def test_pair_r_and_r_minus_one_refuse_before_side_allocation(
-    monkeypatch, denominator, shortfall,
-):
+    monkeypatch: pytest.MonkeyPatch, denominator: int, shortfall: int,
+) -> None:
     first, second = _box(), _box(Fraction(1, denominator))
     attempted = []
 
     class ReachedSides(Exception):
         pass
 
-    def stop_before_sides(*args, **kwargs):
+    def stop_before_sides(*args: object, **kwargs: object) -> NoReturn:
         attempted.append(True)
         raise ReachedSides
 
@@ -100,7 +116,7 @@ def test_pair_r_and_r_minus_one_refuse_before_side_allocation(
     assert bool(attempted) is (shortfall == 0)
 
 
-def test_large_fraction_denominators_grow_admission_and_preserve_integrals():
+def test_large_fraction_denominators_grow_admission_and_preserve_integrals() -> None:
     first, second = _box(), _box(Fraction(1, (1 << 521) - 1))
     with coordinate_reference_budget(_LIMITS) as budget:
         small = owner._overlap_bound(first, _box(Fraction(1, 3)), budget=budget)
@@ -121,7 +137,7 @@ def test_large_fraction_denominators_grow_admission_and_preserve_integrals():
             assert workspace.bound == 0
 
 
-def test_repeated_pair_workspaces_release_without_retaining_intersections():
+def test_repeated_pair_workspaces_release_without_retaining_intersections() -> None:
     first, second = _box(), _box(Fraction(1, 3))
     with coordinate_reference_budget(_LIMITS) as budget:
         retained = budget.retained_basis_bytes
@@ -139,7 +155,7 @@ def test_repeated_pair_workspaces_release_without_retaining_intersections():
             assert budget.retained_basis_bytes == retained
 
 
-def test_pair_local_work_refusal_reports_only_executed_prefix():
+def test_pair_local_work_refusal_reports_only_executed_prefix() -> None:
     with coordinate_reference_budget(_LIMITS) as budget:
         with budget.live_storage() as storage, budget.live_storage() as workspace:
             pair = _pair(
@@ -155,7 +171,9 @@ def test_pair_local_work_refusal_reports_only_executed_prefix():
 
 
 @pytest.mark.parametrize("shortfall", (0, 1))
-def test_pair_actual_root_work_boundary_does_not_reserve_unvisited_branches(shortfall):
+def test_pair_actual_root_work_boundary_does_not_reserve_unvisited_branches(
+    shortfall: int,
+) -> None:
     first, second = _box(), _box(Fraction(1, 3))
     policy = CommonRefinementPolicy(second_moments=True, overlap_simplices=True)
     with coordinate_reference_budget(_LIMITS) as profiling:
@@ -181,7 +199,7 @@ def test_pair_actual_root_work_boundary_does_not_reserve_unvisited_branches(shor
 
 
 @pytest.mark.parametrize("shortfall", (0, 1))
-def test_pair_actual_root_memory_boundary_preserves_real_integrals(shortfall):
+def test_pair_actual_root_memory_boundary_preserves_real_integrals(shortfall: int) -> None:
     first, second = _box(), _box(Fraction(1, 3))
     policy = CommonRefinementPolicy(second_moments=True, overlap_simplices=True)
     with coordinate_reference_budget(_LIMITS) as profiling:
@@ -206,15 +224,28 @@ def test_pair_actual_root_memory_boundary_preserves_real_integrals(shortfall):
                 assert budget.peak_bytes_upper == required
 
 
-def test_face_primitive_scratch_ends_before_next_face_and_pair_outputs_remain(monkeypatch):
+def test_face_primitive_scratch_ends_before_next_face_and_pair_outputs_remain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original = overlap_owner._integrate_overlap_face
     entries = []
 
-    def observe_face(*args):
-        work = args[-1]
+    def observe_face(
+        plane: overlap_owner.Point,
+        vertices: tuple[overlap_owner.Point, ...],
+        center: overlap_owner.Point,
+        volume: Fraction,
+        moment: list[Fraction],
+        second_moment: list[list[Fraction]] | None,
+        simplices: list[overlap_owner.Tetrahedron] | None,
+        work: overlap_owner._OverlapWork,
+        /,
+    ) -> Fraction:
         entries.append(work.budget.temporary_bytes_upper)
-        return original(*args)
-
+        return original(
+            plane, vertices, center, volume, moment,
+            second_moment, simplices, work,
+        )
     monkeypatch.setattr(overlap_owner, "_integrate_overlap_face", observe_face)
     with coordinate_reference_budget(_LIMITS) as budget:
         with budget.live_storage() as storage, budget.live_storage() as workspace:
@@ -234,7 +265,7 @@ def test_face_primitive_scratch_ends_before_next_face_and_pair_outputs_remain(mo
         assert budget.temporary_bytes_upper == 0
 
 
-def test_repeated_real_edges_do_not_inflate_retained_intersection_bank():
+def test_repeated_real_edges_do_not_inflate_retained_intersection_bank() -> None:
     first, second = _box(), _box(Fraction(1, 3))
     repeated = ExactConvexCell(
         second.vertices, second.edges * 8, second.planes, second.lower, second.upper,
@@ -259,7 +290,9 @@ def test_repeated_real_edges_do_not_inflate_retained_intersection_bank():
             del original, duplicate
 
 
-def _construction(sites):
+def _construction(
+    sites: tuple[tuple[float, float, float], ...],
+) -> PolyhedralConstruction:
     topology = reference_cell_topology("hexahedron")
     domain = PiecewiseLinearComplex(
         np.asarray(topology.vertices, dtype=np.float64), topology.entities[2],
@@ -270,7 +303,9 @@ def _construction(sites):
 
 
 @pytest.mark.parametrize("shortfall", (0, 1))
-def test_decomposition_r_and_r_minus_one_precede_star_allocation(monkeypatch, shortfall):
+def test_decomposition_r_and_r_minus_one_precede_star_allocation(
+    monkeypatch: pytest.MonkeyPatch, shortfall: int,
+) -> None:
     construction = _construction(((0.5, 0.5, 0.5),))
     mesh, geometry = construction.mesh, construction.geometry
     attempted = []
@@ -278,7 +313,7 @@ def test_decomposition_r_and_r_minus_one_precede_star_allocation(monkeypatch, sh
     class ReachedStars(Exception):
         pass
 
-    def stop_before_stars(*args, **kwargs):
+    def stop_before_stars(*args: object, **kwargs: object) -> NoReturn:
         attempted.append(True)
         raise ReachedStars
 
@@ -288,6 +323,7 @@ def test_decomposition_r_and_r_minus_one_precede_star_allocation(monkeypatch, sh
         points = owner.exact_vertices(mesh, geometry, budget=budget)
         bound = owner._decomposition_bound(mesh, points, budget=budget)
         connectivity = mesh.connectivity
+        assert isinstance(connectivity, PolyhedralConnectivity)
         topology_items = sum(
             value.size for value in (
                 connectivity.cell_vertex_offsets, connectivity.cell_vertex_values,
@@ -315,7 +351,9 @@ def test_decomposition_r_and_r_minus_one_precede_star_allocation(monkeypatch, sh
 
 
 @pytest.mark.parametrize("case", ("nested", "nonnested", "periodic"))
-def test_real_power_refinement_retains_positive_outputs_and_original_identities(case):
+def test_real_power_refinement_retains_positive_outputs_and_original_identities(
+    case: str,
+) -> None:
     if case == "periodic":
         _, _, source = periodic_adaptation_source()
         target = source
@@ -350,7 +388,7 @@ def test_real_power_refinement_retains_positive_outputs_and_original_identities(
         assert budget.retained_basis_bytes == retained
 
 
-def test_actual_periodic_regenerate_uses_original_request_caps():
+def test_actual_periodic_regenerate_uses_original_request_caps() -> None:
     import phydrax as phx
     from phydrax._meshcore import NativeParallelExecution
     from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
@@ -392,15 +430,18 @@ def test_actual_periodic_regenerate_uses_original_request_caps():
         assert result.common_refinement.status is CommonRefinementStatus.SUCCESS
         assert collector.prepared is not None
         record = result.target.execution_evidence
+        assert record is not None
         assert int(np.asarray(record.total_work_units)) <= limits.maximum_work_units
         assert int(np.asarray(record.total_geometry_queries)) <= limits.maximum_geometry_queries
 
 
-def test_tiny_policy_refuses_before_source_export_without_fabricating_artifact(monkeypatch):
+def test_tiny_policy_refuses_before_source_export_without_fabricating_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = _construction(((0.5, 0.5, 0.5),))
     attempted = []
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
         attempted.append(True)
         raise AssertionError("source export allocated before admission")
 
@@ -417,7 +458,7 @@ def test_tiny_policy_refuses_before_source_export_without_fabricating_artifact(m
     assert not attempted
 
 
-def test_real_work_refusal_retains_truthful_negative_coverage_artifact():
+def test_real_work_refusal_retains_truthful_negative_coverage_artifact() -> None:
     source = _construction(((0.5, 0.5, 0.5),))
     with coordinate_reference_budget(_LIMITS, queries_upper=1 << 20) as budget:
         prepared = owner.prepare_exact_power_refinement(

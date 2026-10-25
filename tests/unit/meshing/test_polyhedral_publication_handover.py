@@ -10,6 +10,7 @@ from phydrax._meshcore import (
     MeshcoreStatus,
     NativeExecutionScope,
     NativeHostStorageWorkspace,
+    NativeScopeTicket,
 )
 from phydrax.meshing._contracts import MeshingLimits
 from phydrax.meshing.providers._native_publication import (
@@ -122,6 +123,7 @@ def test_primitive_provenance_exact_headroom_before_normalization(shortfall: int
                     assert len(provenance.content_json) <= normalized[1]
     assert entered is (shortfall == 0)
     if shortfall:
+        assert error is not None
         assert error.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
 
 
@@ -136,6 +138,7 @@ def test_scope_storage_refresh_keeps_live_owner_and_exact_tokens() -> None:
                     budget.retain_owner(values)
                 view = budget.storage_ticket
                 contributor = budget._storage_owner
+                assert isinstance(view, NativeScopeTicket) and contributor is not None
                 tokens = tuple(
                     workspace._reservation.value for workspace in view._workspaces.values()
                 )
@@ -181,12 +184,13 @@ def test_scope_storage_handover_metadata_real_r_boundary(
                 with budget.bind_ticket(scope.ticket_view()):
                     budget.retain_owner(values)
                 view = budget.storage_ticket
+                assert isinstance(view, NativeScopeTicket)
                 original = destination.set_bound
                 attempts = []
                 with NativeHostStorageWorkspace(scope) as ballast:
                     ballast.reserve_empty()
 
-                    def exact(total):
+                    def exact(total: int) -> None:
                         attempts.append(total)
                         available = scope.remaining().remaining_managed_bytes
                         delta = total - destination.bound
@@ -214,6 +218,7 @@ def test_scope_storage_handover_metadata_real_r_boundary(
                             assert view.settled
                     assert len(attempts) == 1
     if shortfall:
+        assert terminal is not None
         assert terminal.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
 
 
@@ -236,8 +241,13 @@ def test_adaptation_publication_rejects_unknown_owner_at_its_work_boundary(
 
     monkeypatch.setattr(adaptation, "retained_host_storage_fanout_upper", inspect)
     limits = _limits().native_limits()
+    # The live import snapshot meters its own ledger traversal and retained
+    # overlap entry before publication admission begins.
+    with NativeExecutionScope(limits) as measured:
+        adaptation.NativeExecutionImports(measured)
+        imports_work = limits.maximum_work_units - measured.remaining().remaining_work_units
     bounded = NativeExecutionLimits(
-        3 - shortfall, 0, limits.maximum_cavity_cells,
+        imports_work + 3 - shortfall, 0, limits.maximum_cavity_cells,
         limits.maximum_managed_bytes, limits.maximum_seconds,
     )
     expected = MeshcoreError if shortfall else TypeError
@@ -251,5 +261,8 @@ def test_adaptation_publication_rejects_unknown_owner_at_its_work_boundary(
         pytest.fail("An unmapped owner cannot earn publication storage.")
     assert len(inspected) == 3 - shortfall
     assert (id(unknown) in inspected) is (not shortfall)
-    assert scope.completed_evidence().externally_charged_work == 3 - shortfall
+    assert (
+        scope.completed_evidence().externally_charged_work
+        == imports_work + 3 - shortfall
+    )
     assert scope.completed_evidence().host_storage_live_bytes_upper == 0

@@ -116,7 +116,9 @@ _BOX_CORNER_BITS = np.asarray(
 )
 
 
-def _outward_corners(lower: np.ndarray, upper: np.ndarray, origin: np.ndarray, /):
+def _outward_corners(
+    lower: np.ndarray, upper: np.ndarray, origin: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Exact binary64 bounds of ``[lower, upper] - origin``, rounded outward."""
     return (
         np.nextafter(lower - origin, -np.inf),

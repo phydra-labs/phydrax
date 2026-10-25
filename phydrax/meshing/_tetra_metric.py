@@ -10,14 +10,15 @@ No scalar equivalent size is substituted for a tensor metric.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+import heapq
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, ExitStack, nullcontext
 from dataclasses import dataclass, field, fields, InitVar, is_dataclass
 from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations
 from time import monotonic
-from typing import final, NamedTuple, TypeAlias, TypeVar
+from typing import final, NamedTuple, overload, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -31,6 +32,7 @@ import phydrax._geometry_predicates as _owner_phydrax__geometry_predicates
 import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
 import phydrax.discretization._exact_plc_geometry as _dependency_phydrax_discretization__exact_plc_geometry
+import phydrax.geometry._implicit_cavity_atlas as implicit_cavity_owner
 import phydrax.geometry.implicit._projection_cover as implicit_projection_owner
 import phydrax.linalg._small_batched as _owner_phydrax_linalg__small_batched
 import phydrax.meshing._entity_keys as entity_keys_owner
@@ -41,6 +43,7 @@ import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_e
 import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
 import phydrax.meshing.providers._native_route_checks as _owner_phydrax_meshing_providers__native_publication
 import phydrax.optim._least_squares as _owner_phydrax_optim__least_squares
+from phydrax.geometry._planar_primitives import reserve_fraction_work
 from phydrax.geometry._rational import (
     fraction_endpoint,
     rational_vector as plc_rational_point,
@@ -48,6 +51,7 @@ from phydrax.geometry._rational import (
 
 from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._host_storage import immutable_host_array
 from .._meshcore import (
     exact_orient2d,
     exact_orient3d,
@@ -56,6 +60,7 @@ from .._meshcore import (
     NativeBatchTicket,
     NativeExecutionMemoryCounters,
     NativeExecutionScope,
+    NativeScopeTicket,
     TetMesh3D,
     TetMeshArrays,
     TetMeshCurvedSources,
@@ -64,7 +69,7 @@ from .._meshcore import (
     TetMeshSourceComplex,
     TetMeshUnmet,
 )
-from .._resource_ticket import BatchTicket, ManagedBytesContributor
+from .._resource_ticket import ManagedBytesContributor
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, nonnegative_integer
@@ -84,6 +89,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..linalg._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
+from ..linalg._hermitian_spectral import fraction_storage_upper
 from ..nonlinear import quadratic_event_bound
 from ..optim import (
     AbstractLeastSquaresTrialPolicy,
@@ -895,6 +901,67 @@ def stage_source_limits(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CurvedCavityTransition:
+    atlas: implicit_cavity_owner.ImplicitCavityAtlas
+    before: TetMeshArrays
+    after: TetMeshArrays
+    before_cell_ids: np.ndarray
+    after_cell_ids: np.ndarray
+
+
+@dataclass(slots=True)
+class _CavityHistory(Sequence[CurvedCavityTransition]):
+    """Append-only chronological cavity records of one metric request.
+
+    Prepared material lookups trust the prefix of this owner, so it exposes
+    only appending, iteration and indexing; no record is reordered, replaced
+    or removed.
+    """
+
+    _records: list[CurvedCavityTransition] = field(default_factory=list)
+
+    def append(self, record: CurvedCavityTransition, /) -> None:
+        self._records.append(record)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    @overload
+    def __getitem__(self, index: int, /) -> CurvedCavityTransition: ...
+
+    @overload
+    def __getitem__(self, index: slice, /) -> tuple[CurvedCavityTransition, ...]: ...
+
+    def __getitem__(
+        self, index: int | slice, /
+    ) -> CurvedCavityTransition | tuple[CurvedCavityTransition, ...]:
+        if isinstance(index, slice):
+            return tuple(self._records[index])
+        return self._records[index]
+
+    def __iter__(self) -> Iterator[CurvedCavityTransition]:
+        return iter(self._records)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class MaterialEditRecord:
+    """One committed native edit's removed and created cells, as published.
+
+    ``*_rows`` are native vertex rows of positive tetrahedra, ``*_points``
+    their binary64 corners at the edit, and ``*_ids`` the accepted cell IDs.
+    A curved edit names its committed cavity atlas by ``chart_id``.
+    """
+
+    removed_ids: np.ndarray
+    removed_rows: np.ndarray
+    removed_points: np.ndarray
+    created_ids: np.ndarray
+    created_rows: np.ndarray
+    created_points: np.ndarray
+    chart_id: str
+
+
 class TetraMetricOutcome(NamedTuple):
     edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
     metric: np.ndarray
@@ -903,6 +970,8 @@ class TetraMetricOutcome(NamedTuple):
         _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
         | None
     ) = None
+    cavity_history: tuple[CurvedCavityTransition, ...] = ()
+    material_edits: tuple[MaterialEditRecord, ...] = ()
 
 
 def fresh_identifiers(first: int, count: int, /) -> np.ndarray:
@@ -938,6 +1007,9 @@ class _Ancestry:
         tuple[int, ...], dict[tuple[int, ...], int]
     ] | None = None
     curved_collapses: int = 0
+    cavity_history: _CavityHistory = field(default_factory=_CavityHistory)
+    # Every committed edit in chronological order, for cavity-local material maps.
+    material_edits: list[MaterialEditRecord] = field(default_factory=list)
 
 
 def _edges(cells: np.ndarray, /) -> np.ndarray:
@@ -1297,6 +1369,8 @@ class CurvedBoundarySource(StrictModule):
     facets: np.ndarray
     tolerance: float = eqx.field(static=True)
     digest: bytes = eqx.field(static=True)
+    discovery_id: str | None = eqx.field(static=True)
+    maximum_displacement: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1307,6 +1381,8 @@ class CurvedBoundarySource(StrictModule):
         /,
         *,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        discovery_id: str | None = None,
+        maximum_displacement: float = 0.0,
     ) -> None:
         mask = np.asarray(facets)
         if mask.dtype != np.bool_ or mask.ndim != 1:
@@ -1323,6 +1399,10 @@ class CurvedBoundarySource(StrictModule):
         self.facets = mask.copy()
         self.facets.setflags(write=False)
         self.tolerance = float(tolerance)
+        self.discovery_id = discovery_id
+        if not np.isfinite(maximum_displacement) or maximum_displacement < 0:
+            raise ValueError("CurvedBoundarySource maximum displacement must be finite and nonnegative")
+        self.maximum_displacement = float(maximum_displacement)
         self.digest = self._source_digest()
 
     def _source_digest(self) -> bytes:
@@ -1333,6 +1413,8 @@ class CurvedBoundarySource(StrictModule):
                     "source_id": self.profile.source_id,
                     "source_revision": self.profile.source_revision,
                     "profile_id": self.profile.profile_id,
+                    "discovery_id": self.discovery_id,
+                    "maximum_displacement": self.maximum_displacement,
                     "profile_arrays": array_tree_fingerprint(self.profile),
                     "profile_facts": {
                         entry.name: getattr(self.profile, entry.name)
@@ -1665,6 +1747,286 @@ def _record(
         ancestry.cell_kinds[identifier] = int(kind)
 
 
+def _cavity_cell_ids(ancestry: _Ancestry, cells: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        [ancestry.cells[tuple(sorted(row))][0] for row in cells.tolist()],
+        dtype=np.int64,
+    )
+
+
+def _append_material_edit(
+    ancestry: _Ancestry,
+    removed_ids: np.ndarray,
+    removed_rows: np.ndarray,
+    before_points: np.ndarray,
+    created_ids: np.ndarray,
+    created_rows: np.ndarray,
+    after_points: np.ndarray,
+    chart_id: str,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+) -> None:
+    """Retain one committed edit's cavity cells, each listed positively oriented.
+
+    Orientation is not material content: a cell whose binary64 corners list
+    negatively swaps its last two corners. Exact positivity is proved later
+    by the material chain, which refuses any degenerate cell.
+    """
+    rows = []
+    for cells, points in ((removed_rows, before_points), (created_rows, after_points)):
+        row = np.array(cells, dtype=np.int64, copy=True)
+        corners = points[row]
+        negative = np.linalg.det(corners[:, 1:] - corners[:, :1]) < 0.0
+        row[negative] = row[negative][:, (0, 1, 3, 2)]
+        rows.append(row)
+    record = MaterialEditRecord(
+        np.array(removed_ids, dtype=np.int64, copy=True),
+        rows[0],
+        np.array(before_points[rows[0]], dtype=np.float64, copy=True),
+        np.array(created_ids, dtype=np.int64, copy=True),
+        rows[1],
+        np.array(after_points[rows[1]], dtype=np.float64, copy=True),
+        chart_id,
+    )
+    budget.retain_owner(record)
+    ancestry.material_edits.append(record)
+
+
+def _record_edit(
+    ancestry: _Ancestry,
+    before: np.ndarray,
+    after: np.ndarray,
+    kind: EntityLineageKind,
+    before_points: np.ndarray,
+    after_points: np.ndarray,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+    *,
+    chart_id: str = "",
+) -> None:
+    """Record lineage of one committed topology edit and retain its cavity cells."""
+    old_keys = {tuple(sorted(row)) for row in before.tolist()}
+    new_keys = {tuple(sorted(row)) for row in after.tolist()}
+    removed = before[[tuple(sorted(row)) not in new_keys for row in before.tolist()]]
+    created = after[[tuple(sorted(row)) not in old_keys for row in after.tolist()]]
+    removed_ids = _cavity_cell_ids(ancestry, removed)
+    _record(ancestry, before, after, kind)
+    _append_material_edit(
+        ancestry, removed_ids, removed, before_points,
+        _cavity_cell_ids(ancestry, created), created, after_points, chart_id, budget,
+    )
+
+
+def _record_relocation(
+    ancestry: _Ancestry,
+    cells: np.ndarray,
+    before_points: np.ndarray,
+    after_points: np.ndarray,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+) -> None:
+    """Retain the moved star of one committed relocation as an identity edit."""
+    identifiers = _cavity_cell_ids(ancestry, cells)
+    _append_material_edit(
+        ancestry, identifiers, cells, before_points, identifiers, cells, after_points, "", budget,
+    )
+
+
+def _paired_cavity_snapshot(
+    points: np.ndarray,
+    cells: np.ndarray,
+    faces: np.ndarray,
+    labels: np.ndarray,
+    cell_ids: np.ndarray,
+) -> implicit_cavity_owner.CavitySnapshot:
+    used = np.unique(cells)
+    rows = {int(vertex): row for row, vertex in enumerate(used)}
+    cell_faces = {
+        tuple(sorted(face))
+        for cell in cells.tolist()
+        for face in combinations(cell, 3)
+    }
+    selected = [
+        (face, int(label))
+        for face, label in zip(faces.tolist(), labels.tolist(), strict=True)
+        if tuple(sorted(face)) in cell_faces
+    ]
+    edge_owners: dict[tuple[int, int], list[int]] = {}
+    for face, label in selected:
+        for edge in combinations(sorted(face), 2):
+            edge_owners.setdefault(edge, []).append(label)
+    rim = tuple(
+        (
+            rows[a], rows[b],
+            canonical_fingerprint({"edge": (a, b), "source": owners[0]}),
+        )
+        for (a, b), owners in sorted(edge_owners.items())
+        if len(owners) == 1
+    )
+    return implicit_cavity_owner.CavitySnapshot(
+        tuple((Fraction(float(x)), Fraction(float(y)), Fraction(float(z))) for x, y, z in points[used]),
+        tuple((rows[int(a)], rows[int(b)], rows[int(c)], rows[int(d)]) for a, b, c, d in cells),
+        tuple((rows[a], rows[b], rows[c]) for (a, b, c), _ in selected),
+        tuple(str(label) for _, label in selected),
+        tuple(int(value) for value in cell_ids),
+        rim,
+    )
+
+
+def _cavity_centroid(
+    vertices: tuple[implicit_cavity_owner.Point, ...], rows: tuple[int, ...]
+) -> implicit_cavity_owner.Point:
+    x, y, z = (
+        sum((vertices[row][axis] for row in rows), Fraction(0)) / len(rows)
+        for axis in range(3)
+    )
+    return x, y, z
+
+
+def _prepare_curved_cavity(
+    snapshot: TetMeshArrays,
+    points: np.ndarray,
+    removed: np.ndarray,
+    proposed: np.ndarray,
+    new_faces: np.ndarray,
+    source_label: int,
+    ancestry: _Ancestry,
+    curved: _CurvedAuthority,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    *,
+    chart_direction: implicit_cavity_owner.Point | None = None,
+) -> implicit_cavity_owner.ImplicitCavityAtlas | None:
+    with budget.temporary_scope():
+        atlas = _prepare_curved_cavity_impl(
+            snapshot, points, removed, proposed, new_faces, source_label,
+            ancestry, curved, budget, chart_direction=chart_direction,
+        )
+        if atlas is not None:
+            budget.retain_basis((atlas,))
+        return atlas
+
+
+def _prepare_curved_cavity_impl(
+    snapshot: TetMeshArrays,
+    points: np.ndarray,
+    removed: np.ndarray,
+    proposed: np.ndarray,
+    new_faces: np.ndarray,
+    source_label: int,
+    ancestry: _Ancestry,
+    curved: _CurvedAuthority,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    *,
+    chart_direction: implicit_cavity_owner.Point | None = None,
+) -> implicit_cavity_owner.ImplicitCavityAtlas | None:
+    """Earn a paired virtual volume map before the native candidate commits."""
+    discovery = curved.source.discovery_id
+    if discovery is None:
+        raise ValueError("projected cavity history requires the actual original discovery")
+    budget.reserve(
+        snapshot.faces.size + 12 * (removed.shape[0] + proposed.shape[0]),
+        256 * (removed.size + proposed.size + snapshot.faces.size + new_faces.size),
+    )
+    old_keys = {tuple(sorted(row)) for row in removed.tolist()}
+    new_keys = {tuple(sorted(row)) for row in proposed.tolist()}
+    created = {
+        key: ancestry.next_cell_id + index
+        for index, key in enumerate(sorted(new_keys - old_keys))
+    }
+    proposed_ids = np.asarray(
+        [
+            ancestry.cells[key][0] if key in old_keys else created[key]
+            for key in (tuple(sorted(row)) for row in proposed.tolist())
+        ],
+        dtype=np.int64,
+    )
+    next_facets = {
+        tuple(sorted(face))
+        for cell in proposed.tolist()
+        for face in combinations(cell, 3)
+    }
+    retained = np.asarray(
+        [tuple(sorted(face)) in next_facets for face in snapshot.faces.tolist()],
+        dtype=np.bool_,
+    )
+    retained_keys = {tuple(sorted(row)) for row in snapshot.faces[retained].tolist()}
+    fresh = np.asarray(
+        [row for row in new_faces.tolist() if tuple(sorted(row)) not in retained_keys],
+        dtype=np.int32,
+    ).reshape(-1, 3)
+    after_faces = np.concatenate((snapshot.faces[retained], fresh))
+    after_labels = np.concatenate(
+        (snapshot.face_sources[retained], np.full(fresh.shape[0], source_label, dtype=np.int32))
+    )
+    before = _paired_cavity_snapshot(
+        snapshot.points, removed, snapshot.faces, snapshot.face_sources,
+        _cavity_cell_ids(ancestry, removed),
+    )
+    after = _paired_cavity_snapshot(
+        points, proposed, after_faces, after_labels, proposed_ids,
+    )
+    used = tuple(sorted({point for tet in before.cells for point in tet}))
+    anchors = [_cavity_centroid(before.vertices, used)]
+    anchors.extend(_cavity_centroid(before.vertices, cell) for cell in before.cells)
+    predecessor = (
+        ancestry.cavity_history[-1].atlas.chart_id if ancestry.cavity_history else ""
+    )
+    edit = implicit_cavity_owner.prepare_implicit_cavity_edit(
+        before, after, source_id=curved.source.profile.source_id,
+        discovery_id=discovery, chronology_index=len(ancestry.cavity_history),
+        predecessor_id=predecessor, budget=budget,
+    )
+    for axes in ((0, 1), (0, 2), (1, 2)):
+        if chart_direction is not None and chart_direction[3 - sum(axes)] == 0:
+            continue
+        for anchor in dict.fromkeys(anchors):
+            try:
+                atlas = implicit_cavity_owner.build_implicit_cavity_atlas(
+                    edit, chart_axes=axes, anchor=anchor, budget=budget,
+                    chart_direction=chart_direction,
+                )
+                corners = tuple(
+                    point for tetrahedron in (*atlas.old_tets, *atlas.new_tets)
+                    for point in tetrahedron
+                )
+                reserve_fraction_work(corners, 12 * len(corners), 2, 4, budget=budget)
+                cap = Fraction(curved.source.maximum_displacement) ** 2
+                if any(
+                    sum(((a - b) ** 2 for a, b in zip(old_point, new_point, strict=True)), Fraction(0)) > cap
+                    for old_tet, new_tet in zip(atlas.old_tets, atlas.new_tets, strict=True)
+                    for old_point, new_point in zip(old_tet, new_tet, strict=True)
+                ):
+                    # Paired lifts depend on the chart, never on the shared
+                    # anchor; every other anchor repeats this displacement.
+                    break
+                return atlas
+            except implicit_cavity_owner.CavityAtlasRefusal as error:
+                if not error.recoverable:
+                    raise
+                if error.status is implicit_cavity_owner.CavityAtlasStatus.NOT_A_GRAPH:
+                    break
+    return None
+
+
+def _retain_curved_cavity(
+    ancestry: _Ancestry,
+    atlas: implicit_cavity_owner.ImplicitCavityAtlas,
+    before: TetMeshArrays,
+    after: TetMeshArrays,
+    before_ids: np.ndarray,
+    lookup: _MaterialHistoryIndex | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    record = CurvedCavityTransition(
+        atlas, before, after, before_ids, _cavity_cell_ids(ancestry, after.tetrahedra)
+    )
+    budget.retain_basis((record,))
+    ancestry.cavity_history.append(record)
+    if lookup is not None:
+        # The epoch-owned lookup follows each committed append.
+        lookup.synchronize(ancestry.cavity_history, budget=budget)
+
+
 def _collapse_cells(cells: np.ndarray, removed: int, kept: int, /) -> np.ndarray:
     result = cells.copy()
     result[result == removed] = kept
@@ -1692,11 +2054,26 @@ class TetraMetricSource:
         _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     ] = field(kw_only=True)
     corners: np.ndarray = field(init=False, repr=False)
+    # Canonical exact coordinate rows of the PLC source; ``None`` on the
+    # binary64 path.
+    source_points: (
+        tuple[_dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...] | None
+    ) = field(init=False, repr=False)
 
     def __post_init__(
         self,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     ) -> None:
+        # Identity-keyed preparations (the source hierarchy and cell inverses)
+        # rely on these numeric banks staying fixed for the table lifetime.
+        object.__setattr__(self, "points", immutable_host_array(np.asarray(self.points)))
+        object.__setattr__(self, "cells", immutable_host_array(np.asarray(self.cells)))
+        object.__setattr__(
+            self, "vertex_global_ids", immutable_host_array(np.asarray(self.vertex_global_ids))
+        )
+        object.__setattr__(
+            self, "cell_global_ids", immutable_host_array(np.asarray(self.cell_global_ids))
+        )
         if self.points.ndim != 2 or self.points.shape[1] != 3:
             raise ValueError(
                 f"TetraMetricSource.points must have three coordinate columns; got shape={self.points.shape}"
@@ -1751,8 +2128,10 @@ class TetraMetricSource:
                 corners = np.asarray(bank, dtype=object)[self.cells]
                 budget.retain_basis((bank, corners))
                 object.__setattr__(self, "corners", corners)
+                object.__setattr__(self, "source_points", bank)
             return
         object.__setattr__(self, "corners", self.points[self.cells])
+        object.__setattr__(self, "source_points", None)
 
     @classmethod
     def from_mesh(
@@ -1823,45 +2202,130 @@ def _metric_source_bvh(
         return prepare_bvh(lower, upper, dtype=jnp.float64)
 
 
-def _exact_source_weights(
-    corners: np.ndarray,
+@dataclass(frozen=True, slots=True)
+class _TetraInverse:
+    """One positive tetrahedron's base corner and proved edge-matrix adjugate."""
+
+    origin: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint
+    adjugate: _owner_phydrax_linalg__small_batched.ExactAdjugate3
+
+    @property
+    def storage_upper(self) -> int:
+        """Retained adjugate rows and determinant, as for projective action banks."""
+        return fraction_storage_upper(10, 3 * self.adjugate.height + 2) + 512
+
+
+def _tetra_inverse(
+    corners: tuple[_dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...],
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _TetraInverse:
+    """Prove one positive tetrahedron's edge-matrix adjugate through the linear owner."""
+    origin = corners[0]
+    with budget.temporary_scope():
+        # Nine source-edge differences; the shared linear owner prices the
+        # adjugate and its proved identity from the edge-column height.
+        reserve_fraction_work(corners, 9, 9, 2, budget=budget)
+        adjugate = _owner_phydrax_linalg__small_batched.prepare_exact_adjugate_3(
+            tuple(
+                tuple(corner[axis] - origin[axis] for axis in range(3))
+                for corner in corners[1:]
+            ),
+            budget=budget,
+        )
+    if adjugate is None or adjugate.determinant <= 0:
+        raise ValueError(
+            "TetraMetricSource.cells must have positive rational determinants; got a nonpositive source cell"
+        )
+    return _TetraInverse(origin, adjugate)
+
+
+def _tetra_weights(
+    inverse: _TetraInverse,
     point: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint,
     /,
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
+    """Return a point's exact barycentric weights from a proved tetrahedron inverse.
 
-    with _owner_phydrax__geometry_predicates.exact_charge(0, 8 * 15, budget=budget):
-        bits = _owner_phydrax__geometry_predicates.exact_bits(
-            np.asarray((*corners, point), dtype=object), budget=budget
+    Only the four returned weights outlive the transient action storage.
+    """
+    origin = inverse.origin
+    with budget.temporary_scope():
+        # Three query differences, then one partition-of-unity sum of the actions.
+        reserve_fraction_work((origin, point), 3, 3, 2, budget=budget)
+        first, second, third = _owner_phydrax_linalg__small_batched.exact_adjugate_action(
+            inverse.adjugate,
+            (point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]),
+            budget=budget,
         )
-    # Nine source-edge and three query differences each have numerator and
-    # denominator bounded by 2b+1 bits. Elimination, minor bounds, and
-    # arithmetic operation counts belong to the shared rational linear owner.
-    with _owner_phydrax__geometry_predicates.exact_charge(
-        12,
-        12 * (2 * _owner_phydrax__geometry_predicates.bigint_bytes(2 * bits + 1) + 64),
-        budget=budget,
-    ):
-        matrix = tuple(
-            tuple(corners[column + 1, axis] - corners[0, axis] for column in range(3))
-            for axis in range(3)
-        )
-        right = tuple((point[axis] - corners[0, axis],) for axis in range(3))
-        solved = _owner_phydrax_linalg__small_batched.prepare_exact_small_linear_actions(
-            matrix, right, budget=budget
-        )
-        if solved.actions is None or solved.determinant <= 0:
-            raise ValueError(
-                "TetraMetricSource.cells must have positive rational determinants; got a nonpositive source cell"
+        reserve_fraction_work(((first, second, third),), 3, 1, 4, budget=budget)
+        return Fraction(1) - first - second - third, first, second, third
+
+
+@dataclass(slots=True)
+class _SourceInverses:
+    """Proved cell inverses of one immutable source table, prepared on first use.
+
+    Inverses derive only from the table's immutable cell bank and its
+    canonical exact rows or immutable binary64 points. Their storage stays on
+    ``storage``, the live lease of the owning epoch or call.
+    """
+
+    tables: TetraMetricSource
+    storage: _dependency_phydrax_discretization__coordinate_budget.CoordinateLiveStorage
+    cells: dict[int, _TetraInverse] = field(default_factory=dict)
+
+    def inverse(
+        self,
+        cell: int,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> _TetraInverse:
+        """Return one cell's inverse, admitting its storage before it is cached."""
+        inverse = self.cells.get(cell)
+        if inverse is not None:
+            return inverse
+        tables = self.tables
+        vertices = tables.cells[cell].tolist()
+        exact = tables.source_points
+        lifted = 0
+        if exact is None:
+            # Twelve binary64 coordinates are lifted once; the origin is kept.
+            budget.reserve(12, 64 * 12)
+            corners = tuple(plc_rational_point(tables.points[vertex]) for vertex in vertices)
+            lifted = 128 + fraction_storage_upper(
+                3,
+                max(
+                    max(abs(value.numerator).bit_length(), value.denominator.bit_length())
+                    for value in corners[0]
+                ),
             )
-        reference = tuple(row[0] for row in solved.actions)
-        return (
-            Fraction(1) - sum(reference, Fraction(0)),
-            reference[0],
-            reference[1],
-            reference[2],
-        )
+        else:
+            corners = tuple(exact[vertex] for vertex in vertices)
+        inverse = _tetra_inverse(corners, budget=budget)
+        self.storage.set_bound(self.storage.bound + inverse.storage_upper + lifted)
+        self.cells[cell] = inverse
+        return inverse
+
+
+def _exact_point_queries(
+    bank: tuple[_dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...],
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[PackedBVH, np.ndarray, np.ndarray]:
+    """Prepare outward binary64 boxes of exact points and their query hierarchy."""
+    with _owner_phydrax__geometry_predicates.exact_charge(
+        0, 8 * 3 * len(bank), budget=budget
+    ):
+        with _exact_table_boxes(
+            np.asarray(bank, dtype=object)[:, None, :], budget=budget
+        ) as (lower, upper):
+            return prepare_bvh(lower, upper, dtype=jnp.float64), lower, upper
 
 
 def _locate_exact_source_stencil(
@@ -1877,10 +2341,30 @@ def _locate_exact_source_stencil(
         _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
     ]
     | None,
+    source_inverses: _SourceInverses | None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Select immutable source cells and sample the tensor in source coordinates."""
+    """Select immutable source cells and sample the tensor in source coordinates.
 
+    Without ``source_inverses`` the cell inverses live only for this call.
+    """
+    if source_inverses is None:
+        with budget.live_storage() as storage:
+            return _locate_exact_source_stencil(
+                tables,
+                rounded,
+                maximum_pairs,
+                require_coverage=require_coverage,
+                prepared_bvh=prepared_bvh,
+                work_counter=work_counter,
+                exact_points=exact_points,
+                source_inverses=_SourceInverses(tables, storage),
+                budget=budget,
+            )
+    if source_inverses.tables is not tables:
+        raise RuntimeError(
+            "tetra_metric.source_inverses must belong to the located source tables; got another table owner"
+        )
     bank = (
         tuple(plc_rational_point(row) for row in rounded)
         if exact_points is None
@@ -1895,30 +2379,21 @@ def _locate_exact_source_stencil(
         if prepared_bvh is None
         else prepared_bvh
     )
-    with _owner_phydrax__geometry_predicates.exact_charge(
-        0, 8 * 3 * len(bank), budget=budget
-    ):
-        with _exact_table_boxes(
-            np.asarray(bank, dtype=object)[:, None, :], budget=budget
-        ) as (
-            lower,
-            upper,
-        ):
-            queries = prepare_bvh(lower, upper, dtype=jnp.float64)
+    queries, _, _ = _exact_point_queries(bank, budget=budget)
     selected = np.full((len(bank),), -1, dtype=np.int64)
     selected_ids = np.full((len(bank),), np.iinfo(np.int64).max, dtype=np.int64)
     weights = np.zeros((len(bank), 4), dtype=np.float64)
     work = 0
     for cells, points in bvh_overlap_pair_blocks(tree, queries, include_touching=True):
         budget.ticket.checkpoint()
-        for cell, query in zip(cells, points, strict=True):
+        for cell, query in zip(cells.tolist(), points.tolist(), strict=True):
             work += 1
             if work_counter is not None:
                 work_counter[0] += 1
             if work > maximum_pairs:
                 raise source_location_budget(maximum_pairs, work)
-            coefficients = _exact_source_weights(
-                tables.corners[cell], bank[query], budget=budget
+            coefficients = _tetra_weights(
+                source_inverses.inverse(cell, budget=budget), bank[query], budget=budget
             )
             if (
                 min(coefficients) < 0
@@ -1980,6 +2455,7 @@ def _locate_source_stencil(
         _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
     ]
     | None = None,
+    source_inverses: _SourceInverses | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Locate points with the affine kernel bound to immutable source rows."""
@@ -2001,6 +2477,7 @@ def _locate_source_stencil(
             prepared_bvh=prepared_bvh,
             work_counter=work_counter,
             exact_points=exact_points,
+            source_inverses=source_inverses,
             budget=budget,
         )
     cells = tables.cells
@@ -2203,6 +2680,431 @@ def _constrained_face_relations(
     )
 
 
+def _inside_chart_box(
+    point: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint,
+    box: implicit_cavity_owner.Box,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
+    """Decide closed exact box membership at six comparisons."""
+    lower, upper = box
+    reserve_fraction_work((point, lower, upper), 6, 0, 2, budget=budget)
+    return all(lower[axis] <= point[axis] <= upper[axis] for axis in range(3))
+
+
+def _bank_storage_upper(*banks: np.ndarray | Array) -> int:
+    """Declared bytes of retained host or device banks and their owner slots."""
+    return sum(256 + int(bank.nbytes) for bank in banks)
+
+
+@dataclass(frozen=True, slots=True)
+class _MaterialChart:
+    """Outward binary64 enclosures of one chart's exact new and old row boxes."""
+
+    new_lower: np.ndarray
+    new_upper: np.ndarray
+    old_lower: np.ndarray
+    old_upper: np.ndarray
+    # The old-or-new support box; ``None`` only for a chart without rows.
+    support: tuple[np.ndarray, np.ndarray] | None
+
+    @property
+    def storage_upper(self) -> int:
+        support = () if self.support is None else self.support
+        return 512 + _bank_storage_upper(
+            self.new_lower, self.new_upper, self.old_lower, self.old_upper, *support
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _MaterialSupports:
+    """One PackedBVH over the supports of a contiguous chronological record range."""
+
+    first: int
+    stop: int
+    records: np.ndarray
+    tree: PackedBVH | None
+
+    @property
+    def storage_upper(self) -> int:
+        tree = self.tree
+        banks = () if tree is None else (
+            tree.bbox_min, tree.bbox_max, tree.left, tree.right, tree.leaf_id,
+            tree.leaf_items, tree.leaf_node, tree.item_bbox_min, tree.item_bbox_max,
+        )
+        return 512 + _bank_storage_upper(self.records, *banks)
+
+
+@dataclass(slots=True)
+class _MaterialHistoryIndex:
+    """Chronological material lookup, prepared once per appended cavity record.
+
+    Each record retains outward binary64 enclosures of its exact row boxes;
+    exact closed-box membership still selects every row. Support buckets
+    cover contiguous chronological ranges with strictly decreasing record
+    counts, so an appended record enters O(log n) PackedBVH builds. Chart
+    inverses are proved on first exact use. Every preparation is admitted on
+    ``storage``, the live lease of the owning epoch or call, before it is
+    committed; replaced buckets and abandoned histories release their bytes.
+    """
+
+    storage: _dependency_phydrax_discretization__coordinate_budget.CoordinateLiveStorage
+    # The append-only history whose prefix ``records`` is, if any.
+    source: _CavityHistory | None = None
+    records: list[CurvedCavityTransition] = field(default_factory=list)
+    charts: list[_MaterialChart] = field(default_factory=list)
+    buckets: list[_MaterialSupports] = field(default_factory=list)
+    inverses: dict[tuple[int, int, int], _TetraInverse] = field(default_factory=dict)
+    storage_bytes: int = 0
+
+    def _admit(self, delta: int, /) -> None:
+        self.storage.set_bound(self.storage.bound + delta)
+        self.storage_bytes += delta
+
+    def reset(self) -> None:
+        """Detach every preparation and release its storage."""
+        self.records.clear()
+        self.charts.clear()
+        self.buckets.clear()
+        self.inverses.clear()
+        self.source = None
+        self._admit(-self.storage_bytes)
+
+    def synchronize(
+        self,
+        history: Sequence[CurvedCavityTransition],
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        """Bring the prepared lookup up to ``history``.
+
+        The append-only history this index already mirrors only grows, so its
+        prepared prefix is trusted and only appended records are prepared.
+        Any other history is authenticated record by record first and is
+        prepared afresh unless the prepared records are its exact prefix.
+        """
+        prepared = len(self.records)
+        if history is not self.source or len(history) < prepared:
+            # One identity visit per prepared record.
+            budget.reserve(min(prepared, len(history)))
+            if len(history) < prepared or any(
+                current is not retained
+                for current, retained in zip(history, self.records, strict=False)
+            ):
+                self.reset()
+                prepared = 0
+            self.source = history if isinstance(history, _CavityHistory) else None
+        if len(history) > prepared:
+            self._prepare(tuple(history[prepared:]), budget=budget)
+
+    def _prepare(
+        self,
+        appended: tuple[CurvedCavityTransition, ...],
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        """Prepare appended records and their merged bucket, then commit them."""
+        charts: list[_MaterialChart] = []
+        for record in appended:
+            atlas = record.atlas
+            with (
+                _exact_table_boxes(
+                    np.asarray(atlas.new_bounds, dtype=object).reshape((-1, 2, 3)),
+                    budget=budget,
+                ) as (new_lower, new_upper),
+                _exact_table_boxes(
+                    np.asarray(atlas.old_bounds, dtype=object).reshape((-1, 2, 3)),
+                    budget=budget,
+                ) as (old_lower, old_upper),
+            ):
+                lower = np.concatenate((new_lower, old_lower))
+                upper = np.concatenate((new_upper, old_upper))
+                # One binary64 comparison per support-row coordinate.
+                budget.reserve(lower.size + upper.size)
+                charts.append(
+                    _MaterialChart(
+                        new_lower, new_upper, old_lower, old_upper,
+                        (np.min(lower, axis=0), np.max(upper, axis=0))
+                        if lower.shape[0] else None,
+                    )
+                )
+        prepared = len(self.records)
+        first, stop = prepared, prepared + len(appended)
+        kept = len(self.buckets)
+        while kept and self.buckets[kept - 1].stop - self.buckets[kept - 1].first <= stop - first:
+            kept -= 1
+            first = self.buckets[kept].first
+        members: list[int] = []
+        lower_rows: list[np.ndarray] = []
+        upper_rows: list[np.ndarray] = []
+        for member in range(first, stop):
+            support = (
+                self.charts[member] if member < prepared else charts[member - prepared]
+            ).support
+            if support is not None:
+                members.append(member)
+                lower_rows.append(support[0])
+                upper_rows.append(support[1])
+        tree = None
+        if members:
+
+            def reserve_storage(size: int, /) -> None:
+                budget.reserve(0, size)
+
+            with budget.temporary_scope():
+                tree = prepare_bvh(
+                    np.stack(lower_rows),
+                    np.stack(upper_rows),
+                    dtype=jnp.float64,
+                    _charge_work=budget.reserve,
+                    _reserve_storage=reserve_storage,
+                )
+        bucket = _MaterialSupports(first, stop, np.asarray(members, dtype=np.int64), tree)
+        # Admit the new banks before committing them; replaced buckets leave.
+        self._admit(
+            sum(chart.storage_upper for chart in charts)
+            + bucket.storage_upper
+            - sum(replaced.storage_upper for replaced in self.buckets[kept:])
+        )
+        self.records.extend(appended)
+        self.charts.extend(charts)
+        del self.buckets[kept:]
+        self.buckets.append(bucket)
+
+    def supports(
+        self,
+        points: tuple[_dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...],
+        cursor: int,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> tuple[list[list[int]], np.ndarray, np.ndarray]:
+        """Return each point's ascending records before ``cursor`` and its outward box."""
+        queries, lower, upper = _exact_point_queries(points, budget=budget)
+        found: list[list[int]] = [[] for _ in points]
+        for bucket in self.buckets:
+            if bucket.first >= cursor or bucket.tree is None:
+                continue
+            for items, slots in bvh_overlap_pair_blocks(
+                bucket.tree, queries, include_touching=True, visit=budget.reserve
+            ):
+                budget.ticket.checkpoint()
+                chosen = bucket.records[items]
+                earlier = chosen < cursor
+                for record, slot in zip(
+                    chosen[earlier].tolist(), slots[earlier].tolist(), strict=True
+                ):
+                    found[slot].append(record)
+        for candidates in found:
+            candidates.sort()
+        return found, lower, upper
+
+    def rows(
+        self,
+        record: int,
+        point: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Return the new and old rows whose exact closed boxes contain ``point``."""
+        chart, atlas = self.charts[record], self.records[record].atlas
+        selected: list[tuple[int, ...]] = []
+        with budget.temporary_scope():
+            for row_lower, row_upper, bounds in (
+                (chart.new_lower, chart.new_upper, atlas.new_bounds),
+                (chart.old_lower, chart.old_upper, atlas.old_bounds),
+            ):
+                # One conservative binary64 box test per row precedes exact membership.
+                budget.reserve(row_lower.shape[0])
+                candidates = np.flatnonzero(
+                    np.all((row_lower <= upper) & (lower <= row_upper), axis=1)
+                )
+                selected.append(
+                    tuple(
+                        row for row in candidates.tolist()
+                        if _inside_chart_box(point, bounds[row], budget)
+                    )
+                )
+        return selected[0], selected[1]
+
+    def weights(
+        self,
+        record: int,
+        new: bool,
+        row: int,
+        point: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
+        """Return exact weights in one chart row, proving its inverse on first use."""
+        key = (record, int(new), row)
+        inverse = self.inverses.get(key)
+        if inverse is None:
+            atlas = self.records[record].atlas
+            inverse = _tetra_inverse(
+                (atlas.new_tets if new else atlas.old_tets)[row], budget=budget
+            )
+            # The anchor origin belongs to the retained record; the key and
+            # table slot join the adjugate rows.
+            self._admit(inverse.storage_upper + 256)
+            self.inverses[key] = inverse
+        return _tetra_weights(inverse, point, budget=budget)
+
+
+def _material_source_stencil(
+    tables: TetraMetricSource,
+    points: np.ndarray,
+    history: Sequence[CurvedCavityTransition],
+    maximum_pairs: int,
+    *,
+    require_coverage: bool = True,
+    prepared_bvh: PackedBVH | None = None,
+    work_counter: list[int] | None = None,
+    exact_points: tuple[
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
+    ] | None = None,
+    prepared_history: _MaterialHistoryIndex | None = None,
+    source_inverses: _SourceInverses | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Locate the true inverse of the chronological paired maps, never a proxy edge.
+
+    Edits replay from the latest backwards. A point visits, in decreasing
+    chronology, only edits with an exact old or new row box containing its
+    current material position; each edit replays its points in index and row
+    order, exactly as the complete reverse walk. An applied inverse requeries
+    the changed point below that edit. Outside every proved support the map
+    is the identity; a point found only in old rows lies in removed material
+    and stays inadmissible. Without prepared lookups, both the history index
+    and the source cell inverses live only for this call.
+    """
+    if prepared_history is None or source_inverses is None:
+        with budget.live_storage() as storage:
+            return _material_source_stencil(
+                tables,
+                points,
+                history,
+                maximum_pairs,
+                require_coverage=require_coverage,
+                prepared_bvh=prepared_bvh,
+                work_counter=work_counter,
+                exact_points=exact_points,
+                prepared_history=(
+                    _MaterialHistoryIndex(storage)
+                    if prepared_history is None
+                    else prepared_history
+                ),
+                source_inverses=(
+                    _SourceInverses(tables, storage)
+                    if source_inverses is None
+                    else source_inverses
+                ),
+                budget=budget,
+            )
+    budget.reserve(points.size, 64 * points.size)
+    material = (
+        [plc_rational_point(point) for point in points]
+        if exact_points is None else list(exact_points)
+    )
+    if len(material) != points.shape[0]:
+        raise ValueError("metric material queries must align with their exact point bank")
+    admitted = np.ones(points.shape[0], dtype=np.bool_)
+    index = prepared_history
+    index.synchronize(history, budget=budget)
+    work = 0
+    candidates: dict[int, list[int]] = {}
+    boxes: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    pending: dict[int, list[tuple[int, tuple[int, ...], tuple[int, ...]]]] = {}
+    chronology: list[int] = []
+
+    def charge() -> None:
+        nonlocal work
+        work += 1
+        if work_counter is not None:
+            work_counter[0] += 1
+        if work > maximum_pairs:
+            raise source_location_budget(maximum_pairs, work)
+
+    def schedule(member: int) -> None:
+        # The latest remaining binary64 candidate with an exact row-box hit.
+        queue = candidates[member]
+        lower, upper = boxes[member]
+        while queue:
+            record = queue.pop()
+            rows = index.rows(record, material[member], lower, upper, budget=budget)
+            if rows[0] or rows[1]:
+                if record not in pending:
+                    pending[record] = []
+                    heapq.heappush(chronology, -record)
+                pending[record].append((member, *rows))
+                return
+
+    def requery(members: list[int], cursor: int) -> None:
+        found, lower, upper = index.supports(
+            tuple(material[member] for member in members), cursor, budget=budget
+        )
+        for slot, member in enumerate(members):
+            candidates[member] = found[slot]
+            boxes[member] = (lower[slot], upper[slot])
+            schedule(member)
+
+    if index.buckets and material:
+        requery(list(range(len(material))), len(index.records))
+    while chronology:
+        record = -heapq.heappop(chronology)
+        old = index.records[record].atlas.old_tets
+        moved: list[int] = []
+        for member, new_rows, old_rows in sorted(pending.pop(record)):
+            point = material[member]
+            image = None
+            for row in new_rows:
+                charge()
+                coefficients = index.weights(record, True, row, point, budget=budget)
+                if min(coefficients) < 0:
+                    continue
+                reserve_fraction_work((*old[row], coefficients), 24, 3, 8, budget=budget)
+                candidate = tuple(
+                    sum((weight * vertex[axis] for weight, vertex in zip(coefficients, old[row], strict=True)), Fraction(0))
+                    for axis in range(3)
+                )
+                if image is not None and candidate != image:
+                    raise ValueError("implicit material charts must agree on every shared inverse trace")
+                image = candidate
+            if image is not None:
+                material[member] = image
+                moved.append(member)
+                continue
+            for row in old_rows:
+                charge()
+                if min(index.weights(record, False, row, point, budget=budget)) >= 0:
+                    # The part removed by a moving exterior patch is not in the
+                    # target material domain. It must not fall through to identity.
+                    admitted[member] = False
+                    break
+            # An unchanged position keeps its earlier binary64 candidates.
+            schedule(member)
+        if moved and record:
+            requery(moved, record)
+    indices, weights, valid = _locate_exact_source_stencil(
+        tables, np.asarray(material, dtype=np.float64), maximum_pairs - work,
+        require_coverage=False, prepared_bvh=prepared_bvh, work_counter=work_counter,
+        exact_points=tuple(material), source_inverses=source_inverses, budget=budget,
+    )
+    valid = valid & admitted[:, None]
+    if require_coverage and not np.all(valid):
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.LINEAGE_FAILED,
+            "tetra_metric.material_location requires coverage by the complete inverse material history",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.LINEAGE_CONSTRUCTION.value,
+        )
+    return indices, weights, valid
+
+
 def _assemble(
     mesh: CellMesh,
     snapshot: TetMeshArrays,
@@ -2255,17 +3157,24 @@ def _assemble(
         tuple(cells[owners == index] for index in range(len(mesh.blocks))),
         tuple(cell_ids[owners == index] for index in range(len(mesh.blocks))),
     )
-    stencil = (
-        locate_stencil(mesh, snapshot.points[live], maximum_pairs, budget=budget)
-        if source_tables is None or source_tables.source_geometry is None
-        else _locate_source_stencil(
-            source_tables,
-            snapshot.points[live],
-            maximum_pairs,
-            exact_points=exact_points,
-            budget=budget,
+    if ancestry.cavity_history:
+        tables = (
+            TetraMetricSource.from_mesh(mesh, budget=budget)
+            if source_tables is None else source_tables
         )
-    )
+        stencil = _material_source_stencil(
+            tables, snapshot.points[live], ancestry.cavity_history,
+            maximum_pairs, budget=budget,
+        )
+    else:
+        stencil = (
+            locate_stencil(mesh, snapshot.points[live], maximum_pairs, budget=budget)
+            if source_tables is None or source_tables.source_geometry is None
+            else _locate_source_stencil(
+                source_tables, snapshot.points[live], maximum_pairs,
+                exact_points=exact_points, budget=budget,
+            )
+        )
     relations = []
     live_ids = ids[live]
     collapsed = resolved_collapses(ids, source_ids.size, ancestry.vertex_successor)
@@ -2363,22 +3272,26 @@ def _metric_coordinate_phase(
     maximum_cavity_cells: int,
 ) -> Iterator[NativeBatchTicket]:
     """Reserve a bounded host/native phase and retain its request counters."""
-    remaining = scope.remaining()
     storage = budget.storage_ticket
-    retained_bytes = 0 if storage is None else storage.bytes_upper
-    ticket = scope.batch(
-        min(
-            maximum_work_units,
-            max(0, budget.maximum_work_units - budget.work_units),
-            remaining.remaining_work_units,
-        ),
-        queries_upper=remaining.remaining_geometry_queries,
-        bytes_upper=min(
-            max(0, budget.maximum_memory_bytes - retained_bytes),
-            remaining.remaining_managed_bytes,
-        ),
-        cavity_upper=min(maximum_cavity_cells, remaining.remaining_cavity_cells),
+    retained_bytes = (
+        0
+        if storage is None
+        else budget.retained_basis_bytes + budget.temporary_bytes_upper
     )
+    with scope.ticket_view() as incoming:
+        ticket = scope.batch(
+            min(
+                maximum_work_units,
+                max(0, budget.maximum_work_units - budget.work_units),
+                incoming.remaining_work_units,
+            ),
+            queries_upper=incoming.remaining_geometry_queries,
+            bytes_upper=min(
+                max(0, budget.maximum_memory_bytes - retained_bytes),
+                incoming.remaining_managed_bytes,
+            ),
+            cavity_upper=min(maximum_cavity_cells, incoming.remaining_cavity_cells),
+        )
     with budget.measurement(), budget.bind_ticket(ticket):
         with ticket.native_target():
             yield ticket
@@ -2405,6 +3318,11 @@ class _NativeMetricBudget:
     band_incidence: dict[int, int] | None = None
     source_candidates: list[int] = field(default_factory=lambda: [0])
     source_bvh: PackedBVH | None = None
+    cavity_history: _CavityHistory = field(default_factory=_CavityHistory)
+    # Prepared lookups exist only inside ``owned_lookups``, whose live lease
+    # owns their bytes; outside it every lookup is call-scoped.
+    source_inverses: _SourceInverses | None = None
+    material_history: _MaterialHistoryIndex | None = None
     exhausted: bool = False
     resource_message: str | None = None
     resource_requested: tuple[tuple[str, float], ...] = ()
@@ -2467,6 +3385,22 @@ class _NativeMetricBudget:
                     self.band_incidence = None
                     self.optimizer_storage = None
                     self.phase_ticket = None
+
+    @contextmanager
+    def owned_lookups(self) -> Iterator[None]:
+        """Own the source and material lookups on one live lease for the epoch.
+
+        The lease exists before any lookup allocates; leaving the scope
+        detaches both lookups and then releases every byte they admitted.
+        """
+        with self.coordinate_budget.live_storage() as storage:
+            self.source_inverses = _SourceInverses(self.source_tables, storage)
+            self.material_history = _MaterialHistoryIndex(storage)
+            try:
+                yield
+            finally:
+                self.material_history = None
+                self.source_inverses = None
 
     def commit_band(
         self, snapshot: TetMeshArrays, removed: np.ndarray, proposed: np.ndarray, /
@@ -2723,6 +3657,15 @@ class _NativeMetricBudget:
                 self.source_tables, budget=self.coordinate_budget
             )
         try:
+            if self.cavity_history:
+                return _material_source_stencil(
+                    self.source_tables, points, self.cavity_history, remaining,
+                    require_coverage=False, prepared_bvh=self.source_bvh,
+                    work_counter=self.source_candidates, exact_points=exact_points,
+                    prepared_history=self.material_history,
+                    source_inverses=self.source_inverses,
+                    budget=self.coordinate_budget,
+                )
             return _locate_source_stencil(
                 self.source_tables,
                 points,
@@ -2731,6 +3674,7 @@ class _NativeMetricBudget:
                 prepared_bvh=self.source_bvh,
                 work_counter=self.source_candidates,
                 exact_points=exact_points,
+                source_inverses=self.source_inverses,
                 budget=self.coordinate_budget,
             )
         except _leaf_phydrax_meshing__failures.MeshingFailure as error:
@@ -3796,6 +4740,7 @@ def _prepare_native_metric_state(
         int(np.max(identifiers)) + 1,
         [{int(identifier)} for identifier in driver.source.vertex_global_ids.tolist()],
     )
+    driver.epoch.cavity_history = ancestry.cavity_history
     # Metric interpolation precedes cavity and optimizer allowance binding.
     driver.epoch.maximum_optimizer_scratch_bytes = driver.optimizer_scratch_bytes
     driver.epoch.maximum_cavity_cells = driver.maximum_cavity_cells
@@ -3876,6 +4821,7 @@ def _run_native_metric_operation(
                     objective,
                     minimum_quality=driver.minimum_quality,
                     metric_band=(driver.lower_length, driver.upper_length),
+                    curved=driver.curved,
                 )
             count_index = 0
         case _NativeMetricOperation.COLLAPSE:
@@ -4580,7 +5526,7 @@ def execute_native_tetra_metric(
         admission.optimizer_scratch_bytes,
         curved,
     )
-    with budget.live_storage() as proof_storage:
+    with budget.live_storage() as proof_storage, epoch.owned_lookups():
         epoch.curved_storage = proof_storage
         try:
             return _run_native_metric_epoch(
@@ -5112,12 +6058,14 @@ def _reprove_curved_publication(
             return_index=True,
             return_inverse=True,
         )
-        _, certified = curved.certify(corners[rows], budget=budget)
+        deviation, certified = curved.certify(corners[rows], budget=budget)
         admitted = certified[inverse[: claims.rows.size]]
         if not np.all(admitted):
             stale = np.flatnonzero(~admitted)
+            bounds = deviation[inverse[stale]]
             raise ValueError(
-                f"tetra_metric.curved_claims must recertify from the original source; got {stale.size} unproved claim rows {claims.rows[stale[:8]].tolist()!r}"
+                f"tetra_metric.curved_claims must recertify from the original source; got {stale.size} unproved claim rows {claims.rows[stale[:8]].tolist()!r} "
+                f"with {int(np.count_nonzero(~np.isfinite(bounds)))} unresolved and largest finite deviation {float(np.max(bounds[np.isfinite(bounds)], initial=0.0))!r} for tolerance {curved.tolerance!r}"
             )
         published = certified[inverse[claims.rows.size :]]
         if not np.all(published):
@@ -5289,8 +6237,8 @@ def execute_tetra_metric_adaptation(
         with budget.measurement(), ExitStack() as storage:
             if budget.storage_ticket is None:
 
-                def retain_storage(bytes_upper: int) -> BatchTicket:
-                    return scope.batch(0, bytes_upper=bytes_upper)
+                def retain_storage(_bytes_upper: int) -> NativeScopeTicket:
+                    return scope.ticket_view()
 
                 storage.enter_context(budget.retained_storage(retain_storage))
             with measure_phase(record_phase, "native_preparation"):
@@ -5351,6 +6299,8 @@ def execute_tetra_metric_adaptation(
                     publication.metric,
                     outcome.evidence,
                     publication.successor,
+                    tuple(outcome.ancestry.cavity_history),
+                    tuple(outcome.ancestry.material_edits),
                 )
             finally:
                 native.close()
@@ -5865,6 +6815,7 @@ def _split_pass(
     *,
     minimum_quality: float,
     metric_band: tuple[float, float],
+    curved: _CurvedAuthority | None = None,
 ) -> tuple[TetMeshArrays, np.ndarray, int, int, int, bool, tuple[float, ...], int]:
     candidates = _prepare_split_candidates(
         snapshot, values, upper_metric_length, native_budget, objective
@@ -5905,6 +6856,7 @@ def _split_pass(
                 tangent=tangent,
                 minimum_quality=minimum_quality,
                 metric_band=metric_band,
+                curved=curved,
             )
             applied += changes
             work += attempts
@@ -5943,6 +6895,7 @@ def _split_batch(
     minimum_quality: float,
     metric_band: tuple[float, float],
     tangent: bool = True,
+    curved: _CurvedAuthority | None = None,
 ) -> tuple[TetMeshArrays, np.ndarray, int, int, int, bool, tuple[float, ...], int]:
     constructed = _construct_metric_splits(
         native,
@@ -5962,6 +6915,7 @@ def _split_batch(
     points = constructed.points
     if points is None:
         return snapshot, values, 0, work, rejected, exhausted, (), 0
+    sampled_history_length = len(ancestry.cavity_history)
     sampled = _sample_metric_splits(
         points, constructed.constructions, source_tables, source_metric, native_budget
     )
@@ -5977,7 +6931,16 @@ def _split_batch(
     compounds = 0
     accepted: list[float] = []
     for index, (first, second) in enumerate(proposals):
-        if not np.all(sampled.valid[index]):
+        candidate_sample, candidate_valid = samples[index], sampled.valid[index]
+        if len(ancestry.cavity_history) != sampled_history_length:
+            current_sample = _sample_metric_splits(
+                points[index:index + 1], (constructions[index],),
+                source_tables, source_metric, native_budget,
+            )
+            if current_sample is None:
+                return snapshot, values, applied, work, rejected, True, tuple(accepted), compounds
+            candidate_sample, candidate_valid = current_sample.metric[0], current_sample.valid[0]
+        if not np.all(candidate_valid):
             rejected += 1
             continue
         before = snapshot.tetrahedra
@@ -5997,6 +6960,11 @@ def _split_batch(
             break
         plan = None
         compound = False
+        cavity_atlas = None
+        claim_coordinates = None
+        claim_deviations = None
+        candidate_position = points[index]
+        projected_source = None
         if objective is not None:
             plan, compound, evaluations = _prepare_statistical_split(
                 snapshot,
@@ -6004,7 +6972,7 @@ def _split_batch(
                 source_metric,
                 (first, second),
                 constructions[index],
-                samples[index],
+                candidate_sample,
                 ancestry.vertex_sources[first] | ancestry.vertex_sources[second],
                 objective,
                 budget - work,
@@ -6027,13 +6995,43 @@ def _split_batch(
             if not native_budget.optimizer_scratch(32 * capacity + 80):
                 exhausted = True
                 break
-            insertion = native_budget.call(
-                lambda allowance: native.inspect_edge_insertion(
-                    first, second, points[index], points[index],
-                    source_fraction=fractions[index],
-                    maximum_cavity_cells=capacity, work_limit=allowance,
-                )
+            edge_faces = np.any(snapshot.faces == first, axis=1) & np.any(
+                snapshot.faces == second, axis=1
             )
+            edge_sources = np.unique(snapshot.face_sources[edge_faces])
+            if (
+                curved is not None
+                and curved.source.discovery_id is not None
+                and edge_sources.size == 1
+                and int(edge_sources[0]) in curved.face_sources
+            ):
+                native_budget._authenticate_curved(curved.source)
+                native_budget.coordinate_budget.reserve(2)
+                native_budget.coordinate_budget.ticket.consume(geometry_queries=2)
+                argument = jnp.asarray(points[index][None], dtype=jnp.float64)
+                geometry = curved.source.profile.geometry
+                distance = np.asarray(geometry.signed_distance(argument), dtype=np.float64)[0]
+                normal = np.asarray(geometry.boundary_normal(argument), dtype=np.float64)[0]
+                candidate_position = points[index] - distance * normal
+                if not np.all(np.isfinite(candidate_position)):
+                    rejected += 1
+                    continue
+                projected_source = int(edge_sources[0])
+                insertion = native_budget.call(
+                    lambda allowance: native.inspect_projected_edge_insertion(
+                        first, second, points[index], candidate_position, projected_source,
+                        source_fraction=fractions[index],
+                        maximum_cavity_cells=capacity, work_limit=allowance,
+                    )
+                )
+            else:
+                insertion = native_budget.call(
+                    lambda allowance: native.inspect_edge_insertion(
+                        first, second, points[index], points[index],
+                        source_fraction=fractions[index],
+                        maximum_cavity_cells=capacity, work_limit=allowance,
+                    )
+                )
             if insertion is None:
                 rejected += 1
                 if native_budget.exhausted:
@@ -6054,8 +7052,8 @@ def _split_batch(
             if not _metric_cavity_merit(
                 snapshot, values, insertion.removed, insertion.proposed,
                 minimum_quality, metric_band, native_budget,
-                changed_vertex=values.shape[0], changed_position=points[index],
-                changed_metric=samples[index],
+                changed_vertex=values.shape[0], changed_position=candidate_position,
+                changed_metric=candidate_sample,
                 scratch_extra=insertion.buffer_bytes,
                 refinement=True,
                 required_long_split=(
@@ -6073,9 +7071,55 @@ def _split_batch(
                 continue
         else:
             insertion = plan.insertion
+        if projected_source is not None:
+            if curved is None or insertion.projected_faces is None:
+                raise RuntimeError("projected insertion must retain its complete source claim faces")
+            projected_points = np.concatenate((snapshot.points, candidate_position[None]))
+            claim_coordinates = projected_points[insertion.projected_faces]
+            proof = native_budget.certify_curved(curved.source, claim_coordinates)
+            if proof is None:
+                exhausted = True
+                break
+            claim_deviations, admitted = proof
+            if not np.all(admitted):
+                rejected += 1
+                continue
+            fraction = Fraction(float(insertion.source_fraction))
+            direction_x, direction_y, direction_z = (
+                Fraction(float(candidate_position[axis]))
+                - (
+                    (1 - fraction) * Fraction(float(snapshot.points[first, axis]))
+                    + fraction * Fraction(float(snapshot.points[second, axis]))
+                )
+                for axis in range(3)
+            )
+            chart_direction = (direction_x, direction_y, direction_z)
+            cavity_atlas = _prepare_curved_cavity(
+                snapshot, projected_points, insertion.removed, insertion.proposed,
+                insertion.projected_faces, projected_source, ancestry, curved,
+                native_budget.coordinate_budget,
+                chart_direction=chart_direction if any(chart_direction) else None,
+            )
+            if cavity_atlas is None:
+                rejected += 1
+                continue
+        before_snapshot = snapshot
+        if cavity_atlas is not None:
+            native_budget.coordinate_budget.reserve(
+                snapshot.tetrahedra.shape[0], 8 * snapshot.tetrahedra.shape[0]
+            )
+        before_ids = (
+            _cavity_cell_ids(ancestry, snapshot.tetrahedra)
+            if cavity_atlas is not None else None
+        )
         inserted = native_budget.call(
             lambda allowance: native.commit_edge_insertion(
                 insertion, target_size=0.0, work_limit=allowance,
+                claim_digest=(
+                    None if projected_source is None or curved is None else curved.source.digest
+                ),
+                face_coordinates=claim_coordinates,
+                face_deviations=claim_deviations,
             )
         )
         if native_budget.exhausted:
@@ -6090,7 +7134,7 @@ def _split_batch(
             raise RuntimeError(
                 f"tetra_metric.inserted_vertex must append to retained vertex rows; got row {inserted!r} for count {values.shape[0]}"
             )
-        sample = samples[index] if plan is None else plan.metric
+        sample = candidate_sample if plan is None else plan.metric
         values = np.concatenate((values, sample[None]))
         compounds += int(compound)
         if insertion.removed.shape[0] > number:
@@ -6118,7 +7162,18 @@ def _split_batch(
                 points[index] if plan is None else plan.position,
             )
         )
-        _record(ancestry, removed, proposed, EntityLineageKind.REFINED_FROM)
+        _record_edit(
+            ancestry, removed, proposed, EntityLineageKind.REFINED_FROM,
+            points_before, snapshot.points, native_budget.coordinate_budget,
+            chart_id="" if cavity_atlas is None else cavity_atlas.chart_id,
+        )
+        if cavity_atlas is not None:
+            if before_ids is None:
+                raise RuntimeError("projected insertion must retain original cell identities")
+            _retain_curved_cavity(
+                ancestry, cavity_atlas, before_snapshot, snapshot,
+                before_ids, native_budget.material_history, native_budget.coordinate_budget,
+            )
         accepted.append(fractions[index] if plan is None else plan.insertion.source_fraction)
         applied += 1
         if objective is not None and plan is not None:
@@ -6366,8 +7421,11 @@ def _collapse_pass(
                     continue
             work += 1
             before = snapshot.tetrahedra
+            before_snapshot = snapshot
+            before_ids = None
+            cavity_atlas = None
             if curved_surface and curved is not None:
-                accepted = _commit_curved_collapse(
+                accepted, cavity_atlas = _commit_curved_collapse(
                     native,
                     snapshot,
                     removed,
@@ -6375,7 +7433,13 @@ def _collapse_pass(
                     surface_faces.size,
                     curved,
                     native_budget,
+                    ancestry,
                 )
+                if cavity_atlas is not None:
+                    native_budget.coordinate_budget.reserve(
+                        snapshot.tetrahedra.shape[0], 8 * snapshot.tetrahedra.shape[0]
+                    )
+                    before_ids = _cavity_cell_ids(ancestry, snapshot.tetrahedra)
                 if accepted is None:
                     break
             else:
@@ -6404,9 +7468,19 @@ def _collapse_pass(
             if ancestry.vertex_successor is None:
                 ancestry.vertex_successor = {}
             ancestry.vertex_successor[removed] = kept
-            _record(
-                ancestry, before[changed], proposed, EntityLineageKind.COLLAPSED_INTO
+            _record_edit(
+                ancestry, before[changed], proposed, EntityLineageKind.COLLAPSED_INTO,
+                before_snapshot.points, snapshot.points, native_budget.coordinate_budget,
+                chart_id="" if cavity_atlas is None else cavity_atlas.chart_id,
             )
+            if cavity_atlas is not None:
+                if before_ids is None:
+                    raise RuntimeError("curved collapse must retain original cell identities")
+                _retain_curved_cavity(
+                    ancestry, cavity_atlas, before_snapshot, snapshot,
+                    before_ids, native_budget.material_history,
+                    native_budget.coordinate_budget,
+                )
             applied += 1
             if objective is not None and statistical is not None:
                 objective.commit(statistical)
@@ -6450,8 +7524,9 @@ def _commit_curved_collapse(
     maximum_faces: int,
     curved: _CurvedAuthority,
     native_budget: _NativeMetricBudget,
+    ancestry: _Ancestry,
     /,
-) -> bool | None:
+) -> tuple[bool | None, implicit_cavity_owner.ImplicitCavityAtlas | None]:
     """Inspect natively, prove every new whole facet from the source, then commit.
 
     None means the shared epoch allowance is exhausted. The proof binds the
@@ -6464,16 +7539,24 @@ def _commit_curved_collapse(
         )
     )
     if native_budget.exhausted:
-        return None
+        return None, None
     if plan is None or plan.source not in curved.face_sources:
-        return False
+        return False, None
     triangles = snapshot.points[plan.faces]
     proof = native_budget.certify_curved(curved.source, triangles)
     if proof is None:
-        return None
+        return None, None
     deviation, admitted = proof
     if not np.all(admitted):
-        return False
+        return False, None
+    cavity_atlas = None
+    if curved.source.discovery_id is not None:
+        cavity_atlas = _prepare_curved_cavity(
+            snapshot, snapshot.points, plan.removed, plan.proposed, plan.faces,
+            plan.source, ancestry, curved, native_budget.coordinate_budget,
+        )
+        if cavity_atlas is None:
+            return False, None
     accepted = native_budget.call(
         lambda allowance: native.collapse_curved_edge(
             plan,
@@ -6484,8 +7567,8 @@ def _commit_curved_collapse(
         )
     )
     if native_budget.exhausted:
-        return None
-    return bool(accepted)
+        return None, None
+    return bool(accepted), cavity_atlas if accepted else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -6658,7 +7741,10 @@ def _flip_pass(
         ):
             snapshot = native.arrays()
             native_budget.commit_band(snapshot, cavity, proposed)
-            _record(ancestry, cavity, proposed, EntityLineageKind.SWAPPED_FROM)
+            _record_edit(
+                ancestry, cavity, proposed, EntityLineageKind.SWAPPED_FROM,
+                snapshot.points, snapshot.points, native_budget.coordinate_budget,
+            )
             applied += 1
             if objective is not None and statistical is not None:
                 objective.commit(statistical)
@@ -6814,7 +7900,10 @@ def _commit_ring_reconnection(
         ):
             snapshot = native.arrays()
             native_budget.commit_band(snapshot, cavity, proposed)
-            _record(ancestry, cavity, proposed, EntityLineageKind.SWAPPED_FROM)
+            _record_edit(
+                ancestry, cavity, proposed, EntityLineageKind.SWAPPED_FROM,
+                snapshot.points, snapshot.points, native_budget.coordinate_budget,
+            )
             complete = False
             if objective is not None and statistical is not None:
                 objective.commit(statistical)
@@ -10197,7 +11286,13 @@ def _admit_global_size(
                 ledger, float(np.sum(quality)), snapshot.tetrahedra.shape[0]
             )
         )
-        return native.arrays(), changed.size, 1 + budget.optimizer_evaluations - before
+        relocated = native.arrays()
+        _record_relocation(
+            ancestry,
+            snapshot.tetrahedra[np.any(np.isin(snapshot.tetrahedra, changed), axis=1)],
+            snapshot.points, relocated.points, budget.coordinate_budget,
+        )
+        return relocated, changed.size, 1 + budget.optimizer_evaluations - before
     return snapshot, 0, 1 + budget.optimizer_evaluations - before
 
 
@@ -10220,6 +11315,9 @@ def _metric_relocation_merit(
     Refined cavities compare their descending positive band-violation
     multisets: adding shorter edges must not be penalized merely for their
     multiplicity. Common unchanged global edges cancel before this call.
+    A non-insertion edit never creates an edge longer than both the upper bound
+    and every edge it removes: such an edge is a required long split that may
+    recreate the removed short edges, so trading them for it can only cycle.
     """
     if (refinement or required_long_split) and (
         not np.isfinite(old_quality) or not np.isfinite(new_quality)
@@ -10257,6 +11355,9 @@ def _metric_relocation_merit(
         if new_ranked.size != old_ranked.size:
             return new_ranked.size < old_ranked.size
         return new_quality > old_quality + 1.0e-6
+    longest = float(np.max(new_lengths, initial=0.0))
+    if longest > upper and longest > float(np.max(old_lengths, initial=0.0)):
+        return False
     old_deficit = float(
         np.sum(
             np.maximum(lower - old_lengths, 0.0) + np.maximum(old_lengths - upper, 0.0)
@@ -10488,7 +11589,12 @@ def _relocate_pass(
                     vertex, targets[index, step], require_improvement=False
                 )
             ):
+                previous_points = snapshot.points
                 snapshot = native.arrays()
+                _record_relocation(
+                    ancestry, cavity, previous_points, snapshot.points,
+                    native_budget.coordinate_budget,
+                )
                 values[vertex] = samples[index, step]
                 ancestry.vertex_sources[vertex] = set(
                     source_ids[

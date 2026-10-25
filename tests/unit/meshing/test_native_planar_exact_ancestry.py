@@ -19,8 +19,10 @@ import phydrax as phx
 from phydrax._meshcore import MeshcoreError, NativeExecutionScope
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import CellGeometrySpec, CellMesh, ExactPlcCellGeometrySource
+from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._cell_geometry_transfer import is_affine_cell_geometry
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import ExactScalar
 from phydrax.geometry import ConstrainedDelaunayTriangulation, SegmentMesh
 from phydrax.meshing import MeshingScope, SizeControlStrength, UniformSizeControl
 from phydrax.meshing._contracts import MeshingLimits, SurfaceMeshingSpec
@@ -141,15 +143,17 @@ def test_published_affine_carrier_reuses_only_its_actual_earned_image_scope(
     reference_budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch,
     cache_geometry: str,
 ) -> None:
-    from phydrax.discretization import _cell_geometry as owner
-    from phydrax.discretization import _coordinate_enclosure as algebra
+    from phydrax.discretization import (
+        _cell_geometry as owner,
+        _coordinate_enclosure as algebra,
+    )
     from phydrax.discretization._coordinate_identity import coordinate_scope_key
 
     mesh, geometry, publication = _published_affine_carrier_case(reference_budget)
     elements, routes, _ = publication.resolve(mesh, budget=reference_budget)
     bank = owner.prepared_published_affine_root_bank(publication, budget=reference_budget)
     images = algebra.coordinate_vertex_images(
-        tuple((element, route, np.asarray(block.vertices)) for block, element, route
+        tuple((element, np.asarray(route, dtype=np.int64), np.asarray(block.vertices)) for block, element, route
               in zip(mesh.blocks, elements, routes, strict=True)),
         bank, mesh.coordinates.shape[0], mismatch="unequal corners", budget=reference_budget,
     )
@@ -160,7 +164,7 @@ def test_published_affine_carrier_reuses_only_its_actual_earned_image_scope(
     original = algebra.rounded_point
     rounded = []
 
-    def rounding(point):
+    def rounding(point: tuple[ExactScalar, ...]) -> np.ndarray:
         rounded.append(point)
         return original(point)
 
@@ -174,8 +178,10 @@ def test_published_affine_carrier_reuses_only_its_actual_earned_image_scope(
 def test_earned_published_images_keep_root_bytes_and_descendant_rounding_checks(
     reference_budget: CoordinateEnclosureBudget, changed: str,
 ) -> None:
-    from phydrax.discretization import _cell_geometry as owner
-    from phydrax.discretization import _coordinate_enclosure as algebra
+    from phydrax.discretization import (
+        _cell_geometry as owner,
+        _coordinate_enclosure as algebra,
+    )
     from phydrax.discretization._coordinate_identity import coordinate_scope_key
 
     mesh, geometry, publication = _published_affine_carrier_case(reference_budget)
@@ -188,7 +194,7 @@ def test_earned_published_images_keep_root_bytes_and_descendant_rounding_checks(
     elements, routes, _ = publication.resolve(mesh, budget=reference_budget)
     bank = owner.prepared_published_affine_root_bank(publication, budget=reference_budget)
     images = algebra.coordinate_vertex_images(
-        tuple((element, route, np.asarray(block.vertices)) for block, element, route
+        tuple((element, np.asarray(route, dtype=np.int64), np.asarray(block.vertices)) for block, element, route
               in zip(mesh.blocks, elements, routes, strict=True)),
         bank, mesh.coordinates.shape[0], mismatch="unequal corners", budget=reference_budget,
     )
@@ -199,6 +205,50 @@ def test_earned_published_images_keep_root_bytes_and_descendant_rounding_checks(
     with pytest.raises(ValueError, match="routed corner|retained root bytes"):
         owner.require_published_affine_carrier(geometry, mesh, budget=reference_budget)
     assert coordinate_scope_key(mesh, geometry) not in reference_budget.published_affine_carrier_cache
+
+
+def test_published_carrier_rows_reuse_only_authenticated_prepared_weights(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization import (
+        _cell_geometry as owner,
+        _coordinate_enclosure as algebra,
+    )
+    from phydrax.discretization._coordinate_identity import coordinate_scope_key
+
+    mesh, geometry, publication = _published_affine_carrier_case(reference_budget)
+    elements, routes, _ = publication.resolve(mesh, budget=reference_budget)
+    bank = owner.prepared_published_affine_root_bank(publication, budget=reference_budget)
+    # The target factory's pass prepares this request's corner weights.
+    algebra.coordinate_vertex_images(
+        tuple((element, np.asarray(route, dtype=np.int64), np.asarray(block.vertices)) for block, element, route
+              in zip(mesh.blocks, elements, routes, strict=True)),
+        bank, mesh.coordinates.shape[0], mismatch="unequal corners", budget=reference_budget,
+    )
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
+    )
+    for element in elements:
+        rows = owner._published_corner_weight_rows(element, {}, {}, {}, budget=reference_budget)
+        images = algebra.coordinate_corner_images(element, identity, budget=reference_budget)
+        assert rows is not None and images is not None
+        assert rows == images
+        assert [type(value) for row in rows for value in row] == [
+            type(value) for row in images for value in row
+        ]
+    # A stale element is reauthenticated: its current rows are prepared again
+    # and the carrier check refuses the vertex they no longer reproduce.
+    object.__setattr__(
+        elements[0], "barycentric_weights",
+        jnp.asarray(((1.0, 0.0, 0.0), (0.25, 0.75, 0.0), (0.0, 0.0, 1.0))),
+    )
+    rows = owner._published_corner_weight_rows(elements[0], {}, {}, {}, budget=reference_budget)
+    assert rows is not None
+    assert rows[1] == (Fraction(1, 4), Fraction(3, 4), Fraction(0))
+    with pytest.raises(ValueError, match="retained root bytes"):
+        owner.require_published_affine_carrier(geometry, mesh, budget=reference_budget)
+    assert coordinate_scope_key(mesh, geometry) not in reference_budget.published_affine_carrier_cache
+
 
 
 def test_non_rne_planar_carrier_retains_exact_rational_coordinate(
@@ -452,15 +502,17 @@ def test_exact_witness_cache_is_content_bound_and_reused_only_while_owned(
 
 def test_constraint_split_preserves_source_identity_and_exact_dyadic_parameter() -> None:
     vertices = np.asarray(((0.2, 0.2), (0.5, 1.7)), dtype=np.float64)
-    points, pieces, owners, point_sources, parameters = split_constraints(
-        vertices,
-        np.asarray(((0, 1),), dtype=np.int64),
-        0.2,
-        np.empty((0, 2, 2), dtype=np.float64),
-        np.empty((0,), dtype=np.float64),
-        float("inf"),
-        MeshingLimits(),
-    )
+    with NativeExecutionScope(MeshingLimits().native_limits()) as scope:
+        points, pieces, owners, point_sources, parameters = split_constraints(
+            vertices,
+            np.asarray(((0, 1),), dtype=np.int64),
+            0.2,
+            np.empty((0, 2, 2), dtype=np.float64),
+            np.empty((0,), dtype=np.float64),
+            float("inf"),
+            MeshingLimits(),
+            scope=scope,
+        )
     assert np.array_equal(point_sources[:2], (-1, -1))
     assert np.all(point_sources[2:] == 0)
     assert np.all(owners == 0)
@@ -557,8 +609,9 @@ def test_planar_hole_carrier_evidence_names_each_source_bound_and_deviation(
         quality_target=template.quality_target,
         limits=template.limits,
     )
-    prepared = PreparedPlanarDomain(source, request)
-    triangulation, _ = triangulate(prepared, monotonic(), request)
+    with NativeExecutionScope(request.limits.native_limits()) as scope:
+        prepared = PreparedPlanarDomain(source, request, scope=scope)
+        triangulation, _ = triangulate(prepared, monotonic(), request, scope=scope)
     used = np.unique(triangulation.triangles)
     authority, source_deviations, carrier_deviations = constraint_coordinate_source(
         source, prepared, triangulation, used, budget=reference_budget
@@ -689,8 +742,9 @@ def test_lattice_preparation_is_admitted_and_cuts_equal_source_pieces(
     thin_channel_request: tuple[NativePlanarSource, SurfaceMeshingSpec],
 ) -> None:
     source, request = thin_channel_request
-    generic = PreparedPlanarDomain(source, request)
-    admitted = PreparedPlanarDomain(source, request, lattice=True)
+    with NativeExecutionScope(request.limits.native_limits()) as scope:
+        generic = PreparedPlanarDomain(source, request, scope=scope)
+        admitted = PreparedPlanarDomain(source, request, scope=scope, lattice=True)
     assert generic.lattice_spacing == 0.0
     assert admitted.construction_size == generic.construction_size
     assert admitted.lattice_spacing == LATTICE_FRACTION * admitted.construction_size
@@ -720,15 +774,20 @@ def test_lattice_preparation_is_admitted_and_cuts_equal_source_pieces(
         quality_target=request.quality_target,
         limits=request.limits,
     )
-    assert PreparedPlanarDomain(source, graded, lattice=True).lattice_spacing == 0.0
+    with NativeExecutionScope(graded.limits.native_limits()) as scope:
+        graded_prepared = PreparedPlanarDomain(source, graded, scope=scope, lattice=True)
+    assert graded_prepared.lattice_spacing == 0.0
 
 
 def test_lattice_construction_is_one_native_call_within_the_edge_bound(
     thin_channel_request: tuple[NativePlanarSource, SurfaceMeshingSpec],
 ) -> None:
     source, request = thin_channel_request
-    prepared = PreparedPlanarDomain(source, request, lattice=True)
-    triangulation, inserted = triangulate(prepared, monotonic(), request)
+    with NativeExecutionScope(request.limits.native_limits()) as scope:
+        prepared = PreparedPlanarDomain(source, request, scope=scope, lattice=True)
+        triangulation, inserted = triangulate(
+            prepared, monotonic(), request, scope=scope
+        )
     assert inserted == 0
     assert triangulation.evidence.status == "ok"
     assert triangulation.evidence.minimum_angle_degrees >= prepared.minimum_angle_degrees
@@ -749,8 +808,11 @@ def test_lattice_construction_is_one_native_call_within_the_edge_bound(
         quality_target=request.quality_target,
         limits=MeshingLimits(maximum_work_units=100, maximum_scratch_bytes=81_920_000),
     )
-    with pytest.raises(phx.meshing.MeshingFailure) as caught:
-        triangulate(prepared, monotonic(), limited)
+    with (
+        pytest.raises(phx.meshing.MeshingFailure) as caught,
+        NativeExecutionScope(limited.limits.native_limits()) as scope,
+    ):
+        triangulate(prepared, monotonic(), limited, scope=scope)
     failure = caught.value
     assert failure.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert failure.evidence.stage == "surface_meshing"
@@ -766,10 +828,10 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
     from phydrax.discretization import _coordinate_enclosure as algebra
     from phydrax.discretization._coordinate_identity import coordinate_scope_key
     from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
-    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
     from phydrax.meshing import _plc_planar_support as support
     from phydrax.meshing.providers import _native_planar as route
     from phydrax.meshing.providers._native_planar_domain import source_arrays
+    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
 
     collector = CoordinateOperandCollector()
     measured: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
@@ -842,8 +904,9 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
             relative_tolerance=0.5, target_statistics=("p50",)
         ),
     )
-    prepared = PreparedPlanarDomain(source, request, lattice=True)
-    reference, inserted = triangulate(prepared, monotonic(), request)
+    with NativeExecutionScope(request.limits.native_limits()) as scope:
+        prepared = PreparedPlanarDomain(source, request, scope=scope, lattice=True)
+        reference, inserted = triangulate(prepared, monotonic(), request, scope=scope)
     assert inserted == 0 and reference.points.shape[0] == 12
     assert reference.triangles.shape[0] == 12
     result = (
@@ -869,8 +932,10 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
     vertices, edges, lengths = measured[0]
     assert len(consumed) == 2 and all(value is lengths for value in consumed)
     np.testing.assert_array_equal(vertices, np.asarray(result.mesh.coordinates))
+    connectivity = result.mesh.connectivity
+    assert isinstance(connectivity, PolygonalConnectivity)
     np.testing.assert_array_equal(
-        edges, np.sort(np.asarray(result.mesh.connectivity.edges), axis=1)
+        edges, np.sort(np.asarray(connectivity.edges), axis=1)
     )
     np.testing.assert_array_equal(
         lengths, np.linalg.norm(vertices[edges[:, 1]] - vertices[edges[:, 0]], axis=1)
@@ -919,19 +984,22 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
     changed_mesh = result.mesh.with_coordinates(
         np.asarray(result.mesh.coordinates) + 0.125, numeric_version="foreign-carrier"
     )
+    execution_evidence = result.execution_evidence
+    assert execution_evidence is not None
     with pytest.raises(ValueError, match="current source"):
         execute_native_consumer(
             result,
             request.limits,
             lambda budget: operands.require(
-                changed_mesh, result.geometry, result.execution_evidence, budget
+                changed_mesh, result.geometry, execution_evidence, budget
             ),
             failure_factory=lambda *args: ValueError(str(args)),
         )
     facet_data = next(iter(operands._facets.values()))
     original_shape = facet_data.rows.shape
     try:
-        facet_data.rows.shape = (facet_data.rows.size,)
+        # In-place view-metadata mutation is the contract under test; no non-deprecated equivalent exists.
+        facet_data.rows.shape = (facet_data.rows.size,)  # ty: ignore[deprecated]
         with pytest.raises(ValueError, match="numeric view metadata changed"):
             execute_native_consumer(
                 result,
@@ -941,7 +1009,7 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
                 failure_factory=lambda *args: ValueError(str(args)),
             )
     finally:
-        facet_data.rows.shape = original_shape
+        facet_data.rows.shape = original_shape  # ty: ignore[deprecated]
 
     domain = prepared.domain(source)
     _, source_edges, _ = source_arrays(source)
@@ -983,11 +1051,12 @@ def test_compliant_planar_generation_binds_the_admitted_preparation(
     dimensions = proof.classes[0].dimensions
     shape = dimensions.shape
     try:
-        dimensions.shape = (dimensions.size, 1)
+        # In-place view-metadata mutation is the contract under test; no non-deprecated equivalent exists.
+        dimensions.shape = (dimensions.size, 1)  # ty: ignore[deprecated]
         with pytest.raises(ValueError, match="foreign or altered proof"):
             support.bind_planar_source_proof(transfer, result, proof, budget=execution)
     finally:
-        dimensions.shape = shape
+        dimensions.shape = shape  # ty: ignore[deprecated]
     images = proof.maps.images
     try:
         object.__setattr__(proof.maps, "images", tuple(reversed(images)))
@@ -1071,8 +1140,10 @@ def test_median_repair_uses_the_selected_candidates_measured_edges(
         .execute()
     )
     assert len(measured) == 2
+    connectivity = result.mesh.connectivity
+    assert isinstance(connectivity, PolygonalConnectivity)
     np.testing.assert_array_equal(
-        measured[1][1], np.sort(np.asarray(result.mesh.connectivity.edges), axis=1)
+        measured[1][1], np.sort(np.asarray(connectivity.edges), axis=1)
     )
     assert result.compliance.passed
     assert result.certification is not None and result.certification.passed

@@ -21,6 +21,7 @@ import phydrax.discretization._cell_geometry as cell_geometry_owner
 import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
+from .._host_storage import immutable_host_array
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -266,7 +267,7 @@ class MeshPatchBank(StrictModule, NonTrainableState):
 
 
 def _read_only_bank(value: np.ndarray, /) -> np.ndarray:
-    value = np.ascontiguousarray(value)
+    value = immutable_host_array(np.ascontiguousarray(value))
     value.flags.writeable = False
     return value
 

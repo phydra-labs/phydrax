@@ -148,10 +148,10 @@ from ...discretization._coordinate_enclosure import (
     constant as polynomial_constant,
     linear_combinations as polynomial_linear_combinations,
     multiply as polynomial_multiply,
-    scale as polynomial_scale,
     prepared_coordinate_source_bank,
     prepared_coordinate_vertex_images,
     RationalPolynomial,
+    scale as polynomial_scale,
     source_expressions,
 )
 from ...discretization._exact_algebraic_geometry import rational_coefficient
@@ -968,7 +968,7 @@ def _torus_piece_bounds(
     ] = []
     for row in rows.tolist():
         owner, weights = int(owners[row]), parameters[row]
-        corners: list[_RationalPoint] = []
+        corner_values: list[_RationalPoint] = []
         values: list[tuple[Fraction, Fraction]] = []
         tubes: list[tuple[Fraction, Fraction]] = []
         axes: list[tuple[Fraction, Fraction]] = []
@@ -988,14 +988,14 @@ def _torus_piece_bounds(
                 point, value, tube, axis = corner_memo.corner(owner, weights_corner)
             if value is None:
                 break
-            corners.append(point)
+            corner_values.append(point)
             values.append(value)
             if values[-1][0] > tolerance or values[-1][1] < -tolerance:
                 witnessed[row] = True
             tubes.append(tube)
             axes.append(axis)
         if len(values) == 3 and not witnessed[row]:
-            corner_rows.append((row, owner, tuple(corners), values, tubes, axes))
+            corner_rows.append((row, owner, tuple(corner_values), values, tubes, axes))
     if budget is not None:
         # Exact triangle radius, curvature floors and the closed-form
         # whole-piece normal derivative of each unwitnessed row.
@@ -1162,7 +1162,12 @@ def _torus_tube_floor(
         angular = max(Fraction(0), planar - radial_difference * radial_difference)
         errors.append(planar + dz * dz - major * angular / rho_max)
     squared = _barycentric_quadratic_floor(
-        tuple(tube[0] * tube[0] for tube in tubes), errors
+        (
+            tubes[0][0] * tubes[0][0],
+            tubes[1][0] * tubes[1][0],
+            tubes[2][0] * tubes[2][0],
+        ),
+        errors,
     )
     return (
         Fraction(0) if squared <= 0 else Fraction(float(_sqrt_interval(squared)[0]))

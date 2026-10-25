@@ -8,9 +8,9 @@ A package facade maps each re-exported name to its owner module. Owners load on
 first access, so importing one owner never imports the whole package and its
 import cycles, and importing the package never initializes a JAX backend.
 
-`load_all` imports every owner of every facade loaded so far, until no new facade
-appears. It reproduces the complete package import graph for consumers that
-must observe every import-time registration, such as cold artifact restore.
+`load_all` imports every available owner of every facade loaded so far, until no
+new facade appears. Explicit optional owners load only when their dependency is
+installed; direct access still requires that dependency at its public boundary.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from importlib import import_module
+from importlib.util import find_spec
 from types import MappingProxyType, ModuleType
 from typing import Any, Final
 
@@ -27,7 +28,9 @@ from ._jax_config import process_numerics
 # Owner specifications are relative module names; `module:` marks a submodule
 # that is itself the exported value.
 _SUBMODULE: Final = "module:"
-_FACADES: Final[dict[str, Mapping[str, str]]] = {}
+_FACADES: Final[
+    dict[str, tuple[Mapping[str, str], Mapping[str, str]]]
+] = {}
 _LOCK: Final = threading.Lock()
 
 
@@ -48,6 +51,7 @@ def deferred_exports(
     /,
     *,
     fallback: Callable[[str], object] | None = None,
+    optional_owners: Mapping[str, str] | None = None,
     listing: Callable[[], list[str]] | None = None,
 ) -> tuple[Callable[[str], Any], Callable[[], list[str]]]:
     """Return the module `__getattr__` and `__dir__` of one deferring facade.
@@ -56,10 +60,17 @@ def deferred_exports(
     contributes its own names to `dir()`. Like every package facade, the
     returned `__getattr__` is a dynamic boundary: statically, re-exported names
     are typed by the facade's `TYPE_CHECKING` imports.
+
+    ``optional_owners`` maps owner modules to optional top-level dependencies.
+    Only bulk registration loading skips absent dependencies; explicit access
+    still imports the owner and propagates its actual provider error.
     """
     owners = MappingProxyType(dict(exports))
+    optional = MappingProxyType(dict(optional_owners or {}))
+    if set(optional).difference(owners.values()):
+        raise ValueError("Optional deferred owners must be declared export owners.")
     with _LOCK:
-        _FACADES[package] = owners
+        _FACADES[package] = (owners, optional)
 
     def __getattr__(name: str) -> Any:
         owner = owners.get(name)
@@ -86,20 +97,23 @@ def deferred_exports(
 
 
 def load_all() -> None:
-    """Import every deferred owner of every loaded facade, to a fixed point."""
+    """Import available deferred owners without requiring absent optional providers."""
     loaded: set[str] = set()
     while True:
         with _LOCK:
             pending = sorted(
-                (package, owners)
-                for package, owners in _FACADES.items()
+                (package, owners, optional)
+                for package, (owners, optional) in _FACADES.items()
                 if package not in loaded
             )
         if not pending:
             return
-        for package, owners in pending:
+        for package, owners, optional in pending:
             loaded.add(package)
             for owner in sorted(set(owners.values())):
+                dependency = optional.get(owner)
+                if dependency is not None and find_spec(dependency) is None:
+                    continue
                 load_module(owner.removeprefix(_SUBMODULE), package)
 
 

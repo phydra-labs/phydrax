@@ -17,6 +17,27 @@ import jax
 import numpy as np
 from jaxtyping import PyTree
 
+from ._host_storage import declared_object_storage_bytes
+
+
+def _canonical_json_text_value_upper_bytes(value: str, /) -> int:
+    """Bound one quoted string under the canonical ASCII-escaped JSON recipe."""
+    return 12 * str.__len__(value) + 2
+
+
+def _canonical_json_text_upper_bytes(values: Iterable[str], /) -> int:
+    """Bound JSON string output with ``ensure_ascii=True`` without serializing.
+
+    A Unicode code point can expand to twelve ASCII characters when escaped as
+    a UTF-16 surrogate pair; two more characters cover its surrounding quotes.
+    """
+    return sum(_canonical_json_text_value_upper_bytes(value) for value in values)
+
+
+def _retained_text_storage_upper_bytes(values: Iterable[str], /) -> int:
+    """Bound retained string owners with the canonical host-storage utility."""
+    return sum(declared_object_storage_bytes(value) for value in values)
+
 
 def canonical_json(value: Any, /) -> str:
     """Serialize a JSON-compatible value with one deterministic representation."""

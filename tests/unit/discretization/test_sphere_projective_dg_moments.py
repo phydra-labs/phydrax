@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from fractions import Fraction
 from types import SimpleNamespace
 from typing import Any
@@ -57,6 +57,7 @@ _SCALED: tuple[Polynomial, ...] = (
     {(1, 0): Fraction(1, 2), (0, 1): Fraction(-5, 4)},
 )
 _SQUARED = Fraction(3, 7)
+type _Values = tuple[tuple[Fraction, ...], ...]
 
 
 @pytest.fixture
@@ -65,12 +66,20 @@ def budget() -> Iterator[CoordinateEnclosureBudget]:
         yield ledger
 
 
-def _piece(coefficients: tuple[tuple[Fraction, ...], ...]) -> Any:
-    source = (
+def _source() -> tuple[tuple[Fraction, Fraction], ...]:
+    """Fresh caller-owned vertices; some tests mutate them in place."""
+    return (
         (Fraction(1, 10), Fraction(1, 10)),
         (Fraction(1, 2), Fraction(1, 5)),
         (Fraction(1, 5), Fraction(3, 5)),
     )
+
+
+def _piece(
+    coefficients: tuple[tuple[Fraction, ...], ...],
+    source: tuple[tuple[Fraction, Fraction], ...] | None = None,
+) -> Any:
+    source = _source() if source is None else source
     target = tuple(
         projective_point(coefficients, point, invalid_message="outside") for point in source
     )
@@ -102,7 +111,9 @@ def _evaluate(polynomial: Polynomial, x: np.ndarray, y: np.ndarray) -> np.ndarra
     )
 
 
-def _quadrature(piece: SimpleNamespace, new, old) -> np.ndarray:
+def _quadrature(
+    piece: SimpleNamespace, new: Sequence[Polynomial], old: Sequence[Polynomial]
+) -> np.ndarray:
     """Collapsed Gauss-Legendre reference, independent of the series kernel."""
     nodes, weights = np.polynomial.legendre.leggauss(40)
     s, t = (nodes + 1) / 2, weights / 2
@@ -134,7 +145,9 @@ def _quadrature(piece: SimpleNamespace, new, old) -> np.ndarray:
 @pytest.mark.parametrize("spread", [Fraction(0), Fraction(1, 40), Fraction(3, 20)])
 @pytest.mark.parametrize("bases", [(_BARYCENTRIC, _BARYCENTRIC), (_SCALED, _BARYCENTRIC), (_BARYCENTRIC, _SCALED)])
 def test_factorized_projective_dg_matches_generic_and_quadrature(
-    budget: CoordinateEnclosureBudget, spread: Fraction, bases
+    budget: CoordinateEnclosureBudget,
+    spread: Fraction,
+    bases: tuple[tuple[Polynomial, ...], tuple[Polynomial, ...]],
 ) -> None:
     new, old = bases
     piece = _piece(_map(spread))
@@ -281,7 +294,7 @@ def test_affine_scaled_integral_matches_the_certified_sqrt_owner(
 
 @pytest.mark.parametrize("basis", [_BARYCENTRIC, _SCALED])
 def test_shared_affine_reference_forms_preserve_exact_moments(
-    budget: CoordinateEnclosureBudget, basis
+    budget: CoordinateEnclosureBudget, basis: tuple[Polynomial, ...]
 ) -> None:
     moments, mass = _dg_reference_forms(basis, budget=budget)
     for i, polynomial in enumerate(basis):
@@ -413,9 +426,12 @@ def _independent_unit_diagonal(
     ],
 )
 @pytest.mark.parametrize("terms", [0, 1, 9, 20])
-def test_canonical_unit_moments_match_independent_exact_finite_series(delta, terms) -> None:
+def test_canonical_unit_moments_match_independent_exact_finite_series(
+    delta: tuple[Fraction, Fraction, Fraction], terms: int
+) -> None:
     from phydrax.discretization.fem._sphere_chart_transfer import (
-        _DYADIC_ROUNDOFF, _unit_reciprocal_moments,
+        _DYADIC_ROUNDOFF,
+        _unit_reciprocal_moments,
     )
 
     with coordinate_reference_budget() as budget:
@@ -472,18 +488,9 @@ def test_canonical_unit_moments_exact_observed_work_boundary() -> None:
 
 def test_affine_form_canonical_moments_reuse_cyclic_triangle_structure() -> None:
     piece = _piece(_map(Fraction(3, 20)))
-    rotated = SimpleNamespace(
-        exact_source_reference_vertices=(
-            *piece.exact_source_reference_vertices[1:],
-            piece.exact_source_reference_vertices[0],
-        ),
-        exact_target_reference_vertices=(
-            *piece.exact_target_reference_vertices[1:],
-            piece.exact_target_reference_vertices[0],
-        ),
-        source_reference_area=piece.source_reference_area,
-        projective_map=piece.projective_map,
-    )
+    # Cyclically rotated corners rebuild the same triangle and projective map.
+    source = piece.exact_source_reference_vertices
+    rotated = _piece(_map(Fraction(3, 20)), (*source[1:], source[0]))
     root = fraction_sqrt_interval(_SQUARED)
     cache = {}
     with coordinate_reference_budget() as budget:
@@ -504,15 +511,20 @@ def test_affine_form_canonical_moments_reuse_cyclic_triangle_structure() -> None
     )
 
 
-def test_affine_operand_cache_binds_actual_values_and_isolates_caller_fractions():
+def test_affine_operand_cache_binds_actual_values_and_isolates_caller_fractions() -> None:
     from phydrax.discretization.fem._sphere_chart_transfer import (
-        _affine_basis_operand, _affine_vertex_values,
+        _affine_basis_operand,
+        _affine_vertex_values,
     )
 
-    basis = tuple(
-        {index: Fraction(value.numerator, value.denominator) for index, value in row.items()}
-        for row in _SCALED
-    )
+    def fresh(row: Polynomial) -> Polynomial:
+        copied: Polynomial = {}
+        for index, value in row.items():
+            assert isinstance(value, Fraction)
+            copied[index] = Fraction(value.numerator, value.denominator)
+        return copied
+
+    basis = tuple(fresh(row) for row in _SCALED)
     points = _piece(_map(Fraction(1, 8))).exact_source_reference_vertices
     cache = {}
     with coordinate_reference_budget() as budget:
@@ -527,6 +539,7 @@ def test_affine_operand_cache_binds_actual_values_and_isolates_caller_fractions(
         assert _affine_vertex_values(operand, points, budget=budget) == (exact, rounded)
         assert budget.work_units - before < first_work
         exposed = basis[0][(0, 0)]
+        assert isinstance(exposed, Fraction)
         original = operand.coefficients[0][0].as_integer_ratio()
         object.__setattr__(exposed, "_numerator", exposed.numerator + exposed.denominator)
         changed = _affine_basis_operand(basis, cache, budget=budget)
@@ -542,15 +555,16 @@ def test_affine_operand_cache_binds_actual_values_and_isolates_caller_fractions(
         assert _affine_vertex_values(operand, points, budget=budget)[0] != exact
 
 
-def test_affine_operand_copying_and_point_rounding_observed_work_boundary():
+def test_affine_operand_copying_and_point_rounding_observed_work_boundary() -> None:
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
     from phydrax.discretization.fem._sphere_chart_transfer import (
-        _affine_basis_operand, _affine_vertex_values,
+        _affine_basis_operand,
+        _affine_vertex_values,
     )
 
     points = _piece(_map(Fraction(1, 8))).exact_source_reference_vertices
 
-    def prepare(budget):
+    def prepare(budget: CoordinateEnclosureBudget) -> tuple[_Values, _Values]:
         operand = _affine_basis_operand(_SCALED, {}, budget=budget)
         return _affine_vertex_values(operand, points, budget=budget)
 

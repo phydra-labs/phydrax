@@ -10,6 +10,7 @@ import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from typing import TypedDict
 
 import numpy as np
 import pytest
@@ -274,7 +275,7 @@ def _assert_empty_circles(
 
 
 def _segment_coverage(
-    triangulation: ConstrainedDelaunayTriangulation, segments: NDArray[np.int64]
+    triangulation: ConstrainedDelaunayTriangulation, segments: NDArray[np.integer]
 ) -> None:
     points = triangulation.points
     triangles = triangulation.triangles
@@ -887,7 +888,13 @@ def test_cdt_lattice_seeding_meets_targets_with_less_work() -> None:
     segments = np.stack(
         (np.arange(count), (np.arange(count) + 1) % count), axis=1
     ).astype(np.int32)
-    options = {
+    class _LatticeOptions(TypedDict):
+        min_angle: float
+        max_area: float
+        max_edge_length: float
+        max_steiner: int
+
+    options: _LatticeOptions = {
         "min_angle": 25.0,
         "max_area": 0.25 * np.sqrt(3.0) * bound * bound,
         "max_edge_length": bound,

@@ -415,7 +415,7 @@ def test_mapped_tetrahedron_quality_keeps_chart_values_dynamic(
     assert structures == tuple(jax.tree.structure(source) for source in sources)
 
 
-def test_noncardinal_affine_triangle_quality_measures_one_differential() -> None:
+def test_noncardinal_affine_triangle_quality_reuses_one_boundary_differential() -> None:
     root = coordinate_lagrange_element("triangle", 1)
     source = BarycentricCellGeometryElement(
         root,
@@ -440,7 +440,7 @@ def test_noncardinal_affine_triangle_quality_measures_one_differential() -> None
     )
     minimum, maximum = _mapped_boundary_values(source, 2, coordinates, *boundary)
     expected = jax.block_until_ready(
-        _finish_mapped_quality(measured, minimum, maximum, np.zeros((count,)))
+        _finish_mapped_quality(measured, minimum, maximum, jax.numpy.zeros((count,)))
     )
     with coordinate_reference_budget(queries_upper=100) as budget:
         before = budget.ticket.geometry_queries
@@ -449,7 +449,9 @@ def test_noncardinal_affine_triangle_quality_measures_one_differential() -> None
                 "triangle", source, coordinates, None, budget=budget, rule=plan
             )
         )
-        assert budget.ticket.geometry_queries - before == count
+        # Volume samples share the sampled executable; boundary angles reuse
+        # the proved affine differential without querying the map again.
+        assert budget.ticket.geometry_queries - before == count * plan.volume[0].shape[0]
     for values, baseline in zip(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
     ):

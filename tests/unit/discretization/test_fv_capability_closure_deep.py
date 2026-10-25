@@ -163,10 +163,11 @@ def test_fv_capability_closure_deep_scenario_1() -> None:
         method="identity-common-refinement",
         provenance="test",
     )
+    view = remap.prepare_csr_view(phx.linalg.SparseAssemblyPolicy())
     tangent = jnp.arange(mesh.cell_count, dtype=mesh.cell_volumes.dtype)
     primal = jnp.arange(mesh.cell_count, dtype=mesh.cell_volumes.dtype)
     _, image_tangent = jax.jvp(
-        lambda value: remap.apply_fixed_combinatorics(
+        lambda value: view.apply_fixed_combinatorics(
             value, mesh.cell_volumes, mesh.cell_volumes, mesh.cell_volumes
         ),
         (primal,),
@@ -174,7 +175,7 @@ def test_fv_capability_closure_deep_scenario_1() -> None:
     )
     np.testing.assert_allclose(image_tangent, tangent)
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="coverage"):
-        remap.apply_fixed_combinatorics(
+        view.apply_fixed_combinatorics(
             primal, 0.5 * mesh.cell_volumes, mesh.cell_volumes, mesh.cell_volumes
         ).block_until_ready()
     mesh = _large_quad_mesh()

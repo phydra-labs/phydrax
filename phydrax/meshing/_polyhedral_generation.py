@@ -28,6 +28,7 @@ from fractions import Fraction
 from typing import assert_never, final, SupportsFloat, SupportsIndex
 
 import equinox as eqx
+import jax
 import numpy as np
 
 import phydrax._bvh as _owner_phydrax__bvh
@@ -515,6 +516,8 @@ def _seam_pair_fragment(
     budget.reserve(1)
     if source.plane != target.plane:
         return None
+    # One exact source/target seam-triangle overlap query.
+    budget.reserve_geometry_queries(1)
     raw_polygon = planar_primitives_owner.intersection_polygon(
         target.projected, source.projected, budget=budget
     )
@@ -603,9 +606,12 @@ def _seam_group_fragments(
             for second_index in range(index + 1, len(triangles)):
                 second = triangles[second_index]
                 budget.reserve(1)
+                if first.plane != second.plane:
+                    continue
+                # One exact same-side seam-triangle overlap query.
+                budget.reserve_geometry_queries(1)
                 if (
-                    first.plane == second.plane
-                    and planar_primitives_owner.intersection(
+                    planar_primitives_owner.intersection(
                         first.projected, second.projected, budget=budget
                     )
                     > 0
@@ -728,6 +734,12 @@ def prepare_periodic_polyhedral_seam_fragments(
                     PolyhedralGenerationReason.PERIODIC_SEAM_TRANSFORM_DIMENSION
                 )
             for source_group, target_group in groups:
+                # np.isin sorts each facet group and searches every face facet.
+                selected = len(source_group) + len(target_group)
+                budget.reserve(
+                    (2 * len(facets) + selected)
+                    * max(1, (selected + 1).bit_length())
+                )
                 source_faces = np.flatnonzero(np.isin(facets, source_group))
                 target_faces = np.flatnonzero(np.isin(facets, target_group))
                 if not source_faces.size or not target_faces.size:
@@ -799,16 +811,23 @@ def _periodic_seam_bank(
             "polyhedral.diagram.periodic_preparation must be retained for seam assembly; got None"
         )
     prepared = source.prepare(budget=budget)
+    vertex_count = len(prepared.vertices)
+    carrier_rows = diagram.construction.vertex_carriers
+    # Per prepared vertex: the list copy, parent/coefficient/action rows, the
+    # point lookup insertion and hash over three rational coordinates, plus
+    # two visits per carrier column; one visit per constraint index.
+    budget.reserve(
+        vertex_count * (8 + 2 * int(carrier_rows.shape[1])) + len(constraints),
+        512 + 256 * vertex_count,
+    )
     points: list[tuple[Fraction, ...]] = list(prepared.vertices)
     rank = len(preparation.orders)
-    budget.reserve(len(points), 512 + 256 * len(points))
     parents = [(index, -1, -1) for index in range(len(points))]
     coefficients: list[tuple[Fraction, ...]] = [
         (Fraction(1), Fraction(0), Fraction(0))
     ] * len(points)
     actions = [(0,) * rank] * len(points)
     carriers = []
-    carrier_rows = diagram.construction.vertex_carriers
     for vertex_index, weights in enumerate(prepared.barycentric):
         indices = tuple(
             int(carrier_rows[vertex_index, column])
@@ -966,6 +985,10 @@ def _seam_segment_subdivision(
     The private caller retains that capacity through both expanded-cell
     construction and final paired-face lookup, not merely this function exit.
     """
+    # Two visits per loop edge occurrence (pair sort and set insertion), then
+    # the sort of at most that many unique seam edges.
+    occurrences = sum(len(loop) for loop in loops)
+    budget.reserve(occurrences * (2 + max(1, (occurrences + 1).bit_length())))
     edges = {
         tuple(sorted((first, second)))
         for loop in loops
@@ -1070,6 +1093,14 @@ def seam_vertex_orbits(
         )
         orders = preparation.orders
         rank = len(orders)
+        # Parent/winding initialization, then per pair the root calls'
+        # root tests, difference normalization and union, and per vertex the
+        # final root call's test plus the winding range check and row writes.
+        budget.reserve(
+            len(points) * (1 + rank)
+            + len(pairs) * (4 + 4 * rank)
+            + len(points) * (3 + 2 * rank)
+        )
         parent = list(range(len(points)))
         winding = [(0,) * rank for _ in points]
     
@@ -1218,10 +1249,14 @@ def _reconcile_periodic_polyhedral(
             np.asarray(old.face_vertex_offsets),
             np.asarray(old.face_vertex_values),
         )
+        # Face-part lookup over every face and its packed corners.
+        budget.reserve(old.face_count + len(vertices))
         parts = {
             face: bank.face_parts.get(face, (tuple(map(int, vertices[a:b])),))
             for face, (a, b) in enumerate(zip(offsets[:-1], offsets[1:], strict=True))
         }
+        # all_loops flattening and the corner count visit each loop corner.
+        budget.reserve(2 * sum(len(loop) for loops in parts.values() for loop in loops))
         all_loops = tuple(loop for loops in parts.values() for loop in loops)
         loop_corners = sum(len(loop) for loop in all_loops)
         # _seam_segment_subdivision has <=loop_corners distinct edges, each
@@ -1239,6 +1274,22 @@ def _reconcile_periodic_polyhedral(
         )
         storage.workspace.set_bound(bank_bound + subdivision_bound)
         subdivision = _seam_segment_subdivision(bank.points, all_loops, budget=budget)
+        # Realized expanded corners: one subdivision lookup per loop corner.
+        budget.reserve(loop_corners)
+        # _expanded_seam_loop emits len(edge) - 1 corners per occurrence.
+        expanded_corners = sum(
+            len(subdivision[(min(first, second), max(first, second))]) - 1
+            for loop in all_loops
+            for first, second in zip(loop, (*loop[1:], loop[0]), strict=True)
+        )
+        # Expansion emits each realized corner once, origins sort each expanded
+        # loop, and the cell-face count visits each face's loops (each face
+        # bounds at most two cells).
+        budget.reserve(
+            expanded_corners * (2 + max(1, (expanded_corners + 1).bit_length()))
+            + len(old.cell_face_values)
+            + 2 * len(all_loops)
+        )
         expanded = {
             face: tuple(_expanded_seam_loop(loop, subdivision) for loop in loops)
             for face, loops in parts.items()
@@ -1414,9 +1465,25 @@ def _freeze(value: np.ndarray, /, *, scope: NativeExecutionScope) -> np.ndarray:
     result = _dependency_phydrax_meshing__host_banks.family_host_array(
         value.shape, value.dtype, scope=scope
     )
+    scope.charge(work=1 + value.size)
     np.copyto(result, value)
     result.setflags(write=False)
     return result
+
+
+def _geometry_identity_work(
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec, /
+) -> int:
+    """Host work of ``cell_geometry_id``: streamed reads and hashes of its banks."""
+    if geometry.storage is not None:
+        # Owner-local storage publishes its checked logical identity.
+        return 256
+    leaves = jax.tree_util.tree_leaves(
+        (geometry.elements, geometry.geometry_dofs, geometry.coordinates)
+    )
+    return 2 * sum(int(np.size(leaf)) for leaf in leaves) + 256 * (
+        1 + len(geometry.elements)
+    )
 
 
 @checked
@@ -1910,6 +1977,14 @@ def _feature_bvh_storage(count: int) -> int:
     return build + traversal + containers
 
 
+def _admitted_feature_bvh_storage(_bytes_upper: int, /) -> None:
+    """Accept metered BVH build arrays already covered by ``_feature_bvh_storage``.
+
+    Feature callers set that bound on their host workspace before building, so
+    the per-pass build admissions must not be charged a second time.
+    """
+
+
 def _diameters(
     mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
     geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
@@ -1993,6 +2068,10 @@ def _centroid_in_kernel(
         start, stop = face_offsets[cell : cell + 2]
         for face, sign in zip(faces[start:stop], signs[start:stop], strict=True):
             a, b = offsets[face : face + 2]
+            # Gather one face's exact corners, then one source containment
+            # query against its supporting halfspace.
+            budget.reserve(1 + 3 * int(b - a))
+            budget.reserve_geometry_queries(1)
             loop = vertices[a:b]
             if sign < 0:
                 loop = loop[::-1]
@@ -2065,9 +2144,12 @@ def _segment_evidence(
     # uses twenty-four. A clamped projection residual uses 28, its squared
     # norm 168, and exact comparison cross-products 336. 384 includes carries.
     # Three origin/direction/delta vectors, endpoint results and expression
-    # temporaries occupy at most 32 + 2*len(ends) rational slots.
+    # temporaries occupy at most 32 + 2*len(ends) rational slots. Work visits
+    # each rational operation: 18 for the origin, direction and squared length,
+    # then at most 30 per end (lift, delta, dot, quotient, clamp, residual)
+    # plus its share of the final extrema and two square-root bounds.
     feature_fraction_owner.reserve_fraction_work(
-        budget, 0, 32 + 2 * len(ends), 384 * bits + 512
+        budget, 24 + 32 * len(ends), 32 + 2 * len(ends), 384 * bits + 512
     )
     origin = tuple(_feature_coordinate_fraction(x) for x in a)
     direction = tuple(
@@ -2125,6 +2207,13 @@ def _source_feature_edges(
             + 24 * len(complex_.vertices) + 72 * triangle_count
             + 8 * occurrences + 256 * (triangle_count + 16)
         )
+        # Host visits: the vertex bank copy, one gathered triangle per input
+        # triangle, each polygon edge occurrence's sorted key and append, the
+        # semantic edge list and set, and the unknown-entry query count below.
+        scope.charge(
+            work=3 * len(complex_.vertices) + 10 * triangle_count + 7 * occurrences
+            + 3 * semantic_count
+        )
         source_vertices = np.asarray(complex_.vertices, dtype=np.float64)
         triangles: dict[int, np.ndarray] = {}
         for triangle, polygon in zip(
@@ -2141,6 +2230,19 @@ def _source_feature_edges(
                 )
         edges = [tuple(map(int, pair)) for pair in recovery.plc_edges]
         known = {tuple(sorted(pair)) for pair in edges}
+        # Every unknown entry's occurrence after its first is one coplanarity
+        # query of an incident polygon against the anchor (three exact
+        # orientations, their broadcast operands and sign test). Admit the
+        # entry sort, the facet sets over all occurrences and the output rows.
+        entries = len(incidence)
+        pairs = sum(
+            len(polygons) - 1 for edge, polygons in incidence.items() if edge not in known
+        )
+        scope.charge(
+            work=entries * (entries.bit_length() + 1) + 2 * occurrences + 36 * pairs
+            + 2 * (semantic_count + entries),
+            geometry_queries=pairs,
+        )
         for edge, polygons in sorted(incidence.items()):
             if edge in known:
                 continue
@@ -2205,6 +2307,10 @@ def _prepare_feature_ancestry(
             _feature_entry_storage(count + len(recovery.segments))
             + _feature_bvh_storage(count) + 48 * count + 32 * count + 256
         )
+        # Carrier-key map over source edges and recovered segments, the gathered
+        # endpoint bank and its per-edge box extrema. The metered median build
+        # charges its own split/pack visits before each pass.
+        budget.reserve(2 * (count + len(recovery.segments)) + 18 * count)
         carrier_sources = {
             tuple(sorted(map(int, pair))): source for source, pair in enumerate(source_edges)
         }
@@ -2215,7 +2321,10 @@ def _prepare_feature_ancestry(
         )
         np.take(recovery.points, source_edges, axis=0, out=source_points)
         tree = _owner_phydrax__bvh.prepare_bvh(
-            np.min(source_points, axis=1), np.max(source_points, axis=1), dtype=np.float64
+            np.min(source_points, axis=1), np.max(source_points, axis=1),
+            dtype=np.float64,
+            _charge_work=budget.reserve,
+            _reserve_storage=_admitted_feature_bvh_storage,
         )
         def segment_length(pair: np.ndarray) -> float:
             # Only the binary64 length survives; exact projection/square-root
@@ -2255,14 +2364,18 @@ def _match_feature_carrier(
             + _feature_entry_storage(len(source_points)) + 48 + 256
         )
         carrier_points = recovery.points[list(key)]
+        budget.reserve(12)
         carrier_tree = _owner_phydrax__bvh.prepare_bvh(
             np.min(carrier_points, axis=0)[None, :],
             np.max(carrier_points, axis=0)[None, :],
             dtype=np.float64,
+            _charge_work=budget.reserve,
+            _reserve_storage=_admitted_feature_bvh_storage,
         )
         matched = []
+        # Each evaluated node/item box test is charged before it runs.
         for candidates, _ in _owner_phydrax__bvh.bvh_overlap_pair_blocks(
-            tree, carrier_tree, include_touching=True
+            tree, carrier_tree, include_touching=True, visit=budget.reserve
         ):
             for source in candidates:
                 work_units += 1
@@ -2273,6 +2386,8 @@ def _match_feature_carrier(
                         achieved=work_units,
                     )
                 budget.reserve(1)
+                # One exact carrier/source-segment overlap query.
+                budget.reserve_geometry_queries(1)
                 a, b = source_points[source]
                 with budget.temporary_scope():
                     start, stop, residual, _ = _segment_evidence(
@@ -2305,6 +2420,12 @@ def _feature_coverage(
         )
     # Coverage subtracts two retained parameters then multiplies one lifted
     # binary64 length; sorting comparisons cross-multiply two parameters.
+    # Work: per piece its two-parameter bit profile, sort visit and two fold
+    # comparisons/subtractions; per source its sort levels and gap rounding.
+    sizes = tuple(len(pieces) for pieces in intervals)
+    budget.reserve(
+        len(sizes) + sum(size * (size.bit_length() + 7) + 8 for size in sizes)
+    )
     bits = max(
         (_feature_fraction_bits(piece) for piece in intervals), default=1075
     )
@@ -2358,6 +2479,12 @@ def _feature_ancestry(
             + 16 * carriers.shape[1] + 256 * 12
         )
         storage.set_bound(arrays)
+        # The edge copy, the three output fills and both coordinate bit
+        # profiles (three components per point).
+        budget.reserve(
+            3 * edge_count + 2 * source_count
+            + 3 * (mesh.coordinates.shape[0] + len(recovery.points))
+        )
         edges = np.asarray(connectivity.edges, dtype=np.int64)
         points = np.asarray(geometry.source_coordinates(budget=budget), dtype=object)
         sources = _dependency_phydrax_meshing__host_banks.family_host_array(
@@ -2405,7 +2532,8 @@ def _feature_ancestry(
                     entities=(edge,),
                     achieved=work_units,
                 )
-            budget.reserve(1)
+            # The two endpoints' carrier rows, their set and sorted key.
+            budget.reserve(1 + 3 * carriers.shape[1])
             key = tuple(
                 sorted({int(point) for point in carriers[pair].reshape(-1) if point >= 0})
             )
@@ -2423,6 +2551,8 @@ def _feature_ancestry(
                 continue
             sources[edge] = source
             a, b = source_points[source]
+            # One exact mesh-edge/source-segment containment query.
+            budget.reserve_geometry_queries(1)
             with budget.temporary_scope():
                 start, stop, residual, _ = _segment_evidence(
                     points[pair], a, b, budget=budget
@@ -2613,6 +2743,8 @@ def _plan_polyhedral_refinement(
     schedule_: NativePolyhedralSchedule,
     refinement_steps: int,
     lloyd_steps: int,
+    *,
+    scope: NativeExecutionScope,
 ) -> _PolyhedralRefinement:
     """Choose the next refinement actions or refuse unmet bounded requests."""
     needs_weights = (
@@ -2625,6 +2757,7 @@ def _plan_polyhedral_refinement(
         and lloyd_steps >= schedule_.lloyd_steps
     ):
         if schedule_.require_every_site and measures.empty.size:
+            scope.charge(work=measures.empty.size)
             raise PolyhedralGenerationError(
                 PolyhedralGenerationReason.REQUIRED_EMPTY_SITES,
                 entities=tuple(map(int, measures.empty)),
@@ -2633,6 +2766,7 @@ def _plan_polyhedral_refinement(
             finished=True, update_weights=False, insert_sites=False, relocate_sites=False
         )
     if refinement_steps >= schedule_.maximum_refinement_steps:
+        scope.charge(work=2 * measures.large.size + measures.diameters.size)
         raise PolyhedralGenerationError(
             PolyhedralGenerationReason.REFINEMENT_UNRESOLVED,
             entities=tuple(map(int, publication.order[measures.large])),
@@ -2647,6 +2781,7 @@ def _plan_polyhedral_refinement(
         and not needs_weights
         and lloyd_steps >= schedule_.lloyd_steps
     ):
+        scope.charge(work=2 * measures.large.size + measures.diameters.size)
         raise PolyhedralGenerationError(
             PolyhedralGenerationReason.FIXED_SITE_DIAMETER_UNRESOLVED,
             entities=tuple(map(int, publication.order[measures.large])),
@@ -2660,16 +2795,40 @@ def _plan_polyhedral_refinement(
     )
 
 
-def _polyhedral_input_scalar_count(value: ConvertibleToArray | None, /) -> int:
-    """Count the declared input bank without first materializing a NumPy copy."""
-    if value is None:
-        return 0
-    shape = getattr(value, "shape", None)
-    if shape is not None:
-        return math.prod(shape)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return sum(_polyhedral_input_scalar_count(item) for item in value)
-    return 1
+def _polyhedral_input_scalar_count(
+    value: ConvertibleToArray | None, /, *, scope: NativeExecutionScope
+) -> int:
+    """Admit the actual input traversal before normalization allocates a bank."""
+    with NativeHostStorageWorkspace(scope) as storage:
+        storage.set_bound(1024)
+        scope.charge(work=1)
+        pending: list[tuple[object, bool]] = [(value, False)]
+        visiting: set[int] = set()
+        count = 0
+        while pending:
+            item, leaving = pending.pop()
+            if leaving:
+                visiting.remove(id(item))
+                continue
+            if item is None:
+                continue
+            shape = getattr(item, "shape", None)
+            if shape is not None:
+                scope.charge(work=len(shape))
+                count += math.prod(shape)
+            elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
+                if id(item) in visiting:
+                    raise ValueError("Polyhedral input sequences must be acyclic.")
+                scope.charge(work=len(item) + 1)
+                storage.set_bound(
+                    1024 + 512 * (len(pending) + len(item) + len(visiting) + 2)
+                )
+                visiting.add(id(item))
+                pending.append((item, True))
+                pending.extend((child, False) for child in item)
+            else:
+                count += 1
+        return count
 
 
 def _recover_polyhedral_source(
@@ -2705,8 +2864,8 @@ def _recover_polyhedral_source(
             complex_.facet_regions,
             complex_.segments,
         )
-    ) + _polyhedral_input_scalar_count(seed_regions)
-    point_scalars = complex_.vertices.size + _polyhedral_input_scalar_count(seeds)
+    ) + _polyhedral_input_scalar_count(seed_regions, scope=scope)
+    point_scalars = complex_.vertices.size + _polyhedral_input_scalar_count(seeds, scope=scope)
     # Counter/status query banks (including refusal evidence) are fixed-size;
     # their wrapper and scalar metadata are admitted before the native call.
     input_bound = (
@@ -2724,6 +2883,8 @@ def _recover_polyhedral_source(
         _PolyhedralTopologyStorage(scope) as storage,
     ):
         storage.workspace.set_bound(input_bound)
+        # Host casts/range/finite scans precede the native recovery handle.
+        scope.charge(work=64 + 4 * point_scalars + 6 * index_scalars)
 
         def admit_host_output(bytes_upper: int) -> None:
             nonlocal output_bound
@@ -2731,6 +2892,11 @@ def _recover_polyhedral_source(
             # integer owners in addition to the sixteen exported array banks.
             output_bound = bytes_upper + 2 * 256 + 20 * 160
             storage.workspace.set_bound(input_bound + output_bound)
+            # The ABI's sixteen banks occupy >=4 bytes per logical export
+            # word, including the packed per-vertex int8 banks. Zeroing and
+            # native export copying are separate passes over that payload.
+            payload = bytes_upper - 17 * 256
+            scope.charge(work=2 * ((payload + 3) // 4))
 
         recovery = recover_plc_3d(
             complex_.vertices,
@@ -2774,9 +2940,9 @@ def _prepare_polyhedral_carrier(
         completed_work=budget.work_units,
     )
     triangles = len(recovery.input_triangles)
-    site_scalars = 3 if sites is None else _polyhedral_input_scalar_count(sites)
+    site_scalars = 3 if sites is None else _polyhedral_input_scalar_count(sites, scope=scope)
     site_rows = max(1, site_scalars)
-    weight_scalars = site_rows if weights is None else _polyhedral_input_scalar_count(weights)
+    weight_scalars = site_rows if weights is None else _polyhedral_input_scalar_count(weights, scope=scope)
     target_scalars = len(schedule_.target_site_volumes)
     protected_count = len(schedule_.protected_sites)
     # Domain output stores triangle indices (3*i64) and region pairs (2*i64).
@@ -2802,9 +2968,22 @@ def _prepare_polyhedral_carrier(
         + 16 * weight_scalars
         + 224 * protected_count
         + 32 * 256
+        # Source-coordinate finite mask and streaming noncontiguous hashes.
+        + complex_.vertices.size + 2 * 65536
     )
     with _PolyhedralTopologyStorage(scope) as storage:
         storage.workspace.set_bound(retained + temporary)
+        # Input conversion/copies are distinct from the later finite and
+        # duplicate scans. Their scalar counts were admitted without copying.
+        scope.charge(
+            work=(
+                0 if sites is None else
+                1 if isinstance(sites, np.ndarray) and sites.dtype == np.float64 else site_scalars
+            ) + (
+                0 if weights is None else
+                1 if isinstance(weights, np.ndarray) and weights.dtype == np.float64 else weight_scalars
+            ) + target_scalars
+        )
         result = _build_polyhedral_carrier(
             complex_, sites, weights, protected_vertices, source_id, schedule_,
             recovery, scope=scope, budget=budget,
@@ -2843,15 +3022,16 @@ def _build_polyhedral_carrier(
         else np.asarray(sites, dtype=np.float64)
     )
     scope.charge(work=2 * site_array.size)
+    finite_sites = bool(np.all(np.isfinite(site_array)))
     if (
         site_array.ndim != 2
         or site_array.shape[1] != 3
         or site_array.shape[0] < 1
-        or not np.all(np.isfinite(site_array))
+        or not finite_sites
     ):
         raise ValueError(
             "polyhedral.sites must be a finite nonempty (n, 3) array; "
-            f"got shape={site_array.shape}, finite={bool(np.all(np.isfinite(site_array)))}"
+            f"got shape={site_array.shape}, finite={finite_sites}"
         )
     scope.charge(work=site_array.size)
     site_array = site_array.copy()
@@ -2870,6 +3050,7 @@ def _build_polyhedral_carrier(
         )
     scope.charge(work=len(schedule_.protected_sites))
     protected = set(schedule_.protected_sites)
+    scope.charge(work=len(protected))
     if any(
         isinstance(x, bool) or not isinstance(x, int) or x < 0 or x >= site_array.shape[0]
         for x in protected
@@ -3111,6 +3292,7 @@ def _measure_polyhedral_publication_active(
     )
     empty = np.flatnonzero(achieved == 0)
     if schedule_.require_every_site and empty.size and not targets.size:
+        scope.charge(work=empty.size)
         raise PolyhedralGenerationError(
             PolyhedralGenerationReason.REQUIRED_EMPTY_SITES,
             entities=tuple(map(int, empty)),
@@ -3152,10 +3334,13 @@ def _revive_hidden_polyhedral_sites(
     empty: np.ndarray,
     metric_sites: np.ndarray,
     metric_owners: np.ndarray,
+    *,
+    scope: NativeExecutionScope,
 ) -> _PolyhedralWeightUpdate:
     data = diagram.construction
     # Revive hidden weighted sites by a sparse power-distance walk
     # at an interior carrier point, not an all-site distance table.
+    scope.charge(work=48)
     point = np.mean(recovery.points[recovery.tetrahedra[0]], axis=0)
     owner = int(data.cell_sites[0])
     best = float(
@@ -3164,6 +3349,8 @@ def _revive_hidden_polyhedral_sites(
     while True:
         next_owner, next_best = owner, best
         a, b = diagram.neighbor_offsets[owner : owner + 2]
+        # Admit the whole sparse neighborhood before evaluating any distance.
+        scope.charge(work=4 + 16 * int(b - a))
         for neighbor in diagram.neighbors[a:b]:
             if neighbor >= len(metric_sites):
                 continue
@@ -3177,7 +3364,9 @@ def _revive_hidden_polyhedral_sites(
             break
         owner, best = next_owner, next_best
     for site in empty:
+        scope.charge(work=2 * len(metric_owners))
         images = np.flatnonzero(metric_owners == site)
+        scope.charge(work=16 * len(images) + 8)
         distance = min(
             float(np.sum((point - metric_sites[image]) ** 2)) for image in images
         )
@@ -3227,6 +3416,7 @@ def _update_polyhedral_weights_active(
     values, targets = state.weights, state.targets
     achieved, empty, work_units = measures.achieved, measures.empty, measures.work_units
     # Sparse diagonal Jacobian: dV_i/dw_i = sum A_ij/(2|s_i-s_j|).
+    scope.charge(work=values.size)
     diagonal = np.zeros_like(values)
     data = diagram.construction
     remaining_work = schedule_.maximum_work_units - work_units
@@ -3241,6 +3431,7 @@ def _update_polyhedral_weights_active(
             diagram, scope=scope, budget=budget
         )
     work_units += budget.work_units - before
+    scope.charge(work=4 * len(data.face_cells))
     for f, (left, right) in enumerate(
         zip(data.face_cells[:, 0], data.face_cells[:, 1], strict=True)
     ):
@@ -3253,6 +3444,9 @@ def _update_polyhedral_weights_active(
         if i == j:
             continue
         a, b = data.face_offsets[f : f + 2]
+        # Gather/roll/subtract/cross/reduce plus the two vector norms and
+        # diagonal updates. Admission precedes all polygon temporaries.
+        scope.charge(work=32 * int(b - a) + 32)
         polygon = data.vertices[data.face_vertices[a:b]]
         area_vector = (
             np.sum(
@@ -3274,14 +3468,18 @@ def _update_polyhedral_weights_active(
         diagonal[j] += derivative
     if empty.size:
         revived = _revive_hidden_polyhedral_sites(
-            diagram, recovery, values, targets, empty, metric_sites, metric_owners
+            diagram, recovery, values, targets, empty, metric_sites, metric_owners,
+            scope=scope,
         )
         return _PolyhedralWeightUpdate(values=revived.values, work_units=work_units)
+    scope.charge(work=2 * diagonal.size)
     if np.any(diagonal <= 0):
+        scope.charge(work=3 * diagonal.size)
         raise PolyhedralGenerationError(
             PolyhedralGenerationReason.WEIGHT_JACOBIAN_UNRESOLVED,
             entities=tuple(map(int, np.flatnonzero(diagonal <= 0))),
         )
+    scope.charge(work=5 * values.size)
     values += 0.5 * (targets - achieved) / diagonal
     values -= values[0]
     return _PolyhedralWeightUpdate(values=values, work_units=work_units)
@@ -3306,6 +3504,12 @@ def _insert_polyhedral_sites(
     temporary = 20 * 256 + 8 * vertices + 16 * corners + 96 * total + 40 * added
     with _PolyhedralTopologyStorage(scope) as storage:
         storage.workspace.set_bound(retained + temporary)
+        # CSR/coordinate copies, each selected corner's gather/reduction,
+        # concatenation, row sorting and ancestry gather/output passes.
+        scope.charge(
+            work=vertices + 7 * corners + len(connectivity.cell_vertex_offsets)
+            + 3 * total * (total.bit_length() + 2) + 12 * total + 4 * added
+        )
         result = _insert_polyhedral_sites_active(publication, state, measures, complex_)
         storage.retain(
             retained, result.points, result.weights, result.parents, result.split,
@@ -3347,6 +3551,7 @@ def _insert_polyhedral_sites_active(
     # A certified vertex-mean star center lies inside the restricted cell.
     new_sites = np.concatenate((site_array, centers))
     if np.unique(new_sites, axis=0).shape[0] != new_sites.shape[0]:
+        # Failure evidence uses only the already admitted selected-order bank.
         raise PolyhedralGenerationError(
             PolyhedralGenerationReason.SITE_INSERTION_STALLED,
             entities=tuple(map(int, order[large])),
@@ -3423,6 +3628,12 @@ def _relocate_polyhedral_sites_active(
     # Restrict relocation to single unsplit star-visible components;
     # averaging disconnected components can move a site into a hole.
     data = diagram.construction
+    # Bincount zeroing/accumulation, inverse permutation initialization and
+    # scatter, then each eligibility check and possible centroid/write. Keep
+    # this host admission outside the coordinate ticket's reserved allowance.
+    scope.charge(
+        work=achieved.size + 10 * len(diagram.cell_original_sites) + 2 * order.size
+    )
     multiplicity = np.bincount(diagram.cell_original_sites, minlength=achieved.size)
     inverse_order = np.empty_like(order)
     inverse_order[order] = np.arange(order.size, dtype=np.int64)
@@ -3532,6 +3743,7 @@ def _finalize_polyhedral_periodicity_active(
         measures.work_units,
     )
     data = diagram.construction
+    scope.charge(work=len(order) + 7 * len(face_order))
     regions = data.cell_regions[order]
     face_recovery_triangles = data.face_facets[face_order]
     face_facets = np.full(face_recovery_triangles.size, -1, dtype=np.int32)
@@ -3542,6 +3754,7 @@ def _finalize_polyhedral_periodicity_active(
     seam_fragments: tuple[PeriodicPolyhedralSeamFragment, ...] = ()
     assembly = None
     if periodic_group is not None:
+        scope.charge(work=2 * len(order))
         old_bounds = dict(zip(map(int, order), diameters, strict=True))
         remaining = schedule_.maximum_work_units - work_units
         before = budget.work_units
@@ -3587,6 +3800,7 @@ def _finalize_polyhedral_periodicity_active(
             validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
                 assembly.geometry, mesh=assembly.mesh, budget=budget
             )
+            budget.reserve(3 * len(validity.status))
             bad = np.flatnonzero(
                 np.asarray(validity.status)
                 != int(
@@ -3594,11 +3808,16 @@ def _finalize_polyhedral_periodicity_active(
                 )
             )
             if bad.size:
+                budget.reserve(bad.size)
                 raise PolyhedralGenerationError(
                     PolyhedralGenerationReason.PERIODIC_PIECE_GEOMETRY_UNRESOLVED,
                     entities=tuple(map(int, bad)),
                 )
             mesh, geometry = assembly.mesh, assembly.geometry
+            budget.reserve(
+                2 * len(assembly.parent_faces)
+                + 4 * require_polyhedral_connectivity(mesh).cell_count
+            )
             face_facets = face_facets[assembly.parent_faces]
             face_recovery_triangles = face_recovery_triangles[assembly.parent_faces]
             order = np.asarray(
@@ -3611,6 +3830,7 @@ def _finalize_polyhedral_periodicity_active(
             exact_volumes, _, _ = mapped_measure_owner.certified_cell_measures(
                 mesh, geometry, maximum_work=remaining, budget=budget
             )
+            budget.reserve(2 * len(order) + len(site_array) + 4 * targets.size)
             achieved = np.bincount(
                 diagram.cell_original_sites[order],
                 weights=exact_volumes,
@@ -3627,6 +3847,7 @@ def _finalize_polyhedral_periodicity_active(
                     achieved={"relative_volume_residual": residual},
                 )
         work_units += budget.work_units - before
+    scope.charge(work=20 * face_facets.size)
     pairs = np.full((face_facets.size, 2), -1, dtype=np.int64)
     constrained = face_facets >= 0
     pairs[constrained] = complex_.facet_regions[face_facets[constrained]]
@@ -3671,7 +3892,8 @@ def _certify_polyhedral_features(
         finalization.assembly,
     )
     recovery, work_units = carrier.recovery, finalization.work_units
-    feature_source_edges = _source_feature_edges(complex_, recovery, scope=scope)
+    with scope.ticket_view() as native_view, native_view.native_target():
+        feature_source_edges = _source_feature_edges(complex_, recovery, scope=scope)
     remaining_work = schedule_.maximum_work_units - work_units
     before = budget.work_units
     with _polyhedral_coordinate_phase(
@@ -3701,6 +3923,9 @@ def _certify_polyhedral_features(
         storage.set_bound(
             (8 * 8 + 2 + 36 + 8) * len(feature_source_edges) + 256 * 16
         )
+        # Sum, zero test, outward rounding, where, tolerance test and the
+        # nonzero scan visit each source feature edge once.
+        scope.charge(work=6 * len(feature_source_edges))
         combined = feature_distances + feature_gaps
         combined = np.where(combined == 0, 0.0, np.nextafter(combined, np.inf))
         bad_features = np.flatnonzero(combined > schedule_.feature_tolerance)
@@ -3888,6 +4113,18 @@ def _assemble_polyhedral_construction_active(
         finalization, diagram, scope=scope
     ).components
     interfaces, sheets = finalization.interface_faces, finalization.sheet_faces
+    # Streamed host reads and hashes of every identity bank, as in
+    # _cell_mesh._hash_work: the geometry identity's element/route/coordinate
+    # arrays, the site banks and the four piece banks; then the two cell-order
+    # gathers frozen below (each frozen copy charges itself).
+    scope.charge(
+        work=_geometry_identity_work(geometry)
+        + 2 * (
+            site_array.size + values.size + data.piece_sites.size
+            + data.piece_tets.size + data.piece_cells.size + data.piece_volumes.size
+            + order.size
+        )
+    )
     identity = canonical_fingerprint(
         {
             "kind": "native-polyhedral-construction",
@@ -3978,6 +4215,9 @@ def generate_polyhedral_volume(
         def reserve_retained_storage(_bytes_upper: int) -> NativeScopeTicket:
             return scope.ticket_view()
 
+        periodic_storage = request.enter_context(NativeHostStorageWorkspace(scope))
+        periodic_storage.set_bound(256 + 16 * len(periodic_constraints))
+        scope.charge(work=len(periodic_constraints))
         periodic_values = tuple(periodic_constraints)
         if budget is not None:
             # The schedule allowance is relative to the ledger's completed work
@@ -4047,19 +4287,24 @@ def generate_polyhedral_volume(
             work_units = publication.work_units
             # np.unique's selected/site/sort rows and unresolved/split masks.
             loop_storage.set_bound(16 * 256 + 64 * len(publication.order))
+            scope.charge(work=len(publication.unresolved))
             if np.any(publication.unresolved):
-                offending = np.unique(
-                    publication.diagram.cell_original_sites[
-                        publication.order[publication.unresolved]
-                    ]
-                )
+                scope.charge(work=len(publication.order))
+                selected = publication.order[publication.unresolved]
+                scope.charge(work=len(selected))
+                selected_sites = publication.diagram.cell_original_sites[selected]
+                scope.charge(work=len(selected) * (1 + len(selected).bit_length()))
+                offending = np.unique(selected_sites)
+                del selected_sites
+                scope.charge(work=2 * len(offending))
                 if np.any(state.split[offending]):
+                    scope.charge(work=len(selected))
                     raise PolyhedralGenerationError(
                         PolyhedralGenerationReason.PIECE_GEOMETRY_UNRESOLVED,
-                        entities=tuple(
-                            map(int, publication.order[publication.unresolved])
-                        ),
+                        entities=tuple(map(int, selected)),
                     )
+                del selected
+                scope.charge(work=len(offending))
                 state.split[offending] = 1
                 continue
             measures = _measure_polyhedral_publication(
@@ -4071,7 +4316,8 @@ def generate_polyhedral_volume(
             )
             work_units = measures.work_units
             refinement = _plan_polyhedral_refinement(
-                publication, state, measures, schedule_, refinement_steps, lloyd_steps
+                publication, state, measures, schedule_, refinement_steps, lloyd_steps,
+                scope=scope,
             )
             if refinement.finished:
                 break

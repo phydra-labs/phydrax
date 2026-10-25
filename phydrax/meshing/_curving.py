@@ -1562,13 +1562,14 @@ def _prepare_projected_curving(
     projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     periodic: tuple[_dependency_phydrax_meshing__coupling.PeriodicCoupling, ...],
     layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh | None,
+    budget: CoordinateEnclosureBudget,
 ) -> _ProjectedCurvingState:
     pairs = periodic_nodes(mesh, straight, tuple(periodic))
     layer_nodes = (
         None
         if layers is None
         else _dependency_phydrax_meshing__layer_curving.prepare_layer_curving_nodes(
-            mesh, straight, layers
+            mesh, straight, layers, budget=budget
         )
     )
     fixed = classes.fixed.copy()
@@ -1794,7 +1795,7 @@ def _curve_cell_mesh(
     candidate_bytes = 4096 + 2 * straight.coordinates.nbytes
     candidate_storage.set_bound(candidate_bytes)
     projected = _prepare_projected_curving(
-        mesh, straight, classes, projection, periodic, layers
+        mesh, straight, classes, projection, periodic, layers, budget
     )
     pairs, layer_nodes, fixed = projected.pairs, projected.layer_nodes, projected.fixed
     length, reference_coordinates = projected.length, projected.reference_coordinates

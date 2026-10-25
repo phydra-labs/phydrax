@@ -20,8 +20,10 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Literal, overload, Self, TypeAlias
+from weakref import ref, ReferenceType
 
 import equinox as eqx
 import jax
@@ -37,6 +39,12 @@ import phydrax.geometry.brep._placed as placed_owner
 from phydrax.discretization._coordinate_budget import reserve_polynomial
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_storage import (
+    declared_object_storage_bytes,
+    immutable_host_array,
+    immutable_host_array_layout,
+    immutable_host_array_layout_bytes,
+)
 from ..._strict import StrictModule
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
@@ -1293,6 +1301,15 @@ class IntersectionCurvePoint(CurveCoordinateResult):
     chart: Array
 
 
+_INTERSECTION_HOST_BANKS = (
+    "chart_axes", "chart_start", "chart_end", "chart_pieces", "box_lower", "box_upper",
+    "preconditioners", "contraction", "certified", "transition_shifts", "node_axes",
+    "node_values", "node_pieces", "node_references", "node_period_shifts", "node_lower",
+    "node_upper", "nodes_certified", "chart_start_lower", "chart_start_upper",
+    "chart_end_lower", "chart_end_upper", "transitions_certified",
+)
+
+
 class IntersectionCurve(
     StrictModule, CoefficientEnclosureSource, RootCurveCoordinateSource
 ):
@@ -1451,6 +1468,16 @@ class IntersectionCurve(
             self.node_period_shifts = nodes.shifts
             self._certify_nodes(budget=budget)
             self._verify_chart_witnesses(budget=budget)
+            # Retained numeric banks become immutable bytes with unchanged
+            # values, dtype and shape, so carrier identities of prepared source
+            # maps can be memoized instead of rehashed on every source query.
+            # Each snapshot copy is admitted before it is allocated.
+            budget.reserve(
+                len(_INTERSECTION_HOST_BANKS),
+                sum(getattr(self, name).nbytes for name in _INTERSECTION_HOST_BANKS),
+            )
+            for name in _INTERSECTION_HOST_BANKS:
+                setattr(self, name, immutable_host_array(getattr(self, name)))
             self._qualified = bool(
                 np.all(self.certified)
                 and np.all(self.nodes_certified)
@@ -2266,23 +2293,26 @@ class IntersectionCurve(
         budget: CoordinateEnclosureBudget | None,
     ) -> IntersectionCurvePoint:
         tau = jnp.asarray(parameters, dtype=jnp.float64)
-        systems, selector = self._evaluation_pairs()
-        rows = _chart_capacity(selector.shape[0])
-        atlas = _ChartAtlas(
-            systems,
-            jnp.asarray(_pad_rows(selector, rows)),
-            jnp.asarray(_pad_rows(self.chart_axes, rows)),
-            jnp.asarray(_pad_rows(self.chart_start, rows)),
-            jnp.asarray(_pad_rows(self.chart_end, rows)),
-            jnp.asarray(_pad_rows(self.preconditioners, rows)),
-            jnp.asarray(_pad_rows(self.contraction, rows)),
-            jnp.asarray(_pad_rows(self.certified, rows)),
-            jnp.asarray(_pad_rows(self.box_lower, rows)),
-            jnp.asarray(_pad_rows(self.box_upper, rows)),
-            jnp.asarray(minimum_chart, dtype=jnp.int32),
-            jnp.asarray(maximum_chart, dtype=jnp.int32),
-            jnp.asarray(selector.shape[0], dtype=jnp.float64),
+        # Concrete queries in an explicit request reuse its prepared chart
+        # rows; traced parameters and unprepared curves build them live.
+        atlas = (
+            None
+            if isinstance(tau, Tracer)
+            else _request_chart_atlas(
+                self,
+                minimum_chart,
+                maximum_chart,
+                preparations=preparations,
+                budget=budget,
+            )
         )
+        if atlas is None:
+            systems, selector = self._evaluation_pairs()
+            atlas = _ChartAtlas(
+                systems,
+                *_chart_atlas_rows(self, selector),
+                *_chart_atlas_range(minimum_chart, maximum_chart, selector.shape[0]),
+            )
         if isinstance(tau, Tracer):
             result = _evaluate_atlas(atlas, tau.reshape((-1,)))
             result = jax.tree_util.tree_map(
@@ -2568,6 +2598,268 @@ class _ChartAtlas(StrictModule):
         )
 
 
+# Per-chart banks of ``_ChartAtlas`` in field order after the padded selector.
+_CHART_ATLAS_BANKS = (
+    "chart_axes", "chart_start", "chart_end", "preconditioners", "contraction",
+    "certified", "box_lower", "box_upper",
+)
+# Declared bound of one retained request atlas record: its field slots, the
+# padded-row and bound-layout tuples and its request-table slot.
+_PREPARED_ATLAS_RECORD_BYTES = 4096
+# Declared bound of one retained chart range: three scalar device leaves, the
+# retained ``_ChartAtlas`` shell and the range-table slot.
+_PREPARED_ATLAS_RANGE_BYTES = 2048
+
+
+type _ChartAtlasRows = tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]
+
+
+def _chart_atlas_rows(
+    curve: IntersectionCurve, selector: np.ndarray, /
+) -> _ChartAtlasRows:
+    """Padded device chart rows in ``_ChartAtlas`` field order after the systems."""
+    rows = _chart_capacity(selector.shape[0])
+    return (
+        jnp.asarray(_pad_rows(selector, rows)),
+        jnp.asarray(_pad_rows(curve.chart_axes, rows)),
+        jnp.asarray(_pad_rows(curve.chart_start, rows)),
+        jnp.asarray(_pad_rows(curve.chart_end, rows)),
+        jnp.asarray(_pad_rows(curve.preconditioners, rows)),
+        jnp.asarray(_pad_rows(curve.contraction, rows)),
+        jnp.asarray(_pad_rows(curve.certified, rows)),
+        jnp.asarray(_pad_rows(curve.box_lower, rows)),
+        jnp.asarray(_pad_rows(curve.box_upper, rows)),
+    )
+
+
+def _chart_atlas_range(
+    minimum_chart: int, maximum_chart: int, charts: int, /
+) -> tuple[Array, Array, Array]:
+    """Dynamic chart range and true chart count of one ``_ChartAtlas``."""
+    return (
+        jnp.asarray(minimum_chart, dtype=jnp.int32),
+        jnp.asarray(maximum_chart, dtype=jnp.int32),
+        jnp.asarray(charts, dtype=jnp.float64),
+    )
+
+
+def _immutable_layouts(
+    leaves: Sequence[object], /
+) -> tuple[tuple[np.ndarray, tuple[object, ...]], ...] | None:
+    """Byte-backed layouts of concrete immutable host leaves, else ``None``.
+
+    Device arrays and scalars are immutable values. A traced leaf, an unknown
+    owner, or a caller-mutable host bank (including a read-only view of
+    mutable storage) has no reusable layout.
+    """
+    bound = []
+    for leaf in leaves:
+        if isinstance(leaf, Tracer):
+            return None
+        if isinstance(leaf, np.ndarray):
+            layout = immutable_host_array_layout(leaf)
+            if layout is None:
+                return None
+            bound.append((leaf, layout))
+        elif not isinstance(leaf, (jax.Array, np.generic, bool, int, float, complex)):
+            return None
+    return tuple(bound)
+
+
+@dataclass(init=False, eq=False, repr=False)
+class PreparedChartAtlas:
+    """Request-owned device chart rows of one unchanged concrete curve.
+
+    Without it, ``_evaluate_in_chart_range`` rebuilds these exact padded rows,
+    their device copies and the span-pinned source systems on every concrete
+    query. They do not depend on the queried parameters: every query still
+    solves its own chart roots through ``_evaluate_atlas``. Reuse is bound to
+    the retained curve object, its unchanged bank objects and their immutable
+    byte-backed layouts, and to the budget that admitted its retained storage.
+    Systems are retained only when every source leaf is immutable;
+    caller-mutable source leaves rebuild the live systems on every query, and
+    mutable or traced banks are never prepared.
+    """
+
+    curve: IntersectionCurve
+    budget: ReferenceType[CoordinateEnclosureBudget]
+    banks: tuple[object, ...]
+    bank_layouts: tuple[tuple[np.ndarray, tuple[object, ...]], ...]
+    source_layouts: tuple[tuple[np.ndarray, tuple[object, ...]], ...]
+    systems: tuple[SurfacePairSystem, ...] | None
+    rows: _ChartAtlasRows
+    charts: int
+    ranges: dict[
+        tuple[int, int], tuple[tuple[Array, Array, Array], _ChartAtlas | None]
+    ]
+
+    def __init__(
+        self,
+        curve: IntersectionCurve,
+        budget: CoordinateEnclosureBudget,
+        banks: tuple[object, ...],
+        bank_layouts: tuple[tuple[np.ndarray, tuple[object, ...]], ...],
+        source_layouts: tuple[tuple[np.ndarray, tuple[object, ...]], ...],
+        systems: tuple[SurfacePairSystem, ...] | None,
+        rows: _ChartAtlasRows,
+        charts: int,
+    ) -> None:
+        self.curve = curve
+        # A weak edge: the request record never extends its budget's lifetime.
+        self.budget = ref(budget)
+        self.banks = banks
+        self.bank_layouts = bank_layouts
+        self.source_layouts = source_layouts
+        self.systems = systems
+        self.rows = rows
+        self.charts = charts
+        self.ranges = {}
+
+    @classmethod
+    def admit(
+        cls, curve: IntersectionCurve, /, *, budget: CoordinateEnclosureBudget
+    ) -> PreparedChartAtlas | None:
+        """Prepare a concrete curve's rows after admitting their storage.
+
+        Returns ``None`` (the live path) for traced source leaves and for
+        traced or caller-mutable banks.
+        """
+        banks = tuple(getattr(curve, name) for name in _CHART_ATLAS_BANKS)
+        bank_layouts = _immutable_layouts(banks)
+        if bank_layouts is None:
+            return None
+        leaves = jax.tree_util.tree_leaves((curve.first.patch, curve.second.patch))
+        if any(isinstance(leaf, Tracer) for leaf in leaves):
+            return None
+        source_layouts = _immutable_layouts(leaves)
+        systems = None if source_layouts is None else curve._evaluation_pairs()[0]
+        selector = np.asarray(curve._chart_selector, dtype=np.int32)
+        rows = _chart_capacity(selector.shape[0])
+        row_bytes = rows * (
+            selector.dtype.itemsize
+            + sum(
+                np.dtype(bank.dtype).itemsize * math.prod(bank.shape[1:])
+                for bank in banks
+            )
+        )
+        layouts = bank_layouts + (source_layouts or ())
+        # Retained rows and record are admitted before any copy exists.
+        budget.retain_operand_metadata(
+            _PREPARED_ATLAS_RECORD_BYTES
+            + row_bytes
+            + sum(immutable_host_array_layout_bytes(leaf.ndim) for leaf, _ in layouts)
+            + (
+                0
+                if systems is None
+                else declared_object_storage_bytes(jax.tree_util.tree_structure(systems))
+            )
+        )
+        with budget.temporary_scope():
+            # Padded host rows, plus host copies of device banks, are released
+            # once their device rows exist.
+            budget.reserve(
+                0,
+                row_bytes
+                + sum(
+                    np.dtype(bank.dtype).itemsize * math.prod(bank.shape)
+                    for bank in banks
+                    if not isinstance(bank, np.ndarray)
+                ),
+            )
+            device = _chart_atlas_rows(curve, selector)
+        if any(isinstance(row, Tracer) for row in device):
+            return None
+        return cls(
+            curve,
+            budget,
+            banks,
+            bank_layouts,
+            source_layouts or (),
+            systems,
+            device,
+            selector.shape[0],
+        )
+
+    def current(
+        self, curve: IntersectionCurve, budget: CoordinateEnclosureBudget, /
+    ) -> bool:
+        """Same curve, budget, bank objects and immutable layouts; no rescans."""
+        return (
+            self.curve is curve
+            and self.budget() is budget
+            and all(
+                getattr(curve, name) is bank
+                for name, bank in zip(_CHART_ATLAS_BANKS, self.banks, strict=True)
+            )
+            and all(
+                immutable_host_array_layout(leaf) == layout
+                for leaf, layout in self.bank_layouts + self.source_layouts
+            )
+        )
+
+    def atlas(
+        self,
+        minimum_chart: int,
+        maximum_chart: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> _ChartAtlas:
+        """The exact live ``_ChartAtlas`` of one chart range."""
+        key = (minimum_chart, maximum_chart)
+        entry = self.ranges.get(key)
+        if entry is None:
+            budget.retain_operand_metadata(_PREPARED_ATLAS_RANGE_BYTES)
+            bounds = _chart_atlas_range(minimum_chart, maximum_chart, self.charts)
+            if any(isinstance(bound, Tracer) for bound in bounds):
+                systems = (
+                    self.curve._evaluation_pairs()[0]
+                    if self.systems is None
+                    else self.systems
+                )
+                return _ChartAtlas(systems, *self.rows, *bounds)
+            entry = (
+                bounds,
+                None
+                if self.systems is None
+                else _ChartAtlas(self.systems, *self.rows, *bounds),
+            )
+            self.ranges[key] = entry
+        bounds, atlas = entry
+        if atlas is not None:
+            return atlas
+        # Caller-mutable source leaves: bind the live source equations now.
+        return _ChartAtlas(self.curve._evaluation_pairs()[0], *self.rows, *bounds)
+
+
+def _request_chart_atlas(
+    curve: IntersectionCurve,
+    minimum_chart: int,
+    maximum_chart: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget | None,
+) -> _ChartAtlas | None:
+    """The request's prepared atlas of a concrete curve, or ``None`` (live path)."""
+    if (
+        preparations is None
+        or budget is None
+        or type(minimum_chart) is not int
+        or type(maximum_chart) is not int
+    ):
+        return None
+    atlases = preparations.chart_atlases
+    prepared = atlases.get(id(curve))
+    if prepared is None or not prepared.current(curve, budget):
+        atlases.pop(id(curve), None)
+        prepared = PreparedChartAtlas.admit(curve, budget=budget)
+        if prepared is None:
+            return None
+        atlases[id(curve)] = prepared
+    return prepared.atlas(minimum_chart, maximum_chart, budget=budget)
+
+
 _CHART_ROOT = VectorLocalRootPlan(
     3, maximum_steps=40, tolerance=1.0e-13, plan_id="intersection-curve-chart"
 )
@@ -2709,6 +3001,7 @@ def _intersection_is_c1(
 type _ChartFirstJet = tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]
 
 
+@dataclass(init=False, eq=False, repr=False)
 class IntersectionJetPreparation:
     """Reusable deterministic graph programs, optionally resource-observed.
 
@@ -2717,8 +3010,23 @@ class IntersectionJetPreparation:
     inverse enclosures, root definition, chart ownership or derivative formulas.
     An unobserved preparation also retains the results of identical
     deterministic queries; an observed one charges every evaluation and retains
-    results only inside an explicit ``retained_queries`` scope.
+    results only inside an explicit ``retained_queries`` scope. Declared fields
+    are the complete owned state, so retained-storage profiling sizes the
+    programs, roots and memo banks a retained source map keeps alive.
     """
+
+    curve: IntersectionCurve
+    pairs: Any
+    prepare: Any
+    _wrap: Any
+    _observe_point_jet: Any
+    _programs: dict[tuple[int, str, int], Any]
+    _roots: dict[int, Any]
+    _batch_roots: dict[int, Any]
+    _observed: bool
+    chart_boxes: dict[tuple[int, float, float], np.ndarray] | None
+    jets: dict[tuple[object, ...], tuple[np.ndarray, np.ndarray]] | None
+    chart_jets: dict[tuple[int, bytes], _ChartFirstJet | None] | None
 
     def __init__(
         self,
@@ -3337,14 +3645,14 @@ def _intersection_jet_bounds(
         return np.full(dimension, -np.inf), np.full(dimension, np.inf)
 
     systems, selector = (
-        curve._pairs(budget=budget) if _preparation is None else _preparation.pairs
+        type(curve)._pairs(curve, budget=budget) if _preparation is None else _preparation.pairs
     )
     last_chart = curve.num_charts - 1 if maximum_chart is None else maximum_chart
     head = max(minimum_chart, min(int(math.floor(first)), last_chart))
     lower_bounds, upper_bounds = [], []
     for offset, box in enumerate(
-        curve.parameter_enclosures(
-            first,
+        type(curve).parameter_enclosures(
+            curve, first,
             last,
             minimum_chart=minimum_chart,
             maximum_chart=last_chart,
@@ -4017,8 +4325,18 @@ class IntersectionPCurve(AbstractTrimCurve):
                         f"IntersectionPCurve.side must name a generating side; got {self.side!r}"
                     )
 
-    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
-        """Concrete rows through the shared bucketed atlas program."""
+    def host_points(
+        self,
+        parameters: ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        """Concrete rows through the shared bucketed atlas program.
+
+        An explicit request reuses its prepared chart rows of this branch.
+        """
         first_chart = min(int(math.floor(self.first)), self.curve.num_charts - 1)
         last_chart = min(int(math.ceil(self.last)) - 1, self.curve.num_charts - 1)
         result = self.curve._evaluate_in_chart_range(
@@ -4026,7 +4344,8 @@ class IntersectionPCurve(AbstractTrimCurve):
             first_chart,
             last_chart,
             certify=False,
-            budget=None,
+            preparations=preparations,
+            budget=budget,
         )
         return np.asarray(
             result.first_parameters if self.side == "first" else result.second_parameters
@@ -4264,7 +4583,10 @@ class AffinePCurve(AbstractCurve, AbstractTrimCurve):
         return matrix, offset
 
     def validate_range(self, first: float, last: float, /) -> tuple[float, float]:
-        return self.curve.validate_range(first, last)
+        curve = self.curve
+        if isinstance(curve, AbstractTrimCurve):
+            return type(curve).validate_range(curve, first, last)
+        return type(curve).validate_range(curve, first, last)
 
     def validate_query_range(self, first: float, last: float, /) -> tuple[float, float]:
         if not (math.isfinite(first) and math.isfinite(last) and first <= last):
@@ -4272,7 +4594,7 @@ class AffinePCurve(AbstractCurve, AbstractTrimCurve):
                 f"AffinePCurve.interval must be a finite closed subinterval; got {(first, last)!r}"
             )
         if first < last:
-            return self.validate_range(first, last)
+            return type(self).validate_range(self, first, last)
         domain = self.parameter_domain
         if domain is not None and not domain[0] <= first <= domain[1]:
             raise ValueError(
@@ -4334,18 +4656,18 @@ class AffinePCurve(AbstractCurve, AbstractTrimCurve):
                     last,
                 )
             ) as budget:
-                return self.enclosure(
-                    first, last, preparations=preparations, budget=budget
+                return type(self).enclosure(
+                    self, first, last, preparations=preparations, budget=budget
                 )
-        self.validate_query_range(first, last)
+        type(self).validate_query_range(self, first, last)
         match self.curve:
             case AbstractTrimCurve() as curve:
-                bounds = curve.enclosure(
-                    first, last, preparations=preparations, budget=budget
+                bounds = type(curve).enclosure(
+                    curve, first, last, preparations=preparations, budget=budget
                 )
             case AbstractCurve() as curve if first < last:
-                bounds = curve.bounding_box(
-                    first, last, preparations=preparations, budget=budget
+                bounds = type(curve).bounding_box(
+                    curve, first, last, preparations=preparations, budget=budget
                 )
             case AbstractCurve() as curve:
                 images = []
@@ -4371,7 +4693,7 @@ class AffinePCurve(AbstractCurve, AbstractTrimCurve):
                 raise TypeError(
                     f"AffinePCurve.curve must provide a native curve or trim curve; got {type(self.curve).__name__}"
                 )
-        return self._transport_bounds(np.asarray(bounds), translate=True)
+        return type(self)._transport_bounds(self, np.asarray(bounds), translate=True)
 
     def bounding_box(
         self,
@@ -4392,10 +4714,12 @@ class AffinePCurve(AbstractCurve, AbstractTrimCurve):
                     last,
                 )
             ) as budget:
-                return self.bounding_box(
-                    first, last, preparations=preparations, budget=budget
+                return type(self).bounding_box(
+                    self, first, last, preparations=preparations, budget=budget
                 )
-        return self.enclosure(first, last, preparations=preparations, budget=budget)
+        return type(self).enclosure(
+            self, first, last, preparations=preparations, budget=budget
+        )
 
     def is_c1_on(
         self,
@@ -4783,7 +5107,7 @@ class PeriodicPCurve(AbstractCurve, AbstractTrimCurve):
 
     def _transport_bounds(self, bounds: np.ndarray, /) -> np.ndarray:
 
-        offsets = self.period_offset_bounds()
+        offsets = type(self).period_offset_bounds(self)
         return np.asarray(
             [
                 interval_add(
@@ -5150,19 +5474,23 @@ class CurveTrimSegment(AbstractTrimCurve):
             raise ValueError(
                 f"CurveTrimSegment.interval must be an ordered source subinterval; got {(first, last)!r}"
             )
+        intersection_owner.admit_segment_endpoint_roots(
+            (self.first_root, self.last_root), preparations, budget=budget
+        )
 
+        # type(root) selects this same root's method; ty loses that union correlation.
         a = (
             (self.first, self.first)
             if self.first_root is None
-            else self.first_root.parameter_enclosure(
-                preparations=preparations, budget=budget
+            else type(self.first_root).parameter_enclosure(
+                self.first_root, preparations=preparations, budget=budget  # ty: ignore[invalid-argument-type]
             )
         )
         b = (
             (self.last, self.last)
             if self.last_root is None
-            else self.last_root.parameter_enclosure(
-                preparations=preparations, budget=budget
+            else type(self.last_root).parameter_enclosure(
+                self.last_root, preparations=preparations, budget=budget  # ty: ignore[invalid-argument-type]
             )
         )
         endpoints = []
@@ -5227,16 +5555,27 @@ class CurveTrimSegment(AbstractTrimCurve):
                 budget=budget,
             )
 
-    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
+    def host_points(
+        self,
+        parameters: ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
         """Concrete rows through the shared atlas program for intersection carriers."""
         values = _trim_carrier_host(
             self.curve,
             _host_source_parameters(self, np.asarray(parameters, dtype=np.float64)),
             self.first,
             self.last,
+            preparations=preparations,
+            budget=budget,
         )
         if values is None:
-            return AbstractTrimCurve.host_points(self, parameters)
+            return AbstractTrimCurve.host_points(
+                self, parameters, preparations=preparations, budget=budget
+            )
         return values
 
     def is_c1_on(
@@ -5313,11 +5652,11 @@ class CurveTrimSegment(AbstractTrimCurve):
             raise ValueError(
                 f"CurveTrimSegment.interval must lie inside [0, 1]; got {(first, last)!r}"
             )
-        endpoints = self.carrier_parameter_enclosure(
-            first, last, preparations=preparations, budget=budget
+        endpoints = type(self).carrier_parameter_enclosure(
+            self, first, last, preparations=preparations, budget=budget
         )
-        if order == 2 and not self.is_c1_on(
-            first, last, preparations=preparations, budget=budget
+        if order == 2 and not type(self).is_c1_on(
+            self, first, last, preparations=preparations, budget=budget
         ):
             return np.full(2, -np.inf), np.full(2, np.inf)
         lower, upper = _trim_carrier_derivatives(
@@ -5330,18 +5669,19 @@ class CurveTrimSegment(AbstractTrimCurve):
             preparations=preparations,
             budget=budget,
         )
+        # type(root) selects this same root's method; ty loses that union correlation.
         a = (
             (self.first, self.first)
             if self.first_root is None
-            else self.first_root.parameter_enclosure(
-                preparations=preparations, budget=budget
+            else type(self.first_root).parameter_enclosure(
+                self.first_root, preparations=preparations, budget=budget  # ty: ignore[invalid-argument-type]
             )
         )
         b = (
             (self.last, self.last)
             if self.last_root is None
-            else self.last_root.parameter_enclosure(
-                preparations=preparations, budget=budget
+            else type(self.last_root).parameter_enclosure(
+                self.last_root, preparations=preparations, budget=budget  # ty: ignore[invalid-argument-type]
             )
         )
         delta = (np.nextafter(b[0] - a[1], -np.inf), np.nextafter(b[1] - a[0], np.inf))
@@ -5399,8 +5739,8 @@ class CurveTrimSegment(AbstractTrimCurve):
                 return self.enclosure(
                     first, last, preparations=preparations, budget=budget
                 )
-        endpoints = self.carrier_parameter_enclosure(
-            first, last, preparations=preparations, budget=budget
+        endpoints = type(self).carrier_parameter_enclosure(
+            self, first, last, preparations=preparations, budget=budget
         )
         lower, upper = float(endpoints[0]), float(endpoints[1])
         return _trim_carrier_enclosure(
@@ -5464,9 +5804,10 @@ class CurveTrimSegment(AbstractTrimCurve):
 def pcurve_chart_support(
     curve: IntersectionPCurve, first: float, last: float, /
 ) -> tuple[int, int]:
-    lower, upper = sorted((float(curve._carrier(first)), float(curve._carrier(last))))
+    carrier = type(curve)._carrier
+    lower, upper = sorted((float(carrier(curve, first)), float(carrier(curve, last))))
     source_lower, source_upper = sorted(
-        (float(curve._carrier(curve.first)), float(curve._carrier(curve.last)))
+        (float(carrier(curve, curve.first)), float(carrier(curve, curve.last)))
     )
     # Select the source supporting charts, not a neighboring chart reached only
     # by outward endpoint uncertainty. Query coordinates themselves are not
@@ -5553,6 +5894,9 @@ def _trim_carrier_host(
     first: float,
     last: float,
     /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget | None,
 ) -> np.ndarray | None:
     """``_trim_carrier_evaluate`` on concrete parameters through the bucketed atlas.
 
@@ -5561,10 +5905,24 @@ def _trim_carrier_host(
     """
     match curve:
         case PeriodicPCurve():
-            inner = _trim_carrier_host(curve.source_curve, parameters, first, last)
+            inner = _trim_carrier_host(
+                curve.source_curve,
+                parameters,
+                first,
+                last,
+                preparations=preparations,
+                budget=budget,
+            )
             return None if inner is None else inner + np.asarray(curve.offset_value)
         case AffinePCurve():
-            inner = _trim_carrier_host(curve.curve, parameters, first, last)
+            inner = _trim_carrier_host(
+                curve.curve,
+                parameters,
+                first,
+                last,
+                preparations=preparations,
+                budget=budget,
+            )
             return (
                 None
                 if inner is None
@@ -5574,7 +5932,12 @@ def _trim_carrier_host(
         case IntersectionPCurve():
             head, tail = pcurve_chart_support(curve, first, last)
             result = curve.curve._evaluate_in_chart_range(
-                _host_carrier(curve, parameters), head, tail, certify=False, budget=None
+                _host_carrier(curve, parameters),
+                head,
+                tail,
+                certify=False,
+                preparations=preparations,
+                budget=budget,
             )
             return np.asarray(
                 result.first_parameters if curve.side == "first" else result.second_parameters
@@ -5675,11 +6038,12 @@ def _trim_carrier_derivatives(
                 budget=budget,
             )
         )
-        lo, hi = curve._transport_bounds(bounds, translate=False)
+        lo, hi = type(curve)._transport_bounds(curve, bounds, translate=False)
         return lo, hi
     if isinstance(curve, IntersectionPCurve):
         head, tail = pcurve_chart_support(curve, first, last)
-        values = sorted((float(curve._carrier(lower)), float(curve._carrier(upper))))
+        carrier = type(curve)._carrier
+        values = sorted((float(carrier(curve, lower)), float(carrier(curve, upper))))
         lo, hi = intersection_derivative_bounds(
             curve.curve,
             values[0],
@@ -5693,8 +6057,9 @@ def _trim_carrier_derivatives(
             budget=budget,
         )
         return (-hi, -lo) if curve.reversed and order == 1 else (lo, hi)
-    return curve.derivative_bounds(
-        lower, upper, order=order, preparations=preparations, budget=budget
+    # type(curve) keeps the receiver's class; ty loses the curve/trim union correlation.
+    return type(curve).derivative_bounds(
+        curve, lower, upper, order=order, preparations=preparations, budget=budget  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -5710,7 +6075,8 @@ def _trim_carrier_enclosure(
     budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     if isinstance(curve, PeriodicPCurve):
-        return curve._transport_bounds(
+        return type(curve)._transport_bounds(
+            curve,
             _trim_carrier_enclosure(
                 curve.source_curve,
                 lower,
@@ -5722,7 +6088,8 @@ def _trim_carrier_enclosure(
             )
         )
     if isinstance(curve, AffinePCurve):
-        return curve._transport_bounds(
+        return type(curve)._transport_bounds(
+            curve,
             _trim_carrier_enclosure(
                 curve.curve,
                 lower,
@@ -5736,24 +6103,31 @@ def _trim_carrier_enclosure(
         )
     if isinstance(curve, IntersectionPCurve):
         head, tail = pcurve_chart_support(curve, first, last)
-        values = sorted((float(curve._carrier(lower)), float(curve._carrier(upper))))
-        boxes = curve.curve.parameter_enclosures(
-            *values,
+        values = sorted((
+            float(type(curve)._carrier(curve, lower)),
+            float(type(curve)._carrier(curve, upper)),
+        ))
+        boxes = type(curve.curve).parameter_enclosures(
+            curve.curve, *values,
             minimum_chart=head,
             maximum_chart=tail,
             source_extension=True,
             preparations=preparations,
             budget=budget,
         )
-        columns = curve._columns()
+        columns = type(curve)._columns(curve)
         return np.stack(
             (np.min(boxes[:, 0, columns], axis=0), np.max(boxes[:, 1, columns], axis=0))
         )
     if isinstance(curve, AbstractTrimCurve):
-        return curve.enclosure(lower, upper, preparations=preparations, budget=budget)
+        return type(curve).enclosure(
+            curve, lower, upper, preparations=preparations, budget=budget
+        )
     if lower < upper:
         return np.asarray(
-            curve.bounding_box(lower, upper, preparations=preparations, budget=budget),
+            type(curve).bounding_box(
+                curve, lower, upper, preparations=preparations, budget=budget
+            ),
             dtype=np.float64,
         )
 
@@ -5943,6 +6317,10 @@ def trim_source_jet(
     """
 
     if isinstance(curve, CurveTrimSegment):
+        if preparations is not None:
+            intersection_owner.admit_segment_endpoint_roots(
+                (curve.first_root, curve.last_root), preparations, budget=budget
+            )
         a = (
             (curve.first, curve.first)
             if curve.first_root is None

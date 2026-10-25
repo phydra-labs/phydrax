@@ -45,7 +45,7 @@ from contextlib import contextmanager, nullcontext
 from enum import IntEnum, StrEnum
 from fractions import Fraction
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -65,6 +65,7 @@ from ._meshcore import (
 from ._resource_ticket import HostBatchTicket
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from ._validation import nonnegative_integer
 from .discretization._coordinate_budget import CoordinateEnclosureBudget
 from .typing import checked, ConvertibleToArray, parse
 
@@ -582,6 +583,62 @@ def bigint_bytes(bits: int, /) -> int:
     array or tuple slot adds one 8-byte reference.
     """
     return 40 + 4 * ((max(bits, 1) + 29) // 30)
+
+
+def exact_fraction_rows_key(
+    rows: object,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    extra_storage: int = 0,
+) -> bytes | None:
+    """Pack complete exact row values, never rounded coordinates or a digest.
+
+    Row lengths and integer lengths delimit signed numerators and positive
+    denominators. Unsupported scalar forms decline this numerical cache route.
+    The caller owns any scientific namespace and the returned key's lifetime.
+    """
+    extra_storage = nonnegative_integer(extra_storage, "exact_fraction_rows_key.extra_storage")
+    if type(rows) is not tuple:
+        return None
+    size = 8
+    for row in rows:
+        budget.reserve(1)
+        if type(row) is not tuple:
+            return None
+        size += 8
+        for value in row:
+            budget.reserve(1)
+            if (
+                type(value) is not Fraction
+                or type(value.numerator) is not int
+                or type(value.denominator) is not int
+                or value.denominator <= 0
+            ):
+                return None
+            size += (
+                16
+                + max(1, (value.numerator.bit_length() + 8) // 8)
+                + max(1, (value.denominator.bit_length() + 7) // 8)
+            )
+    # The complete immutable row/scalar validation above establishes this shape.
+    canonical = cast(tuple[tuple[Fraction, ...], ...], rows)
+    budget.reserve(0, 1024 + 3 * size + extra_storage)
+    payload = bytearray()
+    payload.extend(len(canonical).to_bytes(8, "big"))
+    for row in canonical:
+        budget.reserve(1)
+        payload.extend(len(row).to_bytes(8, "big"))
+        for value in row:
+            budget.reserve(1)
+            numerator, denominator = value.numerator, value.denominator
+            width = max(1, (numerator.bit_length() + 8) // 8)
+            payload.extend(width.to_bytes(8, "big"))
+            payload.extend(numerator.to_bytes(width, "big", signed=True))
+            width = max(1, (denominator.bit_length() + 7) // 8)
+            payload.extend(width.to_bytes(8, "big"))
+            payload.extend(denominator.to_bytes(width, "big"))
+    return bytes(payload)
 
 
 def exact_bits(values: np.ndarray, /, *, budget: CoordinateEnclosureBudget) -> int:

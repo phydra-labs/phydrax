@@ -808,11 +808,17 @@ def _workflow_outcome(record: Mapping[str, Any], /) -> dict[str, object]:
     scientific = record.get("independent_scientific_certification", "unassessed")
     mandatory = record.get("mandatory_workflow_completion", "incomplete")
     case_contract = record.get("case_contract_completion", mandatory)
+    reporting_complete = (
+        record.get("reporting_status") != "failed"
+        and not record.get("reporting_failures")
+    )
     scientific_case = (
         expected == "positive" and observed == "passed" and scientific == "passed"
     )
-    positive = scientific_case and mandatory == "complete"
-    refusal = expected == "refusal" and observed == "expected-refusal"
+    positive = scientific_case and mandatory == "complete" and reporting_complete
+    refusal = (
+        expected == "refusal" and observed == "expected-refusal" and reporting_complete
+    )
     return {
         "expected_admission": expected,
         "observed_status": observed,
@@ -822,10 +828,13 @@ def _workflow_outcome(record: Mapping[str, Any], /) -> dict[str, object]:
         if refusal
         else "blocked",
         "positive_completion": positive,
-        "case_accepted": positive or scientific_case and case_contract == "complete",
+        "case_accepted": reporting_complete and (
+            positive or scientific_case and case_contract == "complete"
+        ),
         "refusal_certified": refusal,
         "refusals_count_as_positive_completion": False,
         "scientific_certification": scientific,
+        "reporting_complete": reporting_complete,
         "mandatory_workflow_completion": mandatory,
         "case_contract_completion": case_contract,
         "release": record.get("release_evidence", "unassessed"),
@@ -955,7 +964,11 @@ def _family_field_template_identities(
     )
     templates = []
     for kind in sorted(set(kinds)):
-        templates.extend(phx.meshing.qualification.family_solver_field_templates(kind))
+        templates.extend(
+            phx.meshing.qualification.family_solver_field_templates(
+                kind, degree=int(profile.get("geometry_order", 1))
+            )
+        )
         for field_kind in phx.meshing.qualification.LAYER_CORE_FIELD_KINDS:
             templates.extend(
                 phx.meshing.qualification.family_transport_field_templates(

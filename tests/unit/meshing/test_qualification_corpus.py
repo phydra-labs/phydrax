@@ -1017,6 +1017,93 @@ def test_phase_campaign_keeps_unmeasured_phases_unmeasured() -> None:
     assert measured["first_execution_seconds"] is None
 
 
+def test_overset_compiler_phase_projects_actual_counts_and_requires_authored_warms() -> None:
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _corpus_phase_gaps,
+    )
+
+    controls = QualificationControls(
+        scenario="native-overset-lifecycle", repeats=2
+    ).to_record()
+    compiler = {
+        "temporary_bytes": 64,
+        "output_bytes": 64,
+        "generated_code_bytes": 64,
+        "lowering_seconds": 0.01,
+        "compile_seconds": 0.02,
+        "first_execution_seconds": 0.03,
+        "warm_samples_seconds": [0.01, 0.02],
+        "compilation_count": 1,
+        "compilation_count_scope": "explicit-AOT-compile-invocations",
+        "first_execution_compilation_count": 0,
+        "warm_recompilation_count": 0,
+    }
+    payload: dict[str, Any] = {
+        "scenario": "native-overset-lifecycle",
+        "qualification_controls": controls,
+        "epochs": [{"epoch": 0, "compiler": compiler, "retained_bytes": 128}],
+    }
+    sample = _compiler_consumer_sample(payload)
+    evidence = sample.phase_evidence["compiler_epochs"][0]
+    assert evidence["compilation_count_scope"] == "explicit-AOT-compile-invocations"
+    assert evidence["first_execution_compilation_count"] == 0
+    assert evidence["warm_recompilation_count"] == 0
+    assert _corpus_phase_gaps(
+        sample, full_workflow=True, refusal=False
+    ) == []
+
+    from copy import deepcopy
+
+    refused_payload = deepcopy(payload)
+    refused_compiler = refused_payload["epochs"][0]["compiler"]
+    refused_compiler["warm_samples_seconds"] = [0.01]
+    refused_compiler["first_execution_compilation_count"] = 1
+    refused = _compiler_consumer_sample(refused_payload)
+    gaps = _corpus_phase_gaps(refused, full_workflow=True, refusal=False)
+    assert "epochs[0].compiler:warm-samples-count" in gaps
+    assert "epochs[0].compiler:first_execution_compilation_count:runtime-compilation" in gaps
+
+
+def test_distributed_compiler_phases_bind_each_owner_solve_not_topology_epochs() -> None:
+    from tools.meshing_qualification._campaign import corpus_phase_evidence
+
+    def solve(seconds: float) -> dict[str, object]:
+        return {"compiler": {"temporary_bytes": 64, "warm_samples_seconds": [seconds]}}
+
+    records = corpus_phase_evidence(
+        {
+            "scenario": "native-distributed-lifecycle",
+            # Topology epochs transfer fields exactly and compile no solve.
+            "epochs": [{"epoch": 0}, {"epoch": 1}, {"epoch": 2}],
+            "initial_fe": [solve(0.1), solve(0.2)],
+            "initial_fv": [solve(0.3), solve(0.4)],
+            "uninterrupted_fv": [solve(0.5), solve(0.6)],
+            "continued_fe": [solve(0.7)],
+            "continued_fv": [{}],
+        },
+        20000,
+    )["compiler_epochs"]
+    assert [
+        (item["evidence_path"], item["solver"], item["phase"], item["epoch"])
+        for item in records
+    ] == [
+        ("initial_fe[0].compiler", "fe", "warm", 0),
+        ("initial_fe[1].compiler", "fe", "warm", 0),
+        ("initial_fv[0].compiler", "fv", "warm", 0),
+        ("initial_fv[1].compiler", "fv", "warm", 0),
+        ("uninterrupted_fv[0].compiler", "fv", "warm", 3),
+        ("uninterrupted_fv[1].compiler", "fv", "warm", 3),
+        ("continued_fe[0].compiler", "fe", "cold", 3),
+        ("continued_fv[0].compiler", "fv", "cold", 3),
+    ]
+    assert [item["warm_samples_seconds"] for item in records[:-1]] == [
+        [0.1], [0.2], [0.3], [0.4], [0.5], [0.6], [0.7],
+    ]
+    # An owner whose solve emitted no compiler evidence stays unmeasured.
+    assert records[-1]["temporary_bytes"] is None
+    assert records[-1]["memory_status"] == "unmeasured"
+
+
 @pytest.mark.parametrize(
     ("name", "inside", "outside"),
     (
@@ -2248,7 +2335,8 @@ def test_exact_jacobi_prepares_once_and_preserves_the_residual_target() -> None:
     assert preconditioner is not None
     assert compiler["preconditioning"] == "exact-jacobi"
     assert preconditioner["positive_definite"] == "verified"
-    assert preconditioner["minimum_diagonal"] > 0.0
+    minimum_diagonal = preconditioner["minimum_diagonal"]
+    assert minimum_diagonal is not None and minimum_diagonal > 0.0
     assert solver["method"] == "pcg"
     assert solver["preconditioner_id"] == preconditioner["preconditioner_id"]
     assert solver["preconditioner_refresh"] == "supplied"
@@ -2278,6 +2366,42 @@ def test_exact_jacobi_prepares_once_and_preserves_the_residual_target() -> None:
     assert evidence == preconditioner
     assert int(np.asarray(cold_solve.diagnostics.iterations)) == solver["iterations"]
     np.testing.assert_array_equal(cold, values)
+
+
+def test_exact_jacobi_preserves_fully_constrained_values_without_fabricated_extrema() -> (
+    None
+):
+    from tools.meshing_qualification._physics import (
+        _compiled_solver_stages,
+        _prepare_corpus_solver,
+        CorpusPreconditioning,
+    )
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        np.asarray(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            dtype=np.float64,
+        ),
+        np.asarray(((0, 1, 2, 3),), dtype=np.int64),
+    )
+    result = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    _, problem, free = _prepare_corpus_solver(result, material_x=False)
+    assert free.size == 0
+    values, compiler, _ = _compiled_solver_stages(
+        problem,
+        jnp.zeros((0,), dtype=jnp.float64),
+        1,
+        preconditioning=CorpusPreconditioning.EXACT_JACOBI,
+    )
+    preconditioner = compiler["preconditioner"]
+    assert compiler["solver"]["successful"]
+    assert preconditioner is not None
+    assert preconditioner["size"] == 0
+    assert preconditioner["minimum_diagonal"] is None
+    assert preconditioner["maximum_diagonal"] is None
+    np.testing.assert_array_equal(
+        values, np.asarray((0.0, 1.0, 1.0, 1.0), dtype=np.float64)
+    )
 
 
 def test_exact_jacobi_refuses_invalid_or_unavailable_diagonals(
@@ -3291,6 +3415,689 @@ def test_polyhedral_phase_consumer_fails_closed_on_malformed_owning_payload(
     assert any("source-shape" in gap for gap in gaps)
 
 
+_OVERSET_PUBLICATION_TEMPLATES: dict[str, dict[str, Any]] = {}
+
+
+def _overset_publication_template(profile_name: str) -> dict[str, Any]:
+    cached = _OVERSET_PUBLICATION_TEMPLATES.get(profile_name)
+    if cached is not None:
+        return cached
+    from phydrax._meshcore import current_native_execution_scope, NativeParallelExecution
+    from phydrax.meshing._native_preparation import native_preparation_ledger
+    from phydrax.meshing.qualification import (
+        deform_planar_interior,
+        execute_native_consumer,
+        execute_native_request,
+        rigid_planar_successor,
+    )
+    from tools.meshing_qualification._controls import (
+        _overset_qualification_requirements,
+    )
+    from tools.meshing_qualification._records import _result_identity
+    from tools.meshing_qualification._runtime import qualification_failure
+    from tools.meshing_qualification.scenarios.overset import (
+        _BACKGROUND,
+        _OVERSET_PROFILES,
+        _overset_publication_lineage,
+        _overset_qualification_source,
+        _OversetBody,
+        _part_carrier,
+        _SCHWARZ_MAXIMUM_ITERATIONS,
+    )
+
+    profile = _OVERSET_PROFILES.get(profile_name)
+    requirements = _overset_qualification_requirements()
+    geometry = requirements.get("geometry")
+    profiles = geometry.get("profiles") if isinstance(geometry, dict) else None
+    authored_profile = (
+        profiles.get(profile_name) if isinstance(profiles, dict) else None
+    )
+    if (
+        profile is None
+        or not isinstance(authored_profile, dict)
+        or authored_profile != profile.record()
+    ):
+        raise ValueError(f"Unknown or unauthenticated overset profile {profile_name!r}.")
+    work_units = 1_280_000 if profile_name == "routine" else 2_000_000
+    controls = QualificationControls(
+        scenario="native-overset-lifecycle",
+        resolution=4,
+        capacity=20000,
+        timeout=180.0,
+        repeats=3,
+        target_error=0.05,
+        adaptation_rounds=1,
+        maximum_work_units=work_units,
+        maximum_geometry_queries=2_560_000,
+        maximum_scratch_bytes=128_000_000,
+        overset_motion_steps=2,
+    ).to_record()
+    controls["overset_profile"] = profile_name
+
+    def generate_part(
+        name: str, body: _OversetBody | None
+    ) -> tuple[phx.meshing.MeshPart, phx.meshing.NativeMeshingPlan]:
+        source, specification, options, _scopes = _overset_qualification_source(
+            name,
+            4,
+            20000,
+            180.0,
+            body,
+            maximum_work_units=work_units,
+            maximum_geometry_queries=2_560_000,
+            maximum_scratch_bytes=128_000_000,
+        )
+        plan = phx.meshing.NativeMeshingProvider(options).plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        return phx.meshing.MeshPart(name, plan.execute()), plan
+
+    def part_record(
+        part: phx.meshing.MeshPart,
+        plan: phx.meshing.NativeMeshingPlan,
+        body: _OversetBody | None,
+    ) -> dict[str, Any]:
+        source = plan.source
+        if not isinstance(source, phx.meshing.NativePlanarSource):
+            raise TypeError("Overset publication fixture requires an actual planar source.")
+        carrier = _part_carrier(part)
+        return {
+            "source_id": source.source_id,
+            "source_revision": source.source_revision,
+            "source_binding_id": source.binding_id,
+            "request_id": plan.specification.specification_id,
+            "limits_id": plan.specification.limits.limits_id,
+            "prepared_id": plan.plan_id,
+            "authored_body": None if body is None else body.record(),
+            "generation": _result_identity(carrier),
+        }
+
+    parts: dict[str, dict[str, Any]] = {}
+    recipes: dict[str, dict[str, str]] = {}
+    initial_parts: dict[str, phx.meshing.MeshPart] = {}
+    plans: dict[str, phx.meshing.NativeMeshingPlan] = {}
+    with NativeParallelExecution(None, 180.0):
+        background_part, background_plan = generate_part(_BACKGROUND, None)
+        initial_parts[_BACKGROUND] = background_part
+        plans[_BACKGROUND] = background_plan
+        parts[_BACKGROUND] = part_record(background_part, background_plan, None)
+        for body in profile.bodies:
+            part, plan = generate_part(body.name, body)
+            initial_parts[body.name] = part
+            plans[body.name] = plan
+            parts[body.name] = part_record(part, plan, body)
+        recipes = {
+            name: {
+                "source_binding_id": part["source_binding_id"],
+                "request_id": part["request_id"],
+                "plan_id": part["prepared_id"],
+            }
+            for name, part in parts.items()
+        }
+
+        epochs: list[dict[str, Any]] = [{"epoch": 0}]
+        motion_sources: list[dict[str, Any]] = []
+        current_parts = dict(initial_parts)
+        for step in range(2):
+            successors: dict[str, dict[str, Any]] = {}
+            for body in profile.bodies:
+                predecessor = _part_carrier(current_parts[body.name])
+                successor, moved_plan = rigid_planar_successor(
+                    current_parts[body.name],
+                    body.offset(step),
+                    motion_id=f"qualification-accepted-motion-{step}-{body.name}",
+                    plan=plans[body.name],
+                )
+                plans[body.name] = moved_plan
+                current_parts[body.name] = successor
+                carrier = _part_carrier(successor)
+                certification = carrier.certification
+                if certification is None:
+                    raise ValueError("Rigid successor fixture requires actual certification.")
+                source = moved_plan.source
+                if not isinstance(source, phx.meshing.NativePlanarSource):
+                    raise TypeError("Rigid successor fixture must retain a planar source.")
+                lineage = _overset_publication_lineage(carrier, moved_plan)
+                successors[body.name] = {
+                    "result": _result_identity(carrier),
+                    "result_id": carrier.result_id,
+                    "certification_id": certification.report_id,
+                }
+                motion_sources.append(
+                    {
+                        "step": step,
+                        "body": body.name,
+                        "source_binding_id": source.binding_id,
+                        "source_revision": source.source_revision,
+                        "request_id": moved_plan.specification.specification_id,
+                        "limits_id": moved_plan.specification.limits.limits_id,
+                        "prepared_id": moved_plan.plan_id,
+                        "predecessor_result_id": predecessor.result_id,
+                        "result_id": carrier.result_id,
+                        "publication_lineage": lineage,
+                    }
+                )
+            epochs.append(
+                {
+                    "epoch": step + 1,
+                    "step": step,
+                    "offsets": {
+                        body.name: body.offset(step).tolist()
+                        for body in profile.bodies
+                    },
+                    "source_successors": successors,
+                }
+            )
+
+        background = _part_carrier(initial_parts[_BACKGROUND])
+        background_plan = plans[_BACKGROUND]
+        ale_part = deform_planar_interior(
+            initial_parts[_BACKGROUND],
+            np.asarray(background.mesh.coordinates),
+            motion_id=f"qualification-conservative-ale-{profile_name}",
+            plan=background_plan,
+        )
+        ale = _part_carrier(ale_part)
+        background_receipt = background.execution_evidence
+        ale_receipt = ale.execution_evidence
+        if (
+            background_receipt is None
+            or background_receipt.owner_id is None
+            or ale_receipt is None
+            or ale_receipt.owner_id is None
+        ):
+            raise ValueError("Overset archives must retain owner-bound actual receipts.")
+        ale_lineage = _overset_publication_lineage(ale, background_plan)
+        consumer = execute_native_consumer(
+            ale,
+            background_plan.specification.limits,
+            lambda _budget: None,
+            failure_factory=qualification_failure,
+            observe_managed_admission=True,
+        )
+        consumer_record = _part_carrier(
+            phx.meshing.MeshPart(_BACKGROUND, consumer.result)
+        )
+        consumer_receipt = consumer_record.execution_evidence
+        if consumer_receipt is None or consumer_receipt.owner_id is None:
+            raise ValueError("Consumer fixture must retain its actual execution receipt.")
+
+        def retain_cold_history(_budget: Any) -> None:
+            scope = current_native_execution_scope()
+            if scope is None:
+                raise ValueError("Cold fixture must retain its active native request.")
+            native_preparation_ledger(scope).record_history(scope, ale_receipt)
+
+        cold = execute_native_request(
+            background,
+            background_plan.specification.limits,
+            retain_cold_history,
+            target=lambda _value: background,
+            failure_factory=qualification_failure,
+            observe_managed_admission=True,
+        )
+        cold_receipt = cold.result.execution_evidence
+        if cold_receipt is None or cold_receipt.owner_id is None:
+            raise ValueError("Cold fixture must retain its actual execution receipt.")
+
+    background_record = parts[_BACKGROUND]
+    background_id = background_record["generation"]["result_id"]
+    template = {
+        "scenario": "native-overset-lifecycle",
+        "qualification_controls": controls,
+        "profile": profile_name,
+        "authored_profile": authored_profile,
+        "control_capacities": {
+            "overset_profile": profile_name,
+            "resolution": controls["resolution"],
+            "entity_capacity": controls["capacity"],
+            "motion_steps": controls["overset_motion_steps"],
+            "fringe_layers": authored_profile["fringe_layers"],
+            "maximum_wall_candidate_pairs": controls["overset_wall_pairs"],
+            "maximum_donor_candidate_pairs": controls["overset_donor_pairs"],
+            "maximum_overlap_candidate_pairs": controls["overset_overlap_pairs"],
+            "maximum_overlap_accepted_pairs": controls["overset_overlap_pairs"],
+            "maximum_overlap_memory_bytes": 4096 * controls["capacity"],
+            "maximum_composite_krylov_iterations": _SCHWARZ_MAXIMUM_ITERATIONS,
+        },
+        "parts": parts,
+        "generation_recipe_bindings": recipes,
+        "epochs": epochs,
+        "motion_sources": motion_sources,
+        "conservative_profile": {
+            "source_result_id": background_id,
+            "motion_prepared_id": background_plan.plan_id,
+            "motion_result_id": ale.result_id,
+            "motion_result": _result_identity(ale),
+            "motion_provenance": ale_lineage,
+        },
+        "checkpoint": {
+            "conservative_publication_result": _result_identity(consumer_record),
+            "conservative_publication_execution": {
+                "owner_id": consumer_receipt.owner_id,
+                "result_id": consumer_record.result_id,
+            },
+        },
+        "restart": {
+            "cold_request_result": _result_identity(cold.result),
+            "cold_request": {
+                "owner_id": cold_receipt.owner_id,
+                "history_owner_id": background_receipt.owner_id,
+                "history_receipt_id": background_receipt.receipt_hex(),
+                "original_limits_id": background_plan.specification.limits.limits_id,
+                "conservative_source_owner_id": background_receipt.owner_id,
+                "conservative_source_receipt_id": background_receipt.receipt_hex(),
+                "conservative_history_owner_id": ale_receipt.owner_id,
+                "conservative_history_receipt_id": ale_receipt.receipt_hex(),
+            },
+        },
+    }
+    _OVERSET_PUBLICATION_TEMPLATES[profile_name] = template
+    return template
+
+
+def _overset_publication_record(profile_name: str) -> dict[str, Any]:
+    from copy import deepcopy
+
+    return deepcopy(_overset_publication_template(profile_name))
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "expected_endpoints"),
+    (("routine", 7), ("larger", 10), ("combined", 10)),
+)
+def test_overset_publication_discovery_requires_each_authored_native_endpoint(
+    profile_name: str, expected_endpoints: int
+) -> None:
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _corpus_publications,
+    )
+
+    sample = _compiler_consumer_sample(_overset_publication_record(profile_name))
+    publications, paths, gaps = _corpus_publications(
+        sample, full_workflow=True, refusal=False
+    )
+    assert len(publications) == expected_endpoints
+    assert len(paths) == expected_endpoints
+    assert paths[0] == "parts.background.generation"
+    assert paths[-3:] == [
+        "conservative_profile.motion_result",
+        "checkpoint.conservative_publication_result",
+        "restart.cold_request_result",
+    ]
+    assert publications[0]["result_id"] == publications[-1]["result_id"]
+    assert publications[-3]["result_id"] == publications[-2]["result_id"]
+    assert (
+        publications[0]["resource_binding"]["root_receipt_id"]
+        != publications[-1]["resource_binding"]["root_receipt_id"]
+    )
+    assert (
+        publications[-3]["resource_binding"]["root_receipt_id"]
+        != publications[-2]["resource_binding"]["root_receipt_id"]
+    )
+    assert not any("epochs[0].result" in path for path in paths)
+    assert gaps == []
+
+
+@pytest.mark.parametrize(
+    ("defect", "expected_gap"),
+    (
+        (
+            "missing-motion",
+            "publication:epochs[1].source_successors.moving.result:actual-native-publication",
+        ),
+        (
+            "missing-conservative-motion",
+            "publication:conservative_profile.motion_result:actual-native-publication",
+        ),
+        (
+            "missing-checkpoint-consumer",
+            "publication:checkpoint.conservative_publication_result:actual-native-publication",
+        ),
+        (
+            "missing-cold",
+            "publication:restart.cold_request_result:actual-native-publication",
+        ),
+        (
+            "tampered-motion-crosslink",
+            "publication:epochs[1].source_successors.moving:crosslink-result-id",
+        ),
+        (
+            "tampered-conservative-crosslink",
+            "publication:conservative_profile:crosslink-motion-result-id",
+        ),
+        (
+            "tampered-cold-crosslink",
+            "publication:restart.cold_request_result:crosslink-result-id",
+        ),
+        (
+            "reassigned-body",
+            "publication:epochs[1].source_successors.port.result:crosslink-authored-source-plan-certification",
+        ),
+        (
+            "reassigned-step",
+            "publication:epochs[1].source_successors.moving.result:crosslink-authored-source-plan-certification",
+        ),
+        (
+            "omit-motion-lineage",
+            "publication:epochs[1].source_successors.moving.result:actual-plan-source-certification-lineage",
+        ),
+        (
+            "fabricated-composition-result",
+            "publication:epochs[0].result:non-native-composition",
+        ),
+    ),
+)
+def test_overset_publication_consumer_rejects_missing_and_tampered_endpoints(
+    defect: str, expected_gap: str
+) -> None:
+    from copy import deepcopy
+
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _corpus_publications,
+    )
+
+    profile_name = "larger" if defect == "reassigned-body" else "routine"
+    record = deepcopy(_overset_publication_record(profile_name))
+    if defect == "missing-motion":
+        del record["epochs"][1]["source_successors"]["moving"]["result"]
+    elif defect == "missing-conservative-motion":
+        del record["conservative_profile"]["motion_result"]
+    elif defect == "missing-checkpoint-consumer":
+        del record["checkpoint"]["conservative_publication_result"]
+    elif defect == "missing-cold":
+        del record["restart"]["cold_request_result"]
+    elif defect == "tampered-motion-crosslink":
+        record["motion_sources"][0]["result_id"] = "foreign-motion-result"
+    elif defect == "tampered-conservative-crosslink":
+        record["conservative_profile"]["motion_result_id"] = "foreign-motion-result"
+    elif defect == "tampered-cold-crosslink":
+        record["restart"]["cold_request_result"]["result_id"] = "foreign-cold-result"
+    elif defect == "reassigned-body":
+        names = [
+            body["name"] for body in record["authored_profile"]["bodies"]
+        ]
+        first, second = names[:2]
+        successors = record["epochs"][1]["source_successors"]
+        successors[first]["result"], successors[second]["result"] = (
+            successors[second]["result"],
+            successors[first]["result"],
+        )
+        successors[first]["result_id"], successors[second]["result_id"] = (
+            successors[second]["result_id"],
+            successors[first]["result_id"],
+        )
+        successors[first]["certification_id"], successors[second]["certification_id"] = (
+            successors[second]["certification_id"],
+            successors[first]["certification_id"],
+        )
+        record["motion_sources"][0]["result_id"] = successors[first]["result_id"]
+        record["motion_sources"][1]["result_id"] = successors[second]["result_id"]
+    elif defect == "reassigned-step":
+        first = record["epochs"][1]["source_successors"]["moving"]
+        second = record["epochs"][2]["source_successors"]["moving"]
+        first["result"], second["result"] = second["result"], first["result"]
+        first["result_id"], second["result_id"] = second["result_id"], first["result_id"]
+        first["certification_id"], second["certification_id"] = (
+            second["certification_id"],
+            first["certification_id"],
+        )
+        record["motion_sources"][0]["result_id"] = first["result_id"]
+        record["motion_sources"][1]["result_id"] = second["result_id"]
+    elif defect == "omit-motion-lineage":
+        del record["motion_sources"][0]["publication_lineage"]
+    else:
+        record["epochs"][0]["result"] = {"result_id": "not-a-meshing-publication"}
+    publications, paths, gaps = _corpus_publications(
+        _compiler_consumer_sample(record), full_workflow=True, refusal=False
+    )
+    assert expected_gap in gaps
+    if defect.startswith("missing-"):
+        assert len(publications) == 6
+    if defect == "fabricated-composition-result":
+        assert "epochs[0].result" not in paths
+
+
+
+def test_overset_publication_rejects_same_result_with_a_foreign_valid_root() -> None:
+    from copy import deepcopy
+
+    from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
+    from phydrax.meshing._measurements import (
+        native_publication_resource_binding,
+        NativeExecutionRecord,
+        validate_native_execution_interchange,
+    )
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _corpus_publications,
+    )
+
+    record = deepcopy(_overset_publication_record("routine"))
+    publication = record["conservative_profile"]["motion_result"]
+    background = record["parts"]["background"]["generation"]
+    old_root = publication["resource_binding"]["root_receipt_id"]
+    owner_id = publication["resource_binding"]["request_id"]
+    background_owner = background["resource_binding"]["request_id"]
+    assert isinstance(owner_id, str) and isinstance(background_owner, str)
+
+    def issue(
+        owner: str, history: tuple[NativeExecutionRecord, ...] = ()
+    ) -> NativeExecutionRecord:
+        with NativeExecutionScope(
+            NativeExecutionLimits(10, 10, 10, 100_000, 120.0)
+        ) as scope:
+            scope.observe_managed_admission()
+            retained = scope.allocate_host_array((1,), np.float64)
+            retained[0] = 1.0
+        receipt = NativeExecutionRecord(
+            scope.completed_evidence(),
+            owner_id=owner,
+            history_evidence=history,
+        )
+        receipt.require_valid()
+        return receipt
+
+    foreign_background = issue(background_owner)
+    foreign = issue(owner_id, (foreign_background,))
+    foreign_record = foreign.to_record()
+    observation = validate_native_execution_interchange(foreign_record)
+    assert observation["owner_id"] == owner_id
+    assert observation["root_receipt_id"] != old_root
+    publication["execution_evidence"] = foreign_record
+    replacement = native_publication_resource_binding(
+        publication["result_id"],
+        publication["resource_binding"]["runtime_id"],
+        foreign,
+        enforced_limits=tuple(publication["resource_guarantees"]["enforced"]),
+        unenforced_limits=tuple(publication["resource_guarantees"]["unenforced"]),
+    )
+    assert replacement is not None
+    publication["resource_binding"] = replacement
+    _, _, gaps = _corpus_publications(
+        _compiler_consumer_sample(record), full_workflow=True, refusal=False
+    )
+    assert (
+        "publication:conservative_profile.motion_result:crosslink-immediate-predecessor-receipt"
+        in gaps
+    )
+
+
+def test_overset_cold_publication_rejects_same_result_with_foreign_history_roots() -> None:
+    from copy import deepcopy
+
+    from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
+    from phydrax.meshing._measurements import (
+        native_publication_resource_binding,
+        NativeExecutionRecord,
+        validate_native_execution_interchange,
+    )
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _corpus_publications,
+    )
+
+    record = deepcopy(_overset_publication_record("routine"))
+    background = record["parts"]["background"]["generation"]
+    ale = record["conservative_profile"]["motion_result"]
+    publication = record["restart"]["cold_request_result"]
+    original_result_id = publication["result_id"]
+    original_root = publication["resource_binding"]["root_receipt_id"]
+    background_owner = background["resource_binding"]["request_id"]
+    ale_owner = ale["resource_binding"]["request_id"]
+    cold_owner = publication["resource_binding"]["request_id"]
+    if (
+        not isinstance(background_owner, str)
+        or not isinstance(ale_owner, str)
+        or not isinstance(cold_owner, str)
+    ):
+        raise TypeError("Overset receipt fixtures must retain their actual owners.")
+
+    def issue(
+        owner: str, history: tuple[NativeExecutionRecord, ...] = ()
+    ) -> NativeExecutionRecord:
+        with NativeExecutionScope(
+            NativeExecutionLimits(10, 10, 10, 100_000, 120.0)
+        ) as scope:
+            scope.observe_managed_admission()
+            retained = scope.allocate_host_array((1,), np.float64)
+            retained[0] = 1.0
+        receipt = NativeExecutionRecord(
+            scope.completed_evidence(),
+            owner_id=owner,
+            history_evidence=history,
+        )
+        receipt.require_valid()
+        return receipt
+
+    foreign_background = issue(background_owner)
+    foreign_ale = issue(ale_owner, (foreign_background,))
+    foreign_cold = issue(cold_owner, (foreign_background, foreign_ale))
+    foreign_record = foreign_cold.to_record()
+    observation = validate_native_execution_interchange(foreign_record)
+    assert observation["owner_id"] == cold_owner
+    assert observation["root_receipt_id"] != original_root
+    publication["execution_evidence"] = foreign_record
+    replacement = native_publication_resource_binding(
+        original_result_id,
+        publication["resource_binding"]["runtime_id"],
+        foreign_cold,
+        enforced_limits=tuple(publication["resource_guarantees"]["enforced"]),
+        unenforced_limits=tuple(publication["resource_guarantees"]["unenforced"]),
+    )
+    assert replacement is not None
+    publication["resource_binding"] = replacement
+    _, _, gaps = _corpus_publications(
+        _compiler_consumer_sample(record), full_workflow=True, refusal=False
+    )
+    assert (
+        "publication:restart.cold_request_result:crosslink-archived-source-roots"
+        in gaps
+    )
+
+
+def test_overset_publication_outer_fields_must_match_the_authenticated_child(
+    actual_resource_publication: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    from copy import deepcopy
+
+    from tools.meshing_qualification._campaign import (
+        _complete_campaign_sample,
+        _decode_campaign_sample,
+    )
+    from tools.meshing_qualification._records import _finalize_mandatory_cli_record
+    from tools.meshing_qualification.scenarios.native_corpus import (
+        _resource_sample_binding_gaps,
+    )
+
+    _, runtime = actual_resource_publication
+    controls = QualificationControls(
+        scenario="native-overset-lifecycle",
+        resolution=4,
+        capacity=20000,
+        repeats=3,
+        timeout=180.0,
+        target_error=0.05,
+        adaptation_rounds=1,
+        maximum_work_units=1_280_000,
+        maximum_geometry_queries=2_560_000,
+        maximum_scratch_bytes=128_000_000,
+        overset_profile="routine",
+        overset_motion_steps=2,
+    )
+    child = _finalize_mandatory_cli_record(
+        controls,
+        {
+            **_overset_publication_record("routine"),
+            "runtime": runtime,
+            "status": "diagnostic-unassessed",
+            "independent_scientific_certification": "unassessed",
+            "mandatory_workflow_completion": "incomplete",
+            "case_contract_completion": "incomplete",
+        },
+    )
+    frozen: dict[str, Any] = {
+        "case_name": "native-overset-lifecycle",
+        "scenario": "native-overset-lifecycle",
+        "engine": "native",
+        "resolution": 4,
+        "entity_capacity": 20000,
+        "wall_seconds": 180.0,
+        "solver_warm_repeats": 3,
+        "target_error": 0.05,
+        "adaptation_rounds": 1,
+        "scenario_controls": {
+            "overset_profile": "routine",
+            "overset_motion_steps": 2,
+            "overset_wall_pairs": 500_000,
+            "overset_donor_pairs": 500_000,
+            "overset_overlap_pairs": 500_000,
+            "maximum_work_units": 1_280_000,
+            "maximum_geometry_queries": 2_560_000,
+            "maximum_scratch_bytes": 128_000_000,
+        },
+    }
+    outer: dict[str, Any] = {
+        **child,
+        "child_evidence": child,
+        "frozen_controls": frozen,
+        "frozen_controls_id": phx.canonical_fingerprint(frozen),
+    }
+    sample = _complete_campaign_sample(
+        outer,
+        20000,
+        positive=False,
+        accepted=False,
+        verdict=child["workflow_result"],
+    )
+    assert _resource_sample_binding_gaps(sample) == []
+    for missing in (
+        "overset_profile",
+        "overset_motion_steps",
+        "maximum_work_units",
+        "maximum_scratch_bytes",
+    ):
+        incomplete_outer = deepcopy(outer)
+        del incomplete_outer["frozen_controls"]["scenario_controls"][missing]
+        incomplete_outer["frozen_controls_id"] = phx.canonical_fingerprint(
+            incomplete_outer["frozen_controls"]
+        )
+        incomplete_sample = _complete_campaign_sample(
+            incomplete_outer,
+            20000,
+            positive=False,
+            accepted=False,
+            verdict=child["workflow_result"],
+        )
+        assert _resource_sample_binding_gaps(incomplete_sample) == [
+            "actual-child-resource-binding",
+        ]
+    altered = deepcopy(sample.to_record())
+    altered["child_evidence"] = deepcopy(altered["child_evidence"])
+    altered["motion_sources"][0]["result_id"] = "tampered-outer-copy"
+    assert _resource_sample_binding_gaps(_decode_campaign_sample(altered)) == [
+        "actual-child-resource-binding",
+    ]
 def test_polyhedral_phase_consumer_material_mapping_keeps_each_publication_unproved_without_receipt(
     actual_resource_publication: tuple[dict[str, Any], dict[str, Any]],
 ) -> None:
@@ -3620,15 +4427,14 @@ def test_registered_authored_resource_envelopes_are_exact_and_selective() -> Non
     for name in ("native-image-lifecycle", "native-implicit-lifecycle", "plc-material-cavity"):
         assert "resource_envelope" not in profiles[name]
         assert not set(fields).intersection(profiles[name]["controls"])
-    assert profiles["native-distributed-lifecycle"]["resource_envelope"][
-        "execution_group_memory_enforcement"
-    ] == "external-systemd-cgroup-wrapper"
-    assert profiles["native-distributed-lifecycle"]["resource_envelope"]["external_cgroup_properties"] == {
-        "MemoryMax": 25_769_803_776,
-    }
-    assert profiles["native-distributed-lifecycle:larger"]["resource_envelope"]["external_cgroup_properties"] == {
-        "MemoryMax": 34_359_738_368,
-    }
+    for name in ("native-distributed-lifecycle", "native-distributed-lifecycle:larger"):
+        profile = profiles[name]
+        contracts = profile["resource_envelope"]["process_memory_acceptance"]
+        for contract in contracts.values():
+            assert contract["maximum_bytes"] == profile["controls"]["maximum_memory_bytes"]
+        assert contracts["linux"]["required_execution_group_hard_cap"]
+        assert not contracts["darwin"]["required_execution_group_hard_cap"]
+        assert not contracts["darwin"]["descendants_included"]
     for profile in profiles.values():
         if (
             profile["scenario"] == "native-surface-pde"
@@ -3653,39 +4459,15 @@ def test_registered_authored_resource_envelopes_are_exact_and_selective() -> Non
             else:
                 assert "maximum_work_units" not in profile["controls"]
                 assert "maximum_geometry_queries" not in profile["controls"]
-            assert "stale for work-cap policy" in profile["resource_envelope"]["rationale"]
-            if material:
-                assert "exhausted 159997437 work with next 16384" in profile["resource_envelope"]["rationale"]
-                assert "2480 cells, L2 0.0181" in profile["resource_envelope"]["rationale"]
-            else:
-                assert "No current work failure is observed" in profile["resource_envelope"]["rationale"]
         else:
             assert "maximum_scratch_bytes" not in profile["controls"]
         if profile["scenario"] == "native-family-lifecycle":
             assert profile["controls"]["maximum_data_bytes"] == 40_960_000
-            rationale = profile["resource_envelope"]["rationale"]
-            assert "MemoryMax=16G" in rationale
-            assert "finite_volume_owner_preparation_epoch_0" in rationale
-            assert "oom-kill" in rationale
-            assert profile["resource_envelope"]["execution_group_memory_enforcement"] == (
-                "external-systemd-cgroup-wrapper"
-            )
-            assert profile["resource_envelope"]["external_cgroup_properties"] == {
-                "MemoryMax": 34_359_738_368,
-            }
-            assert "not evidence of successful completion" in rationale
             assert profile["resource_envelope"]["rerun_prerequisites"] == [
                 "durable-incremental-stage-and-failure-evidence",
             ]
         else:
             assert "maximum_data_bytes" not in profile["controls"]
-        if profile["controls"].get("implicit_case") == "offset-ring-torus-anisotropic":
-            rationale = profile["resource_envelope"]["rationale"]
-            assert "first metric stage at 1145 seconds" in rationale
-            assert "verified 1.67-1.75x speedup" in rationale
-            assert "identical arrays/evidence/order" in rationale
-            assert "two-adaptation envelope" in rationale
-            assert "not evidence of successful completion" in rationale
         if profile["controls"].get("periodic_case") == "skew-material-feature-exact-algebraic":
             assert profile["controls"]["maximum_recipe_bytes"] == 2_097_152
         else:
@@ -3954,10 +4736,10 @@ def test_authored_scratch_preserves_other_limits_and_exact_polynomial_boundary(
 
 @pytest.mark.parametrize("work", (1_280_000, 2_000_000))
 @pytest.mark.parametrize("mismatch", (
-    None, "requested", "main", "conservative", "main-work", "conservative-work",
+    "requested", "main", "conservative", "main-work", "conservative-work",
 ))
 def test_overset_cold_resource_limits_are_inherited_from_both_archives(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mismatch: str | None, work: int,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mismatch: str, work: int,
 ) -> None:
     from types import SimpleNamespace
 
@@ -3998,30 +4780,9 @@ def test_overset_cold_resource_limits_are_inherited_from_both_archives(
         },
         deadline=Deadline(overset.perf_counter() + 180.0),
     )
-    inherited = []
-
-    class Captured(Exception):
-        pass
-
-    def execute(evidence: Any, limits: phx.meshing.MeshingLimits, *args: Any, **kwargs: Any) -> NoReturn:
-        assert evidence is archives[0].execution_evidence
-        assert limits is archives[0].limits
-        assert limits.maximum_scratch_bytes == scratch
-        assert limits.maximum_work_units == work
-        assert kwargs["workflow_remaining_seconds"] <= 180.0
-        inherited.append(limits)
-        raise Captured
-
-    monkeypatch.setattr(overset, "execute_native_request", execute)
-    if mismatch is None:
-        with pytest.raises(Captured):
-            overset.cold_worker(packet)
-        assert inherited == [archives[0].limits]
-    else:
-        message = "same original background hard request" if mismatch.endswith("-work") else "scratch must equal"
-        with pytest.raises(QualificationFailure, match=message):
-            overset.cold_worker(packet)
-        assert inherited == []
+    message = "same original background hard request" if mismatch.endswith("-work") else "scratch must equal"
+    with pytest.raises(QualificationFailure, match=message):
+        overset.cold_worker(packet)
 
 
 def test_family_cold_scratch_inherits_archived_proof_request(
@@ -4565,6 +5326,10 @@ def test_periodic_cold_control_packet_preserves_authored_caps_and_absolute_deadl
     work: int | None, policy_drift: int | None,
 ) -> None:
     from phydrax.lifecycle._meshing_sources import _source_owner_reconstruction_scope
+    from tools.meshing_qualification._controls import (
+        archive_limit_values,
+        qualification_archive_limits,
+    )
     from tools.meshing_qualification._runtime import (
         ColdControlPacket,
         Deadline,
@@ -4582,7 +5347,7 @@ def test_periodic_cold_control_packet_preserves_authored_caps_and_absolute_deadl
         timeout=1200.0 if material else 300.0,
     )
     deadline = Deadline(periodic.perf_counter() + args.timeout)
-    policy = periodic._periodic_archive_policy(periodic._periodic_archive_limits(args))
+    policy = archive_limit_values(qualification_archive_limits(args))
     if policy_drift is not None:
         policy["max_manifest_bytes"] += policy_drift
     packet = ColdControlPacket(
@@ -4645,70 +5410,17 @@ def test_periodic_authored_fixture_honors_explicit_cli_resource_overrides() -> N
     assert record["resource_limits"]["maximum_wall_seconds"] == 17.0
 
 
-@pytest.mark.parametrize("larger,declared,previous", (
-    (False, 25_769_803_776, 12 * 1024**3),
-    (True, 34_359_738_368, 16 * 1024**3),
-))
-@pytest.mark.parametrize("decrement", (0, 1), ids=("R", "R-minus-one"))
-def test_distributed_external_memory_r_and_r_minus_one_forward_exactly(
-    larger: bool, declared: int, previous: int, decrement: int,
-) -> None:
-    """Check exact external MemoryMax transport without claiming kernel RSS proof."""
-    from tools.meshing_qualification._campaign import (
-        _native_driver_controls,
-        _prepare_campaign_attempt,
-    )
-    from tools.meshing_qualification._controls import (
-        authored_resource_envelope,
-        meshing_limit_values,
-    )
-    from tools.meshing_qualification.scenarios.distributed import (
-        _distributed_qualification_source,
-    )
-
-    scenario = "native-distributed-lifecycle"
-    envelope = authored_resource_envelope(scenario, scenario, {}, larger=larger)
-    assert envelope is not None
-    assert envelope["effective"]["maximum_memory_bytes"] == declared
-    assert envelope["external_cgroup_properties"] == {"MemoryMax": declared}
-    memory_cap = declared - decrement
-    args = QualificationControls(
-        scenario=scenario, resolution=8 if larger else 4,
-        maximum_memory_bytes=memory_cap, maximum_work_units=32_000_000 if larger else 8_000_000,
-        timeout=600.0, distributed_parts=6 if larger else 4,
-        distributed_processes=6 if larger else 4, restart_parts=3 if larger else 2,
-    )
-    attempt = _prepare_campaign_attempt(
-        scenario, args.resolution, args.capacity, args.timeout,
-        args.repeats, args.target_error, args.adaptation_rounds, "native",
-        scenario_override=scenario, controls=_native_driver_controls(scenario, args),
-    )
-    flag = attempt.command.index("--maximum-memory-bytes")
-    assert attempt.command[flag + 1] == str(memory_cap)
-    assert attempt.expected_controls["maximum_memory_bytes"] == memory_cap
-    assert attempt.frozen_controls["scenario_controls"]["maximum_memory_bytes"] == memory_cap
-    assert args.to_record()["maximum_memory_bytes"] == memory_cap
-    old = QualificationControls.from_record({
-        **args.to_record(), "maximum_memory_bytes": previous,
-    })
-    original = _distributed_qualification_source(old)[1].limits
-    revised = _distributed_qualification_source(args)[1].limits
-    assert meshing_limit_values(revised) == meshing_limit_values(original)
-    assert revised.maximum_scratch_bytes == 81_920_000
-    assert revised.maximum_data_bytes == 20_480_000
-    assert revised.maximum_work_units == (32_000_000 if larger else 8_000_000)
-    assert revised.maximum_wall_seconds == 600.0
 
 
-@pytest.mark.parametrize("recipe_cap", (None, 2_097_152))
-def test_periodic_recipe_limit_changes_only_archive_metadata_bound(
+@pytest.mark.parametrize("recipe_cap", (None, 2_097_152, 8_388_608))
+def test_recipe_limit_changes_only_archive_metadata_bound(
     recipe_cap: int | None,
 ) -> None:
     from dataclasses import asdict
 
-    from tools.meshing_qualification.scenarios.periodic import _periodic_archive_limits
+    from tools.meshing_qualification._controls import qualification_archive_limits
 
-    limits = _periodic_archive_limits(QualificationControls(maximum_recipe_bytes=recipe_cap))
+    limits = qualification_archive_limits(QualificationControls(maximum_recipe_bytes=recipe_cap))
     assert limits.max_manifest_bytes == (1_048_576 if recipe_cap is None else recipe_cap)
     original = asdict(phx.ArrayArchiveLimits())
     for name, value in asdict(limits).items():
@@ -4731,7 +5443,7 @@ def test_periodic_recipe_and_archive_exact_r_and_r_minus_one(tmp_path: Path) -> 
         model_structure_recipe,
         validate_model_structure_recipe,
     )
-    from tools.meshing_qualification.scenarios.periodic import _periodic_archive_limits
+    from tools.meshing_qualification._controls import qualification_archive_limits
 
     values = np.asarray((1.0, 2.0, 3.0), dtype=np.float64)
     values.flags.writeable = False
@@ -4743,7 +5455,7 @@ def test_periodic_recipe_and_archive_exact_r_and_r_minus_one(tmp_path: Path) -> 
     assert len(_canonical_recipe_payload(recipe)) == required_recipe
 
     def limits(cap: int) -> phx.ArrayArchiveLimits:
-        return _periodic_archive_limits(QualificationControls(maximum_recipe_bytes=cap))
+        return qualification_archive_limits(QualificationControls(maximum_recipe_bytes=cap))
 
     def publish(path: Path, cap: int) -> Path:
         policy = limits(cap)

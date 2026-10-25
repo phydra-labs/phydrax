@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
-from typing import Any, final, Protocol
+from typing import Any, final, NamedTuple, Protocol, TYPE_CHECKING, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ import phydrax as phx
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._frozendict import frozendict
 from ..._meshcore import NativeExecutionScope
+from ..._resource_ticket import HostBatchTicket
 from ..._trainable import NonTrainableState
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._coordinate_budget import CoordinateEnclosureResourceError
@@ -31,6 +32,7 @@ from ...lifecycle import (
 from ...solver._finite_element_adaptivity import (
     PreparedFiniteElementTopologyTransition,
 )
+from ...sparse import EdgeRelation, SparseLinearMap
 from ...typing import checked
 from .._association import PlcAssociationTransfer
 from .._measurements import NativeExecutionRecord, NativeMeshingPhaseRecorder
@@ -47,6 +49,32 @@ from .._volume_generation import (
     native_volume_execution_budget,
     prepare_plc_source,
 )
+
+
+if TYPE_CHECKING:
+    from scipy.sparse import csr_matrix
+
+    from ...discretization.fem._topology_transfer import SourceRealizationFieldSemantics
+    from ...geometry._volume_material_map import VolumeMaterialChain, VolumeMaterialEdit
+
+
+class _MappedMaterialError(TypedDict):
+    field: str
+    maximum_local_L2: list[float]
+    edits: int
+
+
+class _MappedMaterialReference(TypedDict):
+    density_content_defect: float
+    weak_defects: list[float]
+    source_density_content: float
+    target_density_content: float
+    material_L2_errors: list[_MappedMaterialError]
+    material_error_tolerance: float
+    reference_coverage_ratio: float
+    coefficient_excess: list[float]
+    coefficient_bounds: list[float]
+    coefficient_L2_bounds: list[float]
 
 
 class EnvelopePreparationStages(Protocol):
@@ -752,6 +780,12 @@ def _prepare_envelope_fields(
         result.mesh, fields, coordinate_spec=result.geometry, budget=budget
     ).prepare(reuse_prepared=space, budget=budget)
     if auxiliary is None:
+        # Authored material fields seed only the first epoch; later epochs
+        # must carry their accepted material and history, never a reseed.
+        if epoch != 0:
+            raise ValueError(
+                "envelope.state_transport.auxiliary must carry the accepted density and history after epoch 0; got None"
+            )
         auxiliary = (
             jnp.full((all_fields.field_spaces[1].layout.size,), 2.0, dtype=values.dtype),
             all_fields.dof_maps[2].dof_coordinates[:, 0] + 0.5,
@@ -867,6 +901,541 @@ def _check_envelope_commit(
     return _EnvelopeCommitPhase(result=transaction, receipt=transaction.receipt)
 
 
+def _mapped_p1_cells(mesh: phx.discretization.CellMesh) -> tuple[np.ndarray, np.ndarray]:
+    if any(block.cell_kind != "tetrahedron" for block in mesh.blocks):
+        raise ValueError("envelope.material_map requires affine tetrahedral P1 fields")
+    cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    points = np.asarray(mesh.coordinates)[cells]
+    volumes = np.linalg.det(points[:, 1:] - points[:, :1]) / 6.0
+    if np.any(volumes <= 0.0):
+        raise ValueError("envelope.material_map requires positive physical cells")
+    return cells, volumes
+
+
+def _mapped_p1_mass(mesh: phx.discretization.CellMesh) -> csr_matrix:
+    from scipy.sparse import coo_matrix
+
+    cells, volumes = _mapped_p1_cells(mesh)
+    local = volumes[:, None, None] * (np.ones((4, 4)) + np.eye(4)) / 20.0
+    rows = np.broadcast_to(cells[:, :, None], local.shape).ravel()
+    columns = np.broadcast_to(cells[:, None, :], local.shape).ravel()
+    count = mesh.coordinates.shape[0]
+    return coo_matrix((local.ravel(), (rows, columns)), shape=(count, count)).tocsr()
+
+
+class MaterialChainReference(NamedTuple):
+    """Independent edit-by-edit values, local L2 errors and certificates.
+
+    ``coverage_ratio`` is the largest per-cell piece-volume defect divided by
+    its binary64 Hadamard roundoff bound (at most one when every piece,
+    however thin, is resolved). ``value_bounds`` are certified forward-error
+    bounds of every replayed value, propagated through each local solve from
+    its inputs' bounds, its residual and binary64 accumulation.
+    ``condition_sum`` reports the coefficient
+    amplification of all local solves.
+    """
+
+    values: dict[str, dict[int, np.ndarray]]
+    l2_errors: dict[str, np.ndarray]
+    coverage_ratio: float
+    condition_sum: float
+    value_bounds: dict[str, dict[int, np.ndarray]]
+
+
+def _reference_hadamard(tets: np.ndarray) -> np.ndarray:
+    """Hadamard bound ``prod |edge|`` of each tetrahedron's volume determinant."""
+    return np.prod(np.linalg.norm(tets[:, 1:] - tets[:, :1], axis=2), axis=1)
+
+
+def _reference_halfspaces(tet: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Outward normals ``n`` and offsets ``c`` with ``n @ x <= c`` on one tetrahedron."""
+    normals, offsets = [], []
+    for opposite in range(4):
+        face = np.delete(tet, opposite, axis=0)
+        normal = np.cross(face[1] - face[0], face[2] - face[0])
+        if normal @ (tet[opposite] - face[0]) > 0.0:
+            normal = -normal
+        normals.append(normal)
+        offsets.append(normal @ face[0])
+    return np.asarray(normals), np.asarray(offsets)
+
+
+def _reference_clip(tets: np.ndarray, normal: np.ndarray, offset: float) -> np.ndarray:
+    """Clip tetrahedra to ``normal @ x <= offset`` by the standard tetrahedral cases.
+
+    Every case is an explicit tetrahedral split of the retained corner,
+    wedge or truncated prism, so thin positive-volume slivers keep their
+    volume and a pure contact contributes only its (vanishing) volume. No
+    thickness threshold or hull reconstruction decides membership.
+    """
+    pieces: list[np.ndarray] = []
+    for tet in tets:
+        distance = tet @ normal - offset
+        inside: list[int] = [int(index) for index in np.flatnonzero(distance <= 0.0)]
+        outside: list[int] = [int(index) for index in np.flatnonzero(distance > 0.0)]
+
+        def cut(a: int, b: int) -> np.ndarray:
+            ratio = distance[a] / (distance[a] - distance[b])
+            return tet[a] + ratio * (tet[b] - tet[a])
+
+        match len(inside):
+            case 4:
+                pieces.append(tet)
+            case 1:
+                corner = inside[0]
+                pieces.append(np.stack((tet[corner], *(cut(corner, o) for o in outside))))
+            case 2:
+                a, b = inside
+                o, q = outside
+                ao, aq, bo, bq = cut(a, o), cut(a, q), cut(b, o), cut(b, q)
+                # Prism (a, ao, aq) -> (b, bo, bq).
+                pieces.extend((
+                    np.stack((tet[a], ao, aq, tet[b])),
+                    np.stack((ao, aq, tet[b], bo)),
+                    np.stack((aq, tet[b], bo, bq)),
+                ))
+            case 3:
+                a, b, c = inside
+                o = outside[0]
+                ao, bo, co = cut(a, o), cut(b, o), cut(c, o)
+                # Prism (a, b, c) -> (ao, bo, co).
+                pieces.extend((
+                    np.stack((tet[a], tet[b], tet[c], ao)),
+                    np.stack((tet[b], tet[c], ao, bo)),
+                    np.stack((tet[c], ao, bo, co)),
+                ))
+            case _:
+                pass
+    return np.asarray(pieces, dtype=np.float64).reshape((-1, 4, 3))
+
+
+def _reference_barycentric(tet: np.ndarray) -> np.ndarray:
+    """``X`` with ``lambda_i(x) = [x, 1] @ X[:, i]``."""
+    return np.linalg.solve(np.hstack((tet, np.ones((4, 1)))), np.eye(4))
+
+
+def _reference_volume(tets: np.ndarray) -> np.ndarray:
+    return np.abs(np.linalg.det(tets[:, 1:] - tets[:, :1])) / 6.0
+
+
+def _reference_cone_map(origin: np.ndarray, image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    first, second = (origin[1:] - origin[:1]).T, (image[1:] - image[:1]).T
+    linear = np.linalg.solve(first.T, second.T).T
+    return linear, image[0] - linear @ origin[0], float(np.linalg.det(linear))
+
+
+def material_chain_reference(
+    chain: VolumeMaterialChain,
+    values: Mapping[str, Mapping[int, np.ndarray]],
+    semantics: Mapping[str, SourceRealizationFieldSemantics],
+    *,
+    budget: phx.discretization.CoordinateEnclosureBudget,
+) -> MaterialChainReference:
+    """Replay a material chain on actual P1 vertex values with independent NumPy algebra.
+
+    Pieces are re-derived by halfspace vertex enumeration of
+    ``s ∩ C_k ∩ A_k^{-1}(t)`` from the declared cones (never the chain's exact
+    piece bank), integrated exactly for affine products, and every local
+    projection is solved directly (density by its content KKT system). Each
+    edit's L2 error integrates the squared affine defect, never a cancelling
+    quadratic form.
+
+    Every host bank is admitted on ``budget`` before allocation: retained
+    vertex values as they are created, and each edit's clipping banks, pieces
+    and dense local forms inside one temporary scope.
+    """
+    mesh = chain.source_mesh
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    cells: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    incidence: dict[int, set[int]] = {}
+    for block in mesh.blocks:
+        for identity, row in zip(
+            np.asarray(block.global_ids).tolist(), np.asarray(block.vertices), strict=True,
+        ):
+            cells[int(identity)] = (vertex_ids[row], coordinates[row])
+            for vertex in vertex_ids[row].tolist():
+                incidence.setdefault(vertex, set()).add(int(identity))
+    state = {name: {int(k): np.atleast_1d(np.asarray(v, dtype=np.float64)) for k, v in field.items()}
+             for name, field in values.items()}
+    errors: dict[str, list[np.ndarray]] = {name: [] for name in values}
+    bounds = {name: {vertex: np.zeros_like(value) for vertex, value in field.items()} for name, field in state.items()}
+    width = max((len(next(iter(field.values()), ())) for field in values.values()), default=1)
+    budget.reserve(0, 64 * width * sum(len(field) for field in values.values()))
+    coverage = 0.0
+    condition_sum = 0.0
+    for edit in chain.edits:
+        # Only vertices new to the replay add retained values (one per field);
+        # admit them before the edit allocates and stores any of them.
+        created = np.unique(np.asarray(edit.target_vertex_ids, dtype=np.int64)).tolist()
+        fresh = sum(int(vertex) not in incidence for vertex in created)
+        budget.reserve(0, 128 * width * len(state) * fresh)
+        with budget.temporary_scope():
+            ratio, condition = _reference_edit(
+                edit, cells, incidence, state, bounds, errors, semantics, width, budget,
+            )
+        coverage = max(coverage, ratio)
+        condition_sum += condition
+    return MaterialChainReference(
+        state,
+        {name: np.asarray(rows) for name, rows in errors.items()},
+        coverage,
+        condition_sum,
+        bounds,
+    )
+
+
+def _reference_edit(
+    edit: VolumeMaterialEdit,
+    cells: dict[int, tuple[np.ndarray, np.ndarray]],
+    incidence: dict[int, set[int]],
+    state: dict[str, dict[int, np.ndarray]],
+    bounds: dict[str, dict[int, np.ndarray]],
+    errors: dict[str, list[np.ndarray]],
+    semantics: Mapping[str, SourceRealizationFieldSemantics],
+    width: int,
+    budget: phx.discretization.CoordinateEnclosureBudget,
+    /,
+) -> tuple[float, float]:
+    """Replay one edit; return its coverage ratio and local mass condition."""
+    from ...discretization.fem._topology_transfer import CLAIM_ULPS
+
+    epsilon = float(np.finfo(np.float64).eps)
+    removed = [int(value) for value in np.asarray(edit.source_cell_ids)]
+    created = [int(value) for value in np.asarray(edit.target_cell_ids)]
+    old_vertices = np.asarray(edit.source_vertex_ids, dtype=np.int64)
+    new_vertices = np.asarray(edit.target_vertex_ids, dtype=np.int64)
+    old_points = np.asarray(edit.source_points, dtype=np.float64)
+    new_points = np.asarray(edit.target_points, dtype=np.float64)
+    created_vertices = sorted(set(new_vertices.ravel().tolist()))
+    ring = sorted(
+        {cell for vertex in created_vertices for cell in incidence.get(vertex, ())} - set(removed)
+    )
+    target_cells = [(new_vertices[i], new_points[i]) for i in range(len(created))]
+    target_cells += [cells[cell] for cell in ring]
+    source_cells = [(old_vertices[i], old_points[i]) for i in range(len(removed))]
+    source_cells += [cells[cell] for cell in ring]
+    # A patch vertex stays fixed only if a surviving cell outside the patch keeps it.
+    enclosed = set(removed) | set(ring)
+    vertices = sorted({int(v) for vids, _ in target_cells for v in vids})
+    free = [v for v in vertices if not incidence.get(v, set()) - enclosed]
+    patch = free + [v for v in vertices if v not in set(free)]
+    inputs = sorted({int(v) for vids, _ in source_cells for v in vids})
+    row = {vertex: index for index, vertex in enumerate(patch)}
+    column = {vertex: index for index, vertex in enumerate(inputs)}
+    charts = [
+        _reference_cone_map(
+            np.asarray(origin, dtype=np.float64), np.asarray(image, dtype=np.float64),
+        )
+        for origin, image in zip(edit.source_charts, edit.target_charts, strict=True)
+    ] or [(np.eye(3), np.zeros(3), 1.0)]
+    cones = [np.asarray(tet, dtype=np.float64) for tet in edit.source_charts]
+    # (target cell, source cell, chart, sub-tetrahedra in source coordinates)
+    pieces: list[tuple[int, int, int, np.ndarray]] = []
+    for t in range(len(created)):
+        image_planes = _reference_halfspaces(new_points[t])
+        for s in range(len(removed)):
+            for k, (linear, offset, _) in enumerate(charts):
+                normals = [image_planes[0] @ linear]
+                offsets = [image_planes[1] - image_planes[0] @ offset]
+                if cones:
+                    cone = _reference_halfspaces(cones[k])
+                    normals.append(cone[0])
+                    offsets.append(cone[1])
+                tets = old_points[s][None]
+                for normal, bound in zip(np.vstack(normals), np.concatenate(offsets), strict=True):
+                    # One plane splits a tetrahedron into at most three.
+                    budget.reserve(0, 3 * tets.nbytes)
+                    tets = _reference_clip(tets, normal, float(bound))
+                if tets.shape[0]:
+                    pieces.append((t, s, k, tets))
+    for index in range(len(ring)):
+        pieces.append((len(created) + index, len(removed) + index, -1, target_cells[len(created) + index][1][None]))
+    # Pieces plus their target/source barycentric evaluations.
+    budget.reserve(0, 4 * sum(tets.nbytes for *_, tets in pieces) + 64 * len(pieces))
+    source_volume = np.zeros(len(source_cells))
+    target_volume = np.zeros(len(target_cells))
+    source_bound = np.zeros(len(source_cells))
+    target_bound = np.zeros(len(target_cells))
+    for t, s, k, tets in pieces:
+        jacobian = 1.0 if k < 0 else charts[k][2]
+        volume = float(np.sum(_reference_volume(tets)))
+        hadamard = float(np.sum(_reference_hadamard(tets)))
+        source_volume[s] += volume
+        target_volume[t] += volume * jacobian
+        source_bound[s] += hadamard
+        target_bound[t] += hadamard * jacobian
+    source_points = np.asarray([points for _, points in source_cells])
+    target_points = np.asarray([points for _, points in target_cells])
+    # Every piece, however thin, must be resolved: the per-cell defect stays
+    # within the binary64 Hadamard bound of all determinants that formed it.
+    ratio = max(
+        float(np.max(
+            np.abs(volume - _reference_volume(points))
+            / (CLAIM_ULPS * epsilon * (bound + _reference_hadamard(points)))
+        ))
+        for volume, points, bound in (
+            (source_volume, source_points, source_bound),
+            (target_volume, target_points, target_bound),
+        )
+    )
+    # Simultaneously live doubles: mass and both mixed forms; per field the
+    # KKT system with LAPACK's matrix copy and SVD condition workspace (three
+    # more), right sides with their copy, and old/fixed/patch value banks.
+    size, free_size = len(patch), len(free) + 1
+    budget.reserve(0, 8 * (
+        size * size + 2 * size * len(inputs) + size + len(inputs)
+        + 5 * free_size * free_size + 4 * free_size * width
+        + 2 * len(inputs) * width + 2 * size * width
+    ))
+    mass = np.zeros((len(patch), len(patch)))
+    for vids, points in target_cells:
+        local = _reference_volume(points[None])[0] / 20.0 * (np.ones((4, 4)) + np.eye(4))
+        index = [row[int(v)] for v in vids]
+        mass[np.ix_(index, index)] += local
+    mixed = (np.zeros((len(patch), len(inputs))), np.zeros((len(patch), len(inputs))))
+    evaluations = []
+    for t, s, k, tets in pieces:
+        linear, offset, jacobian = (np.eye(3), np.zeros(3), 1.0) if k < 0 else charts[k]
+        mapped = tets @ linear.T + offset
+        ones = np.ones(tets.shape[:2] + (1,))
+        at_target = np.concatenate((mapped, ones), axis=2) @ _reference_barycentric(target_cells[t][1])
+        at_source = np.concatenate((tets, ones), axis=2) @ _reference_barycentric(source_cells[s][1])
+        volumes = _reference_volume(tets)[:, None, None]
+        local = np.sum(volumes / 20.0 * (
+            at_target.sum(axis=1)[:, :, None] * at_source.sum(axis=1)[:, None, :]
+            + np.swapaxes(at_target, -1, -2) @ at_source
+        ), axis=0)
+        rows = [row[int(v)] for v in target_cells[t][0]]
+        columns = [column[int(v)] for v in source_cells[s][0]]
+        mixed[0][np.ix_(rows, columns)] += jacobian * local
+        mixed[1][np.ix_(rows, columns)] += local
+        evaluations.append((rows, columns, jacobian, at_target, at_source, _reference_volume(tets)))
+    count = len(free)
+    measures = mass.sum(axis=1)
+    condition = float(np.linalg.cond(mass[:count, :count])) if count else 1.0
+    if any(semantics[name] == "conservative-density" for name in state):
+        kkt = np.zeros((count + 1, count + 1))
+        kkt[:count, :count] = mass[:count, :count]
+        kkt[:count, count] = kkt[count, :count] = measures[:count]
+        condition = max(condition, float(np.linalg.cond(kkt)))
+    source_measures = np.zeros(len(inputs))
+    for vids, points in source_cells:
+        for v in vids:
+            source_measures[column[int(v)]] += _reference_volume(points[None])[0] / 4.0
+    gamma = (len(inputs) + len(patch)) * epsilon / (1.0 - (len(inputs) + len(patch)) * epsilon)
+    for name, field in state.items():
+        density = semantics[name] == "conservative-density"
+        old = np.stack([field[v] for v in inputs])
+        old_bound = np.stack([bounds[name][v] for v in inputs])
+        fixed = np.stack([field[v] for v in patch[count:]]) if len(patch) > count else np.zeros((0, old.shape[1]))
+        fixed_bound = (
+            np.stack([bounds[name][v] for v in patch[count:]]) if len(patch) > count else np.zeros_like(fixed)
+        )
+        source_form = mixed[1 if density else 0][:count]
+        coupling = mass[:count, count:]
+        rhs = source_form @ old - coupling @ fixed
+        # Inherited bounds plus binary64 accumulation of the right side.
+        rhs_bound = (
+            np.abs(source_form) @ old_bound + np.abs(coupling) @ fixed_bound
+            + gamma * (np.abs(source_form) @ np.abs(old) + np.abs(coupling) @ np.abs(fixed))
+        )
+        if density:
+            system = np.zeros((count + 1, count + 1))
+            system[:count, :count] = mass[:count, :count]
+            system[:count, count] = measures[:count]
+            system[count, :count] = measures[:count]
+            content = source_measures @ old - measures[count:] @ fixed
+            content_bound = (
+                np.abs(source_measures) @ old_bound + np.abs(measures[count:]) @ fixed_bound
+                + gamma * (np.abs(source_measures) @ np.abs(old) + np.abs(measures[count:]) @ np.abs(fixed))
+            )
+            right = np.vstack((rhs, content[None]))
+            right_bound = np.vstack((rhs_bound, content_bound[None]))
+        else:
+            system = mass[:count, :count]
+            right, right_bound = rhs, rhs_bound
+        solution = np.linalg.solve(system, right)
+        new = solution[:count]
+        # ||dx||_2 <= (||dr||_2 + ||A x - r||_2 + gamma (||A|| ||x|| + ||r||)) / sigma_min.
+        singular = np.linalg.svd(system, compute_uv=False)
+        residual = np.linalg.norm(system @ solution - right, axis=0)
+        forward = (
+            np.linalg.norm(right_bound, axis=0) + residual
+            + gamma * (singular[0] * np.linalg.norm(solution, axis=0) + np.linalg.norm(right, axis=0))
+        ) / singular[-1]
+        patch_values = np.vstack((new, fixed))
+        # This edit's certified local L2 error: the computed defect plus the
+        # same edit's value uncertainty and its binary64 evaluation. The
+        # affine interpolant of vertex bounds dominates |affine defect|.
+        patch_bound = np.vstack((np.broadcast_to(forward, new.shape), fixed_bound))
+        squared = np.zeros(old.shape[1])
+        uncertain = np.zeros(old.shape[1])
+        magnitude = np.zeros(old.shape[1])
+
+        def tet_square(values: np.ndarray, volumes: np.ndarray) -> np.ndarray:
+            return np.sum(
+                volumes[:, None] / 20.0 * (values.sum(axis=1) ** 2 + np.sum(values**2, axis=1)),
+                axis=0,
+            )
+
+        for rows, columns, jacobian, at_target, at_source, volumes in evaluations:
+            weight = jacobian if density else 1.0
+            defect = at_target @ patch_values[rows] - at_source @ old[columns] / weight
+            spread = np.abs(at_target) @ patch_bound[rows] + np.abs(at_source) @ old_bound[columns] / weight
+            scale = np.abs(at_target) @ np.abs(patch_values[rows]) + np.abs(at_source) @ np.abs(old[columns]) / weight
+            squared += jacobian * tet_square(defect, volumes)
+            uncertain += jacobian * tet_square(spread, volumes)
+            magnitude += jacobian * tet_square(scale, volumes)
+        errors[name].append(
+            np.sqrt(np.maximum(squared, 0.0)) + np.sqrt(uncertain) + gamma * np.sqrt(magnitude)
+        )
+        for position, vertex in enumerate(free):
+            field[vertex] = np.asarray(new[position], dtype=np.float64)
+            bounds[name][vertex] = np.asarray(forward, dtype=np.float64)
+    for vertex in set(old_vertices.ravel().tolist()):
+        incidence[vertex].difference_update(removed)
+    for cell in removed:
+        del cells[cell]
+    for position, cell in enumerate(created):
+        vids = np.asarray(new_vertices[position], dtype=np.int64)
+        cells[cell] = (vids, np.asarray(new_points[position], dtype=np.float64))
+        for vertex in vids.tolist():
+            incidence.setdefault(int(vertex), set()).add(cell)
+    return ratio, condition
+
+
+def _mapped_envelope_field_reference(
+    chain: VolumeMaterialChain,
+    semantics: dict[str, SourceRealizationFieldSemantics],
+    phase: _EnvelopeFieldPhase,
+    target_space: phx.discretization.FiniteElementDiscretization,
+    candidate_fields: tuple[jax.Array, ...],
+    *,
+    transfers: tuple[phx.discretization.FiniteElementFieldTransfer, ...],
+    material_error_tolerance: float,
+    budget: phx.discretization.CoordinateEnclosureBudget,
+) -> _MappedMaterialReference:
+    """Check carried P1 fields against an independent edit-by-edit NumPy replay.
+
+    :func:`material_chain_reference` re-derives every material piece and local
+    projection from the declared chain and the actual source values. The
+    composed production transfers must reproduce its coefficients within the
+    binary64 amplification of both replays' local solves (so thin cells cannot
+    hide a wrong value behind a small mass) and in the weak sense. Density
+    content is measured independently from both endpoint meshes.
+    """
+    from ...discretization.fem._topology_transfer import CLAIM_ULPS
+
+    if any(
+        element.degree != 1
+        for elements in phase.space.elements for element in elements
+    ):
+        raise ValueError("envelope.material_map independent oracle requires declared P1 fields")
+    names = tuple(field.name for field in phase.fields)
+    density = next(
+        (index for index, name in enumerate(names) if semantics[name] == "conservative-density"),
+        None,
+    )
+    if density is None:
+        raise ValueError("envelope.material_map requires one conservative density field")
+
+    def vertex_values(
+        mesh: phx.discretization.CellMesh,
+        space: phx.discretization.FiniteElementDiscretization,
+        fields: tuple[jax.Array | np.ndarray, ...],
+    ) -> np.ndarray:
+        cells, _ = _mapped_p1_cells(mesh)
+        values = np.zeros((mesh.coordinates.shape[0], len(fields)))
+        for index, field in enumerate(fields):
+            routes = np.concatenate([np.asarray(row) for row in space.dof_maps[index].cell_dofs])
+            values[cells.ravel(), index] = np.asarray(field)[routes].ravel()
+        return values
+
+    first, final = chain.source_mesh, chain.target_mesh
+    source_cells, source_volumes = _mapped_p1_cells(first)
+    source_values = vertex_values(first, phase.space, phase.source_fields)
+    source_ids = np.asarray(first.vertex_global_ids, dtype=np.int64).tolist()
+    reference = material_chain_reference(
+        chain,
+        {
+            name: {vertex: source_values[row, index : index + 1] for row, vertex in enumerate(source_ids)}
+            for index, name in enumerate(names)
+        },
+        semantics,
+        budget=budget,
+    )
+    initial_content = float(source_volumes @ source_values[source_cells, density].mean(axis=1))
+    cells, volumes = _mapped_p1_cells(final)
+    actual = vertex_values(final, target_space, candidate_fields)
+    expected = np.zeros_like(actual)
+    for row, vertex in enumerate(np.asarray(final.vertex_global_ids, dtype=np.int64).tolist()):
+        for index, name in enumerate(names):
+            expected[row, index] = reference.values[name][vertex][0]
+    mass = _mapped_p1_mass(final)
+    weak = np.max(np.abs(mass @ (actual - expected)), axis=0)
+    # Per-vertex certified uncertainty of both sides: the production row's
+    # propagated forward error (its action condition at that row's claim
+    # scale, times the source field scale) plus the replay's own bound.
+    unit = CLAIM_ULPS * float(np.finfo(np.float64).eps)
+    row_scales = []
+    for transfer in transfers:
+        primal = transfer.transfer.primal
+        if not isinstance(primal, SparseLinearMap) or not isinstance(primal.relation, EdgeRelation):
+            raise ValueError("envelope.material_map transfers must expose coalesced sparse rows")
+        row_scales.append(np.maximum(np.bincount(
+            np.asarray(primal.relation.target_indices, dtype=np.int64),
+            weights=np.abs(np.asarray(primal.coefficients, dtype=np.float64)),
+            minlength=transfer.transfer.target_size,
+        ), 1.0))
+    rows = vertex_values(final, target_space, tuple(row_scales))
+    field_scale = np.max(np.abs(source_values), axis=0, initial=0.0)
+    conditions = np.asarray([transfer.transfer.action_condition for transfer in transfers])
+    replay_bound = np.zeros_like(expected)
+    for row, vertex in enumerate(np.asarray(final.vertex_global_ids, dtype=np.int64).tolist()):
+        for index, name in enumerate(names):
+            replay_bound[row, index] = reference.value_bounds[name][vertex][0]
+    coefficient_bound = unit * conditions * rows * field_scale + replay_bound
+    coefficient_defect = np.max(np.abs(actual - expected) - coefficient_bound, axis=0, initial=-np.inf)
+    # Endpoint matching only, in field units: |delta| <= b entrywise and
+    # M >= 0 entrywise give ||delta||_L2^2 = delta^T M delta <= b^T M b.
+    coefficient_l2 = np.sqrt(np.sum(coefficient_bound * (mass @ coefficient_bound), axis=0))
+    density_content = float(volumes @ actual[cells, density].mean(axis=1))
+    content_defect = abs(density_content - initial_content)
+    errors: list[_MappedMaterialError] = [
+        {
+            "field": name,
+            "maximum_local_L2": np.max(reference.l2_errors[name], axis=0, initial=0.0).tolist(),
+            "edits": int(reference.l2_errors[name].shape[0]),
+        }
+        for name in names
+    ]
+    # The independent floating clipping must resolve every piece of every edit.
+    if not reference.coverage_ratio <= 1.0:
+        raise ValueError("envelope.material_map independent pieces must cover every edit within roundoff")
+    if np.any(coefficient_defect > 0.0):
+        raise ValueError("envelope.material_map coefficients must match the independent replay within solve amplification")
+    if any(
+        np.any(reference.l2_errors[name] > material_error_tolerance)
+        for name in names
+    ):
+        raise ValueError("envelope.material_map exceeds the declared material L2 error budget")
+    if np.any(weak > 1e-12) or content_defect > 1e-12:
+        raise ValueError("envelope.material_map must satisfy mapped weak equations and conserve density content")
+    return {
+        "density_content_defect": content_defect,
+        "weak_defects": weak.tolist(),
+        "source_density_content": initial_content,
+        "target_density_content": density_content,
+        "material_L2_errors": errors,
+        "material_error_tolerance": material_error_tolerance,
+        "reference_coverage_ratio": reference.coverage_ratio,
+        "coefficient_excess": coefficient_defect.tolist(),
+        "coefficient_bounds": np.max(coefficient_bound, axis=0, initial=0.0).tolist(),
+        "coefficient_L2_bounds": coefficient_l2.tolist(),
+    }
+
+
 @checked
 def transition_envelope_state(
     result: phx.meshing.CellMeshingResult,
@@ -881,6 +1450,7 @@ def transition_envelope_state(
     source_space: phx.discretization.FiniteElementDiscretization | None = None,
     target_space: phx.discretization.FiniteElementDiscretization | None = None,
     budget: phx.discretization.CoordinateEnclosureBudget | None = None,
+    material_error_tolerance: float | None = None,
     solution_inventory: Callable[
         [phx.discretization.FiniteElementDiscretization, jax.Array], float
     ] | None = None,
@@ -890,6 +1460,30 @@ def transition_envelope_state(
     Optional transported-field spaces are caller-retained owners of the source
     and target carriers; each is admitted only if it realizes its plan bitwise.
     """
+    chain = None if adaptation.transition is None else adaptation.transition.volume_material_chain
+    if chain is not None:
+        if material_error_tolerance is None or not np.isfinite(material_error_tolerance) or material_error_tolerance <= 0.0:
+            raise ValueError("envelope.material_map requires the declared positive material L2 error budget")
+        if budget is None:
+            limits = adaptation.policy.limits
+            with HostBatchTicket(
+                limits.maximum_work_units, bytes_upper=limits.maximum_scratch_bytes,
+            ) as ticket:
+                ledger = phx.discretization.CoordinateEnclosureBudget(
+                    ticket, maximum_work_units=limits.maximum_work_units,
+                    maximum_memory_bytes=limits.maximum_scratch_bytes,
+                )
+                return transition_envelope_state(
+                    result, adaptation, problem, values, epoch, auxiliary,
+                    projection_policy=projection_policy, failure_factory=failure_factory,
+                    source_space=source_space, target_space=target_space, budget=ledger,
+                    solution_inventory=solution_inventory,
+                    material_error_tolerance=material_error_tolerance,
+                )
+    semantics: dict[str, SourceRealizationFieldSemantics] | None = (
+        {"u": "intensive", "density": "conservative-density", "history": "intensive"}
+        if chain is not None else None
+    )
     phase = _prepare_envelope_fields(
         result, problem, values, epoch, auxiliary, source_space, budget
     )
@@ -900,12 +1494,14 @@ def transition_envelope_state(
         _EnvelopeRollbackGate(),
         fields=fields,
         projection_policy=projection_policy,
+        surface_chart_semantics=semantics,
     )
     commit = phx.solver.FiniteElementTopologyTransaction(
         _finite_envelope_fields,
         fields=fields,
         composition_rebind=capture,
         projection_policy=projection_policy,
+        surface_chart_semantics=semantics,
     )
     target_fields = phx.discretization.FiniteElementPlan(
         adaptation.target.mesh,
@@ -927,6 +1523,29 @@ def transition_envelope_state(
         result, adaptation, phase, gate, gated, failure_factory
     )
     rejected = rollback.result
+    mapped_reference = None
+    if chain is not None:
+        if budget is None or material_error_tolerance is None or semantics is None:
+            raise ValueError("envelope.material_map requires its budget, error budget and semantics")
+        candidate_fields = tuple(
+            transfer.transfer.apply(field)
+            for transfer, field in zip(gated.transfers, phase.source_fields, strict=True)
+        )
+        # Endpoint banks are admitted here; the replay admits every
+        # edit-dependent bank (clips, pieces, local forms, new values) itself.
+        nodes = max(chain.source_mesh.coordinates.shape[0], chain.target_mesh.coordinates.shape[0])
+        cells = max(
+            sum(block.cell_count for block in mesh.blocks)
+            for mesh in (chain.source_mesh, chain.target_mesh)
+        )
+        with budget.temporary_scope():
+            budget.reserve(0, 256 * nodes * len(fields) + 1024 * cells)
+            mapped_reference = _mapped_envelope_field_reference(
+                chain, semantics, phase, target_fields, candidate_fields,
+                transfers=tuple(gated.transfers),
+                material_error_tolerance=material_error_tolerance,
+                budget=budget,
+            )
     transaction = commit.execute(
         accepted,
         result.mesh,
@@ -942,25 +1561,28 @@ def transition_envelope_state(
         ),
     )
     committed = _check_envelope_commit(transaction, rebinds, failure_factory)
-    density_defect = float(jnp.max(jnp.abs(transaction.state.fields[1] - 2.0)))
-    history_defect = float(
-        jnp.max(
-            jnp.abs(
+    if mapped_reference is None:
+        density_defect = float(jnp.max(jnp.abs(transaction.state.fields[1] - 2.0)))
+        history_defect = float(
+            jnp.max(jnp.abs(
                 transaction.state.fields[2]
                 - (target_fields.dof_maps[2].dof_coordinates[:, 0] + 0.5)
-            )
+            ))
         )
-    )
+    else:
+        density_defect = mapped_reference["density_content_defect"]
+        history_defect = mapped_reference["weak_defects"][2]
     if density_defect > 1e-12 or history_defect > 1e-12:
         raise failure_factory(
             "envelope.state.fields",
-            "satisfy the affine density and history references",
+            "satisfy the declared density and material-history references",
             {"density_defect": density_defect, "history_defect": history_defect},
         )
     return (
         transaction.state.fields[0],
         (transaction.state.fields[1], transaction.state.fields[2]),
         {
+            "mapped_material_reference": mapped_reference,
             "receipt_id": committed.receipt.receipt_id,
             "source_composition_id": rebinds[-1].source.composition_id,
             "target_composition_id": committed.receipt.composition.composition_id,
@@ -977,7 +1599,7 @@ def transition_envelope_state(
                 }
             ),
             "auxiliary_seed_origin": "authored-initial-fields"
-            if epoch == 0
+            if auxiliary is None
             else "actual-carried-fields",
             "field_transfers": [
                 {

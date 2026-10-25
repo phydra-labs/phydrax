@@ -9,8 +9,35 @@ import pytest
 
 from phydrax._geometry_predicates import _exact_integer, _ORIENT2D, _ORIENT3D
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry._embedding_state import MeshCertificateLimits
+from phydrax.geometry._global_embedding import exact_source_predicate_view
 from tests._support.coordinate_references import coordinate_reference_budget
+
+
+@pytest.mark.parametrize("coefficient", [Fraction(7, 15), Fraction(1, 2)])
+def test_predicate_view_unwraps_rational_field_values_without_changing_source(
+    coefficient: Fraction,
+) -> None:
+    authored = np.asarray(
+        ((RadicalElement(coefficient), RadicalElement(), Fraction(1)),), dtype=object,
+    )
+    with coordinate_reference_budget() as budget:
+        view, binary = exact_source_predicate_view(authored, budget=budget)
+    assert binary == (coefficient == Fraction(1, 2))
+    assert isinstance(authored[0, 0], RadicalElement)
+    assert authored[0, 0].terms == ((1, coefficient),)
+    assert Fraction(view[0, 0]) == coefficient
+    if not binary:
+        assert all(isinstance(value, Fraction) for value in view.flat)
+
+
+def test_predicate_view_keeps_genuine_radicals_in_the_authored_field() -> None:
+    authored = np.asarray(((RadicalElement.sqrt(2), Fraction(0)),), dtype=object)
+    with coordinate_reference_budget() as budget:
+        view, binary = exact_source_predicate_view(authored, budget=budget)
+    assert not binary
+    assert view is authored
 
 
 @pytest.mark.parametrize("rational", [False, True])

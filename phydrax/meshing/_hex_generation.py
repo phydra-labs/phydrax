@@ -70,8 +70,11 @@ from ..discretization import (
 )
 from ..discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
     cell_mesh_reuse_bounds,
+    cell_mesh_reuse_work,
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._reference_cell_types import CellGeometryElement
@@ -298,6 +301,7 @@ def extract_dual_hex_candidate(
         supports[original + edge_count + face_count :] = cells
         # The edge and face lookups stay live beside the block's temporaries.
         workspace.set_bound(scratch + cell_block_construction_bounds(hexes.shape[0], 8))
+        scope.charge(work=cell_block_construction_work(hexes.shape[0], 8))
         initial = (CellBlock("cells", "hexahedron", hexes),)
         mesh, geometry, parents = parent_coordinate_geometry(
             source,
@@ -761,6 +765,13 @@ def parent_coordinate_geometry(
         (kind, vertices.shape[0], vertices.shape[1])
         for _, kind, vertices, _ in composed.blocks
     )
+    scope.charge(
+        work=sum(
+            cell_block_construction_work(vertices.shape[0], vertices.shape[1])
+            for _, _, vertices, _ in composed.blocks
+        )
+        + cell_mesh_construction_work(vertex_count, ambient, shapes)
+    )
     with scope.host_workspace() as workspace:
         blocks = []
         for name, kind, vertices, identities in composed.blocks:
@@ -946,6 +957,15 @@ def prepare_hex_frame(
             + 45 * vertex_count
             + 4096
         )
+        # One unit per element per host pass. Per polygon: loop view, normal
+        # stack, length, zero test, normalization, transverse test, basis
+        # projection, axis and residual selection, and the axis fingerprint.
+        # Per loop entry: vertex gather, roll, cross product and sum, the
+        # coordinate-plane gather and comparison, and the incidence mark. Per
+        # source vertex: the batched pullback solve, its host copy, success
+        # test and conversion, and the incidence allocation, count, test and
+        # selection. The optional field optimizer keeps its own ticket.
+        scope.charge(work=10 * polygons + 7 * entries + 8 * vertex_count)
         loops = [
             complex_.polygon_vertices[
                 complex_.polygon_offsets[row] : complex_.polygon_offsets[row + 1]
@@ -1123,8 +1143,9 @@ def _grid_vertex_coordinates(
         bits = 3 * (endpoint_bits + basis_bits + subdivisions.bit_length() + 2)
         # Admission and construction share the same sparse storage model.
         axis_upper = tuple(min(count, len(axis) * subdivisions + 1) for axis in knots)
+        # The constant basis work and one address-unique visit per vertex axis.
         budget.reserve(
-            9, _grid_coordinate_bytes(count, axis_upper, basis_values, bits)
+            9 + 3 * count, _grid_coordinate_bytes(count, axis_upper, basis_values, bits)
         )
         addresses = tuple(np.unique(vertices[:, axis]).tolist() for axis in range(3))
         logical = []
@@ -1166,6 +1187,8 @@ def _grid_vertex_coordinates(
             points.append(tuple(point))
         exact = tuple(points)
         budget.retain_basis(exact)
+        # One binary64 rounding per placed vertex component.
+        budget.reserve(3 * count)
         physical = _dependency_phydrax_meshing__host_banks.family_host_array(
             vertices.shape, np.float64, scope=scope
         )
@@ -1196,11 +1219,24 @@ def _grid_face_sources(
     # polygon's on-plane faces are known.
     with scope.host_workspace() as workspace:
         # Face rows (32 bytes) and their 96-byte corner gather precede the
-        # 24-byte center bank. Per polygon the corner-axis gather and masks
-        # (37 bytes) or the row, center, chart and classification selections
-        # (at most 80 bytes) coexist with the knot mask and ordinal banks.
+        # 24-byte center bank. The per-axis plane index retains sorted row and
+        # key banks (48 bytes); building one axis (at most 61 bytes) or one
+        # polygon's row, center, chart and classification selections (at most
+        # 80 bytes) reuses the corner-gather envelope beside the knot mask
+        # and ordinal banks.
         workspace.set_bound(
-            (32 + 24 + 96) * face_count + widest_axis + 48 * entries + 4096
+            (32 + 24 + 48 + 96) * face_count + widest_axis + 48 * entries + 4096
+        )
+        # One unit per element per host pass: face rows, corner gather and
+        # mean, and both source fills; per axis, the corner-axis gather,
+        # comparison, reduction, row and key selection, stable sort and its
+        # two takes. Per polygon: its view, knot comparison and selection,
+        # and two plane-index searches; per loop entry, the two ordinal
+        # gathers, searches and scalings with their stack and conversion.
+        scope.charge(
+            work=29 * face_count
+            + polygons * (1 + 2 * widest_axis + 2 * face_count.bit_length())
+            + 8 * entries
         )
         faces = _dependency_phydrax_meshing__host_banks.entities(mesh, 2)
         face_points = np.mean(grid[faces], axis=1)
@@ -1212,6 +1248,20 @@ def _grid_face_sources(
             (face_count,), np.int64, scope=scope
         )
         source_polygons.fill(-1)
+        # Faces whose four corners share one integer coordinate, ordered by
+        # that coordinate. The stable sort keeps each plane's rows ascending,
+        # exactly the rows a full-face scan of the plane selects.
+        plane_rows: list[np.ndarray] = []
+        plane_keys: list[np.ndarray] = []
+        for axis in range(3):
+            corners = grid[faces, axis]
+            constant = np.flatnonzero(np.all(corners == corners[:, :1], axis=1))
+            keys = corners[constant, 0]
+            del corners
+            order = np.argsort(keys, kind="stable")
+            plane_rows.append(constant[order])
+            plane_keys.append(keys[order])
+            del constant, keys, order
         for polygon in range(polygons):
             loop = complex_.polygon_vertices[
                 complex_.polygon_offsets[polygon] : complex_.polygon_offsets[polygon + 1]
@@ -1224,11 +1274,17 @@ def _grid_face_sources(
                     "hex.source.patch must retain a coordinate-plane representation; got a varying grid-plane coordinate"
                 )
             logical_plane = index[0] * subdivisions
-            on_plane = np.all(grid[faces, axis] == logical_plane, axis=1)
-            rows = np.flatnonzero(on_plane)
-            del on_plane
+            keys = plane_keys[axis]
+            rows = plane_rows[axis][
+                np.searchsorted(keys, logical_plane, side="left") : np.searchsorted(
+                    keys, logical_plane, side="right"
+                )
+            ]
             if rows.size == 0:
                 continue
+            # The center gather and chart selection, classification masks,
+            # chosen rows, occupancy gather and test, and both assignments.
+            scope.charge(work=9 * rows.size)
             remaining = [coordinate for coordinate in range(3) if coordinate != axis]
             ordinal = np.stack(
                 [
@@ -1366,6 +1422,18 @@ def _feature_grid_knots(
             + 65 * breaks_count
             + _HOST_ENTRY_BYTES * (2 * entries + segments)
             + 4096
+        )
+        # One unit per element per host pass. Per root: point copy, batched
+        # pullback solve, host copy, success test and concatenation. Per break
+        # and axis: column, sort, mask and unique output. Per polygon its
+        # loop list; per loop entry its owner key, count update, owner visit
+        # and grid-edge comparison; per segment its row and comparison.
+        scope.charge(
+            work=5 * roots
+            + 12 * breaks_count
+            + complex_.polygon_facets.size
+            + 5 * entries
+            + 2 * segments
         )
         if source.mapped:
             root_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
@@ -1943,6 +2011,8 @@ def _extract_integer_grid(
         scope=scope, budget=budget
     )
     cell_count = cells.shape[0]
+    # One corner gather and one reduction step per connectivity entry.
+    scope.charge(work=2 * cells.size)
     # Each cell's 192-byte corner gather is temporary.
     with scope.host_workspace() as workspace:
         workspace.set_bound(192 * cell_count + 4096)
@@ -1978,9 +2048,32 @@ def _classify_mapped_grid(
     root_count = sum(block.cell_count for block in source.mesh.blocks)
     cell_count = cells.shape[0]
     slots = cell_count * schedule.maximum_location_candidates
+    # Root setup, one unit per element per host pass: per root, its eight
+    # connectivity entries, 24-entry corner gather, edge differences and
+    # stack, diagonal, expected matrix and corners, and the three
+    # comparisons (at most 128); per source vertex, the coordinate copy.
+    root_vertices = source.mesh.coordinates.shape[0]
+    setup_work = 128 * root_count + 3 * root_vertices
+    # The median-split hierarchy over the root boxes: box conversion and
+    # centers, then per level (at most bit_length + 2) the node scan, box
+    # reductions and three-key sort of every root, and finally the packed
+    # node, box and payload banks with their per-level visits.
+    levels = root_count.bit_length() + 2
+    nodes = 2 * root_count + 1
+    hierarchy_work = (
+        15 * root_count
+        + 2 * root_count + 2
+        + 16 * nodes
+        + levels * root_count * (10 + 3 * (1 + root_count.bit_length()))
+        + 12 * nodes
+        + 15 * root_count
+        + 6 * (levels * root_count + nodes)
+    )
     # One hierarchy query per integer-cell center.
     with (
-        scope.batch(cell_count, queries_upper=cell_count) as ticket,
+        scope.batch(
+            setup_work + hierarchy_work + cell_count, queries_upper=cell_count
+        ) as ticket,
         scope.host_workspace() as workspace,
     ):
         # Root connectivity and point copies, corner, matrix and expectation
@@ -1988,6 +2081,7 @@ def _classify_mapped_grid(
         # bytes per root); candidate and validity host copies (9 bytes per
         # slot) and completeness flags.
         workspace.set_bound(1536 * root_count + 9 * slots + cell_count + 4096)
+        ticket.consume(setup_work + hierarchy_work)
         root_cells = _dependency_phydrax_meshing__host_banks.entities(source.mesh, 3)
         root_corners = np.asarray(source.mesh.coordinates, dtype=np.float64)[root_cells]
         root_matrices = np.stack(
@@ -2141,6 +2235,17 @@ def _retain_integer_grid(
         # vertex dedupe (flattened, permutation, sorted, mask, inverse), and
         # one dimension's entity gather, sorted rows, and dedupe copies.
         workspace.set_bound(1024 * candidates + 4096)
+        # One unit per element per host pass, bounded by the candidate banks:
+        # the region mask and three row filters per cell, the vertex dedupe
+        # per connectivity entry, the two vertex takes and exact-row gather
+        # per vertex, and the gather, row sort and dedupe of twelve edge and
+        # six face rows per cell.
+        scope.charge(
+            work=4 * candidates
+            + cells.size
+            + 3 * coordinates.shape[0]
+            + 3 * (12 + 6) * candidates
+        )
         kept = regions >= 0
         cells, regions, integer_cells = cells[kept], regions[kept], integer_cells[kept]
         del kept
@@ -2189,6 +2294,10 @@ def _retain_integer_grid(
     shapes = (("hexahedron", cells.shape[0], 8),)
     block_bytes = cell_block_construction_bounds(cells.shape[0], 8)
     mesh_bytes = cell_mesh_construction_bounds(vertex_count, 3, shapes)
+    scope.charge(
+        work=cell_block_construction_work(cells.shape[0], 8)
+        + cell_mesh_construction_work(vertex_count, 3, shapes)
+    )
     with scope.host_workspace() as workspace:
         workspace.set_bound(block_bytes)
         block = CellBlock("integer_blocks", "hexahedron", cells)
@@ -2291,6 +2400,8 @@ def generate_integer_grid_hexes(
         )
         record_elapsed(record_phase, "topology_construction", topology_started)
         classification_started = phase_started(record_phase)
+        # One region fill per candidate cell.
+        scope.charge(work=topology.cells.shape[0])
         regions = _dependency_phydrax_meshing__host_banks.family_host_array(
             (topology.cells.shape[0],), np.int64, scope=scope
         )
@@ -2323,7 +2434,11 @@ def generate_integer_grid_hexes(
         closure_rounds = topology.closure_rounds
         del topology, classified, retained_grid
         # Retained payload is exact before face classification: the two face
-        # source banks hold one int64 per face each.
+        # source banks hold one int64 per face each. The walk visits each
+        # retained array once and each exact scalar's bit length and declared
+        # storage.
+        knot_scalars = sum(len(axis) for axis in layout.exact_axis_knots)
+        scope.charge(work=24 + 2 * (knot_scalars + 3 * len(exact_coordinates)))
         data_bytes = 16 * mesh.topology.entities(2).count + sum(
             array.nbytes
             for array in (
@@ -2363,6 +2478,9 @@ def generate_integer_grid_hexes(
             scope=scope,
             budget=budget,
         )
+        # The construction fingerprint hashes the regions, integer vertices
+        # and exact axis knots (numerator and denominator per scalar).
+        scope.charge(work=regions.size + integer_vertices.size + 2 * knot_scalars)
         return GridHexConstruction(
             mesh,
             regions,
@@ -3493,6 +3611,8 @@ def _compose_mapped_geometry(
             ]
         )
         placement_groups.append((name, rows))
+        # Inside the coordinate phase, the block is admitted on its ticket.
+        budget.reserve(cell_block_construction_work(len(rows), reference_cells.shape[1]))
         with scope.host_workspace() as block_storage:
             block_storage.set_bound(cell_block_construction_bounds(len(rows), reference_cells.shape[1]))
             blocks.append(CellBlock(
@@ -3626,6 +3746,10 @@ def _certify_source_grid_restrictions(
         shapes = tuple(
             (block.cell_kind, block.cell_count, block.arity) for block in realized.blocks
         )
+        # Inside the coordinate phase, the proof mesh is admitted on its ticket.
+        budget.reserve(cell_mesh_construction_work(
+            mesh.coordinates.shape[0], mesh.ambient_dimension, shapes
+        ))
         with scope.host_workspace() as workspace:
             workspace.set_bound(cell_mesh_construction_bounds(
                 mesh.coordinates.shape[0], mesh.ambient_dimension, shapes
@@ -3792,6 +3916,10 @@ def _realize_mapped_grid_hexes(
     )
     mesh_bytes = cell_mesh_construction_bounds(vertex_count, ambient, shapes)
     reuse_bytes = cell_mesh_reuse_bounds(vertex_count, ambient, shapes)
+    scope.charge(
+        work=cell_mesh_construction_work(vertex_count, ambient, shapes)
+        + cell_mesh_reuse_work(vertex_count, ambient, shapes)
+    )
     with scope.host_workspace() as workspace:
         workspace.set_bound(mesh_bytes)
         grouped_reference = CellMesh(
@@ -3866,7 +3994,10 @@ def _realize_mapped_grid_hexes(
                 (source_reference_mesh, source_geometry), budget,
             )
             if source_fields is not None:
-                budget.reserve(0, 512 + 16 * (len(association_fields) + len(source_fields)))
+                # The handoff's parent tuple visits each ordered row once.
+                budget.reserve(
+                    len(order_), 512 + 16 * (len(association_fields) + len(source_fields))
+                )
                 handoff = _dependency_phydrax_discretization__cell_geometry_validity._ConstructedTensorGrid(
                     budget, source_reference_mesh, source_geometry, mesh, geometry, theorem,
                     tuple(int(parent_rows[row]) for row in order_),
@@ -3878,6 +4009,17 @@ def _realize_mapped_grid_hexes(
                     (handoff, type(handoff), names, tuple(getattr(handoff, name) for name in names)),
                 )
                 association_inputs.append(handoff)
+    # The region and parent reorders, then the construction identity hashes
+    # every array leaf of the source and composed geometries once.
+    identity_leaves = sum(
+        1 + value.size
+        for value in jax.tree.leaves(tuple(
+            (owner.elements, owner.geometry_dofs, owner.coordinates)
+            for owner in (source_geometry, geometry)
+        ))
+        if isinstance(value, (jax.Array, np.ndarray))
+    )
+    scope.charge(work=2 * len(order_) + identity_leaves)
     return MappedGridHexConstruction(
         mesh,
         grouped_reference,

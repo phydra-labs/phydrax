@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from fractions import Fraction
 from time import monotonic
@@ -526,9 +526,11 @@ def execute_native_request[T](
     # physical consumers; they never escape into a process-global proof cache.
     from ...lifecycle._meshing_sources import meshing_source_owner_reconstruction_scope
 
-    with NativeExecutionScope(native_limits) as scope:
+    with NativeExecutionScope(native_limits) as scope, ExitStack() as admission:
         if observe_managed_admission:
             scope.observe_managed_admission()
+            view = admission.enter_context(scope.ticket_view())
+            admission.enter_context(view.native_target())
         native_preparation_ledger(scope).record_history(
             scope, receipt,
             completed_source=None if isinstance(source, NativeExecutionRecord) else source,
@@ -572,7 +574,7 @@ def execute_native_request[T](
         scope.evidence,
         limits,
         started,
-        history_evidence=(receipt,),
+        history_evidence=issue.history_evidence,
     )
     issue.complete(bound)
     return NativeConsumerResult(result=bound, value=value)

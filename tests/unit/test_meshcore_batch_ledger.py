@@ -1349,6 +1349,7 @@ def _native_clip_scratch() -> None:
                 signs=signs.ctypes.data,
                 scratch_limit=900000,
                 work_limit=9000,
+                plane_count=10,
                 vertex_capacity=16,
                 face_capacity=10,
                 entry_capacity=48,

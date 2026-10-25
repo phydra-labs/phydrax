@@ -3,28 +3,54 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import fields
+from pathlib import Path
+from typing import Any, NoReturn, TYPE_CHECKING, TypedDict
 
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._array_archive import ArrayArchiveCorruptionError, DEFAULT_ARRAY_ARCHIVE_LIMITS
+from phydrax._array_archive import (
+    ArrayArchiveCorruptionError,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
+)
+from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._meshcore import (
     MeshcoreStatus,
     NativeExecutionEvidence,
     NativeExecutionMemoryCounters,
     NativeExecutionWorkCounters,
 )
-from phydrax._model._structure import model_array_catalog, model_recipe_array_values, model_structure_recipe
-from phydrax.lifecycle import _meshing_sources as owner
-from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from phydrax._model._structure import (
+    model_array_catalog,
+    model_recipe_array_values,
+    model_structure_recipe,
+    RecipeNode,
+)
 from phydrax.geometry._source_fidelity import ParametricCurveBoundarySource
+from phydrax.lifecycle import _meshing_sources as owner
 from tests._support.structured_sources import square
 from tests.unit.lifecycle.test_meshing_polyhedral_fields import actual_epoch
 
 
-def _receipt(plan: str, peak: int | None, history: tuple = ()):
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
+
+
+class _StructuredGenerationRecords(TypedDict):
+    generation_source: phx.meshing.NativeStructuredSource
+    generation_specification: phx.meshing.SurfaceMeshingSpec
+    generation_options: phx.meshing.NativeMeshingOptions
+    generation_part: phx.meshing.MeshPart
+    certification_inputs: owner.MeshCertificationInputs
+    report: owner.MeshCertificationReport
+
+
+def _receipt(
+    plan: str, peak: int | None, history: tuple[owner.NativeExecutionRecord, ...] = ()
+) -> owner.NativeExecutionRecord:
     evidence = NativeExecutionEvidence(
         NativeExecutionWorkCounters(11, 7, 5, 3, 2, 1),
         NativeExecutionMemoryCounters(1024, 16, 32, 64, 4, 1),
@@ -36,7 +62,9 @@ def _receipt(plan: str, peak: int | None, history: tuple = ()):
 class _Controls:
     """Real numerical controls with minimal, explicitly named owner-field tables."""
 
-    def __init__(self, monkeypatch, *, peak=None, history=False):
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, *, peak: int | None = None, history: bool = False
+    ) -> None:
         owner.register_meshing_source_artifacts()
         previous = _receipt("previous-plan", None)
         self.generation = _receipt("generation-plan", peak, (previous,) if history else ())
@@ -88,37 +116,37 @@ class _Controls:
             generation_part=self.part,
         )
 
-    def add(self, node):
+    def add(self, node: RecipeNode) -> int:
         self.nodes.append(node)
         return len(self.nodes) - 1
 
-    def literal(self, value):
+    def literal(self, value: str | None) -> int:
         return self.add({"kind": "literal", "value": value})
 
-    def dataclass(self, cls, **members):
+    def dataclass(self, cls: type[DataclassInstance], **members: int) -> int:
         identifier = owner.registered_artifact_value_id(cls)
         assert identifier is not None
         return self.add({"kind": "dataclass", "type": identifier, "items": [
             members.get(field.name, self.none) for field in fields(cls)
         ]})
 
-    def mapping(self, members):
+    def mapping(self, members: Mapping[str, int]) -> int:
         return self.add({"kind": "mapping", "items": [
             [self.literal(name), value] for name, value in members.items()
         ]})
 
-    def select(self):
+    def select(self) -> owner._ExecutionControlSelection:
         # Negative tests may append a mutated child after the previously built root.
         self.root = self.add(self.nodes[self.root])
         return owner._select_execution_controls({}, DEFAULT_ARRAY_ARCHIVE_LIMITS)
 
-    def restore(self):
+    def restore(self) -> owner._RestoredExecutionControls:
         return owner._restore_execution_controls(self.select(), self.arrays)
 
-    def singular(self):
+    def singular(self) -> None:
         self.root = self.mapping(self.roles)
 
-    def epochs(self):
+    def epochs(self) -> None:
         self.roles.pop("generation_part")
         final = self.dataclass(owner._result.CellMeshingResult,
             **(self.carrier_fields | {"execution_evidence": self.accepted_receipt,
@@ -133,7 +161,7 @@ class _Controls:
         self.roles["accepted_target"] = final
         self.singular()
 
-    def plural(self):
+    def plural(self) -> int:
         foreign_carrier = self.dataclass(owner._result.CellMeshingResult)
         foreign_part = self.dataclass(owner.MeshPart, name=self.literal("alpha"), carrier=foreign_carrier)
         parts = self.add({"kind": "tuple", "items": [foreign_part, self.part]})
@@ -149,7 +177,7 @@ class _Controls:
         self.root = self.mapping(self.plural_roles)
         return foreign_part
 
-    def design(self):
+    def design(self) -> None:
         self.source = self.dataclass(owner.NativeImplicitSource, source_id=self.source_id, source_revision=self.revision)
         self.plan = self.dataclass(owner.NativeMeshingPlan, source=self.source,
             specification=self.specification, options=self.options, plan_id=self.literal("generation-plan"))
@@ -161,14 +189,18 @@ class _Controls:
         self.root = self.dataclass(owner._decision.NativeDesignSourceState, **self.design_fields)
 
 
-def _replace_field(graph, index, cls, name, value):
+def _replace_field(
+    graph: _Controls, index: int, cls: type[DataclassInstance], name: str, value: int
+) -> None:
     position = tuple(field.name for field in fields(cls)).index(name)
     graph.nodes[index]["items"][position] = value
 
 
 @pytest.mark.parametrize("peak", (None, 80), ids=("unobserved", "observed"))
 @pytest.mark.parametrize("history", (False, True), ids=("empty-history", "receipt-history"))
-def test_existing_raw_controls_preserve_managed_observation_and_history(monkeypatch, peak, history):
+def test_existing_raw_controls_preserve_managed_observation_and_history(
+    monkeypatch: pytest.MonkeyPatch, peak: int | None, history: bool
+) -> None:
     graph = _Controls(monkeypatch, peak=peak, history=history)
     graph.singular()
     controls = graph.restore()
@@ -177,7 +209,9 @@ def test_existing_raw_controls_preserve_managed_observation_and_history(monkeypa
     assert controls.identity["source_binding_id"] == "declared-binding"
 
 
-def test_plural_raw_controls_select_declared_background_not_first_part(monkeypatch):
+def test_plural_raw_controls_select_declared_background_not_first_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     graph.plural()
     controls = graph.restore()
@@ -186,7 +220,9 @@ def test_plural_raw_controls_select_declared_background_not_first_part(monkeypat
 
 
 @pytest.mark.parametrize("defect", ("missing-name", "duplicate-part", "missing-options", "mixed", "foreign-request", "duplicate-map"))
-def test_plural_raw_controls_refuse_ambiguous_or_foreign_occurrences(monkeypatch, defect):
+def test_plural_raw_controls_refuse_ambiguous_or_foreign_occurrences(
+    monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
     graph = _Controls(monkeypatch)
     first = graph.plural()
     if defect == "missing-name":
@@ -210,7 +246,9 @@ def test_plural_raw_controls_refuse_ambiguous_or_foreign_occurrences(monkeypatch
         graph.restore()
 
 
-def test_compartment_raw_binding_fingerprints_whole_retained_source(monkeypatch):
+def test_compartment_raw_binding_fingerprints_whole_retained_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     interpretation = graph.literal("occupied-voxel-cells")
     graph.source = graph.dataclass(owner.CompartmentMeshingSource, source_id=graph.source_id,
@@ -225,7 +263,9 @@ def test_compartment_raw_binding_fingerprints_whole_retained_source(monkeypatch)
     assert first.identity["source_id"] == second.identity["source_id"]
 
 
-def test_design_standalone_returns_actual_accepted_receipt_binds_original_generation(monkeypatch):
+def test_design_standalone_returns_actual_accepted_receipt_binds_original_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     graph.design()
     controls = graph.restore()
@@ -236,7 +276,9 @@ def test_design_standalone_returns_actual_accepted_receipt_binds_original_genera
     assert controls.identity["source_binding_id"]
 
 
-def test_design_raw_controls_allow_genuine_unchanged_accepted_generation(monkeypatch):
+def test_design_raw_controls_allow_genuine_unchanged_accepted_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     graph.design()
     graph.design_fields["accepted"] = graph.carrier
@@ -247,10 +289,15 @@ def test_design_raw_controls_allow_genuine_unchanged_accepted_generation(monkeyp
 
 
 @pytest.fixture(scope="module")
-def structured_generation_records():
+def structured_generation_records() -> tuple[
+    owner.NativeMeshingPlan, _StructuredGenerationRecords
+]:
     """Publish a real transfinite owner, not a hand-authored control table."""
     block = square(2)
-    controls = block.boundaries
+    controls: list[phx.meshing.TransfiniteCurveControl] = []
+    for control in block.boundaries:
+        assert isinstance(control, phx.meshing.TransfiniteCurveControl)
+        controls.append(control)
     revision = canonical_fingerprint(
         {"curves": tuple(array_tree_fingerprint(control.curve) for control in controls)}
     )
@@ -296,10 +343,15 @@ def structured_generation_records():
 
 
 def test_actual_structured_generation_raw_controls_bind_published_plan_and_specification(
-    structured_generation_records, tmp_path,
-):
+    structured_generation_records: tuple[
+        owner.NativeMeshingPlan, _StructuredGenerationRecords
+    ],
+    tmp_path: Path,
+) -> None:
     plan, records = structured_generation_records
     carrier = records["generation_part"].carrier
+    assert isinstance(carrier, owner._result.CellMeshingResult)
+    assert carrier.execution_evidence is not None
     provenance = dict(json.loads(carrier.provenance.content_json)["items"])
     assert provenance["plan"] == plan.plan_id == carrier.execution_evidence.owner_id
     assert provenance["specification"] == plan.specification.specification_id
@@ -314,10 +366,15 @@ def test_actual_structured_generation_raw_controls_bind_published_plan_and_speci
 
 @pytest.mark.parametrize("defect", ("foreign-plan", "foreign-specification"))
 def test_actual_structured_raw_controls_refuse_foreign_generation_join(
-    structured_generation_records, tmp_path, defect,
-):
+    structured_generation_records: tuple[
+        owner.NativeMeshingPlan, _StructuredGenerationRecords
+    ],
+    tmp_path: Path,
+    defect: str,
+) -> None:
     plan, original = structured_generation_records
-    records = dict(original)
+    records = original.copy()
+    assert isinstance(plan.specification, phx.meshing.SurfaceMeshingSpec)
     foreign_specification = phx.meshing.SurfaceMeshingSpec(
         plan.specification.target, plan.specification.scope,
         planar_embedding=plan.specification.planar_embedding,
@@ -335,6 +392,7 @@ def test_actual_structured_raw_controls_refuse_foreign_generation_join(
         records["generation_specification"] = foreign_specification
     else:
         carrier = records["generation_part"].carrier
+        assert isinstance(carrier, owner._result.CellMeshingResult)
         foreign_carrier = foreign_plan.execute()
         assert foreign_carrier.execution_evidence is not None
         foreign_carrier = carrier.with_execution_evidence(foreign_carrier.execution_evidence)
@@ -347,8 +405,9 @@ def test_actual_structured_raw_controls_refuse_foreign_generation_join(
 
 
 def test_actual_epoch_controls_preserve_original_receipt_and_accepted_history(
-    actual_epoch, tmp_path,
-):
+    actual_epoch: tuple[owner.MeshingAcceptedEpoch, dict[str, Any]],
+    tmp_path: Path,
+) -> None:
     epoch, records = actual_epoch
     assert isinstance(epoch, owner.MeshingAcceptedEpoch)
     generation = epoch.carrier.execution_evidence
@@ -364,7 +423,9 @@ def test_actual_epoch_controls_preserve_original_receipt_and_accepted_history(
     )
 
 
-def test_accepted_epoch_controls_use_original_generation_not_final_adapted_provenance(monkeypatch):
+def test_accepted_epoch_controls_use_original_generation_not_final_adapted_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     graph.epochs()
     controls = graph.restore()
@@ -375,7 +436,9 @@ def test_accepted_epoch_controls_use_original_generation_not_final_adapted_prove
 
 
 @pytest.mark.parametrize("defect", ("foreign-plan", "foreign-target", "foreign-history"))
-def test_design_raw_controls_refuse_foreign_lineage(monkeypatch, defect):
+def test_design_raw_controls_refuse_foreign_lineage(
+    monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
     graph = _Controls(monkeypatch)
     graph.design()
     if defect == "foreign-plan":
@@ -392,7 +455,9 @@ def test_design_raw_controls_refuse_foreign_lineage(monkeypatch, defect):
 
 
 @pytest.mark.parametrize("defect", ("nonoptional-none", "nonempty-literal-history", "foreign-history-owner"))
-def test_raw_receipt_nullable_and_history_guards_remain_strict(monkeypatch, defect):
+def test_raw_receipt_nullable_and_history_guards_remain_strict(
+    monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
     graph = _Controls(monkeypatch)
     graph.singular()
     if defect == "nonoptional-none":
@@ -406,7 +471,9 @@ def test_raw_receipt_nullable_and_history_guards_remain_strict(monkeypatch, defe
 
 @pytest.mark.parametrize("defect", ("foreign-plan", "foreign-specification", "missing-specification", "duplicate-plan"))
 @pytest.mark.parametrize("schema", ("singular", "epochs"))
-def test_generation_provenance_join_remains_exact(monkeypatch, defect, schema):
+def test_generation_provenance_join_remains_exact(
+    monkeypatch: pytest.MonkeyPatch, defect: str, schema: str
+) -> None:
     graph = _Controls(monkeypatch)
     getattr(graph, schema)()
     items = [["plan", "generation-plan"], ["specification", "specification"]]
@@ -425,7 +492,9 @@ def test_generation_provenance_join_remains_exact(monkeypatch, defect, schema):
 
 
 @pytest.mark.parametrize("schema", ("compartment", "design"))
-def test_raw_container_identity_does_not_construct_scientific_owners(monkeypatch, schema):
+def test_raw_container_identity_does_not_construct_scientific_owners(
+    monkeypatch: pytest.MonkeyPatch, schema: str
+) -> None:
     graph = _Controls(monkeypatch)
     if schema == "compartment":
         graph.roles["generation_source"] = graph.dataclass(
@@ -435,7 +504,7 @@ def test_raw_container_identity_does_not_construct_scientific_owners(monkeypatch
     else:
         graph.design()
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("raw controls must not construct scientific owners")
 
     for cls in (owner.CompartmentMeshingSource, owner.NativeImplicitSource,
@@ -446,7 +515,9 @@ def test_raw_container_identity_does_not_construct_scientific_owners(monkeypatch
     assert controls.identity["source_binding_id"]
 
 
-def test_raw_container_fingerprint_includes_actual_array_bank_content(monkeypatch):
+def test_raw_container_fingerprint_includes_actual_array_bank_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _Controls(monkeypatch)
     entry, index = graph.catalog[0]
     graph.roles["generation_source"] = graph.dataclass(

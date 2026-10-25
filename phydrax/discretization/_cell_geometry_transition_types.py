@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import numbers
+import operator
 from abc import abstractmethod
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -192,7 +193,10 @@ def _exact_object_number(original: object, converted: float, /) -> bool:
         case float() | int() | Fraction() | Decimal():
             return original == converted
         case numbers.Rational():
-            return Fraction(original.numerator, original.denominator) == converted
+            # ``numbers.Integral`` parts expose their exact value as ``int``.
+            numerator = operator.index(original.numerator)
+            denominator = operator.index(original.denominator)
+            return Fraction(numerator, denominator) == converted
         case np.floating():
             return bool(original == original.dtype.type(converted))
         case _:

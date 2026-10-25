@@ -49,12 +49,20 @@ def test_image_support_checks_keep_target_then_fill_validation_order() -> None:
 
 
 def test_image_preparation_formats_typed_support_findings_at_refusal() -> None:
+    from phydrax._meshcore import NativeExecutionScope
+
     source = _source(np.ones((1, 1, 1), dtype=np.int16))
     specification = replace(
         image_specification(source), fill_strategy=M.VolumeFillStrategy.POLYHEDRAL
     )
-    with pytest.raises(ValueError, match="PreparedCompartmentVolume.specification"):
-        PreparedCompartmentVolume(source, specification, M.NativeVolumeSchedule())
+    with (
+        NativeExecutionScope(specification.limits.native_limits()) as scope,
+        scope.host_workspace() as workspace,
+        pytest.raises(ValueError, match="PreparedCompartmentVolume.specification"),
+    ):
+        PreparedCompartmentVolume(
+            source, specification, M.NativeVolumeSchedule(), scope=scope, workspace=workspace
+        )
 
 
 def test_plc_provider_preserves_geometry_family_then_fill_issue_order() -> None:

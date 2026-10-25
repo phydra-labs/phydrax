@@ -641,6 +641,18 @@ bool TetMesh::face_ancestry(const int32_t* vertices, int32_t source,
     contributors.push_back(rows.front());
     return true;
   }
+  if (!claimed_rows_.empty()) {
+    NativeVector<int64_t> epochs;
+    epochs.reserve(rows.size());
+    for (int32_t row : rows) {
+      native_execution_charge(TetWorkCost::kVisit);
+      const auto claim = std::lower_bound(curved_claims_.begin(), curved_claims_.end(), row,
+          [](const CurvedRowClaim& value, int32_t key) { return value.row < key; });
+      epochs.push_back(claim != curved_claims_.end() && claim->row == row ? claim->generation : 0);
+    }
+    return exact_facet_history_coverage(subject, original_points_.data(), original_faces_,
+                                        rows, epochs, contributors);
+  }
   return exact_facet_coverage(subject, original_points_.data(), original_faces_, rows,
                               contributors);
 }

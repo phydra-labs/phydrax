@@ -304,6 +304,22 @@ class PolyhedralAdaptationEvidence(NamedTuple):
     feature_edge_sources: np.ndarray | None
 
     @property
+    def identity_work(self) -> int:
+        """Host reads and streamed hashes of every bank ``evidence_id`` visits."""
+        banks = (
+            self.changed_cell_ids,
+            self.site_points,
+            self.site_weights,
+            self.site_parents,
+            self.cell_sites,
+            self.cell_components,
+            self.cell_regions,
+            self.face_facets,
+            self.feature_edge_sources,
+        )
+        return 256 + 2 * sum(bank.size for bank in banks if bank is not None)
+
+    @property
     def evidence_id(self) -> str:
         return canonical_fingerprint(
             {
@@ -391,6 +407,9 @@ def regenerated_polyhedral_associations(
             raise ValueError(
                 "polyhedral_adaptation.source_associations must bind mesh entities; got an unbound association"
             )
+        # Four entity-set comparisons, then one visit per association row for
+        # target membership and each of the resolved/ambiguous scans.
+        budget.reserve(4 + 3 * np.asarray(association.resolved).size)
         association.validate_target(source.mesh.entity_set(dimensions[0]))
         if not np.all(np.asarray(association.resolved)) or np.any(
             np.asarray(association.ambiguous)
@@ -428,6 +447,8 @@ def _stratum_overlap(
         budget.reserve(
             0, 16 * 256 + 512 * (len(source_points) + len(target_points))
         )
+        # One logical visit per profiled coordinate scalar.
+        budget.reserve(source_points.size + target_points.size)
         bits = max(
             (value.numerator.bit_length() + value.denominator.bit_length()
              if isinstance(value, Fraction)
@@ -455,19 +476,18 @@ def _decide_stratum_overlap(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     """Deciding surface/curve ancestry requires positive physical overlap."""
-    exact_comparisons = source_points.dtype == object or target_points.dtype == object
     if dimension == 0:
-        if exact_comparisons and source_points.shape == target_points.shape:
+        if source_points.shape == target_points.shape:
             budget.reserve(2 * source_points.size)
         return np.array_equal(source_points, target_points)
-    if exact_comparisons:
-        # polygon_bounds charges two coefficient units per scalar comparison.
-        # These are the actual two min/max reductions for each input and the
-        # three componentwise comparisons of their resulting bounding boxes.
-        comparisons = source_points.shape[1] * (
-            2 * (len(source_points) - 1) + 2 * (len(target_points) - 1) + 3
-        )
-        budget.reserve(2 * comparisons)
+    # polygon_bounds charges two coefficient units per scalar comparison.
+    # These are the actual two min/max reductions for each input and the
+    # three componentwise comparisons of their resulting bounding boxes; the
+    # binary64 reductions visit the same comparisons.
+    comparisons = source_points.shape[1] * (
+        2 * (len(source_points) - 1) + 2 * (len(target_points) - 1) + 3
+    )
+    budget.reserve(2 * comparisons)
     if np.any(
         np.maximum(np.min(source_points, axis=0), np.min(target_points, axis=0))
         > np.minimum(np.max(source_points, axis=0), np.max(target_points, axis=0))
@@ -562,6 +582,10 @@ def _decide_stratum_overlap(
         return False
     for first in triangles[0]:
         for second in triangles[1]:
+            # One native triangle-pair predicate: one query and one visit,
+            # matching the exact branch's per-pair query ticket.
+            budget.reserve_geometry_queries(1)
+            budget.reserve(1)
             native = _owner_phydrax__meshcore.triangle_intersections(
                 first[None, :], second[None, :]
             )
@@ -575,6 +599,27 @@ def _decide_stratum_overlap(
                 return True
     return False
 
+
+def _stratum_pass_work(mesh: CellMesh, dimension: int, /) -> int:
+    """Logical visits of one sorted key or packed-row pass over one stratum.
+
+    Each row and each of its connectivity entries is visited once per
+    comparison level of the sort/search, matching ``key_rows``' sorted lookup.
+    """
+    c = mesh.connectivity
+    rows = int(np.asarray(mesh.entity_set(dimension).entity_ids).size)
+    match dimension:
+        case 0 | 3:
+            entries = rows
+        case 1:
+            entries = 2 * rows
+        case _:
+            entries = (
+                int(np.asarray(c.face_vertex_values).size)
+                if isinstance(c, PolyhedralConnectivity)
+                else 3 * rows
+            )
+    return (rows + entries) * max(1, (rows + 1).bit_length())
 
 def _stratum_vertex_rows(mesh: CellMesh, dimension: int, /) -> tuple[np.ndarray, ...]:
     """Keep packed cyclic face order; lineage keys deliberately discard it."""
@@ -689,6 +734,15 @@ def _build_regenerated_relations(
                 target_geometry.source_coordinates(budget=budget), dtype=object
             )
         for dimension in range(3):
+            # entity_keys, _stratum_vertex_rows and the position key_rows
+            # below are three sorted passes over each stratum.
+            budget.reserve(
+                3
+                * (
+                    _stratum_pass_work(source.mesh, dimension)
+                    + _stratum_pass_work(target, dimension)
+                )
+            )
             old_keys, new_keys = (
                 entity_keys_owner.entity_keys(source.mesh, dimension),
                 entity_keys_owner.entity_keys(target, dimension),
@@ -730,6 +784,9 @@ def _build_regenerated_relations(
                 raise ValueError(
                     "polyhedral_adaptation.source_associations must name declared mesh entities; got unknown IDs"
                 )
+            # Bank insertion, the matched-multiplicity scan and one visit per
+            # target identity row (including unmatched rows) below.
+            budget.reserve(old_positions.size + 3 * new_positions.size)
             for identity, position in zip(
                 old.source_entities.entity_ids(), old_positions.tolist(), strict=True
             ):
@@ -743,7 +800,6 @@ def _build_regenerated_relations(
             )
             storage.set_bound(base + relation_storage)
             work += old_positions.size + new_positions.size
-            budget.reserve(old_positions.size + new_positions.size)
             for row, identity in enumerate(new_identities):
                 parents = bank.get(identity, [])
                 work += len(parents)
@@ -1075,6 +1131,13 @@ def _prepare_plane_split(
     normals, offsets, counts = [], [], []
     for index in cut:
         cell_normals, cell_offsets = [], []
+        corners = sum(len(face) for face in loops[index])
+        # Sorting the cell's corners, then per face one cross product/offset
+        # and one signed residual visit per unique cell vertex.
+        scope.charge(
+            work=corners * max(1, corners.bit_length())
+            + len(loops[index]) * (8 + corners)
+        )
         vertices = np.unique(np.concatenate(loops[index]))
         for face in loops[index]:
             points = coordinates[face]
@@ -1098,18 +1161,53 @@ def _prepare_plane_split(
     )
 
 
+def _plane_clip_shape(planes: int, /) -> tuple[int, int, int]:
+    """Return clip3d.cpp's convex face, vertex and loop-entry capacities."""
+    faces = planes + 6
+    vertices = 2 * faces - 4
+    return faces, vertices, 2 * (vertices + faces - 2)
+
+
+def _plane_clip_work(counts: list[int], width: int, /) -> int:
+    """Bound native box/halfspace clipping visits before the kernel runs.
+
+    The host pads every item's plane rows to ``width``. clip3d.cpp then clips
+    each item's box by its planes in turn; each cut visits at most every current
+    vertex, face and loop entry of the convex polytope. Output compaction sorts
+    the vertices and faces and rotates every loop entry; moments revisit them.
+    """
+    work = 4 * len(counts) * width
+    for planes in counts:
+        faces, vertices, loops = _plane_clip_shape(planes)
+        work += (
+            3 * planes
+            + planes * (vertices + faces + loops)
+            + vertices * (vertices.bit_length() + 1)
+            + faces * (faces.bit_length() + 1)
+            + 2 * loops
+        )
+    return work
+
+
 def _clip_plane_split(
     preparation: _PlaneSplitPreparation,
+    storage: NativeHostStorageWorkspace,
     *,
     scope: NativeExecutionScope,
 ) -> _owner_phydrax__meshcore.BoxHalfspaceClip:
-    with NativeHostStorageWorkspace(scope) as storage:
-        # The implementation pads the *actual* cut-cell halfspaces. This term
-        # cannot be replaced by an incidence sum for mixed cell arities.
-        storage.set_bound(
-            12 * 256 + 32 * len(preparation.normals) * max(preparation.counts)
-            + 8 * len(preparation.counts) + 256
-        )
+    count, width = len(preparation.counts), max(preparation.counts)
+    faces, vertices, loops = _plane_clip_shape(width)
+    # The implementation pads the *actual* cut-cell halfspaces. This term
+    # cannot be replaced by an incidence sum for mixed cell arities. The native
+    # call returns padded vertex, face-offset, label and loop banks plus counts,
+    # volumes, moments and status per item; they stay live through assembly.
+    storage.set_bound(
+        12 * 256 + 32 * count * width + 8 * count + 256
+        + count * (24 * vertices + 4 * (2 * faces + 1) + 4 * loops + 48)
+    )
+    scope.charge(work=_plane_clip_work(preparation.counts, width))
+    # Native clipping workspace belongs to the request's managed pool.
+    with scope.ticket_view() as ticket, ticket.native_target():
         return _build_plane_clip(preparation)
 
 
@@ -1338,83 +1436,92 @@ def _build_plane_split(
     )
     if not preparation.cut:
         return _PlaneSplitResult(mesh, 0.0)
-    native = _clip_plane_split(preparation, scope=scope)
-    points, point_counts = native.vertices, native.vertex_counts
-    face_offsets, face_labels = native.face_offsets, native.face_labels
-    face_vertices, face_counts = native.face_vertices, native.face_counts
-    loops, cell_ids = preparation.loops, preparation.cell_ids
-    vertex_ids, coordinates, cut = (
-        preparation.vertex_ids,
-        preparation.coordinates,
-        preparation.cut,
-    )
-    global_points = list(coordinates)
-    global_ids = list(vertex_ids)
-    point_keys: dict[tuple[int, ...], int] = {}
-    assembly = _PlaneSplitAssembly(global_points, global_ids, point_keys)
-    next_vertex = int(np.max(vertex_ids)) + 1
-    next_cell = int(np.max(cell_ids)) + 1
-    new_loops, new_ids = [], []
-    residual = 0.0
-    cut_positions = {cell: index for index, cell in enumerate(cut)}
-    for cell, original in enumerate(loops):
-        if cell not in cut_positions:
-            new_loops.append(original)
-            new_ids.append(int(cell_ids[cell]))
-            continue
-        for side in range(2):
-            item = 2 * cut_positions[cell] + side
-            incident: list[list[int]] = [[] for _ in range(point_counts[item])]
-            for face in range(face_counts[item]):
-                label = int(face_labels[item, face])
-                for vertex in face_vertices[
-                    item, face_offsets[item, face] : face_offsets[item, face + 1]
-                ]:
-                    incident[int(vertex)].append(label)
-            local_to_global = []
-            for vertex, labels in enumerate(incident):
-                mapped = _map_plane_cut_vertex(
-                    original,
-                    labels,
-                    points[item, vertex],
-                    plane,
-                    preparation,
-                    assembly,
-                    vertex_support,
-                    tolerance,
-                    maximum_vertices,
-                    next_vertex,
-                    budget=budget,
-                )
-                next_vertex = mapped.next_vertex
-                residual = max(residual, mapped.error)
-                local_to_global.append(mapped.global_vertex)
-            faces = tuple(
-                np.asarray(
-                    [
-                        local_to_global[int(value)]
-                        for value in face_vertices[
-                            item, face_offsets[item, face] : face_offsets[item, face + 1]
-                        ]
-                    ],
-                    dtype=np.int32,
-                )
-                for face in range(face_counts[item])
-            )
-            new_loops.append(faces)
-            new_ids.append(next_cell)
-            next_cell += 1
-    if residual > tolerance:
-        raise polyhedral_shared_owner.PolyhedralAdaptationError(
-            "PolyhedralMeshAdaptation.coordinate_tolerance must bound shared-edge constructions; got excess construction error"
+    with NativeHostStorageWorkspace(scope) as clip_storage:
+        native = _clip_plane_split(preparation, clip_storage, scope=scope)
+        points, point_counts = native.vertices, native.vertex_counts
+        face_offsets, face_labels = native.face_offsets, native.face_labels
+        face_vertices, face_counts = native.face_vertices, native.face_counts
+        loops, cell_ids = preparation.loops, preparation.cell_ids
+        vertex_ids, coordinates, cut = (
+            preparation.vertex_ids,
+            preparation.coordinates,
+            preparation.cut,
         )
-    target = CellMesh.from_polyhedra(
-        np.asarray(global_points, dtype=np.float64),
-        new_loops,
-        vertex_global_ids=np.asarray(global_ids, dtype=np.int64),
-        cell_global_ids=np.asarray(new_ids, dtype=np.int64),
-    )
-    return _PlaneSplitResult(target, residual)
+        # Uncut loop/id copies; per cut child, the incident label lists and
+        # the remapped face loops each visit every used loop entry, and every
+        # output vertex is mapped once (its exact construction is budgeted).
+        used = face_offsets[np.arange(face_counts.shape[0]), face_counts]
+        scope.charge(
+            work=2 * len(loops) + 2 * coordinates.shape[0]
+            + 3 * int(np.sum(used)) + 2 * int(np.sum(point_counts))
+        )
+        global_points = list(coordinates)
+        global_ids = list(vertex_ids)
+        point_keys: dict[tuple[int, ...], int] = {}
+        assembly = _PlaneSplitAssembly(global_points, global_ids, point_keys)
+        next_vertex = int(np.max(vertex_ids)) + 1
+        next_cell = int(np.max(cell_ids)) + 1
+        new_loops, new_ids = [], []
+        residual = 0.0
+        cut_positions = {cell: index for index, cell in enumerate(cut)}
+        for cell, original in enumerate(loops):
+            if cell not in cut_positions:
+                new_loops.append(original)
+                new_ids.append(int(cell_ids[cell]))
+                continue
+            for side in range(2):
+                item = 2 * cut_positions[cell] + side
+                incident: list[list[int]] = [[] for _ in range(point_counts[item])]
+                for face in range(face_counts[item]):
+                    label = int(face_labels[item, face])
+                    for vertex in face_vertices[
+                        item, face_offsets[item, face] : face_offsets[item, face + 1]
+                    ]:
+                        incident[int(vertex)].append(label)
+                local_to_global = []
+                for vertex, labels in enumerate(incident):
+                    mapped = _map_plane_cut_vertex(
+                        original,
+                        labels,
+                        points[item, vertex],
+                        plane,
+                        preparation,
+                        assembly,
+                        vertex_support,
+                        tolerance,
+                        maximum_vertices,
+                        next_vertex,
+                        budget=budget,
+                    )
+                    next_vertex = mapped.next_vertex
+                    residual = max(residual, mapped.error)
+                    local_to_global.append(mapped.global_vertex)
+                faces = tuple(
+                    np.asarray(
+                        [
+                            local_to_global[int(value)]
+                            for value in face_vertices[
+                                item, face_offsets[item, face] : face_offsets[item, face + 1]
+                            ]
+                        ],
+                        dtype=np.int32,
+                    )
+                    for face in range(face_counts[item])
+                )
+                new_loops.append(faces)
+                new_ids.append(next_cell)
+                next_cell += 1
+        if residual > tolerance:
+            raise polyhedral_shared_owner.PolyhedralAdaptationError(
+                "PolyhedralMeshAdaptation.coordinate_tolerance must bound shared-edge constructions; got excess construction error"
+            )
+        target = CellMesh.from_polyhedra(
+            np.asarray(global_points, dtype=np.float64),
+            new_loops,
+            vertex_global_ids=np.asarray(global_ids, dtype=np.int64),
+            cell_global_ids=np.asarray(new_ids, dtype=np.int64),
+        )
+        return _PlaneSplitResult(target, residual)
 
 
 class _AgglomerationPreparation(StrictModule):
@@ -1599,7 +1706,7 @@ def _topology_edit(
         storage.workspace.set_bound(base)
         edit, relation_bytes = _build_topology_edit(
             source, target, refinement, vertex_support,
-            storage=storage.workspace, base=base,
+            storage=storage.workspace, base=base, scope=scope,
         )
         storage.retain(
             bound.retained + relation_bytes + 64 * overlap_rows,
@@ -1617,6 +1724,7 @@ def _build_topology_edit(
     *,
     storage: NativeHostStorageWorkspace,
     base: int,
+    scope: NativeExecutionScope,
 ) -> tuple[_dependency_phydrax_meshing__topology_edit.CellTopologyEdit, int]:
     loops = polyhedral_shared_owner.polyhedral_face_loops(target)
     blocks = []
@@ -1651,6 +1759,13 @@ def _build_topology_edit(
     relations = []
     relation_bytes = 0
     for dimension in range(4):
+        # Sorted source and target entity-key extraction before matching; the
+        # cell relation gathers visit each refinement row once.
+        scope.charge(
+            work=_stratum_pass_work(source, dimension)
+            + _stratum_pass_work(target, dimension)
+            + (0 if refinement is None else 2 * int(np.asarray(refinement.source_cells).size))
+        )
         keys = entity_keys_owner.entity_keys(source, dimension)
         if dimension == 3:
             source_cells = (
@@ -1682,12 +1797,19 @@ def _build_topology_edit(
             parents, children = [], []
             if dimension in (1, 2):
                 for target_key in target_keys:
+                    # Key filtering and the support union over its vertices.
+                    scope.charge(work=2 + 2 * target_keys.shape[1])
                     values = [int(value) for value in target_key if value >= 0]
                     support = set().union(
                         *(vertex_support.get(value, set()) for value in values)
                     )
                     if not support:
                         continue
+                    # Admit this key's full scan of every source key before it:
+                    # each comparison builds one source set and two subset tests.
+                    scope.charge(
+                        work=len(keys) * (2 * keys.shape[1] + len(support) + len(values) + 2)
+                    )
                     for source_key in keys:
                         if support.issubset(
                             set(int(value) for value in source_key if value >= 0)
@@ -1719,6 +1841,12 @@ def _build_topology_edit(
                     ),
                 )
             )
+    # Source vertex-set build, then one membership visit per target vertex
+    # and one relation-array row write.
+    scope.charge(
+        work=int(np.asarray(source.vertex_global_ids).size)
+        + 2 * int(np.asarray(target.vertex_global_ids).size)
+    )
     source_vertices = set(int(value) for value in np.asarray(source.vertex_global_ids))
     vertices = np.asarray(target.vertex_global_ids, dtype=np.int64)
     valid = np.asarray(
@@ -1861,6 +1989,8 @@ def _prepare_edge_trace_stencil(
     )
     budget.reserve(edge_rows.size, 256 + 192 * len(edge_rows))
     edges = {frozenset(int(value) for value in edge) for edge in edge_rows}
+    # One membership visit per action row for the unsupported-edge scan.
+    budget.reserve(2 * len(actions))
     if any(len(row) != 1 and frozenset(row) not in edges for row in actions):
         return _EdgeTraceStencil(None, None)
     budget.reserve(len(actions))
@@ -1925,6 +2055,8 @@ def _edge_trace_stencil(
     chain = []
     visited = set()
     while current.source_id != original.source_id:
+        # One cycle test, one set insertion and one parent step per link.
+        scope.charge(work=3)
         if id(current) in visited:
             raise ValueError(
                 "polyhedral_adaptation.edge_trace.ancestry must be acyclic; got a source cycle"
@@ -1990,7 +2122,8 @@ def _periodic_source_target(
                     "polyhedral_adaptation.periodic_source must retain image preparation; got missing periodic source data"
                 )
         points = geometry.rational_source_coordinates(budget=budget)
-        budget.reserve(0, 256 + 128 * len(points))
+        # One insertion per point plus one hash visit per rational coordinate.
+        budget.reserve(4 * len(points), 256 + 128 * len(points))
         lookup = {point: row for row, point in enumerate(points)}
         generator_bits = max(
             (planar_primitives_owner.binary64_fraction_bits(float(value))
@@ -2205,10 +2338,31 @@ def _build_regenerated_target(
                 raise TypeError(
                     "polyhedral_adaptation.source.connectivity must retain packed identities; got another connectivity kind"
                 )
-        first_vertex = int(np.max(np.asarray(source.vertex_global_ids))) + 1
-        first_cell = int(np.max(np.asarray(source_connectivity.cell_global_ids))) + 1
         vertex_count = generated.coordinates.shape[0]
         cell_count = generated.connectivity.cell_count
+        generated_connectivity = (
+            _dependency_phydrax_meshing__polyhedral_generation.require_polyhedral_connectivity(
+                generated
+            )
+        )
+        # Source identity maxima, the generated face-loop extraction (each face
+        # bounds at most two cell loops) and both identity ranges. The topology
+        # phase charged one construction; a periodic target constructs twice.
+        loops = generated_connectivity.cell_face_values.size
+        corners = 2 * generated_connectivity.face_vertex_values.size
+        scope.charge(
+            work=source.coordinates.shape[0] + source_connectivity.cell_count
+            + loops + corners + vertex_count + cell_count
+            + (
+                0
+                if generated.periodic_topology is None
+                else _dependency_phydrax_meshing__polyhedral_generation._polyhedral_mesh_work_bound(
+                    vertex_count, cell_count, loops, corners
+                )
+            )
+        )
+        first_vertex = int(np.max(np.asarray(source.vertex_global_ids))) + 1
+        first_cell = int(np.max(np.asarray(source_connectivity.cell_global_ids))) + 1
         if (
             max(first_vertex + vertex_count - 1, first_cell + cell_count - 1)
             > np.iinfo(np.int64).max
@@ -2429,6 +2583,11 @@ def _admit_polyhedral_source(
         raise ValueError(
             "polyhedral_adaptation.cell_classes must align with polyhedral cells; got incompatible rows"
         )
+    # Protected-ID set insertion and one singleton support set per vertex.
+    scope.charge(
+        work=int(np.asarray(protected_face_ids).size)
+        + 2 * int(np.asarray(mesh.vertex_global_ids).size)
+    )
     protected = set(
         int(value) for value in np.asarray(protected_face_ids, dtype=np.int64).reshape(-1)
     )
@@ -2476,6 +2635,10 @@ def _execute_polyhedral_plane(
         )
         # One new support set per intersected edge; the union has no more
         # entries than its two actual predecessor sets together.
+        # One visit per support set, then two lookups and one sum per edge.
+        execution.scope.charge(
+            work=len(source.vertex_support) + 3 * int(edges.shape[0])
+        )
         support_slots = sum(len(values) for values in source.vertex_support.values())
         for first, second in edges:
             support_slots += (
@@ -2549,6 +2712,8 @@ def _build_polyhedral_plane(
                     budget=budget,
                 )
             )
+    # One singleton support set per candidate vertex.
+    execution.scope.charge(work=2 * int(np.asarray(target.vertex_global_ids).size))
     support = {
         int(identifier): {int(identifier)}
         for identifier in np.asarray(target.vertex_global_ids)
@@ -2900,6 +3065,12 @@ def _certify_polyhedral_candidate(
         )
         offsets = np.asarray(common.target_offsets)
         source_cells = np.asarray(common.source_cells)
+        # Per target row: offset reads, a gather and a sort-based unique over
+        # its accepted overlap owners; summed over every accepted overlap row.
+        rows = int(source_cells.size)
+        scope.charge(
+            work=4 * common.target_cell_count + rows * (2 + max(1, rows).bit_length())
+        )
         for row in range(common.target_cell_count):
             begin, end = offsets[row:row + 2]
             owners = source_cells[begin:end]
@@ -3015,6 +3186,9 @@ def _build_polyhedral_publication(
             )
     source_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     target_ids = np.asarray(target_connectivity.cell_global_ids, dtype=np.int64)
+    # setdiff1d sorts both ID arrays, then merges them once.
+    total = source_ids.size + target_ids.size
+    scope.charge(work=total * max(1, (total + 1).bit_length()))
     evidence = PolyhedralAdaptationEvidence(
         request.operation,
         count,

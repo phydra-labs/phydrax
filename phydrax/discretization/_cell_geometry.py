@@ -65,7 +65,11 @@ from . import (
 )
 from ._coordinate_budget import CoordinateEnclosureBudget
 from ._coordinate_enclosure import CoordinateSourceBank, Expression
-from ._coordinate_identity import coordinate_scope_key
+from ._coordinate_identity import (
+    coordinate_scope_key,
+    CoordinateIdentityInputs,
+    OperationElementAdmission,
+)
 from ._coordinate_source_snapshot import BarycentricSourceSnapshot, SplineSourceSnapshot
 from ._reference_cell_types import CellGeometryElement
 
@@ -669,7 +673,12 @@ class LayerColumnCellGeometryElement(StrictModule, NonTrainableState):
         with (
             nullcontext(budget)
             if budget is not None
-            else owned_coordinate_preparation(estimate.work_upper, estimate.bytes_upper)
+            # Standalone restoration also owns identity/admission metadata.
+            # Explicit caller budgets remain authoritative.
+            else owned_coordinate_preparation(
+                max(estimate.work_upper, 16_384),
+                max(estimate.bytes_upper, 1 << 20),
+            )
         ) as budget:
             fresh = cls(value.wall_element, fiber_graph=value.fiber_graph, budget=budget)
         for name in (
@@ -2909,10 +2918,17 @@ def coordinate_source_snapshot_preparation_bounds(
 
 
 def _coordinate_snapshot_identity(
-    element: CellGeometryElement, budget: CoordinateEnclosureBudget
+    element: CellGeometryElement,
+    budget: CoordinateEnclosureBudget,
+    admission: OperationElementAdmission | None,
 ) -> str:
     # Host action snapshots follow the same complete current-field/array
     # authentication as coordinate algebra; an object's address is not a seal.
+    # Only the authenticating operation's current admission of this exact
+    # element stands in for that authentication.
+    carried = None if admission is None else admission.identity(element, budget)
+    if carried is not None:
+        return carried[1]
     return coordinate_enclosure_owner._authenticated_element_identity(
         element, budget, retain_admission=False
     )[1]
@@ -2924,9 +2940,15 @@ def prepare_barycentric_source_snapshot(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    admission: OperationElementAdmission | None = None,
 ) -> BarycentricSourceSnapshot:
-    """Admit and retain one host coefficient action per source owner and budget."""
-    key = _coordinate_snapshot_identity(element, budget)
+    """Admit and retain one host coefficient action per source owner and budget.
+
+    ``admission`` is the calling operation's live authentication of
+    ``element``; any other carried record is ignored and ``element`` is
+    authenticated in full.
+    """
+    key = _coordinate_snapshot_identity(element, budget, admission)
     if key not in budget.barycentric_source_snapshot_cache:
         with budget.temporary_scope():
             # The device-get view and one host-owned copy coexist. Retained
@@ -2960,7 +2982,7 @@ def prepare_spline_source_snapshot(
     budget: CoordinateEnclosureBudget,
 ) -> SplineSourceSnapshot:
     """Admit one host knot/weight bundle without changing dynamic execution leaves."""
-    key = _coordinate_snapshot_identity(element, budget)
+    key = _coordinate_snapshot_identity(element, budget, None)
     if key not in budget.spline_source_snapshot_cache:
         sources = (element.u_knots, element.v_knots, element.weights)
         with budget.temporary_scope():
@@ -4228,6 +4250,62 @@ def _require_affine_root_publication(
             )
 
 
+def _published_corner_weight_rows(
+    element: CellGeometryElement,
+    roots: dict[int, tuple[object, CoordinateIdentityInputs | None]],
+    verified: dict[int, CoordinateIdentityInputs],
+    dense: dict[
+        tuple[int, tuple[tuple[int, coordinate_enclosure_owner.ExactScalar], ...]],
+        tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    ],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank | None:
+    """Corner images of the identity coefficient bank under ``element``.
+
+    The element is authenticated within the calling operation (``roots`` and
+    ``verified``); the preparation owner reuses only its authenticated identity.
+    Unit rows are the identity rows and weighted rows use the same exact sums
+    as ``coordinate_corner_images``
+    on that bank; ``dense`` evaluates each distinct row once per operation.
+    """
+    with budget.temporary_scope():
+        _, admission = coordinate_enclosure_owner._operation_element_admission(
+            element, roots, verified, budget
+        )
+        try:
+            prepared = coordinate_enclosure_owner._prepare_coordinate_corner_weights(
+                element, budget=budget, admission=admission
+            )
+            if prepared is None:
+                return None
+        finally:
+            if admission is not None:
+                admission.close()
+    width = element.local_dof_count
+    rows = []
+    for row in prepared[1]:
+        budget.reserve(1)
+        value = dense.get((width, row))
+        if value is None:
+            budget.reserve(width * (1 + len(row)), 256 + 64 * width)
+            value = (
+                tuple(Fraction(int(row[0][0] == axis)) for axis in range(width))
+                if len(row) == 1 and row[0][1] == 1
+                else tuple(
+                    sum(
+                        (weight * Fraction(int(node == axis)) for node, weight in row),
+                        Fraction(0),
+                    )
+                    for axis in range(width)
+                )
+            )
+            dense[(width, row)] = value
+        rows.append(value)
+    return tuple(rows)
+
+
 @checked
 def require_published_affine_carrier(
     geometry: CellGeometrySpec,
@@ -4285,15 +4363,16 @@ def require_published_affine_carrier(
         rounded_images = np.empty(carrier.shape, dtype=np.float64)
         rounded_bits = rounded_images.view(np.uint64)
         available = np.zeros((len(images),), dtype=np.bool_)
+    roots: dict[int, tuple[object, CoordinateIdentityInputs | None]] = {}
+    verified: dict[int, CoordinateIdentityInputs] = {}
+    dense: dict[
+        tuple[int, tuple[tuple[int, coordinate_enclosure_owner.ExactScalar], ...]],
+        tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    ] = {}
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         width = element.local_dof_count
-        weights = coordinate_enclosure_owner.coordinate_corner_images(
-            element,
-            tuple(
-                tuple(Fraction(int(row == column)) for column in range(width))
-                for row in range(width)
-            ),
-            budget=budget,
+        weights = _published_corner_weight_rows(
+            element, roots, verified, dense, budget=budget
         )
         if weights is None:
             raise ValueError(
@@ -4412,15 +4491,11 @@ def _cardinal_corner_nodes(
     exact corner preparation returns ``coefficients[node]`` itself. The rows are
     the request's shared corner-weight preparation, keyed as the image owner keys it.
     """
-    key = coordinate_enclosure_owner.element_identity(element, budget=budget)
-    prepared = budget.corner_weight_cache.get(key)
+    prepared = coordinate_enclosure_owner._prepare_coordinate_corner_weights(
+        element, budget=budget
+    )
     if prepared is None:
-        prepared = coordinate_enclosure_owner._prepare_coordinate_corner_weights(
-            element, budget=budget
-        )
-        if prepared is None:
-            return None
-        budget.corner_weight_cache[key] = prepared
+        return None
     _, weights = prepared
     if not weights or not all(len(row) == 1 and row[0][1] == 1 for row in weights):
         return None

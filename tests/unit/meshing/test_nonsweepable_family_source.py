@@ -22,6 +22,31 @@ from tools.meshing_qualification.scenarios.family import (
 )
 
 
+def _executed_fixture(args: QualificationControls) -> tuple[Any, Any, Any, dict[str, Any]]:
+    """The qualification fixture, executed at the registered lifecycle work cap.
+
+    Work follows the registered native-family-lifecycle envelope: the priced
+    CellMesh/CellBlock constructions of the dual-hex mesh alone need about
+    6.3M work units at resolution two, beyond 100 per capacity unit.
+    """
+    source, request, options, case = _family_qualification_fixture(args)
+    old = request.limits
+    limits = phx.meshing.MeshingLimits(
+        maximum_vertices=old.maximum_vertices,
+        maximum_edges=old.maximum_edges,
+        maximum_faces=old.maximum_faces,
+        maximum_cells=old.maximum_cells,
+        maximum_connectivity_entries=old.maximum_connectivity_entries,
+        maximum_data_bytes=old.maximum_data_bytes,
+        maximum_work_units=128_000_000,
+        maximum_cavity_cells=old.maximum_cavity_cells,
+        maximum_geometry_queries=old.maximum_geometry_queries,
+        maximum_scratch_bytes=old.maximum_scratch_bytes,
+        maximum_wall_seconds=old.maximum_wall_seconds,
+    )
+    return source, eqx.tree_at(lambda value: value.limits, request, limits), options, case
+
+
 def test_nonsweepable_profile_is_additive_and_uses_generic_native_plc() -> None:
     original = (
         "dual-quad",
@@ -179,7 +204,7 @@ def test_nonsweepable_exact_chart_midpoints_release_only_proved_slanted_edges() 
     )
 
     args = QualificationControls(family_case="nonsweepable-dual-hex", resolution=2)
-    source, request, options, case = _family_qualification_fixture(args)
+    source, request, options, case = _executed_fixture(args)
     result = (
         phx.meshing.NativeMeshingProvider(options)
         .plan(source, request, coordinate_contract=phx.SpatialCoordinateContract.si())
@@ -270,7 +295,7 @@ def published_cavity_material() -> tuple[
     phx.meshing.CellMeshingResult, dict[str, Any], tuple[str, ...]
 ]:
     args = QualificationControls(family_case="nonsweepable-dual-hex", resolution=2)
-    source, request, options, case = _family_qualification_fixture(args)
+    source, request, options, case = _executed_fixture(args)
     result = (
         phx.meshing.NativeMeshingProvider(options)
         .plan(source, request, coordinate_contract=phx.SpatialCoordinateContract.si())

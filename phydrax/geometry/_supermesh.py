@@ -34,7 +34,8 @@ from collections.abc import Iterable, Iterator
 from contextlib import closing, contextmanager, nullcontext
 from dataclasses import fields
 from enum import IntEnum, StrEnum
-from typing import NamedTuple
+from fractions import Fraction
+from typing import cast, NamedTuple
 
 import equinox as eqx
 import jax
@@ -58,6 +59,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_integer
 from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
@@ -67,6 +69,15 @@ from ..discretization._coordinate_budget import (
 from ..discretization._reference_cell_types import CellBlock, PolyhedralBlock
 from ..ein import contract
 from ..typing import checked, parse
+from ._exact_polyhedral_geometry import (
+    exact_vertices,
+    ExactOverlapRefusal,
+    ExactPolyhedralRefusal,
+    star_determinant,
+    Tetrahedron,
+    tetrahedron_overlap,
+    TetrahedronPlanePreparation,
+)
 
 
 # Narrow-phase working set per native batch (inputs plus outputs).
@@ -1993,6 +2004,41 @@ def prepare_common_refinement(
     import phydrax.geometry._exact_power_refinement as exact_power_refinement_owner
 
     _validate_meshes(source, target, policy)
+    if (
+        source_geometry is not None
+        and target_geometry is not None
+        and all(block.cell_kind == "tetrahedron" for mesh in (source, target) for block in mesh.blocks)
+    ):
+        if budget is None or budget.ticket.settled:
+            scope = scope or meshcore_owner.current_native_execution_scope()
+            ticket = (
+                HostBatchTicket(
+                    policy.maximum_exact_work, queries_upper=policy.maximum_candidate_pairs,
+                    bytes_upper=policy.maximum_memory_bytes,
+                )
+                if scope is None else scope.batch(
+                    min(policy.maximum_exact_work, scope.remaining().remaining_work_units),
+                    queries_upper=min(policy.maximum_candidate_pairs, scope.remaining().remaining_geometry_queries),
+                    bytes_upper=min(policy.maximum_memory_bytes, scope.remaining().remaining_managed_bytes),
+                )
+            )
+            if budget is not None:
+                with budget.bind_ticket(ticket), budget.activate():
+                    return prepare_exact_tetrahedral_refinement(
+                        source, target, source_geometry, target_geometry, policy, budget,
+                    ).refinement
+            with ticket:
+                ledger = CoordinateEnclosureBudget(
+                    ticket, maximum_work_units=policy.maximum_exact_work,
+                    maximum_memory_bytes=policy.maximum_memory_bytes,
+                )
+                with ledger.activate():
+                    return prepare_exact_tetrahedral_refinement(
+                        source, target, source_geometry, target_geometry, policy, ledger,
+                    ).refinement
+        return prepare_exact_tetrahedral_refinement(
+            source, target, source_geometry, target_geometry, policy, budget,
+        ).refinement
     if source_geometry is not None or target_geometry is not None:
         if budget is not None and not budget.ticket.settled:
             with budget.activate():
@@ -2395,3 +2441,209 @@ __all__ = [
     "PreparedCommonRefinement",
     "prepare_common_refinement",
 ]
+
+
+class ExactTetrahedralRefinementError(ValueError):
+    """Typed exact simplex refusal without a fabricated successful partition."""
+
+    def __init__(self, status: CommonRefinementStatus, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class ExactTetrahedralRefinement(NamedTuple):
+    refinement: PreparedCommonRefinement
+    exact_volumes: tuple[Fraction, ...]
+    source_measures: tuple[Fraction, ...]
+    target_measures: tuple[Fraction, ...]
+
+
+def _material_decomposition(
+    mesh: CellMesh, geometry: CellGeometrySpec, budget: CoordinateEnclosureBudget,
+    storage: CoordinateLiveStorage,
+) -> tuple[Decomposition, tuple[Tetrahedron, ...], tuple[Fraction, ...]]:
+    """Read actual rational nodal rows, never their rounded carrier vertices."""
+    from ..discretization._cell_geometry import BarycentricCellGeometryElement
+    from ..discretization._exact_algebraic_geometry import rational_coefficient
+    from ..discretization.fem._reference_types import FiniteElementSpec
+
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    if any(
+        not isinstance(element, (FiniteElementSpec, BarycentricCellGeometryElement))
+        or element.cell_kind != "tetrahedron"
+        or element.degree != 1
+        for element in elements
+    ):
+        raise ValueError("exact tetrahedral refinement requires affine simplex coordinates")
+    count = sum(block.cell_count for block in mesh.blocks)
+    storage.set_bound(storage.bound + 4096 + count * 4096)
+    points = exact_vertices(mesh, geometry, budget=budget)
+    rational_points = tuple(
+        tuple(rational_coefficient(value, role="exact tetrahedral coordinate") for value in row)
+        for row in points
+    )
+    bits = max(
+        (max(value.numerator.bit_length(), value.denominator.bit_length())
+         for row in rational_points for value in row), default=1,
+    )
+    storage.set_bound(storage.bound + count * (1024 + 64 * (24 * bits // 8 + 1)))
+    tetrahedra = tuple(
+        cast(Tetrahedron, tuple(rational_points[index] for index in row))
+        for block in routes for row in np.asarray(block)
+    )
+    measures = tuple(star_determinant(tet, budget=budget) / 6 for tet in tetrahedra)
+    if any(value <= 0 for value in measures):
+        raise ExactTetrahedralRefinementError(CommonRefinementStatus.INVALID_GEOMETRY, "nonpositive exact tetrahedron")
+    budget.reserve(count * 18)
+    moments = tuple(
+        tuple(volume * sum((point[axis] for point in tet), Fraction(0)) / 4 for axis in range(3))
+        for volume, tet in zip(measures, tetrahedra, strict=True)
+    )
+    floating = np.asarray(tetrahedra, dtype=np.float64)
+    carrier = Decomposition(
+        count, np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks)),
+        floating, None, np.arange(count + 1, dtype=np.int64),
+        np.asarray(measures, dtype=np.float64), np.asarray(moments, dtype=np.float64),
+        np.nextafter(floating.min(axis=1), -np.inf),
+        np.nextafter(floating.max(axis=1), np.inf), 0, 0,
+    )
+    return carrier, tetrahedra, measures
+
+
+def prepare_exact_tetrahedral_refinement(
+    source: CellMesh, target: CellMesh, source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec, policy: CommonRefinementPolicy,
+    budget: CoordinateEnclosureBudget,
+) -> ExactTetrahedralRefinement:
+    """Assemble the canonical refinement from exact rational tetra intersections."""
+    from ._exact_power_refinement import _rne_error
+
+    with (
+        budget.bound_stage(policy.maximum_exact_work, policy.maximum_memory_bytes),
+        budget.measurement() as measurement,
+        budget.temporary_scope(),
+        budget.live_storage() as storage,
+        budget.live_storage() as candidates_storage,
+        budget.live_storage() as pair_storage,
+        budget.live_storage() as workspace,
+    ):
+        first, first_tets, first_measures = _material_decomposition(
+            source, source_geometry, budget, storage,
+        )
+        second, second_tets, second_measures = _material_decomposition(
+            target, target_geometry, budget, storage,
+        )
+        if policy.coverage is CommonRefinementCoverage.COMPLETE:
+            # Both row sets must be partitions of the same domain. Their exact
+            # total measures must therefore agree before any pair clipping can
+            # possibly certify complete coverage. This is only a refusal test:
+            # equal totals still require all local intersection/coverage proofs.
+            with budget.temporary_scope():
+                count = len(first_measures) + len(second_measures)
+                denominator_bits = sum(
+                    value.denominator.bit_length()
+                    for group in (first_measures, second_measures) for value in group
+                )
+                numerator_bits = max(
+                    (value.numerator.bit_length()
+                     for group in (first_measures, second_measures) for value in group),
+                    default=1,
+                )
+                sum_bits = denominator_bits + numerator_bits + count.bit_length() + 2
+                budget.reserve(count + 1, 1024 + 8 * declared_integer_storage_bytes(sum_bits))
+                if sum(first_measures, Fraction(0)) != sum(second_measures, Fraction(0)):
+                    raise ExactTetrahedralRefinementError(
+                        CommonRefinementStatus.COVERAGE_GAP,
+                        "exact tetrahedral complete coverage requires equal total volumes",
+                    )
+        candidates = _candidate_pairs(
+            first, second, policy.maximum_candidate_pairs,
+            _RefinementStorage(budget, candidates_storage),
+        )
+        if candidates is None:
+            raise ExactTetrahedralRefinementError(CommonRefinementStatus.RESOURCE_LIMIT, "exact tetrahedral candidate limit")
+        targets, sources = candidates
+        covered_source = [Fraction(0)] * first.cell_count
+        covered_target = [Fraction(0)] * second.cell_count
+        rows, pieces, offsets, errors = [], [], [0], []
+        exact_volumes = []
+        preparation = TetrahedronPlanePreparation(budget)
+        for target_row, source_row in zip(targets, sources, strict=True):
+            overlap = tetrahedron_overlap(
+                first_tets[source_row], second_tets[target_row],
+                second_moments=policy.second_moments, retain_simplices=policy.overlap_simplices,
+                budget=budget, preparation=preparation,
+                _output_storage=pair_storage, _workspace=workspace,
+            )
+            if isinstance(overlap, ExactOverlapRefusal):
+                raise ExactPolyhedralRefusal(overlap)
+            if overlap.volume == 0:
+                del overlap
+                pair_storage.set_bound(0)
+                continue
+            if len(rows) >= policy.maximum_accepted_pairs:
+                raise ExactTetrahedralRefinementError(CommonRefinementStatus.RESOURCE_LIMIT, "exact tetrahedral accepted-pair limit")
+            simplices = () if overlap.simplices is None else overlap.simplices
+            storage.set_bound(storage.bound + 4096 + len(simplices) * 384)
+            budget.reserve(2)
+            covered_source[source_row] += overlap.volume
+            covered_target[target_row] += overlap.volume
+            rows.append((
+                target_row, source_row, float(overlap.volume),
+                tuple(map(float, overlap.first_moment)),
+                None if overlap.second_moment is None else tuple(
+                    tuple(map(float, row)) for row in overlap.second_moment
+                ),
+            ))
+            errors.append(_rne_error(overlap.volume))
+            exact_volumes.append(overlap.volume)
+            pieces.extend(np.asarray(simplices, dtype=np.float64))
+            offsets.append(len(pieces))
+            del overlap, simplices
+            pair_storage.set_bound(0)
+        budget.reserve(first.cell_count + second.cell_count)
+        source_defects = tuple(a - b for a, b in zip(covered_source, first_measures, strict=True))
+        target_defects = tuple(a - b for a, b in zip(covered_target, second_measures, strict=True))
+        defects = source_defects + target_defects
+        if any(value > 0 for value in defects):
+            raise ExactTetrahedralRefinementError(CommonRefinementStatus.DOUBLE_COVERAGE, "exact tetrahedral double coverage")
+        if (
+            policy.coverage in (CommonRefinementCoverage.COMPLETE, CommonRefinementCoverage.SOURCE)
+            and any(source_defects)
+        ) or (
+            policy.coverage in (CommonRefinementCoverage.COMPLETE, CommonRefinementCoverage.TARGET)
+            and any(target_defects)
+        ):
+            raise ExactTetrahedralRefinementError(CommonRefinementStatus.COVERAGE_GAP, "exact tetrahedral coverage gap")
+        entries = Entries(
+            np.asarray([row[0] for row in rows], dtype=np.int32),
+            np.asarray([row[1] for row in rows], dtype=np.int32),
+            np.asarray([row[2] for row in rows], dtype=np.float64),
+            np.asarray([row[3] for row in rows], dtype=np.float64).reshape((-1, 3)),
+            np.asarray([row[4] for row in rows], dtype=np.float64).reshape((-1, 3, 3))
+            if policy.second_moments else None,
+            np.asarray(offsets, dtype=np.int32) if policy.overlap_simplices else None,
+            np.asarray(pieces, dtype=np.float64).reshape((-1, 4, 3)) if policy.overlap_simplices else None,
+        )
+        evidence = CommonRefinementEvidence(
+            status=CommonRefinementStatus.SUCCESS, reason="exact tetrahedral coverage",
+            source_coverage_defects=np.asarray(source_defects, dtype=np.float64),
+            target_coverage_defects=np.asarray(target_defects, dtype=np.float64),
+            source_measures=first.measures, target_measures=second.measures,
+            source_tolerances=np.asarray([_rne_error(value) for value in first_measures]),
+            target_tolerances=np.asarray([_rne_error(value) for value in second_measures]),
+            counts=Counts(len(targets), len(rows), len(targets), 0, 0, 0),
+            retained_bytes=storage.bound,
+            working_bytes=measurement.peak_bytes_upper,
+        )
+        result = PreparedCommonRefinement(
+            source=first, target=second, entries=entries,
+            identities=(source.mesh_id, target.mesh_id, source.topology_id, target.topology_id),
+            geometry_ids=(cell_geometry_id(source_geometry), cell_geometry_id(target_geometry)),
+            volume_error_bounds=np.asarray(errors), policy=policy, evidence=evidence,
+        )
+        candidates_storage.set_bound(0)
+        workspace.set_bound(0)
+        result = ExactTetrahedralRefinement(result, tuple(exact_volumes), first_measures, second_measures)
+        budget.retain_owner(result, temporary_storage_credit=storage)
+        return result

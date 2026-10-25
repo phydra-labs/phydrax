@@ -254,12 +254,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
 
         scopes = _prepare_fidelity_scopes(mesh, scoped_fidelity, budget).scopes
         self.schedule = schedule
-        self.domain = (
-            None if domain is None else jax.tree.map(_immutable_host_leaf, domain)
-        )
-        self.source = (
-            None if source is None else jax.tree.map(_immutable_host_leaf, source)
-        )
+        self.domain = None if domain is None else _immutable_host_tree(domain)
+        self.source = None if source is None else _immutable_host_tree(source)
         device_regions, device_junctions, device_scopes = jax.device_put(
             (
                 None if regions is None else np.asarray(regions, dtype=np.int64),
@@ -279,10 +275,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
         ):
             if mapped_source_evidence is None and budget is not None:
-                mapped_source_evidence = (
-                    mapped_reference_coverage_owner.retained_mapped_reference_source_evidence(
-                        self.domain, limits_, budget=budget
-                    )
+                mapped_source_evidence = mapped_reference_coverage_owner.retained_mapped_reference_source_evidence(
+                    self.domain, limits_, budget=budget
                 )
             if mapped_source_evidence is not None:
                 mapped_source_evidence.require_live(self.domain, limits_)
@@ -630,7 +624,9 @@ def _renew_transition_regions(
     return _TransitionRegions(regions)
 
 
-def _sorted_rows(keys: np.ndarray, queries: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def _sorted_rows(
+    keys: np.ndarray, queries: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Rows of sorted unique ``keys`` equal to each query and whether one exists."""
     if keys.size == 0:
         return np.zeros(queries.shape, dtype=np.int64), np.zeros(
@@ -652,6 +648,15 @@ def _immutable_host_leaf(value: object) -> object:
         snapshot.setflags(write=False)
         return snapshot
     return value
+
+
+def _immutable_host_tree[T](value: T, /) -> T:
+    """Snapshot mutable host leaves; an already immutable tree keeps its identity."""
+    leaves, treedef = jax.tree.flatten(value)
+    snapshots = [_immutable_host_leaf(leaf) for leaf in leaves]
+    if all(snapshot is leaf for snapshot, leaf in zip(snapshots, leaves, strict=True)):
+        return value
+    return jax.tree.unflatten(treedef, snapshots)
 
 
 def _validate_domain_integrity(
@@ -738,7 +743,7 @@ def _validate_query_integrity(
         case source_fidelity_owner.ImplicitProjectionBoundarySource():
             _validate_query_integrity(source.profile, budget=budget)
             rebuilt = source_fidelity_owner.ImplicitProjectionBoundarySource(
-                source.profile, budget=budget
+                source.profile, discovery=source.discovery, budget=budget
             )
         case source_fidelity_owner.MappedDomainBoundarySource():
             domain = source.domain
@@ -778,7 +783,9 @@ def _validate_query_integrity(
             )
         case surface_source_support_owner.SurfaceNativeRestrictionBoundarySource():
             _validate_query_integrity(source.root, budget=budget)
-            surface_source_support_owner.SurfaceNativeRestrictionBoundarySource.require_current(source)
+            surface_source_support_owner.SurfaceNativeRestrictionBoundarySource.require_current(
+                source
+            )
             geometry = _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.from_stored_fields(
                 source.geometry, budget=budget
             )

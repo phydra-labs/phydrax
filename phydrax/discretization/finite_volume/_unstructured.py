@@ -756,7 +756,12 @@ def _evaluate_mapped_fv_geometry(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _MappedFiniteVolumeGeometry:
-    """Evaluate current geometry; only source-independent rules may be shared."""
+    """Evaluate current geometry into final-capacity quadrature banks.
+
+    Only source-independent rules may be shared. Per-cell coordinate gathers are
+    temporary; retaining them or a second list of quadrature arrays duplicates
+    the largest constructor-owned storage before device publication.
+    """
 
     volumes, errors, exact = mapped_measure_owner.certified_cell_measures(
         mesh, geometry, budget=budget
@@ -772,8 +777,16 @@ def _evaluate_mapped_fv_geometry(
     dimension, ambient = mesh.topological_dimension, mesh.coordinates.shape[1]
     embedded = dimension == 2 and ambient == 3
     cells = []
-    cell_points, cell_weights, centers = [], [], []
     degree = max(9 * element.degree for element in elements)
+    cell_count = sum(block.vertices.shape[0] for block in mesh.blocks)
+    cell_width = max(
+        len(reference_rule(kind, degree)[1])
+        for kind in {block.cell_kind for block in mesh.blocks}
+    )
+    cell_points = np.zeros((cell_count, cell_width, ambient), dtype=np.float64)
+    cell_weights = np.zeros((cell_count, cell_width), dtype=np.float64)
+    cell_valid = np.zeros((cell_count, cell_width), dtype=np.bool_)
+    centers = np.empty((cell_count, ambient), dtype=np.float64)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         tabulation = imported_cell_geometry.coordinate_tabulation(element)
         reference = imported_reference_cell.reference_cell_topology(block.cell_kind)
@@ -796,13 +809,16 @@ def _evaluate_mapped_fv_geometry(
                 raise ValueError(
                     "UnstructuredFiniteVolumeDiscretization.cell_quadrature_weights must have positive finite mapped densities; got a nonpositive or nonfinite weight."
                 )
-            cell_points.append(points)
-            cell_weights.append(measure_weights)
-            centers.append(
+            cell_index = len(cells)
+            width = len(measure_weights)
+            cell_points[cell_index, :width] = points
+            cell_weights[cell_index, :width] = measure_weights
+            cell_valid[cell_index, :width] = True
+            centers[cell_index] = (
                 np.sum(points * measure_weights[:, None], axis=0)
                 / np.sum(measure_weights)
             )
-            cells.append((vertices, reference, tabulation, local))
+            cells.append((vertices, reference, tabulation, dofs))
     match mesh.connectivity:
         case PolyhedralConnectivity() as connectivity:
             offsets = np.asarray(connectivity.face_vertex_offsets)
@@ -816,10 +832,25 @@ def _evaluate_mapped_fv_geometry(
             raise TypeError(
                 "UnstructuredFiniteVolumePlan.connectivity must be polygonal or volumetric; got unsupported connectivity."
             )
-    face_points, face_weights, face_centers, area_vectors = [], [], [], []
+    face_width = max(
+        len(
+            reference_rule(
+                "interval" if arity == 2 else
+                "triangle" if arity == 3 else "quadrilateral",
+                degree,
+            )[1]
+        )
+        for arity in {len(face) for face in faces}
+    )
+    face_points = np.zeros((len(faces), face_width, ambient), dtype=np.float64)
+    face_weights = np.zeros((len(faces), face_width), dtype=np.float64)
+    face_centers = np.empty((len(faces), ambient), dtype=np.float64)
+    area_vectors = np.empty((len(faces), ambient), dtype=np.float64)
+    face_measures = np.empty((len(faces),), dtype=np.float64)
     closure = np.zeros((len(cells), ambient), dtype=np.float64)
-    for face, cell in zip(faces, owner, strict=True):
-        vertices, reference, tabulation, local = cells[int(cell)]
+    for face_index, (face, cell) in enumerate(zip(faces, owner, strict=True)):
+        vertices, reference, tabulation, dofs = cells[int(cell)]
+        local = coefficients[dofs]
         facet = next(
             f
             for f in reference.entities[mesh.topological_dimension - 1]
@@ -877,41 +908,31 @@ def _evaluate_mapped_fv_geometry(
         w = np.asarray(w)
         weights = w * np.linalg.norm(normal, axis=1)
         vector = np.sum(w[:, None] * normal, axis=0)
-        face_points.append(points)
-        face_weights.append(weights)
-        face_centers.append(np.sum(points * weights[:, None], axis=0) / np.sum(weights))
-        area_vectors.append(vector)
+        face_points[face_index, :len(weights)] = points
+        face_weights[face_index, :len(weights)] = weights
+        face_centers[face_index] = (
+            np.sum(points * weights[:, None], axis=0) / np.sum(weights)
+        )
+        area_vectors[face_index] = vector
+        face_measures[face_index] = np.sum(weights)
         closure[cell] += vector
     neighbor = _owner_neighbor(connectivity, len(cells))[1]
     for face, cell in enumerate(neighbor):
         if cell >= 0:
             closure[cell] -= area_vectors[face]
 
-    def padded(
-        points: list[np.ndarray], weights: list[np.ndarray]
-    ) -> tuple[Array, Array, Array]:
-        width = max(len(w) for w in weights)
-        p = np.zeros((len(points), width, ambient))
-        w = np.zeros((len(points), width))
-        valid = np.zeros((len(points), width), dtype=np.bool_)
-        for i, (pi, wi) in enumerate(zip(points, weights, strict=True)):
-            p[i, : len(wi)], w[i, : len(wi)], valid[i, : len(wi)] = pi, wi, True
-        return jnp.asarray(p), jnp.asarray(w), jnp.asarray(valid)
-
-    cp, cw, cv = padded(cell_points, cell_weights)
-    fp, fw, _ = padded(face_points, face_weights)
     return _MappedFiniteVolumeGeometry(
         jnp.asarray(volumes),
         jnp.asarray(centers),
         jnp.asarray(face_centers),
         jnp.asarray(area_vectors),
-        jnp.asarray([np.sum(w) for w in face_weights]),
+        jnp.asarray(face_measures),
         jnp.asarray(closure),
-        fp,
-        fw,
-        cp,
-        cw,
-        cv,
+        jnp.asarray(face_points),
+        jnp.asarray(face_weights),
+        jnp.asarray(cell_points),
+        jnp.asarray(cell_weights),
+        jnp.asarray(cell_valid),
         jnp.asarray(errors),
         exact,
     )

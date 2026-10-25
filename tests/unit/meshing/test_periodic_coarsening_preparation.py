@@ -5,21 +5,30 @@
 """Mark-only periodic closure retains live source proof and ended charges."""
 
 import copy
+from typing import NoReturn
 
 import equinox as eqx
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing import _adaptation as adaptation_owner
-from phydrax.meshing import _periodic as periodic_owner
+from phydrax._meshcore import NativeExecutionScope
+from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.meshing import _adaptation as adaptation_owner, _periodic as periodic_owner
 from phydrax.meshing._native_preparation import NativePreparationLedger
 from phydrax.meshing.providers import _native_periodic as provider_owner
 from tests._support.periodic_meshing import periodic_seed_request
 
 
+type PeriodicRefinement = tuple[
+    adaptation_owner.MeshAdaptationResult, adaptation_owner.MeshAdaptationPolicy
+]
+
+
 @pytest.fixture(scope="module")
-def periodic_refinement():
+def periodic_refinement() -> PeriodicRefinement:
     M = phx.meshing
     source, specification = periodic_seed_request()
     result = (
@@ -43,7 +52,9 @@ def periodic_refinement():
     return refined, policy
 
 
-def _prepare(periodic_refinement, *, incomplete=False):
+def _prepare(
+    periodic_refinement: PeriodicRefinement, *, incomplete: bool = False
+) -> adaptation_owner.PreparedMeshAdaptation:
     refined, policy = periodic_refinement
     ids = np.asarray(refined.target.mesh.entity_set(2).entity_ids)
     return adaptation_owner.prepare_mesh_adaptation(
@@ -57,17 +68,39 @@ def _prepare(periodic_refinement, *, incomplete=False):
 
 @pytest.mark.parametrize("incomplete", (False, True))
 def test_closed_marks_equal_metered_query_without_source_repreparation(
-    periodic_refinement, monkeypatch, incomplete
-):
+    periodic_refinement: PeriodicRefinement, monkeypatch: pytest.MonkeyPatch, incomplete: bool
+) -> None:
     prepared = _prepare(periodic_refinement, incomplete=incomplete)
     expected = periodic_owner.periodic_coarsening_cell_ids(prepared)
 
-    def unexpected(*args, **kwargs):
+    def unexpected(
+        source: phx.meshing.CellMeshingResult,
+        request: adaptation_owner.MeshAdaptationRequest,
+        policy: adaptation_owner.MeshAdaptationPolicy,
+        /,
+        *,
+        source_preparation: adaptation_owner._RouteSourcePreparation,
+        budget: CoordinateEnclosureBudget,
+        scope: NativeExecutionScope,
+    ) -> NoReturn:
+        raise AssertionError("mark closure must not repeat source preparation")
+
+    def unexpected_associations(
+        self: provider_owner.PeriodicAssociationTransfer,
+        source: phx.meshing.CellMeshingResult,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        _prepared_source: list[provider_owner._PeriodicSourceAssociationPreparation] | None = None,
+    ) -> NoReturn:
         raise AssertionError("mark closure must not repeat source preparation")
 
     monkeypatch.setattr(adaptation_owner, "_check_route_request", unexpected)
     monkeypatch.setattr(adaptation_owner, "_resolve_constraints", unexpected)
-    monkeypatch.setattr(provider_owner.PeriodicAssociationTransfer, "source_associations", unexpected)
+    monkeypatch.setattr(
+        provider_owner.PeriodicAssociationTransfer, "source_associations", unexpected_associations
+    )
     closed = periodic_owner.prepare_periodic_coarsening(prepared)
     assert isinstance(closed.request, phx.meshing.MarkedMeshAdaptation)
     assert isinstance(prepared.request, phx.meshing.MarkedMeshAdaptation)
@@ -87,13 +120,22 @@ def test_closed_marks_equal_metered_query_without_source_repreparation(
         assert closed.prepared_id != prepared.prepared_id
 
 
-def test_receipt_imports_original_once_and_preserves_limits(periodic_refinement, monkeypatch):
+def test_receipt_imports_original_once_and_preserves_limits(
+    periodic_refinement: PeriodicRefinement, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prepared = _prepare(periodic_refinement, incomplete=True)
     original = prepared.periodic_source_receipt
-    imports = []
+    imports: list[phx.meshing.NativeExecutionRecord] = []
     import_receipt = NativePreparationLedger.import_receipt
 
-    def capture(self, scope, receipt, /, *, import_work=True):
+    def capture(
+        self: NativePreparationLedger,
+        scope: NativeExecutionScope,
+        receipt: phx.meshing.NativeExecutionRecord,
+        /,
+        *,
+        import_work: bool = True,
+    ) -> None:
         imports.append(receipt)
         return import_receipt(self, scope, receipt, import_work=import_work)
 
@@ -135,9 +177,12 @@ def test_receipt_imports_original_once_and_preserves_limits(periodic_refinement,
     prior.require_valid()
 
 
-def test_closed_request_executes_same_target_and_reproves_target(periodic_refinement, monkeypatch):
+def test_closed_request_executes_same_target_and_reproves_target(
+    periodic_refinement: PeriodicRefinement, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prepared = _prepare(periodic_refinement)
     selected = periodic_owner.periodic_coarsening_cell_ids(prepared)
+    assert isinstance(prepared.request, adaptation_owner.MarkedMeshAdaptation)
     legacy = adaptation_owner.prepare_mesh_adaptation(
         prepared.source,
         adaptation_owner.MarkedMeshAdaptation((), selected, hierarchy=prepared.request.hierarchy),
@@ -145,12 +190,25 @@ def test_closed_request_executes_same_target_and_reproves_target(periodic_refine
     )
     closed = periodic_owner.prepare_periodic_coarsening(prepared)
     expected = adaptation_owner.execute_mesh_adaptation(legacy)
-    target_proofs = []
+    target_proofs: list[CellMesh] = []
     prove = provider_owner.periodic_source_associations
 
-    def capture(*args, **kwargs):
-        target_proofs.append(args[2])
-        return prove(*args, **kwargs)
+    def capture(
+        source: phx.meshing.NativePeriodicSource,
+        specification: phx.meshing.SurfaceMeshingSpec | phx.meshing.VolumeMeshingSpec,
+        target: CellMesh,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        geometry: CellGeometrySpec | None = None,
+        _prepared_cover: provider_owner._PeriodicSourceAssociationPreparation | None = None,
+    ) -> tuple[phx.meshing.GeometryAssociation, ...]:
+        target_proofs.append(target)
+        return prove(
+            source, specification, target, scope=scope, budget=budget,
+            geometry=geometry, _prepared_cover=_prepared_cover,
+        )
 
     monkeypatch.setattr(provider_owner, "periodic_source_associations", capture)
     actual = adaptation_owner.execute_mesh_adaptation(closed)
@@ -166,13 +224,16 @@ def test_closed_request_executes_same_target_and_reproves_target(periodic_refine
 
 
 @pytest.mark.parametrize("kind", ("shallow", "stored", "reconstructed", "receipt"))
-def test_equal_identity_copies_cannot_inherit_live_authority(periodic_refinement, kind):
+def test_equal_identity_copies_cannot_inherit_live_authority(
+    periodic_refinement: PeriodicRefinement, kind: str
+) -> None:
     prepared = _prepare(periodic_refinement)
     if kind == "shallow":
         detached = copy.copy(prepared)
     elif kind == "stored":
         detached = adaptation_owner.PreparedMeshAdaptation.from_stored_fields(prepared)
     elif kind == "receipt":
+        assert prepared.periodic_source_receipt is not None
         restored = provider_owner._PeriodicSourceAssociationReceipt.from_stored_fields(
             prepared.periodic_source_receipt
         )
@@ -189,7 +250,9 @@ def test_equal_identity_copies_cannot_inherit_live_authority(periodic_refinement
 
 
 @pytest.mark.parametrize("kind", ("source", "geometry", "association", "policy"))
-def test_stale_scientific_binding_cannot_reuse_receipt(periodic_refinement, kind):
+def test_stale_scientific_binding_cannot_reuse_receipt(
+    periodic_refinement: PeriodicRefinement, kind: str
+) -> None:
     prepared = _prepare(periodic_refinement)
     if kind == "source":
         changed = eqx.tree_at(
@@ -213,7 +276,9 @@ def test_stale_scientific_binding_cannot_reuse_receipt(periodic_refinement, kind
 
 
 @pytest.mark.parametrize("name", ("cell_classes", "facet_classes", "protected_edge_mask", "fixed_vertex_mask"))
-def test_in_place_constraint_mutation_refuses_live_reuse(periodic_refinement, name):
+def test_in_place_constraint_mutation_refuses_live_reuse(
+    periodic_refinement: PeriodicRefinement, name: str
+) -> None:
     prepared = _prepare(periodic_refinement)
     values = getattr(prepared.constraints, name)
     before = values.copy()

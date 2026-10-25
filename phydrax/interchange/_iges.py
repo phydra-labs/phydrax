@@ -2092,6 +2092,9 @@ def _import(
         )
         for entity_type, count in sorted(dropped.items())
     ]
+    # Retained finite declarations do not consume loss allowance. Dropped
+    # entities and synthesized p-curves do.
+    consumed_losses = len(losses)
     if file.bounded_descriptor is not None:
         representation = _bounded_qualifiers(file.bounded_descriptor, digest)
         losses.append(
@@ -2117,12 +2120,13 @@ def _import(
                 changes_interpretation=False,
             )
         )
+        consumed_losses += 1
     resource = account_bounded_resource(
         resource,
         depth=resolver.maximum_depth,
         nodes=len(file.entries),
         attributes=file.attributes,
-        losses=len(losses),
+        losses=consumed_losses,
     )
     unit_name = _UNITS[file.unit_flag][0]
     resolution_qualifiers: dict[str, str] = {}

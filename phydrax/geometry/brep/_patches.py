@@ -229,6 +229,25 @@ def _parameter_box(parameter_box: ConvertibleToArray, /) -> np.ndarray:
     return box
 
 
+# A bound whose magnitude is not at most this is nonfinite.
+SURFACE_BOX_FINITE_LIMIT = float(np.finfo(np.float64).max)
+
+
+def surface_box_bank_bytes(count: int, /) -> int:
+    """Admitted bytes of one ``(count, 2, 3)`` float64 surface-box bank."""
+    return 128 + 48 * count
+
+
+def surface_parameter_boxes(parameter_boxes: ConvertibleToArray, /) -> np.ndarray:
+    """Return a ``(B, 2, 2)`` float64 bank; each row keeps scalar validation."""
+    boxes = np.asarray(parameter_boxes, dtype=np.float64)
+    if boxes.ndim != 3 or boxes.shape[1:] != (2, 2):
+        raise ValueError(
+            f"surface.parameter_boxes must have shape (num_boxes, 2, 2); got {boxes.shape}."
+        )
+    return boxes
+
+
 def _check_knots(knots: np.ndarray, degree: int, /) -> None:
     """Nondecreasing knots with legal end and interior multiplicities."""
     if not np.all(np.isfinite(knots)) or np.any(np.diff(knots) < 0.0):
@@ -857,7 +876,7 @@ class AbstractCurve(StrictModule, CoefficientEnclosureSource):
 
     def validate_query_range(self, first: float, last: float, /) -> tuple[float, float]:
         if first < last:
-            return self.validate_range(first, last)
+            return type(self).validate_range(self, first, last)
         if first != last or not np.isfinite(first):
             raise ValueError(
                 f"curve.parameter_range must have finite lower <= upper; got {(first, last)}."
@@ -1056,7 +1075,7 @@ class LineCurve(AbstractCurve):
                 return self.bounding_box(
                     first, last, preparations=preparations, budget=budget
                 )
-        first_, last_ = self.validate_query_range(first, last)
+        first_, last_ = type(self).validate_query_range(self, first, last)
         return _interval_box(
             np.asarray(self.origin), ((np.asarray(self.direction), (first_, last_)),)
         )
@@ -2148,6 +2167,48 @@ class AbstractSurfacePatch(
                 )
         raise NotImplementedError
 
+    def bounding_boxes(
+        self,
+        parameter_boxes: ConvertibleToArray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        stop_magnitude: float = SURFACE_BOX_FINITE_LIMIT,
+    ) -> np.ndarray:
+        """Scalar :meth:`bounding_box` of ``(B, 2, 2)`` boxes in row order, ``(M, 2, 3)``.
+
+        Evaluation stops after the first row with a bound whose magnitude is not
+        at most ``stop_magnitude``; every nonfinite bound stops it. ``M < B``
+        therefore identifies that row as the last one, and later rows are never
+        evaluated.
+        """
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_boxes,
+                )
+            ) as budget:
+                return self.bounding_boxes(
+                    parameter_boxes,
+                    preparations=preparations,
+                    budget=budget,
+                    stop_magnitude=stop_magnitude,
+                )
+        boxes = surface_parameter_boxes(parameter_boxes)
+        count = boxes.shape[0]
+        budget.reserve(0, surface_box_bank_bytes(count))
+        result = np.empty((count, 2, 3), dtype=np.float64)
+        bounding_box = type(self).bounding_box
+        for row in range(count):
+            result[row] = bounding_box(self, boxes[row], preparations=preparations, budget=budget)
+            if not np.all(np.abs(result[row]) <= stop_magnitude):
+                return result[: row + 1]
+        return result
+
     @property
     def periods(self) -> tuple[float | None, float | None]:
         """Parameter periods of the ``u`` and ``v`` directions (``None``: open)."""
@@ -2884,8 +2945,10 @@ def _analytic_derivative_batch(
     The chart derivatives are the exact derivatives of each ``evaluate``
     formula, enclosed with directed interval trigonometry and arithmetic.
     """
+    validate_parameter_box = type(self).validate_parameter_box
     for box in boxes:
-        self.validate_parameter_box(box, budget=budget)
+        # The dynamically selected override belongs to this same surface.
+        validate_parameter_box(self, box, budget=budget)  # ty: ignore[invalid-argument-type]
     count = boxes.shape[0]
     budget.reserve(count)
     angle = (boxes[:, 0, 0], boxes[:, 1, 0])
@@ -3156,7 +3219,7 @@ class CylinderPatch(AbstractSurfacePatch):
                 return self.bounding_box(
                     parameter_box, preparations=preparations, budget=budget
                 )
-        box = self.validate_parameter_box(parameter_box, budget=budget)
+        box = type(self).validate_parameter_box(self, parameter_box, budget=budget)
         cosine, sine = _trig_ranges(box[0, 0], box[1, 0])
         radius = float(self.radius)
         return _interval_box(

@@ -45,7 +45,10 @@ from phydrax.lifecycle import (
 )
 from phydrax.lifecycle._meshing_sources import meshing_source_owner_reconstruction_scope
 from phydrax.meshing import MixedAdaptationEvidence, NativeMeshingPhaseMeasurement
-from phydrax.meshing._native_preparation import native_preparation_ledger
+from phydrax.meshing._native_preparation import (
+    native_preparation_ledger,
+    stage_native_completed_source_issue,
+)
 from phydrax.meshing.providers._native_publication import (
     bind_native_execution_result,
     NativePublicationExecution,
@@ -1984,7 +1987,9 @@ def _hybrid_concave_adaptation_cycle(
                     np.asarray((first,), dtype=np.int64), layer_columns=columns
                 ),
                 policy=policy,
-            )
+                observe_managed_admission=True,
+            ),
+            observe_managed_admission=True,
         ),
     )
     if refinement.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
@@ -2014,7 +2019,9 @@ def _hybrid_concave_adaptation_cycle(
                     hierarchy=refinement.hierarchy,
                 ),
                 policy=policy,
-            )
+                observe_managed_admission=True,
+            ),
+            observe_managed_admission=True,
         ),
     )
     if coarsening.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
@@ -2378,7 +2385,9 @@ def _hybrid_corrected_adaptation(
                 accepted,
                 phx.meshing.MarkedMeshAdaptation(core_ids[:1], layer_columns=columns),
                 policy=policy,
-            )
+                observe_managed_admission=True,
+            ),
+            observe_managed_admission=True,
         ),
     )
     if (
@@ -2414,7 +2423,9 @@ def _hybrid_corrected_adaptation(
                     layer_columns=_hybrid_qualification_columns(refinement.target),
                 ),
                 policy=policy,
-            )
+                observe_managed_admission=True,
+            ),
+            observe_managed_admission=True,
         ),
     )
     if coarsening.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
@@ -3391,6 +3402,7 @@ def _hybrid_qualification_curving(
                         association,
                         inputs,
                         limits=limits,
+                        audit_policy=phx.meshing.CellMeshAuditPolicy(),
                         curving=curved.evidence,
                         execution=NativePublicationExecution(
                             execution, workspace, None, budget
@@ -3403,6 +3415,14 @@ def _hybrid_qualification_curving(
                             published.mesh, published.geometry, budget, execution,
                             coordinate_contract=published.coordinate_contract,
                         )
+                publication_owner = (
+                    published.result_id if result.execution_evidence is None
+                    else result.execution_evidence.owner_id
+                )
+                with budget.bind_ticket(execution.ticket_view()):
+                    issue = stage_native_completed_source_issue(
+                        execution, published, owner_id=publication_owner, budget=budget
+                    )
         if execution.evidence is None:
             raise RuntimeError("hybrid.curving must retain its complete request evidence")
         bound = bind_native_execution_result(
@@ -3410,9 +3430,11 @@ def _hybrid_qualification_curving(
             execution.evidence,
             limits,
             execution.operation_started,
+            owner_id=publication_owner,
             history_evidence=()
             if result.execution_evidence is None else (result.execution_evidence,),
         )
+        issue.complete(bound)
         if coordinate_operands is not None:
             if bound.execution_evidence is None:
                 raise RuntimeError("Hybrid operands require their ended publication receipt.")
@@ -3839,14 +3861,18 @@ def _hybrid_qualification_transition(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
         f"{label}_prepare",
-        lambda: phx.meshing.prepare_mesh_adaptation(result, request, policy=policy),
+        lambda: phx.meshing.prepare_mesh_adaptation(
+            result, request, policy=policy, observe_managed_admission=True
+        ),
     )
     adaptation = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
         f"{label}_execute",
         lambda: phx.meshing.execute_mesh_adaptation(
-            prepared, coordinate_operands=coordinate_operands
+            prepared,
+            coordinate_operands=coordinate_operands,
+            observe_managed_admission=True,
         ),
     )
     if (

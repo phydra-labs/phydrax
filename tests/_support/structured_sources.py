@@ -67,7 +67,10 @@ def material_multiblock_request() -> tuple[
     assert isinstance(domain, phx.geometry.PiecewiseLinearDomain)
     capacity = 20000
     # Keep the qualification request's limits, including its live
-    # storage and work allowances, when transferring fixture ownership.
+    # storage allowance, when transferring fixture ownership. Work follows the
+    # registered native-family-lifecycle envelope: the priced CellMesh
+    # constructions of the two blocks and their glued mesh alone need about
+    # 5.3M of the request's 6.4M work units, beyond 100 per capacity unit.
     limits = phx.meshing.MeshingLimits(
         maximum_vertices=capacity,
         maximum_edges=12 * capacity,
@@ -75,7 +78,7 @@ def material_multiblock_request() -> tuple[
         maximum_cells=capacity,
         maximum_connectivity_entries=64 * capacity,
         maximum_data_bytes=1024 * capacity,
-        maximum_work_units=100 * capacity,
+        maximum_work_units=128_000_000,
         maximum_cavity_cells=capacity,
         maximum_geometry_queries=100 * capacity,
         maximum_scratch_bytes=4096 * capacity,

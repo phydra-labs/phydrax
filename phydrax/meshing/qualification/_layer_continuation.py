@@ -64,10 +64,11 @@ from phydrax.discretization import (
     FieldTracePolicy,
     NestedReferenceWitnesses,
     PiecewiseConstantReconstruction,
-    PolynomialComposedCellGeometryElement,
     reference_cell_topology,
-    RestrictedCellGeometryElement,
-    SplineCellGeometryElement,
+)
+from phydrax.discretization._cell_geometry import (
+    coordinate_tabulation,
+    require_scalar_coordinate_element,
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
@@ -829,23 +830,12 @@ def layer_core_scalar_content(
         space.coordinate_dofs,
         strict=True,
     ):
-        # Refined and restored blocks keep the source basis restricted or
-        # composed onto each child; they are tabulated, not reinterpolated.
-        if not isinstance(
-            coordinate,
-            (
-                FiniteElementSpec,
-                RestrictedCellGeometryElement,
-                PolynomialComposedCellGeometryElement,
-                SplineCellGeometryElement,
-            ),
-        ):
-            raise TypeError(
-                f"continuation.coordinate_element must support coordinate tabulation; got {type(coordinate).__name__}"
-            )
+        coordinate_tabulator = coordinate_tabulation(
+            require_scalar_coordinate_element(coordinate, "continuation")
+        )
         points, weights = degree_aware_reference_rule(element.cell_kind, 8)
         basis = np.asarray(element.tabulate(points)[0])
-        gradients = np.asarray(coordinate.tabulate(points)[1])
+        gradients = np.asarray(coordinate_tabulator.tabulate(points)[1])
         for route, geometry_route in zip(
             np.asarray(routes), np.asarray(geometry_routes), strict=True
         ):

@@ -2,14 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fractions import Fraction
+from typing import NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax.discretization._sphere_chart_deformation as sphere_chart_deformation_owner
 from phydrax._model._structure import (
@@ -18,6 +21,8 @@ from phydrax._model._structure import (
     model_structure_recipe,
 )
 from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization import CellMesh
+from phydrax.discretization._cell_geometry import CellGeometryElement, CellGeometrySpec
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
@@ -33,7 +38,9 @@ from phydrax.geometry._sphere_material_atlas import (
     SphereProjectiveActionBank,
 )
 from phydrax.geometry.brep._coordinate_request import coordinate_source_request
+from phydrax.geometry.brep._patches import AbstractSurfacePatch
 from phydrax.lifecycle import register_meshing_source_artifacts
+from phydrax.linalg._hermitian_spectral import fraction_storage_upper
 from phydrax.linalg._small_batched import (
     confirm_exact_action_3,
     exact_adjugate_action,
@@ -148,7 +155,12 @@ def test_material_source_enclosures_are_batched_without_changing_bounds(
     original = owner.source_image_enclosure
     sizes: list[int] = []
 
-    def checked_batch(source, directions, *, budget):
+    def checked_batch(
+        source: AbstractSurfacePatch,
+        directions: np.ndarray,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[np.ndarray, np.ndarray]:
         sizes.append(directions.shape[0])
         actual = original(source, directions, budget=budget)
         # Compare to the old per-triangle interval operation, including all
@@ -279,16 +291,23 @@ def test_stored_material_coordinate_validation_uses_actual_caller_budget(
 
     domain, result, atlas = accepted_sphere_material(0.4)
     original = geometry_owner.CellGeometrySpec.resolve
-    seen = []
+    seen: list[CellGeometrySpec] = []
 
-    def resolve(geometry, mesh, /, *, exact_source_prepared=False, budget=None):
+    def resolve(
+        geometry: CellGeometrySpec,
+        mesh: CellMesh,
+        /,
+        *,
+        exact_source_prepared: bool = False,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[tuple[CellGeometryElement, ...], tuple[Array, ...], Array]:
         assert budget is caller
         seen.append(geometry)
         return original(
             geometry, mesh, exact_source_prepared=exact_source_prepared, budget=budget
         )
 
-    def forbid_preparation(*args, **kwargs):
+    def forbid_preparation(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("explicit restoration must not open a helper preparation")
 
     monkeypatch.setattr(geometry_owner.CellGeometrySpec, "resolve", resolve)
@@ -528,6 +547,38 @@ def test_exact_adjugate_actions_prove_and_confirm_unique_solutions() -> None:
         )
         # The singular attempt charges the same profile and adjugate visits.
         assert budget.work_units - before == 9 + 72
+
+
+def test_exact_adjugate_action_storage_covers_unrelated_vector_denominators() -> None:
+    """Query denominators outside the prepared columns enter the action's storage bound."""
+    columns = (
+        (Fraction(2), Fraction(0), Fraction(1)),
+        (Fraction(1), Fraction(3), Fraction(0)),
+        (Fraction(0), Fraction(1), Fraction(1, 2)),
+    )
+    right = (Fraction(1, 3**200), Fraction(5, 7**150), Fraction(-2, 11**120))
+    with coordinate_reference_budget() as budget:
+        adjugate = prepare_exact_adjugate_3(columns, budget=budget)
+        assert adjugate is not None
+        # Largest |numerator| is 5 (three bits); the denominators are coprime.
+        height = 3 + math.lcm(*(value.denominator for value in right)).bit_length() + 1
+        bits = max(8 * adjugate.height, 3 * adjugate.height + height) + 64
+        work, storage = budget.work_units, budget.temporary_bytes_upper
+        solved = exact_adjugate_action(adjugate, right, budget=budget)
+        # Three profiled vector entries, then the unchanged 18 action visits.
+        assert budget.work_units - work == 3 + 18
+        assert budget.temporary_bytes_upper - storage == fraction_storage_upper(16, bits)
+    matrix = tuple(zip(*columns, strict=True))
+    assert all(
+        sum((matrix[row][column] * solved[column] for column in range(3)), Fraction(0))
+        == right[row]
+        for row in range(3)
+    )
+    actual = max(
+        max(abs(value.numerator).bit_length(), value.denominator.bit_length())
+        for value in solved
+    )
+    assert 8 * adjugate.height + 64 < actual <= bits
 
 
 def test_exact_small_projective_actions_preserve_binary_cancellation_and_singularity() -> (

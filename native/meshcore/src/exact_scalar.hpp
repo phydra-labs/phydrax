@@ -1,9 +1,17 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// Scalar lifting and first-row determinant expansion shared by exact kernels.
+// Scalar lifting, determinant expansion, and exact dyadic quotient rounding.
 #pragma once
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <type_traits>
+#include <utility>
 
+#include "dyadic.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
 
@@ -43,6 +51,96 @@ template <class T>
 inline T det3_columns(const T* x, const T* y, const T* z) {
   return z[0] * (x[1] * y[2] - x[2] * y[1]) + z[1] * (x[2] * y[0] - x[0] * y[2]) +
          z[2] * (x[0] * y[1] - x[1] * y[0]);
+}
+
+// Scalar users own their admission. The optional callback admits each exact
+// residual before it is formed; the counter preserves existing residual tariffs.
+struct QuotientRoundingWork final {
+  std::int64_t* residuals = nullptr;
+  void* context = nullptr;
+  void (*admit)(void*, std::int64_t) = nullptr;
+
+  void charge(std::int64_t operations) const {
+    if (admit != nullptr) admit(context, operations);
+  }
+  void residual() const {
+    charge(3);  // Lift the candidate, multiply, and subtract.
+    if (residuals != nullptr) ++*residuals;
+  }
+};
+
+// Correct a finite candidate using exact residuals. The residual sum decides
+// the midpoint, including ties to even; overflow retains a finite carrier.
+inline double nearest_quotient(const Dyadic& numerator, const Dyadic& denominator,
+                               double x, QuotientRoundingWork work = {}) {
+  if (denominator.sign() == 0) {
+    throw std::invalid_argument("An exact quotient requires a nonzero denominator.");
+  }
+  work.residual();
+  Dyadic residual = numerator - Dyadic(x) * denominator;
+  while (residual.sign() != 0) {
+    const int direction = residual.sign() * denominator.sign();
+    const double next = std::nextafter(
+        x, direction > 0 ? std::numeric_limits<double>::infinity()
+                         : -std::numeric_limits<double>::infinity());
+    if (!std::isfinite(next)) break;
+    work.residual();
+    Dyadic next_residual = numerator - Dyadic(next) * denominator;
+    if (next_residual.sign() == 0) return next;
+    if (next_residual.sign() == residual.sign()) {
+      x = next;
+      residual = std::move(next_residual);
+      continue;
+    }
+    work.charge(1);
+    const int closer = (residual + next_residual).sign() * residual.sign();
+    if (closer > 0 || (closer == 0 && (std::bit_cast<std::uint64_t>(next) & 1u) == 0)) {
+      x = next;
+    }
+    break;
+  }
+  return x;
+}
+
+// Equal rational values share the correctly rounded carrier. Values beyond
+// binary64 saturate only this carrier, never a purported enclosing endpoint.
+inline double rounded_quotient(const Dyadic& numerator, const Dyadic& denominator,
+                               QuotientRoundingWork work = {}) {
+  if (denominator.sign() == 0) {
+    throw std::invalid_argument("An exact quotient requires a nonzero denominator.");
+  }
+  work.charge(6);
+  std::int64_t exponent = 0, denominator_exponent = 0;
+  const double fraction = numerator.fraction(exponent);
+  const double denominator_fraction = denominator.fraction(denominator_exponent);
+  const auto shift = std::clamp<std::int64_t>(
+      exponent - denominator_exponent, std::numeric_limits<int>::min(),
+      std::numeric_limits<int>::max());
+  const double candidate = std::ldexp(fraction / denominator_fraction, static_cast<int>(shift));
+  const double initial = std::isfinite(candidate)
+                             ? candidate
+                             : std::copysign(std::numeric_limits<double>::max(), candidate);
+  return nearest_quotient(numerator, denominator, initial, work);
+}
+
+struct QuotientBounds final {
+  double lower;
+  double upper;
+};
+
+inline QuotientBounds directed_quotient_bounds(const Dyadic& numerator,
+                                              const Dyadic& denominator,
+                                              QuotientRoundingWork work = {}) {
+  const double carrier = rounded_quotient(numerator, denominator, work);
+  work.residual();
+  const int side = (numerator - Dyadic(carrier) * denominator).sign() * denominator.sign();
+  if (side < 0) {
+    return {std::nextafter(carrier, -std::numeric_limits<double>::infinity()), carrier};
+  }
+  if (side > 0) {
+    return {carrier, std::nextafter(carrier, std::numeric_limits<double>::infinity())};
+  }
+  return {carrier, carrier};
 }
 
 }  // namespace phx::mc::exact

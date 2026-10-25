@@ -12,6 +12,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._host_storage import retained_host_storage_profile
 from phydrax._meshcore import NativeExecutionScope
 from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
@@ -198,7 +199,9 @@ def test_provenance_keeps_concrete_selected_bank_values(
         # The second payload must coexist with the first, not renew its ledger.
         assert budget.peak_bytes_upper >= first_peak + first_retained
     data = construction.diagram.construction
-    order = np.asarray(construction.mesh.connectivity.cell_global_ids)
+    connectivity = construction.mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    order = np.asarray(connectivity.cell_global_ids)
     assert payload["site_ancestry"] == construction.site_parents.tolist()
     assert payload["carrier_points"] == construction.recovery.points.tolist()
     assert payload["construction_cell_first_moments"] == data.cell_moments[order].tolist()

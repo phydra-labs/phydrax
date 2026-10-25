@@ -340,6 +340,96 @@ def test_observed_nested_intervals_measure_local_allocations(
     assert meshcore.current_native_execution_scope() is None
 
 
+def test_full_inherited_escrow_remains_admissible_under_its_original_quota() -> None:
+    from phydrax.meshing import MeshingFailure, MeshingFailureCategory, MeshingLimits
+    from phydrax.meshing._measurements import NativeExecutionRecord
+    from phydrax.meshing._volume_generation import require_native_preparation_allowance
+
+    capacity = 1 << 20
+    limits = NativeExecutionLimits(100, 100, 100, capacity, 120.0)
+    with NativeExecutionScope(limits) as root:
+        root.observe_managed_admission()
+        with root.ticket_view() as outer, outer.native_target():
+            with NativeExecutionScope(limits) as child:
+                child.observe_managed_admission()
+                with (
+                    child.ticket_view() as inner,
+                    inner.native_target(),
+                    child.host_workspace() as storage,
+                ):
+                    storage.set_bound(4096)
+                    with NativeExecutionScope(limits):
+                        storage.set_bound(2048)
+    evidence = child.completed_evidence()
+    peak = evidence.managed_admission_peak_bytes_upper
+    assert peak is not None and 4096 <= peak <= capacity
+    assert root.completed_evidence().managed_admission_peak_bytes_upper == peak
+    receipt = NativeExecutionRecord(evidence, owner_id="bounded-inherited-request")
+    require_native_preparation_allowance(
+        MeshingLimits(maximum_scratch_bytes=capacity), receipt
+    )
+    with pytest.raises(MeshingFailure) as refusal:
+        require_native_preparation_allowance(
+            MeshingLimits(maximum_scratch_bytes=peak - 1), receipt
+        )
+    assert refusal.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
+
+
+@pytest.mark.parametrize("outside", (0, 8192), ids=("empty-baseline", "live-outside"))
+def test_partial_escrow_is_counted_once_through_tighter_descendants(outside: int) -> None:
+    with NativeExecutionScope(_limits()) as root:
+        root.observe_managed_admission()
+        with root.host_workspace() as storage:
+            storage.set_bound(outside)
+            with root.batch(10, bytes_upper=65536) as outer, outer.native_target():
+                with NativeExecutionScope(_limits()) as child:
+                    child.observe_managed_admission()
+                    baseline = child._managed_observation_used()
+                    with child.batch(1, bytes_upper=32768) as phase:
+                        admitted = child._managed_observation_used()
+                        assert admitted - baseline == 32768
+                        with phase.native_target():
+                            with NativeExecutionScope(
+                                NativeExecutionLimits(100, 100, 100, 16384, 120.0)
+                            ):
+                                assert child._managed_observation_used() == admitted
+                            phase.consume(1, managed_bytes=4096)
+    assert child.completed_evidence().status is MeshcoreStatus.OK
+    assert root.completed_evidence().managed_admission_peak_bytes_upper is not None
+
+
+def test_impossible_observed_event_is_not_clipped_to_the_request_quota() -> None:
+    with NativeExecutionScope(_limits()) as scope:
+        scope.observe_managed_admission()
+        scope._managed_observation_peak = _limits().maximum_managed_bytes + 1
+    assert scope.completed_evidence().managed_admission_peak_bytes_upper is None
+
+
+def test_unobserved_descendants_borrow_their_nearest_observed_phase() -> None:
+    limits = _limits()
+    with NativeExecutionScope(limits) as root:
+        root.observe_managed_admission()
+        with root.batch(10, bytes_upper=65536) as parent, parent.native_target():
+            with NativeExecutionScope(limits) as child:
+                child.observe_managed_admission()
+                with (
+                    child.ticket_view() as view,
+                    view.native_target(),
+                    child.host_workspace() as storage,
+                ):
+                    storage.set_bound(4096)
+                    with NativeExecutionScope(limits), NativeExecutionScope(limits):
+                        storage.set_bound(2048)
+    child_evidence = child.completed_evidence()
+    root_evidence = root.completed_evidence()
+    child_peak = child_evidence.managed_admission_peak_bytes_upper
+    root_peak = root_evidence.managed_admission_peak_bytes_upper
+    assert child_evidence.status is root_evidence.status is MeshcoreStatus.OK
+    assert child_peak is not None and root_peak is not None
+    assert 4096 <= child_peak <= root_peak <= limits.maximum_managed_bytes
+    assert meshcore.current_native_execution_scope() is None
+
+
 def test_refusal_preserves_observed_ticket_peak_and_status() -> None:
     with pytest.raises(MeshcoreError) as caught:
         with NativeExecutionScope(_limits()) as scope:

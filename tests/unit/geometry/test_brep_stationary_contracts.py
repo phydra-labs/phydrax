@@ -1,5 +1,7 @@
 """White-box contracts for bounded stationary strata and root realization."""
 
+import pickle
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,6 +21,7 @@ from phydrax.geometry.brep._constructors import brep_trim_domain
 from phydrax.geometry.brep._patches import PlanePatch
 from phydrax.geometry.brep._query_types import FaceCertificate
 from phydrax.geometry.brep._stationary_isolation import (
+    ClosestStationaryIsolation,
     isolate_closest_stationary,
     source_distance_bounds,
     stationary_root_representative,
@@ -283,3 +286,76 @@ def test_stationary_face_search_refines_coarse_sloped_trim_enclosures() -> None:
         representative.point, expected, rtol=0.0, atol=_ROUNDING_BOUND
     )
     assert roots[0].distance_lower <= np.linalg.norm(normal) <= roots[0].distance_upper
+
+
+@pytest.mark.parametrize(
+    ("uv_fraction", "inside"),
+    (((0.5, 1.0 / 3.0), True), ((0.92, 0.85), False)),
+    ids=("trim-interior-root", "trim-exterior-root"),
+)
+@pytest.mark.parametrize("max_boxes", (1024, 3), ids=("complete", "box-limit"))
+def test_stationary_face_search_keeps_trim_decisions_for_excluded_boxes(
+    uv_fraction: tuple[float, float], inside: bool, max_boxes: int
+) -> None:
+    height = float(np.sqrt(3.0) * 0.3)
+    model = brep_planar_face(
+        PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop.polygon(((0.0, 0.0), (0.6, 0.0), (0.3, height))),
+        ),
+        coordinate_contract=SpatialCoordinateContract.si(),
+        tessellation=BRepTessellationPolicy(realize=False),
+    )
+    geometry = model.geometry
+    if geometry is None:
+        raise RuntimeError(
+            "triangle_model.geometry must contain native geometry; got None"
+        )
+    patch = model.patches[0]
+    assert isinstance(patch, PlanePatch)
+    bounds = np.asarray(model.parameter_bounds)[0]
+    # The squared-distance stationary point of the plane is this chart point;
+    # the exterior case lies inside the chart box but outside the triangle.
+    uv = bounds[0] + np.asarray(uv_fraction) * (bounds[1] - bounds[0])
+    expected = np.asarray(patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)))
+    normal = np.cross(np.asarray(patch.first_axis), np.asarray(patch.second_axis))
+    domain = brep_trim_domain(geometry, 0, patch, tolerance=_ROUNDING_BOUND)
+    classified = domain.classify(uv[None])
+    assert bool(classified.inside[0]) is inside
+
+    def isolate() -> ClosestStationaryIsolation:
+        return isolate_closest_stationary(
+            model,
+            expected + normal,
+            certificates=(_plane_certificate(patch, bounds),),
+            trim_domains=(domain,),
+            faces=(0,),
+            distance_upper=8.0,
+            tolerance=_ROUNDING_BOUND,
+            parameter_tolerance=_ROUNDING_BOUND,
+            max_boxes=max_boxes,
+            max_depth=32,
+        )
+
+    isolation = isolate()
+    # Request-local trim refinements never change a repeated, fresh query.
+    assert pickle.dumps(isolation) == pickle.dumps(isolate())
+    roots = tuple(root for root in isolation.roots if root.dimension == 2)
+    if max_boxes == 3:
+        # The box allowance is consumed only by visited/tightened boxes.
+        assert not isolation.complete
+        assert isolation.boxes_processed == 3
+        assert 0.0 <= isolation.unresolved_distance_lower <= 8.0
+        return
+    assert isolation.complete
+    assert isolation.unresolved_boxes == 0
+    if inside:
+        assert len(roots) == 1
+        representative = stationary_root_representative(model, roots[0])
+        np.testing.assert_allclose(
+            representative.point, expected, rtol=0.0, atol=_ROUNDING_BOUND
+        )
+    else:
+        # A source-equation root outside the trim never becomes a face root,
+        # even though its box is neither interval- nor Krawczyk-excluded.
+        assert not roots

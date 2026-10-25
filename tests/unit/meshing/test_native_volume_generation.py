@@ -421,8 +421,8 @@ def test_narrow_source_adopts_native_hard_size_only_when_measured_compliant(
 def test_orthogonal_grid_construction_preserves_closed_plc_under_original_caps(
     name: str,
 ) -> None:
-    from tools._meshing_cases import meshing_case, prepare_case
     from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+    from tools._meshing_cases import meshing_case, prepare_case
 
     source, specification, options = prepare_case(meshing_case(name), 4, 20000, 120.0)
     before = phx.array_tree_fingerprint(source.complex)
@@ -461,8 +461,9 @@ def test_orthogonal_grid_construction_preserves_closed_plc_under_original_caps(
 def test_plc_source_operands_require_paid_current_full_input_owners(
     fault: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dataclasses import replace
     import pickle
+    from dataclasses import replace
+
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
     from phydrax.meshing._native_preparation import native_preparation_ledger
@@ -583,12 +584,13 @@ def test_plc_source_inputs_refuse_changed_prefix_or_domain(
 ) -> None:
     from dataclasses import replace
     from typing import Any
-    from phydrax.meshing._volume_generation import VolumeConstruction
-    from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+    from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
     from phydrax.meshing._native_preparation import native_preparation_ledger
-    from phydrax.meshing.qualification._native_lifecycle import prepare_plc_associations
+    from phydrax.meshing._volume_generation import VolumeConstruction
     from phydrax.meshing.providers import _native_volume as route
+    from phydrax.meshing.qualification._native_lifecycle import prepare_plc_associations
     from tools._meshing_cases import meshing_case, prepare_case
 
     source, specification, options = prepare_case(
@@ -697,9 +699,10 @@ def test_plc_associations_keep_actual_publication_domain_and_native_source_table
     retain_inputs: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from typing import Any
-    from phydrax.meshing import _volume_generation as volume
+
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+    from phydrax.meshing import _volume_generation as volume
     from phydrax.meshing._native_preparation import native_preparation_ledger
     from phydrax.meshing.qualification._native_lifecycle import prepare_plc_associations
     from tools._meshing_cases import meshing_case, prepare_case
@@ -1468,6 +1471,100 @@ def test_postconstruction_host_work_keeps_original_cumulative_allowance() -> Non
     assert int(execution.evidence.work_counters.source_queries) == 2
 
 
+@pytest.mark.parametrize(
+    "shortfall", (0, 1), ids=("exact-phase-storage-bound", "one-byte-below-real-demand")
+)
+def test_metric_storage_lease_reuses_owner_and_respects_active_parent(
+    shortfall: int,
+) -> None:
+    from phydrax._host_storage import retained_host_storage_profile
+    from phydrax._meshcore import is_native_host_buffer, NativeExecutionLimits
+    from phydrax.discretization._coordinate_budget import (
+        CoordinateEnclosureBudget,
+        CoordinateEnclosureResourceError,
+    )
+    from phydrax.meshing._adaptation import adaptation_phase
+    from phydrax.meshing._tetra_metric import _metric_coordinate_phase
+
+    payload = np.empty((4096,), dtype=np.uint8)
+    _, required, _, _ = retained_host_storage_profile(
+        payload, {}, is_native_host_buffer
+    )
+    parent_bytes = required // 2
+    maximum_memory = required + parent_bytes if shortfall == 0 else required - shortfall
+    limits = NativeExecutionLimits(1_000_000, 1_000_000, 100, 1 << 20, 120.0)
+    with NativeExecutionScope(limits) as scope:
+        initial_remaining_bytes = scope.remaining().remaining_managed_bytes
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=100_000,
+            maximum_memory_bytes=maximum_memory,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda _amount: scope.ticket_view()):
+            construction = scope.batch(100_000, bytes_upper=2 * required)
+            if shortfall:
+                with pytest.raises(CoordinateEnclosureResourceError) as refused:
+                    with budget.bind_ticket(construction), construction.native_target():
+                        budget.retain_owner(payload)
+                assert refused.value.limit == maximum_memory
+                assert refused.value.requested == required
+                assert budget.retained_basis_bytes == 0
+                assert id(payload) not in budget.retained_owner_objects
+                return
+
+            with budget.bind_ticket(construction), construction.native_target():
+                budget.retain_owner(payload)
+            retained = budget.storage_ticket
+            assert budget.retained_basis_bytes == required
+            remaining = scope.remaining()
+            assert budget.peak_bytes_upper == required
+            parent = scope.batch(
+                100_000,
+                queries_upper=remaining.remaining_geometry_queries,
+                bytes_upper=parent_bytes,
+                cavity_upper=remaining.remaining_cavity_cells,
+            )
+            with parent, parent.native_target():
+                phase_payloads: list[int] = []
+                before_parent_bytes = parent.remaining_managed_bytes
+                assert (
+                    scope.remaining().remaining_managed_bytes
+                    > before_parent_bytes
+                )
+                with adaptation_phase(scope, budget):
+                    assert budget.ticket.bytes_upper == before_parent_bytes
+                    with budget.live_storage() as phase_storage:
+                        owner = budget._scope_storage_contributor()
+                        assert owner is not None
+                        headroom = owner.headroom()
+                        assert headroom is not None
+                        payload_bytes = headroom - required
+                        phase_payloads.append(payload_bytes)
+                        phase_storage.set_bound(payload_bytes)
+                before_metric_bytes = parent.remaining_managed_bytes
+                with _metric_coordinate_phase(
+                    scope,
+                    budget,
+                    maximum_work_units=100_000,
+                    maximum_cavity_cells=100,
+                ) as phase:
+                    assert phase.bytes_upper == before_metric_bytes
+                    with budget.live_storage() as phase_storage:
+                        owner = budget._scope_storage_contributor()
+                        assert owner is not None
+                        headroom = owner.headroom()
+                        assert headroom is not None
+                        payload_bytes = headroom - required
+                        phase_payloads.append(payload_bytes)
+                        phase_storage.set_bound(payload_bytes)
+            assert budget.peak_bytes_upper == required + max(phase_payloads)
+            assert budget.temporary_bytes_upper == 0
+            assert retained is not None and not retained.settled
+        assert scope.remaining().remaining_managed_bytes == initial_remaining_bytes
+
+
 def test_host_phase_cannot_restart_original_operation_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1590,7 +1687,8 @@ def test_fixed_boundary_corpus_opt_in_preserves_every_numerical_schedule_control
 def test_cold_plc_bootstrap_matches_complete_paid_canonical_declaration(fault: str) -> None:
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.meshing._volume_generation import (
-        _matches_canonical_declared_plc_domain, declared_plc_domain,
+        _matches_canonical_declared_plc_domain,
+        declared_plc_domain,
     )
     from tools._meshing_cases import meshing_case, prepare_case
 

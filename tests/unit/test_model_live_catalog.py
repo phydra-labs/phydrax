@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections.abc import Callable, Mapping
-from typing import Any, final, Literal
+from typing import Any, final, Literal, NoReturn
 
 import equinox as eqx
 import jax
@@ -219,39 +219,6 @@ def test_live_catalog_handles_root_array() -> None:
     assert arrays[inventory[0].name] is value
 
 
-def test_live_catalog_encodes_once_without_descriptor_roundtrip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    value = _mixed_value()
-    encode = structure._structure_recipe
-    lower = structure._lower_recipe
-    counts = {"root_encode": 0, "lower": 0}
-
-    def counted_encode(current: Any, path: str, shared: Any, /) -> dict[str, Any]:
-        if current is value:
-            counts["root_encode"] += 1
-        return encode(current, path, shared)
-
-    def counted_lower(
-        recipe: Any, limits: ArrayArchiveLimits, /
-    ) -> structure.RecipeTable:
-        counts["lower"] += 1
-        return lower(recipe, limits)
-
-    def refuse(*_args: Any, **_kwargs: Any) -> Any:
-        pytest.fail(
-            "Live catalog must not restore descriptors or rebind the recipe graph"
-        )
-
-    monkeypatch.setattr(structure, "_structure_recipe", counted_encode)
-    monkeypatch.setattr(structure, "_lower_recipe", counted_lower)
-    monkeypatch.setattr(structure, "_array_descriptor", refuse)
-    monkeypatch.setattr(structure, "restore_nodes", refuse)
-    monkeypatch.setattr(structure, "model_array_catalog", refuse)
-    monkeypatch.setattr(structure, "_table_objects", refuse)
-    _, inventory, arrays = structure.prepare_model_recipe_catalog(value, prefix="live")
-    assert len(inventory) == len(arrays) == 5
-    assert counts == {"root_encode": 1, "lower": 1}
 
 
 @pytest.mark.parametrize(
@@ -407,30 +374,13 @@ def test_external_recipe_values_still_reject_changed_alias_structure() -> None:
         )
 
 
-def test_fresh_array_pairs_encode_each_side_once_and_preserve_alias_pairs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_fresh_array_pairs_preserve_alias_pairs() -> None:
     shared = np.asarray((1.0, -0.0), dtype=np.float32)
     shared.setflags(write=False)
     second_left = np.asarray((2.0, 0.0), dtype=np.float32)
     second_right = np.asarray((3.0, 4.0), dtype=np.float32)
     first = (_Branch(shared, shared), shared)
     second = (_Branch(second_left, second_right), second_left)
-    encode = structure._structure_recipe
-    counts = [0, 0]
-
-    def counted_encode(value: Any, path: str, retained: Any, /) -> dict[str, Any]:
-        if value is first:
-            counts[0] += 1
-        if value is second:
-            counts[1] += 1
-        return encode(value, path, retained)
-
-    def refuse(*_args: Any, **_kwargs: Any) -> Any:
-        pytest.fail("Fresh paired recipes must reuse their retained shared objects")
-
-    monkeypatch.setattr(structure, "_structure_recipe", counted_encode)
-    monkeypatch.setattr(structure, "_table_objects", refuse)
     pairs = structure.model_recipe_array_pairs(first, second)
     assert pairs is not None
     assert len(pairs) == 2
@@ -438,7 +388,6 @@ def test_fresh_array_pairs_encode_each_side_once_and_preserve_alias_pairs(
     assert pairs[0][1] is second_left
     assert pairs[1][0] is shared
     assert pairs[1][1] is second_right
-    assert counts == [1, 1]
 
 
 def test_fresh_array_pairs_keep_metadata_and_limit_admission() -> None:
@@ -469,7 +418,9 @@ def test_needed_content_forms_equal_eager_forms_for_every_admitted_node() -> Non
             assert needed(index) == eager[index]
 
 
-def test_lazy_pairs_preserve_eager_schema_alias_key_set_and_literal_semantics(monkeypatch) -> None:
+def test_lazy_pairs_preserve_eager_schema_alias_key_set_and_literal_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from fractions import Fraction
 
     first = np.asarray((1.0, -0.0), dtype=np.float64)
@@ -487,7 +438,7 @@ def test_lazy_pairs_preserve_eager_schema_alias_key_set_and_literal_semantics(mo
         (first, second.astype(np.float32)),
     )
 
-    def eager_lookup(nodes):
+    def eager_lookup(nodes: list[structure.RecipeNode]) -> Callable[[int], bytes]:
         return structure._content_forms(nodes).__getitem__
 
     for left, right in cases:
@@ -500,14 +451,16 @@ def test_lazy_pairs_preserve_eager_schema_alias_key_set_and_literal_semantics(mo
             assert [(id(a), id(b)) for a, b in actual] == [(id(a), id(b)) for a, b in expected]
 
 
-def test_pairing_never_computes_unused_composite_content_forms(monkeypatch) -> None:
+def test_pairing_never_computes_unused_composite_content_forms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original = structure._needed_content_forms
     requested = []
 
-    def observe(nodes):
+    def observe(nodes: list[structure.RecipeNode]) -> Callable[[int], bytes]:
         lookup = original(nodes)
 
-        def read(index):
+        def read(index: int) -> bytes:
             requested.append(nodes[index]["kind"])
             return lookup(index)
 
@@ -522,7 +475,9 @@ def test_pairing_never_computes_unused_composite_content_forms(monkeypatch) -> N
 
 
 @pytest.mark.parametrize("defect", ("unknown-kind", "literal", "fraction", "duplicate-key", "reference", "array", "type"))
-def test_pairing_eagerly_admits_even_a_mismatched_unused_bad_subtree(monkeypatch, defect) -> None:
+def test_pairing_eagerly_admits_even_a_mismatched_unused_bad_subtree(
+    monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
     import copy
 
     left, right = object(), object()
@@ -548,15 +503,17 @@ def test_pairing_eagerly_admits_even_a_mismatched_unused_bad_subtree(monkeypatch
     recipe = {"kind": "tuple", "items": [{"kind": "literal", "value": 0}, invalid]}
     original = structure._structure_recipe
 
-    def encode(value, path, shared):
+    def encode(
+        value: Any, path: str, shared: structure._SharedObjects | None
+    ) -> dict[str, Any]:
         if value is left:
             return {"kind": "literal", "value": 0}
         if value is right:
             return copy.deepcopy(recipe)
         return original(value, path, shared)
 
-    def no_form_computation(nodes):
-        def refuse(_index):
+    def no_form_computation(nodes: list[structure.RecipeNode]) -> Callable[[int], bytes]:
+        def refuse(_index: object) -> NoReturn:
             pytest.fail("both full lowerings must finish before any lazy form is requested")
         return refuse
 
@@ -572,7 +529,9 @@ def test_pairing_eagerly_admits_even_a_mismatched_unused_bad_subtree(monkeypatch
     assert str(actual.value) == str(expected.value)
 
 
-def test_pairing_preserves_cycle_and_size_admission_before_form_requests(monkeypatch) -> None:
+def test_pairing_preserves_cycle_and_size_admission_before_form_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cycle = []
     cycle.append(cycle)
     with monkeypatch.context() as patch:

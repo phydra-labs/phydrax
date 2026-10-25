@@ -18,6 +18,7 @@ from the recorded obligations, never assigned.
 from __future__ import annotations
 
 import itertools
+import json
 import math
 from dataclasses import asdict
 from fractions import Fraction
@@ -1181,6 +1182,151 @@ def _source_edge_ids(
     return np.unique(np.asarray(selected, dtype=np.int64))
 
 
+def _overset_publication_lineage(
+    result: phx.meshing.CellMeshingResult,
+    plan: phx.meshing.NativeMeshingPlan,
+) -> dict[str, Any]:
+    """Retain the actual plan, semantic provenance, and certification owners."""
+    from phydrax.meshing.providers._native import _prepared_id
+
+    source = plan.source
+    specification = plan.specification
+    trace_binding = result.trace.binding
+    if (
+        not isinstance(source, phx.meshing.NativePlanarSource)
+        or not isinstance(specification, phx.meshing.SurfaceMeshingSpec)
+        or result.certification is None
+        or trace_binding is None
+    ):
+        raise TypeError(
+            "overset.publication_lineage requires a planar source, surface specification, and passing result certification."
+        )
+    certification = result.certification
+    specification_identity = {
+        "kind": "surface-meshing-spec",
+        "target": specification.target.target_id,
+        "planar_embedding": (
+            None
+            if specification.planar_embedding is None
+            else specification.planar_embedding.embedding_id
+        ),
+        "scope": specification.scope.scope_id,
+        "size_controls": [
+            control.control_id for control in specification.size_controls
+        ],
+        "size_combination": specification.size_combination.value,
+        "size_compliance": specification.size_compliance.policy_id,
+        "protected_features": [
+            feature.feature_id for feature in specification.protected_features
+        ],
+        "regions": [control.control_id for control in specification.region_controls],
+        "patches": [control.control_id for control in specification.patch_controls],
+        "periodic": [
+            constraint.constraint_id
+            for constraint in specification.periodic_constraints
+        ],
+        "layers": [control.control_id for control in specification.layer_controls],
+        "limits": specification.limits.limits_id,
+        "quality_target": (
+            None
+            if specification.quality_target is None
+            else specification.quality_target.target_id
+        ),
+        "background_metric": (
+            None
+            if specification.background_metric is None
+            else specification.background_metric.control_id
+        ),
+        "deterministic": specification.deterministic,
+    }
+    if canonical_fingerprint(specification_identity) != specification.specification_id:
+        raise ValueError(
+            "overset.publication_lineage must retain the actual specification identity."
+        )
+    plan_identity = {
+        "kind": "native-meshing-plan",
+        "route": plan.options.route,
+        "options": plan.options.options_id,
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "specification": specification.specification_id,
+        "support": plan.support.report_id,
+        "coordinate_contract": plan.coordinate_contract.spatial_id,
+        "prepared": _prepared_id(plan.prepared),
+    }
+    if canonical_fingerprint(plan_identity) != plan.plan_id:
+        raise ValueError(
+            "overset.publication_lineage must retain the actual prepared plan identity."
+        )
+    semantic = phx.SemanticProvenance.from_stored_fields(result.provenance)
+    semantic_content = json.loads(semantic.content_json)
+    return {
+        "result_id": result.result_id,
+        "mesh_id": result.mesh.mesh_id,
+        "audit_id": result.audit.report_id,
+        "topology_id": result.mesh.topology_id,
+        "compliance_specification_id": result.compliance.specification_id,
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "source_binding_id": source.binding_id,
+        "specification_id": specification.specification_id,
+        "limits_id": specification.limits.limits_id,
+        "prepared_id": plan.plan_id,
+        "prepared_route_id": plan_identity["prepared"],
+        "specification_identity": specification_identity,
+        "plan_identity": plan_identity,
+        "trace_binding": {
+            "binding_id": trace_binding.binding_id,
+            "source_id": trace_binding.source_id,
+            "source_revision": trace_binding.source_revision,
+            "topology_id": trace_binding.topology_id,
+            "geometry_id": trace_binding.geometry_id,
+            "geometry_layout_id": trace_binding.geometry_layout_id,
+            "policy_ids": list(trace_binding.policy_ids),
+            "runtime_id": trace_binding.runtime_id,
+        },
+        "semantic_id": semantic.semantic_id,
+        "semantic_content": semantic_content,
+        "semantic_resource_ids": [list(item) for item in semantic.resource_ids],
+        "trace_stage_report_ids": [
+            stage.report_id for stage in result.trace.stages
+        ],
+        "certification": {
+            "report_id": certification.report_id,
+            "passed": certification.passed,
+            "mesh_id": certification.mesh_id,
+            "topology_id": certification.topology_id,
+            "geometry_id": certification.geometry_id,
+            "request_id": certification.request.request_id,
+            "source_id": certification.request.source_id,
+            "source_revision": certification.request.source_revision,
+            "domain_id": certification.request.domain_id,
+            "limits_id": certification.request.limits.limits_id,
+            "schedule_id": certification.schedule.schedule_id,
+        },
+    }
+
+
+def _overset_receipt_id(result: phx.meshing.CellMeshingResult, /) -> str:
+    """Return the actual retained root receipt, not a result-ID surrogate."""
+    receipt = result.execution_evidence
+    if receipt is None or receipt.owner_id is None:
+        raise ValueError("overset.receipt must retain the actual owner-bound request.")
+    receipt.require_valid()
+    return receipt.receipt_hex()
+
+
+def _overset_receipt_owner_id(
+    result: phx.meshing.CellMeshingResult, /
+) -> str:
+    """Return the actual owner of a retained native publication receipt."""
+    receipt = result.execution_evidence
+    if receipt is None or receipt.owner_id is None:
+        raise ValueError("overset.receipt must retain the actual owner-bound request.")
+    receipt.require_valid()
+    return str(receipt.owner_id)
+
+
 def _overset_qualification_part(
     name: str,
     body: _OversetBody | None,
@@ -2084,11 +2230,9 @@ def _overset_prepare_solver(
         "generated_code_bytes": None
         if memory is None
         else memory.generated_code_size_in_bytes,
-        "memory_status": "unavailable" if memory is None else "measured",
         "compilation_count": 1,
         "warm_samples_seconds": [],
         "compilation_count_scope": "explicit-AOT-compile-invocations",
-        "warm_recompilation_count": 0,
         "execution_scope": (
             "overset-composite-right-preconditioned-GMRES-multiplicative-part-blocks"
             if prepare_part_blocks else "overset-composite-unpreconditioned-GMRES"
@@ -2144,6 +2288,7 @@ def _overset_composite_update(
     solver: _OversetSolver,
     *,
     reused: bool,
+    warm_repeats: int,
 ) -> tuple[dict[str, jax.Array], dict[str, Any], float]:
     """Solve the composite overset Poisson update and check it independently."""
     composite, rows = solver.composite, solver.rows
@@ -2156,14 +2301,44 @@ def _overset_composite_update(
             ("Composite numerical actions must bind the current registration and field query."),
             {"registration": connectivity.connectivity_id, "query": solver.route.transfer_id},
         )
+    if type(warm_repeats) is not int or warm_repeats < 0:
+        raise ValueError(
+            f"overset.warm_repeats must be a nonnegative integer; got {warm_repeats!r}"
+        )
     names = composite.names
     seed = jax.device_put(
         np.concatenate([np.asarray(values[name])[rows[name].free] for name in names])
     )
-    started = perf_counter()
-    current, solved = solver.compiled(composite, seed, solver.policy)
-    current = jax.block_until_ready(current)
-    execution = perf_counter() - started
+    with CompileCounter(stage="overset_solver_first_execution") as first_compiler:
+        started = perf_counter()
+        accepted = jax.block_until_ready(
+            solver.compiled(composite, seed, solver.policy)
+        )
+        execution = perf_counter() - started
+    warm_samples = []
+    with CompileCounter(stage="overset_solver_warm_execution") as warm_compiler:
+        for _ in range(warm_repeats):
+            started = perf_counter()
+            jax.block_until_ready(solver.compiled(composite, seed, solver.policy))
+            warm_samples.append(perf_counter() - started)
+    if warm_repeats or "first_execution_compilation_count" not in solver.compiler:
+        solver.compiler.update(
+            first_execution_seconds=execution,
+            warm_samples_seconds=warm_samples,
+            first_execution_compilation_count=first_compiler.count,
+            warm_recompilation_count=warm_compiler.count,
+        )
+    if first_compiler.count or warm_compiler.count:
+        raise qualification_failure(
+            "_overset_composite_update",
+            ("Composite execution must not compile at runtime."),
+            {
+                "first_execution_compilation_count": first_compiler.count,
+                "warm_recompilation_count": warm_compiler.count,
+                "compilation_count_scope": "observed-CompileCounter-events",
+            },
+        )
+    current, solved = accepted
     evidence = _solver_evidence(solved)
     iterations = int(np.max(np.asarray(solved.diagnostics.iterations)))
     preconditioned = solver.policy.preconditioning is not None
@@ -2889,9 +3064,11 @@ def _overset_qualification_conservative(
         "nonconserving_transport_refused": not tampered.published,
         "refusals_atomic": refusals_atomic,
         "accepted_composition_id": receipt.composition.composition_id,
-        "source_certification_id": source_carrier.certification.report_id,
-        "target_certification_id": target_carrier.certification.report_id,
-        "registration_epoch": candidate.epoch,
+        "source_result_id": source_carrier.result_id,
+        "motion_prepared_id": plan.plan_id,
+        "motion_result_id": target_carrier.result_id,
+        "motion_result": _result_identity(target_carrier),
+        "motion_provenance": _overset_publication_lineage(target_carrier, plan),
     }
     if not certified:
         raise qualification_failure(
@@ -2964,6 +3141,7 @@ def _overset_accept_epoch(
     record: dict[str, Any],
     deadline: Deadline,
     *,
+    warm_repeats: int,
     previous: _OversetSolver | None = None,
     reuse: phx.meshing.PreparedOversetFieldTransfer | None = None,
 ) -> _OversetAccepted:
@@ -2987,7 +3165,9 @@ def _overset_accept_epoch(
     )
     values, report, execution = _ledger.run(
         f"{label}:composite_schwarz_poisson",
-        lambda: _overset_composite_update(connectivity, seeds, solver, reused=False),
+        lambda: _overset_composite_update(
+            connectivity, seeds, solver, reused=False, warm_repeats=warm_repeats
+        ),
     )
     record["stages_seconds"].update(
         _overset_epoch_stages(solver, execution, epoch["epoch"])
@@ -3016,6 +3196,8 @@ def _overset_qualification_motion(
     profile: _OversetProfile,
     record: dict[str, Any],
     deadline: Deadline,
+    *,
+    warm_repeats: int,
 ) -> _OversetAccepted:
     """Refresh holes/donors, transfer accepted state, refuse faults, then update."""
 
@@ -3025,18 +3207,20 @@ def _overset_qualification_motion(
         f"motion-{step}:wall_cutting_donor_refresh",
         lambda: connectivity.reregister(successors),
     )
+    source_successors = {}
+    for name, part in successors.items():
+        carrier = _part_carrier(part)
+        source_successors[name] = {
+            "result": _result_identity(carrier),
+            "result_id": carrier.result_id,
+            "certification_id": _part_certification(part).report_id,
+        }
     epoch: dict[str, Any] = {
         # Initial geometry is epoch zero; each motion publishes its successor.
         "epoch": step + 1,
         "step": step,
         "offsets": {body.name: body.offset(step).tolist() for body in profile.bodies},
-        "source_successors": {
-            name: {
-                "result_id": _part_carrier(part).result_id,
-                "certification_id": _part_certification(part).report_id,
-            }
-            for name, part in successors.items()
-        },
+        "source_successors": source_successors,
         "registration": _overset_qualification_registration_evidence(candidate),
     }
     record["epochs"].append(epoch)
@@ -3214,6 +3398,7 @@ def _overset_qualification_motion(
         profile,
         record,
         deadline,
+        warm_repeats=warm_repeats,
         previous=accepted.solver,
         reuse=route,
     )
@@ -3573,6 +3758,44 @@ def _overset_qualification_cold_worker(
     conservative_carrier = target_epoch.carrier
     conservative_values = target_epoch.fields
     conservative_expected = conservative_packet["expected"]
+    source_receipt = source_epoch.carrier.execution_evidence
+    conservative_receipt = conservative_carrier.execution_evidence
+    if (
+        source_receipt is None
+        or source_receipt.owner_id is None
+        or conservative_receipt is None
+        or conservative_receipt.owner_id is None
+    ):
+        raise ValueError(
+            "overset.cold.conservative must retain owner-bound archived source receipts."
+        )
+    archive_receipts_match = (
+        source_receipt.receipt_hex()
+        == conservative_expected["source_execution_receipt_id"]
+        and source_receipt.owner_id
+        == conservative_expected["source_execution_owner_id"]
+        and conservative_receipt.receipt_hex()
+        == conservative_expected["target_execution_receipt_id"]
+        and conservative_receipt.owner_id
+        == conservative_expected["target_execution_owner_id"]
+    )
+    if not archive_receipts_match:
+        raise qualification_failure(
+            "overset.cold.conservative",
+            "Cold restore must retain the exact source and accepted-motion receipts archived for the conservative profile.",
+            {
+                "source_receipt_id": source_receipt.receipt_hex(),
+                "accepted_motion_receipt_id": conservative_receipt.receipt_hex(),
+            },
+        )
+    scope = current_native_execution_scope()
+    if scope is None:
+        raise ValueError(
+            "overset.cold.conservative must bind archived source history to the active native request."
+        )
+    from phydrax.meshing._native_preparation import native_preparation_ledger
+
+    native_preparation_ledger(scope).record_history(scope, conservative_receipt)
     bitwise = {
         name: array_tree_fingerprint(value)
         == conservative_expected["field_fingerprints"].get(name)
@@ -3621,11 +3844,11 @@ def _overset_qualification_cold_worker(
         overlap.source_double_count, overlap.target_double_count,
     )
     conservative_passed = (
-        source_epoch.carrier.result_id == conservative_expected["source_result_id"]
+        archive_receipts_match
+        and source_epoch.carrier.result_id == conservative_expected["source_result_id"]
         and conservative_carrier.result_id == conservative_expected["target_result_id"]
         and [epoch.epoch_id for epoch in conservative_epochs]
         == conservative_expected["epoch_ids"]
-        and set(bitwise) == set(conservative_expected["field_fingerprints"])
         and all(bitwise.values())
         and all(error <= _CONTENT_TOLERANCE for error in inventory_errors.values())
         and all(error <= _CONTENT_TOLERANCE for error in conservation_errors.values())
@@ -3651,7 +3874,7 @@ def _overset_qualification_cold_worker(
         prepare_part_blocks=False,
     )
     continued, report, _ = _overset_composite_update(
-        rebuilt, values, solver, reused=False,
+        rebuilt, values, solver, reused=False, warm_repeats=0,
     )
     return _part_carrier(rebuilt.assembly.part(_BACKGROUND)), ColdWorkerReport(
         record={
@@ -3674,6 +3897,10 @@ def _overset_qualification_cold_worker(
                 "coverage_counts": list(coverage),
                 "source_result_id": source_epoch.carrier.result_id,
                 "target_result_id": conservative_carrier.result_id,
+                "source_execution_receipt_id": source_receipt.receipt_hex(),
+                "target_execution_receipt_id": conservative_receipt.receipt_hex(),
+                "source_execution_owner_id": source_receipt.owner_id,
+                "target_execution_owner_id": conservative_receipt.owner_id,
                 "epoch_ids": [epoch.epoch_id for epoch in conservative_epochs],
             },
             "compiler": {**solver.compiler, "solver": report["solver"]},
@@ -3774,9 +4001,24 @@ def _overset_conservative_checkpoint(
         np.asarray(accepted.motion.target.mesh.coordinates),
         _mesh_triangles(accepted.motion.target.mesh),
     )
+    source_receipt = accepted.source.execution_evidence
+    target_receipt = accepted.motion.target.execution_evidence
+    if (
+        source_receipt is None
+        or source_receipt.owner_id is None
+        or target_receipt is None
+        or target_receipt.owner_id is None
+    ):
+        raise ValueError(
+            "overset.conservative.checkpoint must retain owner-bound source and target receipts."
+        )
     return records, {
         "source_result_id": accepted.source.result_id,
         "target_result_id": accepted.motion.target.result_id,
+        "source_execution_receipt_id": source_receipt.receipt_hex(),
+        "target_execution_receipt_id": target_receipt.receipt_hex(),
+        "source_execution_owner_id": str(source_receipt.owner_id),
+        "target_execution_owner_id": str(target_receipt.owner_id),
         "motion_transition_id": accepted.motion.transition_id,
         "epoch_ids": [initial.epoch_id, final.epoch_id],
         "field_fingerprints": {
@@ -3843,6 +4085,8 @@ def _overset_qualification_restart(
             {name: states[name].value for name in names},
         ),
         "composition_id": accepted.composition.composition_id,
+        "source_execution_receipt_id": _overset_receipt_id(background),
+        "source_execution_owner_id": _overset_receipt_owner_id(background),
         "source_binding_ids": {
             name: _planar_source(generation_plans[name]).binding_id for name in names
         },
@@ -3929,6 +4173,7 @@ def _overset_qualification_restart(
                     publish_conservative,
                     failure_factory=qualification_failure,
                     prepared_operands=conservative.prepared_operands,
+                    observe_managed_admission=True,
                 ),
             )
         except (RuntimeError, ValueError, TypeError, OSError) as failure:
@@ -3954,8 +4199,12 @@ def _overset_qualification_restart(
         ended = conservative_publication.result.execution_evidence
         if ended is None:
             raise ValueError("overset.conservative.checkpoint requires the real ended publication-consumer receipt")
+        evidence["conservative_publication_result"] = _result_identity(
+            conservative_publication.result
+        )
         evidence["conservative_publication_execution"] = {
             "owner_id": ended.owner_id,
+            "result_id": conservative_publication.result.result_id,
             "work_units": int(np.asarray(ended.total_work_units)),
             "geometry_queries": int(np.asarray(ended.total_geometry_queries)),
             "receipt_fingerprint": array_tree_fingerprint(ended),
@@ -4006,6 +4255,7 @@ def _overset_qualification_restart(
         "uninterrupted_composite_schwarz_poisson",
         lambda: _overset_composite_update(
             connectivity, accepted.values, accepted.solver, reused=True,
+            warm_repeats=0,
         ),
     )
     continuation = max(
@@ -4202,6 +4452,7 @@ def _overset_qualification_execute(
         profile,
         record,
         deadline,
+        warm_repeats=args.repeats,
     )
     record["physical_error"] = initial["poisson"]["physical_error"]
     if record["physical_error"] <= args.target_error:
@@ -4215,10 +4466,12 @@ def _overset_qualification_execute(
             )
         successors: dict[str, phx.meshing.MeshPart] = {}
         for body in profile.bodies:
+            predecessor_part = accepted.connectivity.assembly.part(body.name)
+            predecessor = _part_carrier(predecessor_part)
             successor, moved_plan = _ledger.run(
                 f"motion-{step}:{body.name}:source_successor",
-                lambda body=body: rigid_planar_successor(
-                    accepted.connectivity.assembly.part(body.name),
+                lambda body=body, predecessor_part=predecessor_part: rigid_planar_successor(
+                    predecessor_part,
                     body.offset(step),
                     motion_id=f"qualification-accepted-motion-{step}-{body.name}",
                     plan=generation_plans[body.name],
@@ -4227,6 +4480,7 @@ def _overset_qualification_execute(
             )
             generation_plans[body.name] = moved_plan
             successors[body.name] = successor
+            moved_carrier = _part_carrier(successor)
             record["motion_sources"].append(
                 {
                     "step": step,
@@ -4236,11 +4490,16 @@ def _overset_qualification_execute(
                     "request_id": moved_plan.specification.specification_id,
                     "limits_id": moved_plan.specification.limits.limits_id,
                     "prepared_id": moved_plan.plan_id,
-                    "result_id": _part_carrier(successor).result_id,
+                    "predecessor_result_id": predecessor.result_id,
+                    "result_id": moved_carrier.result_id,
+                    "publication_lineage": _overset_publication_lineage(
+                        moved_carrier, moved_plan
+                    ),
                 }
             )
         accepted = _overset_qualification_motion(
-            accepted, successors, step, profile, record, deadline
+            accepted, successors, step, profile, record, deadline,
+            warm_repeats=args.repeats,
         )
     record["physical_error"] = max(
         epoch["poisson"]["physical_error"] for epoch in record["epochs"]
@@ -4473,6 +4732,20 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
             {"main_specification_id": execution.specification_id,
              "conservative_specification_id": conservative_execution.specification_id},
         )
+    if (
+        execution.execution_evidence.receipt_hex()
+        != expected["source_execution_receipt_id"]
+        or execution.execution_evidence.owner_id
+        != expected["source_execution_owner_id"]
+    ):
+        raise qualification_failure(
+            "overset.cold.original_controls",
+            "The main cold archive must retain its exact accepted background source receipt.",
+            {
+                "receipt_id": execution.execution_evidence.receipt_hex(),
+                "owner_id": execution.execution_evidence.owner_id,
+            },
+        )
     control_read_seconds = perf_counter() - began
     try:
         continued = execute_native_request(
@@ -4484,6 +4757,7 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
             target=lambda value: value[0],
             failure_factory=qualification_failure,
             workflow_remaining_seconds=packet.deadline.remaining(),
+            observe_managed_admission=True,
         )
     except _OversetColdRemapRefusal as failure:
         # Report only after the real request has unwound. No accepted target or
@@ -4500,18 +4774,37 @@ def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
             "The cold reader, proof and solve must retain one ended execution receipt.",
             {"result": continued.result},
         )
+    conservative_report = report.record.get("conservative")
+    if not isinstance(conservative_report, dict):
+        raise qualification_failure(
+            "overset.cold.execution",
+            "The cold conservative reader must retain its exact archived source receipts.",
+            {"conservative": conservative_report},
+        )
     return ColdWorkerReport(
         record={
             **report.record,
             "cold_request_result": _result_identity(continued.result),
             "cold_request": {
                 "history_owner_id": execution.execution_evidence.owner_id,
+                "history_receipt_id": execution.execution_evidence.receipt_hex(),
                 "owner_id": receipt.owner_id,
                 "work_units": int(np.asarray(receipt.total_work_units)),
                 "geometry_queries": int(np.asarray(receipt.total_geometry_queries)),
                 "receipt_fingerprint": array_tree_fingerprint(receipt),
                 "original_limits_id": execution.limits.limits_id,
-                "conservative_history_owner_id": conservative_execution.execution_evidence.owner_id,
+                "conservative_source_owner_id": (
+                    conservative_report.get("source_execution_owner_id")
+                ),
+                "conservative_source_receipt_id": (
+                    conservative_report.get("source_execution_receipt_id")
+                ),
+                "conservative_history_owner_id": (
+                    conservative_report.get("target_execution_owner_id")
+                ),
+                "conservative_history_receipt_id": (
+                    conservative_report.get("target_execution_receipt_id")
+                ),
                 "reader_proof_solve_shared_budget": True,
             },
         },

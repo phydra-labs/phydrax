@@ -264,7 +264,8 @@ void* BoundedMemoryResource::do_allocate(std::size_t bytes, std::size_t alignmen
     // Host usage is conservative storage, not a native allocation request.
     for (auto* observer = observation_; observer != nullptr; observer = observer->previous) {
       if (observer->aggregate || observer->thread == std::this_thread::get_id()) {
-        observer->external_peak_upper = std::max(observer->external_peak_upper, load_shared(usage.host_bytes));
+        observer->external_peak_upper = std::max(
+            observer->external_peak_upper, static_cast<std::size_t>(load_shared(usage.host_bytes)));
       }
     }
   }
@@ -1541,13 +1542,19 @@ extern "C" int32_t phx_mc_execution_admit_cavity(void* opaque, uint64_t cells) {
   if (scope == nullptr || scope != phx::mc::active_execution_scope || cells > std::numeric_limits<std::size_t>::max()) return PHX_MC_INVALID_ARGUMENT;
   return scope->admit_cavity(static_cast<std::size_t>(cells)) ? PHX_MC_OK : scope->status();
 }
-extern "C" int32_t phx_mc_execution_remaining(void* opaque, uint64_t* remaining, double* wall_seconds) {
+extern "C" int32_t phx_mc_execution_remaining(void* opaque, uint64_t* remaining,
+                                              double* wall_seconds) {
   auto* scope = static_cast<phx::mc::NativeExecutionScope*>(opaque);
-  if (scope == nullptr || scope != phx::mc::active_execution_scope || remaining == nullptr || wall_seconds == nullptr) return PHX_MC_INVALID_ARGUMENT;
-  scope->checkpoint(); const auto allowance = scope->remaining();
+  auto* active = phx::mc::active_execution_scope;
+  if (scope == nullptr || remaining == nullptr || wall_seconds == nullptr ||
+      !phx::mc::NativeExecutionScope::is_active_or_ancestor(scope))
+    return PHX_MC_INVALID_ARGUMENT;
+  active->checkpoint();
+  const auto allowance = scope->remaining();
   const auto state = phx::mc::ExecutionResources::from_slots(allowance.data());
   phx::mc::CounterPublisher publisher{state, remaining};
-  *wall_seconds = scope->remaining_wall_seconds(); return scope->status();
+  *wall_seconds = scope->remaining_wall_seconds();
+  return active->status();
 }
 extern "C" int32_t phx_mc_execution_allocate_host_array(void* opaque, uint64_t bytes, uint64_t alignment,
                                                        void** out_owner, void** out_data) {

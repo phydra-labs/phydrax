@@ -34,4 +34,16 @@ bool exact_facet_coverage_by_arrangement(
     std::span<const std::array<int32_t, 4>> original_faces,
     std::span<const int32_t> rows, NativeVector<int32_t>& contributors);
 
+// Chronological exact union: epochs correspond to sorted, unique `rows`.
+// Newer accepted rows supersede older rows on overlapping fragments. Two rows
+// in the same epoch may never overlap. All surviving fragments need an owner.
+// Epoch-zero authored rows retain consistent orientation. Delegated later
+// epochs use geometric coverage: native validated their material-side order
+// before accepting host rows, which may use the public outward permutation.
+bool exact_facet_history_coverage(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> rows, std::span<const int64_t> epochs,
+    NativeVector<int32_t>& contributors);
+
 }  // namespace phx::mc

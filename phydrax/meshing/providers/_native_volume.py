@@ -67,10 +67,10 @@ from .._volume_generation import (
 )
 from . import _native_plc_geometry as plc_geometry_owner, _native_sources as sources_owner
 from ._native_publication import (
+    coordinate_phase,
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
-    coordinate_phase,
     publish_native_result,
 )
 from ._native_route_checks import (
@@ -760,14 +760,15 @@ def _execute_volume_route_bound(
     )
     check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
     domain = declared_plc_domain(source.complex, source.source_id)
-    allowance = scope.remaining()
-    with scope.batch(
-        min(limits.maximum_work_units, allowance.remaining_work_units),
-        queries_upper=min(
-            limits.maximum_geometry_queries, allowance.remaining_geometry_queries
-        ),
-        bytes_upper=min(limits.maximum_scratch_bytes, allowance.remaining_managed_bytes),
-    ) as ticket:
+    with scope.ticket_view() as incoming:
+        ticket = scope.batch(
+            min(limits.maximum_work_units, incoming.remaining_work_units),
+            queries_upper=min(
+                limits.maximum_geometry_queries, incoming.remaining_geometry_queries
+            ),
+            bytes_upper=min(limits.maximum_scratch_bytes, incoming.remaining_managed_bytes),
+        )
+    with ticket:
         budget = CoordinateEnclosureBudget(
             ticket,
             maximum_work_units=limits.maximum_work_units,

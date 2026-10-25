@@ -1545,6 +1545,264 @@ def test_exact_image_authoring_cannot_reset_a_supplied_exhausted_work_budget() -
                     qualification._junction_source(6, coordinate_budget=budget)
 
 
+def test_native_image_source_refuses_before_voxel_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typing import NoReturn
+
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+    from tools import neurofluid_qualification as qualification
+
+    allocated: list[tuple[int, ...]] = []
+
+    def observe_allocation(shape: tuple[int, ...], /, **kwargs: Any) -> NoReturn:
+        allocated.append(shape)
+        raise AssertionError("Resource refusal must precede voxel allocation.")
+
+    limits = phx.meshing.MeshingLimits(maximum_work_units=1)
+    with qualification.NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.batch(
+            0,
+            queries_upper=limits.maximum_geometry_queries,
+            bytes_upper=limits.maximum_scratch_bytes,
+        ) as ticket:
+            budget = qualification.CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with ticket.native_target(), budget.activate():
+                monkeypatch.setattr(
+                    qualification.np, "ones", observe_allocation
+                )
+                with pytest.raises(CoordinateEnclosureResourceError):
+                    qualification._segmentation(2, coordinate_budget=budget)
+    assert allocated == []
+
+
+@pytest.mark.parametrize("operation", ("complex", "surfaces", "source"))
+@pytest.mark.parametrize("shortfall", ("work", "storage"))
+def test_unicode_compartment_metadata_has_exact_source_admission(
+    native_case: phx.applications.neurofluid.NeurofluidCase,
+    operation: str,
+    shortfall: str,
+) -> None:
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import (
+        CoordinateEnclosureBudget,
+        CoordinateEnclosureResourceError,
+    )
+
+    repeated = "𐐷" * 4096
+
+    def identifier(suffix: str) -> str:
+        return f"{repeated}:{suffix}"
+
+    label_ids = (identifier("label-a"), identifier("label-b"))
+    compartment_ids = (identifier("region-a"), identifier("region-b"))
+    values = np.asarray(native_case.segmentation.asset.values)
+    labels = phx.imaging.LabelVolume(
+        _image(
+            values,
+            phx.units.ONE,
+            identifier("source-asset"),
+            value_kind=phx.measurement.ValueKind.CATEGORICAL,
+        ),
+        phx.imaging.LabelOntology(
+            "long-ontology",
+            "synthetic",
+            "1",
+            (
+                phx.imaging.LabelDefinition(1, label_ids[0], "label-a"),
+                phx.imaging.LabelDefinition(2, label_ids[1], "label-b"),
+            ),
+        ),
+    )
+    compartments = (
+        phx.geometry.CompartmentDefinition(
+            compartment_ids[0],
+            (label_ids[0],),
+            identifier("material-a"),
+            allowed_neighbor_ids=(compartment_ids[1],),
+        ),
+        phx.geometry.CompartmentDefinition(
+            compartment_ids[1],
+            (label_ids[1],),
+            identifier("material-b"),
+            containment_parent_id=compartment_ids[0],
+            allowed_neighbor_ids=(compartment_ids[0],),
+        ),
+    )
+    interfaces = (
+        phx.geometry.CompartmentInterfaceDefinition(
+            identifier("interface"),
+            compartment_ids[0],
+            compartment_ids[1],
+            identifier("interface-role"),
+        ),
+    )
+    expected_complex = phx.imaging.build_compartment_complex(
+        labels, compartments, interfaces
+    )
+    expected_surfaces = phx.imaging.extract_compartment_surfaces(
+        labels, expected_complex
+    )
+    source_complex = phx.imaging.build_compartment_complex(labels, compartments, ())
+    source_surfaces = phx.imaging.extract_compartment_surfaces(labels, source_complex)
+    contract = labels.asset.spatial_affine.coordinate_contract
+    outer = phx.geometry.SurfaceModel.from_triangles(
+        np.asarray(
+            (
+                (-0.5, -0.5, -0.5),
+                (1.5, -0.5, -0.5),
+                (1.5, 1.5, -0.5),
+                (-0.5, 1.5, -0.5),
+                (-0.5, -0.5, 1.5),
+                (1.5, -0.5, 1.5),
+                (1.5, 1.5, 1.5),
+                (-0.5, 1.5, 1.5),
+            ),
+            dtype=np.float64,
+        ),
+        np.asarray(
+            (
+                (0, 2, 1),
+                (0, 3, 2),
+                (4, 5, 6),
+                (4, 6, 7),
+                (0, 1, 5),
+                (0, 5, 4),
+                (3, 7, 6),
+                (3, 6, 2),
+                (0, 4, 7),
+                (0, 7, 3),
+                (1, 2, 6),
+                (1, 6, 5),
+            ),
+            dtype=np.int64,
+        ),
+        phx.geometry.SurfaceMetadata(
+            source_id=identifier("outer"),
+            source_revision=labels.label_volume_id,
+            coordinate_contract=contract,
+            provenance=(identifier("outer-provenance"),),
+        ),
+    )
+    expected_source = phx.geometry.CompartmentMeshingSource(
+        labels, source_complex, outer, source_surfaces
+    )
+    type SourceResult = (
+        phx.geometry.CompartmentComplex
+        | phx.imaging.CompartmentSurfaceResult
+        | phx.geometry.CompartmentMeshingSource
+    )
+
+    if operation == "complex":
+        expected = expected_complex
+
+        def invoke(budget: CoordinateEnclosureBudget) -> SourceResult:
+            return phx.imaging.build_compartment_complex(
+                labels, compartments, interfaces, budget=budget
+            )
+
+    elif operation == "surfaces":
+        expected = expected_surfaces
+
+        def invoke(budget: CoordinateEnclosureBudget) -> SourceResult:
+            return phx.imaging.extract_compartment_surfaces(
+                labels, expected_complex, budget=budget
+            )
+
+    else:
+        expected = expected_source
+
+        def invoke(budget: CoordinateEnclosureBudget) -> SourceResult:
+            return phx.geometry.CompartmentMeshingSource(
+                labels, source_complex, outer, source_surfaces, budget=budget
+            )
+
+    def run(work: int, storage: int) -> tuple[SourceResult, int, int]:
+        with HostBatchTicket(work, bytes_upper=storage) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=work,
+                maximum_memory_bytes=storage,
+            )
+            with budget.activate():
+                result = invoke(budget)
+            return result, budget.required_work_units, budget.peak_bytes_upper
+
+    _, required_work, required_storage = run(1 << 30, 1 << 30)
+    assert required_work > 1 and required_storage > 1
+    escaped_text_upper = 12 * len(repeated)
+    # These floors exceed the prior item-only bounds for even one long field.
+    assert required_work > escaped_text_upper
+    assert required_storage > 2 * escaped_text_upper
+    limits = {
+        "work": (required_work - 1, required_storage, "coefficient_work"),
+        "storage": (required_work, required_storage - 1, "polynomial_storage"),
+    }
+    short_work, short_storage, resource = limits[shortfall]
+    with pytest.raises(CoordinateEnclosureResourceError) as refused:
+        run(short_work, short_storage)
+    assert refused.value.resource == resource
+
+    actual, _, _ = run(required_work, required_storage)
+    if operation == "complex":
+        assert isinstance(actual, phx.geometry.CompartmentComplex)
+        assert isinstance(expected, phx.geometry.CompartmentComplex)
+        assert actual.complex_id == expected.complex_id
+        assert actual.adjacency.report_id == expected.adjacency.report_id
+        assert actual.observed_adjacencies == expected.observed_adjacencies
+    elif operation == "surfaces":
+        assert isinstance(actual, phx.imaging.CompartmentSurfaceResult)
+        assert isinstance(expected, phx.imaging.CompartmentSurfaceResult)
+        assert actual.extraction_id == expected.extraction_id
+        assert tuple(value.surface_id for value in actual.surfaces) == tuple(
+            value.surface_id for value in expected.surfaces
+        )
+        assert tuple(
+            value.surface.metadata.metadata_id for value in actual.surfaces
+        ) == tuple(value.surface.metadata.metadata_id for value in expected.surfaces)
+    else:
+        assert isinstance(actual, phx.geometry.CompartmentMeshingSource)
+        assert isinstance(expected, phx.geometry.CompartmentMeshingSource)
+        assert actual.source_id == expected.source_id
+        assert actual.source_revision == expected.source_revision
+        assert actual.interface_definitions == expected.interface_definitions
+
+
+def test_compartment_source_revalidation_rejects_mutated_labels_and_releases_scratch() -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+    from tools import neurofluid_qualification as qualification
+
+    source, _ = qualification._native_source(4)
+    values = source.labels.asset.values
+    values.setflags(write=True)
+    values[0, 0, 0] = 2
+    values.setflags(write=False)
+    limits = phx.meshing.MeshingLimits()
+    with qualification.NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.batch(
+            limits.maximum_work_units,
+            queries_upper=limits.maximum_geometry_queries,
+            bytes_upper=limits.maximum_scratch_bytes,
+        ) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with ticket.native_target(), budget.activate():
+                with pytest.raises(
+                    ValueError,
+                    match="CompartmentMeshingSource.compartments must match image",
+                ):
+                    source.validate_source_integrity(budget=budget)
+            assert budget.work_units > 0
+            assert budget.temporary_bytes_upper == 0
+
+
 @pytest.mark.parametrize("shortfall", (0, 1), ids=("R", "R-minus-one"))
 def test_cold_declared_image_borrows_exact_remaining_work(
     monkeypatch: pytest.MonkeyPatch, shortfall: int
@@ -1732,7 +1990,9 @@ def test_transport_warm_science_enters_one_original_root_before_authoring(
             deadline=qualification.Deadline(qualification.perf_counter() + 120.0),
         )
     assert len(observed) == 1
-    assert observed[0].completed_evidence() is not None
+    evidence = observed[0].completed_evidence()
+    assert evidence is not None
+    assert evidence.managed_admission_peak_bytes_upper is not None
     assert current_native_execution_scope() is None
 
 

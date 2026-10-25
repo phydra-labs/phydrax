@@ -74,8 +74,10 @@ def _constructors(
 ) -> tuple[Callable[..., Any], ...]:
     # Resolve current module attributes, not a saved imported function alias.
     from ..meshing import _certification as certification_owner
-    from ..meshing.providers import _native as native_owner
-    from ..meshing.providers import _native_publication as publication_owner
+    from ..meshing.providers import (
+        _native as native_owner,
+        _native_publication as publication_owner,
+    )
     from ..meshing.qualification import _hybrid as hybrid_owner
     from . import _meshing_sources as source_owner
 
@@ -243,8 +245,10 @@ def _material_constructors(
     options: NativeMeshingOptions, result: CellMeshingResult, /,
 ) -> tuple[Callable[..., Any], ...]:
     from ..geometry import _domain_coverage as coverage_owner
-    from ..meshing import _compartments as material_owner
-    from ..meshing import _organization_records as organization_owner
+    from ..meshing import (
+        _compartments as material_owner,
+        _organization_records as organization_owner,
+    )
     from ..meshing.providers import _native_compartment as producer_owner
 
     functions = (
@@ -270,7 +274,7 @@ def _material_constructors(
         producer_owner.execute_compartment_route,
         producer_owner.generate_compartment_volume,
         producer_owner.publish_native_result,
-        producer_owner.coordinate_budget,
+        CoordinateEnclosureBudget.__init__,
         producer_owner.NativePublicationExecution.__init__,
         producer_owner._CompartmentOuterProofPayload.__init__,
         producer_owner._issue_compartment_material_authority,

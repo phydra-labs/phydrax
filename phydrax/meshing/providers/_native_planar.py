@@ -169,31 +169,53 @@ def _planar_candidate(
     measured once, charged, and shared by the median repair decision and
     compliance.
     """
-    triangles = np.asarray(triangulation.triangles, dtype=np.int64)
-    used, compact = np.unique(triangles, return_inverse=True)
-    vertices = np.asarray(triangulation.points, dtype=np.float64)[used]
-    triangles = compact.reshape(triangles.shape).astype(np.int32)
-    segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
-    constrained, constrained_sources = constrained_edges(
-        triangles, segment_ids, prepared.segment_sources
-    )
-    missing = np.setdiff1d(
-        np.arange(prepared.source_directions.shape[0]), constrained_sources
-    )
-    if missing.size:
-        raise MeshingFailure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "source.edges must lie within the meshed planar region; got uncovered edges",
-            stage=MeshingStageKind.SURFACE_MESHING.value,
-            entity_ids=tuple(int(value) for value in missing),
+    triangle_count = triangulation.triangles.shape[0]
+    point_count = triangulation.points.shape[0]
+    corners = 3 * triangle_count
+    with scope.host_workspace() as storage:
+        # Triangle, compact-index and segment-id banks with the vertex unique
+        # sort (160 per triangle), compacted coordinates (32 per point), the
+        # constrained-edge pairs, their unique sort and the source coverage
+        # difference (192 per triangle), and the per-source-edge rows.
+        storage.set_bound(
+            352 * triangle_count
+            + 32 * point_count
+            + 32 * prepared.source_directions.shape[0]
+            + 4096
         )
-    simplex_entity_limits(
-        vertices,
-        triangles,
-        specification.limits,
-        MeshingStageKind.SURFACE_MESHING,
-        cell_kind="triangle",
-    )
+        # Two sorts over the corners (vertex unique, constrained-pair unique),
+        # the source coverage difference, gathers and the entity-limit scan.
+        scope.charge(
+            work=2 * corners * ((max(corners, 2) - 1).bit_length() + 2)
+            + 4 * point_count
+            + 2 * prepared.source_directions.shape[0]
+        )
+        triangles = np.asarray(triangulation.triangles, dtype=np.int64)
+        used, compact = np.unique(triangles, return_inverse=True)
+        vertices = np.asarray(triangulation.points, dtype=np.float64)[used]
+        triangles = compact.reshape(triangles.shape).astype(np.int32)
+        segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
+        constrained, constrained_sources = constrained_edges(
+            triangles, segment_ids, prepared.segment_sources
+        )
+        missing = np.setdiff1d(
+            np.arange(prepared.source_directions.shape[0]), constrained_sources
+        )
+        if missing.size:
+            raise MeshingFailure(
+                MeshingFailureCategory.INVALID_SOURCE,
+                "source.edges must lie within the meshed planar region; got uncovered edges",
+                stage=MeshingStageKind.SURFACE_MESHING.value,
+                entity_ids=tuple(int(value) for value in missing),
+            )
+        simplex_entity_limits(
+            vertices,
+            triangles,
+            specification.limits,
+            MeshingStageKind.SURFACE_MESHING,
+            cell_kind="triangle",
+        )
+        del compact, segment_ids, missing
     with coordinate_phase(scope, specification.limits, budget):
         mesh = canonicalize_cell_mesh(
             cell_mesh_owner.CellMesh.from_triangles(
@@ -201,11 +223,13 @@ def _planar_candidate(
             ),
             budget=budget,
         )
-    edges = np.sort(
-        # ty: ignore[unresolved-attribute]
-        np.asarray(mesh.connectivity.edges, dtype=np.int64),
-        axis=1,
-    )
+    mesh_edges = mesh.connectivity.edges  # ty: ignore[unresolved-attribute]
+    edge_count = mesh_edges.shape[0]
+    with scope.host_workspace() as storage:
+        # Host edge copy and its row sort (16 bytes per edge each).
+        storage.set_bound(32 * edge_count + 4096)
+        scope.charge(work=4 * edge_count)
+        edges = np.sort(np.asarray(mesh_edges, dtype=np.int64), axis=1)
     return _PlanarCandidate(
         used,
         vertices,
@@ -215,6 +239,19 @@ def _planar_candidate(
         mesh,
         edges,
         measure_edge_lengths(vertices, edges, scope=scope),
+    )
+
+
+def _candidate_banks(candidate: _PlanarCandidate, /) -> tuple[np.ndarray, ...]:
+    """Host banks a candidate keeps after its construction phases close."""
+    return (
+        candidate.used,
+        candidate.vertices,
+        candidate.triangles,
+        candidate.constrained,
+        candidate.constrained_sources,
+        candidate.edges,
+        candidate.lengths,
     )
 
 
@@ -246,7 +283,8 @@ def execute_planar_route(
         coordinate_operands is not None and coordinate_operands.capture_polynomials
     )
     budget.capture_signed_determinant_operands = (
-        coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+        coordinate_operands is not None
+        and coordinate_operands.capture_signed_determinants
     )
     budget.capture_affine_areas = (
         coordinate_operands is not None and coordinate_operands.capture_affine_areas
@@ -259,7 +297,9 @@ def execute_planar_route(
         limits = specification.limits
         with scope.host_workspace() as initial_storage:
             with measure_phase(record_phase, "refinement"):
-                triangulation, inserted = triangulate(prepared, started, specification)
+                triangulation, inserted = triangulate(
+                    prepared, started, specification, scope=scope
+                )
                 initial_storage.retain_owner(triangulation)
             with measure_phase(record_phase, "construction"):
                 candidate = _planar_candidate(
@@ -270,7 +310,7 @@ def execute_planar_route(
                     scope=scope,
                     budget=budget,
                 )
-                initial_storage.retain_owner(candidate.lengths)
+                initial_storage.retain_owner(_candidate_banks(candidate))
             repair = median_repair_needed(
                 prepared,
                 specification,
@@ -287,7 +327,9 @@ def execute_planar_route(
                     source, specification, prepared, started, scope
                 )
                 workspace.retain_owner(prepared)
-                triangulation, inserted = triangulate(prepared, started, specification)
+                triangulation, inserted = triangulate(
+                    prepared, started, specification, scope=scope
+                )
                 workspace.retain_owner(triangulation)
             with measure_phase(record_phase, "construction"):
                 candidate = _planar_candidate(
@@ -300,7 +342,7 @@ def execute_planar_route(
                 )
         else:
             workspace.retain_owner(triangulation)
-        workspace.retain_owner(candidate.lengths)
+        workspace.retain_owner(_candidate_banks(candidate))
         evidence = triangulation.evidence
         mesh, used = candidate.mesh, candidate.used
         constrained = candidate.constrained
@@ -328,8 +370,14 @@ def execute_planar_route(
                     authority,
                     budget=budget,
                 )
-            domain = prepared.domain(source)
-            admissible = float(np.max(prepared.source_bounds, initial=0.0))
+            source_rows = prepared.source_points.shape[0] + prepared.source_edges.shape[0]
+            with scope.host_workspace() as storage:
+                # Oriented facet, mask and region-row banks of the domain.
+                storage.set_bound(256 * source_rows + 4096)
+                scope.charge(work=8 * source_rows)
+                domain = prepared.domain(source)
+                admissible = float(np.max(prepared.source_bounds, initial=0.0))
+            workspace.retain_owner(domain)
         with measure_phase(record_phase, "compliance"):
             compliance = planar_compliance(
                 specification,
@@ -347,13 +395,21 @@ def execute_planar_route(
                 (float(np.max(source_deviations, initial=0.0)), admissible),
                 scope=scope,
             )
-            source_requested, source_achieved = source_carrier_evidence(
-                prepared,
-                authority,
-                np.asarray(mesh.vertex_global_ids, dtype=np.int64),
-                carrier_deviations,
-                source_deviations,
-            )
+            vertex_count = mesh.vertex_global_ids.shape[0]
+            carrier_rows = prepared.source_edges.shape[0] + vertex_count
+            with scope.host_workspace() as storage:
+                # Host vertex ids and one requested/achieved key-value record
+                # pair per source edge and carrier vertex.
+                storage.set_bound(8 * vertex_count + 512 * carrier_rows + 4096)
+                scope.charge(work=vertex_count + 4 * carrier_rows)
+                source_requested, source_achieved = source_carrier_evidence(
+                    prepared,
+                    authority,
+                    np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+                    carrier_deviations,
+                    source_deviations,
+                )
+            workspace.retain_owner((source_requested, source_achieved))
             compliance = MeshingComplianceReport(
                 specification.specification_id,
                 issues=compliance.issues,
@@ -416,7 +472,10 @@ def execute_planar_route(
             # any publication verdict earned by the completed scientific checks.
             with coordinate_phase(scope, limits, budget):
                 coordinate_operands.capture(
-                    result.mesh, result.geometry, budget, scope,
+                    result.mesh,
+                    result.geometry,
+                    budget,
+                    scope,
                     coordinate_contract=result.coordinate_contract,
                 )
         return result

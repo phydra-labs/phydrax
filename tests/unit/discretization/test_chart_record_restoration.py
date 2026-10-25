@@ -5,6 +5,7 @@
 
 import math
 from dataclasses import replace
+from typing import NoReturn
 
 from phydrax import config as pxconfig
 
@@ -24,13 +25,16 @@ from phydrax.discretization import (
     SphereGeometryReconstruction,
     UnstructuredFiniteVolumePlan,
 )
-from phydrax.discretization._cell_geometry_transition_types import CellGeometryTransitionError
+from phydrax.discretization._cell_geometry_transition_types import (
+    CellGeometryTransitionError,
+)
 from phydrax.discretization._coordinate_budget import (
-    CoordinateEnclosureBudget, CoordinateEnclosureResourceError,
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
 from phydrax.discretization._sphere_chart_records import SphereChartValidation
-from phydrax.meshing.qualification._surface import prepare_surface_fields
 from phydrax.geometry import MeshCertificateLimits
+from phydrax.meshing.qualification._surface import prepare_surface_fields
 from tests._support.coordinate_references import coordinate_reference_budget
 from tests._support.mapped_cells import curved_surface_chart_fv
 from tests._support.sphere_material import accepted_sphere_material
@@ -251,7 +255,7 @@ def test_corner_only_sphere_reconstruction_does_not_realize_unused_directions(
     domain, source, atlas = accepted_sphere_material(1.0)
     strata = material_owner.sphere_material_strata(domain, source)
 
-    def forbid_direction(*args, **kwargs):
+    def forbid_direction(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("prescribed corner nodes need no preliminary source realization")
 
     monkeypatch.setattr(material_owner, "corner_direction", forbid_direction)
@@ -345,7 +349,7 @@ def test_explicit_restore_uses_actual_request_and_exact_work_boundary(
 
     record = request.getfixturevalue(record_name)
 
-    def forbid_ticket(*args, **kwargs):
+    def forbid_ticket(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("explicit restoration must not open a HostBatchTicket")
 
     monkeypatch.setattr(sphere_owner, "HostBatchTicket", forbid_ticket)
@@ -379,7 +383,8 @@ def test_explicit_reconstruction_restore_refuses_uncertified_status(
     sphere_reconstruction: SphereGeometryReconstruction,
 ) -> None:
     from phydrax.geometry._global_embedding import (
-        EmbeddingCounts, GlobalEmbeddingCertificate,
+        EmbeddingCounts,
+        GlobalEmbeddingCertificate,
     )
     from phydrax.geometry._mesh_certificates import MeshCertificateFinding
 
@@ -584,6 +589,27 @@ def test_sphere_request_proof_reauthenticates_changed_bank_bytes(
             object.__setattr__(bank, "reference_vertices", original)
 
 
+def test_sphere_bank_rehashes_only_replaced_backing_bytes(
+    sphere_chart: PreparedSphereChartDeformation,
+) -> None:
+    bank = sphere_chart.pieces
+    original = bank.reference_vertices
+    with coordinate_reference_budget() as budget:
+        bank.authenticate(budget=budget)
+        start = budget.work_units
+        bank.authenticate(budget=budget)
+        unchanged = budget.work_units - start
+        # Equal values in a new mutable owner are not the digested bytes.
+        object.__setattr__(bank, "reference_vertices", np.array(original, copy=True))
+        try:
+            start = budget.work_units
+            bank.authenticate(budget=budget)
+            rehashed = budget.work_units - start
+        finally:
+            object.__setattr__(bank, "reference_vertices", original)
+    assert 0 < unchanged < rehashed
+
+
 @pytest.mark.parametrize(
     "field_name", ["source_cell_global_id", "target_cell_global_id", "geometry_entity_id", "occurrence_path"]
 )
@@ -651,7 +677,9 @@ def test_sphere_bank_metadata_does_not_repeat_numerical_row_construction(
         ("plan_id", "foreign-plan"),
     ],
 )
-def test_stored_sphere_inverse_controls_bind_the_complete_plan(field_name, foreign):
+def test_stored_sphere_inverse_controls_bind_the_complete_plan(
+    field_name: str, foreign: int | float | str
+) -> None:
     from copy import copy
 
     from phydrax.linalg._small_batched import SmallLinearSolvePlan
@@ -693,7 +721,8 @@ def test_kernel_fan_reuses_actual_map_without_changing_canonical_payload(
     sphere_chart: PreparedSphereChartDeformation,
 ) -> None:
     from phydrax.discretization._sphere_chart_piece_bank import (
-        SphereChartPieceBank, SphereChartPieceBankBuilder,
+        SphereChartPieceBank,
+        SphereChartPieceBankBuilder,
     )
 
     piece = sphere_chart.pieces[0]
@@ -724,7 +753,9 @@ def test_kernel_fan_reuses_actual_map_without_changing_canonical_payload(
 def test_private_fan_map_cannot_cross_builder_ownership(
     sphere_chart: PreparedSphereChartDeformation,
 ) -> None:
-    from phydrax.discretization._sphere_chart_piece_bank import SphereChartPieceBankBuilder
+    from phydrax.discretization._sphere_chart_piece_bank import (
+        SphereChartPieceBankBuilder,
+    )
 
     piece = sphere_chart.pieces[0]
     with coordinate_reference_budget() as budget:

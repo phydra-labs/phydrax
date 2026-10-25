@@ -36,8 +36,6 @@ from phydrax.meshing import (
 from phydrax.meshing._measurements import NativeExecutionImports, NativeExecutionRecord
 from phydrax.meshing._native_preparation import (
     _completed_native_sources,
-    _NativeReceiptSnapshot,
-    _prepare_native_receipt_graph,
     native_preparation_ledger,
     prepare_native_completed_source_issue,
     stage_native_source_publication,
@@ -109,12 +107,35 @@ def test_publication_receipt_storage_is_admitted_before_device_transfer(
     assert caught.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
+@pytest.mark.parametrize("predecessor", ("preparation", "consumer"))
+def test_explicit_publication_owner_cannot_relabel_paid_history(predecessor: str) -> None:
+    source = phx.meshing.certify_cell_mesh(
+        triangle_grid(1, 1), phx.SpatialCoordinateContract.si()
+    )
+    previous = _ended(5, owner=source.result_id)
+    carried = source if predecessor == "preparation" else source.with_execution_evidence(previous)
+    with NativeExecutionScope(_limits(1).native_limits()) as scope:
+        pass
+    with pytest.raises(ValueError):
+        bind_native_execution_result(
+            carried, scope.completed_evidence(), _limits(1), perf_counter(),
+            preparation_evidence=previous if predecessor == "preparation" else None,
+            owner_id="different-generation-request",
+        )
+
+
 @pytest.mark.parametrize("slack", (0, -1), ids=("R", "R-1"))
 def test_completed_request_history_is_provenance_not_a_charge(slack: int) -> None:
     history = _ended(50, 2)
     own = 9
-    # One unit retains the history identity; the 50 historical units are not charged.
-    limits = _limits(own + 1 + slack)
+    # History's 50 units stay historical; fresh authentication and retention
+    # are operations of this request and must be admitted as well.
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as measured:
+        native_preparation_ledger(measured).record_history(measured, history)
+        authentication = (
+            1_000_000 - measured.remaining().remaining_work_units
+        )
+    limits = _limits(own + authentication + slack)
 
     def run() -> NativeExecutionScope:
         with native_volume_execution_budget(limits) as request:
@@ -137,27 +158,56 @@ def test_completed_request_history_is_provenance_not_a_charge(slack: int) -> Non
         request.completed_evidence(), owner_id="next-request", history_evidence=(history,)
     )
     assert record.history_evidence == (history,)
-    assert int(np.asarray(record.total_work_units)) == own + 1
+    assert int(np.asarray(record.total_work_units)) == own + authentication
     assert int(np.asarray(record.total_geometry_queries)) == 0
     assert history.receipt_hex() not in record.imported_preparation_hex()
     interchange = record.to_record()
     assert interchange["phases"][0]["history_evidence"] == [1]
     assert interchange["phases"][1]["receipt_id"] == history.receipt_hex()
-    assert interchange["phases"][0]["total_work_units"] == own + 1
+    assert interchange["phases"][0]["total_work_units"] == own + authentication
+
+
+def test_new_request_preserves_history_discovered_during_restoration() -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    source = phx.meshing.certify_cell_mesh(
+        triangle_grid(1, 1), phx.SpatialCoordinateContract.si()
+    )
+    first = _ended(1_000_001, 2, owner="archive-request")
+    dependency = _ended(1_000_003, 3, owner="restored-source-request")
+
+    def restore(budget: CoordinateEnclosureBudget) -> CellMeshingResult:
+        scope = current_native_execution_scope()
+        if scope is None:
+            raise RuntimeError("Restoration must retain its current request scope.")
+        native_preparation_ledger(scope).record_history(scope, dependency)
+        budget.reserve(7)
+        return source
+
+    restored = execute_native_request(
+        first, _limits(1_000_000), restore,
+        target=lambda value: value, failure_factory=_failure,
+    )
+    receipt = restored.result.execution_evidence
+    assert receipt is not None
+    assert tuple(item.receipt_hex() for item in receipt.history_evidence) == tuple(
+        sorted((first.receipt_hex(), dependency.receipt_hex()))
+    )
+    assert receipt.preparation_evidence is None
+    assert int(np.asarray(receipt.total_work_units)) < 1_000_000
+    assert int(np.asarray(receipt.total_geometry_queries)) == 0
 
 
 def test_history_and_request_charges_remain_disjoint() -> None:
     history = _ended(3)
-    snapshots: list[_NativeReceiptSnapshot] = []
-    _prepare_native_receipt_graph(history, snapshots=snapshots)
-    with NativeExecutionScope(_limits(1 + snapshots[0].work).native_limits()) as request:
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as request:
         ledger = native_preparation_ledger(request)
         ledger.record_history(request, history)
         with pytest.raises(ValueError, match="recorded as history"):
             ledger.import_receipt(request, history)
         with pytest.raises(ValueError, match="recorded as history"):
             ledger.remember_receipt(request, history)
-    with NativeExecutionScope(_limits(100).native_limits()) as request:
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as request:
         ledger = native_preparation_ledger(request)
         ledger.import_receipt(request, history)
         with pytest.raises(ValueError, match="already charged to this request"):
@@ -173,22 +223,24 @@ def test_history_and_request_charges_remain_disjoint() -> None:
 
 def test_history_is_recorded_once_without_replaying_elapsed_time() -> None:
     history = _ended(3)
-    snapshots: list[_NativeReceiptSnapshot] = []
-    _prepare_native_receipt_graph(history, snapshots=snapshots)
-    with NativeExecutionScope(_limits(1 + snapshots[0].work).native_limits()) as request:
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as request:
         ledger = native_preparation_ledger(request)
         ledger.record_history(request, history)
+        after_first = request.remaining().remaining_work_units
         ledger.record_history(request, history)
+        after_second = request.remaining().remaining_work_units
+        graph = ledger._receipt_graphs[id(history)]
+        assert after_first - after_second == graph.authentication_work + 69
     evidence = request.completed_evidence()
     assert evidence.prior_elapsed_seconds == 0.0
-    assert evidence.work_counters.construction_work == 1 + snapshots[0].work
+    assert evidence.work_counters.construction_work == 1_000_000 - after_second
 
 
 @pytest.mark.parametrize("nested", (False, True), ids=("root", "after-consumer"))
 def test_explicit_import_of_remembered_phase_keeps_identity_without_recharge(
     nested: bool,
 ) -> None:
-    with NativeExecutionScope(_limits(100, 10).native_limits()) as root:
+    with NativeExecutionScope(_limits(1_000_000, 10).native_limits()) as root:
         with NativeExecutionScope(_limits(50, 5).native_limits()) as preparation:
             with preparation.batch(7, queries_upper=2) as ticket:
                 ticket.consume(7, geometry_queries=2)
@@ -197,14 +249,20 @@ def test_explicit_import_of_remembered_phase_keeps_identity_without_recharge(
         )
         ledger = native_preparation_ledger(root)
         ledger.remember_receipt(root, prior)
+        ledger.authenticate_receipt(root, prior)
+        graph = ledger._receipt_graphs[id(prior)]
         assert ledger.imported_receipt_ids(root) == ()
 
         def import_twice(scope: NativeExecutionScope) -> NativeExecutionImports:
             before = scope.remaining()
             ledger.import_receipt(scope, prior)
+            middle = scope.remaining()
             ledger.import_receipt(scope, prior)
             after = scope.remaining()
-            assert after.remaining_work_units == before.remaining_work_units
+            first_cost = before.remaining_work_units - middle.remaining_work_units
+            second_cost = middle.remaining_work_units - after.remaining_work_units
+            assert first_cost == second_cost
+            assert first_cost > graph.authentication_work
             assert after.remaining_geometry_queries == before.remaining_geometry_queries
             assert after.remaining_managed_bytes == before.remaining_managed_bytes
             assert after.remaining_seconds <= before.remaining_seconds
@@ -213,7 +271,7 @@ def test_explicit_import_of_remembered_phase_keeps_identity_without_recharge(
             return imported
 
         if nested:
-            with NativeExecutionScope(_limits(50, 5).native_limits()) as consumer:
+            with NativeExecutionScope(_limits(1_000_000, 5).native_limits()) as consumer:
                 imported = import_twice(consumer)
             evidence = imported.evidence()
         else:
@@ -228,7 +286,14 @@ def test_explicit_import_of_remembered_phase_keeps_identity_without_recharge(
     assert current.preparation_evidence is prior
     assert prior.receipt_hex() in current.imported_preparation_hex()
     assert root.completed_evidence().prior_elapsed_seconds == 0.0
-    assert root.completed_evidence().work_counters.construction_work == 8
+    assert int(np.asarray(current.source_preparation_work_units)) == 7
+    assert int(np.asarray(current.total_work_units)) == (
+        int(np.asarray(current.work_counters.construction_work)) + 7
+    )
+    if not nested:
+        assert int(np.asarray(current.total_work_units)) == (
+            root.completed_evidence().work_counters.construction_work
+        )
     assert root.completed_evidence().work_counters.source_queries == 2
 
 
@@ -236,7 +301,7 @@ def test_remembered_import_refuses_changed_owner_and_foreign_root() -> None:
     from copy import deepcopy
 
     prior = _ended(3)
-    with NativeExecutionScope(_limits(100).native_limits()) as first:
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as first:
         ledger = native_preparation_ledger(first)
         ledger.remember_receipt(first, prior)
         changed = deepcopy(prior)
@@ -301,26 +366,29 @@ def test_oversize_request_import_is_a_typed_resource_refusal(targeted: bool) -> 
     assert "child must fit the parent estimate" not in str(caught.value)
     evidence = request.completed_evidence()
     assert evidence.work_counters.work_refusals >= 1
-    assert evidence.externally_charged_work == 0
+    assert evidence.externally_charged_work == 2
 
 
 def test_preparation_is_charged_once_per_request_and_again_by_each_request() -> None:
     preparation = _ended(7)
     consumed = []
     for _ in range(2):
-        with NativeExecutionScope(_limits(100).native_limits()) as request:
+        with NativeExecutionScope(_limits(1_000_000).native_limits()) as request:
             ledger = native_preparation_ledger(request)
             ledger.import_receipt(request, preparation)
             ledger.import_receipt(request, preparation)
-            consumed.append(100 - request.remaining().remaining_work_units)
-    # Each complete request charges its own preparation once (+1 identity unit);
-    # an earlier request having used it grants no exemption.
-    assert consumed == [8, 8]
+            imports = NativeExecutionImports(request, preparation=preparation)
+            consumed.append(1_000_000 - request.remaining().remaining_work_units)
+        assert imports.evidence().work_counters.construction_work == consumed[-1] - 7
+    # Both requests independently re-earn metadata; only the seven preparation
+    # units are removed from each importing phase's raw counters.
+    assert consumed[0] == consumed[1]
+    assert consumed[0] > 8
 
 
 @pytest.mark.parametrize("ownership", ("live", "ended"))
 def test_live_and_ended_preparation_share_the_request_allowance(ownership: str) -> None:
-    limits = _limits(20)
+    limits = _limits(1_000_000)
     ended = _ended(6, owner="request")
     with NativeExecutionScope(limits.native_limits()) as request:
         ledger = native_preparation_ledger(request)
@@ -344,11 +412,11 @@ def test_live_and_ended_preparation_share_the_request_allowance(ownership: str) 
         owner_id="request",
         imports=imports,
     )
-    # Raw counters are this phase's own work (4 + 1 identity unit); the chained
-    # preparation supplies the remaining 6 exactly once.
-    assert int(np.asarray(record.work_counters.construction_work)) == 5
-    assert int(np.asarray(record.total_work_units)) == 11
-    assert int(request.completed_evidence().work_counters.construction_work) == 11
+    # Authentication/retention belong to this phase; the represented six units
+    # are supplied by the preparation exactly once.
+    total = int(request.completed_evidence().work_counters.construction_work)
+    assert int(np.asarray(record.work_counters.construction_work)) == total - 6
+    assert int(np.asarray(record.total_work_units)) == total
 
 
 def _source_result(work: int, *, mutable: bool = False) -> CellMeshingResult:
@@ -555,64 +623,49 @@ def test_each_epoch_request_keeps_its_original_allowance(slack: int) -> None:
     assert len({root.receipt_hex() for root in roots if root is not None}) == 4
 
 
-@pytest.mark.parametrize("helper", ("consumer", "request"))
-@pytest.mark.parametrize("observe", (False, True), ids=("legacy-default", "observed"))
+@pytest.mark.parametrize("observe", (False, True), ids=("unobserved", "observed"))
 def test_native_helper_observation_opts_into_actual_scope_before_admissions(
-    helper: str, observe: bool, monkeypatch: pytest.MonkeyPatch,
+    observe: bool,
 ) -> None:
+    from phydrax._meshcore import load_meshcore
+
     source = _source_result(2)
     limits = MeshingLimits(maximum_wall_seconds=120.0)
-    observed = []
-    original = NativeExecutionScope.observe_managed_admission
-
-    def enable(scope: NativeExecutionScope) -> None:
-        assert not scope._managed_admission_started
-        observed.append(scope)
-        original(scope)
-
-    monkeypatch.setattr(NativeExecutionScope, "observe_managed_admission", enable)
-    active = []
 
     def consume(
         budget: phx.discretization.CoordinateEnclosureBudget,
     ) -> CellMeshingResult:
-        scope = current_native_execution_scope()
-        assert scope is not None
-        assert scope._managed_observation_enabled is observe
-        active.append(scope)
-        budget.reserve(1, 128)
-        if helper == "request":
-            return source.with_execution_evidence(_ended(1, owner="new-request"))
+        budget.reserve(1, 1024)
+        first = np.asarray(((0.0, 0.0),), dtype=np.float64)
+        second = np.asarray(((1.0, 0.0),), dtype=np.float64)
+        third = np.asarray(((0.0, 1.0),), dtype=np.float64)
+        signs = np.empty((1,), dtype=np.int8)
+        status = load_meshcore()["phx_mc_orient2d"](
+            1, first.ctypes.data, second.ctypes.data, third.ctypes.data, signs.ctypes.data
+        )
+        assert status == MeshcoreStatus.OK
+        np.testing.assert_array_equal(signs, np.asarray((1,), dtype=np.int8))
         return source
 
-    options = {"observe_managed_admission": True} if observe else {}
-    if helper == "request":
-        continued = execute_native_request(
-            source, limits, consume, target=lambda value: value,
-            failure_factory=_failure, **options,
-        )
-        receipt = continued.result.execution_evidence
-        assert receipt is not None
-        assert receipt.history_evidence == (
-            source.execution_evidence,
-        )
-    else:
-        continued = execute_native_consumer(
-            source, limits, consume, failure_factory=_failure, **options,
-        )
-        receipt = continued.result.execution_evidence
-        assert receipt is not None
-        assert receipt.preparation_evidence is (
-            source.execution_evidence
-        )
-    assert observed == (active if observe else [])
-    evidence = active[0].completed_evidence()
-    recorded = receipt.native_evidence()
-    assert recorded.managed_admission_peak_bytes_upper == (
-        evidence.managed_admission_peak_bytes_upper
+    continued = execute_native_request(
+        source,
+        limits,
+        consume,
+        target=lambda value: value,
+        failure_factory=_failure,
+        observe_managed_admission=observe,
     )
-    if not observe:
+    receipt = continued.result.execution_evidence
+    assert receipt is not None
+    assert receipt.history_evidence == (source.execution_evidence,)
+    recorded = receipt.native_evidence()
+    assert recorded.status is MeshcoreStatus.OK
+    if observe:
+        assert recorded.managed_admission_peak_bytes_upper is not None
+        assert recorded.managed_admission_peak_bytes_upper >= 1024
+    else:
         assert recorded.managed_admission_peak_bytes_upper is None
+    assert current_native_execution_scope() is None
 
 
 def _consume(work: int) -> None:
@@ -630,7 +683,7 @@ def test_history_records_restore_their_complete_causal_graph(tmp_path: Path) -> 
 
     history = _ended(3)
     preparation = _ended(2, owner="request")
-    with NativeExecutionScope(_limits(100).native_limits()) as request:
+    with NativeExecutionScope(_limits(1_000_000).native_limits()) as request:
         ledger = native_preparation_ledger(request)
         ledger.record_history(request, history)
         ledger.import_receipt(request, preparation)
@@ -792,3 +845,139 @@ def test_private_polynomial_operands_reuse_only_paid_current_source(
             )
             with pytest.raises(ValueError, match="already be paid"):
                 operands.require(mesh, geometry, receipt, budget)
+
+
+def test_prepaid_preparation_clock_and_import_keep_original_work_boundary() -> None:
+    """Clock tightening precedes authentication; preparation is still paid once."""
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    prior = _ended(50, 2)
+    original_id = prior.receipt_hex()
+    seconds = float(np.asarray(prior.total_elapsed_seconds))
+    full = _limits(1_000_000, 2).native_limits()
+    idle = 0.25
+
+    def import_prior(scope: NativeExecutionScope) -> NativeExecutionImports:
+        ledger = native_preparation_ledger(scope)
+        expiry = scope.operation_started + full.maximum_seconds - seconds - idle
+        ledger.prepay_receipt_clock(scope, prior, expires_at=expiry)
+        ledger.import_receipt(scope, prior)
+        return NativeExecutionImports(scope, preparation=prior)
+
+    with NativeExecutionScope(full) as measured:
+        imports = import_prior(measured)
+        required = full.maximum_work_units - measured.remaining().remaining_work_units
+    assert measured.completed_evidence().prior_elapsed_seconds == pytest.approx(seconds + idle)
+    assert imports.evidence().prior_elapsed_seconds == pytest.approx(idle)
+    assert imports.evidence().work_counters.source_queries == 0
+    assert imports.evidence().work_counters.construction_work == required - 50
+
+    for shortfall in (0, 1):
+        scope = NativeExecutionScope(replace(full, maximum_work_units=required - shortfall))
+        expectation = pytest.raises(MeshcoreError) if shortfall else nullcontext()
+        with expectation as caught, scope:
+            ledger = native_preparation_ledger(scope)
+            imported = import_prior(scope)
+            assert scope.remaining().remaining_work_units == 0
+            assert scope.remaining().remaining_geometry_queries == 0
+        if shortfall:
+            assert caught is not None
+            assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+            assert ledger._storage == []
+            assert ledger._receipt_graphs == {}
+        else:
+            assert imported.evidence().work_counters.construction_work == required - 50
+            assert imported.evidence().prior_elapsed_seconds == pytest.approx(idle)
+        assert prior.receipt_hex() == original_id
+
+
+def test_receipt_authentication_refuses_before_numerical_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior = _ended(3)
+    attempted = False
+
+    def forbidden(self: NativeExecutionRecord) -> NoReturn:
+        nonlocal attempted
+        attempted = True
+        raise AssertionError("Unadmitted receipt numerics must not be inspected.")
+
+    monkeypatch.setattr(NativeExecutionRecord, "_require_phase_valid", forbidden)
+    with (
+        pytest.raises(MeshcoreError) as caught,
+        NativeExecutionScope(_limits(2).native_limits()) as scope,
+    ):
+        prior.require_valid_in_scope(scope)
+    assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    refusal = scope.completed_evidence()
+    assert refusal.memory_counters.live_bytes == 0
+    assert refusal.host_storage_live_bytes_upper == 0
+    assert not attempted
+
+
+@pytest.mark.parametrize("shortfall", (0, 1), ids=("R", "R-1"))
+def test_receipt_authentication_storage_exact_boundary(shortfall: int) -> None:
+    """Cold receipt validation admits exactly its declared scratch and refuses R-1."""
+    from contextlib import nullcontext
+
+    from phydrax._meshcore import NativeHostStorageWorkspace
+    from phydrax.meshing._measurements import native_receipt_validation_bytes_upper
+
+    prior = _ended(3)
+    limits = _limits(1_000_000).native_limits()
+    with NativeExecutionScope(limits) as measured:
+        prior.require_valid_in_scope(measured)
+    required = measured.completed_evidence().host_storage_peak_bytes_upper
+    assert required == native_receipt_validation_bytes_upper(
+        1, 3, 0, len("completed-request")
+    )
+    # A one-phase receipt fits the registered distributed 1 MiB scratch.
+    assert required < 1024**2 // 4
+    expectation = pytest.raises(MeshcoreError) if shortfall else nullcontext()
+    with expectation as caught, NativeExecutionScope(limits) as scope:
+        with NativeHostStorageWorkspace(scope) as ballast:
+            ballast.reserve_empty()
+            # The validation workspace's own empty token is native-managed.
+            before = scope.remaining().remaining_managed_bytes
+            with NativeHostStorageWorkspace(scope) as token:
+                token.reserve_empty()
+                token_bytes = before - scope.remaining().remaining_managed_bytes
+            available = scope.remaining().remaining_managed_bytes
+            ballast.set_bound(available - required - token_bytes + shortfall)
+            prior.require_valid_in_scope(scope)
+    if shortfall:
+        assert caught is not None
+        assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+
+
+@pytest.mark.parametrize("history_count", (0, 8, 32))
+def test_receipt_authentication_storage_bounds_measured_host_peak(
+    history_count: int,
+) -> None:
+    """The admitted scratch is an upper bound on the actual traced host peak."""
+    import gc
+    import tracemalloc
+
+    imported = [_ended(5 + index, owner="imported-phase") for index in range(64)]
+    history = tuple(_ended(200 + index) for index in range(history_count))
+    with NativeExecutionScope(_limits(10_000_000, 10).native_limits()) as scope:
+        ledger = native_preparation_ledger(scope)
+        for record in imported:
+            ledger.import_receipt(scope, record)
+        imports = NativeExecutionImports(scope)
+    root = NativeExecutionRecord(
+        imports.evidence(), owner_id="root-phase", imports=imports,
+        history_evidence=history,
+    )
+    assert len(root.imported_preparation_hex()) == 64
+    with NativeExecutionScope(_limits(10_000_000).native_limits()) as receiving:
+        gc.collect()
+        tracemalloc.start()
+        try:
+            root.require_valid_in_scope(receiving)
+            _, traced_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    admitted = receiving.completed_evidence().host_storage_peak_bytes_upper
+    assert traced_peak <= admitted

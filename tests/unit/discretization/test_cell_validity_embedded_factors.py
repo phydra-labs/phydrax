@@ -4,17 +4,38 @@
 
 """Chart-factored embedded Gram decisions agree with the polynomial route."""
 
+from collections.abc import Callable
 from fractions import Fraction
 from itertools import product
+from typing import Concatenate
 
 import numpy as np
 import pytest
 
-from phydrax.discretization import _cell_geometry_validity as validity
-from phydrax.discretization import PolynomialComposedCellGeometryElement
-from phydrax.discretization._cell_geometry import coordinate_lagrange_element
+from phydrax.discretization import (
+    _cell_geometry_validity as validity,
+    PolynomialComposedCellGeometryElement,
+)
+from phydrax.discretization._cell_geometry import (
+    coordinate_lagrange_element,
+    ScalarCoordinateElement,
+)
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import expression_evaluate
 from tests._support.coordinate_references import coordinate_reference_budget
+
+
+def _observe_element[**P, R](
+    function: Callable[Concatenate[ScalarCoordinateElement, P], R],
+    observe: Callable[[ScalarCoordinateElement], None],
+) -> Callable[Concatenate[ScalarCoordinateElement, P], R]:
+    def observed(
+        actual: ScalarCoordinateElement, /, *args: P.args, **kwargs: P.kwargs
+    ) -> R:
+        observe(actual)
+        return function(actual, *args, **kwargs)
+
+    return observed
 
 
 # Dual-quad corner charts of one triangle (corner, edge midpoint, centroid,
@@ -45,7 +66,7 @@ def _curved_root_bank() -> tuple[tuple[Fraction, ...], ...]:
 
 
 def _dual_quads(
-    triangle: tuple[tuple[Fraction, Fraction], ...], budget
+    triangle: tuple[tuple[Fraction, Fraction], ...], budget: CoordinateEnclosureBudget
 ) -> tuple[PolynomialComposedCellGeometryElement, ...]:
     root = coordinate_lagrange_element("quadrilateral", 2)
     source = PolynomialComposedCellGeometryElement(
@@ -268,13 +289,14 @@ def test_box_factor_operands_bound_the_independent_expanded_child(
     with coordinate_reference_budget() as budget:
         factors = validity._polynomial_chart_factors(element, 3, budget, embedded=False)
         assert factors is not None
-        original_jacobian = validity._polynomial_jacobian
-
-        def root_only(actual, *args, **kwargs):
+        def reject_child(actual: ScalarCoordinateElement) -> None:
             assert actual is not element, "A conclusive root bound expanded the child again"
-            return original_jacobian(actual, *args, **kwargs)
 
-        monkeypatch.setattr(validity, "_polynomial_jacobian", root_only)
+        monkeypatch.setattr(
+            validity,
+            "_polynomial_jacobian",
+            _observe_element(validity._polynomial_jacobian, reject_child),
+        )
         result = validity._certify_factored_cell(
             factors, element, bank, reference, 3, policy, budget
         )
@@ -316,15 +338,17 @@ def test_loose_root_scale_keeps_the_original_near_floor_child_path(
         )
         assert magnitude is not None
         assert factors.lower ** 2 <= validity._squared_threshold(magnitude, 3, False, policy)
-        original = validity._polynomial_jacobian
-        children = []
+        children: list[ScalarCoordinateElement] = []
 
-        def capture(actual, *args, **kwargs):
+        def capture(actual: ScalarCoordinateElement) -> None:
             if actual is element:
                 children.append(actual)
-            return original(actual, *args, **kwargs)
 
-        monkeypatch.setattr(validity, "_polynomial_jacobian", capture)
+        monkeypatch.setattr(
+            validity,
+            "_polynomial_jacobian",
+            _observe_element(validity._polynomial_jacobian, capture),
+        )
         result = validity._certify_factored_cell(
             factors, element, bank, reference, 3, policy, budget
         )

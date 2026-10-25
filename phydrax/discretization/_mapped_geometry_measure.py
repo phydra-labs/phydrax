@@ -3930,6 +3930,7 @@ def _certified_cell_measures(
     controls = _CellMeasureControls(
         absolute_per_cell, relative, maximum_subcells, maximum_binomial_terms, work
     )
+    from .._geometry_predicates import exact_fraction_rows_key
     from ._coordinate_operands import _signed_determinant_operand_batch
 
     with (
@@ -3958,46 +3959,12 @@ def _certified_cell_measures(
                 or type(local) is not tuple
             ):
                 return None
-            payload_size = 8
-            for row in local:
-                ledger.reserve(1)
-                if type(row) is not tuple:
-                    return None
-                payload_size += 8
-                for value in row:
-                    ledger.reserve(1)
-                    if (
-                        type(value) is not Fraction
-                        or type(value.numerator) is not int
-                        or type(value.denominator) is not int
-                        or value.denominator <= 0
-                    ):
-                        return None
-                    payload_size += (
-                        16
-                        + max(1, (value.numerator.bit_length() + 8) // 8)
-                        + max(1, (value.denominator.bit_length() + 7) // 8)
-                    )
-            # Admit the growing bytearray, largest transient integer encoding,
-            # final immutable bytes, namespace and key before allocating them.
-            # This lives alongside the ledger's entire retained cache union.
             identity = admission.identity
-            ledger.reserve(0, 1024 + 3 * payload_size + 4 * len(identity[0]))
-            payload = bytearray()
-            payload.extend(len(local).to_bytes(8, "big"))
-            for row in local:
-                ledger.reserve(1)
-                payload.extend(len(row).to_bytes(8, "big"))
-                for value in row:
-                    ledger.reserve(1)
-                    assert isinstance(value, Fraction)
-                    numerator, denominator = value.numerator, value.denominator
-                    size = max(1, (numerator.bit_length() + 8) // 8)
-                    payload.extend(size.to_bytes(8, "big"))
-                    payload.extend(numerator.to_bytes(size, "big", signed=True))
-                    size = max(1, (denominator.bit_length() + 7) // 8)
-                    payload.extend(size.to_bytes(8, "big"))
-                    payload.extend(denominator.to_bytes(size, "big"))
+            payload = exact_fraction_rows_key(
+                local, budget=ledger, extra_storage=4 * len(identity[0]),
+            )
+            if payload is None:
+                return None
             # Complete current values, not digests or mutable Fraction owners,
             # are numerical authority. The empty bank avoids retaining the
             # per-cell coefficient graph and separates this key's namespace.
@@ -4005,7 +3972,7 @@ def _certified_cell_measures(
                 "affine-rational-measure:" + identity[0],
                 identity[1],
                 (),
-                bytes(payload),
+                payload,
             )
 
         for element, local in cells:

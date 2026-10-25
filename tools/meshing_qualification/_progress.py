@@ -1,9 +1,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Host-only, incremental family evidence; never a scientific restart checkpoint."""
+"""Host-only incremental qualification evidence; never a scientific restart checkpoint."""
 from __future__ import annotations
 
 import json
 import os
+import sys
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -19,24 +20,25 @@ from phydrax._meshcore import current_native_execution_scope
 from phydrax.meshing import CellMeshingResult, NativeMeshingPhaseMeasurement
 from tools.meshing_qualification._runtime import (
     _runtime_identity,
+    ColdWorkerReport,
     Deadline,
     notify_stage,
     observe_stages,
 )
 
 
-def read_family_progress(path: Path) -> dict[str, Any]:
+def read_progress(path: Path) -> dict[str, Any]:
     """Read the last atomically committed snapshot in a fresh interpreter."""
     with path.open(encoding="utf-8") as stream:
         value = json.load(stream)
-    if not isinstance(value, dict) or value.get("schema") != "family-progress-v1":
-        raise ValueError("Family progress must use the family-progress-v1 schema")
+    if not isinstance(value, dict) or value.get("kind") != "meshing-qualification-progress":
+        raise ValueError("Progress must identify meshing qualification evidence")
     events = value.get("events")
     if not isinstance(events, list) or any(
         not isinstance(event, dict) or event.get("sequence") != index
         for index, event in enumerate(events)
     ):
-        raise ValueError("Family progress must contain a contiguous event prefix")
+        raise ValueError("Qualification progress must contain a contiguous event prefix")
     return value
 
 
@@ -103,7 +105,7 @@ def _published_result(value: object) -> CellMeshingResult | None:
     return None
 
 
-class FamilyProgress:
+class QualificationProgress:
     """Queue immutable metadata without filesystem waits on the science thread.
 
     The writer fsyncs and atomically replaces each snapshot. Abrupt termination
@@ -118,9 +120,10 @@ class FamilyProgress:
         self._cohort: dict[str, Any] | None = None
         self._deadline: float | None = None
         self._published_identity: dict[str, str] | None = None
-        self._thread = Thread(target=self._write, name="family-progress", daemon=True)
+        self._thread = Thread(target=self._write, name="qualification-progress", daemon=True)
         self._initial = json.dumps({
-            "schema": "family-progress-v1", "pid": os.getpid(),
+            "kind": "meshing-qualification-progress", "pid": os.getpid(),
+            "command": [sys.executable, *sys.argv],
             "controls": controls, "events": [], "first_failure": None,
             "scientific_restart_checkpoint": False,
         }).encode()
@@ -130,7 +133,7 @@ class FamilyProgress:
         state = json.loads(self._initial)
         try:
             if self.path.exists():
-                raise FileExistsError(f"Family progress prefix already exists: {self.path}")
+                raise FileExistsError(f"Qualification progress already exists: {self.path}")
             while True:
                 payload = self._queue.get()
                 try:
@@ -237,7 +240,7 @@ class FamilyProgress:
         self._thread.join()
 
 
-def record_family_native_phase(
+def record_native_phase(
     phases: list[NativeMeshingPhaseMeasurement], record: dict[str, Any],
     measurement: NativeMeshingPhaseMeasurement,
 ) -> None:
@@ -245,22 +248,32 @@ def record_family_native_phase(
     notify_stage(record, measurement.phase, "native_interval_exit", None, measurement)
 
 
-def run_with_family_progress[T](
+def evidence_path(kind: str, *, process_id: int | None = None) -> Path | None:
+    """Give each process a distinct artifact under the caller's durable run prefix."""
+    prefix = os.environ.get("PHYDRAX_MESHING_EVIDENCE_PREFIX")
+    if prefix is None:
+        return None
+    path = Path(f"{prefix}.process-{os.getpid() if process_id is None else process_id}-{kind}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def run_with_progress[T](
     controls: dict[str, Any], call: Callable[[], T], *, cold: bool = False,
 ) -> T:
-    prefix = os.environ.get("FAMILY_COMPACT_PROFILE_PREFIX")
-    if prefix is None:
+    path = evidence_path("cold-progress.json" if cold else "progress.json")
+    if path is None:
         return call()
-    suffix = f".cold-{os.getpid()}" if cold else ""
-    progress = FamilyProgress(Path(prefix + suffix + "-progress.json"), controls)
+    progress = QualificationProgress(path, controls)
     record: dict[str, Any] = {}
     failure: BaseException | None = None
     try:
         with observe_stages(progress):
             value = call()
-            candidate = value if isinstance(value, dict) else getattr(value, "record", None)
-            if isinstance(candidate, dict):
-                record = candidate
+            if isinstance(value, dict):
+                record = value
+            elif isinstance(value, ColdWorkerReport):
+                record = value.record
             notify_stage(record, "scenario", "scenario_exit", None, value)
             return value
     except BaseException as error:
@@ -275,4 +288,4 @@ def run_with_family_progress[T](
         if record.get("reporting_failures"):
             record["reporting_status"] = "failed"
             if failure is not None:
-                failure.add_note(f"Family progress reporting failed: {record['reporting_failures']}")
+                failure.add_note(f"Qualification progress reporting failed: {record['reporting_failures']}")

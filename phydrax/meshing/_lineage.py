@@ -15,6 +15,7 @@ from jax.core import Tracer
 
 import phydrax.discretization._cell_geometry_transition_types as transition_types_owner
 import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.geometry._volume_material_map as volume_material_map_owner
 import phydrax.meshing._result as result_owner
 
 from .._fingerprint import (
@@ -24,8 +25,12 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_budget import (
+    coordinate_retention_preparation_bounds,
+    CoordinateEnclosureBudget,
+)
 from ..typing import checked, parse
 from . import _lineage_records as lineage_records_owner
 from ._organization_records import MeshAttribute, MeshLabel, MeshPatch, MeshZone
@@ -169,14 +174,18 @@ class CellMeshTransition(StrictModule, NonTrainableState):
     reference-correspondence constructor on a replay ledger sized by
     ``reconstruction_preparation_bounds`` and authenticates every stored field
     against the retained target, lineage, and geometry transition.
+    Mapped transitions retain ``source_geometry`` and authenticate the complete
+    current geometry content at both ends of their cavity-local material chain.
     """
 
     source_mesh_id: str = eqx.field(static=True)
     source_topology_id: str = eqx.field(static=True)
+    source_geometry: CellGeometrySpec | None
     target: result_owner.CellMeshingResult
     lineage: lineage_records_owner.MeshLineage
     vertex_stencil: lineage_records_owner.VertexInterpolationStencil | None
     geometry_transition: transition_types_owner.CellGeometryTransition | None
+    volume_material_chain: volume_material_map_owner.VolumeMaterialChain | None
     parent_cell_ids: Array | None
     parent_reference_vertices: Array | None
     parent_reference_homogeneous: Array | None
@@ -201,6 +210,8 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         geometry_transition: transition_types_owner.CellGeometryTransition | None = None,
         parents: transition_types_owner.NestedReferenceWitnesses | None = None,
         coarsening: transition_types_owner.NestedReferenceWitnesses | None = None,
+        volume_material_chain: volume_material_map_owner.VolumeMaterialChain | None = None,
+        source_geometry: CellGeometrySpec | None = None,
         budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         mesh_id = str(source_mesh_id).strip()
@@ -246,6 +257,32 @@ class CellMeshTransition(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"CellMeshTransition.geometry_transition must match source topology and target map; got target geometry ID {geometry_transition.target_geometry_id!r}"
                 )
+        if volume_material_chain is not None:
+            from ..geometry._source_fidelity import ImplicitProjectionBoundarySource
+
+            query = None if target.certification is None else target.certification.request.source
+            if (
+                not isinstance(query, ImplicitProjectionBoundarySource)
+                or query.discovery is None
+                or volume_material_chain.original_source_id != query.source_id
+                or volume_material_chain.discovery_id != query.discovery.query_id
+            ):
+                raise ValueError(
+                    "CellMeshTransition.volume_material_chain must retain the target's actual original implicit source and discovery"
+                )
+            query.discovery.require_bound(query.profile.geometry, budget=budget)
+            if (
+                source_geometry is None
+                or volume_material_chain.source_mesh.mesh_id != mesh_id
+                or volume_material_chain.source_mesh.topology_id != topology_id
+            ):
+                raise ValueError(
+                    "CellMeshTransition.volume_material_chain must bind both actual endpoint meshes and geometry"
+                )
+            volume_material_chain.require_bound(
+                volume_material_chain.source_mesh, source_geometry,
+                target.mesh, target.geometry,
+            )
         if (
             vertex_stencil is not None
             and parents is not None
@@ -265,10 +302,12 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         )
         self.source_mesh_id = mesh_id
         self.source_topology_id = topology_id
+        self.source_geometry = source_geometry
         self.target = target
         self.lineage = lineage
         self.vertex_stencil = vertex_stencil
         self.geometry_transition = geometry_transition
+        self.volume_material_chain = volume_material_chain
         self.parent_cell_ids = (
             None if witnesses is None else jax.device_put(np.asarray(witnesses[0]))
         )
@@ -315,6 +354,10 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             else [array_tree_fingerprint(value) for value in coarsened[:3]],
             "transition_kind": transition_kind.value,
         }
+        if source_geometry is not None:
+            payload["source_geometry"] = array_tree_fingerprint(source_geometry)
+        if volume_material_chain is not None:
+            payload["volume_material_chain"] = volume_material_chain.chain_id
         # Exact banks bind only when retained, so rounded transitions keep their IDs.
         if witnesses is not None and witnesses[2] is not None:
             payload["parent_homogeneous"] = array_tree_fingerprint(witnesses[2])
@@ -342,7 +385,31 @@ class CellMeshTransition(StrictModule, NonTrainableState):
                 )
                 work += bank_work
                 storage += bank_bytes
-        return work, storage, 0
+        queries = 0
+        if self.volume_material_chain is not None:
+            from ..geometry._source_fidelity import ImplicitProjectionBoundarySource
+
+            # Construction re-earns the original discovery's leaf classes:
+            # every leaf box query, the fresh leaf banks and the retained owner.
+            certificate = self.target.certification
+            query = None if certificate is None else certificate.request.source
+            if isinstance(query, ImplicitProjectionBoundarySource) and query.discovery is not None:
+                discovery = query.discovery
+                queries += discovery.reconstruction_query_count
+                # The owner's own retention pricing of ``retain_basis``.
+                retention_work, retention_bytes = coordinate_retention_preparation_bounds(
+                    (discovery,)
+                )
+                work += retention_work
+                storage += retention_bytes + 4 * sum(
+                    int(np.asarray(bank).nbytes)
+                    for bank in (
+                        discovery.leaf_lower, discovery.leaf_upper,
+                        discovery.leaf_value_lower, discovery.leaf_value_upper,
+                        discovery.leaf_code_starts,
+                    )
+                )
+        return work, storage, queries
 
     @classmethod
     @checked
@@ -443,6 +510,8 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             geometry_transition=value.geometry_transition,
             parents=parents,
             coarsening=coarsening,
+            volume_material_chain=value.volume_material_chain,
+            source_geometry=value.source_geometry,
             budget=budget,
         )
         for member in fields(value):

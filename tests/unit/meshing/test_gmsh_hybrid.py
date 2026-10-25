@@ -345,7 +345,7 @@ def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generati
 def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
-    import gmsh
+    gmsh = pytest.importorskip("gmsh")
 
     provider = phx.meshing.GmshProvider()
     source, source_face, target_face, swept, core = _slab_fixture(

@@ -18,6 +18,7 @@ from phydrax.discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     CellGeometrySpec,
     coordinate_lagrange_element,
+    coordinate_tabulation,
     CoordinateTabulator,
     LayerColumnCellGeometryElement,
     PolynomialComposedCellGeometryElement,
@@ -127,6 +128,27 @@ def test_coordinate_owner_reconstruction_preserves_fields_and_dynamic_leaves(
     validate_meshing_source_closure(restored)
 
 
+def test_rational_composed_coordinate_tabulation_preserves_chart_law() -> None:
+    element = RationalComposedCellGeometryElement(
+        coordinate_lagrange_element("tetrahedron", 1),
+        coordinate_lagrange_element("pyramid", 1),
+        np.asarray(
+            ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1)),
+            dtype=np.int64,
+        ),
+        np.asarray(
+            ((1, 1, 1), (2, 1, 1), (2, 2, 1), (1, 2, 1), (1, 1, 1)),
+            dtype=np.int64,
+        ),
+    )
+    points = np.asarray(((0.2, 0.3, 0.25), (0.5, 0.5, 0.4)), dtype=np.float64)
+    canonical = coordinate_tabulation(element).tabulate(points)
+    retained = element.tabulate(points)
+
+    np.testing.assert_array_equal(canonical[0], retained[0])
+    np.testing.assert_array_equal(canonical[1], retained[1])
+
+
 def _corrupt_stored_source(
     stored_source: RestorableCoordinateSource,
 ) -> RestorableCoordinateSource:
@@ -211,9 +233,8 @@ def test_host_snapshot_refusal_retains_preparation_measurement() -> None:
         assert refusal.value.resource == "polynomial_storage"
         evidence = refusal.value.phase_evidence
         assert evidence is not None
-        # Owner profiling earns work before storage admission. A refused
-        # allocation has a requested-byte quantity, not an allocated-byte peak.
-        assert evidence.work_units == budget.work_units > 0
+        # Refusal reports completed work, not work that failed admission.
+        assert evidence.work_units == budget.work_units
         assert evidence.native_charged_work_units == budget.native_charged_work_units == 0
         assert evidence.peak_bytes_upper == budget.peak_bytes_upper == 0
         assert refusal.value.completed == 0

@@ -973,8 +973,9 @@ def _residual_interval_bounds(
                 item for item in curve_segments if item.lower <= midpoint <= item.upper
             )
         )
-        uv_box = parameter_piece.evaluator.bounding_box(
-            start, end, preparations=preparations, budget=budget
+        parameter_curve = parameter_piece.evaluator
+        uv_box = type(parameter_curve).bounding_box(
+            parameter_curve, start, end, preparations=preparations, budget=budget
         )
         possible = [
             patch

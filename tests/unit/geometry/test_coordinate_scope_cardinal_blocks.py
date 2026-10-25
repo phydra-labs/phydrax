@@ -245,6 +245,7 @@ def test_vertex_images_sum_actual_operation_storage_without_changing_arithmetic_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sys
+
     from phydrax.discretization import _coordinate_enclosure as algebra
     from phydrax.discretization._cell_geometry import (
         BarycentricCellGeometryElement,
@@ -252,6 +253,7 @@ def test_vertex_images_sum_actual_operation_storage_without_changing_arithmetic_
     )
     from phydrax.discretization._coordinate_budget import (
         CoordinateEnclosureBudget,
+        CoordinateEnclosureResource,
         polynomial_coefficient_storage_upper,
     )
 
@@ -259,7 +261,12 @@ def test_vertex_images_sum_actual_operation_storage_without_changing_arithmetic_
     arithmetic_calls = []
     original_reserve = CoordinateEnclosureBudget.reserve
 
-    def reserve(self, work, storage_upper=0, **kwargs):
+    def reserve(
+        self: CoordinateEnclosureBudget,
+        work: int | np.integer,
+        storage_upper: int | np.integer = 0,
+        **kwargs: CoordinateEnclosureResource,
+    ) -> None:
         if sys._getframe(1).f_code.co_name == "coordinate_vertex_images" and work == 4 * count:
             arithmetic_calls.append(work)
         return original_reserve(self, work, storage_upper, **kwargs)
@@ -306,7 +313,10 @@ def test_vertex_images_sum_actual_operation_storage_without_changing_arithmetic_
     assert outcomes[1][1] < previous_global_output_bound
 
 
-def _streamed_shared_vertex_case():
+def _streamed_shared_vertex_case() -> tuple[
+    tuple[tuple[BarycentricCellGeometryElement, np.ndarray, np.ndarray], ...],
+    tuple[tuple[Fraction, Fraction], ...],
+]:
     from phydrax.discretization._cell_geometry import (
         BarycentricCellGeometryElement,
         coordinate_lagrange_element,

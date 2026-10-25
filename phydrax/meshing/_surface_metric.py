@@ -977,9 +977,14 @@ def _certify_surface_metric_arcs(
             ],
             dtype=np.bool_,
         )
-        return _constant_surface_metric_arc_bounds(
+        bounds, work = _constant_surface_metric_arc_bounds(
             domain, state, source.metric[0], lower_required, budget=budget
         )
+        if work > maximum_work:
+            raise _dependency_phydrax_meshing__tetra_metric.source_location_budget(
+                maximum_work, work
+            )
+        return bounds, work
     pieces, work = _metric_arc_pieces(state, source, maximum_pairs, budget=budget)
     edges, _, _ = _edge_table(state)
     bounds = [[Fraction(0), Fraction(0)] for _ in edges]
@@ -2653,7 +2658,12 @@ def _execute_surface_relocation(
         before, after, unit_improved = _surface_relocation_measures(
             domain, local, trial, budget=budget
         )
-        if after <= before + 1.0e-6 and not (unit_improved and after >= minimum_quality):
+        # Commit a strict quality gain, or a size gain that keeps the star's
+        # minimum quality: trading shape for size drives cells toward the
+        # acceptance floor, where the certificate cannot separate them.
+        if after <= before + 1.0e-6 and not (
+            unit_improved and after >= max(before, minimum_quality)
+        ):
             continue
         state.points = points
         state.charts[rows] = charts
@@ -3509,6 +3519,8 @@ class _SurfaceMetricCertificatePhase(StrictModule):
     arc_edge_ids: np.ndarray | None
     arc_binding: str | None
     work: int
+    certification_work: int
+    certified_long: frozenset[tuple[int, int]]
     status: _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus
 
 
@@ -4368,7 +4380,13 @@ def _run_surface_metric_execution(
     request: _SurfaceMetricExecutionRequest,
     prepared: _SurfaceMetricPreparedInputs,
     carrier: _SurfaceMetricCarrierPhase,
+    schedule_passes: Iterator[int],
+    /,
+    *,
+    resume: _SurfaceMetricExecutionPhase | None = None,
+    certified_long: frozenset[tuple[int, int]] = frozenset(),
 ) -> _SurfaceMetricExecutionPhase:
+    """Run authored passes; certified-long edges are forced splits, never complete."""
     domain = request.domain
     maximum_fidelity = request.maximum_fidelity
     minimum_metric_quality = request.minimum_metric_quality
@@ -4376,23 +4394,29 @@ def _run_surface_metric_execution(
     relocation = request.relocation
     maximum_operations = prepared.schedule.maximum_operations
     budget = request.budget
-    state = carrier.state
     original_vertex_count = carrier.original_vertex_count
     features = carrier.features
     blocked = carrier.blocked
-    counts = MetricOperationCounts()
-    rejected, work, passes = 0, 0, 0
+    if resume is None:
+        state = carrier.state
+        counts = MetricOperationCounts()
+        rejected, work, passes = 0, 0, 0
+    else:
+        state, counts = resume.state, resume.counts
+        rejected, work, passes = resume.rejected, resume.work, resume.passes
     status = _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.PASS_LIMIT
 
-    def checkpoint() -> None:
-
-        budget.ticket.checkpoint()
-
-    for passes in metric_execution_passes(prepared.schedule, checkpoint):
+    for passes in schedule_passes:
         lengths, quality, fidelity = _measure(domain, state, budget=budget)
         edges, first, cell_edges = _edge_table(state)
+        long_rows = {
+            row
+            for row, edge in enumerate(edges.tolist())
+            if (edge[0], edge[1]) in certified_long
+        }
         if (
             topology_operations
+            and not long_rows
             and _surface_size_complete(
                 lengths,
                 lengths,
@@ -4410,7 +4434,7 @@ def _run_surface_metric_execution(
             break
         applied = 0
         bad_cells = np.flatnonzero(fidelity > maximum_fidelity)
-        forced = set(
+        forced = long_rows | set(
             cell_edges[
                 bad_cells, np.argmax(lengths[cell_edges[bad_cells]], axis=1)
             ].tolist()
@@ -4493,7 +4517,9 @@ def _certify_surface_metric_execution(
     prepared: _SurfaceMetricPreparedInputs,
     carrier: _SurfaceMetricCarrierPhase,
     execution: _SurfaceMetricExecutionPhase,
+    spent: int,
 ) -> _SurfaceMetricCertificatePhase:
+    """Certify the executed state; ``spent`` is prior certificate work in this request."""
     domain = request.domain
     maximum_fidelity = request.maximum_fidelity
     minimum_metric_quality = request.minimum_metric_quality
@@ -4507,7 +4533,7 @@ def _certify_surface_metric_execution(
     original_vertex_count = carrier.original_vertex_count
     features = carrier.features
     blocked = carrier.blocked
-    work = execution.work
+    certification_work = spent
     status = execution.status
     lengths, quality, fidelity = _measure(domain, state, budget=budget)
     edges, _, _ = _edge_table(state)
@@ -4532,20 +4558,21 @@ def _certify_surface_metric_execution(
     ):
         status = _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.COMPLETE
     arc_bounds, arc_edge_ids, arc_binding = None, None, None
+    certified_long: frozenset[tuple[int, int]] = frozenset()
     if status is _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.COMPLETE:
         with measure_phase(record_phase, "metric_preparation"):
             arc_bounds, arc_work = _certify_surface_metric_arcs(
                 domain,
                 state,
                 source,
-                maximum_work=maximum_arc_work_units,
+                maximum_work=maximum_arc_work_units - certification_work,
                 maximum_pairs=maximum_location_pairs,
                 features=features,
                 blocked=blocked,
                 generated_from=original_vertex_count,
                 budget=budget,
             )
-        work += arc_work
+        certification_work += arc_work
 
         with measure_phase(record_phase, "metric_preparation"):
             with budget.temporary_scope():
@@ -4554,10 +4581,10 @@ def _certify_surface_metric_execution(
                     state,
                     source,
                     minimum_quality=minimum_metric_quality,
-                    maximum_work=maximum_arc_work_units - arc_work,
+                    maximum_work=maximum_arc_work_units - certification_work,
                     budget=budget,
                 )
-        work += quality_work
+        certification_work += quality_work
         edges, _, _ = _edge_table(state)
         arc_edge_ids = np.sort(state.vertex_ids[edges], axis=1)
         arc_binding = canonical_fingerprint(
@@ -4597,6 +4624,10 @@ def _certify_surface_metric_execution(
                 "quality_lower_bounds": array_tree_fingerprint(quality),
             }
         )
+        certified_long = frozenset(
+            (int(first), int(second))
+            for first, second in edges[arc_bounds[:, 1] > _UPPER].tolist()
+        )
         if topology_operations and not _surface_size_complete(
             arc_bounds[:, 0],
             arc_bounds[:, 1],
@@ -4620,7 +4651,9 @@ def _certify_surface_metric_execution(
         arc_bounds,
         arc_edge_ids,
         arc_binding,
-        work,
+        execution.work + certification_work,
+        certification_work,
+        certified_long,
         status,
     )
 
@@ -4835,10 +4868,48 @@ def execute_surface_metric_adaptation(
         request = replace(request, material_routing=routing)
         try:
             carrier = _prepare_surface_metric_carriers(request, prepared)
-            execution = _run_surface_metric_execution(request, prepared, carrier)
-            certificate = _certify_surface_metric_execution(
-                request, prepared, carrier, execution
+            schedule_passes = metric_execution_passes(
+                prepared.schedule, budget.ticket.checkpoint
             )
+            execution = _run_surface_metric_execution(
+                request, prepared, carrier, schedule_passes
+            )
+            certificate = _certify_surface_metric_execution(
+                request, prepared, carrier, execution, 0
+            )
+            # The certificate is the authority: certified-long edges return to
+            # execution as forced splits within the authored passes and arc work.
+            while (
+                certificate.certified_long
+                and certificate.status
+                is _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.STALLED
+                and execution.passes < prepared.schedule.maximum_passes
+            ):
+                resumed = _run_surface_metric_execution(
+                    request,
+                    prepared,
+                    carrier,
+                    schedule_passes,
+                    resume=execution,
+                    certified_long=certificate.certified_long,
+                )
+                changed = (
+                    resumed.counts.evidence_counts() != execution.counts.evidence_counts()
+                )
+                execution = resumed
+                if not changed:
+                    certificate = replace(
+                        certificate,
+                        work=execution.work + certificate.certification_work,
+                    )
+                    break
+                certificate = _certify_surface_metric_execution(
+                    request,
+                    prepared,
+                    carrier,
+                    execution,
+                    certificate.certification_work,
+                )
             return _assemble_surface_metric_outcome(
                 request, prepared, carrier, execution, certificate
             )

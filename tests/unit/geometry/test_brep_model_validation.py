@@ -2,6 +2,7 @@ from dataclasses import replace
 from typing import get_args
 
 import equinox as eqx
+import jax
 import numpy as np
 import pytest
 
@@ -223,6 +224,17 @@ def test_stored_geometry_reconstruction_recomputes_bounds_and_identity(
     np.testing.assert_array_equal(restored.vertex_points, geometry.vertex_points)
     np.testing.assert_array_equal(
         restored.vertex_evaluation_bounds, geometry.vertex_evaluation_bounds
+    )
+    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(geometry)
+    assert any(
+        leaf is restored.vertex_evaluation_bounds
+        for leaf in jax.tree_util.tree_leaves(restored)
+    )
+    # Constructor-input replacement recomputes the derived bounds and identity.
+    replaced = replace(geometry, shell_orientations=geometry.shell_orientations)
+    assert replaced.geometry_id == geometry.geometry_id
+    np.testing.assert_array_equal(
+        replaced.vertex_evaluation_bounds, geometry.vertex_evaluation_bounds
     )
 
 

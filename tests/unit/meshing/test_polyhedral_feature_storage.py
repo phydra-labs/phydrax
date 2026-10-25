@@ -1,9 +1,11 @@
 """Allocation-bound regressions for the real polyhedral feature helpers."""
 
 from fractions import Fraction
+from typing import Literal, SupportsFloat, SupportsIndex
 
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike, DTypeLike
 
 from phydrax._meshcore import (
     MeshcoreError,
@@ -11,14 +13,18 @@ from phydrax._meshcore import (
     NativeBatchTicket,
     NativeExecutionLimits,
     NativeExecutionScope,
+    PlcRecovery3D,
     recover_plc_3d,
 )
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
 from phydrax.geometry._embedding_state import MeshCertificateLimits
 from phydrax.linalg._hermitian_spectral import fraction_storage_upper
-from phydrax.meshing import MeshingLimits
-from phydrax.meshing import _polyhedral_generation as owner
+from phydrax.meshing import (
+    _polyhedral_generation as owner,
+    MeshingLimits,
+    PiecewiseLinearComplex,
+)
 from tests._support.coordinate_references import (
     coordinate_reference_budget,
     native_meshing_request,
@@ -30,7 +36,7 @@ def _scope(cap: int) -> NativeExecutionScope:
     return NativeExecutionScope(NativeExecutionLimits(1 << 30, 1 << 30, 1 << 20, cap, 120.0))
 
 
-def _cube_recovery():
+def _cube_recovery() -> tuple[PiecewiseLinearComplex, PlcRecovery3D]:
     source = voxel_plc(((0, 0, 0),))
     recovery = recover_plc_3d(
         source.vertices, source.polygon_offsets, source.polygon_vertices,
@@ -60,7 +66,7 @@ def test_segment_storage_exact_boundary_precedes_rational_lifts(
     lifts = 0
     original = owner._feature_coordinate_fraction
 
-    def lift(value):
+    def lift(value: Fraction | SupportsFloat | SupportsIndex | str, /) -> Fraction:
         nonlocal lifts
         lifts += 1
         return original(value)
@@ -98,12 +104,18 @@ def test_source_incidence_admission_exact_boundary_precedes_array_allocation(
     class ReachedAllocation(Exception):
         pass
 
-    def allocation(value, *args, **kwargs):
+    def allocation(
+        value: ArrayLike,
+        dtype: DTypeLike | None = None,
+        order: Literal["K", "A", "C", "F"] | None = None,
+        *,
+        copy: bool | None = None,
+    ) -> np.ndarray:
         nonlocal reached
         if value is source.vertices:
             reached += 1
             raise ReachedAllocation
-        return original(value, *args, **kwargs)
+        return original(value, dtype, order, copy=copy)
 
     monkeypatch.setattr(np, "asarray", allocation)
     with _scope(required) as scope:

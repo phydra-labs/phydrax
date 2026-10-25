@@ -1143,6 +1143,11 @@ int main() {
   test_exact_reference_halfplanes();
   test_exact_reference_containment();
   test_exact_reference_tetrahedron_and_corner_closure();
+  test_exact_reference_clip_plane_counts();
+  test_exact_reference_cap_incidence_under_plane_orders();
+  test_exact_reference_clip_high_bit_rationals();
+  test_exact_reference_clip_redundant_contact_and_empty();
+  test_exact_reference_clip_refusals();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();
   test_tetrahedron_contacts();

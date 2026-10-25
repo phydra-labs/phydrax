@@ -322,11 +322,27 @@ def _sample(
     }, payload
 
 
+def _available_cpu_count() -> int:
+    """CPUs this process may run on: its affinity mask where the platform has one.
+
+    Darwin and Windows expose no process affinity mask to Python; every logical
+    CPU the system reports is schedulable there.
+    """
+    if sys.platform != "win32" and sys.platform != "darwin":
+        return len(os.sched_getaffinity(0))
+    count = os.cpu_count()
+    if count is None:
+        raise RuntimeError(
+            "kernel_performance.available_cpu_count must be reported by the platform; got None"
+        )
+    return count
+
+
 def benchmark_parallel_batches(resolution: int, repeats: int, /) -> dict[str, object]:
     """Compare affine thread policies on identical prepared host batches."""
     count = 10000 * resolution
     cases = _cases(count)
-    available = len(os.sched_getaffinity(0))
+    available = _available_cpu_count()
     threads = (1, 8, min(32, available)) if available > 8 else (1, 8)
     records: list[dict[str, Any]] = []
     for name, call in cases:

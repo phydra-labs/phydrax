@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from phydrax.discretization import CellBlock, CellMesh, UnstructuredFiniteVolumePlan
+from phydrax.discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    UnstructuredFiniteVolumePlan,
+)
+from tests._support.mapped_cells import curved_volume
 
 
 # Quadrature and quality preparation use at most 256 eps of accumulated
@@ -106,3 +112,71 @@ def test_direct_plan_retains_ordered_ids_and_boundary_partition() -> None:
     np.testing.assert_array_equal(np.sort(prepared.boundary_patch_ids), (0, 0, 0, 1))
     np.testing.assert_array_equal(prepared.neighbor_cells, (-1, -1, -1, -1))
     assert prepared.prepared_id == plan.prepare().prepared_id
+
+
+@pytest.mark.parametrize("kind", ("quadrilateral", "hexahedron"))
+@pytest.mark.parametrize("cell_count", (1, 8, 32))
+def test_mapped_constructor_capacity_preserves_quadrature(
+    kind: str, cell_count: int
+) -> None:
+    """Scale real mapped-owner storage without a generation/lifecycle prefix."""
+    source, geometry = curved_volume(kind)
+    elements, routes, coordinates = geometry.resolve(source)
+    reference = UnstructuredFiniteVolumePlan.from_cell_mesh(source).prepare(
+        cell_geometry=geometry
+    )
+    ambient = source.ambient_dimension
+    shifts = np.zeros((cell_count, ambient), dtype=np.float64)
+    shifts[:, 0] = 2.0 * np.arange(cell_count)
+    vertices = np.asarray(source.coordinates)
+    coefficients = np.asarray(coordinates)
+    vertex_count, coefficient_count = len(vertices), len(coefficients)
+    mesh = CellMesh(
+        (vertices[None] + shifts[:, None]).reshape((-1, ambient)),
+        (
+            CellBlock(
+                "volume",
+                source.blocks[0].cell_kind,
+                np.asarray(source.blocks[0].vertices)
+                + vertex_count * np.arange(cell_count)[:, None],
+                global_ids=17 + 3 * np.arange(cell_count, dtype=np.int64),
+            ),
+        ),
+    )
+    mapped = CellGeometrySpec(
+        {"volume": elements[0]},
+        {
+            "volume": np.asarray(routes[0])
+            + coefficient_count * np.arange(cell_count)[:, None]
+        },
+        (coefficients[None] + shifts[:, None]).reshape((-1, ambient)),
+    )
+    prepared = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare(
+        cell_geometry=mapped
+    )
+    np.testing.assert_array_equal(
+        prepared.cell_global_ids, 17 + 3 * np.arange(cell_count)
+    )
+    np.testing.assert_allclose(
+        prepared.cell_volumes, np.repeat(reference.cell_volumes, cell_count),
+        rtol=0.0, atol=PREPARATION_ROUNDOFF,
+    )
+    np.testing.assert_allclose(
+        prepared.cell_quadrature_points,
+        np.asarray(reference.cell_quadrature_points) + shifts[:, None],
+        rtol=0.0, atol=PREPARATION_ROUNDOFF,
+    )
+    np.testing.assert_allclose(
+        prepared.cell_quadrature_weights,
+        np.repeat(reference.cell_quadrature_weights, cell_count, axis=0),
+        rtol=0.0, atol=PREPARATION_ROUNDOFF,
+    )
+    np.testing.assert_array_equal(
+        prepared.cell_quadrature_valid,
+        np.repeat(reference.cell_quadrature_valid, cell_count, axis=0),
+    )
+    np.testing.assert_allclose(
+        np.sort(np.asarray(prepared.face_measures)),
+        np.sort(np.tile(np.asarray(reference.face_measures), cell_count)),
+        rtol=0.0, atol=PREPARATION_ROUNDOFF,
+    )

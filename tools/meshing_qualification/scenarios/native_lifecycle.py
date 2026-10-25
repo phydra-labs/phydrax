@@ -62,6 +62,7 @@ from tools.meshing_qualification._physics import (
     _physical_inventory,
     _prepare_corpus_solver,
     CorpusCompilerEvidence,
+    CorpusPreconditioning,
 )
 from tools.meshing_qualification._records import (
     _phase_recordings,
@@ -813,7 +814,11 @@ def _corpus_cold_reanalysis(
     record: dict[str, Any],
 ) -> None:
 
-    _ledger = StageLedger(record, deadline=deadline)
+    _ledger = StageLedger(
+        record,
+        deadline=deadline,
+        cold_phase="fresh_process_allfield_history_continued_PDE",
+    )
 
     limits = ArrayArchiveLimits()
     if result.certification is None:
@@ -841,7 +846,7 @@ def _corpus_cold_reanalysis(
         ) as cold_worker,
     ):
         receipt, measured = _ledger.run(
-            record.get("active_phase", "write_meshing_source_closure"),
+            "allfield_history_checkpoint_publication",
             lambda: _measured(
                 lambda: write_meshing_source_closure(
                     Path(directory) / "corpus.checkpoint.zip", records, limits=limits
@@ -1316,7 +1321,18 @@ def _solve_native_lifecycle_epoch(
         if previous_values is None
         else jnp.asarray(previous_values)[free_dofs]
     )
-    values, compiler, timings = _compiled_solver_stages(problem, seed, repeats)
+    # Whole-domain diffusion has an admitted exact diagonal. The region-restricted
+    # material form retains its authored policy rather than substituting a diagonal.
+    values, compiler, timings = _compiled_solver_stages(
+        problem,
+        seed,
+        repeats,
+        preconditioning=(
+            CorpusPreconditioning.NONE
+            if case.name == "plc-material-cavity"
+            else CorpusPreconditioning.EXACT_JACOBI
+        ),
+    )
     stages.update({f"{key}_epoch_{epoch}": value for key, value in timings.items()})
     error = _physical_error(
         result.mesh, values, material_x=case.name == "plc-material-cavity", space=space
@@ -1411,7 +1427,9 @@ def _adapt_native_lifecycle_fields(
     prepared, measured = _ledger.run(
         phase,
         lambda: _measured(
-            lambda: phx.meshing.prepare_mesh_adaptation(result, request, policy=policy)
+            lambda: phx.meshing.prepare_mesh_adaptation(
+                result, request, policy=policy, observe_managed_admission=True
+            )
         ),
     )
     stages[phase] = measured["wall_seconds"]
@@ -1421,7 +1439,9 @@ def _adapt_native_lifecycle_fields(
         phase,
         lambda: _measured(
             lambda: phx.meshing.execute_mesh_adaptation(
-                prepared, coordinate_operands=context.coordinate_operands
+                prepared,
+                coordinate_operands=context.coordinate_operands,
+                observe_managed_admission=True,
             )
         ),
     )

@@ -161,6 +161,136 @@ Insertion TetMesh::prepare_edge_insertion(int32_t a, int32_t b, const double* wi
   return Insertion::kCapacity;
 }
 
+Insertion TetMesh::prepare_projected_edge_insertion(
+    int32_t a, int32_t b, const double* witness, const double* position,
+    double fraction, std::size_t cell_limit, int32_t source, InsertKind& kind) try {
+  const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
+  if (source < 0 || std::isnan(curved_tolerance(source)) ||
+      !live_vertex(a) || !live_vertex(b) || a == b || segment_source(a, b) >= 0 ||
+      !(fraction > 0.0 && fraction < 1.0) || !geometry::finite3(position)) {
+    return Insertion::kRefused;
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    if (!coordinate_in_domain(position[axis])) return Insertion::kRefused;
+  }
+  const double* edge[2] = {point(a), point(b)};
+  const double parameters[2] = {fraction, 0.0};
+  double carrier[3], rounding = 0.0;
+  if (!source_carrier(edge, SourceStratum::kSegment, parameters, carrier, rounding) ||
+      !std::equal(carrier, carrier + 3, witness)) return Insertion::kRefused;
+  // Earn the ordinary exact material partition before changing the physical
+  // chart. This retains the complete conflict cavity, including compound rims.
+  Insertion status = prepare_edge_insertion(a, b, witness, witness, fraction, cell_limit, kind);
+  if (status != Insertion::kOk) return status;
+  if (kind != InsertKind::kSubfacet || crossed_.empty()) return Insertion::kRefused;
+  for (const Crossed& face : crossed_) {
+    if (!spend(TetWorkCost::kFacet)) return Insertion::kCapacity;
+    if (face.source != source) return Insertion::kRefused;
+  }
+  status = stage_insertion(kind);
+  if (status != Insertion::kOk) return status;
+  NativeMap<FaceKey, std::array<int32_t, 3>> faces;
+  const auto proposal = edit_.proposal();
+  for (std::size_t cell = 0; cell < proposal.size(); ++cell) {
+    if (!spend(TetWorkCost::kCell)) return Insertion::kCapacity;
+    if (is_ghost(proposal[cell])) continue;
+    for (int slot = 0; slot < 4; ++slot) {
+      if (!spend(TetWorkCost::kFacet)) return Insertion::kCapacity;
+      const int32_t mark = edit_.proposal_constraint(cell, slot);
+      if (mark == kNoConstraint || proposal[cell].v[slot] == pending_) continue;
+      int32_t face[3];
+      oriented_facet(proposal[cell].v, slot, face);
+      if (std::find(face, face + 3, pending_) == face + 3) continue;
+      if (mark != source) return Insertion::kRefused;
+      faces.emplace(FaceKey::of(face[0], face[1], face[2]),
+                    std::array<int32_t, 3>{face[0], face[1], face[2]});
+    }
+  }
+  if (faces.empty()) return Insertion::kRefused;
+  retained_edit_ = PreparedReplacement{};
+  std::copy_n(position, 3, pending_point_);
+  pending_projected_source_ = source;
+  // The pending point is not a PLC approximation. Only the complete delegated
+  // face claims below can authorize publication of this new physical chart.
+  pending_source_ = SourceWitness{};
+  pending_source_authored_ = true;
+  status = admit_cavity_protection(position);
+  if (status != Insertion::kOk) return status;
+  status = retain_edge_insertion(a, b, witness, position, fraction, cell_limit, kind);
+  if (status != Insertion::kOk) return status;
+  auto& binding = retained_edit_.binding_;
+  binding.projected_source = source;
+  binding.tolerance = curved_tolerance(source);
+  std::copy_n(curved_digest(source), 32, binding.digest.begin());
+  binding.faces.reserve(faces.size());
+  for (const auto& [key, face] : faces) binding.faces.push_back(face);
+  return Insertion::kOk;
+} catch (...) {
+  abandon();
+  throw;
+}
+
+Insertion TetMesh::authenticate_projected_insertion(const CurvedCollapseClaims& claims) try {
+  const MemoryScope memory_scope(memory_owner_);
+  auto& binding = retained_edit_.binding_;
+  if (!retained_edit_.current() || pending_projected_source_ < 0 ||
+      claims.source != binding.projected_source || claims.source != pending_projected_source_ ||
+      claims.generation != accepted_generation_ || claims.digest == nullptr ||
+      claims.faces == nullptr || claims.coordinates == nullptr || claims.deviations == nullptr ||
+      claims.count != static_cast<int64_t>(binding.faces.size()) ||
+      !std::equal(binding.digest.begin(), binding.digest.end(), claims.digest) ||
+      curved_tolerance(claims.source) != binding.tolerance) return Insertion::kRefused;
+  NativeVector<double> deviations(binding.faces.size(), -1.0);
+  for (int64_t row = 0; row < claims.count; ++row) {
+    if (!spend(TetWorkCost::kFacet)) return Insertion::kCapacity;
+    const int32_t* face = claims.faces + 3 * row;
+    const FaceKey key = FaceKey::of(face[0], face[1], face[2]);
+    const auto found = std::lower_bound(binding.faces.begin(), binding.faces.end(), key,
+        [](const auto& candidate, const FaceKey& value) {
+          return FaceKey::of(candidate[0], candidate[1], candidate[2]) < value;
+        });
+    if (found == binding.faces.end() ||
+        !(FaceKey::of((*found)[0], (*found)[1], (*found)[2]) == key)) return Insertion::kRefused;
+    // Host claims certify the public outward row: the native material-side
+    // facet with its last two corners exchanged, exactly as inspected.
+    const auto& inward = *found;
+    if (face[0] != inward[0] || face[1] != inward[2] || face[2] != inward[1]) {
+      return Insertion::kRefused;
+    }
+    const auto index = static_cast<std::size_t>(found - binding.faces.begin());
+    const double deviation = claims.deviations[row];
+    if (deviations[index] >= 0.0 || !std::isfinite(deviation) ||
+        deviation < 0.0 || deviation > binding.tolerance) return Insertion::kRefused;
+    for (int corner = 0; corner < 3; ++corner) {
+      if (face[corner] != pending_ && !live_vertex(face[corner])) return Insertion::kRefused;
+      for (int axis = 0; axis < 3; ++axis) {
+        if (std::bit_cast<uint64_t>(point(face[corner])[axis]) !=
+            std::bit_cast<uint64_t>(claims.coordinates[9 * row + 3 * corner + axis])) {
+          return Insertion::kRefused;
+        }
+      }
+    }
+    deviations[index] = deviation;
+  }
+  const std::size_t added = binding.faces.size();
+  if (added > (static_cast<std::size_t>(INT32_MAX) - original_points_.size() / 3) / 3 ||
+      added > static_cast<std::size_t>(INT32_MAX) - original_faces_.size()) {
+    return Insertion::kCapacity;
+  }
+  original_points_.reserve(original_points_.size() + 9 * added);
+  original_faces_.reserve(original_faces_.size() + added);
+  face_tolerance_.reserve(face_tolerance_.size() + added);
+  face_rows_.reserve(face_rows_.size() + added);
+  claimed_rows_.reserve(claimed_rows_.size() + added);
+  curved_claims_.reserve(curved_claims_.size() + added);
+  binding.deviations = std::move(deviations);
+  return Insertion::kOk;
+} catch (...) {
+  abandon();
+  throw;
+}
+
 Insertion TetMesh::prepare(const double* p, int32_t origin, int32_t split_a, int32_t split_b,
                            std::size_t cell_limit, const SourceWitness* construction) try {
   const MemoryScope memory_scope(memory_owner_);
@@ -320,6 +450,11 @@ Insertion TetMesh::commit_retained_insertion(InsertKind kind, double size) try {
     abandon();
     return Insertion::kRefused;
   }
+  if (pending_projected_source_ >= 0 &&
+      retained_edit_.binding_.deviations.size() != retained_edit_.binding_.faces.size()) {
+    abandon();
+    return Insertion::kRefused;
+  }
   auto prepared = std::move(retained_edit_);
   EditTransaction transaction(*this, crossed_);
   transaction.retire_constraints();
@@ -344,8 +479,33 @@ Insertion TetMesh::commit_retained_insertion(InsertKind kind, double size) try {
   sizes_.push_back(size);
   vertex_tet_.push_back(-1);
   vertex_stamp_.push_back(0U);
+  if (prepared.binding_.projected_source >= 0) {
+    const auto& binding = prepared.binding_;
+    const int32_t first_row = static_cast<int32_t>(original_faces_.size());
+    for (std::size_t i = 0; i < binding.faces.size(); ++i) {
+      const auto base = static_cast<int32_t>(original_points_.size() / 3);
+      // Claim rows keep the authenticated public outward corner order, as
+      // curved-collapse claim rows do, never the material-side binding order.
+      const auto& inward = binding.faces[i];
+      for (int32_t vertex : {inward[0], inward[2], inward[1]}) {
+        const double* coordinate = point(vertex);
+        original_points_.insert(original_points_.end(), coordinate, coordinate + 3);
+      }
+      const auto row = static_cast<int32_t>(original_faces_.size());
+      original_faces_.push_back({base, base + 1, base + 2, binding.projected_source});
+      face_tolerance_.push_back(0.0);
+      const std::pair<int32_t, int32_t> entry{binding.projected_source, row};
+      face_rows_.insert(std::upper_bound(face_rows_.begin(), face_rows_.end(), entry), entry);
+      claimed_rows_.insert(std::upper_bound(claimed_rows_.begin(), claimed_rows_.end(), entry), entry);
+      curved_claims_.push_back({row, binding.projected_source, binding.deviations[i],
+                                accepted_generation_ + 1});
+    }
+    witnesses_.back() = SourceWitness{SourceStratum::kFacet, first_row, {0.0, 0.0}, 0.0};
+    release_face_ancestry();
+  }
   pending_ = kNoPending;
   pending_edge_star_ = false;
+  pending_projected_source_ = -1;
   if (kind == InsertKind::kSubsegment) {
     segments_.erase(topology::undirected_edge(split_a_, split_b_));
     segments_.insert(prepared.binding_.segments.extract(topology::undirected_edge(split_a_, p)));
@@ -377,11 +537,13 @@ Insertion TetMesh::retain_edge_insertion(int32_t a, int32_t b, const double* wit
 
 bool TetMesh::reuse_edge_insertion(int32_t a, int32_t b, const double* witness,
                                    const double* position, double fraction,
-                                   std::size_t cell_limit, InsertKind& kind) const noexcept {
+                                   std::size_t cell_limit, InsertKind& kind,
+                                   int32_t projected_source) const noexcept {
   const auto& binding = retained_edit_.binding_;
   if (!retained_edit_.current() ||
       binding.operation != PreparedBinding::Operation::kInsertion ||
       binding.first != a || binding.second != b || binding.cell_limit != cell_limit ||
+      binding.projected_source != projected_source ||
       !live_vertex(a) || !live_vertex(b) ||
       binding.source != (binding.kind == InsertKind::kSubsegment ? segment_source(a, b) : -1)) {
     return false;

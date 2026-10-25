@@ -3307,8 +3307,11 @@ def _polyhedral_qualification_periodic_adapt(
         ),
     )
     return phx.meshing.execute_mesh_adaptation(
-        phx.meshing.prepare_mesh_adaptation(result, request, policy=policy),
+        phx.meshing.prepare_mesh_adaptation(
+            result, request, policy=policy, observe_managed_admission=True
+        ),
         coordinate_operands=coordinate_operands,
+        observe_managed_admission=True,
     )
 
 
@@ -4183,8 +4186,10 @@ def _regenerate_polyhedral_target(
                             watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT,
                         ),
                     ),
+                    observe_managed_admission=True,
                 ),
                 coordinate_operands=coordinate_operands,
+                observe_managed_admission=True,
             )
         ),
     )

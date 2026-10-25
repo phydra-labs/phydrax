@@ -1460,6 +1460,33 @@ void test_logical_facet_coverage_retains_all_primitive_contributors() {
   PHX_CHECK(!phx::mc::exact_facet_coverage(crossing, gaps, islands, island_rows, contributors));
 }
 
+void test_source_history_coverage_uses_chronological_owners() {
+  const double points[] = {0,0,0, 1,0,0, 1,1,0, 0,1,0};
+  const double crossing[] = {0,0,0, 1,0,0, 0,1,0};
+  const std::array<int32_t, 4> faces[] = {
+      {0,1,2,7}, {0,2,3,7}, {2,1,0,7}, {3,2,0,7}};
+  const int32_t rows[] = {0,1,2,3};
+  const int64_t epochs[] = {0,0,1,2};
+  phx::mc::NativeVector<int32_t> contributors;
+  PHX_CHECK(phx::mc::exact_facet_history_coverage(
+      crossing, points, faces, rows, epochs, contributors));
+  PHX_CHECK(contributors.size() == 2 && contributors[0] == 2 && contributors[1] == 3);
+  const int64_t overlapping[] = {0,0,0,1};
+  PHX_CHECK(!phx::mc::exact_facet_history_coverage(
+      crossing, points, faces, rows, overlapping, contributors));
+  PHX_CHECK(contributors.empty());
+  const int32_t duplicate[] = {0,1,2,2};
+  PHX_CHECK(!phx::mc::exact_facet_history_coverage(
+      crossing, points, faces, duplicate, epochs, contributors));
+  const int32_t nonmember[] = {0,1,2,4};
+  PHX_CHECK(!phx::mc::exact_facet_history_coverage(
+      crossing, points, faces, nonmember, epochs, contributors));
+  const int32_t missing[] = {0,2};
+  const int64_t missing_epochs[] = {0,1};
+  PHX_CHECK(!phx::mc::exact_facet_history_coverage(
+      crossing, points, faces, missing, missing_epochs, contributors));
+}
+
 // The single-row and partition predicate proofs must return exactly the
 // arrangement result: subjects inside, across, touching and outside coplanar
 // rows of a logical facet with noncoplanar, duplicated, reversed and
@@ -2042,6 +2069,7 @@ int main() {
   test_authored_subsegment_obeys_containing_zero_bound_facet();
   test_unsegmented_shared_diagonal_keeps_both_exact_facet_ancestors();
   test_exact_row_carrier_remains_canonical_authority_despite_parameter_rounding();
+  test_source_history_coverage_uses_chronological_owners();
   test_tilted_decimal_bounded_segment_split_is_ancestry_backed();
   test_tilted_decimal_bound_below_certified_deviation_refuses_without_mutation();
   test_tilted_decimal_refinement_uses_bounded_ancestry();

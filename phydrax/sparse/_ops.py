@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import prod
 from typing import Any, Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -15,7 +16,7 @@ from jax.typing import ArrayLike
 
 from .. import ein
 from ..typing import parse
-from ._relation import EdgeRelation, RowRelation, SparseRelation
+from ._relation import EdgeRelation, InjectiveRouteWindows, RowRelation, SparseRelation
 
 
 RouteReduction: TypeAlias = Literal["sum", "mean", "max", "min"]
@@ -182,6 +183,66 @@ def route_reduce(
             lambda value: _reduce_row_leaf(relation, value, reduction), values
         )
     raise TypeError("relation must be an EdgeRelation or RowRelation.")
+
+
+def _window_lanes(
+    windows: InjectiveRouteWindows,
+    destination: ArrayLike,
+    values: ArrayLike,
+    window: ArrayLike,
+    name: str,
+    /,
+) -> tuple[Array, Array, Array]:
+    if not isinstance(windows, InjectiveRouteWindows):
+        raise TypeError(f"{name} requires prepared InjectiveRouteWindows.")
+    target = jnp.asarray(destination)
+    if target.ndim == 0 or target.shape[0] != windows.target_size:
+        raise ValueError(
+            f"{name} destination must begin with {windows.target_size} rows; got {target.shape}."
+        )
+    routed = jnp.asarray(values)
+    if routed.shape != (windows.capacity,) + target.shape[1:]:
+        raise ValueError(
+            f"{name} values must have shape {(windows.capacity,) + target.shape[1:]}; got {routed.shape}."
+        )
+    if routed.dtype != target.dtype:
+        raise TypeError(
+            f"{name} values must have the destination dtype {target.dtype}; got {routed.dtype}."
+        )
+    message = f"{name} window must lie in [0, {windows.windows})."
+    if isinstance(window, int):
+        if not 0 <= window < windows.windows:
+            raise ValueError(f"{message[:-1]}; got {window}.")
+        index = jnp.asarray(window)
+    else:
+        index = jnp.asarray(window)
+        if index.shape != () or not jnp.issubdtype(index.dtype, jnp.integer):
+            raise TypeError(f"{name} window must be an integer scalar; got {index.shape} {index.dtype}.")
+        # `dynamic_index_in_dim` would clamp an out-of-range index; refuse instead.
+        index = eqx.error_if(index, (index < 0) | (index >= windows.windows), message)
+    lanes = jax.lax.dynamic_index_in_dim(windows.target_indices, index, keepdims=False)
+    return target, routed, lanes
+
+
+def route_replace(
+    windows: InjectiveRouteWindows,
+    destination: ArrayLike,
+    values: ArrayLike,
+    /,
+    *,
+    window: ArrayLike = 0,
+) -> Array:
+    """Overwrite the destination rows named by one prepared window's valid lanes.
+
+    The window's valid lanes name distinct rows (validated once when the
+    windows were prepared), so the result never depends on write order. Each
+    named row is replaced exactly, whatever it held (including NaN or
+    infinity); invalid lanes write nothing and every other row is untouched.
+    ``window`` may be traced; an out-of-range window is refused, never clamped.
+    Work is proportional to the window capacity.
+    """
+    target, routed, lanes = _window_lanes(windows, destination, values, window, "route_replace")
+    return target.at[lanes].set(routed, mode="drop")
 
 
 def _coefficient_array(
@@ -475,4 +536,5 @@ __all__ = [
     "linear_transpose_apply",
     "mask_routes",
     "route_reduce",
+    "route_replace",
 ]

@@ -5,13 +5,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 import numpy as np
 from scipy import ndimage
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import (
+    _canonical_json_text_upper_bytes,
+    _retained_text_storage_upper_bytes,
+    canonical_fingerprint,
+)
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateTemporaryStorage,
+)
 from ..geometry import (
     CompartmentComplex,
     CompartmentDefinition,
@@ -221,7 +230,276 @@ class CompartmentSurfaceResult:
     extraction_id: str
 
 
+def _admit_compartment_source_phase(
+    budget: CoordinateEnclosureBudget,
+    work_units: int,
+    scratch_bytes: int,
+    result_bytes: int,
+    retained_work_units: int,
+    /,
+) -> None:
+    budget.ticket.checkpoint()
+    budget.admit_work_bound(
+        work_units + retained_work_units,
+        storage_upper=scratch_bytes + result_bytes,
+    )
+    budget.reserve(work_units, scratch_bytes + result_bytes)
+
+
+def _finish_compartment_source_phase(
+    budget: CoordinateEnclosureBudget,
+    lifetime: CoordinateTemporaryStorage,
+    result: object,
+    scratch_bytes: int,
+    result_bytes: int,
+    /,
+    *,
+    retain_result: bool,
+) -> None:
+    budget.ticket.checkpoint()
+    if retain_result:
+        with budget.live_storage() as storage:
+            storage.promote_temporary_storage(lifetime, result_bytes)
+            budget.retain_owner(result, temporary_storage_credit=storage)
+    budget.release_temporary_storage(scratch_bytes)
+
+
+def _compartment_complex_text_upper_bytes(
+    labels: LabelVolume,
+    compartments: tuple[CompartmentDefinition, ...],
+    interfaces: tuple[CompartmentInterfaceDefinition, ...],
+    /,
+) -> tuple[int, int, int]:
+    region_count = len(compartments)
+
+    def report_texts() -> Iterator[str]:
+        # Expected and missing each repeat every required interface pair;
+        # observed and forbidden each fit the full unordered-pair set.
+        yield from ("kind", "compartment-adjacency-report")
+        yield from ("expected", "observed", "missing", "forbidden")
+        for interface in interfaces:
+            if interface.required:
+                for _ in range(2):
+                    yield interface.first_compartment_id
+                    yield interface.second_compartment_id
+        for compartment in compartments:
+            for _ in range(2 * max(0, region_count - 1)):
+                yield compartment.compartment_id
+
+    def complex_texts() -> Iterator[str]:
+        # Complex identity recipe, including all declaration fields and
+        # measure names; keys are included alongside the variable values.
+        yield from (
+            "kind",
+            "compartment-complex",
+            "source_revision",
+            labels.label_volume_id,
+            "compartments",
+            "interfaces",
+            "measures",
+            "adjacency",
+        )
+        for compartment in compartments:
+            yield from ("id", compartment.compartment_id)
+            yield "labels"
+            yield from compartment.label_ids
+            yield from ("role", compartment.material_role, "parent")
+            if compartment.containment_parent_id is not None:
+                yield compartment.containment_parent_id
+            yield "neighbors"
+            yield from compartment.allowed_neighbor_ids
+        for interface in interfaces:
+            yield from (
+                "id",
+                interface.interface_id,
+                "pair",
+                interface.first_compartment_id,
+                interface.second_compartment_id,
+                "role",
+                interface.interface_role,
+                "required",
+            )
+        for compartment in compartments:
+            yield compartment.compartment_id
+
+    def retained_texts() -> Iterator[str]:
+        yield labels.label_volume_id
+        for compartment in compartments:
+            yield compartment.compartment_id
+            yield from compartment.label_ids
+            yield compartment.material_role
+            if compartment.containment_parent_id is not None:
+                yield compartment.containment_parent_id
+            yield from compartment.allowed_neighbor_ids
+        for interface in interfaces:
+            yield interface.interface_id
+            yield interface.first_compartment_id
+            yield interface.second_compartment_id
+            yield interface.interface_role
+
+    return (
+        _canonical_json_text_upper_bytes(report_texts()),
+        _canonical_json_text_upper_bytes(complex_texts()),
+        _retained_text_storage_upper_bytes(retained_texts()),
+    )
+
+
+
+
+def _compartment_surface_text_bounds(
+    labels: LabelVolume,
+    complex: CompartmentComplex,
+    face_count: int,
+    /,
+) -> tuple[int, int, int]:
+    result_text_upper = _canonical_json_text_upper_bytes(
+        ("kind", "compartment-surface-result", "complex", "surfaces")
+    )
+    text_work_upper = result_text_upper
+    text_peak_upper = result_text_upper
+    if face_count:
+        for definition in complex.interfaces:
+            metadata_text_upper = _canonical_json_text_upper_bytes(
+                (
+                    "kind",
+                    "surface-metadata",
+                    "source_id",
+                    labels.asset.asset_id,
+                    "source_revision",
+                    labels.label_volume_id,
+                    "coordinate_contract",
+                    labels.asset.spatial_affine.coordinate_contract.spatial_id,
+                    "provenance",
+                    "voxel-compartment-interface",
+                    definition.interface_id,
+                    "cell_tags",
+                )
+            )
+            surface_text_upper = _canonical_json_text_upper_bytes(
+                (
+                    "kind",
+                    "compartment-surface",
+                    "interface",
+                    definition.interface_id,
+                    "source",
+                    labels.label_volume_id,
+                    "mesh",
+                )
+            )
+            text_work_upper += metadata_text_upper + surface_text_upper
+            text_peak_upper = max(
+                text_peak_upper, metadata_text_upper, surface_text_upper
+            )
+
+    _, _, complex_text_storage_upper = _compartment_complex_text_upper_bytes(
+        labels, complex.compartments, complex.interfaces
+    )
+    surface_text_storage_upper = 0
+    if face_count and complex.interfaces:
+        contract = labels.asset.spatial_affine.coordinate_contract
+
+        def retained_surface_texts() -> Iterator[str]:
+            yield labels.asset.asset_id
+            yield contract.length_coordinate_kind
+            yield contract.coordinate_system
+            yield contract.reference_frame
+            yield contract.length_unit.symbol
+            yield contract.length_unit.reference_system_id
+            yield from (
+                name for name, _, _ in contract.length_unit.dimension.terms
+            )
+
+        surface_text_storage_upper = _retained_text_storage_upper_bytes(
+            retained_surface_texts()
+        )
+    return (
+        text_work_upper,
+        2 * text_peak_upper,
+        complex_text_storage_upper + surface_text_storage_upper,
+    )
+
+
 def build_compartment_complex(
+    labels: LabelVolume,
+    compartments: tuple[CompartmentDefinition, ...],
+    interfaces: tuple[CompartmentInterfaceDefinition, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> CompartmentComplex:
+    if budget is None:
+        return _build_compartment_complex_core(labels, compartments, interfaces)
+    with budget.temporary_scope() as lifetime:
+        return _build_compartment_complex(
+            labels, compartments, interfaces, budget=budget, lifetime=lifetime,
+            retain_result=True,
+        )
+
+
+def _build_compartment_complex(
+    labels: LabelVolume,
+    compartments: tuple[CompartmentDefinition, ...],
+    interfaces: tuple[CompartmentInterfaceDefinition, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    lifetime: CoordinateTemporaryStorage,
+    retain_result: bool,
+) -> CompartmentComplex:
+    if not isinstance(labels, LabelVolume):
+        raise TypeError("labels must be LabelVolume.")
+    voxel_count = labels.asset.values.size
+    region_count = len(compartments)
+    label_count = sum(len(value.label_ids) for value in compartments)
+    interface_count = len(interfaces)
+    pair_capacity = region_count * max(0, region_count - 1) // 2
+    itemsize = labels.asset.values.dtype.itemsize
+    report_text_upper, complex_text_upper, retained_text_bytes = (
+        _compartment_complex_text_upper_bytes(
+            labels, compartments, interfaces
+        )
+    )
+    text_work_upper = report_text_upper + complex_text_upper
+    # The fingerprints run sequentially, so scratch holds only the larger
+    # escaped payload while work sums both complete serializer traversals.
+    text_scratch_upper = 2 * max(report_text_upper, complex_text_upper)
+    work_units = (
+        voxel_count * (region_count + 6)
+        + label_count
+        + region_count * region_count
+        + interface_count
+        + 128
+        + text_work_upper
+    )
+    # Two selected label arrays and concurrent masks bound the volume
+    # temporary; the text term is the larger simultaneous fingerprint payload.
+    scratch_bytes = (
+        voxel_count * (2 * itemsize + 16)
+        + 512 * (region_count * region_count + label_count + interface_count + 1)
+        + text_scratch_upper
+    )
+    # Retained text is credited only for published results; temporary
+    # revalidation shares the existing source owners.
+    result_bytes = (
+        8192
+        + 512 * (region_count + interface_count + pair_capacity + 1)
+        + (retained_text_bytes if retain_result else 0)
+    )
+    retained_work_units = (
+        64 + region_count * region_count + label_count + interface_count
+    )
+    _admit_compartment_source_phase(
+        budget, work_units, scratch_bytes, result_bytes, retained_work_units
+    )
+    result = _build_compartment_complex_core(labels, compartments, interfaces)
+    _finish_compartment_source_phase(
+        budget, lifetime, result, scratch_bytes, result_bytes,
+        retain_result=retain_result,
+    )
+    return result
+
+
+def _build_compartment_complex_core(
     labels: LabelVolume,
     compartments: tuple[CompartmentDefinition, ...],
     interfaces: tuple[CompartmentInterfaceDefinition, ...],
@@ -282,9 +560,26 @@ def extract_compartment_surfaces(
     labels: LabelVolume,
     complex: CompartmentComplex,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompartmentSurfaceResult:
     if complex.source_revision != labels.label_volume_id:
         raise ValueError("Compartment complex and label volume revisions differ.")
+    if budget is None:
+        compartment_code, compartment_ids, _ = _compartment_code(labels, complex)
+        return _extract_compartment_surfaces_core(
+            labels, complex, compartment_code, compartment_ids
+        )
+    return _extract_compartment_surfaces(
+        labels, complex, budget=budget, lifetime=None, retain_result=True
+    )
+
+
+def _compartment_code(
+    labels: LabelVolume,
+    complex: CompartmentComplex,
+    /,
+) -> tuple[np.ndarray, tuple[str, ...], dict[int, str]]:
     ontology = {value.label_id: value.value for value in labels.ontology.labels}
     value_to_compartment = {
         ontology[label_id]: compartment.compartment_id
@@ -302,6 +597,155 @@ def extract_compartment_surfaces(
             if assigned == compartment_id
         ]
         compartment_code[np.isin(labels.asset.values, source_values)] = code
+    return compartment_code, compartment_ids, value_to_compartment
+
+
+def _count_compartment_faces(
+    labels: LabelVolume,
+    compartment_code: np.ndarray,
+    /,
+) -> int:
+    valid = np.asarray(labels.asset.valid_mask)
+    face_count = 0
+    for axis in range(3):
+        lower_slice = [slice(None)] * 3
+        upper_slice = [slice(None)] * 3
+        lower_slice[axis] = slice(0, -1)
+        upper_slice[axis] = slice(1, None)
+        lower = compartment_code[tuple(lower_slice)]
+        upper = compartment_code[tuple(upper_slice)]
+        supported = (
+            valid[tuple(lower_slice)]
+            & valid[tuple(upper_slice)]
+            & (lower >= 0)
+            & (upper >= 0)
+            & (lower != upper)
+        )
+        face_count += int(np.count_nonzero(supported))
+    return face_count
+
+
+def _extract_compartment_surfaces(
+    labels: LabelVolume,
+    complex: CompartmentComplex,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    lifetime: CoordinateTemporaryStorage | None,
+    retain_result: bool,
+) -> CompartmentSurfaceResult:
+    if complex.source_revision != labels.label_volume_id:
+        raise ValueError("Compartment complex and label volume revisions differ.")
+    voxel_count = labels.asset.values.size
+    region_count = len(complex.compartments)
+    label_count = sum(len(value.label_ids) for value in complex.compartments)
+    interface_count = len(complex.interfaces)
+    code_bytes = (
+        4 * voxel_count + 1024 + 512 * (region_count + label_count + 1)
+    )
+    # One visit per region-volume pass and each of three face-count traversals.
+    code_work = (
+        voxel_count * (region_count + 3)
+        + label_count
+        + region_count
+        + interface_count
+        + 128
+    )
+    code_scratch = 16 * voxel_count + 512 * (
+        region_count + label_count + 1
+    )
+    with budget.live_storage() as code_storage:
+        code_storage.set_bound(code_bytes)
+        with budget.temporary_scope():
+            budget.ticket.checkpoint()
+            budget.admit_work_bound(code_work, storage_upper=code_scratch)
+            budget.reserve(code_work, code_scratch)
+            compartment_code, compartment_ids, value_to_compartment = (
+                _compartment_code(labels, complex)
+            )
+            face_count = _count_compartment_faces(labels, compartment_code)
+            budget.ticket.checkpoint()
+        sort_work = 24 * face_count * (4 * face_count + 1).bit_length()
+        text_work_upper, text_scratch_upper, retained_text_bytes = (
+            _compartment_surface_text_bounds(labels, complex, face_count)
+        )
+        work_units = (
+            3 * voxel_count
+            + face_count * 32
+            + sort_work
+            + interface_count
+            + 128
+            + text_work_upper
+        )
+        # Surface metadata and identities serialize once per emitted interface;
+        # only the largest simultaneous JSON string and encoded copy add peak
+        # scratch, while work sums every possible interface fingerprint.
+        scratch_bytes = (
+            256 * voxel_count
+            + 512 * (interface_count + 1)
+            + text_scratch_upper
+        )
+        # Published output ownership includes strings from the complex and
+        # surfaces; revalidation shares those source owners with its caller.
+        result_bytes = (
+            8192 * face_count
+            + 4096 * (interface_count + 1)
+            + 8192
+            + (retained_text_bytes if retain_result else 0)
+        )
+        retained_work_units = 128 + 16 * interface_count
+        try:
+            if lifetime is None:
+                with budget.temporary_scope() as result_lifetime:
+                    _admit_compartment_source_phase(
+                        budget,
+                        work_units,
+                        scratch_bytes,
+                        result_bytes,
+                        retained_work_units if retain_result else 0,
+                    )
+                    result = _extract_compartment_surfaces_core(
+                        labels, complex, compartment_code, compartment_ids
+                    )
+                    _finish_compartment_source_phase(
+                        budget,
+                        result_lifetime,
+                        result,
+                        scratch_bytes,
+                        result_bytes,
+                        retain_result=retain_result,
+                    )
+            else:
+                _admit_compartment_source_phase(
+                    budget,
+                    work_units,
+                    scratch_bytes,
+                    result_bytes,
+                    retained_work_units if retain_result else 0,
+                )
+                result = _extract_compartment_surfaces_core(
+                    labels, complex, compartment_code, compartment_ids
+                )
+                _finish_compartment_source_phase(
+                    budget,
+                    lifetime,
+                    result,
+                    scratch_bytes,
+                    result_bytes,
+                    retain_result=retain_result,
+                )
+        finally:
+            del compartment_code, compartment_ids, value_to_compartment
+    return result
+
+
+def _extract_compartment_surfaces_core(
+    labels: LabelVolume,
+    complex: CompartmentComplex,
+    compartment_code: np.ndarray,
+    compartment_ids: tuple[str, ...],
+    /,
+) -> CompartmentSurfaceResult:
     interfaces = {value.ordered_pair: value for value in complex.interfaces}
     loops: dict[str, list[tuple[tuple[int, int, int], ...]]] = {
         value.interface_id: [] for value in complex.interfaces
@@ -412,6 +856,87 @@ def extract_compartment_surfaces(
         }
     )
     return CompartmentSurfaceResult(complex, tuple(surfaces), extraction_id)
+
+
+def _rebuild_compartment_source_facts(
+    labels: LabelVolume,
+    compartments: CompartmentComplex,
+    interfaces: CompartmentSurfaceResult,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> None:
+    if budget is None:
+        expected_complex = build_compartment_complex(
+            labels, compartments.compartments, compartments.interfaces
+        )
+        if expected_complex.complex_id != compartments.complex_id:
+            raise ValueError(
+                "CompartmentMeshingSource.compartments must match image measures and adjacency; "
+                f"got {compartments.complex_id!r} != {expected_complex.complex_id!r}"
+            )
+        expected_interfaces = extract_compartment_surfaces(labels, compartments)
+    else:
+        with budget.temporary_scope() as lifetime:
+            expected_complex = _build_compartment_complex(
+                labels,
+                compartments.compartments,
+                compartments.interfaces,
+                budget=budget,
+                lifetime=lifetime,
+                retain_result=False,
+            )
+            try:
+                if expected_complex.complex_id != compartments.complex_id:
+                    raise ValueError(
+                        "CompartmentMeshingSource.compartments must match image measures and adjacency; "
+                        f"got {compartments.complex_id!r} != {expected_complex.complex_id!r}"
+                    )
+                expected_interfaces = _extract_compartment_surfaces(
+                    labels,
+                    compartments,
+                    budget=budget,
+                    lifetime=lifetime,
+                    retain_result=False,
+                )
+                try:
+                    if expected_interfaces.extraction_id != interfaces.extraction_id:
+                        raise ValueError(
+                            "CompartmentMeshingSource.interfaces must represent the occupied image cells; "
+                            f"got {interfaces.extraction_id!r} != {expected_interfaces.extraction_id!r}"
+                        )
+                    if tuple(
+                        (value.definition.interface_id, value.surface.mesh.mesh_id)
+                        for value in interfaces.surfaces
+                    ) != tuple(
+                        (value.definition.interface_id, value.surface.mesh.mesh_id)
+                        for value in expected_interfaces.surfaces
+                    ):
+                        raise ValueError(
+                            "CompartmentMeshingSource.interfaces.surfaces must match the extraction binding; "
+                            "got different interface or mesh IDs"
+                        )
+                finally:
+                    del expected_interfaces
+            finally:
+                del expected_complex
+        return
+    if expected_interfaces.extraction_id != interfaces.extraction_id:
+        raise ValueError(
+            "CompartmentMeshingSource.interfaces must represent the occupied image cells; "
+            f"got {interfaces.extraction_id!r} != {expected_interfaces.extraction_id!r}"
+        )
+    if tuple(
+        (value.definition.interface_id, value.surface.mesh.mesh_id)
+        for value in interfaces.surfaces
+    ) != tuple(
+        (value.definition.interface_id, value.surface.mesh.mesh_id)
+        for value in expected_interfaces.surfaces
+    ):
+        raise ValueError(
+            "CompartmentMeshingSource.interfaces.surfaces must match the extraction binding; "
+            "got different interface or mesh IDs"
+        )
 
 
 __all__ = [

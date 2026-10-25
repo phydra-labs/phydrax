@@ -7,6 +7,7 @@ from jax import Array
 import phydrax as phx
 from phydrax._meshcore import NativeExecutionScope
 from phydrax.geometry import ImplicitSurfacePlan
+from phydrax.geometry._domain_coverage import DomainCoverageCertificate
 from phydrax.meshing._periodic import simplex_entity_corners
 from phydrax.meshing.providers._native_route_policy import NativePublicationPolicy
 from phydrax.units import METER
@@ -279,6 +280,7 @@ def test_native_planar_route_meshes_holes_embedded_segments_and_quality() -> Non
     assert result.certification is not None
     coverage = result.certification.coverage
     assert coverage is not None
+    assert isinstance(coverage, DomainCoverageCertificate)
     assert result.certification.passed
     assert coverage.status == "certified"
     assert len(coverage.achieved_region_measures) == 1
@@ -333,6 +335,7 @@ def test_native_planar_thin_channel_retains_hard_median_and_quality() -> None:
     assert result.certification is not None and result.certification.passed
     coverage = result.certification.coverage
     assert coverage is not None and coverage.status == "certified"
+    assert isinstance(coverage, DomainCoverageCertificate)
     assert len(coverage.achieved_region_measures) == 1
     measured_area = coverage.achieved_region_measures[0]
     assert measured_area is not None
@@ -1056,6 +1059,7 @@ def test_native_dual_quad_provider_certifies_complete_square_cover() -> None:
     assert certification is not None and certification.passed
     coverage = certification.coverage
     assert coverage is not None
+    assert isinstance(coverage, DomainCoverageCertificate)
     assert all(value is not None for value in coverage.achieved_region_measures)
     np.testing.assert_allclose(
         np.asarray(coverage.achieved_region_measures, dtype=np.float64),
@@ -1112,6 +1116,7 @@ def test_native_phase_recorder_preserves_scientific_result_identity() -> None:
     assert certification is not None and certification.passed
     coverage = certification.coverage
     assert coverage is not None
+    assert isinstance(coverage, DomainCoverageCertificate)
     assert all(value is not None for value in coverage.achieved_region_measures)
     np.testing.assert_allclose(
         np.asarray(coverage.achieved_region_measures, dtype=np.float64),

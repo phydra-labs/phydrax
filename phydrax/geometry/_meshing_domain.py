@@ -1062,6 +1062,39 @@ class MeshingDomain(StrictModule, NonTrainableState):
         kind = "region" if dimension == 3 else self.source_kinds[dimension]
         return f"{self.source_revision}:{kind}:{indices[index]}"
 
+    def entity_ids(
+        self, dimensions: np.ndarray, indices: np.ndarray, /
+    ) -> tuple[str, ...]:
+        """Row ``i`` is ``entity_id(dimensions[i], indices[i])``.
+
+        Each distinct ``(dimension, index)`` stratum is encoded once, so the
+        cost scales with the distinct strata rather than with the mesh rows.
+        """
+
+        dimensions_ = np.asarray(dimensions)
+        indices_ = np.asarray(indices)
+        if (
+            dimensions_.ndim != 1
+            or indices_.shape != dimensions_.shape
+            or not np.issubdtype(dimensions_.dtype, np.integer)
+            or not np.issubdtype(indices_.dtype, np.integer)
+        ):
+            raise ValueError(
+                f"MeshingDomain.entity_ids must receive aligned one-dimensional integer rows; got dimensions {dimensions_.dtype}{dimensions_.shape} and indices {indices_.dtype}{indices_.shape}"
+            )
+        if not dimensions_.size:
+            return ()
+        strata, inverse = np.unique(
+            np.stack((dimensions_, indices_), axis=1).astype(np.int64),
+            axis=0,
+            return_inverse=True,
+        )
+        entity_id = self.entity_id
+        identities = tuple(
+            entity_id(dimension, index) for dimension, index in strata.tolist()
+        )
+        return tuple(identities[row] for row in inverse.reshape(-1).tolist())
+
     def curve_uses(self, curve: int, /) -> tuple[tuple[int, PatchCurveUse], ...]:
         """``(patch, use)`` pairs of one curve in order (owner first)."""
 
@@ -1333,12 +1366,17 @@ class MeshingDomain(StrictModule, NonTrainableState):
         values: np.ndarray,
         /,
         *,
+        intervals: np.ndarray | None = None,
         budget: CoordinateEnclosureBudget | None = None,
         preparations: TrimRequestPreparations | None = None,
         restriction_bank: BernsteinRestrictionBank | None = None,
         meridian_jets: list[MeridianOverlaps] | None = None,
     ) -> np.ndarray:
-        """Continuous chord bounds, including non-C1 source chart transitions."""
+        """Continuous chord bounds, including non-C1 source chart transitions.
+
+        ``intervals`` selects arcs ``[values[i], values[i + 1]]`` of the whole
+        discretization; each selected bound equals its full-batch value.
+        """
         with (
             coordinate_source_request(
                 (self.curve_atlas.mapping, values),
@@ -1361,11 +1399,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
             span = last - first
             known_second = None
             if isinstance(boundary_map, PhysicalCurveMap):
-                candidate = domain_numerics_owner.curve_second_bound(
+                # A nonfinite global bound is the same per-arc fallback signal;
+                # retaining it avoids re-deriving it for every arc.
+                known_second = domain_numerics_owner.curve_second_bound(
                     boundary_map.curves[curve], budget=budget
                 )
-                if np.isfinite(candidate):
-                    known_second = candidate
             else:
                 surface, carrier = self.patches[patch].surface, use.pcurve
                 match (surface, carrier):
@@ -1399,8 +1437,21 @@ class MeshingDomain(StrictModule, NonTrainableState):
                         )
                     case _:
                         pass
+            arcs = np.arange(values.size - 1, dtype=np.int64)
+            if intervals is not None:
+                selected = np.asarray(intervals)
+                if (
+                    selected.ndim != 1
+                    or not np.issubdtype(selected.dtype, np.integer)
+                    or np.any(selected < 0)
+                    or np.any(selected >= values.size - 1)
+                ):
+                    raise ValueError(
+                        "MeshingDomain.curve_interpolation_intervals must index source arcs; got invalid interval indices"
+                    )
+                arcs = selected.astype(np.int64)
             bounds = []
-            for start, end in zip(values[:-1], values[1:], strict=True):
+            for start, end in zip(values[arcs], values[arcs + 1], strict=True):
                 lower, upper = sorted(
                     (float(first + span * start), float(first + span * end))
                 )

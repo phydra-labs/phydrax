@@ -94,6 +94,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import nonnegative_integer, positive_integer
 from ..discretization import CellMesh, TetrahedralConnectivity
+from ..discretization._cell_mesh import (
+    cell_block_construction_work,
+    cell_mesh_construction_work,
+)
 from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
 from ..geometry.simplicial._topology import TriangleTopology
 from ..typing import checked
@@ -1504,6 +1508,7 @@ class PreparedImplicitVolume:
         _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile
     )
     query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery
+    discovery: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery | None
     specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec
     schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule
     target_size: float
@@ -1590,6 +1595,7 @@ def prepare_restricted_implicit_volume(
     /,
     *,
     scope: NativeExecutionScope,
+    discovery: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery | None = None,
 ) -> PreparedImplicitVolume:
     """Prepare the certified analytic profile without extracting or filling a PLC."""
     issues = implicit_volume_support_issues(specification)
@@ -1600,16 +1606,19 @@ def prepare_restricted_implicit_volume(
             stage="implicit_volume_preparation",
         )
     _implicit_region_metadata(specification)
-    if specification.limits.maximum_geometry_queries < 3:
+    preparation_queries = 5 + 2 * len(specification.region_seeds) + (
+        0 if discovery is None else discovery.reconstruction_query_count
+    )
+    if specification.limits.maximum_geometry_queries < preparation_queries:
         raise _leaf_phydrax_meshing__failures.MeshingFailure(
             _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "implicit_volume.preparation must admit three bounded geometry requests; got insufficient geometry query capacity",
+            "implicit_volume.preparation must admit source-profile checks, original discovery reproof, carrier enclosure and region queries; got insufficient geometry query capacity",
             stage="implicit_volume_preparation",
         )
     with implicit_source_budget(
         specification.limits,
         scope=scope,
-        queries_upper=5 + 2 * len(specification.region_seeds),
+        queries_upper=preparation_queries,
     ) as budget:
         profile = _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile(
             geometry,
@@ -1619,6 +1628,8 @@ def prepare_restricted_implicit_volume(
             budget=budget,
         )
         profile.require_bound(geometry, coordinate_contract, budget=budget)
+        if discovery is not None:
+            discovery.require_bound(geometry, budget=budget)
         box = np.asarray(domain, dtype=np.float64)
         if (
             box.shape != (2, 3)
@@ -1735,6 +1746,7 @@ def prepare_restricted_implicit_volume(
                 "kind": "prepared-restricted-implicit-volume",
                 "profile": profile.profile_id,
                 "domain_query": query.query_id,
+                "original_discovery": None if discovery is None else discovery.query_id,
                 "domain": array_tree_fingerprint(box),
                 "specification": specification.specification_id,
                 "schedule": schedule.schedule_id,
@@ -1747,13 +1759,14 @@ def prepare_restricted_implicit_volume(
         return PreparedImplicitVolume(
             profile,
             query,
+            discovery,
             specification,
             schedule,
             size,
             tolerance,
             float(cover),
             seed_kind,
-            3 + seed_queries,
+            budget.ticket.geometry_queries,
             resolution.report_id,
             identity,
         )
@@ -2940,11 +2953,18 @@ def generate_restricted_implicit_volume(
             _dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION,
             scope=scope,
         )
-        mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(
-            CellMesh.from_tetrahedra(
-                points, cells, numeric_version=prepared.profile.source_revision
-            )
+        shapes = (("tetrahedron", cells.shape[0], 4),)
+        scope.charge(
+            work=cell_block_construction_work(cells.shape[0], 4)
+            + cell_mesh_construction_work(points.shape[0], 3, shapes)
         )
+        constructed = CellMesh.from_tetrahedra(
+            points, cells, numeric_version=prepared.profile.source_revision
+        )
+        scope.charge(
+            work=_dependency_phydrax_meshing__canonical.canonical_cell_mesh_work(constructed)
+        )
+        mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(constructed)
         name, _, _ = _implicit_region_metadata(prepared.specification)
         domain = domain_coverage_owner.PiecewiseLinearDomain(
             points,
@@ -3103,11 +3123,13 @@ def execute_restricted_implicit_volume(
     """Certify and publish analytic restricted-Delaunay generation."""
 
     with implicit_source_budget(
-        specification.limits, scope=scope, queries_upper=2
+        specification.limits, scope=scope, queries_upper=2 + (
+            0 if prepared.discovery is None else prepared.discovery.reconstruction_query_count
+        )
     ) as budget:
         prepared.profile.require_bound(geometry, coordinate_contract, budget=budget)
         fidelity_source = source_fidelity_owner.ImplicitProjectionBoundarySource(
-            prepared.profile, budget=budget
+            prepared.profile, discovery=prepared.discovery, budget=budget
         )
     if specification.specification_id != prepared.specification.specification_id:
         raise ValueError(

@@ -448,7 +448,12 @@ PHX_MC_API int32_t phx_mc_execution_admit_work_bound(void* scope, uint64_t maxim
 PHX_MC_API int32_t phx_mc_execution_admit_cavity(void* scope, uint64_t cells);
 /* Observe [unreserved construction work, unreserved source queries, unreserved
  * cavity capacity, available managed bytes] and native wall allowance.
- * Minimum across all parent scopes; no allowance is renewed or consumed. */
+ * Minimum across the queried scope's parents; no allowance is renewed or consumed.
+ * The scope may be current or a live same-thread ancestor. The active scope's
+ * deadline is polled and its status returned. Ancestor work/query/cavity/wall
+ * values describe that ancestor; managed availability includes active memory
+ * windows. Ancestor observations do not authorize mutation outside the active
+ * scope's enforced allowance. */
 PHX_MC_API int32_t phx_mc_execution_remaining(
     void* scope, uint64_t* remaining, double* wall_seconds);
 /* Allocate an uninitialized host array through the active creating-thread
@@ -604,12 +609,17 @@ PHX_MC_API int32_t phx_mc_clip_reference_triangle_exact(
     int32_t vertex_capacity, int32_t* supporting_planes, int32_t* edge_labels,
     int32_t* vertex_count, int64_t* work_units);
 
-/* Exact original reference tetrahedron clipped by six rational box pullbacks.
- * Forty denominator-cleared signed integers describe ten (a,b,c,d) planes
- * with a*x+b*y+c*z+d<=0. The first four are canonical simplex planes.
+/* Exact original reference tetrahedron clipped by rational halfspaces.
+ * plane_count in [4,16]; 4*plane_count denominator-cleared signed integers
+ * (offsets[4*plane_count+1]) describe (a,b,c,d) planes with a*x+b*y+c*z+d<=0
+ * in original reference coordinates. The first four are positive multiples
+ * of the canonical simplex planes; the rest are arbitrary exact halfspaces.
  * Outputs source support triplets (V,3), complete incident plane masks (V),
- * oriented face CSR/plane labels, actual work; no numerical vertices.
- * Capacities V>=16, F>=10, face entries>=48. Counts commit only on success. */
+ * oriented face CSR/plane labels, actual work; no numerical vertices. With
+ * F=plane_count, capacities V>=2F-4, faces>=F, face entries>=6F-12 (convex
+ * polytope bounds). Empty and lower-dimensional intersections return OK with
+ * zero counts. scratch_limit must admit (2F-4)*(2048+4096*M) bytes for M-limb
+ * coefficients before allocation. Counts commit only on success. */
 typedef struct phx_mc_clip_reference_tetrahedron_exact_request {
   const uint32_t* words;
   int64_t word_count;
@@ -617,6 +627,7 @@ typedef struct phx_mc_clip_reference_tetrahedron_exact_request {
   const int8_t* signs;
   int64_t scratch_limit;
   int64_t work_limit;
+  int32_t plane_count;
   int32_t vertex_capacity;
   int32_t face_capacity;
   int32_t entry_capacity;
@@ -631,6 +642,76 @@ typedef struct phx_mc_clip_reference_tetrahedron_exact_request {
 } phx_mc_clip_reference_tetrahedron_exact_request;
 PHX_MC_API int32_t phx_mc_clip_reference_tetrahedron_exact(
     const phx_mc_clip_reference_tetrahedron_exact_request* request);
+
+/* Exact pooled arrangement of positive tetrahedra under a clipping DAG, in
+ * ONE coordinate frame. Points: point_count rows of four denominator-cleared
+ * signed integers (X,Y,Z,W), W>0 (x = X/W). Planes: plane_count rows
+ * (a,b,c,d) meaning a*x+b*y+c*z+d = 0, nonzero normal, first nonzero
+ * coefficient positive. Scalars are signed little-endian uint32 magnitudes,
+ * offsets[4*rows+1] into words, empty iff sign 0, nonzero top limb.
+ * Signed 1-based plane references r select a*x+b*y+c*z+d <= 0 (r > 0) or
+ * its negation (r < 0). tetrahedra (S,4) are strictly positive point rows;
+ * tetrahedron_planes (S,4) slot k is the outward face opposite corner k:
+ * exactly zero at the other corners and negative at corner k. Job j
+ * (parents[j] = -(s+1): tetrahedron s; parents[j] = p in [0,j): job p's
+ * result) is clipped by cut_planes[cut_offsets[j]..cut_offsets[j+1]); its
+ * inherited chain (4 + every ancestral and own cut) is at most 16. Children
+ * of empty jobs are empty without clipping. One primitive query is charged
+ * before EVERY job. Exact plane sides, edge/three-plane constructions and
+ * points are pooled across jobs; points are welded by exact projective
+ * equality (binary64 round-to-nearest buckets only choose candidates).
+ * On success *result owns: exact homogeneous vertices (packed like inputs,
+ * W>0) in first-use order, vertex_input_index (smallest equal input point or
+ * -1), per-job face CSR cell_face_offsets[J+1] -> face_offsets[F+1] ->
+ * face_vertices (outward strictly convex loops, each starting at its
+ * smallest vertex), signed global face_planes[F] (cell on the <= 0 side);
+ * empty and zero-measure jobs have no faces. evidence[6] is always written:
+ * work units, primitive queries, peak managed bytes of this call, completed
+ * job prefix, failure category (0 none, 1 point, 2 plane, 3 tetrahedron,
+ * 4 job topology, 5 cut, 6 job execution, 7 publication) and failure row.
+ * Failures publish no result. scratch_limit bounds this call's additional
+ * managed bytes (exact limbs, pools, output banks); work_limit its work. */
+#define PHX_MC_TETRAHEDRA_ARRANGEMENT_EVIDENCE 6
+#define PHX_MC_TETRAHEDRA_ARRANGEMENT_SIZES 5
+/* Counters: propagated empty jobs, sections, side evaluations, side reuses,
+ * vertex constructions, construction reuses, vertex welds, pool vertices. */
+#define PHX_MC_TETRAHEDRA_ARRANGEMENT_COUNTERS 8
+typedef struct phx_mc_tetrahedra_arrangement phx_mc_tetrahedra_arrangement;
+typedef struct phx_mc_arrange_tetrahedra_exact_request {
+  int64_t point_count;
+  int64_t plane_count;
+  int64_t tetrahedron_count;
+  int64_t job_count;
+  int64_t cut_count;
+  int64_t point_word_count;
+  int64_t plane_word_count;
+  const uint32_t* point_words;
+  const int64_t* point_offsets;
+  const int8_t* point_signs;
+  const uint32_t* plane_words;
+  const int64_t* plane_offsets;
+  const int8_t* plane_signs;
+  const int32_t* tetrahedra;
+  const int32_t* tetrahedron_planes;
+  const int32_t* parents;
+  const int64_t* cut_offsets;
+  const int32_t* cut_planes;
+  int64_t scratch_limit;
+  int64_t work_limit;
+  int64_t* evidence;
+  phx_mc_tetrahedra_arrangement** result;
+} phx_mc_arrange_tetrahedra_exact_request;
+PHX_MC_API int32_t phx_mc_arrange_tetrahedra_exact(
+    const phx_mc_arrange_tetrahedra_exact_request* request);
+/* sizes: vertices, vertex words, jobs, faces, face entries. */
+PHX_MC_API int32_t phx_mc_tetrahedra_arrangement_sizes(
+    const phx_mc_tetrahedra_arrangement* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_tetrahedra_arrangement_export(
+    const phx_mc_tetrahedra_arrangement* result, uint32_t* vertex_words,
+    int64_t* vertex_word_offsets, int8_t* vertex_signs, int32_t* vertex_input_index,
+    int64_t* cell_face_offsets, int64_t* face_offsets, int32_t* face_vertices,
+    int32_t* face_planes, int64_t* counters);
+PHX_MC_API void phx_mc_tetrahedra_arrangement_free(phx_mc_tetrahedra_arrangement* result);
 
 /* Axis-aligned box (3,) clipped by halfspaces per item.  Outputs a closed
  * polyhedron: vertices (count, vertex_capacity, 3), vertex_counts (count,),
@@ -720,6 +801,127 @@ PHX_MC_API int32_t phx_mc_segment_triangle_intersections(
 PHX_MC_API int32_t phx_mc_point_triangle_locations(int64_t count, const double* points,
                                                    const double* triangles, int8_t* sides,
                                                    int8_t* features, int32_t* item_status);
+
+/* ------------------------------------------------- quadratic simplex bounds
+ * Outward enclosures of degree-two Bernstein forms on child simplices; the
+ * coordinate domain does not apply. m = dimension + 1 with dimension in
+ * {1, 2, 3}; components in {1, 2, 3}. q_lower/q_upper (count, components, m, m)
+ * enclose symmetric matrices Q of f(lambda) = lambda^T Q lambda over root
+ * barycentric coordinates: Q_ii is the Bernstein coefficient of lambda_i^2 and
+ * Q_ij (i != j) that of 2 lambda_i lambda_j. A coefficient lower endpoint may be
+ * -INFINITY and an upper endpoint +INFINITY. barycentric_lower/_upper
+ * (count, m, m): row k encloses the root barycentric coordinates of child
+ * vertex k, every endpoint finite in [0, 1], and each row's exact lower-endpoint
+ * sum <= 1 <= its exact upper-endpoint sum. lower/upper (count, components)
+ * receive min/max over k <= l of the interval child coefficients L Q L^T,
+ * computed with every binary64 product and sum rounded outward: they enclose
+ * f over the whole child simplex for every Q and L in the input intervals.
+ * Overflow yields an infinite endpoint, never NaN. Status: NONFINITE_INPUT
+ * for NaN, q_lower = +INFINITY, q_upper = -INFINITY or a nonfinite barycentric
+ * endpoint (outranking INVALID_INPUT anywhere in the batch); INVALID_INPUT for
+ * asymmetric q_lower or q_upper, a reversed interval, a barycentric endpoint
+ * outside [0, 1] or a row whose enclosure misses sum one; INVALID_ARGUMENT for a
+ * bad dimension, components, count, null output, or null input with count > 0.
+ * Validation failures write no output. Validation and evaluation run with
+ * round-to-nearest and gradual underflow on every participating thread,
+ * restoring the caller's mode; INTERNAL_ERROR if that mode cannot be
+ * established. The call admits and charges components (m^3 + m^2 (m + 1) / 2)
+ * work units per item; its parallel region requests no arena payload, so its
+ * managed bytes are only the region's arena bookkeeping. Outputs are complete
+ * only when PHX_MC_OK is returned. */
+PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
+    int64_t count, int32_t dimension, int32_t components, const double* q_lower,
+    const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,
+    double* lower, double* upper);
+
+/* ------------------------------------------------ exact P2 tetrahedron validity
+ * Exact root Bernstein validity for full-dimensional quadratic tetrahedral
+ * coordinate maps. nodes is (count,10,3), finite binary64. derivative_weights
+ * is (3,4,10) in derivative-column order and power order (1,x,y,z); each
+ * coefficient is an integer linear combination of the ten node coordinates.
+ * relative_floor must be finite in [0,1); the node limit is positive and depth,
+ * work and scratch limits are nonnegative. Decisions are 0=subdivide, 1=root
+ * valid, 2=root invalid, 3=Bernstein-node-limit unresolved, 4=depth-zero
+ * unresolved. Decisions 0,1,2,4 receive outward, saturating root min/max
+ * Bernstein bounds; decision 3 receives NaN bounds. Outputs remain untouched
+ * unless PHX_MC_OK is returned.
+ * Each exact scalar operation and bounded proof-term visit spends one work unit;
+ * maximum_scratch_bytes bounds managed staging and exact-integer storage.
+ *
+ * evidence is always written when nonnull, as int64[6]: actual work, primitive
+ * queries, peak managed bytes, completed cells, failing cell (-1 if none), and
+ * failure category (0 success, 1 validation, 2 execution, 3 publication). One
+ * primitive query is charged per evaluated cell. Native deadline and resource
+ * refusals propagate unchanged. Empty batches may omit data/output arrays.
+ */
+PHX_MC_API int32_t phx_mc_quadratic_tetrahedron_validity(
+    int64_t count, const double* nodes, const int32_t* derivative_weights,
+    double relative_floor, int64_t maximum_bernstein_nodes,
+    int64_t maximum_subdivision_depth, int64_t maximum_work_units,
+    int64_t maximum_scratch_bytes, int32_t* decisions, double* lower, double* upper,
+    int64_t* evidence);
+
+/* ------------------------------------------------- interval program execution
+ * Executes one straight-line interval program over caller workspaces
+ * lower/upper (workspace_size,) in place; the coordinate domain does not
+ * apply. instructions (instruction_count, 8) holds rows
+ *   (opcode, out_offset, out_size, a_offset, a_index, b_offset, b_index, aux)
+ * executed in order. Element k of an operand (offset, index) is workspace
+ * entry offset + k for index == -1, else offset + indices[index + k]. Row
+ * semantics, element by element in round-to-nearest binary64, with down/up
+ * one nextafter toward -/+INFINITY, min/max returning the first NaN operand
+ * and ordering -0 below +0, and x * y read as +0 when one factor is zero and
+ * the other infinite:
+ *   GATHER     (1) out = a.
+ *   ADD        (2) [down(al + bl), up(ah + bh)].
+ *   SUB        (3) [down(al - bh), up(ah - bl)]; [+0, +0] when al == ah ==
+ *                  bl == bh is finite.
+ *   SUB_SAME   (4) SUB, then [+0, +0] when al and ah are finite.
+ *   MUL        (5) [down(min(min(ll, lu), min(ul, uu))),
+ *                   up(max(max(ll, lu), max(ul, uu)))] of the endpoint
+ *                  products.
+ *   NEG        (6) [-ah, -al].
+ *   REDUCE_SUM (7) out[k] sums the aux contiguous terms a_offset + k aux + t,
+ *                  t = 0..aux-1, from +0 in order for each bound and for
+ *                  max(|lo|, |hi|) as s; with g = parameters[b_index] the
+ *                  result is [down(lo_sum - g s), up(hi_sum + g s)].
+ *   SIN, COS   (8, 9) min/max of the libm endpoint values (NaN for a
+ *                  nonfinite endpoint); the max becomes +1 when the phase
+ *                  pi/2 (SIN) or 0 (COS) and the min becomes -1 when the
+ *                  phase -pi/2 (SIN) or pi (COS) may lie in the interval: some
+ *                  p + 2 pi ceil((al - e - p) / (2 pi)) <= ah + e with
+ *                  e = 8 eps max(1, |al|); both become so when ah - al < 2 pi
+ *                  fails or an endpoint is nonfinite. Then four steps
+ *                  down/up and clamping to [-1, 1].
+ * Unused fields are canonical: b_offset = b_index = -1 for GATHER, NEG, SIN
+ * and COS; aux = 0 except for REDUCE_SUM, whose a_index and b_offset are -1
+ * and whose g must be finite and nonnegative. Each row's output region lies
+ * inside the workspace at or after the end of the previous row's output, and
+ * every element the row reads lies below its out_offset, so rows read only
+ * caller-initialized entries or earlier results and never overwrite either.
+ * Workspace values are data: NaN, infinities, signed zeros and subnormals
+ * follow the row semantics. Status: INVALID_ARGUMENT for a negative or
+ * unaddressable count or a null array with a positive count; INVALID_INPUT
+ * for an unknown opcode, a noncanonical field, an out-of-range or misordered
+ * region, offset, index or parameter, or an invalid g. The whole program is
+ * validated before any workspace entry is written. The call allocates no
+ * native memory and charges no work or queries: the caller prices each
+ * evaluation. Without an active execution scope it is unmetered. With one,
+ * it polls only that scope's deadline and recorded refusals, adding no work,
+ * at entry, after every 4096 validated rows or index entries, before the
+ * first write and after every block of at most 4096 element operations
+ * (aux + 1 per REDUCE_SUM element, 1 otherwise), returning TIMEOUT or the
+ * recorded refusal status. Validation and execution run on the calling thread
+ * with round-to-nearest and gradual underflow, restoring the caller's mode;
+ * INTERNAL_ERROR if that mode cannot be established. INVALID_ARGUMENT,
+ * INVALID_INPUT, INTERNAL_ERROR and a refusal before the first write leave
+ * both workspaces unmodified; a refusal during execution leaves them
+ * partially written, so the caller must discard them. Results are complete
+ * only when PHX_MC_OK is returned. */
+PHX_MC_API int32_t phx_mc_interval_program_execute(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
+    double* upper, int64_t workspace_size);
 
 /* ------------------------------------------------------------ triangulations
  * Results are returned as an owned mesh handle (NULL on failure).  Cells are
@@ -1367,9 +1569,21 @@ PHX_MC_API int32_t phx_mc_tet_mesh_collapse_curved_edge(
 /* Current accepted-state generation of a mesh. */
 PHX_MC_API int32_t phx_mc_tet_mesh_accepted_generation(const phx_mc_tet_mesh* mesh,
                                                        int64_t* generation);
-/* Retained curved host claims: count, then rows (source row), sources,
- * coordinates (count x 9), deviations and accepted generations. Null outputs
- * report only the count. */
+/* Read the finite tetrahedron rows of the retained curved-collapse inspection.
+ * Identity must match remove/keep/generation. Both capacities zero is a count
+ * query; otherwise each caller bank holds capacity rows of four vertex IDs.
+ * counts[2] receives removed/proposed sizes. No reprepare or publication.
+ * A missing/stale retained owner returns INVALID_INPUT with zero counts. */
+PHX_MC_API int32_t phx_mc_tet_mesh_curved_collapse_cavity(
+    phx_mc_tet_mesh* mesh, int32_t remove, int32_t keep, int64_t generation,
+    int64_t removed_capacity, int64_t proposed_capacity, int64_t work_limit,
+    int32_t* removed, int32_t* proposed, int64_t* counts);
+/* Retained curved host claims: count, then immutable rows (source row), sources,
+ * coordinates (count x 9), deviations and chronological accepted generations.
+ * Initial rows are epoch zero; a committed row records its resulting accepted
+ * generation, not the predecessor used to authenticate the edit. Newer rows
+ * supersede older exact planar coverage only on their overlapping fragments;
+ * same-epoch overlap is invalid. Null outputs report only the count. */
 PHX_MC_API int32_t phx_mc_tet_mesh_curved_claims(
     const phx_mc_tet_mesh* mesh, int64_t capacity, int64_t* count, int32_t* rows,
     int32_t* sources, double* coordinates, double* deviations, int64_t* generations);
@@ -1928,6 +2142,18 @@ PHX_MC_API int32_t phx_mc_tet_mesh_inspect_edge_insertion(
     phx_mc_tet_mesh*, int32_t first, int32_t second, const double* split_position,
     const double* final_position, double source_fraction, int64_t maximum_cavity_cells, int64_t work_limit,
     int32_t* removed_tetrahedra, int32_t* proposed_tetrahedra, int64_t* counts);
+/* Projected curved-source insertion. First proves the complete ordinary
+ * material cavity at split_position, then the same topology at final_position.
+ * source names one declared curved group; source_fraction is strictly interior.
+ * projected_faces has capacity 4*maximum_cavity_cells triples, in native
+ * material-side orientation. counts has five entries: the ordinary four
+ * followed by the exact number of new constrained faces requiring host claims.
+ * Inspection publishes nothing. Every such face must be claimed at commit. */
+PHX_MC_API int32_t phx_mc_tet_mesh_inspect_projected_edge_insertion(
+    phx_mc_tet_mesh*, int32_t first, int32_t second, const double* split_position,
+    const double* final_position, double source_fraction, int32_t source,
+    int64_t maximum_cavity_cells, int64_t work_limit, int32_t* removed_tetrahedra,
+    int32_t* proposed_tetrahedra, int32_t* projected_faces, int64_t* counts);
 /* Reprepare and compare the actual inspected final cavity/source witness, then
  * commit once. Different/stale tuples refuse without changing accepted geometry. */
 typedef struct phx_mc_tet_mesh_commit_edge_insertion_request {
@@ -1947,6 +2173,17 @@ typedef struct phx_mc_tet_mesh_commit_edge_insertion_request {
   double target_size;
   int64_t work_limit;
   int32_t* inserted_vertex;
+  /* Ordinary insertion: claim_count=0. Projected insertion: exactly the
+   * inspected new faces, ordered coordinates (count x 9), deviations (count),
+   * and the declared 32-byte digest. Each claim face is the public outward row
+   * (inspected material-side face with its last two corners exchanged); any
+   * other order refuses. Native retains claim rows in that certified order. */
+  int32_t projected_source;
+  int64_t claim_count;
+  const uint8_t* claim_digest;
+  const int32_t* claim_faces;
+  const double* claim_coordinates;
+  const double* claim_deviations;
 } phx_mc_tet_mesh_commit_edge_insertion_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_commit_edge_insertion(
     const phx_mc_tet_mesh_commit_edge_insertion_request* request);

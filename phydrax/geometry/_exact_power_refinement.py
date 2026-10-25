@@ -17,10 +17,10 @@ from phydrax.discretization._coordinate_budget import (
 )
 from phydrax.geometry._embedding_state import boxes
 
-from .._strict import StrictModule
-from .._geometry_predicates import exact_bits
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._geometry_predicates import exact_bits
 from .._host_storage import declared_integer_storage_bytes
+from .._strict import StrictModule
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -38,6 +38,7 @@ from ..discretization._exact_power_geometry import (
 from ..discretization._exact_rational_geometry import ExactRationalCellGeometrySource
 from ..typing import checked
 from ._exact_polyhedral_geometry import (
+    _OverlapStorageBounds,
     convex_cell_overlap,
     convex_cells_disjoint,
     exact_convex_cells,
@@ -45,7 +46,6 @@ from ._exact_polyhedral_geometry import (
     ExactConvexCell,
     ExactOverlapRefusal,
     ExactTetrahedronOverlap,
-    _OverlapStorageBounds,
     star_determinant,
     star_tetrahedra,
     tetrahedra_disjoint,
@@ -54,18 +54,19 @@ from ._exact_polyhedral_geometry import (
     TetrahedronPlanePreparation,
 )
 from ._supermesh import (
+    _admit_minimum_publication,
+    _bvh_storage_bound,
+    _RefinementStorage,
     CommonRefinementCoverage,
     CommonRefinementEvidence,
     CommonRefinementPolicy,
     CommonRefinementStatus,
     Counts,
-    _bvh_storage_bound,
-    _admit_minimum_publication,
-    _RefinementStorage,
     Decomposition,
     Entries,
     PreparedCommonRefinement,
 )
+
 
 def _power_candidates(
     first: Decomposition, second: Decomposition, limit: int,
@@ -370,11 +371,13 @@ def _power_pair(
     )
     for first_piece, second_piece in pairs:
         piece_pairs += 1
-        if (
-            convex_cells_disjoint(first_piece, second_piece)
-            if convex
-            else tetrahedra_disjoint(first_piece, second_piece)
-        ):
+        if isinstance(first_piece, ExactConvexCell) and isinstance(second_piece, ExactConvexCell):
+            disjoint = convex_cells_disjoint(first_piece, second_piece)
+        elif isinstance(first_piece, tuple) and isinstance(second_piece, tuple):
+            disjoint = tetrahedra_disjoint(first_piece, second_piece)
+        else:
+            raise RuntimeError("Power overlap pieces must use the same exact cell representation.")
+        if disjoint:
             continue
         prior_storage = storage.bound
         try:
@@ -382,7 +385,8 @@ def _power_pair(
                 budget.reserve(0, 4096 + 128 * (
                     len(first_piece.vertices) + len(second_piece.vertices)
                     + len(first_piece.planes) + len(second_piece.planes)
-                    if convex else 16
+                    if isinstance(first_piece, ExactConvexCell)
+                    and isinstance(second_piece, ExactConvexCell) else 16
                 ))
                 bounds = _overlap_bound(first_piece, second_piece, budget=budget)
         except CoordinateEnclosureResourceError as error:
@@ -394,7 +398,7 @@ def _power_pair(
             break
         # Each helper preadmits its actual live stages on this same ledger.
         # The pair owner directly retains its returned Fraction/recipe bank.
-        if convex:
+        if isinstance(first_piece, ExactConvexCell) and isinstance(second_piece, ExactConvexCell):
             overlap = convex_cell_overlap(
                 first_piece,
                 second_piece,
@@ -406,7 +410,7 @@ def _power_pair(
                 _output_storage=storage,
                 _workspace=workspace,
             )
-        else:
+        elif isinstance(first_piece, tuple) and isinstance(second_piece, tuple):
             overlap = tetrahedron_overlap(
                 first_piece,
                 second_piece,
@@ -419,6 +423,8 @@ def _power_pair(
                 _output_storage=storage,
                 _workspace=workspace,
             )
+        else:
+            raise RuntimeError("Power overlap pieces must use the same exact cell representation.")
         consumed += overlap.operation_count
         working_bytes = max(working_bytes, budget.peak_bytes_upper)
         match overlap:

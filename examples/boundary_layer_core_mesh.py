@@ -182,6 +182,11 @@ def main() -> None:
     error = solve_diffusion(result)
     if result.certification is None or result.certification.coverage is None:
         raise RuntimeError("Combined coverage certification is mandatory.")
+    coverage = result.certification.coverage
+    if not isinstance(coverage, phx.geometry.DomainCoverageCertificate):
+        raise RuntimeError(
+            "The native layer-core mesh must certify domain coverage; got CAD source coverage."
+        )
     print(
         json.dumps(
             {
@@ -196,9 +201,7 @@ def main() -> None:
                 "active_column_counts": np.asarray(
                     layers.evidence.active_column_counts
                 ).tolist(),
-                "region_volumes": np.asarray(
-                    result.certification.coverage.achieved_region_measures
-                ).tolist(),
+                "region_volumes": np.asarray(coverage.achieved_region_measures).tolist(),
                 "certification_passed": result.certification.passed,
                 "diffusion_patch_max_error": error,
             },

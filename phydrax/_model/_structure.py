@@ -124,7 +124,97 @@ def _preflight_serialized_leaf(
     return payload_end
 
 
-def _canonical_recipe_payload(recipe: Mapping[str, Any], /) -> bytes:
+type _RecipeAdmission = Callable[[int, int], None]
+
+
+def _recipe_admit(
+    admission: _RecipeAdmission | None,
+    work: int = 0,
+    storage: int = 0,
+    /,
+) -> None:
+    if admission is not None and (work or storage):
+        admission(work, storage)
+
+
+def _json_string_size_upper(value: str, admission: _RecipeAdmission | None, /) -> int:
+    _recipe_admit(admission, len(value))
+    size = 2
+    for character in value:
+        codepoint = ord(character)
+        size += (
+            2
+            if character in ('"', "\\")
+            or codepoint in (8, 9, 10, 12, 13)
+            else 6
+            if codepoint < 32 or codepoint > 0x7E
+            else 1
+        )
+        if codepoint > 0xFFFF:
+            size += 6
+    return size
+
+
+def _canonical_recipe_size_upper(
+    value: Any, admission: _RecipeAdmission | None, /
+) -> tuple[int, int]:
+    _recipe_admit(admission, 1, 128)
+    pending = [value]
+    size = 0
+    nodes = 0
+    while pending:
+        current = pending.pop()
+        nodes += 1
+        _recipe_admit(admission, 1, 64)
+        if isinstance(current, Mapping):
+            count = len(current)
+            _recipe_admit(admission, count, 128 + 48 * count)
+            size += 2 + max(0, count - 1) + count
+            for key, child in current.items():
+                if isinstance(key, str):
+                    size += _json_string_size_upper(key, admission)
+                elif key is None:
+                    size += 4
+                elif isinstance(key, bool):
+                    size += 5 if key else 4
+                elif isinstance(key, int):
+                    size += max(1, key.bit_length()) + (key < 0)
+                elif isinstance(key, float):
+                    size += 32
+                else:
+                    size += 64
+                pending.append(child)
+        elif isinstance(current, (list, tuple)):
+            count = len(current)
+            _recipe_admit(admission, count, 64 + 16 * count)
+            size += 2 + max(0, count - 1)
+            pending.extend(current)
+        elif isinstance(current, str):
+            size += _json_string_size_upper(current, admission)
+        elif current is None:
+            size += 4
+        elif isinstance(current, bool):
+            size += 5 if current else 4
+        elif isinstance(current, int):
+            size += max(1, current.bit_length()) + (current < 0)
+        elif isinstance(current, float):
+            size += 32
+        else:
+            size += 64
+    return size, nodes
+
+
+def _canonical_recipe_payload(
+    recipe: Any,
+    /,
+    *,
+    admission: _RecipeAdmission | None = None,
+) -> bytes:
+    if admission is not None:
+        size, nodes = _canonical_recipe_size_upper(recipe, admission)
+        # The JSON string and its UTF-8 bytes coexist; include serializer frames
+        # and dictionary sort scratch before json.dumps allocates either output.
+        _recipe_admit(admission, size, 256 + 3 * size + 64 * nodes)
     try:
         return json.dumps(
             recipe,
@@ -137,24 +227,40 @@ def _canonical_recipe_payload(recipe: Mapping[str, Any], /) -> bytes:
         raise ValueError("Model artifact recipe is not canonical finite JSON.") from error
 
 
-def _recipe_contains_array(recipe: Mapping[str, Any], /) -> bool:
+def _recipe_contains_array(
+    recipe: Mapping[str, Any],
+    /,
+    *,
+    admission: _RecipeAdmission | None = None,
+) -> bool:
+    _recipe_admit(admission, 1, 128)
     pending = [recipe]
     while pending:
         node = pending.pop()
+        _recipe_admit(admission, 1, 64)
         kind = node["kind"]
         if kind in ("array", "prng_key", "reference"):
             return True
         if kind == "slice":
+            _recipe_admit(admission, 3, 64)
             pending.extend((node["start"], node["stop"], node["step"]))
         elif kind == "dataclass":
+            count = len(node["items"])
+            _recipe_admit(admission, count, 64 + 16 * count)
             pending.extend(node["items"])
         elif kind == "value":
+            _recipe_admit(admission, 1, 64)
             pending.append(node["payload"])
         elif kind in ("tuple", "list", "set", "frozenset", "namedtuple"):
+            count = len(node["items"])
+            _recipe_admit(admission, count, 64 + 16 * count)
             pending.extend(node["items"])
         elif kind in ("mapping", "frozendict", "mappingproxy"):
+            count = 2 * len(node["items"])
+            _recipe_admit(admission, count, 64 + 32 * len(node["items"]))
             pending.extend(item for pair in node["items"] for item in pair)
     return False
+
 
 
 def serialize_model_leaf(file: BinaryIO, value: Any, /) -> None:
@@ -236,18 +342,24 @@ def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
     return restored
 
 
-def model_array_bytes(value: object, /) -> int:
+def model_array_bytes(
+    value: object, /, *, visit: Callable[[], None] | None = None
+) -> int:
     """Count distinct declared scientific buffers without copying or gathering.
 
     Dataclass fields include immutable host preparation hidden from ordinary
     PyTree leaves. Bound methods retain their numerical receiver, and custom
     PyTrees contribute their declared dynamic leaves. Sharing is object identity,
-    not equal contents or a guessed underlying buffer allocation.
+    not equal contents or a guessed underlying buffer allocation. ``visit`` runs
+    once per popped node before it is inspected, so a caller can admit each
+    logical visit before it happens.
     """
     pending: list[object] = [value]
     seen: dict[int, object] = {}
     total = 0
     while pending:
+        if visit is not None:
+            visit()
         current = pending.pop()
         identity = id(current)
         if identity in seen:
@@ -291,6 +403,7 @@ def model_structure_recipe(
     /,
     *,
     path: str = "model",
+    admission: _RecipeAdmission | None = None,
 ) -> dict[str, Any]:
     """Encode static model structure without embedding Python module paths.
 
@@ -299,30 +412,58 @@ def model_structure_recipe(
     first traversal occurrence; every later occurrence is
     ``{"kind": "reference", "target": n}``, where ``n`` numbers those objects in
     the order restoration completes them. Values without shared objects keep
-    their tree-shaped recipe unchanged.
+    their tree-shaped recipe unchanged. The optional explicit callback receives
+    ``(work_units, storage_bytes_upper)`` increments before corresponding
+    preparation or canonical-JSON workspace allocations; it never selects an
+    ambient budget and retains no preparation state.
     """
-    return _structure_recipe(value, path, {})
+    return _structure_recipe(value, path, {}, admission=admission)
 
 
 def prepare_model_recipe(
-    value: Any, /, *, prefix: str
+    value: Any,
+    /,
+    *,
+    prefix: str,
+    admission: _RecipeAdmission | None = None,
 ) -> tuple[dict[str, Any], dict[str, jax.Array | np.ndarray]]:
     """Prepare portable structure and distinct live numerical bindings.
 
     Runtime leaves precede static numerical fields in declared order. Archive
-    admission is performed by the serialization boundary, not by preparation.
+    admission remains the serialization boundary's responsibility. The optional
+    explicit ``admission(work_units, storage_bytes_upper)`` callback bounds this
+    preparation's temporary workspace; no ambient budget is inferred.
     """
     if not isinstance(prefix, str) or not prefix:
         raise ValueError(f"recipe.prefix must be nonempty text; got {prefix!r}")
+    if admission is not None:
+        _recipe_admit(admission, 1, 128)
     shared: _SharedObjects = {}
-    recipe = _structure_recipe(value, "model", shared)
+    recipe = _structure_recipe(value, "model", shared, admission=admission)
+    if admission is not None:
+        array_count = sum(
+            isinstance(item, (jax.Array, np.ndarray)) for _, item in shared.values()
+        )
+        _recipe_admit(admission, array_count, 128 + 128 * len(shared))
     ordered: dict[int, jax.Array | np.ndarray] = {}
-    for _, _, leaf in _runtime_leaves(value):
+    for _, _, leaf in _runtime_leaves(value, admission=admission):
         if isinstance(leaf, (jax.Array, np.ndarray)):
             ordered.setdefault(id(leaf), leaf)
     for _, item in shared.values():
         if isinstance(item, (jax.Array, np.ndarray)):
             ordered.setdefault(id(item), item)
+    if admission is not None:
+        array_count = len(ordered)
+        key_data_bytes = sum(
+            item.size * np.dtype(np.uint32).itemsize
+            for item in ordered.values()
+            if _is_prng_key(item)
+        )
+        _recipe_admit(
+            admission,
+            array_count,
+            256 + array_count * (128 + len(prefix) + 40) + key_data_bytes,
+        )
     arrays = {
         f"{prefix}/{position:06d}": jr.key_data(item) if _is_prng_key(item) else item
         for position, item in enumerate(ordered.values())
@@ -369,39 +510,63 @@ def prepare_model_recipe_catalog(
     )
 
 
-def _runtime_leaves(value: Any, /) -> Iterable[tuple[int, tuple[Any, ...], Any]]:
+def _runtime_leaves(
+    value: Any,
+    /,
+    *,
+    admission: _RecipeAdmission | None = None,
+) -> Iterable[tuple[int, tuple[Any, ...], Any]]:
     """Yield first-reached leaves with their conceptually expanded PyTree index.
 
     Public one-level flattening preserves registered key paths and static-field
     partitioning. Completed subtrees retain their objects and full leaf counts,
     so repeated reaches advance indices without expanding shared descendants.
     """
+    _recipe_admit(admission, 1, 256)
     completed: dict[int, tuple[Any, int]] = {}
     # A nonnegative start marks a subtree-completion frame.
     pending: list[tuple[Any, tuple[Any, ...], int]] = [(value, (), -1)]
     tree_index = 0
     while pending:
+        _recipe_admit(admission, 1, 128)
         current, path, start = pending.pop()
         identity = id(current)
         if start >= 0:
+            _recipe_admit(admission, 0, 64)
             completed[identity] = (current, tree_index - start)
             continue
         if identity in completed:
             tree_index += completed[identity][1]
             continue
+        if admission is not None:
+            if dataclasses.is_dataclass(current) and not isinstance(current, type):
+                direct_children = len(dataclasses.fields(current))
+            elif isinstance(current, Mapping):
+                direct_children = 2 * len(current)
+            elif isinstance(current, (tuple, list, set, frozenset)):
+                direct_children = len(current)
+            elif isinstance(current, MethodType):
+                direct_children = 1
+            else:
+                direct_children = len(vars(current)) if hasattr(current, "__dict__") else 1
+            _recipe_admit(
+                admission, 1 + direct_children, 256 + 128 * direct_children
+            )
         children, _ = jax.tree_util.tree_flatten_with_path(
             current, is_leaf=lambda child: child is not current
         )
         if len(children) == 1 and not children[0][0] and children[0][1] is current:
+            _recipe_admit(admission, 0, 64)
             completed[identity] = (current, 1)
             yield tree_index, path, current
             tree_index += 1
             continue
+        if admission is not None:
+            _recipe_admit(admission, 0, 64 + 64 * len(children))
         pending.append((current, (), tree_index))
         pending.extend(
             (child, path + child_path, -1) for child_path, child in reversed(children)
         )
-
 
 # Leaf selector precedence preserves recipe kinds before registered-owner traversal.
 def _structure_recipe(
@@ -409,12 +574,21 @@ def _structure_recipe(
     path: str,
     shared: _SharedObjects | None,
     /,
+    *,
+    admission: _RecipeAdmission | None = None,
 ) -> dict[str, Any]:
     # Set items, mapping keys and immutable-value payloads are unshared: they
     # encode without references, and validation refuses any array they hold.
+    _recipe_admit(admission, 1, 128 + len(path))
     if shared is not None and id(value) in shared:
         return {"kind": "reference", "target": shared[id(value)][0]}
     if _is_prng_key(value):
+        shape = value.shape
+        _recipe_admit(
+            admission,
+            len(shape),
+            256 + 32 * len(shape) + value.size * np.dtype(np.uint32).itemsize,
+        )
         data = jr.key_data(value)
         return _shared_record(
             shared,
@@ -429,80 +603,125 @@ def _structure_recipe(
         array = value
         if array.dtype.hasobject:
             raise TypeError(f"{path} contains an object-dtype array.")
+        if admission is not None:
+            dtype_fields = array.dtype.fields
+            field_count = 0 if dtype_fields is None else len(dtype_fields)
+            admission(field_count, 128 + 64 * field_count)
+            field_name_bytes = (
+                0
+                if dtype_fields is None
+                else sum(len(name) for name in dtype_fields)
+            )
+        else:
+            field_count = field_name_bytes = 0
+        _recipe_admit(
+            admission,
+            len(array.shape) + field_count,
+            512
+            + 32 * len(array.shape)
+            + 128 * field_count
+            + 12 * field_name_bytes,
+        )
+        dtype_name = str(array.dtype)
         record: dict[str, Any] = {
             "kind": "array",
             "shape": list(array.shape),
-            "dtype": str(array.dtype),
+            "dtype": dtype_name,
             "backend": "jax" if isinstance(value, jax.Array) else "numpy",
         }
         if isinstance(value, np.ndarray):
             record["writable"] = value.flags.writeable
         return _shared_record(shared, value, record)
     if isinstance(value, enum.Enum):
+        _recipe_admit(admission, 1, 256)
         return {
             "kind": "enum",
             "type": artifact_value_id(type(value)),
             "name": value.name,
         }
     if value is None or isinstance(value, (str, bool, int, float)):
+        if isinstance(value, str):
+            _recipe_admit(admission, len(value))
         if isinstance(value, float) and not np.isfinite(value):
             token = "nan" if np.isnan(value) else "inf" if value > 0.0 else "-inf"
             return {"kind": "nonfinite_float", "value": token}
         return {"kind": "literal", "value": value}
     if type(value) is Fraction:
+        _recipe_admit(admission, 2, 256)
         return {
             "kind": "fraction",
             "numerator": value.numerator,
             "denominator": value.denominator,
         }
-    if (
-        isinstance(value, tuple)
-        and "_fields" not in vars(type(value))
-        and all(
+    if isinstance(value, tuple) and "_fields" not in vars(type(value)):
+        _recipe_admit(admission, 2 * len(value))
+        if all(
             item is None
             or type(item) in (str, bool, int, float)
             and (not isinstance(item, float) or np.isfinite(item))
             for item in value
-        )
-    ):
-        return {"kind": "literal_tuple", "values": list(value)}
-    if (
-        isinstance(value, tuple)
-        and "_fields" not in vars(type(value))
-        and value
-        and all(type(item) is Fraction for item in value)
-    ):
-        return {
-            "kind": "fraction_tuple",
-            "values": [[item.numerator, item.denominator] for item in value],
-        }
+        ):
+            _recipe_admit(admission, 0, 64 + 16 * len(value))
+            return {"kind": "literal_tuple", "values": list(value)}
+        if value and all(type(item) is Fraction for item in value):
+            _recipe_admit(admission, 2 * len(value), 64 + 64 * len(value))
+            return {
+                "kind": "fraction_tuple",
+                "values": [[item.numerator, item.denominator] for item in value],
+            }
     if isinstance(value, complex):
         if not np.isfinite(value.real) or not np.isfinite(value.imag):
             raise ValueError(f"{path} contains a non-finite static complex value.")
+        _recipe_admit(admission, 2, 256)
         return {"kind": "complex", "real": value.real, "imag": value.imag}
     if isinstance(value, np.generic):
-        return _structure_recipe(value.item(), path, shared)
+        _recipe_admit(admission, 1, 128)
+        return _structure_recipe(value.item(), path, shared, admission=admission)
     if isinstance(value, np.dtype):
+        field_names = () if value.fields is None else value.fields
+        if admission is not None:
+            admission(len(field_names), 0)
+        name_bytes = sum(len(name) for name in field_names)
+        _recipe_admit(
+            admission,
+            len(field_names) + 1,
+            512 + 128 * len(field_names) + 12 * name_bytes,
+        )
         return {"kind": "dtype", "value": str(value)}
     if isinstance(value, bytes):
+        encoded_upper = 4 * ((len(value) + 2) // 3)
+        _recipe_admit(admission, len(value), 256 + 2 * encoded_upper)
         return {
             "kind": "bytes",
             "value": base64.b64encode(value).decode("ascii"),
         }
     if isinstance(value, Path):
+        _recipe_admit(admission, 0, 4096)
+        path_parts = value.parts
+        _recipe_admit(
+            admission, len(path_parts), 256 + 12 * sum(map(len, path_parts))
+        )
         return {"kind": "path", "value": str(value)}
     if isinstance(value, slice):
+        _recipe_admit(admission, 3, 256 + 3 * len(path))
         return {
             "kind": "slice",
-            "start": _structure_recipe(value.start, f"{path}.start", shared),
-            "stop": _structure_recipe(value.stop, f"{path}.stop", shared),
-            "step": _structure_recipe(value.step, f"{path}.step", shared),
+            "start": _structure_recipe(
+                value.start, f"{path}.start", shared, admission=admission
+            ),
+            "stop": _structure_recipe(
+                value.stop, f"{path}.stop", shared, admission=admission
+            ),
+            "step": _structure_recipe(
+                value.step, f"{path}.step", shared, admission=admission
+            ),
         }
     if value is Ellipsis:
         return {"kind": "ellipsis"}
     if isinstance(value, type):
+        _recipe_admit(admission, 1, 256)
         return {"kind": "type", "value": artifact_value_id(value)}
-    return _structure_composite_recipe(value, path, shared)
+    return _structure_composite_recipe(value, path, shared, admission=admission)
 
 
 # Explicit owner/container dispatch preserves codec precedence and post-order shared-object completion.
@@ -511,27 +730,48 @@ def _structure_composite_recipe(
     path: str,
     shared: _SharedObjects | None,
     /,
+    *,
+    admission: _RecipeAdmission | None = None,
 ) -> dict[str, Any]:
     """Encode registered owners and containers in their restoration order."""
     codec = artifact_value_codec_for(value)
     if codec is not None:
-        payload = _structure_recipe(codec.encode_value(value), f"{path}.payload", None)
-        if _recipe_contains_array(payload):
+        _recipe_admit(admission, 1, 512 + 2 * len(path))
+        payload = _structure_recipe(
+            codec.encode_value(value),
+            f"{path}.payload",
+            None,
+            admission=admission,
+        )
+        if _recipe_contains_array(payload, admission=admission):
             raise TypeError(
                 f"{path}.payload must exclude arrays; got an array-containing recipe"
             )
         return {"kind": "value", "type": codec.value_id, "payload": payload}
     if isinstance(value, tuple) and "_fields" in vars(type(value)):
+        count = len(value)
+        _recipe_admit(admission, count, 256 + 128 * count + count * len(path))
         return {
             "kind": "namedtuple",
             "type": artifact_value_id(type(value)),
             "items": [
-                _structure_recipe(item, f"{path}[{index}]", shared)
+                _structure_recipe(
+                    item, f"{path}[{index}]", shared, admission=admission
+                )
                 for index, item in enumerate(value)
             ],
         }
     if dataclasses.is_dataclass(value) and not isinstance(value, frozendict):
         cls = type(value)
+        _recipe_admit(admission, 1, 512)
+        owner_fields = dataclasses.fields(value)
+        count = len(owner_fields)
+        if admission is not None:
+            field_name_bytes = sum(len(field.name) for field in owner_fields)
+            admission(
+                count + field_name_bytes,
+                256 + 128 * count + count * len(path) + field_name_bytes,
+            )
         return _shared_record(
             shared,
             value,
@@ -543,37 +783,54 @@ def _structure_composite_recipe(
                         object.__getattribute__(value, field.name),
                         f"{path}.{field.name}",
                         shared,
+                        admission=admission,
                     )
-                    for field in dataclasses.fields(value)
+                    for field in owner_fields
                 ],
             },
         )
     if isinstance(value, tuple):
+        count = len(value)
+        _recipe_admit(admission, count, 128 + 64 * count + count * len(path))
         return {
             "kind": "tuple",
             "items": [
-                _structure_recipe(item, f"{path}[{index}]", shared)
+                _structure_recipe(
+                    item, f"{path}[{index}]", shared, admission=admission
+                )
                 for index, item in enumerate(value)
             ],
         }
     if isinstance(value, list):
+        count = len(value)
+        _recipe_admit(admission, count, 128 + 64 * count + count * len(path))
         return {
             "kind": "list",
             "items": [
-                _structure_recipe(item, f"{path}[{index}]", shared)
+                _structure_recipe(
+                    item, f"{path}[{index}]", shared, admission=admission
+                )
                 for index, item in enumerate(value)
             ],
         }
     if isinstance(value, (set, frozenset)):
-        encoded_items = [_structure_recipe(item, f"{path}.item", None) for item in value]
-        encoded_items.sort(key=_canonical_recipe_payload)
+        count = len(value)
+        _recipe_admit(admission, count, 256 + 128 * count + count * len(path))
+        encoded_items = [
+            _structure_recipe(item, f"{path}.item", None, admission=admission)
+            for item in value
+        ]
+        encoded_items.sort(
+            key=lambda item: _canonical_recipe_payload(item, admission=admission)
+        )
         return {
             "kind": "frozenset" if isinstance(value, frozenset) else "set",
             "items": encoded_items,
         }
     if isinstance(value, Mapping):
-        return _structure_mapping_recipe(value, path, shared)
+        return _structure_mapping_recipe(value, path, shared, admission=admission)
     if callable(value):
+        _recipe_admit(admission, 1, 256)
         return {"kind": "callable", "value": artifact_value_id(value)}
     raise TypeError(
         f"Portable model artifact cannot represent {path} of type {type(value).__name__}."
@@ -585,6 +842,8 @@ def _structure_mapping_recipe(
     path: str,
     shared: _SharedObjects | None,
     /,
+    *,
+    admission: _RecipeAdmission | None = None,
 ) -> dict[str, Any]:
     """Canonicalize unshared keys before encoding shared values."""
     mapping_kind = (
@@ -594,23 +853,43 @@ def _structure_mapping_recipe(
         if isinstance(value, MappingProxyType)
         else "mapping"
     )
+    count = len(value)
+    _recipe_admit(admission, count, 512 + 256 * count + count * len(path))
     # Values encode in sorted key order, which is their restoration order.
     encoded_keys = sorted(
         (
-            (_structure_recipe(key, f"{path}.key", None), item)
+            (
+                _structure_recipe(
+                    key, f"{path}.key", None, admission=admission
+                ),
+                item,
+            )
             for key, item in value.items()
         ),
-        key=lambda pair: _canonical_recipe_payload(pair[0]),
+        key=lambda pair: _canonical_recipe_payload(
+            pair[0], admission=admission
+        ),
     )
-    key_payloads = [_canonical_recipe_payload(key) for key, _ in encoded_keys]
+    _recipe_admit(admission, count, 128 + 64 * count)
+    key_payloads = [
+        _canonical_recipe_payload(key, admission=admission)
+        for key, _ in encoded_keys
+    ]
+    _recipe_admit(admission, count, 128 + 64 * count)
     if len(set(key_payloads)) != len(key_payloads):
         raise TypeError(
             f"{path}.keys must have distinct recipe encodings; got {len(key_payloads)} keys with {len(set(key_payloads))} distinct encodings"
         )
+    _recipe_admit(admission, count, 128 + 128 * count + count * len(path))
     return {
         "kind": mapping_kind,
         "items": [
-            [key, _structure_recipe(item, f"{path}.value", shared)]
+            [
+                key,
+                _structure_recipe(
+                    item, f"{path}.value", shared, admission=admission
+                ),
+            ]
             for key, item in encoded_keys
         ],
     }

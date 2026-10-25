@@ -18,7 +18,7 @@ Mesh certificate checks
 {"checks":["mapped_cad_boundary_homotopy_reuse"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"X","statement":"The independent source-chart issuer retains this exact complete homotopy report on this mesh object and unchanged live mesh/geometry/topology/limits; its target facets equal the entire current boundary."},{"tag":"N","statement":"The issued interval homotopy proves every full facet and same-owner/different-owner pair injective, all boundary links and traces conforming, synchronized-time separation, and source domain-side orientation."},{"tag":"T","statement":"The endpoint of the proved whole-boundary isotopy is an embedding modulo exactly the shared target entities."}],"conclusion":"Import only whole-boundary injectivity; current positive full-cell Jacobians, all skeleton conformity, facet pairing and shell exterior degrees remain independent obligations.","citation":{"kind":"mathematical","reference":"Hatcher, Algebraic Topology","locator":"Section 2.2, degree invariance under homotopy and sum of local degrees","url":"https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},"failure_statuses":[]},
 {"checks":["mapped_closed_cell_orientation"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"N","statement":"The bound closed-cell validity certificate proves a strictly positive determinant on each full source cell."}],"conclusion":"The positive local-degree orientation hypothesis is recorded for the boundary-degree route.","citation":{"kind":"mathematical","reference":"Hatcher, Algebraic Topology","locator":"Section 2.2, Proposition 2.30 (sum of local degrees)","url":"https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},"failure_statuses":[]},
 {"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","premises":[{"tag":"X","statement":"Every repeated vertex image and every repeated oriented edge restriction is identical across its incident cells; facet identity was checked by trace_continuity."}],"conclusion":"The source coordinate action is well-defined on the shared vertex, edge and facet skeleton.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","url":""},"failure_statuses":[]},
-{"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets","premises":[{"tag":"X","statement":"A just-issued complete exact facet-trace proof binds this same mesh, actual polynomial coordinate laws, canonical tetrahedron charts, cell objects, state and live budget; the full coefficient and topology signature is authenticated again."},{"tag":"T","statement":"For each shared vertex or oriented edge, actual paired facets containing that entity connect its incident cells. Restriction of an exact facet identity to that entity preserves identity, and equality propagates along the connected star."},{"tag":"X","statement":"Every disconnected star component is compared with the first incident cell by the original exact vertex evaluation or full edge restriction. Unsupported, rational and composed coordinate laws retain the original full proof."}],"conclusion":"All original shared vertex and edge conformity obligations are earned, with representative vertex images and unchanged incidence counts; no report status or source identifier substitutes for a trace proof.","citation":{"kind":"definition","reference":"Transitivity of equality and composition of affine simplex restrictions","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets","url":""},"failure_statuses":["violated"]},
+{"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets","premises":[{"tag":"X","statement":"A just-issued complete exact facet-trace proof binds this same mesh, actual polynomial coordinate laws, canonical tetrahedron charts, cell objects, state and live budget; the full coefficient and topology signature is authenticated again."},{"tag":"T","statement":"For each shared vertex or oriented edge, actual paired facets containing that entity connect its incident cells. Restriction of an exact facet identity to that entity preserves identity, and equality propagates along the connected star."},{"tag":"X","statement":"Every disconnected star component is compared with the first incident cell by the original exact vertex evaluation or full edge restriction. Unsupported, rational and composed coordinate laws retain the original full proof."}],"conclusion":"All original shared vertex and edge conformity obligations are earned, with representative vertex images and unchanged incidence counts; no report status or source identifier substitutes for a trace proof.","citation":{"kind":"mathematical","reference":"Lean Language Reference, Propositional Equality","locator":"congrArg applied to restriction of functions, followed by Eq.trans along each connected incidence path","url":"https://lean-lang.org/doc/reference/latest/Basic-Propositions/Propositional-Equality/"},"failure_statuses":["violated"]},
 {"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"X","statement":"A repeated source vertex or edge has different exact images or restrictions."}],"conclusion":"The boundary-degree route reports violated shared-entity conformity and emits mapped_trace_mismatch.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._decide","url":""},"failure_statuses":["violated"]},
 {"checks":["mapped_trace_mismatch"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","premises":[{"tag":"X","statement":"Two incident cells disagree on an exact shared vertex image or oriented edge expression."}],"conclusion":"The mapped mesh has a nonconforming shared coordinate action.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","url":""},"failure_statuses":["violated"]},
 {"checks":["mapped_boundary_injectivity"],"owner":"phydrax.geometry._boundary_degree_embedding._boundary_injectivity","premises":[{"tag":"N","statement":"All boundary candidate pairs are separated by certified full-image or tangent-cone contact proofs."},{"tag":"X","statement":"Facets of one owner inherit its closed-cell injectivity and facets of different owners admit only their shared entities."}],"conclusion":"The union of mapped boundary facets is injective modulo its shared mesh entities.","citation":{"kind":"mathematical","reference":"Rockafellar, Convex Analysis","locator":"Section 11, separation theorems","url":"https://doi.org/10.1515/9781400873173"},"failure_statuses":[]},
@@ -37,8 +37,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import factorial
-from typing import assert_never, cast, final
-from weakref import ReferenceType, ref, WeakKeyDictionary
+from typing import assert_never, cast, final, NoReturn
+from weakref import ref, ReferenceType, WeakKeyDictionary
 
 import equinox as eqx
 import numpy as np
@@ -72,20 +72,19 @@ from ..discretization._coordinate_enclosure import (
     multiply,
     Polynomial,
     polynomial_bounds,
-    RationalPolynomial,
     prepared_coordinate_source_bank,
+    RationalPolynomial,
     restrict_chart_expressions,
     scale,
     sum_polynomials,
 )
 from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization._reference_cell import reference_cell_topology
-from ..typing import checked
 from ..discretization.fem._reference_types import FiniteElementSpec
+from ..typing import checked
 from ._embedding_cells import Cell
 from ._embedding_state import ContactDecision, EmbeddingState, MeshCertificateLimits
 from ._global_embedding import MappedBoundaryDegreeStatus
-
 from ._source_boundary_records import CadBoundaryClosureEvidence
 
 
@@ -130,7 +129,7 @@ class _FacetTraceWitness:
     pairs: tuple[tuple[int, int, tuple[int, ...]], ...]
     evidence_id: str
 
-    def __reduce__(self):
+    def __reduce__(self) -> NoReturn:
         raise TypeError("Facet trace witnesses must not cross archive or proof boundaries.")
 
 
@@ -908,8 +907,11 @@ def _boundary_contact(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> ContactDecision:
-    """Try tangent cones before the generic pair proof, retaining both work charges."""
-    with budget.temporary_scope():
+    """Try tangent cones, retiring pair-local polynomial preparations afterwards."""
+    # The outer boundary proof keeps root face preparations live. Rebased cone
+    # patches and subdivision nets belong only to this pair, not to every later
+    # candidate. Keep their work/peak charges while releasing their storage.
+    with budget.polynomial_preparation_scope():
         contact = (
             affine_mapped_contact_owner.contact_decision(
                 first,

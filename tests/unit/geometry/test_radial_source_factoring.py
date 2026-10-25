@@ -2,19 +2,30 @@
 """Keep exact affine/proxy factoring separate from radial proof verdicts."""
 
 import sys
+from collections.abc import Mapping
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
-from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
-from phydrax.geometry import MeshCertificateLimits
-from phydrax.geometry import _radial_source_fidelity as owner
+from phydrax.discretization._cell_geometry import (
+    CellGeometryElement,
+    coordinate_lagrange_element,
+)
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from phydrax.discretization._coordinate_enclosure import (
+    CoordinateSourceBank,
+    ExactScalar,
+    Polynomial,
+)
+from phydrax.geometry import _radial_source_fidelity as owner, MeshCertificateLimits
 from tests._support.coordinate_references import coordinate_reference_budget
 
 
-def _inputs(curved):
+def _inputs(curved: bool) -> tuple[CellGeometryElement, CoordinateSourceBank]:
     element = coordinate_lagrange_element("triangle", 2 if curved else 1)
     local = tuple(
         (
@@ -26,7 +37,11 @@ def _inputs(curved):
     return element, local
 
 
-def _prepare(element, local, budget):
+def _prepare(
+    element: CellGeometryElement,
+    local: CoordinateSourceBank,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[float, np.ndarray]:
     findings = []
     result = owner._prepare_radial_cell(
         element, local, np.asarray((0, 1, 2), dtype=np.int64), 17,
@@ -40,12 +55,19 @@ def _prepare(element, local, budget):
 
 
 @pytest.mark.parametrize("curved,products", [(False, 3), (True, 6)])
-def test_radial_reuses_only_coefficientwise_identical_proxy(monkeypatch, curved, products):
+def test_radial_reuses_only_coefficientwise_identical_proxy(
+    monkeypatch: pytest.MonkeyPatch, curved: bool, products: int
+) -> None:
     element, local = _inputs(curved)
     multiply = owner.algebra.multiply
     calls = 0
 
-    def counted(*args, **kwargs):
+    def counted(
+        first: Mapping[tuple[int, ...], ExactScalar],
+        second: Mapping[tuple[int, ...], ExactScalar],
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> Polynomial:
         nonlocal calls
         frame = sys._getframe(1)
         if (
@@ -54,7 +76,7 @@ def test_radial_reuses_only_coefficientwise_identical_proxy(monkeypatch, curved,
             and frame.f_back.f_code.co_name == "_prepare_radial_cell"
         ):
             calls += 1
-        return multiply(*args, **kwargs)
+        return multiply(first, second, budget=budget)
 
     monkeypatch.setattr(owner.algebra, "multiply", counted)
     with coordinate_reference_budget() as budget:
@@ -65,7 +87,7 @@ def test_radial_reuses_only_coefficientwise_identical_proxy(monkeypatch, curved,
 
 
 @pytest.mark.parametrize("curved", [False, True])
-def test_radial_factoring_observed_exact_work_boundary(curved):
+def test_radial_factoring_observed_exact_work_boundary(curved: bool) -> None:
     element, local = _inputs(curved)
     with coordinate_reference_budget() as observed:
         bound, corners = _prepare(element, local, observed)

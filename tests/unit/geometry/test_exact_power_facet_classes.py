@@ -13,10 +13,12 @@ import pytest
 
 import phydrax.geometry._exact_power_certificates as certificates
 from phydrax.discretization import CellMesh
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry._embedding_state import (
     EmbeddingState,
-    MeshCertificateLimits,
+    Facets,
     mesh_facets,
+    MeshCertificateLimits,
 )
 from phydrax.geometry._exact_polyhedral_geometry import (
     triangle_contact,
@@ -24,6 +26,7 @@ from phydrax.geometry._exact_polyhedral_geometry import (
     triangulate_loop,
 )
 from tests._support.coordinate_references import coordinate_reference_budget
+
 
 _POINTS = (
     (0, 0, 0),
@@ -69,7 +72,9 @@ def _mesh(tets: tuple[tuple[int, ...], ...]) -> tuple[CellMesh, np.ndarray]:
     return mesh, exact
 
 
-def _occurrence_verdict(points: np.ndarray, facets, budget) -> tuple[bool, int]:
+def _occurrence_verdict(
+    points: np.ndarray, facets: Facets, budget: CoordinateEnclosureBudget
+) -> tuple[bool, int]:
     """Prior per-occurrence enumeration: every occurrence triangulated and paired."""
     triangles = []
     for occurrence, row in enumerate(facets.rows):
@@ -104,9 +109,19 @@ def test_facet_classes_keep_contact_verdict_with_fewer_pairs_and_scoped_storage(
     mesh, points = _mesh(tets)
     calls = []
 
-    def counted(*args, **kwargs):
+    def counted(
+        points: np.ndarray,
+        first: tuple[int, ...],
+        second: tuple[int, ...],
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparation: TriangleContactPreparation | None = None,
+    ) -> bool:
         calls.append(None)
-        return triangle_contact(*args, **kwargs)
+        return triangle_contact(
+            points, first, second, budget=budget, preparation=preparation
+        )
 
     monkeypatch.setattr(certificates, "triangle_contact", counted)
     state = EmbeddingState([], [])
@@ -167,7 +182,10 @@ def test_same_cycle_accepts_rotation_and_reversal_only(
 )
 @pytest.mark.parametrize("reverse", (False, True))
 def test_triangle_contact_exact_shared_simplex_separation(
-    extra, second: tuple[int, ...], contact: bool, reverse: bool
+    extra: tuple[tuple[int, ...], ...],
+    second: tuple[int, ...],
+    contact: bool,
+    reverse: bool,
 ) -> None:
     points = np.asarray(
         tuple(tuple(Fraction(value) for value in row) for row in (

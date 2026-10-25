@@ -407,13 +407,26 @@ def tangent_cone_contact(
                     * (dimension + 1)
                     * (2 + 2 * dimension),
                 )
+                # At the root, the exact quotient-cone lemma can discharge
+                # the whole contact without preparing either image box.
+                # Boundary broadphase already needed whole-face enclosures;
+                # repeat them here only when the cone proof needs subdivision.
+                root_separated = depth == 0 and _separated_cones(
+                    *_piece_cones(cones, a, b, budget=budget), budget=budget
+                )
+                if root_separated:
+                    active.release_piece()
+                    continue
                 box_a = embedding_cells_owner.bounds(cones.patches[0], *a, budget=budget)
                 box_b = embedding_cells_owner.bounds(cones.patches[1], *b, budget=budget)
                 if (
                     np.any(box_a[1] < box_b[0])
                     or np.any(box_b[1] < box_a[0])
-                    or _separated_cones(
-                        *_piece_cones(cones, a, b, budget=budget), budget=budget
+                    or (
+                        depth != 0
+                        and _separated_cones(
+                            *_piece_cones(cones, a, b, budget=budget), budget=budget
+                        )
                     )
                 ):
                     active.release_piece()

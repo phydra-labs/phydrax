@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,6 +21,7 @@ from ...discretization import (
     MetricNetworkPlan,
     PreparedMetricNetwork,
 )
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...equations import (
     BulkDGTransportPlan,
     MixedDimensionalTransportPlan,
@@ -485,12 +486,15 @@ class NeurofluidTransportCheckpoint:
     target_error: float
     balance_tolerance: float
     checkpoint_id: str = field(init=False)
+    budget: InitVar[CoordinateEnclosureBudget | None] = field(
+        default=None, kw_only=True
+    )
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, budget: CoordinateEnclosureBudget | None) -> None:
         """Validate the physics and both accepted trajectories before publishing identity."""
         _validate_neurofluid_checkpoint_inputs(self)
         _validate_neurofluid_checkpoint_clock_and_identity(self)
-        _validate_neurofluid_checkpoint_physics(self)
+        _validate_neurofluid_checkpoint_physics(self, budget=budget)
         sizes = (
             self.result.mesh.entity_set(3).count,
             self.network_plan.mesh.entity_set(0).count,
@@ -588,8 +592,10 @@ def _validate_neurofluid_checkpoint_clock_and_identity(
 
 def _validate_neurofluid_checkpoint_physics(
     checkpoint: NeurofluidTransportCheckpoint,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> None:
-    checkpoint.source.validate_source_integrity()
+    checkpoint.source.validate_source_integrity(budget=budget)
     if (
         checkpoint.result.region_evidence is None
         or checkpoint.result.certification is None

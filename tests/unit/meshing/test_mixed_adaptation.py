@@ -5,7 +5,7 @@ import json
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 import equinox as eqx
 import numpy as np
@@ -62,8 +62,8 @@ from phydrax.lifecycle._meshing_sources import (
     read_meshing_source_closure,
     write_meshing_source_closure,
 )
-from phydrax.meshing._curving import straight_geometry
 from phydrax.meshing import _mixed_adaptation as mixed_owner
+from phydrax.meshing._curving import straight_geometry
 from phydrax.meshing._mixed_adaptation import (
     adapt_mixed_mesh,
     MixedAdaptationEvidence,
@@ -75,8 +75,8 @@ from phydrax.meshing._mixed_adaptation import (
     Sibling,
 )
 from phydrax.meshing._periodic import (
-    PeriodicConstructionOrbits,
     periodic_vertex_orbit_witness,
+    PeriodicConstructionOrbits,
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit, build_mesh
 from phydrax.meshing.qualification import sphere_surface
@@ -178,7 +178,14 @@ def test_prepared_template_facts_preserve_every_signature_and_protection(
         ) == signature
     assert len(cache) == len(templates)
 
-    def forbid_repreparation(*args, **kwargs):
+    def forbid_repreparation(
+        kind: str,
+        ids: np.ndarray,
+        points: np.ndarray,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+    ) -> NoReturn:
         raise AssertionError("Retained exact template facts must not be recomputed")
 
     monkeypatch.setattr(mixed_owner, "_point_keys", forbid_repreparation)
@@ -255,7 +262,15 @@ def test_prepared_template_facts_preserve_closure_ids_and_canonical_work(
     requested = np.asarray((37,), dtype=np.int64)
     actual = adapt_mixed_mesh(mesh, refine_cell_ids=requested)
 
-    def direct(cell, template, cache, orbits, *, scope, budget):
+    def direct(
+        cell: mixed_owner.Cell,
+        template: mixed_owner._Template,
+        cache: mixed_owner._TemplateClosureCache,
+        orbits: PeriodicConstructionOrbits | None,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[mixed_owner._FaceSignature, ...]:
         if orbits is None:
             return mixed_owner._facet_signatures(
                 cell.kind, cell.vertices, template, scope=scope, budget=budget

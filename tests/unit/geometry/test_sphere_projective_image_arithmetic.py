@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from fractions import Fraction
 
@@ -57,7 +57,13 @@ def test_affine_row_omits_only_actual_identity_arithmetic(
         for name in ("__add__", "__mul__"):
             original = getattr(Fraction, name)
 
-            def observed(left, right, *, _name=name, _original=original):
+            def observed(
+                left: Fraction,
+                right: Fraction | int,
+                *,
+                _name: str = name,
+                _original: Callable[[Fraction, Fraction | int], Fraction] = original,
+            ) -> Fraction:
                 # The operation's debit must precede the Fraction operation.
                 assert budget.work_units == len(events) + 1
                 events.append(_name)
@@ -98,7 +104,7 @@ def test_image_quotient_admits_each_executed_division(
     divisions = []
     original = Fraction.__truediv__
     with _arithmetic_budget(work) as budget:
-        def observed(left, right):
+        def observed(left: Fraction, right: Fraction | int) -> Fraction:
             assert budget.work_units == len(divisions) + 1
             divisions.append((left, right))
             return original(left, right)
@@ -139,7 +145,7 @@ def test_authenticated_reference_images_preserve_checks_and_exact_work_boundary(
     )
     expected = mapping.reference_images(points)
 
-    def evaluate(work: int):
+    def evaluate(work: int) -> int:
         with _arithmetic_budget(work) as ledger:
             result = tuple(
                 owner._sphere_reference_image(mapping, point, budget=ledger)
@@ -169,7 +175,8 @@ def test_authenticated_reference_images_preserve_checks_and_exact_work_boundary(
         _arithmetic_budget(100) as ledger,
         pytest.raises(TypeError, match="Fraction coordinates"),
     ):
-        owner._sphere_reference_image(mapping, (0, Fraction(0)), budget=ledger)
+        # Deliberately ill-typed input: the runtime refusal of non-Fraction coordinates is the contract.
+        owner._sphere_reference_image(mapping, (0, Fraction(0)), budget=ledger)  # ty: ignore[invalid-argument-type]
     interior = (Fraction(1, 3), Fraction(1, 3))
     with pytest.raises(ValueError, match="target direction cone"):
         other_mapping.reference_images((interior,))

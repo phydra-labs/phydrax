@@ -28,6 +28,10 @@ import numpy as np
 import phydrax.discretization as cell_mesh_owner
 import phydrax.geometry as contracts_owner
 import phydrax.geometry.design as schema_owner
+from phydrax.discretization._cell_mesh import (
+    cell_block_construction_work,
+    cell_mesh_construction_work,
+)
 from phydrax.meshing._association_state import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -386,6 +390,7 @@ def _certification_request(
                 source_revision=source.source_revision,
                 budget=budget,
             ),
+            discovery=source.discovery,
             budget=budget,
         )
     else:
@@ -435,6 +440,12 @@ def _publish_surface(
             cell_kind="triangle",
         )
         with measure_phase(record_phase, "construction"):
+            scope.charge(
+                work=cell_block_construction_work(faces.shape[0], 3)
+                + cell_mesh_construction_work(
+                    vertices.shape[0], vertices.shape[1], (("triangle", faces.shape[0], 3),)
+                )
+            )
             mesh = cell_mesh_owner.CellMesh.from_triangles(
                 vertices, faces, numeric_version=source.source_revision
             )

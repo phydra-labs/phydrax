@@ -728,6 +728,21 @@ def lifted_dof_entities(
             ranges.append((0, np.arange(count), np.ones((count,), dtype=np.int64)))
         case FiniteElementDofLayout(association="edge"):
             ranges.append((1, np.arange(count), np.ones((count,), dtype=np.int64)))
+        case FiniteElementDofLayout(association="cell"):
+            # Cell-major routes (``build_finite_element_dof_routes``): every cell
+            # owns one contiguous run of its local DOFs in mesh cell order.
+            cells = mesh.topology.entity_sets[dimension].count
+            if cells == 0 or count % cells:
+                raise ValueError(
+                    "finite_element.cell_layout must give every cell one uniform local DOF width; "
+                    f"got {count} DOFs on {cells} cells"
+                )
+            width = count // cells
+            ranges.append((
+                dimension,
+                np.arange(cells, dtype=np.int64) * width,
+                np.full((cells,), width, dtype=np.int64),
+            ))
         case _:
             raise ValueError(
                 "finite_element.quotient_layout.association must number vertex, edge, face, "

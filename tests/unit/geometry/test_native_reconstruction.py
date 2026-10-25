@@ -338,6 +338,20 @@ def test_incompletely_sampled_region_is_reported_on_the_closed_surface() -> None
     assert any("farther than" in warning for warning in report.warnings)
 
 
+def test_supported_triangle_boundary_does_not_create_a_repair_patch() -> None:
+    from phydrax.geometry.reconstruction._robustness import sampling_coverage
+
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)),
+        dtype=np.float64,
+    )
+    faces = np.asarray(((0, 1, 2),), dtype=np.int64)
+    points = vertices + np.asarray(((0.0, 0.0, 0.1),), dtype=np.float64)
+    unsupported, evidence = sampling_coverage(points, vertices, faces, 0.2)
+    np.testing.assert_array_equal(unsupported, False)
+    assert evidence.unsupported_triangles == 0
+    assert evidence.unsupported_patches == 0
+
 def test_incompletely_sampled_region_is_refused_under_refuse_policy() -> None:
     points, _ = _capless_sphere()
 

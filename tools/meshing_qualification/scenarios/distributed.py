@@ -70,14 +70,15 @@ from phydrax.discretization.fem import (
     prepare_owner_local_finite_element,
 )
 from phydrax.discretization.fem._distributed import (
+    OwnerLocalFiniteElementExecution,
     prepare_owner_local_finite_element_execution,
 )
 from phydrax.discretization.finite_volume import (
-    execute_owner_local_finite_volume_advance,
     PreparedUnstructuredFiniteVolumeDynamics,
     UnstructuredFiniteVolumeDiscretization,
 )
 from phydrax.discretization.finite_volume._unstructured_dynamics import (
+    _replicated,
     prepare_owner_local_finite_volume_execution,
 )
 from phydrax.execution import (
@@ -121,6 +122,7 @@ from phydrax.linalg import (
     DistributedLinearOperator,
     solve_distributed_pcg,
 )
+from phydrax.linalg.krylov import KrylovBreakdownStatus
 from phydrax.meshing import (
     CollectiveMeshEvidence,
     commit_partitioned_adaptive_simplex,
@@ -190,6 +192,7 @@ from tools.meshing_qualification._runtime import (
     peak_resident_bytes,
     PEAK_RESIDENT_SCOPE,
     qualification_failure,
+    QualificationFailure,
     StageLedger,
 )
 from tools.meshing_qualification.scenarios import _distributed_euler as euler_history
@@ -230,9 +233,7 @@ _DISTRIBUTED_RNG_RESIDUAL_NORM = 1.0e-12
 
 
 @contextmanager
-def _distributed_stage_boundary(
-    record: dict[str, Any], name: str
-) -> Iterator[None]:
+def _distributed_stage_boundary(record: dict[str, Any], name: str) -> Iterator[None]:
     """Agree only a ledger's local boundary, never its scientific callback."""
     failure: Exception | None = None
     category = None
@@ -473,7 +474,9 @@ def _distributed_qualification_generate(
     collective initial theorem accepts or refuses all owners together.
     """
 
-    source, request, options = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run("source_preparation", lambda: _distributed_qualification_source(args))
+    source, request, options = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run("source_preparation", lambda: _distributed_qualification_source(args))
     record["source"] = {
         "source_id": source.source_id,
         "source_revision": source.source_revision,
@@ -495,7 +498,9 @@ def _distributed_qualification_generate(
     provider = phx.meshing.NativeMeshingProvider(options)
 
     def plan_generation() -> tuple[Any, Any]:
-        prepared = prepare_distributed_planar_generation(source, request, schedule, layout)
+        prepared = prepare_distributed_planar_generation(
+            source, request, schedule, layout
+        )
         return prepared, provider.plan(
             source,
             request,
@@ -504,10 +509,12 @@ def _distributed_qualification_generate(
             initial_partition=prepared,
         )
 
-    prepared, plan = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        "geometry_constraint_preparation", plan_generation
-    )
-    result = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    prepared, plan = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run("geometry_constraint_preparation", plan_generation)
+    result = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "native_generation_publication_certification",
         lambda: plan.execute(record_phase=phases.append),
     )
@@ -603,9 +610,9 @@ def _distributed_qualification_generate(
                 "geometry": evidence.geometry_id,
             }
         ),
-        "preparation_receipt_id": np.asarray(
-            prepared.preparation_evidence.receipt_id
-        ).tobytes().hex(),
+        "preparation_receipt_id": np.asarray(prepared.preparation_evidence.receipt_id)
+        .tobytes()
+        .hex(),
         "independent_area": area,
         "independent_perimeter": perimeter,
     }
@@ -744,7 +751,9 @@ def _distributed_qualification_project(
         value_units = (
             euler_history.state_units()
             if name == euler_history.ENTRY
-            else None if units is None else (phx.units.KELVIN,)
+            else None
+            if units is None
+            else (phx.units.KELVIN,)
         )
         compact_index = prepare_meshing_field_index_binding(
             carrier,
@@ -1087,6 +1096,7 @@ class _DistributedFEContinuation:
     warm: list[float]
     values: jax.Array
 
+
 @final
 @dataclass(frozen=True, slots=True)
 class _DistributedEulerAdvance:
@@ -1096,7 +1106,6 @@ class _DistributedEulerAdvance:
     time: jax.Array
     steps: jax.Array
     inventory: jax.Array
-
 
 
 @final
@@ -1180,7 +1189,9 @@ def _distributed_place_owner_history(row: np.ndarray, like: jax.Array, /) -> jax
     """Place this process's raw row with the part sharding of an allocator array."""
     (shard,) = like.addressable_shards
     return jax.make_array_from_single_device_arrays(
-        (like.shape[0], *row.shape), like.sharding, [jax.device_put(row[None], shard.device)]
+        (like.shape[0], *row.shape),
+        like.sharding,
+        [jax.device_put(row[None], shard.device)],
     )
 
 
@@ -1208,7 +1219,9 @@ def _distributed_rng_reduce(words: np.ndarray, /) -> dict[str, object]:
     }
 
 
-def _distributed_rng_records(ids: np.ndarray, counters: np.ndarray, /) -> dict[str, object]:
+def _distributed_rng_records(
+    ids: np.ndarray, counters: np.ndarray, /
+) -> dict[str, object]:
     """Digest of allocated (stable cell ID, counter) records over the process set."""
     live = ids >= 0
     return _distributed_rng_reduce(
@@ -1273,9 +1286,9 @@ def _distributed_rng_probe(
     if ids.size:
         keys = stream.entity_keys(key_data, ids, counters)
         signs = np.asarray(
-            jax.vmap(
-                lambda key: jax.random.rademacher(key, (probes,), dtype=jnp.int8)
-            )(keys),
+            jax.vmap(lambda key: jax.random.rademacher(key, (probes,), dtype=jnp.int8))(
+                keys
+            ),
             dtype=np.float64,
         )
     else:
@@ -1543,7 +1556,9 @@ def _distributed_rng_generation(
         prepared,
         jnp.zeros(ids.shape, dtype=jnp.uint32, device=ids.sharding),
     )
-    bank, draw = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    bank, draw = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "rng_generation_probe_draw",
         lambda: _distributed_rng_draw(stream, initial, source, history),
     )
@@ -1596,7 +1611,15 @@ def _distributed_rng_repack(
             "A repack lost, duplicated or changed a probe counter record.",
             {"active": active, "owned": owned, "records": records, "repacked": repacked},
         )
-    return {"allocated_records": repacked, "active_cells": owned}
+    return {
+        "allocated_records": repacked,
+        "active_cells": owned,
+        "saved_allocated_records": records,
+        "saved_active_cells": active,
+        "saved_dtype": str(saved.dtype),
+        "repacked_dtype": str(moved.dtype),
+        "compact_dtype": str(np.asarray(fields[name]).dtype),
+    }
 
 
 def _distributed_rng_continue(
@@ -1689,7 +1712,9 @@ def _distributed_rng_role_refusals(
         "unit_counter_refused": refused(
             counter(np.dtype(np.uint32), units=(phx.units.KELVIN,))
         ),
-        "unaddressed_counter_refused": refused(counter(np.dtype(np.uint32), address=None)),
+        "unaddressed_counter_refused": refused(
+            counter(np.dtype(np.uint32), address=None)
+        ),
         "signed_root_key_refused": refused(
             lambda: MeshingFieldStateRole(
                 stream.key_entry_name,
@@ -1749,9 +1774,7 @@ def _distributed_transfer_vertex_fields(
     sources = jnp.concatenate(
         (jax.device_put(closure, next(iter(remote.devices()))), remote), axis=0
     )
-    return {
-        name: transfer.apply(sources[:, column]) for column, name in enumerate(names)
-    }
+    return {name: transfer.apply(sources[:, column]) for column, name in enumerate(names)}
 
 
 def _distributed_accept_topology_epoch(
@@ -1771,13 +1794,16 @@ def _distributed_accept_topology_epoch(
     """Execute and accept one owner-local edit while preserving raw history identities."""
 
     meshing = phx.meshing
-    partitioned = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    partitioned = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"owner_local_preparation_{epoch}",
         lambda: prepare_partitioned_mesh_adaptation(
             meshing.prepare_mesh_adaptation(
                 current,
                 meshing.MarkedMeshAdaptation(),
                 policy=_distributed_qualification_policy(policy, distribution, partition),
+                observe_managed_admission=True,
             )
         ),
     )
@@ -1790,12 +1816,17 @@ def _distributed_accept_topology_epoch(
         else refine_adaptive_simplex_parts
     )
     kernel = lambda: operation_kernel(
-        partitioned.layout, type(partitioned).execution_parts(partitioned), states, states.mesh.cell_active
+        partitioned.layout,
+        type(partitioned).execution_parts(partitioned),
+        states,
+        states.mesh.cell_active,
     )
-    updated = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        f"owner_local_{operation}_{epoch}", lambda: jax.block_until_ready(kernel())
-    )
-    results = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    updated = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(f"owner_local_{operation}_{epoch}", lambda: jax.block_until_ready(kernel()))
+    results = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"owner_local_publication_{epoch}",
         lambda: (
             commit_partitioned_adaptive_simplex(partitioned, updated.state).local_results
@@ -1842,10 +1873,16 @@ def _distributed_accept_topology_epoch(
     type(evidence).require_passed(evidence)
     type(current.audit).require_passed(current.audit)
     raw_layout, raw_state, _ = restore_partitioned_mesh_state(storage, evidence)
-    moved_euler, euler_record = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    moved_euler, euler_record = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"euler_conservative_transfer_{epoch}",
         lambda: euler_history.transfer_history(
-            result, states, raw_state, euler_values, tuple(jax.devices()),
+            result,
+            states,
+            raw_state,
+            euler_values,
+            tuple(jax.devices()),
             message_capacity=args.distributed_halo_capacity,
             system=euler_system,
         ),
@@ -1902,14 +1939,23 @@ def _distributed_project_topology_epoch(
         accepted.raw_state,
     )
     evidence, storage, transfer = accepted.evidence, accepted.storage, accepted.transfer
-    carried, lineage = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    carried, lineage = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"rng_counter_lineage_transport_{epoch}",
         lambda: _distributed_rng_transport(rng, accepted.prepared, raw_state),
     )
-    physical, roles, fields = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    physical, roles, fields = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"all_field_history_projection_{epoch}",
         lambda: _distributed_qualification_project(
-            current, values, baselines, fe_fields, precision, mesh_epoch,
+            current,
+            values,
+            baselines,
+            fe_fields,
+            precision,
+            mesh_epoch,
             transition=result.transition,
         ),
     )
@@ -1923,7 +1969,9 @@ def _distributed_project_topology_epoch(
             ("Accepted H1 transfer lost the exactly representable affine temperature."),
             {"error": error},
         )
-    advanced, draw = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    advanced, draw = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"rng_probe_draw_{epoch}",
         lambda: _distributed_rng_draw(
             _distributed_rng_stream(), carried, current, fields["material-cell-average"]
@@ -1973,15 +2021,29 @@ def _distributed_initial_field_histories(
 ) -> _DistributedFields:
     """Retain accepted generated-cell/vertex values before their first retirement."""
     result: _DistributedFields = {}
-    for name, raw_name, kind, _, bank, association, _, indexed, _, _ in _DISTRIBUTED_FIELD_ROLES:
+    for (
+        name,
+        raw_name,
+        kind,
+        _,
+        bank,
+        association,
+        _,
+        indexed,
+        _,
+        _,
+    ) in _DISTRIBUTED_FIELD_ROLES:
         if kind == "rng-counter":
             continue
         source_index = prepare_meshing_field_index_binding(
-            source, parse(bank, MeshingFieldIndexBank, "bank"),
+            source,
+            parse(bank, MeshingFieldIndexBank, "bank"),
             field_space=physical.field_spaces[0] if indexed else None,
         )
         raw_ids = (
-            prepared.mesh.vertex_ids if association == "vertex" else prepared.mesh.cell_ids
+            prepared.mesh.vertex_ids
+            if association == "vertex"
+            else prepared.mesh.cell_ids
         )
         ids = _distributed_rng_local(raw_ids)
         source_ids = np.asarray(source_index.index_values)
@@ -1992,7 +2054,8 @@ def _distributed_initial_field_histories(
         if valid:
             valid = np.array_equal(source_ids[order[positions]], ids[live])
         _distributed_collective_require(
-            valid, "_distributed_initial_field_histories",
+            valid,
+            "_distributed_initial_field_histories",
             "Initial allocated records must retain their accepted source field identities.",
             {"entry": name},
         )
@@ -2072,9 +2135,7 @@ def _distributed_owned_field_content(
             np.asarray(storage.entity_owner[degree]) == storage.partition_index
         )
         prefix = (
-            name.encode()
-            + values.dtype.str.encode()
-            + repr(values.shape[1:]).encode()
+            name.encode() + values.dtype.str.encode() + repr(values.shape[1:]).encode()
         )
         words = np.empty((owned.size, 4), dtype=np.uint64)
         for index, row in enumerate(owned):
@@ -2098,12 +2159,12 @@ def _distributed_graph_compact_values(
     if np.any(positions >= keys.size) or not np.array_equal(keys[positions], query):
         raise ValueError("prebalance.fields must cover every published compact identity")
     # Shared vertex corners may repeat; selecting one must not hide differing bytes.
-    row_bytes = np.ascontiguousarray(rows).view(np.uint8).reshape(
-        (keys.size, int(np.prod(rows.shape[1:])) * rows.dtype.itemsize)
+    row_bytes = (
+        np.ascontiguousarray(rows)
+        .view(np.uint8)
+        .reshape((keys.size, int(np.prod(rows.shape[1:])) * rows.dtype.itemsize))
     )
-    if np.any(
-        (keys[1:] == keys[:-1]) & np.any(row_bytes[1:] != row_bytes[:-1], axis=1)
-    ):
+    if np.any((keys[1:] == keys[:-1]) & np.any(row_bytes[1:] != row_bytes[:-1], axis=1)):
         raise ValueError("prebalance.fields must retain identical shared packet bytes")
     return rows[positions]
 
@@ -2176,7 +2237,10 @@ def _distributed_prebalance_provider(
     adaptation = ledger.run(
         "provider_prebalance_preparation",
         lambda: phx.meshing.prepare_mesh_adaptation(
-            source, phx.meshing.MarkedMeshAdaptation(), policy=graph_policy
+            source,
+            phx.meshing.MarkedMeshAdaptation(),
+            policy=graph_policy,
+            observe_managed_admission=True,
         ),
     )
     prepared = ledger.run(
@@ -2186,7 +2250,10 @@ def _distributed_prebalance_provider(
     raw = prepared.states
     live_parts = type(prepared).execution_parts(prepared)
     vertex_names = (
-        "temperature", "material-temperature", "essential-values", "essential-mask"
+        "temperature",
+        "material-temperature",
+        "essential-values",
+        "essential-mask",
     )
     with agreed_local_step(stage="provider-prebalance-field-packets"):
         storage = source.mesh.storage
@@ -2218,21 +2285,27 @@ def _distributed_prebalance_provider(
             raw,
             cell_field_ids=_distributed_graph_field_bucket(
                 storage.entity_global_ids[cell_degree],
-                prepared.layout.cell_capacity, -1, live_parts,
+                prepared.layout.cell_capacity,
+                -1,
+                live_parts,
             ),
             cell_fields=_distributed_graph_field_bucket(
                 cell_values, prepared.layout.cell_capacity, 0.0, live_parts
             ),
             vertex_field_ids=_distributed_graph_field_bucket(
                 storage.entity_global_ids[0],
-                prepared.layout.vertex_capacity, -1, live_parts,
+                prepared.layout.vertex_capacity,
+                -1,
+                live_parts,
             ),
             vertex_fields=_distributed_graph_field_bucket(
                 vertex_values, prepared.layout.vertex_capacity, 0.0, live_parts
             ),
             cell_epochs=jnp.full(
-                raw.mesh.cell_ids.shape, mesh_epoch,
-                dtype=jnp.int64, device=raw.mesh.cell_ids.sharding,
+                raw.mesh.cell_ids.shape,
+                mesh_epoch,
+                dtype=jnp.int64,
+                device=raw.mesh.cell_ids.sharding,
             ),
         ),
     )
@@ -2242,9 +2315,7 @@ def _distributed_prebalance_provider(
     )
     repartitioned = ledger.run(
         "provider_prebalance_repartition",
-        lambda: repartition_partitioned_mesh_adaptation(
-            prepared, raw, bound, proposal
-        ),
+        lambda: repartition_partitioned_mesh_adaptation(prepared, raw, bound, proposal),
     )
     with agreed_local_step(stage="provider-prebalance-migration-admission"):
         migration = repartitioned.migration
@@ -2386,7 +2457,9 @@ def _distributed_qualification_epochs(
         args.distributed_parts,
         halo_width=args.distributed_halo_width,
     )
-    distribution = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    distribution = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "owner_local_tile_ownership",
         lambda: meshing.prepare_mesh_distribution(
             meshing.MeshPart(_DISTRIBUTED_PART, source), policy=partition
@@ -2460,11 +2533,25 @@ def _distributed_qualification_epochs(
         "time_step": jnp.asarray(0.01, dtype=jnp.float64),
     }
     initial_fields[euler_history.ENTRY] = euler_model["system"].primitive_to_conserved(
-        jnp.stack((density, jnp.zeros_like(density), jnp.zeros_like(density), jnp.ones_like(density)), axis=1)
+        jnp.stack(
+            (
+                density,
+                jnp.zeros_like(density),
+                jnp.zeros_like(density),
+                jnp.ones_like(density),
+            ),
+            axis=1,
+        )
     )
     initial = _DistributedPhysicsState(
-        source, initial_fields, fe_fields, precision, f"accepted-{mesh_epoch}",
-        tuple(jax.devices()), jnp.asarray(0.0, dtype=jnp.float64), jnp.asarray(0, dtype=jnp.int64),
+        source,
+        initial_fields,
+        fe_fields,
+        precision,
+        f"accepted-{mesh_epoch}",
+        tuple(jax.devices()),
+        jnp.asarray(0.0, dtype=jnp.float64),
+        jnp.asarray(0, dtype=jnp.int64),
         euler_model,
     )
     solved = _distributed_continue_fe(
@@ -2478,8 +2565,13 @@ def _distributed_qualification_epochs(
         initial, record, record_name="initial_fields"
     )
     euler = _distributed_continue_fv(
-        args, initial, inventory, record, started,
-        prefix="initial", continued_from_restart=False,
+        args,
+        initial,
+        inventory,
+        record,
+        started,
+        prefix="initial",
+        continued_from_restart=False,
     )
     values[euler_history.ENTRY] = euler.values
     initial_fields[euler_history.ENTRY] = euler.values
@@ -2494,12 +2586,25 @@ def _distributed_qualification_epochs(
         "model_id": canonical_fingerprint(array_tree_fingerprint(euler_model)),
     }
     prebalanced = _distributed_prebalance_provider(
-        args, source, distribution, partition, policy, initial_physical,
-        initial_fields, euler_clock, fe_fields, precision, record, started, mesh_epoch,
+        args,
+        source,
+        distribution,
+        partition,
+        policy,
+        initial_physical,
+        initial_fields,
+        euler_clock,
+        fe_fields,
+        precision,
+        record,
+        started,
+        mesh_epoch,
     )
     source, current = prebalanced.source, prebalanced.source
     distribution, partition, policy = (
-        prebalanced.distribution, prebalanced.partition, prebalanced.policy
+        prebalanced.distribution,
+        prebalanced.partition,
+        prebalanced.policy,
     )
     initial_physical, initial_fields = prebalanced.physical, prebalanced.fields
     values = {name: initial_fields[name] for name in values}
@@ -2525,7 +2630,9 @@ def _distributed_qualification_epochs(
         )
         if rng is None:
             baselines.update(
-                _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+                _distributed_stage_ledger(
+                    record, deadline=Deadline(started + args.timeout)
+                ).run(
                     "initial_field_history_binding",
                     lambda: _distributed_initial_field_histories(
                         source, initial_physical, initial_fields, accepted.prepared
@@ -2608,6 +2715,7 @@ def _distributed_prepare_graph_epoch(
         current,
         meshing.MarkedMeshAdaptation(),
         policy=_distributed_qualification_policy(policy, distribution, graph),
+        observe_managed_admission=True,
     )
     partitioned = prepare_partitioned_mesh_adaptation(adaptation)
     devices = tuple(partitioned.parts.mesh.devices.flat)
@@ -2643,7 +2751,9 @@ def _distributed_prepare_graph_epoch(
             )
         return binding.index_values
 
-    bound = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    bound = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "graph_field_forest_binding",
         lambda: prepare_ownerlocal_migration_state(
             partitioned,
@@ -2679,7 +2789,9 @@ def _distributed_prepare_graph_epoch(
             ("Native migration binding omitted its reassembled forest ownership."),
             {"cell_owners": cell_owners, "vertex_owners": vertex_owners},
         )
-    proposal = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    proposal = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "native_graph_restart_proposal",
         lambda: prepare_graph_restart_proposal(
             partitioned.parts,
@@ -2691,7 +2803,9 @@ def _distributed_prepare_graph_epoch(
             ).astype(jnp.int64),
         ),
     )
-    receipt = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    receipt = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "native_graph_restart_repartition",
         lambda: repack_simplex_restart(
             ExecutionRuntime.current().root_group,
@@ -2716,7 +2830,9 @@ def _distributed_prepare_graph_epoch(
                 "shape": list(value.shape),
                 "dtype": str(value.dtype),
                 "bytes": value.size * value.dtype.itemsize,
-                "local_bytes": sum(shard.data.nbytes for shard in value.addressable_shards),
+                "local_bytes": sum(
+                    shard.data.nbytes for shard in value.addressable_shards
+                ),
             }
             for value in values
         ]
@@ -2728,9 +2844,13 @@ def _distributed_prepare_graph_epoch(
     ]
     record["graph_restart_packet"] = {
         "status_local": status_codes,
-        "status_reasons_local": [AdaptiveSimplexStatus(code).name for code in status_codes],
+        "status_reasons_local": [
+            AdaptiveSimplexStatus(code).name for code in status_codes
+        ],
         "invalid_reason_masks_local": local_values(receipt.invalid_reason_masks),
-        "duplicate_record_conflicts_local": local_values(receipt.duplicate_record_conflicts),
+        "duplicate_record_conflicts_local": local_values(
+            receipt.duplicate_record_conflicts
+        ),
         "duplicate_record_schema": receipt.duplicate_record_schema(),
         "invalid_reason_bits": {
             bit.name: int(bit) for bit in SimplexRestartInvalidReason
@@ -2785,7 +2905,9 @@ def _distributed_field_difference(
 ) -> dict[str, Any]:
     """Retain typed, deterministic identity evidence before collective refusal."""
     if actual.shape != expected.shape or actual.shape[0] != identifiers.size:
-        raise ValueError("Graph field comparison requires matching entity/component shapes.")
+        raise ValueError(
+            "Graph field comparison requires matching entity/component shapes."
+        )
     binding = role.index_binding
     if not isinstance(binding, MeshingFieldIndexBinding):
         raise ValueError("Graph field comparison requires an entity identity binding.")
@@ -2796,9 +2918,11 @@ def _distributed_field_difference(
     else:
         # Exact counters must not wrap unsigned subtraction or round through float64.
         error = np.asarray(
-            [abs(int(a) - int(b)) for a, b in zip(
-                actual.reshape(-1), expected.reshape(-1), strict=True
-            )], dtype=object,
+            [
+                abs(int(a) - int(b))
+                for a, b in zip(actual.reshape(-1), expected.reshape(-1), strict=True)
+            ],
+            dtype=object,
         ).reshape(actual.shape)
     components = int(np.prod(actual.shape[1:]))
     row_error = np.max(error.reshape((identifiers.size, components)), axis=1)
@@ -2806,7 +2930,8 @@ def _distributed_field_difference(
     differing = np.flatnonzero(row_different)
     first = (
         int(differing[np.lexsort((owners[differing], identifiers[differing]))[0]])
-        if differing.size else None
+        if differing.size
+        else None
     )
     maximum = max(row_error.tolist(), default=0)
     return {
@@ -2837,7 +2962,9 @@ def _distributed_graph_transport_reference(
     with agreed_local_step(stage="graph-transport-reference-admission"):
         storage = accepted.current.mesh.storage
         if storage is None:
-            raise ValueError("Accepted graph predecessor requires current compact ownership.")
+            raise ValueError(
+                "Accepted graph predecessor requires current compact ownership."
+            )
         ids = np.asarray(storage.entity_global_ids[degree])
         owned = np.asarray(storage.entity_owned[degree])
         values = accepted.fields[name]
@@ -2848,20 +2975,23 @@ def _distributed_graph_transport_reference(
         parts = type(receipt).execution_parts(receipt)
         placement = NamedSharding(parts.mesh, PartitionSpec(parts.axis_name))
         packet_ids = np.full((1, capacity), -1, dtype=np.int64)
-        packet_ids[0, :ids.size] = np.where(owned, ids, -1)
+        packet_ids[0, : ids.size] = np.where(owned, ids, -1)
         packet_values = np.zeros((1, capacity, *values.shape[1:]), dtype=values.dtype)
-        packet_values[0, :ids.size] = np.asarray(values)
+        packet_values[0, : ids.size] = np.asarray(values)
     identifiers = jax.make_array_from_process_local_data(
         placement, packet_ids, (parts.part_count, capacity)
     )
     owners = jax.make_array_from_process_local_data(
-        placement, np.full((1, capacity), storage.partition_index, dtype=np.int32),
+        placement,
+        np.full((1, capacity), storage.partition_index, dtype=np.int32),
         (parts.part_count, capacity),
     )
     payload = jax.make_array_from_process_local_data(
         placement, packet_values, (parts.part_count, capacity, *values.shape[1:])
     )
-    return np.asarray(_owner_local_recovery(receipt, identifiers, owners, payload, queries))
+    return np.asarray(
+        _owner_local_recovery(receipt, identifiers, owners, payload, queries)
+    )
 
 
 def _distributed_recover_graph_epoch(
@@ -2877,11 +3007,15 @@ def _distributed_recover_graph_epoch(
     meshing = phx.meshing
     adaptation, receipt = prepared.adaptation, prepared.receipt
     roles, fields = accepted.roles, accepted.fields
-    results = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    results = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "graph_restart_publication",
-        lambda: commit_partitioned_mesh_restart(
-            receipt, adaptation, proof=prepared.proof
-        ).local_results,
+        lambda: (
+            commit_partitioned_mesh_restart(
+                receipt, adaptation, proof=prepared.proof
+            ).local_results
+        ),
     )
     with agreed_local_step(stage="graph-restart-publication-admission"):
         if (
@@ -2908,6 +3042,18 @@ def _distributed_recover_graph_epoch(
             )
         type(evidence).require_passed(evidence)
         type(target.audit).require_passed(target.audit)
+        # Publication is already committed even if a subsequent history/science
+        # gate refuses it. Do not leave the earlier proposal status as evidence.
+        record["migration"] = {
+            "status": "published",
+            "route": "native-graph-restart-repack",
+            "receipt_id": prepared.proof.content_id,
+            "result_id": target.result_id,
+            "cell_migration_counts_local": np.asarray(
+                migration_counts.addressable_shards[0].data
+            ).tolist(),
+            "field_history_status": "pending",
+        }
     fe_fields, precision = _distributed_qualification_fe_declaration()
     physical = agreed_local(
         lambda: _distributed_qualification_fe(
@@ -2915,7 +3061,9 @@ def _distributed_recover_graph_epoch(
         ),
         stage="graph-physical-field-preparation",
     )
-    roles, recovered = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    roles, recovered = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "graph_field_history_recovery",
         lambda: _distributed_qualification_recover(
             target, receipt, roles, fields, physical.field_spaces[0], prepared.proof
@@ -2927,8 +3075,12 @@ def _distributed_recover_graph_epoch(
             raise ValueError("Graph recovery requires target entity ownership.")
         by_name = {role.entry_name: role for role in roles}
         record["graph_field_inventory"] = [
-            {"role": role.entry_name, "state_epoch": role.state_epoch,
-             "dtype": str(role.dtype), "shape": list(role.shape)}
+            {
+                "role": role.entry_name,
+                "state_epoch": role.state_epoch,
+                "dtype": str(role.dtype),
+                "shape": list(role.shape),
+            }
             for role in roles
         ]
     comparisons: list[dict[str, Any]] = []
@@ -2939,21 +3091,35 @@ def _distributed_recover_graph_epoch(
             continue
         degree = 0 if association == "vertex" else target.mesh.topological_dimension
         ids = np.asarray(storage.entity_global_ids[degree])
-        expected = _distributed_graph_transport_reference(accepted, receipt, name, degree, ids)
+        expected = _distributed_graph_transport_reference(
+            accepted, receipt, name, degree, ids
+        )
         with agreed_local_step(stage="graph-transport-reference-comparison"):
-            comparisons.append(_distributed_field_difference(
-                by_name[name], np.asarray(recovered[name]), expected, ids,
-                np.asarray(storage.entity_owner[degree]),
-                comparison="accepted-compact-transport", tolerance=0.0,
-            ))
+            comparisons.append(
+                _distributed_field_difference(
+                    by_name[name],
+                    np.asarray(recovered[name]),
+                    expected,
+                    ids,
+                    np.asarray(storage.entity_owner[degree]),
+                    comparison="accepted-compact-transport",
+                    tolerance=0.0,
+                )
+            )
     with agreed_local_step(stage="graph-physical-field-recovery"):
         mask = np.asarray(physical.dof_maps[0].boundary_dof_mask)
         recovered_mask = np.asarray(recovered["essential-mask"])
-        comparisons.append(_distributed_field_difference(
-            by_name["essential-mask"], recovered_mask, mask,
-            np.asarray(storage.entity_global_ids[0]), np.asarray(storage.entity_owner[0]),
-            comparison="independent-physical-reference", tolerance=0.0,
-        ))
+        comparisons.append(
+            _distributed_field_difference(
+                by_name["essential-mask"],
+                recovered_mask,
+                mask,
+                np.asarray(storage.entity_global_ids[0]),
+                np.asarray(storage.entity_owner[0]),
+                comparison="independent-physical-reference",
+                tolerance=0.0,
+            )
+        )
         if not np.array_equal(recovered_mask, mask):
             raise qualification_failure(
                 "_distributed_qualification_graph",
@@ -2991,16 +3157,26 @@ def _distributed_recover_graph_epoch(
             for name, reference in references.items()
         }
         for name, reference in references.items():
-            degree = target.mesh.topological_dimension if name == "material-cell-average" else 0
-            comparisons.append(_distributed_field_difference(
-                by_name[name], np.asarray(recovered[name]), reference,
-                np.asarray(storage.entity_global_ids[degree]),
-                np.asarray(storage.entity_owner[degree]),
-                comparison="independent-physical-reference", tolerance=1e-12,
-            ))
+            degree = (
+                target.mesh.topological_dimension
+                if name == "material-cell-average"
+                else 0
+            )
+            comparisons.append(
+                _distributed_field_difference(
+                    by_name[name],
+                    np.asarray(recovered[name]),
+                    reference,
+                    np.asarray(storage.entity_global_ids[degree]),
+                    np.asarray(storage.entity_owner[degree]),
+                    comparison="independent-physical-reference",
+                    tolerance=1e-12,
+                )
+            )
         transport_errors = {
             item["role"]: item["max_error"]
-            for item in comparisons if item["comparison"] == "accepted-compact-transport"
+            for item in comparisons
+            if item["comparison"] == "accepted-compact-transport"
         }
         if any(value != 0 for value in transport_errors.values()):
             raise qualification_failure(
@@ -3008,13 +3184,15 @@ def _distributed_recover_graph_epoch(
                 "Graph history transport changed accepted compact field values.",
                 transport_errors,
             )
-        if max(errors.values()) > 1e-12:
+        if not all(np.isfinite(value) and value <= 1e-12 for value in errors.values()):
             raise qualification_failure(
                 "_distributed_qualification_graph",
                 "Hot graph history recovery disagrees with the independent physical references.",
                 errors,
             )
-    time, steps = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    time, steps = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "graph_euler_history_recovery",
         lambda: _distributed_euler_clock(target, recovered, accepted.euler_clock),
     )
@@ -3024,6 +3202,7 @@ def _distributed_recover_graph_epoch(
         "steps": int(_distributed_replicated(steps)),
         "inventory": _distributed_replicated(accepted.euler_clock["inventory"]).tolist(),
     }
+    record["migration"]["field_history_status"] = "accepted"
     return _DistributedGraphState(
         results=results,
         physical=physical,
@@ -3048,16 +3227,24 @@ def _distributed_qualification_graph(
     prepared = _distributed_prepare_graph_epoch(
         args, accepted, record, started, mesh_epoch
     )
-    recovered = _distributed_recover_graph_epoch(
-        args, accepted, prepared, record, started, mesh_epoch
-    )
+    try:
+        recovered = _distributed_recover_graph_epoch(
+            args, accepted, prepared, record, started, mesh_epoch
+        )
+    except Exception:
+        migration = record.get("migration", {})
+        if migration.get("status") == "published":
+            migration["field_history_status"] = "refused"
+        raise
     proposal, receipt, proof = prepared.proposal, prepared.receipt, prepared.proof
     target, errors = recovered.results[0].target, recovered.errors
     transition = recovered.transition
     migration_counts = recovered.migration_counts
     counts = np.asarray(migration_counts.addressable_shards[0].data).tolist()
     valid = np.asarray(proposal.workset.cell_valid.addressable_shards[0].data)
-    record["rng"]["graph"] = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    record["rng"]["graph"] = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "graph_rng_counter_recovery",
         lambda: _distributed_rng_repack(receipt, target, recovered.fields),
     )
@@ -3146,7 +3333,9 @@ def _distributed_bind_checkpoint_arrays(
         mesh_arrays.array_roles,
         mesh_arrays.evidence,
     )
-    state = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    state = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "checkpoint_scientific_binding",
         lambda: MeshingCheckpointState(
             source_topology_id=evidence.source.mesh.topology_id,
@@ -3188,7 +3377,9 @@ def _distributed_publish_checkpoint(
 
     repository, limits = binding.repository, binding.limits
     state, arrays = payload.state, payload.arrays
-    publication = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    publication = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         stage,
         lambda: publish_process_meshing_checkpoint(
             repository,
@@ -3203,7 +3394,9 @@ def _distributed_publish_checkpoint(
         ),
     )
     multihost_utils.sync_global_devices(f"distributed-qualification-{stage}-published")
-    manifest = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    manifest = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"{stage}_exact_coverage_assembly",
         lambda: assemble_distributed_checkpoint_from_repository(
             repository,
@@ -3340,7 +3533,9 @@ def _distributed_refusal_probe(
             "The accepted owner-local epoch lost its collective evidence.",
             {"retained": retained},
         )
-    partitioned = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    partitioned = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "collective_refusal_probe_preparation",
         lambda: prepare_partitioned_mesh_adaptation(
             meshing.prepare_mesh_adaptation(
@@ -3349,15 +3544,21 @@ def _distributed_refusal_probe(
                 policy=_distributed_qualification_policy(
                     epochs.policy, epochs.distribution, epochs.partition
                 ),
+                observe_managed_admission=True,
             )
         ),
     )
     states = partitioned.states
-    updated = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    updated = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "collective_refusal_probe_coarsen",
         lambda: jax.block_until_ready(
             coarsen_adaptive_simplex_parts(
-                partitioned.layout, type(partitioned).execution_parts(partitioned), states, states.mesh.cell_active
+                partitioned.layout,
+                type(partitioned).execution_parts(partitioned),
+                states,
+                states.mesh.cell_active,
             )
         ),
     )
@@ -3371,6 +3572,7 @@ def _distributed_refusal_probe(
         updated.state,
         jnp.where(corrupt, mesh.coordinates + 0.125, mesh.coordinates),
     )
+
     # The refused epoch's counters advance only tentatively, as its probe would.
     def euler_state_id() -> str:
         raw = epochs.fields[euler_history.RAW_ENTRY]
@@ -3392,7 +3594,9 @@ def _distributed_refusal_probe(
 
     retained_euler = euler_state_id()
     retained_rng = _distributed_rng_bank_digest(epochs.rng)
-    tentative = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    tentative = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "collective_refusal_probe_rng_tentative",
         lambda: _distributed_rng_bank_digest(
             _distributed_rng_advance(
@@ -3400,7 +3604,9 @@ def _distributed_refusal_probe(
             )
         ),
     )
-    refusal = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    refusal = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "collective_refusal_probe_commit",
         lambda: _distributed_collective_refusal(
             lambda: commit_partitioned_adaptive_simplex(partitioned, tampered)
@@ -3495,7 +3701,9 @@ def _distributed_qualification_produce(
     # The uninterrupted owners draw the next probe events of the published
     # counters; the restored owners must reproduce them before advancing.
     target = graph.results[0].target
-    record["rng"]["uninterrupted"] = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    record["rng"]["uninterrupted"] = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "rng_uninterrupted_continuation",
         lambda: _distributed_rng_continue(
             _distributed_rng_stream(), target, graph.fields, _DISTRIBUTED_RNG_STEPS
@@ -3503,7 +3711,11 @@ def _distributed_qualification_produce(
     )
     fe_fields, precision = _distributed_qualification_fe_declaration()
     physics = _DistributedPhysicsState(
-        target, graph.fields, fe_fields, precision, f"accepted-{mesh_epoch}",
+        target,
+        graph.fields,
+        fe_fields,
+        precision,
+        f"accepted-{mesh_epoch}",
         tuple(graph.parts.mesh.devices.flat),
         jnp.asarray(graph.euler_clock["time"]),
         jnp.asarray(graph.euler_clock["steps"]),
@@ -3513,8 +3725,13 @@ def _distributed_qualification_produce(
         physics, record, record_name="uninterrupted_fields"
     )
     _distributed_continue_fv(
-        args, physics, inventory, record, started,
-        prefix="uninterrupted", continued_from_restart=False,
+        args,
+        physics,
+        inventory,
+        record,
+        started,
+        prefix="uninterrupted",
+        continued_from_restart=False,
     )
     refusals = _distributed_rng_role_refusals(target)
     if not all(refusals.values()):
@@ -3539,9 +3756,7 @@ def _distributed_qualification_launch(
     deadline still rejects a late launch, but must not discard its rank evidence.
     """
 
-    count = {"producer": args.distributed_processes, "consumer": args.restart_parts}[
-        role
-    ]
+    count = {"producer": args.distributed_processes, "consumer": args.restart_parts}[role]
     command = [
         sys.executable,
         "-m",
@@ -3590,7 +3805,9 @@ def _distributed_qualification_launch(
                 "process_id": result.process_id,
                 "returncode": result.returncode,
                 "stderr": result.stderr.decode("utf-8", errors="replace"),
-                "record_path": str(record_directory / f"process-{result.process_id}.json"),
+                "record_path": str(
+                    record_directory / f"process-{result.process_id}.json"
+                ),
             }
             for result in results
         ]
@@ -3609,7 +3826,9 @@ def _distributed_qualification_launch(
                     {
                         "process_id": rank,
                         "record_path": str(result_path),
-                        **FailureRecord.from_exception(error, f"{role}_processes").to_record(),
+                        **FailureRecord.from_exception(
+                            error, f"{role}_processes"
+                        ).to_record(),
                     }
                 )
                 continue
@@ -3617,9 +3836,9 @@ def _distributed_qualification_launch(
             processes.append(process)
         return results
 
-    results = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        f"{role}_processes", launch
-    )
+    results = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(f"{role}_processes", launch)
     for result in results:
         process = by_rank.get(result.process_id)
         if process is None:
@@ -3661,9 +3880,8 @@ def _distributed_qualification_launch(
             ),
             {"record_errors": record_errors},
         )
-    if (
-        len(processes) != count
-        or sorted(result.process_id for result in results) != list(range(count))
+    if len(processes) != count or sorted(result.process_id for result in results) != list(
+        range(count)
     ):
         raise qualification_failure(
             "_distributed_qualification_launch",
@@ -3762,7 +3980,9 @@ def _distributed_qualification_restore(
             {"published": published},
         )
     owner_zero = next(item for item in published if int(item["process_index"]) == 0)
-    manifest = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    manifest = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "restore_checkpoint_coverage_assembly",
         lambda: assemble_distributed_checkpoint_from_repository(
             repository,
@@ -3792,11 +4012,11 @@ def _distributed_qualification_restore(
         "bitwise",
     )
     policy = TopologyRestartPolicy(allow_topology_change=True)
-    placement = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    placement = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "owner_local_restore_placement",
-        lambda: prepare_distributed_restore_placement(
-            states, manifest, group, limits
-        ),
+        lambda: prepare_distributed_restore_placement(states, manifest, group, limits),
     )
     source_owner_index = placement.decoded_owners[0]
     source_owner = next(
@@ -3804,7 +4024,9 @@ def _distributed_qualification_restore(
     )
     last = args.distributed_processes - 1
     swapped = {**expected, 0: expected[last], last: expected[0]}
-    binding_refusal = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    binding_refusal = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "consumer_binding_refusal_probe",
         lambda: _distributed_collective_refusal(
             lambda: restore_meshing_checkpoint(
@@ -3827,7 +4049,9 @@ def _distributed_qualification_restore(
             "A restore bound to swapped owner identities was admitted.",
             {"swapped": swapped},
         )
-    checkpoint = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    checkpoint = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "changed_owner_count_restore",
         lambda: restore_meshing_checkpoint(
             repository,
@@ -3885,9 +4109,9 @@ def _distributed_qualification_restore(
         premise.require_current_domain()
         return premise.generation_id
 
-    renewed = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        "source_recertification", recertify
-    )
+    renewed = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run("source_recertification", recertify)
     record["source_recertification"] = {
         "initial_evidence_id": original.evidence_id,
         "source_evidence_id": original.source_evidence_id,
@@ -3906,7 +4130,9 @@ def _distributed_qualification_restore(
     if physical.field_spaces[0].field_space_id != source_owner["field_space_id"]:
         raise qualification_failure(
             "_distributed_qualification_restore",
-            ("Restored physical field space differs from its published source-owner space."),
+            (
+                "Restored physical field space differs from its published source-owner space."
+            ),
             {"physical": physical, "published": source_owner},
         )
     if int(closure["accepted_data"]["fields"]["accepted-epoch"]) != state.mesh_epoch:
@@ -4007,7 +4233,9 @@ def _distributed_qualification_repack(
     group = ExecutionRuntime.current().root_group
     cell_history = _distributed_qualification_histories(fields, "cell")
     vertex_history = _distributed_qualification_histories(fields, "vertex")
-    receipt = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    receipt = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "changed_owner_count_repack",
         lambda: repack_simplex_restart(
             group,
@@ -4124,7 +4352,9 @@ def _distributed_qualification_repack(
             state = restored.state.source_owner_states[owner]
             source_closure = state.source_closure
             if state.source_owner_index != owner or source_closure is None:
-                raise ValueError("restart.historical_sources must retain every assigned authenticated archive owner")
+                raise ValueError(
+                    "restart.historical_sources must retain every assigned authenticated archive owner"
+                )
             sources.append(source_closure["collective_target"])
         historical_sources = tuple(sources)
     old_policy = results[0].policy
@@ -4143,9 +4373,12 @@ def _distributed_qualification_repack(
         policy=_distributed_qualification_policy(
             old_policy, results[0].distribution.target, partition
         ),
+        observe_managed_admission=True,
     )
     lost = jnp.where(owners >= 0, (owners + 1) % producers, owners).astype(jnp.int32)
-    refused = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    refused = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "consumer_collective_refusal_probe",
         lambda: repack_simplex_restart(
             group,
@@ -4160,7 +4393,9 @@ def _distributed_qualification_repack(
         ),
     )
     refused_status = bool(jnp.all(refused.status != 0))
-    commit_refusal = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    commit_refusal = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "consumer_collective_refusal_commit",
         lambda: _distributed_collective_refusal(
             lambda: commit_partitioned_mesh_restart(
@@ -4174,11 +4409,15 @@ def _distributed_qualification_repack(
             "A repack with corrupted saved authority was not refused by every owner.",
             {"commit_refusal": commit_refusal, "refused_status": refused_status},
         )
-    published = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    published = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "changed_owner_count_publication",
-        lambda: commit_partitioned_mesh_restart(
-            receipt, prepared, proof=proof, historical_sources=historical_sources
-        ).local_results,
+        lambda: (
+            commit_partitioned_mesh_restart(
+                receipt, prepared, proof=proof, historical_sources=historical_sources
+            ).local_results
+        ),
     )
     if len(published) != 1:
         raise qualification_failure(
@@ -4258,7 +4497,9 @@ def _distributed_qualification_repack(
         declaration.precision_policy,
         declaration.numeric_version,
     )
-    roles, recovered = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    roles, recovered = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "restored_field_history_recovery",
         lambda: _distributed_qualification_recover(
             target,
@@ -4285,7 +4526,9 @@ def _distributed_qualification_repack(
     }
     validate_meshing_field_declarations(new_closure)
     euler_clock: Mapping[str, Any] = closure["accepted_data"]["euler_clock"]
-    euler_time, euler_steps = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    euler_time, euler_steps = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "restored_euler_history_recovery",
         lambda: _distributed_euler_clock(target, recovered, euler_clock),
     )
@@ -4320,9 +4563,7 @@ def _distributed_qualification_repack(
                     - np.mean(material[cells], axis=1)
                 )
             ),
-            float(
-                not np.array_equal(np.asarray(recovered["essential-mask"]), boundary)
-            ),
+            float(not np.array_equal(np.asarray(recovered["essential-mask"]), boundary)),
         ),
         dtype=np.float64,
     )
@@ -4339,7 +4580,10 @@ def _distributed_qualification_repack(
             strict=True,
         )
     )
-    if max(errors.values()) > 1e-12 or global_errors[4] != 0.0:
+    if (
+        not all(np.isfinite(value) and value <= 1e-12 for value in errors.values())
+        or global_errors[4] != 0.0
+    ):
         raise qualification_failure(
             "_distributed_qualification_repack",
             (
@@ -4393,19 +4637,25 @@ def _distributed_qualification_repack(
 
 
 def _distributed_rearchive_closure(
-    restart: _DistributedRestartState, mesh_epoch: int,
+    restart: _DistributedRestartState,
+    mesh_epoch: int,
 ) -> dict[str, Any]:
     """Archive current accepted arrays, retaining prior owners only as provenance."""
     declaration = restart.closure["field_declarations"][_DISTRIBUTED_PART]
     roles = declaration.state_roles
     names = tuple(role.entry_name for role in roles)
-    required = {
-        name for row in _DISTRIBUTED_FIELD_ROLES for name in row[:2]
-    } | {"accepted-epoch", "rng-root-key"}
+    required = {name for row in _DISTRIBUTED_FIELD_ROLES for name in row[:2]} | {
+        "accepted-epoch",
+        "rng-root-key",
+    }
     if len(names) != len(set(names)) or set(names) != required:
-        raise ValueError("restart.rearchive requires each physical field and history role exactly once")
+        raise ValueError(
+            "restart.rearchive requires each physical field and history role exactly once"
+        )
     if set(restart.fields) != required:
-        raise ValueError("restart.rearchive fields must match the complete accepted role inventory")
+        raise ValueError(
+            "restart.rearchive fields must match the complete accepted role inventory"
+        )
     if restart.result.target.result_id != restart.target.result_id:
         raise ValueError("restart.rearchive result must own the current accepted target")
     for role in roles:
@@ -4413,7 +4663,9 @@ def _distributed_rearchive_closure(
         if role.state_epoch != mesh_epoch or (
             binding is not None and binding.source_result_id != restart.target.result_id
         ):
-            raise ValueError("restart.rearchive roles must retain the current accepted epoch and field owner")
+            raise ValueError(
+                "restart.rearchive roles must retain the current accepted epoch and field owner"
+            )
     accepted = restart.closure["accepted_data"]
     closure = {
         **restart.closure,
@@ -4468,7 +4720,9 @@ def _distributed_rearchive(
     published, manifest = _distributed_publish_checkpoint(
         args, binding, payload, identities, record, started, "restored_closure_rearchive"
     )
-    states = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    states = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "restored_closure_reread",
         lambda: read_meshing_checkpoint_states(
             binding.repository, manifest, limits=binding.limits
@@ -4488,7 +4742,81 @@ def _distributed_rearchive(
     record["rearchive"] = {
         "status": "published-and-reread",
         **published,
-        "reread_state_ids": {str(owner): value for owner, value in sorted(reread.items())},
+        "reread_state_ids": {
+            str(owner): value for owner, value in sorted(reread.items())
+        },
+    }
+
+
+@eqx.filter_jit
+def _distributed_fe_execute(
+    execution: OwnerLocalFiniteElementExecution,
+) -> tuple[jax.Array, ...]:
+    """Exactly the admitted owner-local FE call, as one explicitly compiled program."""
+    return execution()
+
+
+def _distributed_index_compiler(record: dict[str, Any], *paths: str) -> None:
+    """Index the per-executable compiler records; no aggregate is derived."""
+    prior = record["compiler"].get("executables", [])
+    record["compiler"] = {
+        "status": "measured-per-executable",
+        "scope": (
+            "Each owner-local compiled executable retains its own static compiler "
+            "record; values are not summed across executables or processes."
+        ),
+        "executables": [*prior, *paths],
+    }
+
+
+def _distributed_compiled_stages(
+    ledger: StageLedger,
+    name: str,
+    entry: Any,
+    arguments: tuple[Any, ...],
+    repeats: int,
+    *,
+    kernel: str,
+    execution_scope: str,
+    logical_retained_bytes: int,
+) -> tuple[Any, dict[str, Any]]:
+    """Lower, compile, run and rerun one owner-local executable under named stages.
+
+    The first execution's values are the scientific result. Static compiler
+    memory belongs to that executable; it is outside native admission and is
+    not a compiler-process or device peak.
+    """
+    lowered = ledger.run(f"{name}_lowering", lambda: entry.lower(*arguments))
+    compiled = ledger.run(f"{name}_compile", lowered.compile)
+    memory = compiled.compiled.memory_analysis()
+    stages = ledger.record["stages_seconds"]
+    first = ledger.run(name, lambda: jax.block_until_ready(compiled(*arguments)))
+    warm = []
+    for repeat in range(repeats):
+        warm_name = f"{name}_warm_{repeat}"
+        ledger.run(warm_name, lambda: jax.block_until_ready(compiled(*arguments)))
+        warm.append(stages[warm_name])
+    return first, {
+        "kernel": kernel,
+        "execution_scope": execution_scope,
+        "temporary_bytes": None if memory is None else memory.temp_size_in_bytes,
+        "output_bytes": None if memory is None else memory.output_size_in_bytes,
+        "argument_bytes": None if memory is None else memory.argument_size_in_bytes,
+        "generated_code_bytes": None
+        if memory is None
+        else memory.generated_code_size_in_bytes,
+        "memory_status": "unavailable" if memory is None else "measured",
+        "memory_scope": (
+            "compiled-executable-static-memory-requirements; outside native "
+            "admission; not compiler-process or device peak"
+        ),
+        "lowering_seconds": stages[f"{name}_lowering"],
+        "compile_seconds": stages[f"{name}_compile"],
+        "first_execution_seconds": stages[name],
+        "compilation_count": 1,
+        "compilation_count_semantics": "explicit compile calls; not backend cache misses",
+        "warm_samples_seconds": warm,
+        "logical_retained_bytes": logical_retained_bytes,
     }
 
 
@@ -4531,12 +4859,12 @@ def _distributed_dirichlet_action(
             initial=jnp.where(owned, initial, 0.0),
         )
         true_residual = rhs - operator.mv(solved.value)
-        true_residual_norm = jnp.sqrt(jnp.maximum(
-            jnp.real(program.pairing.inner(true_residual, true_residual)), 0.0
-        ))
-        rhs_norm = jnp.sqrt(jnp.maximum(
-            jnp.real(program.pairing.inner(rhs, rhs)), 0.0
-        ))
+        true_residual_norm = jnp.sqrt(
+            jnp.maximum(
+                jnp.real(program.pairing.inner(true_residual, true_residual)), 0.0
+            )
+        )
+        rhs_norm = jnp.sqrt(jnp.maximum(jnp.real(program.pairing.inner(rhs, rhs)), 0.0))
         threshold = policy.absolute_tolerance + policy.relative_tolerance * rhs_norm
         error = jax.lax.pmax(
             jnp.max(jnp.where(owned, jnp.abs(solved.value - reference), 0.0)),
@@ -4548,6 +4876,10 @@ def _distributed_dirichlet_action(
         accepted = program.pairing.global_all(
             program.collective_certificate()
             & solved.converged
+            & (
+                (solved.breakdown == int(KrylovBreakdownStatus.NONE))
+                | (solved.breakdown == int(KrylovBreakdownStatus.HAPPY))
+            )
             & jnp.all(jnp.isfinite(solved.value))
         )
         return (
@@ -4581,7 +4913,9 @@ def _distributed_continue_fe(
 
     target, fields = state.target, state.fields
     devices = state.devices
-    halos = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    halos = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"{prefix}_fe_halo_preparation",
         lambda: prepare_owner_local_halo_plans(
             (target.mesh,),
@@ -4591,7 +4925,9 @@ def _distributed_continue_fe(
             message_capacity=args.distributed_halo_capacity,
         ),
     )
-    program = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    program = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"{prefix}_fe_preparation",
         lambda: prepare_owner_local_finite_element(
             FiniteElementPlan(
@@ -4627,14 +4963,18 @@ def _distributed_continue_fe(
         args.distributed_halo_capacity,
         args.distributed_host_packet_bytes,
     )
-    # Conjugate gradients terminate within the global unknown count.
+    # A residual tolerance is not a forward-error bound: the inverse stiffness
+    # amplifies it. Resolve two additional decimal orders relative to the graph
+    # gate, then independently enforce that gate on the computed affine solve.
     action = _distributed_dirichlet_action(
         DistributedKrylovPolicy(
-            program.global_dof_count, relative_tolerance=1e-12, absolute_tolerance=1e-13
+            program.global_dof_count, relative_tolerance=1e-14, absolute_tolerance=1e-15
         )
     )
 
-    execution = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    execution = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         f"{prefix}_fe_execution_preparation",
         lambda: prepare_owner_local_finite_element_execution(
             (program,),
@@ -4646,20 +4986,31 @@ def _distributed_continue_fe(
         ),
     )
 
-    def solve() -> tuple[jax.Array, ...]:
-        return jax.block_until_ready(execution())
-
     (
-        solution, error, free, accepted, iterations, residual,
-        true_residual, threshold, breakdown, converged,
-    ) = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        f"{prefix}_fe_solve", solve
+        (
+            solution,
+            error,
+            free,
+            accepted,
+            iterations,
+            residual,
+            true_residual,
+            threshold,
+            breakdown,
+            converged,
+        ),
+        compiler,
+    ) = _distributed_compiled_stages(
+        _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)),
+        f"{prefix}_fe_solve",
+        _distributed_fe_execute,
+        (execution,),
+        args.repeats,
+        kernel="_distributed_fe_execute",
+        execution_scope="owner-local-dirichlet-pcg-solve-and-halo-exchange",
+        logical_retained_bytes=phx.model_array_bytes(execution),
     )
-    warm = []
-    for repeat in range(args.repeats):
-        name = f"{prefix}_fe_warm_solve_{repeat}"
-        _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(name, solve)
-        warm.append(record["stages_seconds"][name])
+    warm = compiler["warm_samples_seconds"]
 
     def local(value: jax.Array) -> np.ndarray:
         return np.asarray(value.addressable_shards[0].data)[0]
@@ -4668,22 +5019,29 @@ def _distributed_continue_fe(
     free_dofs = int(local(free))
     record[f"{prefix}_fe_solver"] = {
         "dtype": str(solution.dtype),
+        "iterations": int(local(iterations)),
         "reported_residual_norm": float(local(residual)),
         "true_residual_norm": float(local(true_residual)),
         "residual_threshold": float(local(threshold)),
-        "breakdown": bool(local(breakdown)),
+        "breakdown_status": int(local(breakdown)),
+        "breakdown_status_name": KrylovBreakdownStatus(int(local(breakdown))).name,
         "converged": bool(local(converged)),
         "collectively_accepted": bool(local(accepted)),
         "affine_forward_max_error": solve_error,
         "forward_error_bound": None,
     }
-    if not bool(local(accepted)) or free_dofs == 0 or solve_error > 1e-10:
+    if not bool(local(accepted)) or free_dofs == 0 or not solve_error <= 1e-12:
         raise qualification_failure(
             "_distributed_continue_fe",
             (
                 "Continued owner-local FE solve was refused or disagrees with the affine reference."
             ),
-            {"accepted": local(accepted), "free": free_dofs, "solve_error": solve_error},
+            {
+                "accepted": local(accepted),
+                "free": free_dofs,
+                "solve_error": solve_error,
+                "solver": record[f"{prefix}_fe_solver"],
+            },
         )
     record[f"{prefix}_fe"] = {
         "status": "executed",
@@ -4698,12 +5056,17 @@ def _distributed_continue_fe(
         "solve_max_error": solve_error,
         "iterations": int(local(iterations)),
         "residual_norm": float(local(residual)),
+        "solver": record[f"{prefix}_fe_solver"],
         "collectively_accepted": True,
         "warm_samples_seconds": warm,
+        "compiler": compiler,
         "continued_from_restart": continued_from_restart,
     }
+    _distributed_index_compiler(record, f"{prefix}_fe.compiler")
     return _DistributedFEContinuation(
-        solve_error=solve_error, free=free_dofs, warm=warm,
+        solve_error=solve_error,
+        free=free_dofs,
+        warm=warm,
         values=solution.addressable_shards[0].data[0, : program.local_dof_count],
     )
 
@@ -4763,12 +5126,16 @@ def _distributed_check_restored_inventories(
         "material-cell-average": 38.0,
     }
     if owned_cells != storage.global_entity_counts[-1] or any(
-        abs(integrals[name] - value) > 1e-12 for name, value in references.items()
+        not abs(integrals[name] - value) <= 1e-12 for name, value in references.items()
     ):
         raise qualification_failure(
             "_distributed_check_restored_inventories",
             ("Restored physical inventories disagree with their independent integrals."),
-            {"integrals": integrals, "owned_cells": owned_cells, "references": references},
+            {
+                "integrals": integrals,
+                "owned_cells": owned_cells,
+                "references": references,
+            },
         )
     record[record_name] = {
         "reopened_state_roles": sorted(fields),
@@ -4789,7 +5156,11 @@ def _distributed_euler_clock(
     clock: Mapping[str, Any],
 ) -> tuple[jax.Array, jax.Array]:
     """Validate the persisted physical clock against its actual accepted Euler bank."""
-    schemas = (("time", (), np.float64), ("steps", (), np.int64), ("inventory", (4,), np.float64))
+    schemas = (
+        ("time", (), np.float64),
+        ("steps", (), np.int64),
+        ("inventory", (4,), np.float64),
+    )
     valid = all(
         isinstance(clock.get(name), (jax.Array, np.ndarray))
         and clock[name].shape == shape
@@ -4809,7 +5180,8 @@ def _distributed_euler_clock(
         and isinstance(model, Mapping)
         and type(model.get("system")) is phx.equations.EulerSystem
         and model["system"].dimension == 2
-        and type(model.get("reconstruction")) is phx.discretization.PiecewiseConstantReconstruction
+        and type(model.get("reconstruction"))
+        is phx.discretization.PiecewiseConstantReconstruction
         and type(model.get("flux")) is phx.discretization.RusanovFluxPlan
         and type(model.get("boundary")) is phx.discretization.SlipWallBoundary
         and isinstance(model.get("time_step"), (jax.Array, np.ndarray))
@@ -4843,10 +5215,17 @@ def _distributed_euler_clock(
         bool(np.isfinite(physical_time))
         and physical_time > 0
         and accepted_steps >= 1
-        and bool(np.all(np.abs(measured - expected) <= euler_history.INVENTORY_TOLERANCE)),
+        and bool(
+            np.all(np.abs(measured - expected) <= euler_history.INVENTORY_TOLERANCE)
+        ),
         "_distributed_euler_clock",
         "Accepted Euler content and time must survive migration and cold restore without reinitialization.",
-        {"inventory": measured.tolist(), "expected": expected.tolist(), "time": physical_time, "steps": accepted_steps},
+        {
+            "inventory": measured.tolist(),
+            "expected": expected.tolist(),
+            "time": physical_time,
+            "steps": accepted_steps,
+        },
     )
     return time, steps
 
@@ -4880,11 +5259,14 @@ def _distributed_accept_continued_fields(
     )
     with agreed_local_step(stage="continued-all-field-acceptance-roles"):
         rng_roles = tuple(
-            role for role in declaration.state_roles
+            role
+            for role in declaration.state_roles
             if role.role in ("rng-key", "rng-counter")
         )
         roles = (*roles, *rng_roles)
-        fields.update({role.entry_name: restart.fields[role.entry_name] for role in rng_roles})
+        fields.update(
+            {role.entry_name: restart.fields[role.entry_name] for role in rng_roles}
+        )
     renewed = rebind_distributed_checkpoint_field_declaration(
         declaration, restart.target, physical, roles
     )
@@ -4931,6 +5313,7 @@ def _distributed_continue_fv(
             "Restored FV mesh.storage must retain owner-local closure evidence; got None",
             {"mesh": mesh},
         )
+
     def prepare() -> tuple[
         UnstructuredFiniteVolumeDiscretization, PreparedUnstructuredFiniteVolumeDynamics
     ]:
@@ -5018,25 +5401,39 @@ def _distributed_continue_fv(
             maximum_storage_bytes=args.maximum_memory_bytes,
         ),
     )
-    state = execution.pack_state((seed,))
-    advance = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
-        f"{prefix}_owner_local_fv",
-        lambda: jax.block_until_ready(
-            execute_owner_local_finite_volume_advance(
-                execution, state, physics.time, jnp.asarray(physics.euler_model["time_step"])
-            )
-        ),
+    # Exactly the arguments `execute_owner_local_finite_volume_advance` passes
+    # its cached program (no extra controls); its five outputs are the advance.
+    arguments = (
+        execution.numeric,
+        execution.pack_state((seed,)),
+        _replicated(physics.time, group),
+        _replicated(jnp.asarray(physics.euler_model["time_step"]), group),
+        (),
+        jax.tree_util.tree_structure(None),
+        None,
+    )
+    (advanced, inventory_before, inventory_after, finite, admissible_flags), compiler = (
+        _distributed_compiled_stages(
+            _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)),
+            f"{prefix}_owner_local_fv",
+            execution.program,
+            arguments,
+            args.repeats,
+            kernel="OwnerLocalFiniteVolumeExecution.program",
+            execution_scope="owner-local-fixed-capacity-euler-advance-and-halo-exchange",
+            logical_retained_bytes=phx.model_array_bytes(arguments[:4]),
+        )
     )
     drift = float(
         np.max(
             np.abs(
-                _distributed_replicated(advance.inventory_after)
-                - _distributed_replicated(advance.inventory_before)
+                _distributed_replicated(inventory_after)
+                - _distributed_replicated(inventory_before)
             )
         )
     )
     owned = np.asarray(geometry.cell_owned)
-    updated = np.asarray(execution.unpack_state(advance.state)[0])
+    updated = np.asarray(execution.unpack_state(advanced)[0])
     changed = int(
         _distributed_process_sum(
             np.asarray(
@@ -5045,10 +5442,8 @@ def _distributed_continue_fv(
             )
         )
     )
-    admissible = bool(
-        np.all(_distributed_replicated(advance.finite & advance.admissible))
-    )
-    if not admissible or drift > 1e-12 or changed == 0:
+    admissible = bool(np.all(_distributed_replicated(finite & admissible_flags)))
+    if not admissible or not drift <= 1e-12 or changed == 0:
         raise qualification_failure(
             "_distributed_continue_fv",
             ("Continued FV advance is inadmissible, nonconservative, or stationary."),
@@ -5076,10 +5471,11 @@ def _distributed_continue_fv(
         "system_id": system.system_id,
         "model_id": canonical_fingerprint(array_tree_fingerprint(physics.euler_model)),
         "continued_from_restart": continued_from_restart,
+        "compiler": compiler,
         "state_entry": euler_history.ENTRY,
         "component_names": list(euler_history.COMPONENTS),
-        "inventory_before": _distributed_replicated(advance.inventory_before).tolist(),
-        "inventory_after": _distributed_replicated(advance.inventory_after).tolist(),
+        "inventory_before": _distributed_replicated(inventory_before).tolist(),
+        "inventory_after": _distributed_replicated(inventory_after).tolist(),
         "time_before": float(_distributed_replicated(physics.time)),
         "time_after": float(_distributed_replicated(accepted_time)),
         "steps_before": int(_distributed_replicated(physics.steps)),
@@ -5091,8 +5487,9 @@ def _distributed_continue_fv(
         "material_cell_inventory": integrals["material-cell-average"],
         "fv_inventory_drift": drift,
     }
+    _distributed_index_compiler(record, f"{prefix}_fv.compiler")
     return _DistributedEulerAdvance(
-        accepted_values, accepted_time, accepted_steps, advance.inventory_after
+        accepted_values, accepted_time, accepted_steps, inventory_after
     )
 
 
@@ -5122,7 +5519,9 @@ def _distributed_rng_restart(
     key_data, raw_values = fields[stream.key_entry_name], fields[raw_name]
     if (
         persisted != {name: stream, raw_name: stream, stream.key_entry_name: stream}
-        or not np.array_equal(np.asarray(key_data), np.asarray(_distributed_rng_root_key()))
+        or not np.array_equal(
+            np.asarray(key_data), np.asarray(_distributed_rng_root_key())
+        )
         or not isinstance(raw_values, jax.Array)
     ):
         raise qualification_failure(
@@ -5130,7 +5529,9 @@ def _distributed_rng_restart(
             "The restored probe stream must persist the declared address and root key.",
             {"persisted": persisted},
         )
-    repack = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    repack = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "restored_rng_counter_recovery",
         lambda: _distributed_rng_repack(receipt, restart.target, fields),
     )
@@ -5139,7 +5540,9 @@ def _distributed_rng_restart(
             encoding="utf-8"
         )
     )
-    restored = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    restored = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "rng_restored_continuation",
         lambda: _distributed_rng_continue(stream, restart.target, fields, steps),
     )
@@ -5191,7 +5594,11 @@ def _distributed_euler_agreement(
     reference: Mapping[str, Any], continued: Mapping[str, Any], /
 ) -> dict[str, object]:
     """Compare actual uninterrupted and cold advances at the same accepted time."""
-    schemas = (("inventory_before", (4,)), ("inventory_after", (4,)), ("state_moments", (2, 4)))
+    schemas = (
+        ("inventory_before", (4,)),
+        ("inventory_after", (4,)),
+        ("state_moments", (2, 4)),
+    )
     arrays = tuple(
         (np.asarray(reference[name]), np.asarray(continued[name]), shape)
         for name, shape in schemas
@@ -5204,8 +5611,14 @@ def _distributed_euler_agreement(
     )
     defect = max(float(np.max(np.abs(left - right))) for left, right, _ in arrays)
     identities = (
-        "system_id", "model_id", "state_entry", "component_names",
-        "time_before", "time_after", "steps_before", "steps_after",
+        "system_id",
+        "model_id",
+        "state_entry",
+        "component_names",
+        "time_before",
+        "time_after",
+        "steps_before",
+        "steps_after",
     )
     _distributed_collective_require(
         all(reference[name] == continued[name] for name in identities)
@@ -5213,7 +5626,11 @@ def _distributed_euler_agreement(
         and defect <= euler_history.INVENTORY_TOLERANCE,
         "_distributed_euler_agreement",
         "Cold Euler continuation must agree with the uninterrupted accepted-state advance.",
-        {"maximum_moment_difference": defect, "reference": reference, "continued": continued},
+        {
+            "maximum_moment_difference": defect,
+            "reference": reference,
+            "continued": continued,
+        },
     )
     return {
         "status": "uninterrupted-and-restored-euler-advances-agree",
@@ -5262,7 +5679,9 @@ def _distributed_qualification_consume(
     record["euler_continuation"] = _distributed_euler_agreement(
         publication["euler_uninterrupted"], record["continued_fv"]
     )
-    continued_state = _distributed_stage_ledger(record, deadline=Deadline(started + args.timeout)).run(
+    continued_state = _distributed_stage_ledger(
+        record, deadline=Deadline(started + args.timeout)
+    ).run(
         "continued_all_field_acceptance",
         lambda: _distributed_accept_continued_fields(
             restart, continued, euler, mesh_epoch
@@ -5272,7 +5691,9 @@ def _distributed_qualification_consume(
     return continued.solve_error
 
 
-def _distributed_identical(records: list[dict[str, Any]], path: tuple[str, ...], /) -> Any:
+def _distributed_identical(
+    records: list[dict[str, Any]], path: tuple[str, ...], /
+) -> Any:
     """Return the one value every process record reports for a collective result."""
     values = []
     for item in records:
@@ -5382,6 +5803,9 @@ def _distributed_verify_consumers(
     """Require one collective changed-placement result and bind every process record."""
     producers = _distributed_ordered(producers, "producer", args.distributed_processes)
     ordered = _distributed_ordered(consumers, "consumer", args.restart_parts)
+    record["process_memory_acceptance"] = _distributed_process_memory_acceptance(
+        args.maximum_memory_bytes, [*producers, *ordered]
+    )
     for path in (
         ("request_id",),
         ("checkpoint", "manifest_id"),
@@ -5418,7 +5842,9 @@ def _distributed_verify_consumers(
         != ordered[0]["restart"]["global_cells"]
         or any(
             item["restart"]["partition_index"] != item["actual_topology"]["process_index"]
-            or item["rearchive"]["reread_state_ids"][str(item["rearchive"]["process_index"])]
+            or item["rearchive"]["reread_state_ids"][
+                str(item["rearchive"]["process_index"])
+            ]
             != item["rearchive"]["state_id"]
             or item["checkpoint"]["nonaddressable_arrays"] == 0
             for item in ordered
@@ -5458,6 +5884,12 @@ def _distributed_verify_consumers(
     record["initial_fields"] = first["initial_fields"]
     record["euler_transfers"] = [item["euler_transfers"] for item in producers]
     record["euler_graph"] = first["euler_graph"]
+    record["graph_field_comparisons"] = [
+        item["graph_field_comparisons"] for item in producers
+    ]
+    record["graph_field_inventory"] = [
+        item["graph_field_inventory"] for item in producers
+    ]
     record["euler_restart"] = ordered[0]["euler_restart"]
     record["euler_continuation"] = ordered[0]["euler_continuation"]
     record["field_declarations"] = first["field_declarations"]
@@ -5508,6 +5940,20 @@ def _distributed_verify_consumers(
     record["continued_fe"] = [item["continued_fe"] for item in ordered]
     record["continued_fv"] = [item["continued_fv"] for item in ordered]
     record["uninterrupted_fv"] = [item["uninterrupted_fv"] for item in producers]
+    _distributed_index_compiler(
+        record,
+        *(
+            f"{name}[{index}].compiler"
+            for name in (
+                "initial_fe",
+                "initial_fv",
+                "uninterrupted_fv",
+                "continued_fe",
+                "continued_fv",
+            )
+            for index in range(len(record[name]))
+        ),
+    )
     record["communication"] = {
         "status": "measured-owner-message-counts",
         "producer": [item["communication"] for item in producers],
@@ -5515,6 +5961,45 @@ def _distributed_verify_consumers(
         "payload_byte_status": "unmeasured",
     }
     return max(item["continued_fe"]["solve_max_error"] for item in ordered)
+
+
+def _distributed_process_memory_acceptance(
+    maximum_bytes: int,
+    processes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Admit measured individual process peaks, never a simultaneous group peak."""
+    observations = [
+        {
+            "process": index,
+            "peak_process_resident_bytes": item.get("peak_process_resident_bytes"),
+        }
+        for index, item in enumerate(processes)
+    ]
+    peaks = [item["peak_process_resident_bytes"] for item in observations]
+    measured = [
+        value
+        for value in peaks
+        if isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and np.isfinite(value)
+        and value > 0
+    ]
+    peak = max(measured) if measured and len(measured) == len(peaks) else None
+    evidence = {
+        "status": "accepted" if peak is not None and peak <= maximum_bytes else "refused",
+        "scope": "maximum-individual-process-peak-not-simultaneous-total",
+        "maximum_memory_bytes": maximum_bytes,
+        "maximum_individual_peak_bytes": peak,
+        "observations": observations,
+        "enforcement": "measured-acceptance-only",
+    }
+    if evidence["status"] != "accepted":
+        raise qualification_failure(
+            "_distributed_process_memory_acceptance",
+            "Distributed process peak memory is unavailable, invalid, or exceeds its frozen ceiling.",
+            evidence,
+        )
+    return evidence
 
 
 def _distributed_qualification_orchestrate(
@@ -5607,7 +6092,7 @@ def _distributed_qualification_lifecycle(
                 physical_error = _distributed_qualification_orchestrate(
                     args, record, started
                 )
-                if physical_error > args.target_error:
+                if not physical_error <= args.target_error:
                     raise qualification_failure(
                         "_distributed_qualification_lifecycle",
                         (
@@ -5657,6 +6142,22 @@ def _distributed_qualification_lifecycle(
             for device in jax.local_devices()
             for statistics in (device.memory_stats(),)
         ]
+        try:
+            record["local_process_memory_acceptance"] = (
+                _distributed_process_memory_acceptance(
+                    args.maximum_memory_bytes, [record]
+                )
+            )
+        except QualificationFailure as error:
+            record["local_process_memory_acceptance"] = {
+                "status": "refused",
+                **FailureRecord.from_exception(
+                    error, "process_memory_acceptance"
+                ).to_record(),
+            }
+            record["mandatory_workflow_completion"] = "incomplete"
+            if record["status"] == "passed":
+                record_failure(record, error, "process_memory_acceptance")
         if record["end_to_end_seconds"] > args.timeout:
             record["status"] = "timeout"
             record.update(

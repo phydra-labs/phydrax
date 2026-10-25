@@ -53,6 +53,7 @@ from .._strict import StrictModule
 from ..discretization import _coordinate_enclosure as algebra, CellMesh
 from ..discretization._cell_complex import PolyhedralConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
+from ..discretization._coordinate_identity import CoordinateIdentityInputs
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._reference_cell_types import CellBlock, PolyhedralBlock
@@ -117,10 +118,15 @@ def _shared_affine_vertex_images(
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[_Point, ...] | None:
-    """Consume the canonical whole-route corner proof for affine tetrahedra."""
+    """Consume the canonical whole-route corner proof for affine tetrahedra.
+
+    One operation-scoped recheck record lets a root shared by every block be
+    reauthenticated once here; it is dropped when this check returns.
+    """
+    verified: dict[int, CoordinateIdentityInputs] = {}
     if not all(
         isinstance(block, CellBlock) and block.cell_kind == "tetrahedron"
-        and algebra.affine_simplex_source(element, budget=budget)
+        and algebra.affine_simplex_source(element, budget=budget, verified=verified)
         for block, element in zip(mesh.blocks, prepared.elements, strict=True)
     ):
         return None
@@ -573,6 +579,9 @@ def _exact_affine_plc_validity(
         _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy()
     )
     floor = Fraction(policy.relative_determinant_floor)
+    # Host inputs, certificate arrays, validity masks, and block-offset metadata
+    # coexist until the completed certificate takes ownership of its arrays.
+    ledger.reserve(0, 4096 + 96 * len(cells) + 128 * len(mesh.blocks))
     status = np.empty((len(cells),), dtype=np.int32)
     lower = np.empty((len(cells),), dtype=np.float64)
     upper = np.empty((len(cells),), dtype=np.float64)
@@ -2821,9 +2830,12 @@ def _mapped_support_validity(
     ledger, cells, vertex_images = budget, mapped.cells, mapped.vertex_images
     with ledger.activate():
         if validity is None:
-            validity = _exact_affine_plc_validity(
-                mesh, geometry, cells, vertex_images, budget=budget
-            )
+            with ledger.temporary_scope():
+                validity = _exact_affine_plc_validity(
+                    mesh, geometry, cells, vertex_images, budget=budget
+                )
+                if validity is not None:
+                    ledger.retain_owner(validity)
             if validity is None:
                 policy = (
                     _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy()

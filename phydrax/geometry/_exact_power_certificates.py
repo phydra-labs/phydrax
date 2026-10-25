@@ -510,7 +510,7 @@ def _certify_power_nonoverlap(
                 )
             )
             for first_piece, second_piece in pairs:
-                if hulls:
+                if isinstance(first_piece, ExactConvexCell) and isinstance(second_piece, ExactConvexCell):
                     if convex_cells_disjoint(first_piece, second_piece):
                         continue
                     overlap = convex_cell_overlap(
@@ -519,7 +519,7 @@ def _certify_power_nonoverlap(
                         maximum_work=maximum_work - work,
                         budget=budget,
                     )
-                else:
+                elif isinstance(first_piece, tuple) and isinstance(second_piece, tuple):
                     if tetrahedra_disjoint(first_piece, second_piece):
                         continue
                     overlap = tetrahedron_overlap(
@@ -529,6 +529,8 @@ def _certify_power_nonoverlap(
                         budget=budget,
                         preparation=preparation,
                     )
+                else:
+                    raise RuntimeError("Power certificate pieces must use the same exact cell representation.")
                 match overlap:
                     case ExactOverlapRefusal():
                         state.add(

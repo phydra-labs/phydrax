@@ -19,7 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
-from ._unstructured_remap import UnstructuredConservativeRemapPlan
+from ._unstructured_remap import PreparedRemapCSRView, UnstructuredConservativeRemapPlan
 
 
 _INT32_MAX = np.iinfo(np.int32).max
@@ -351,6 +351,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
     fine: UnstructuredFiniteVolumeDiscretization
     prolongation: UnstructuredConservativeRemapPlan
     restriction: UnstructuredConservativeRemapPlan
+    prolongation_view: PreparedRemapCSRView | None
     fine_parent_cells: Array
     coarse_cell_global_ids: Array
     fine_cell_global_ids: Array
@@ -381,7 +382,12 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         interface_map: ArrayLike | None = None,
         coarse_interface_route_ids: Sequence[str] | None = None,
         fine_interface_route_ids: Sequence[str] | None = None,
+        prolongation_view: PreparedRemapCSRView | None = None,
     ) -> None:
+        """``prolongation_view``: the explicit final rows of a volume material
+        prolongation (from its ``prepare_csr_view``), required for that route
+        because such a plan stores no rows; routed plans take none.
+        """
         if not isinstance(
             coarse, UnstructuredFiniteVolumeDiscretization
         ) or not isinstance(fine, UnstructuredFiniteVolumeDiscretization):
@@ -404,13 +410,41 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
             or restriction.target_geometry_id != coarse.geometry_id
         ):
             raise ValueError("AMR restriction does not bind fine to coarse geometry.")
-        offsets = np.asarray(prolongation.target_offsets, dtype=np.int32)
+        # A volume material plan stores no routes: its final rows come only from
+        # the caller's explicitly prepared view (own policy and budget).
+        if prolongation.material_schedule is None:
+            if prolongation_view is not None:
+                raise ValueError(
+                    "AMR prolongation_view is only for a volume material prolongation; got a routed plan."
+                )
+            stored = (
+                prolongation.target_offsets,
+                prolongation.source_indices,
+                prolongation.intersection_measures,
+            )
+        else:
+            if prolongation_view is None:
+                raise ValueError(
+                    "Nested AMR over a volume material prolongation requires its explicit CSR view; got none (UnstructuredConservativeRemapPlan.prepare_csr_view)."
+                )
+            # Host admission: the view's rows and plan content must still be
+            # the ones it derived, whatever its carried identifiers say.
+            type(prolongation_view).require_bound(prolongation_view, prolongation)
+            stored = (
+                prolongation_view.target_offsets,
+                prolongation_view.source_indices,
+                prolongation_view.intersection_measures,
+            )
+        stored_offsets, stored_parents, stored_overlap = stored
+        if stored_offsets is None or stored_parents is None or stored_overlap is None:
+            raise ValueError("AMR prolongation must carry its final CSR rows.")
+        offsets = np.asarray(stored_offsets, dtype=np.int32)
         if np.any(np.diff(offsets) != 1):
             raise ValueError(
                 "Nested AMR requires exactly one coarse parent per fine cell."
             )
-        parent = np.asarray(prolongation.source_indices, dtype=np.int32)
-        overlap = np.asarray(prolongation.intersection_measures)
+        parent = np.asarray(stored_parents, dtype=np.int32)
+        overlap = np.asarray(stored_overlap)
         if not np.allclose(
             overlap, np.asarray(fine.cell_volumes), rtol=1e-10, atol=1e-12
         ):
@@ -493,6 +527,9 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
             {
                 "kind": "unstructured-amr-coverage-evidence",
                 "prolongation": prolongation.coverage_evidence_id,
+                "prolongation_view": None
+                if prolongation_view is None
+                else prolongation_view.view_id,
                 "restriction": restriction.coverage_evidence_id,
             }
         )
@@ -513,6 +550,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         self.fine = fine
         self.prolongation = prolongation
         self.restriction = restriction
+        self.prolongation_view = prolongation_view
         self.fine_parent_cells = jnp.asarray(parent)
         self.coarse_cell_global_ids = coarse.cell_global_ids
         self.fine_cell_global_ids = fine.cell_global_ids
@@ -533,6 +571,9 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
                 "coarse": coarse.prepared_id,
                 "fine": fine.prepared_id,
                 "prolongation": prolongation.plan_id,
+                "prolongation_view": None
+                if prolongation_view is None
+                else prolongation_view.view_id,
                 "restriction": restriction.plan_id,
                 "maximum_refined_cells": capacity,
                 "refinement_ratio": ratio,

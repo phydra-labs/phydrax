@@ -531,8 +531,8 @@ def test_small_generation_measured_query_boundary() -> None:
     np.testing.assert_array_equal(source.vertices, original)
 
 
-def test_small_generation_consumed_work_is_not_an_admission_boundary() -> None:
-    """Keep the conservative exact-power envelope residual explicit, not promoted."""
+def test_small_generation_consumed_work_is_its_admission_boundary() -> None:
+    """The complete request's measured work admits it exactly and refuses R-1."""
     from dataclasses import replace
 
     from phydrax.meshing._polyhedral_generation import generate_polyhedral_volume
@@ -541,17 +541,99 @@ def test_small_generation_consumed_work_is_not_an_admission_boundary() -> None:
     schedule = NativePolyhedralSchedule()
     limits = schedule.native_limits()
     with meshcore.NativeExecutionScope(limits) as measured:
-        generate_polyhedral_volume(source, schedule=schedule, scope=measured)
+        reference = generate_polyhedral_volume(source, schedule=schedule, scope=measured)
         consumed = limits.maximum_work_units - measured.remaining().remaining_work_units
+    with meshcore.NativeExecutionScope(
+        replace(limits, maximum_work_units=consumed)
+    ) as exact:
+        result = generate_polyhedral_volume(source, schedule=schedule, scope=exact)
+        assert exact.remaining().remaining_work_units == 0
+    assert result.mesh.topology_id == reference.mesh.topology_id
+    np.testing.assert_array_equal(result.cell_sites, reference.cell_sites)
     with pytest.raises(meshcore.MeshcoreError) as caught:
         with meshcore.NativeExecutionScope(
-            replace(limits, maximum_work_units=consumed)
+            replace(limits, maximum_work_units=consumed - 1)
         ) as scope:
             generate_polyhedral_volume(source, schedule=schedule, scope=scope)
     assert caught.value.status is meshcore.MeshcoreStatus.CAPACITY_EXCEEDED
     assert caught.value.batch_requested_upper is not None
-    assert caught.value.batch_refusal_evidence is not None
-    assert (
-        caught.value.batch_requested_upper[0]
-        > caught.value.batch_refusal_evidence[0]
+
+
+def test_refinement_insertion_work_boundary_precedes_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real restricted-cell insertion retains its inputs at the R-1 boundary.
+
+    A nested refusal terminates the shared parent pool, so each boundary runs
+    in its own root scope over the captured live insertion inputs.
+    """
+    from dataclasses import replace
+
+    from phydrax.meshing import _polyhedral_generation as generation
+
+    source = voxel_plc([(0, 0, 0)])
+    source_vertices = source.vertices.copy()
+    schedule = NativePolyhedralSchedule(maximum_cell_diameter=1.5)
+    original = generation._insert_polyhedral_sites
+    captured: list[tuple[Any, Any, Any, Any]] = []
+
+    class CapturedInsertion(Exception):
+        pass
+
+    def insert(publication: Any, state: Any, measures: Any, complex_: Any, *, scope: Any) -> Any:
+        captured.append((publication, state, measures, complex_))
+        raise CapturedInsertion
+
+    monkeypatch.setattr(generation, "_insert_polyhedral_sites", insert)
+    with pytest.raises(CapturedInsertion), meshcore.NativeExecutionScope(
+        schedule.native_limits()
+    ) as scope:
+        generation.generate_polyhedral_volume(
+            source, sites=np.asarray(((0.2, 0.2, 0.2),)), schedule=schedule, scope=scope
+        )
+    np.testing.assert_array_equal(source.vertices, source_vertices)
+    ((publication, state, measures, complex_),) = captured
+    connectivity = generation.require_polyhedral_connectivity(publication.mesh)
+    added = len(measures.large)
+    total = len(state.points) + added
+    required = (
+        publication.mesh.coordinates.size + 7 * connectivity.cell_vertex_values.size
+        + len(connectivity.cell_vertex_offsets)
+        + 3 * total * (total.bit_length() + 2) + 12 * total + 4 * added
     )
+    saved = tuple(bank.copy() for bank in (state.points, state.weights, state.parents, state.split))
+    with (
+        pytest.raises(meshcore.MeshcoreError) as caught,
+        meshcore.NativeExecutionScope(
+            replace(schedule.native_limits(), maximum_work_units=required - 1)
+        ) as refused,
+    ):
+        original(publication, state, measures, complex_, scope=refused)
+    assert caught.value.status is meshcore.MeshcoreStatus.CAPACITY_EXCEEDED
+    assert refused.completed_evidence().work_counters.construction_work == 0
+    for actual, expected in zip(
+        (state.points, state.weights, state.parents, state.split), saved, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    with meshcore.NativeExecutionScope(schedule.native_limits()) as measured:
+        reference = original(publication, state, measures, complex_, scope=measured)
+        complete_required = (
+            schedule.native_limits().maximum_work_units
+            - measured.remaining().remaining_work_units
+        )
+    with meshcore.NativeExecutionScope(
+        replace(schedule.native_limits(), maximum_work_units=complete_required)
+    ) as exact:
+        result = original(publication, state, measures, complex_, scope=exact)
+        assert exact.remaining().remaining_work_units == 0
+    np.testing.assert_array_equal(result.points, reference.points)
+    with (
+        pytest.raises(meshcore.MeshcoreError),
+        meshcore.NativeExecutionScope(
+            replace(schedule.native_limits(), maximum_work_units=complete_required - 1)
+        ) as short,
+    ):
+        original(publication, state, measures, complex_, scope=short)
+    failed = short.completed_evidence()
+    assert failed.memory_counters.live_bytes == 0
+    assert failed.host_storage_live_bytes_upper == 0

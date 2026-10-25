@@ -378,6 +378,13 @@ def _prepare_campaign_attempt(
     }
     if resource_envelope is not None:
         frozen_controls["resource_envelope"] = resource_envelope
+        memory_contracts = resource_envelope.get("process_memory_acceptance")
+        if memory_contracts is not None:
+            if sys.platform not in memory_contracts:
+                raise ValueError(
+                    f"No authored process-memory acceptance contract for {sys.platform!r}."
+                )
+            frozen_controls["process_memory_contract"] = memory_contracts[sys.platform]
     # The child echoes its parsed controls; its verdict binds them to these values.
     expected_controls: dict[str, Any] = {
         "scenario": scenario,
@@ -972,10 +979,12 @@ def _native_campaign_sample(
         and scenario_controls.get("distributed_checkpoint_root") is None
     ):
         with TemporaryDirectory(prefix="phydrax-campaign-distributed-") as directory:
+            # Repository roots admit only real directory components; platform
+            # temporary roots may be reached through a symlink (/var on macOS).
+            root = Path(directory).resolve(strict=True) / "checkpoint"
             return _execute_campaign_attempt(
                 _bind_generated_controls(
-                    attempt,
-                    {"distributed_checkpoint_root": str(Path(directory) / "checkpoint")},
+                    attempt, {"distributed_checkpoint_root": str(root)}
                 )
             )
     return _execute_campaign_attempt(attempt)
@@ -1042,6 +1051,9 @@ def _compiler_phase_record(
                 "memory_scope",
                 "compilation_count",
                 "compilation_count_semantics",
+                "compilation_count_scope",
+                "first_execution_compilation_count",
+                "warm_recompilation_count",
             )
         },
         "memory_status": compiler.get("memory_status", "unmeasured"),
@@ -1159,9 +1171,49 @@ def _polyhedral_compiler_phases(
     return records
 
 
+# Owner-local compiled solves of the distributed lifecycle, in execution order:
+# producers solve on the generated carrier and continue FV after every topology
+# epoch; changed-placement consumers continue both in a fresh process set.
+_DISTRIBUTED_COMPILED_SOLVES = (
+    ("initial_fe", "fe", "warm", False),
+    ("initial_fv", "fv", "warm", False),
+    ("uninterrupted_fv", "fv", "warm", True),
+    ("continued_fe", "fe", "cold", True),
+    ("continued_fv", "fv", "cold", True),
+)
+
+
+def _distributed_compiler_phases(
+    sample: dict[str, Any], capacity: int
+) -> list[dict[str, Any]]:
+    """Bind every owner process's compiled solve to its own compiler record.
+
+    Distributed topology epochs transfer fields exactly and run no compiled
+    solve; they are not compiler phases. Solves after the last topology epoch
+    carry that accepted-epoch count as their epoch index.
+    """
+    accepted = len(_phase_sequence(sample.get("epochs"), "epochs"))
+    records = []
+    for name, solver, phase, after_epochs in _DISTRIBUTED_COMPILED_SOLVES:
+        for position, owner in enumerate(_phase_sequence(sample.get(name), name)):
+            path = f"{name}[{position}]"
+            records.append(
+                _compiler_phase_record(
+                    _phase_mapping(owner, path).get("compiler"),
+                    capacity,
+                    index=accepted if after_epochs else 0,
+                    phase=phase,
+                    solver=solver,
+                    evidence_path=f"{path}.compiler",
+                )
+            )
+    return records
+
+
 def corpus_phase_evidence(sample: dict[str, Any], capacity: int) -> dict[str, Any]:
     """Expose phase measurements without deriving missing work or bytes."""
-    epochs = _phase_sequence(sample.get("epochs"), "epochs")
+    distributed = sample.get("scenario") == "native-distributed-lifecycle"
+    epochs = () if distributed else _phase_sequence(sample.get("epochs"), "epochs")
     compiler_records = []
     stages = sample.get("stages_seconds", {})
     if not isinstance(stages, dict):
@@ -1190,6 +1242,8 @@ def corpus_phase_evidence(sample: dict[str, Any], capacity: int) -> dict[str, An
         compiler_records.append(measured)
     if sample.get("scenario") == "native-polyhedral-lifecycle":
         compiler_records.extend(_polyhedral_compiler_phases(sample, capacity))
+    if distributed:
+        compiler_records.extend(_distributed_compiler_phases(sample, capacity))
     measured_stages = [
         {
             "name": name,
@@ -1627,7 +1681,8 @@ def campaign_registration_record() -> dict[str, object]:
                 "minimum_adaptation_rounds": profile["minimum_adaptation_rounds"],
                 **(
                     {"resource_envelope": profile["resource_envelope"]}
-                    if "resource_envelope" in profile else {}
+                    if "resource_envelope" in profile
+                    else {}
                 ),
             }
             for name, profile in profiles.items()
@@ -1724,15 +1779,28 @@ def _native_driver_controls(
         *_NATIVE_DRIVER_ARGUMENTS[name],
         "maximum_work_units",
         "maximum_geometry_queries",
-        *(("maximum_scratch_bytes",) if name in (
-            "native-overset-lifecycle", "native-family-lifecycle",
-            "native-surface-pde", "native-periodic-lifecycle",
-        ) else ()),
+        *(
+            ("maximum_scratch_bytes",)
+            if name
+            in (
+                "native-overset-lifecycle",
+                "native-family-lifecycle",
+                "native-surface-pde",
+                "native-periodic-lifecycle",
+            )
+            else ()
+        ),
         *(("maximum_data_bytes",) if name == "native-family-lifecycle" else ()),
         *(("maximum_recipe_bytes",) if name == "native-periodic-lifecycle" else ()),
-        *(("maximum_memory_bytes",) if name in (
-            "native-distributed-lifecycle", "native-family-lifecycle",
-        ) else ()),
+        *(
+            ("maximum_memory_bytes",)
+            if name
+            in (
+                "native-distributed-lifecycle",
+                "native-family-lifecycle",
+            )
+            else ()
+        ),
     ):
         value = values[key]
         if value is not None:
@@ -1824,7 +1892,8 @@ def _benchmark_registered_native_corpus(
             "campaigns": campaigns,
             **(
                 {"resource_envelope": profile["resource_envelope"]}
-                if "resource_envelope" in profile else {}
+                if "resource_envelope" in profile
+                else {}
             ),
         }
         records[name] = {**body, "profile_result_id": canonical_fingerprint(body)}

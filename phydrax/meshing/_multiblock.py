@@ -29,7 +29,9 @@ from .._meshcore import NativeExecutionScope
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
 )
 from ..typing import checked
 from ._contracts import MeshingLimits
@@ -56,10 +58,19 @@ def logical_face_vertices(shape: tuple[int, ...], face: int, /) -> np.ndarray:
             f"multiblock.logical_face must belong to the block dimension; got face {face} for {len(shape)} axes"
         )
     axis, side = divmod(face, 2)
-    selector = tuple(
-        (0 if side == 0 else -1) if i == axis else slice(None) for i in range(len(shape))
+    # C-order node IDs of the fixed face, without a whole-block identity range.
+    strides = tuple(prod(shape[i + 1 :]) for i in range(len(shape)))
+    free = tuple(i for i in range(len(shape)) if i != axis)
+    ids = np.full(
+        tuple(shape[i] for i in free),
+        (0 if side == 0 else shape[axis] - 1) * strides[axis],
+        dtype=np.int64,
     )
-    return np.arange(np.prod(shape), dtype=np.int64).reshape(shape)[selector]
+    for position, i in enumerate(free):
+        offsets = [1] * len(free)
+        offsets[position] = shape[i]
+        ids += (np.arange(shape[i], dtype=np.int64) * strides[i]).reshape(offsets)
+    return ids
 
 
 def _face_correspondence(
@@ -123,6 +134,19 @@ def _glued_geometry(
             raise ValueError(
                 "multiblock.geometry.restriction_source must share one source geometry and root topology; got different source bindings"
             )
+        # Each record's ancestry maps are merged once; a block-owner merge
+        # copies at most every owner entry per record.
+        family_execution_owner.count_geometry_queries(
+            0,
+            work_units=len(records)
+            + sum(
+                len(record.block_parent_cell_ids)
+                + len(record.block_parent_vertex_ids)
+                + len(authored) * len(record.block_source_blocks or ())
+                for record in authored
+            ),
+            budget=budget,
+        )
         parent_cells = {}
         parent_vertices = {}
         source_blocks: dict[str, str] | None = {}
@@ -140,8 +164,22 @@ def _glued_geometry(
                 construction.mesh, budget=budget
             )
             entries = sum(block.vertices.size for block in construction.mesh.blocks)
-            # Coordinate and route comparisons own one boolean temporary each.
-            workspace.set_bound(retained + max(source_points.size, entries) + 4096)
+            route_entries = sum(np.size(route) for route in source_routes)
+            # Coordinate and route transfers with their comparisons, the corner
+            # gather or source copy, and the shifted route conversion.
+            family_execution_owner.count_geometry_queries(
+                0,
+                work_units=3 * np.size(source_points)
+                + 2 * entries
+                + 4 * route_entries
+                + max(vertex_route.size * (points.shape[1] + 1), np.size(source_points)),
+                budget=budget,
+            )
+            # Coordinate and route comparisons own two host transfers and one
+            # boolean temporary each.
+            workspace.set_bound(
+                retained + 17 * max(np.size(source_points), entries, route_entries) + 4096
+            )
             corner_defined = (
                 construction.geometry.restriction_source is None
                 and np.array_equal(source_points, construction.mesh.coordinates)
@@ -161,8 +199,12 @@ def _glued_geometry(
             )
             # Gathered corner coordinates and shifted routes stay live until the
             # bank is assembled; a route conversion may own one more copy.
-            gathered = vertex_route.size * points.shape[1] if corner_defined else 0
-            retained += 8 * gathered + 8 * entries
+            gathered = (
+                vertex_route.size * points.shape[1]
+                if corner_defined
+                else np.size(source_points)
+            )
+            retained += 8 * gathered + 8 * route_entries
             workspace.set_bound(retained + 4096)
             # The interface tolerance explicitly permits identifying nearby corner
             # nodes. Only a map defined by those very corners follows that snapping;
@@ -193,8 +235,13 @@ def _glued_geometry(
                 block_source_blocks=source_blocks,
             )
         )
+        width = coordinates[0].shape[1]
+        # One copy per retained coordinate into the pooled bank.
+        family_execution_owner.count_geometry_queries(
+            0, work_units=offset * width, budget=budget
+        )
         bank = _dependency_phydrax_meshing__host_banks.family_host_array(
-            (offset, coordinates[0].shape[1]), np.float64, scope=scope
+            (offset, width), np.float64, scope=scope
         )
         start = 0
         for values in coordinates:
@@ -248,8 +295,8 @@ def construct_glued_structured_blocks(
         total += block.mesh.coordinates.shape[0]
     ambient = ordered[0].mesh.ambient_dimension
     ordered_interfaces = tuple(sorted(interfaces, key=lambda i: i.control_id))
-    # Block and face node counts follow from the logical shapes. An undeclared
-    # block or face contributes nothing: its interface refuses before work.
+    # Face node counts follow from the logical shapes. An undeclared block or
+    # face contributes nothing: its interface refuses before work.
     extents = []
     for interface in ordered_interfaces:
         sides = []
@@ -258,11 +305,12 @@ def construct_glued_structured_blocks(
             (interface.second_block, interface.second_face),
         ):
             shape = by_name[name].logical_shape if name in by_name else ()
-            nodes = prod(shape) if 0 <= face < 2 * len(shape) else 0
-            sides.append((nodes, nodes // shape[face // 2] if nodes else 0))
+            sides.append(
+                prod(shape) // shape[face // 2] if 0 <= face < 2 * len(shape) else 0
+            )
         extents.append((sides[0], sides[1]))
-    pair_count = sum(first[1] for first, _ in extents)
-    largest = max((first[1] for first, _ in extents), default=0)
+    pair_count = sum(first for first, _ in extents)
+    largest = max((first for first, _ in extents), default=0)
     cell_blocks = tuple(
         cell_block for block in ordered for cell_block in block.mesh.blocks
     )
@@ -270,9 +318,28 @@ def construct_glued_structured_blocks(
         (cell_block.cell_kind, cell_block.cell_count, cell_block.arity)
         for cell_block in cell_blocks
     )
+    entries = sum(cell_block.vertices.size for cell_block in cell_blocks)
+    cell_count = sum(cell_block.cell_count for cell_block in cell_blocks)
+    largest_block = max(block.mesh.coordinates.shape[0] for block in ordered)
+    # Union by size keeps every root path within the bit length of the largest
+    # possible glued class, which has at most one node per pair beyond its
+    # first. Only nodes named by a pair leave a singleton class.
+    height = (pair_count + 1).bit_length()
+    # Coordinate transfers and copies; identity, least-member and size banks;
+    # per side the face identities, their flattened copy and offset rows; the
+    # pair residual gathers and reductions; two bounded root walks and a union
+    # per pair; one representative per node; and both final displacement
+    # sides with their root gathers.
+    scope.charge(
+        work=2 * total * ambient
+        + 6 * total
+        + sum(5 * (first + second) for first, second in extents)
+        + pair_count * (15 * ambient + 14 + 8 * height)
+    )
     with scope.host_workspace() as workspace:
-        # The parent identity range is the assembly's one unpooled temporary.
-        workspace.set_bound(8 * total + 4096)
+        # The parent identity range, or one block's coordinate transfer, is the
+        # assembly's one unpooled temporary.
+        workspace.set_bound(8 * total + 8 * largest_block * ambient + 4096)
         points = _dependency_phydrax_meshing__host_banks.family_host_array(
             (total, ambient), np.float64, scope=scope
         )
@@ -316,7 +383,7 @@ def construct_glued_structured_blocks(
         residual = 0.0
         declared_pairs = []
         start = 0
-        for interface, ((first_nodes, first_face), (second_nodes, second_face)) in zip(
+        for interface, (first_face, second_face) in zip(
             ordered_interfaces, extents, strict=True
         ):
             if (
@@ -337,12 +404,10 @@ def construct_glued_structured_blocks(
                     f"multiblock.interface.faces must participate in one gluing each; got reused face endpoints {endpoints}"
                 )
             occupied.update(endpoints)
-            # Both identity ranges, both face row copies and the two coordinate
-            # gathers of the residual may coexist.
+            # Both face identity banks, their flattened copies and the two
+            # coordinate gathers of the residual may coexist.
             workspace.set_bound(
-                8 * (first_nodes + second_nodes + first_face + second_face)
-                + 16 * first_face * ambient
-                + 4096
+                16 * (first_face + second_face) + 16 * first_face * ambient + 4096
             )
             first_ids, second_ids = _face_correspondence(
                 by_name[interface.first_block], by_name[interface.second_block], interface
@@ -402,10 +467,27 @@ def construct_glued_structured_blocks(
                     f"multiblock.interface.displacement must fit tolerance {interface.tolerance}; got final node displacement {displacement} for {interface.control_id}"
                 )
             residual = max(residual, displacement)
+        # The representative sort compares at most the bit length of the node
+        # count per node, with six further unique/inverse passes.
+        scope.charge(work=total * (total.bit_length() + 6))
         # Flattened input, sort permutation, sorted values, boundary masks,
         # unique values, running counts and inverse rows.
         workspace.set_bound(64 * total + 4096)
         representatives, inverse = np.unique(roots, return_inverse=True)
+        # Assembly copies routes, converts and gathers every corner, ranges
+        # cell IDs and gathers representative coordinates and identities; then
+        # the block and mesh constructors' priced passes.
+        scope.charge(
+            work=total
+            + 2 * entries
+            + cell_count
+            + representatives.size * (ambient + 1)
+            + sum(
+                cell_block_construction_work(cell_block.cell_count, cell_block.arity)
+                for cell_block in cell_blocks
+            )
+            + cell_mesh_construction_work(representatives.size, ambient, mesh_shapes)
+        )
         # The representatives and inverse stay live; each cell block owns a
         # converted row bank, a gathered row bank and an identity range, as do
         # the representative coordinates and vertex identities.
@@ -459,9 +541,14 @@ def construct_glued_structured_blocks(
             tuple(cells),
             vertex_global_ids=np.arange(representatives.size, dtype=np.int64),
         )
-    geometry = _glued_geometry(
-        ordered, tuple(routes), np.asarray(mesh.coordinates), scope=scope, budget=budget
-    )
+    glued = mesh.coordinates
+    # One host transfer per glued coordinate, live through the geometry phase.
+    scope.charge(work=glued.size)
+    with scope.host_workspace() as workspace:
+        workspace.set_bound(8 * glued.size + 4096)
+        geometry = _glued_geometry(
+            ordered, tuple(routes), np.asarray(glued), scope=scope, budget=budget
+        )
     _dependency_phydrax_meshing__structured.certify_constructed_mesh(
         mesh,
         geometry=geometry,

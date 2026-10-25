@@ -153,9 +153,15 @@ These local boundaries do **not** close the remaining route-wide obligations:
 preparation receipt validation/debit before execution, preparation's ended
 receipt construction and identity rebinding, ended execution receipt graph
 validation/hashing, and exhaustive source-proof/certification query ownership.
-Generation input normalization/domain construction and refinement/failure
-branches also require exhaustive owner-level work admission, rather than
-inferring closure from the successful final measurement/lineage passes.
+Generation input normalization/domain construction and receipt authentication
+still require exhaustive owner-level work admission. Weight-Jacobian polygon
+passes, hidden-site sparse walks, insertion sorting/gathers and Lloyd host
+passes now admit their host work before execution, using the existing storage
+lifetimes. Restricted guard arithmetic and edge/CSR sorting likewise admit
+their previously omitted host passes, without converting predicates into source
+queries. Adaptation publication separately admits phase-metadata reads and its
+primitive schema-sizing traversal. These boundaries do not infer closure from
+successful refinement or final measurement/lineage passes.
 Even the one-cell voxel generation replay at its consumed-work total can refuse
 the conservative `exact_power_cell_measures` admission envelope. Consumed work
 is therefore not a proved route work-capacity boundary; a passing query R/R−1
@@ -195,6 +201,21 @@ data, and changed unverified providers are not covered. The original `None`,
 unavailable status and reason remain visible. Process/host and compiler
 measurements, logical retained bytes, every native/managed admission check,
 scientific acceptance and independent cold continuation remain hard requirements.
+
+On macOS, qualification uses the native host-memory sampler's Darwin
+`getrusage(RUSAGE_SELF)` resident high-water counter, in bytes. The counter
+resets across `exec`; it excludes descendants and is not a device allocator
+peak. Linux retains `/proc/self/status` `VmHWM` because Linux's raw `getrusage`
+counter can include pre-exec high water. These are observed peaks, not hard
+allocation limits. See [Darwin's `getrusage` contract](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/getrusage.2).
+
+The approved macOS measured-memory contract retains the authored process-memory
+ceilings, including the distributed routine/larger and family limits. Acceptance
+compares measured process peaks against those ceilings and explicitly does not
+claim hard execution-group enforcement or a simultaneous aggregate peak.
+Registered Linux contracts retain their external cgroup requirement. Native and
+managed admission, compiler evidence, scientific tolerances, field/history
+inventory, and independent cold continuation are unchanged.
 
 ### Qualification outcomes that are not passes
 
@@ -434,6 +455,25 @@ touch along their shared entity and are separated by a certified tangent-cone
 contact lemma rather than by box separation. The premises are recorded in
 `GlobalEmbeddingCertificate.boundary_degree` (`MappedBoundaryDegreeEvidence`).
 An unproven premise falls back to the pairwise route, never to acceptance.
+
+For a polynomial map of total degree at most two on a convex reference cell,
+the local-injectivity owner can instead certify full Jacobian column rank by
+exact maximal-minor bounds on a covering subdivision. The quadratic midpoint
+identity then proves injectivity on the whole cell. This route derives rank
+from the actual coordinate expressions; a supplied validity status is not
+authority. Higher-degree, rational, and unsupported reference-cell cases keep
+the general proof. Inter-cell contact, boundary conformity, source fidelity,
+and domain coverage are still independent obligations.
+
+Quadratic simplex contact subdivision can reject separated image boxes with
+native outward-rounded Bernstein bounds. Exact rational controls are prepared
+once per request; the native kernel encloses the transformed controls on each
+child simplex. It establishes round-to-nearest with gradual underflow on every
+participating thread and restores the caller's floating-point mode afterward.
+Only strict box separation retires a contact obligation. Inconclusive bounds,
+unsupported expressions, and unavailable native execution retain the exact
+contact proof; native failures and resource refusals propagate. This filter does
+not certify Jacobian rank, source fidelity, or domain coverage.
 
 **Exact construction sources.**
 
@@ -2058,6 +2098,13 @@ covered by a retained reservation. Subsequent refusals charge only the
 nonnegative share owned by the current phase; a work-limit failure remains a
 typed work refusal rather than becoming an invalid negative-byte request.
 
+Exact material-chain validation separates per-edit proof scratch from live
+endpoint keys, shared rational points, and history outputs. Storage promotion
+transfers existing admission credit without releasing and reacquiring it.
+Retiring scratch does not reduce cumulative work or the recorded peak.
+Temporary scopes close in last-in-first-out order; a rejected outer close
+keeps inner storage charged and preserves any primary operation failure.
+
 Source-fidelity and coverage operations debit the source-query allowance.
 Native primitive-query telemetry records a different operation class. Read
 execution-phase measurements with their phase labels; compilation, Python
@@ -2261,23 +2308,22 @@ it cannot admit a new violation in exchange for quantile improvement. This
 does not turn the separately declared soft volume term into a hard scientific
 constraint or relax the original native determinant threshold.
 
-These mechanisms are not a qualification of the original Image, periodic,
-CAD or two-million-work exact-coverage campaigns. Retained failures and resource
-refusals remain failures until their original scientific acceptance gates pass
-on the current source graph. A scoped contract test or finite-motion diagnostic
-is not global convergence, source coverage or release evidence. Optional
+These mechanisms alone do not qualify the original resource-budget Image,
+periodic, CAD or two-million-work exact-coverage campaigns. Retained failures
+and resource refusals remain failures until their scientific and resource gates
+pass on the relevant source graph. A scoped contract test or finite-motion
+diagnostic is not global convergence, source coverage or release evidence. Optional
 external providers are explicit comparison/interoperability routes, never a
 hidden native fallback.
 
-For the original Image request, fresh-process source reopening at the unchanged
-257-member/16-level/rank-eight archive defaults has passed, but sizing remains
-unaccepted. Retained complete-frontier timeout and Neurofluid compliance/stalled
-failures remain evidence; the newer hard-shape source run still resource-refuses
-with unmet quantiles. Standalone typed metric-network reopening has also passed
-with its actual original source/default archive controls. Neither source-only
-nor metric-network cold identity is field/PDE continuation; those downstream
-gates still depend on scientific sizing acceptance. Concurrent diagnostic
-timings are not isolated performance evidence.
+Under the approved finite development execution policy, both registered Image
+profiles—two-slab and oblique-junction transport—complete generation, the full
+accepted field/history trajectory, rollback, archive reopening, and independent
+cold PDE continuation. Their canonical qualification records have no admission
+or phase-evidence gaps. The verified CPU allocator-peak limitation remains
+explicit. These development-policy results are not original-budget qualification
+or uncontended headline performance measurements; earlier failed runs retain
+their original source and control identities.
 
 `phydrax.applications.neurofluid.NeurofluidTransportCheckpoint` is a typed
 data owner for the original compartment source, certified result, unprepared
@@ -2285,9 +2331,27 @@ metric-network plan and transport parameters plus actual initial/history/final/
 continued states, accepted flags and AD arrays. Its clock/cursor and original
 physical controls bind the complete history; source, region, certification,
 carrier and physics identities are validated. It does not retain a runtime,
-cache or callback. This public data contract does not imply that the original
-Image scientific producer, accepted full transport or fresh continued PDE
-campaign has passed.
+cache or callback. A checkpoint roundtrip alone is not workflow qualification:
+the producer must also supply the complete scientific and resource evidence.
+
+Image source construction and validation accept an explicit coordinate budget.
+Their admission includes voxel/face traversal, simultaneous host temporaries,
+retained outputs, and escaped Unicode metadata used by canonical identities.
+The transport checkpoint's optional budget is constructor-only, not serialized
+scientific state. Warm transport maps one original native target before opening
+host storage; nested generation inherits that allowance. Cold reconstruction
+forwards its own request budget rather than creating a fresh helper allowance.
+The resulting managed admission envelope is a conservative bound, not process
+RSS or device allocator measurement.
+
+Nested observers use the same request-root pool before and after scope entry,
+so inherited escrow is not counted as a second allocation. A complete envelope
+may tighten the conservative historical host bound by the independently enforced
+request quota. An observed event peak above that quota invalidates the envelope
+instead of being clipped. Raw native, host, and process counters remain separate
+and unchanged. Native remaining-resource queries may inspect a live same-thread
+ancestor, but still poll the active scope's deadline; they do not authorize work
+or mutation through an ancestor.
 
 `host_storage_live_bytes_upper` and `host_storage_peak_bytes_upper` report these
 conservative external bounds separately from the native allocator's six
@@ -2456,6 +2520,48 @@ bound to the source vertices). Routes:
   Their complete inspected cavity must still meet the hard quality floor,
   source, fidelity and resource constraints. A primary tie or regression does
   not qualify; other operation criteria and deterministic ordering are unchanged.
+  When curved edits carry material charts, source queries follow their inverse
+  maps in reverse chronological order. A request-owned spatial index skips only
+  edits whose old and new supports cannot contain the current point; an inverse
+  that moves the point triggers a new search of earlier edits. Shared traces
+  must still agree exactly, and removed material cannot fall through to identity.
+  Exact tetrahedral linear preparations are reused within the epoch and released
+  with its storage lease. These numerical preparations do not replace endpoint
+  domain coverage, source fidelity, or conservative field-transfer certification.
+  Each curved edit's chart cones triangulate every overlay polygon of its old
+  and new boundary patches from the polygon's own vertices, so one cone map
+  covers each polygon's cones and collinear edge subdivisions are kept.
+  A `VolumeMaterialChain`'s per-edit contents and local FE projections use exact
+  material pieces `s ∩ C_k ∩ A_k^{-1}(t)` (`s ∩ t` for domain-preserving
+  edits) computed on one shared exact arrangement per edit, in that edit's old
+  physical frame: each source/target or source/cone pair passing exact axis
+  bounds is one job clipping the source by the other cell's four declared
+  outward faces, which the native pool recognizes as that initial tetrahedron
+  (geometric reuse only; routes stay explicit) and screens by exact plane sides
+  at both cells' corners, publishing a nested cell whole and otherwise clipping
+  whichever cell fewer planes cut. `s ∩ C_k` is clipped once and reused by
+  every target meeting the image cone, each (target, image cone) pair is
+  screened once in the new frame, and one native call decides the remaining
+  plane sides, welds exact vertices and reuses sides and edge crossings across
+  all jobs. Pieces keep explicit
+  `(target, source, chart)` routes and exact volumes that must partition every
+  source cell and, through each exact Jacobian, every target cell. The
+  published bank stores each edit's shared vertices, each rounded once, and
+  edit-local positive pulling simplex rows; that triangulation and vertex
+  numbering are internal, not scientific identities. Cold reconstruction
+  rebuilds every arrangement from the retained edits under the original limits.
+  Exact zero and positive-unit operations can be omitted without changing their
+  primitive prices or the resulting geometry. Sparse face terms are prepared
+  once; their metadata and value-cache slots are admitted before allocation.
+  Work reductions alone are not an original-limit qualification result.
+  FV transport never composes rows: each edit publishes exact density weights
+  `W_ts = P_ts / |t|` per (target, source) pair as power-of-two scaled
+  mantissas with exact exponents and certified rounding bounds, and the remap
+  applies them chronologically in bounded token-slot chunks with exact
+  mantissa/exponent arithmetic. The material remap refuses certified action
+  bounds that exceed its coverage tolerance relative to each source cell's
+  volume or each target's carried content; explicit final rows exist only
+  through `prepare_csr_view` under a `SparseAssemblyPolicy`.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte.
@@ -2908,6 +3014,38 @@ high-order nodes the declared isometry of their source-side nodes
 certifies an existing high-order geometry, such as a Gmsh high-order output,
 without moving it.
 
+Source-geometry calls in these host proofs use concrete method dispatch without
+constructing temporary Equinox bound-method trees. Trim-box exclusion compares
+the existing two-dimensional bounds directly. The common finite midpoint/radius
+path retains the original arithmetic and outward rounding without allocating
+exceptional-lane masks; infinite, NaN, and overflow-adjacent bounds retain their
+existing handling. These optimizations do not cache closest-point verdicts or
+change refinement allowances.
+
+Source-homotopy prefetch authenticates each request once before its cache lookup.
+After a source callback returns a batch, its source definition and immutable-bank
+layouts are authenticated once before that batch's rows are retained. No source
+callback occurs within the row-copy loop; a later request authenticates again.
+This removes repeated checks within one operation, not mutation checks across
+operations or any scientific acceptance criterion.
+
+Small homotopy products, projected-minor tests, and bounded Bernstein-net
+projections use prepared native interval programs when supported. They preserve
+the host owner's outward endpoint and reduction order, including extended-real
+behavior. Static programs retain shapes and arithmetic only, not source data.
+Input blocks enter the admitted native workspace directly. Stack and
+concatenation preserve their declared structural layout; an uncertain layout
+does not authorize a native reduction. Larger/generic shapes and an absent
+provider keep their existing NumPy route, while installed-provider failures
+remain failures.
+
+The CAD qualification workflow rejects its straight P2 control with a fresh,
+resolved lower-distance bound at an assigned boundary node and source occurrence.
+The bound must exceed the unchanged nodal residual tolerance. That existential
+witness proves a failed acceptance obligation; it does not claim a global maximum
+or replace any validity, fidelity, embedding, coverage, or independent validity
+recertification required for the accepted curved geometry.
+
 For full-dimensional P2 tetrahedra, relaxation uses the native matrix-free
 Newton trust-region method with a fixed SPD node-block Jacobi action assembled
 from target-normalized smoothing-gradient Gram blocks, the normal-penalty Gram
@@ -3100,6 +3238,33 @@ adaptation request through its paid execution receipt. Closing an execution
 scope never grants those consumers another work/query/storage allowance.
 Receipt-only epoch/transition sealing verifies the real charged graph without
 repeating geometry proof outside that request.
+When receipt replacement retains every declared scientific root field by
+identity, this comparison need not serialize those shared fields as an archive.
+Changed fields still require the original complete content comparison. FE
+field-owner preparation keys contain the declaration, mesh, and coordinate map;
+unrelated publication certificates and CAD history are not preparation inputs.
+Actual field/index validation still runs for each carrier on a cache hit.
+Curved CAD and hybrid publication also completes the live source-owner handoff
+before a physical consumer can extend its receipt. Its history is authenticated
+on that same request. `qualify_hybrid_curved_publication` requires an explicit
+`audit_policy`; source-family association and watertightness requirements must
+not disappear during curving. Publication retains the original generation-plan
+receipt owner and canonical plan/specification provenance needed to authenticate
+a later checkpoint.
+For curved CAD, checkpoint registration binds the exact authored B-Rep solid and
+declared region identities rather than comparing the curved domain to its
+straight PLC approximation. A tighter certified deviation is permitted; a weaker
+one is refused. Approximate coverage retains and reconstructs its actual
+embedding, fidelity, and CAD-domain premises.
+Warm CAD writing can compose live `MeshCertificationPreparedEvidence` through
+`recertify_restored_meshing_source(..., prepared=...)` on the actual paid request.
+The preparation reauthenticates its mesh, source, controls, and issued CAD closure;
+normal archive validation then reuses that newly earned report within the same
+reconstruction scope. The completed writing receipt is recorded outside the
+accepted epoch snapshot. Stored fields alone cannot recreate live issuance, so
+cold restoration still earns its own proof. Its final receipt retains every
+historical dependency discovered during restoration, not only the initial
+archive receipt; historical work and queries are not charged to the new request.
 Actual native publication can retain its kernel-issued exact power coordinates
 and barycentrics in caller-owned `PreparedCoordinateOperands`. Their complete
 source structure, immutable numeric profiles and exact paid earning receipt
@@ -3802,6 +3967,80 @@ Layout decode is explicit because its parser dependency is optional, and
 `provider-worker` (cold launch versus persistent session) needs a real provider
 worker; without one it returns a `missing-dependency` record.
 
+`brep-preconditioners` measures the actual CAD root-preconditioning boundary:
+
+```sh
+python -m tools.meshing_benchmarks --case brep-preconditioners \
+  --resolution 1 4 16 64 256 --repeats 5
+```
+
+Resolution counts real matrices, not padded slots. Each result reports active
+and evaluated rows, input preparation, lowering and compilation for each used
+shape, compiler memory, first and warmed boundary execution, and logical retained
+input/output bytes. An independent host solve checks the returned matrices.
+These measurements isolate preconditioning; they do not certify a CAD lifecycle
+or replace whole-workflow deadline and resource evidence.
+
+`brep-quadratic-bounds` measures the ahead-of-time native interval filter:
+
+```sh
+python -m tools.meshing_benchmarks --case brep-quadratic-bounds \
+  --resolution 1 32 1024 16384 --repeats 5
+```
+
+Resolution counts quadratic tetrahedron maps. Preparation, cold and warmed
+boundary execution, and logical retained input/output bytes are separate.
+An independent dyadic-control transformation checks outward inclusion. The
+result measures one bound kernel, not global embedding or source fidelity;
+native compilation belongs to the recorded meshcore build rather than JAX
+lowering or compilation.
+
+`cell-validity` measures fresh exact P2 tetrahedral validity:
+
+```sh
+python -m tools.meshing_benchmarks --case cell-validity \
+  --resolution 1 32 1024 8192 --repeats 5
+```
+
+Resolution counts independent local maps, not an embedded global mesh. Each
+sample creates a new request and proves the actual map; warmed samples do not
+reuse a validity verdict. The benchmark checks exact cubic Bernstein extrema
+independently and separates input preparation, first execution, warmed execution,
+work units, managed-memory peak, and logical retained bytes. Native compilation
+belongs to the ahead-of-time build. This is local validity evidence, not source
+fidelity, global embedding, or full workflow qualification.
+
+
+`brep-interval-program` compares native and interpreted execution of the same
+prepared interval program:
+
+```sh
+python -m tools.meshing_benchmarks --case brep-interval-program \
+  --resolution 1 16 256 4096 --repeats 5
+```
+
+Resolution counts input boxes; execution chunks never exceed 64 boxes. The
+record separates input preparation, JAX tracing/native program lowering, first
+execution, and warmed execution, both without a resource scope and with native
+workspace admission enabled. Native compilation is ahead of time. Retained
+numeric banks, workspace size, and the observed managed-memory peak are
+reported separately. All bounds must match the interpreter bit for bit and
+enclose independent interior samples. These are interval-program timings, not
+complete projection or certification timings.
+
+`homotopy-arithmetic` measures the actual tiny matrix, strict projected-minor,
+and six-control net routines over distinct operand sets:
+
+```sh
+python -m tools.meshing_benchmarks --case homotopy-arithmetic \
+  --resolution 1 32 1024 --repeats 5
+```
+
+It separates static program preparation, NumPy-reference timing, clean native
+timing, and active-native-scope timing/peak memory. Endpoint bytes and strict
+positivity decisions are checked independently. Accounting diagnostics remain
+non-headline measurements; these leaf timings do not establish workflow speedups.
+
 Two cases measure process startup and native batch parallelism:
 
 ```sh
@@ -3893,6 +4132,16 @@ walk; new proofs and public mutable leaves still authenticate afresh.
 Coordinate bits, canonical payloads, source roots and
 tolerances are unchanged; public NumPy arrays do not acquire this private
 authority merely by setting a read-only flag.
+Intersection-curve construction and stored-field reconstruction likewise snapshot
+their numerical host banks onto immutable bytes after admitting the copies.
+Values, dtypes, shapes, dynamic leaves, and branch fingerprints are unchanged;
+mutable caller buffers cannot alter the prepared curve through an alias.
+Intersection-jet preparations expose their complete retained state to the
+existing storage profiler, including programs, endpoint roots, and memo banks.
+At a periodic seam, endpoint authentication distinguishes the scalar root
+parameter from its UV period sheet. Only an outer periodic lift may differ:
+the root, side, affine parameter chain, and underlying curve must still agree.
+Native gap endpoints bind to that root's spatial curve, not its UV lift.
 The genuine map preparer binds its complete creation-time source definition
 through the existing request-owned weak issuer. A changed source revokes that
 prepared map and requires genuine reprepare/reproof; a newly computed digest
@@ -4012,6 +4261,33 @@ child can report; this reporting allowance never extends the scientific
 deadline, and a child whose science did not return before the deadline is
 classified as a timeout. Each record's `deadline_policy` states the origin,
 whether startup is included, and the reporting allowance.
+
+### Development execution versus performance targets
+
+Scientific acceptance and original-budget qualification are separate outcomes.
+For development, use the existing explicit work/time controls to let an expensive
+workflow finish under a generous finite safety envelope:
+
+```sh
+python -m tools.meshing_qualification --scenario native-cad-lifecycle \
+  --cad-format brep --cad-case quadric-routine \
+  --timeout 3600 --maximum-work-units 1000000000 \
+  --maximum-recipe-bytes 8388608
+```
+
+Keep the workload, accuracy/conservation requirements, geometry-query limits,
+and memory/scratch/data/entity limits unchanged. The explicit CAD development
+exception above admits at most 8 MiB of recipe/manifest metadata instead of the
+default 1 MiB. Other archive bounds and all archive validation remain unchanged.
+Warm and cold execution use the same serialized archive policy; a policy mismatch
+is refused before the cold process reads the archive. This does not change the
+library default or the authored corpus envelopes.
+Record the original authored targets alongside the actual launched controls,
+observed resources, and target overruns. A scientific pass under larger limits
+is not a pass under the original limits. Expected-refusal profiles retain their
+authored controls; their successful refusal is not positive workflow completion.
+The registered corpus keeps its authored envelopes rather than silently adopting
+standalone development overrides.
 
 ### Authored finite qualification envelopes
 
@@ -4136,9 +4412,11 @@ time 275.4s and scenario time 425s; memory was healthy. Routine/larger now
 author a finite **600s whole timeout**. Routine work 8,000,000, routine/larger memory
 24/32GiB and science remain unchanged. Extra time **does not resolve the
 binding failure or establish successful workflow completion**.
-The canonical envelopes still bind exact cgroup `MemoryMax` values:
-25,769,803,776/34,359,738,368 bytes. Memory R/R−1 tests prove unrounded
-command/record transport, not kernel RSS admission. Producers and consumers
+The canonical envelopes retain exact memory ceilings of
+25,769,803,776/34,359,738,368 bytes. Linux requires an external cgroup using
+those values. Under the approved macOS contract, every producer and consumer
+must instead report a valid individual process peak within its ceiling;
+their maximum is not a simultaneous aggregate. Producers and consumers
 inherit one absolute deadline; no phase resets its allowance.
 
 Larger distributed 6-to-3 at work 8,000,000, whole timeout 600s and 32GiB
@@ -4153,13 +4431,13 @@ The durable family 2,400s run at `MemoryMax=16G` completed publication,
 independent acceptance, association and all-field preparation, then the
 external cgroup recorded `oom-kill` at
 `finite_volume_owner_preparation_epoch_0` after 1,442s, with work/query/deadline
-headroom. Family now authors the finite execution-group/process memory cap
-**32GiB (34,359,738,368 bytes)**. The canonical envelope records
-`external_cgroup_properties.MemoryMax=34359738368`, and the external
-systemd/cgroup wrapper must use that exact value. Native scratch 1,536,000,000,
-retained data 40,960,000, work/query/deadline and science are unchanged.
-Memory R/R−1 tests prove exact command/record forwarding without rounding;
-they do not claim actual kernel RSS admission, which remains externally enforced.
+headroom. Family now authors a finite memory ceiling of
+**32GiB (34,359,738,368 bytes)**. Its platform-specific
+`process_memory_acceptance` contract requires external cgroup enforcement
+on Linux and measured warm plus independent-cold process peaks on macOS.
+Native scratch 1,536,000,000, retained data 40,960,000, work/query/deadline
+and science are unchanged. Measured-memory boundary tests accept an actual
+observed peak at R and refuse it at R−1; they do not claim kernel enforcement.
 
 **Before any family rerun, durable incremental stage and failure evidence
 is required.** The canonical envelope records this prerequisite as
@@ -4312,9 +4590,10 @@ from logical retained storage; unavailable measurements remain
 `None`/unmeasured, not zero. These interfaces describe the benchmark contract,
 not a positive receipt or qualification of every listed family.
 
-Set `FAMILY_COMPACT_PROFILE_PREFIX` to a unique run prefix for incremental
-family evidence. The warm process writes `<prefix>-progress.json`; independent
-cold workers use `<prefix>.cold-<pid>-progress.json`. Each fsynced atomic
+Set `PHYDRAX_MESHING_EVIDENCE_PREFIX` to a unique external run prefix for
+incremental qualification evidence. Every CLI process writes
+`<prefix>.process-<pid>-progress.json`; independent cold workers write
+`<prefix>.process-<pid>-cold-progress.json`. Each fsynced atomic
 replacement contains a contiguous event prefix: stage entry/exit, completed
 native intervals, the first failure and traceback, source/native/backend/build
 identity, published and accepted mesh IDs, and the inherited absolute deadline.
@@ -4326,12 +4605,19 @@ Reporting queues immutable metadata to a background writer without retaining
 numerical owners or waiting for filesystem writes on the scientific thread.
 An abrupt interruption can lose queued events, but the last committed snapshot
 remains readable with
-`tools.meshing_qualification._family_progress.read_family_progress(Path(...))`
+`tools.meshing_qualification._progress.read_progress(Path(...))`
 in a fresh interpreter. It is diagnostic evidence, not a scientific restart
 checkpoint or permission to replay accepted work. Existing evidence prefixes
 are never overwritten by a new writer. Reporting errors surface separately as
 `reporting_status="failed"` / `reporting_failures`; they do not change scientific
 callbacks, numerical identities, limits or reset deadlines.
+The CLI also retains its final process result. Before cold execution, the runtime
+preserves the actual source archive and exact control packet; raw child stdout
+and stderr survive scientific or decoding failure. These artifacts do not carry
+live proof authority or renew a request's deadline. Linux parent-death signals
+and Darwin process-exit kernel events terminate workers whose launcher dies.
+Reporting failures block positive qualification without relabeling the separate
+scientific result.
 
 The original structured transfinite-quad workflow has passed its 16-to-64-to-16
 lifecycle with original source/history, Q1 native PDE and FV consumers, default

@@ -5,7 +5,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.lifecycle import _meshing_field_records as fields
+from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing.qualification import _polyhedral as kernel
 from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
 from tests.unit.lifecycle.test_meshing_polyhedral_fields import actual_epoch
@@ -16,11 +18,18 @@ def _fail(stage: str, message: str, data: dict[str, object]) -> Exception:
 
 
 @pytest.fixture
-def kernel_calls(monkeypatch):
+def kernel_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[kernel.PolyhedralArchiveOwners]:
     original = kernel.prepare_polyhedral_archive_owners
-    calls = []
+    calls: list[kernel.PolyhedralArchiveOwners] = []
 
-    def prepare(carrier, *, budget=None):
+    def prepare(
+        carrier: CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> kernel.PolyhedralArchiveOwners:
         result = original(carrier, budget=budget)
         calls.append(result)
         return result
@@ -30,16 +39,18 @@ def kernel_calls(monkeypatch):
 
 
 def test_kernel_issued_owner_is_reused_by_first_canonical_epoch_admission(
-    actual_epoch, kernel_calls,
+    actual_epoch: tuple[fields.MeshingAcceptedEpoch, dict[str, Any]],
+    kernel_calls: list[kernel.PolyhedralArchiveOwners],
 ) -> None:
     epoch, records = actual_epoch
 
-    def admit(budget):
+    def admit(budget: CoordinateEnclosureBudget) -> fields.MeshingAcceptedEpoch:
         binding, prepared = fields.prepare_meshing_polyhedral_owner_binding(
             epoch.carrier, budget=budget
         )
         assert len(kernel_calls) == 1
         declaration = epoch.declarations[0]
+        assert isinstance(declaration, fields.MeshingPolyhedralFieldDeclaration)
         admitted = fields.MeshingAcceptedEpoch(
             epoch.carrier, (declaration,), epoch.fields
         )
@@ -59,11 +70,12 @@ def test_kernel_issued_owner_is_reused_by_first_canonical_epoch_admission(
 
 
 def test_supplied_owners_do_not_issue_canonical_preparation_authority(
-    actual_epoch, kernel_calls,
+    actual_epoch: tuple[fields.MeshingAcceptedEpoch, dict[str, Any]],
+    kernel_calls: list[kernel.PolyhedralArchiveOwners],
 ) -> None:
     epoch, records = actual_epoch
 
-    def admit(budget):
+    def admit(budget: CoordinateEnclosureBudget) -> None:
         supplied = kernel.prepare_polyhedral_archive_owners(epoch.carrier, budget=budget)
         fields.prepare_meshing_polyhedral_owner_binding(
             epoch.carrier, owners=supplied, budget=budget
@@ -80,11 +92,14 @@ def test_supplied_owners_do_not_issue_canonical_preparation_authority(
     )
 
 
-def test_kernel_owner_reuse_expires_with_the_actual_request(actual_epoch, kernel_calls) -> None:
+def test_kernel_owner_reuse_expires_with_the_actual_request(
+    actual_epoch: tuple[fields.MeshingAcceptedEpoch, dict[str, Any]],
+    kernel_calls: list[kernel.PolyhedralArchiveOwners],
+) -> None:
     epoch, records = actual_epoch
     previous = []
 
-    def admit(budget):
+    def admit(budget: CoordinateEnclosureBudget) -> None:
         _, prepared = fields.prepare_meshing_polyhedral_owner_binding(epoch.carrier, budget=budget)
         if previous:
             assert prepared is not previous[0]
@@ -99,11 +114,12 @@ def test_kernel_owner_reuse_expires_with_the_actual_request(actual_epoch, kernel
 
 
 def test_kernel_owner_reuse_reauthenticates_current_mutable_output_bytes(
-    actual_epoch, kernel_calls,
+    actual_epoch: tuple[fields.MeshingAcceptedEpoch, dict[str, Any]],
+    kernel_calls: list[kernel.PolyhedralArchiveOwners],
 ) -> None:
     epoch, records = actual_epoch
 
-    def admit(budget):
+    def admit(budget: CoordinateEnclosureBudget) -> None:
         binding, _ = fields.prepare_meshing_polyhedral_owner_binding(epoch.carrier, budget=budget)
         bank = binding.coefficient_banks["vem"].coordinates
         assert isinstance(bank, np.ndarray) and bank.size
@@ -127,15 +143,19 @@ def test_kernel_owner_reuse_reauthenticates_current_mutable_output_bytes(
 
 
 def test_kernel_owner_reuse_tracks_current_constructor_identity(
-    actual_epoch, kernel_calls, monkeypatch,
+    actual_epoch: tuple[fields.MeshingAcceptedEpoch, dict[str, Any]],
+    kernel_calls: list[kernel.PolyhedralArchiveOwners],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     epoch, records = actual_epoch
     original = kernel.PolyhedralSourceStarFEMPlan.__init__
 
-    def admit(budget):
+    def admit(budget: CoordinateEnclosureBudget) -> None:
         _, first = fields.prepare_meshing_polyhedral_owner_binding(epoch.carrier, budget=budget)
 
-        def changed(self, *args: Any, **kwargs: Any) -> None:
+        def changed(
+            self: kernel.PolyhedralSourceStarFEMPlan, *args: Any, **kwargs: Any
+        ) -> None:
             original(self, *args, **kwargs)
 
         with monkeypatch.context() as patch:

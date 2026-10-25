@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import replace
+from itertools import accumulate
 from typing import final, Literal, Protocol
 
 import equinox as eqx
@@ -55,7 +57,9 @@ from ...discretization._cell_geometry_validity import (
 )
 from ...discretization._cell_mesh import (
     cell_block_construction_bounds,
+    cell_block_construction_work,
     cell_mesh_construction_bounds,
+    cell_mesh_construction_work,
 )
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._reference_cell import reference_cell_topology
@@ -200,6 +204,31 @@ def _tetrahedron_scaffold(specification: VolumeMeshingSpec, /) -> VolumeMeshingS
     )
 
 
+def _grouped_rows(values: np.ndarray, /) -> dict[int, np.ndarray]:
+    """Ascending rows of each present value, in increasing value order.
+
+    Each group equals ``np.flatnonzero(values == value)``; one stable sort
+    replaces a full comparison scan per value.
+    """
+    if values.size == 0:
+        return {}
+    order = np.argsort(values, kind="stable")
+    present, starts = np.unique(values[order], return_index=True)
+    return dict(zip(present.tolist(), np.split(order, starts[1:]), strict=True))
+
+
+def _size_evidence_work(edges: int, vertices: int, statistics: int, /) -> int:
+    """Host work of ``edge_size_evidence`` and ``uniform_size_compliance``.
+
+    Per edge: its row copy, endpoint gathers and difference, its length, the
+    finite and positive checks, four incident extrema updates, the minimum,
+    maximum and hard-bound reductions, and one partition per target
+    statistic; per vertex: the coordinate copy and the two extrema banks with
+    their ratio.
+    """
+    return edges * (16 + statistics) + 6 * vertices
+
+
 @checked
 def dual_quad_support_issues(
     source: sources_owner.NativePlanarSource, specification: SurfaceMeshingSpec, /
@@ -261,6 +290,8 @@ class PreparedDualQuad(StrictModule, NonTrainableState):
         source: sources_owner.NativePlanarSource,
         specification: SurfaceMeshingSpec,
         /,
+        *,
+        scope: NativeExecutionScope,
     ) -> None:
         issues = dual_quad_support_issues(source, specification)
         if issues:
@@ -268,7 +299,9 @@ class PreparedDualQuad(StrictModule, NonTrainableState):
                 "PreparedDualQuad.specification must satisfy supported quad capabilities; got "
                 + "; ".join(issues)
             )
-        self.scaffold = PreparedPlanarDomain(source, _triangle_scaffold(specification))
+        self.scaffold = PreparedPlanarDomain(
+            source, _triangle_scaffold(specification), scope=scope
+        )
         self.source_binding_id = source.binding_id
         self.specification_id = specification.specification_id
         self.prepared_id = canonical_fingerprint(
@@ -344,7 +377,10 @@ def execute_quad_route(
         started, limits = (scope.operation_started, specification.limits)
         with measure_phase(record_phase, "topology_construction"):
             triangulation, inserted = triangulate(
-                prepared.scaffold, started, _triangle_scaffold(specification)
+                prepared.scaffold,
+                started,
+                _triangle_scaffold(specification),
+                scope=scope,
             )
         triangle_count = triangulation.triangles.shape[0]
         point_count = triangulation.points.shape[0]
@@ -357,6 +393,16 @@ def execute_quad_route(
                 640 * triangle_count + 48 * point_count + 96 * source_edge_count + 4096
             )
             phase_storage.set_bound(phase_bytes)
+            # Triangle/segment copies and their compaction (four passes over
+            # 3T entries), the used-vertex and constrained-edge sorts, the
+            # point gather, and the source-edge difference sort.
+            sorted_rows = source_edge_count + 3 * triangle_count
+            scope.charge(
+                work=12 * triangle_count
+                + point_count
+                + (3 * triangle_count + sorted_rows)
+                * (sorted_rows.bit_length() + 1)
+            )
             triangles = np.asarray(triangulation.triangles, dtype=np.int64)
             used, compact = np.unique(triangles, return_inverse=True)
             points = np.asarray(triangulation.points, dtype=np.float64)[used]
@@ -387,6 +433,14 @@ def execute_quad_route(
                     ),
                 )
             )
+            scope.charge(
+                work=cell_block_construction_work(triangle_rows, 3)
+                + cell_mesh_construction_work(
+                    vertex_count,
+                    triangulation.points.shape[1],
+                    (("triangle", triangle_rows, 3),),
+                )
+            )
             scaffold = CellMesh.from_triangles(
                 points, triangles, numeric_version=source.source_revision
             )
@@ -411,6 +465,8 @@ def execute_quad_route(
             )
         with scope.host_workspace() as phase_storage:
             phase_storage.set_bound(128 * source_edge_count + 4096)
+            # The two maxima over the source-edge deviation and bound banks.
+            scope.charge(work=2 * source_edge_count)
             domain = prepared.scaffold.domain(source)
             rounding = float(np.max(source_deviations, initial=0.0))
             admissible = float(np.max(prepared.scaffold.source_bounds, initial=0.0))
@@ -422,6 +478,9 @@ def execute_quad_route(
             phase_storage.set_bound(
                 384 * scaffold_edge_count + 192 * constrained_count + 4096
             )
+            # One keyed row per scaffold edge and one lookup per constrained
+            # edge, each with its sorted pair.
+            scope.charge(work=2 * (scaffold_edge_count + constrained_count))
             edge_rows = {
                 tuple(sorted(edge)): row
                 for row, edge in enumerate(entities(scaffold, 1).tolist())
@@ -630,6 +689,8 @@ def _publish_volume_extraction(
         cell_regions = family_host_array(
             (region_count,), construction.cell_regions.dtype, scope=scope
         )
+        # One region gather per published cell.
+        scope.charge(work=region_count)
         np.take(construction.cell_regions, extraction.parent_cells, out=cell_regions)
         certification_request = NativeCertificationRequest(
             MeshCertificationSchedule("volume_plc"),
@@ -869,6 +930,13 @@ def execute_hex_dominant_route(
             # The entries above as float64/int64 plus the sort permutation
             # and key copies: at most 512 bytes per tetrahedron.
             phase_storage.set_bound(512 * cell_count + 4096)
+            # Per tetrahedron: its four-corner copy and gather, three edge
+            # differences, one determinant with its scaling and negated key,
+            # its identifier copy, and the two-key lexicographic sort with the
+            # selected-prefix gather.
+            scope.charge(
+                work=cell_count * (16 + 2 * (cell_count.bit_length() + 1))
+            )
             cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
             points = np.asarray(construction.mesh.coordinates, dtype=np.float64)[cells]
             # Source volumes rank a deterministic robustness-oriented core selection.
@@ -994,29 +1062,45 @@ def _grid_metadata(
     source_vertex_count = complex_.vertices.shape[0]
     with scope.host_workspace() as workspace:
         # Conservative CPython container bounds per cell, face, edge, and
-        # vertex (identity banks, region strings, incidence sets, ridge and
-        # resolution maps), per source polygon, facet, and source vertex, per
-        # old edge and source edge row (pullback rows and covering
-        # intervals), plus the old-point, old-edge, chart, and edge-row banks.
+        # vertex (identity banks, region strings, incidence sets, ridge plans
+        # and resolution maps), per source polygon, facet, and source vertex,
+        # per old edge and source edge row (pullback rows, their line index
+        # and covering intervals), plus the old-point, old-edge, chart,
+        # edge-row and grouping-sort banks.
         workspace.set_bound(
             _HOST_ENTRY_BYTES
             * (
                 2 * cell_count
                 + 2 * face_count
-                + 5 * edge_count
+                + 6 * edge_count
                 + 5 * vertex_count
                 + complex_.polygon_facets.size
                 + facet_count
                 + 2 * source_vertex_count
                 + old_edge_set.count
-                + 3 * source_edge_count
+                + 5 * source_edge_count
             )
             + 32 * old_vertex_count
             + 16 * old_edge_set.count
             + 9 * source_edge_count
             + 40 * vertex_count
             + 16 * edge_count
+            + 24 * (cell_count + face_count)
             + 4096
+        )
+        sort_depth = max(cell_count, face_count).bit_length() + 1
+        # Identity and connectivity copies; the region and facet groupings,
+        # their scope sorts, the unique-polygon sort and label scopes; face
+        # incidence, label masks, normals, orientations and association
+        # columns; every source polygon loop entry; the coordinate copy and
+        # rounding scan; and the per-face edge/vertex facet incidence.
+        scope.charge(
+            work=8 * vertex_count
+            + 4 * edge_count
+            + 42 * face_count
+            + 12 * cell_count
+            + 4 * complex_.polygon_vertices.size
+            + (2 * cell_count + 4 * face_count) * sort_depth
         )
         ids = tuple(
             np.asarray(local_entities.entity_ids, dtype=np.int64)
@@ -1034,23 +1118,29 @@ def _grid_metadata(
                 "grid.face_source_facets must identify every exposed face; got an unassigned boundary face",
             )
         del boundary_faces
+        cell_regions = np.asarray(grid.cell_regions)
+        region_rows = _grouped_rows(cell_regions)
         zones = tuple(
             MeshZone(
                 name,
                 MeshZoneRole.REGION,
-                mesh_entity_scope(mesh, 3, ids[3][grid.cell_regions == region]),
+                mesh_entity_scope(mesh, 3, ids[3][region_rows[region]]),
             )
             for region, name in enumerate(complex_.region_ids)
-            if np.any(grid.cell_regions == region)
+            if region in region_rows
         )
+        del region_rows
         facet_rows = np.flatnonzero(facets >= 0)
-        present_facets = np.unique(facets[facet_rows]).tolist()
+        facet_groups = _grouped_rows(facets[facet_rows])
+        present_facets = list(facet_groups)
         patches = tuple(
             MeshPatch(
-                f"facet:{facet}", mesh_entity_scope(mesh, 2, ids[2][facets == facet])
+                f"facet:{facet}",
+                mesh_entity_scope(mesh, 2, ids[2][facet_rows[rows]]),
             )
-            for facet in present_facets
+            for facet, rows in facet_groups.items()
         )
+        del facet_groups
         incidence = complex_.facet_regions[facets[facet_rows]]
         interface = (
             (incidence[:, 0] >= 0)
@@ -1107,7 +1197,7 @@ def _grid_metadata(
                     sources_owner.source_entity_id(
                         source.source_revision, "region", int(region)
                     )
-                    for region in grid.cell_regions
+                    for region in cell_regions
                 ),
                 np.zeros((cells.shape[0],), dtype=np.float64),
                 exact=True,
@@ -1145,6 +1235,7 @@ def _grid_metadata(
             sets,
             rounding,
             associations,
+            scope=scope,
         )
         associations = phase.associations
         ridge_names = phase.ridge_names
@@ -1161,6 +1252,7 @@ def _grid_metadata(
             sets,
             rounding,
             associations,
+            scope=scope,
         )
         associations = phase.associations
     return NativeRouteMetadata(zones, patches, labels, tuple(associations))
@@ -1253,6 +1345,15 @@ def execute_grid_hex_route(
             # Host point and edge copies, endpoint gathers and differences,
             # lengths, a partition copy, and per-vertex extrema banks.
             size_workspace.set_bound(128 * edge_count + 72 * vertex_count + 4096)
+            # Size evidence plus the coordinate-magnitude rounding scan.
+            scope.charge(
+                work=_size_evidence_work(
+                    edge_count,
+                    vertex_count,
+                    len(specification.size_compliance.target_statistics),
+                )
+                + 3 * vertex_count
+            )
             points = np.asarray(mesh.coordinates, dtype=np.float64)
             lengths, growth = edge_size_evidence(points, entities(mesh, 1))
             requested, achieved, issues = uniform_size_compliance(
@@ -1630,14 +1731,30 @@ def _mapped_grid_metadata(
     with scope.host_workspace() as workspace:
         # Conservative CPython bounds for the face-key map, owner lists, and
         # interface rows, plus identity, face, and padded cell banks with
-        # their selection masks and patch-control scope copies.
+        # their selection masks, grouping sorts and patch-control scope copies.
         workspace.set_bound(
             _HOST_ENTRY_BYTES * (3 * face_count + 2 * cell_count)
             + 8 * vertex_count
-            + 64 * face_count
-            + 160 * cell_count
+            + 88 * face_count
+            + 184 * cell_count
             + 8 * control_entries
             + 4096
+        )
+        sort_depth = max(cell_count, face_count, control_entries).bit_length() + 1
+        patch_control_count = len(specification.patch_controls)
+        # Face, cell and vertex-ID copies with one sorted key per face; the
+        # region and parent-face groupings with their scope sorts and region
+        # control lookups; per patch control its parent membership sort,
+        # selection and scope; six sorted, keyed owner lookups per cell; and
+        # the interface scan with its scope.
+        scope.charge(
+            work=vertex_count
+            + 24 * face_count
+            + 68 * cell_count
+            + (2 * cell_count + 4 * face_count) * sort_depth
+            + len(source.domain.region_ids) * len(specification.region_controls)
+            + patch_control_count * face_count * (3 + 2 * sort_depth)
+            + control_entries * sort_depth
         )
         face_rows = entities(mesh, 2)
         target_cells = entities(mesh, 3)
@@ -1660,8 +1777,9 @@ def _mapped_grid_metadata(
 
         cell_ids = np.asarray(mesh.topology.entities(3).entity_ids, dtype=np.int64)
         zones = []
+        region_rows = _grouped_rows(np.asarray(mapped.cell_regions))
         for region, region_id in enumerate(source.domain.region_ids):
-            if not np.any(mapped.cell_regions == region):
+            if region not in region_rows:
                 continue
             control = next(
                 (
@@ -1675,22 +1793,24 @@ def _mapped_grid_metadata(
                 MeshZone(
                     region_id,
                     MeshZoneRole.REGION,
-                    entity_scope(3, cell_ids[mapped.cell_regions == region]),
+                    entity_scope(3, cell_ids[region_rows[region]]),
                     material_id=None if control is None else control.material_id,
                     region_role=None if control is None else control.role,
                 )
             )
+        del region_rows
         dimensions = np.asarray(associations[2].parent_dimensions, dtype=np.int64)
         parent_ids = np.asarray(associations[2].parent_ids, dtype=np.int64)
         faces = np.asarray(mesh.topology.entities(2).entity_ids, dtype=np.int64)
-        present_parents = np.unique(parent_ids[dimensions == 2]).tolist()
+        face_parents = np.flatnonzero(dimensions == 2)
         patches = [
             MeshPatch(
                 source.domain.image_entity_id(2, parent),
-                entity_scope(2, faces[(dimensions == 2) & (parent_ids == parent)]),
+                entity_scope(2, faces[face_parents[rows]]),
             )
-            for parent in present_parents
+            for parent, rows in _grouped_rows(parent_ids[face_parents]).items()
         ]
+        del face_parents
         for control in specification.patch_controls:
             selected = (dimensions == 2) & np.isin(
                 parent_ids, np.asarray(control.scope.entity_ids)
@@ -1936,6 +2056,25 @@ def _quad_compliance(
             + (128 * max(_FIELD_WORKING_ENTRIES, patch_count) if patch_count else 0)
             + 4096
         )
+        statistics = len(specification.size_compliance.target_statistics)
+        depth = (2 * edge_count + max(control_ids, default=0)).bit_length() + 1
+        # Coordinate copy and the later feature-rounding scan; per edge its
+        # row copy, endpoint gathers and difference, length, midpoint, sample
+        # minimum, gradation, ancestry gather and sorted constraint selection;
+        # three size-field samples per edge and one per vertex against every
+        # controlled patch edge; the scaffold-edge source bank; and per control
+        # its sorted edge copy, membership sorts, selection, ratio, reductions
+        # and one partition per target statistic.
+        scope.charge(
+            work=2 * dimension * vertex_count
+            + 17 * edge_count
+            + (3 * edge_count + vertex_count) * max(1, patch_count)
+            + 2 * scaffold_edge_count
+            + sum(
+                edge_count * (10 + statistics + 2 * depth) + ids * depth
+                for ids in control_ids
+            )
+        )
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
         edges = entities(mesh, 1)
         a, b = vertices[edges[:, 0]], vertices[edges[:, 1]]
@@ -2053,6 +2192,8 @@ def _quad_compliance(
     with scope.host_workspace() as phase_storage:
         # Keyed report tuples and strings, plus host vertex IDs.
         phase_storage.set_bound(512 * carrier_rows + 8 * vertex_rows + 4096)
+        # One requested and one achieved row per source edge and carrier.
+        scope.charge(work=2 * carrier_rows)
         source_requested, source_achieved = source_carrier_evidence(
             prepared.scaffold,
             authority,
@@ -2137,6 +2278,25 @@ def _volume_extraction_compliance(
                 for requested, association_rows in feature_rows
             )
             + 4096
+        )
+        # Size evidence; per protected feature its requested-ID copy and
+        # missing scan, and per exact association row its stratum copies,
+        # membership sort, selection, present-set update and residual maximum.
+        scope.charge(
+            work=_size_evidence_work(
+                edge_count,
+                vertex_count,
+                len(specification.size_compliance.target_statistics),
+            )
+            + sum(
+                2 * requested
+                + sum(
+                    5 * rows
+                    + (rows + requested) * ((rows + requested).bit_length() + 1)
+                    for rows in association_rows
+                )
+                for requested, association_rows in feature_rows
+            )
         )
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
         edges = entities(mesh, 1)
@@ -2375,6 +2535,15 @@ def _mapped_grid_compliance(
         # Host point and edge copies, endpoint gathers and differences,
         # lengths, a partition copy, and per-vertex extrema banks.
         workspace.set_bound(128 * edge_count + 72 * vertex_count + 4096)
+        # Size evidence plus the three per-cell mapped quality reductions.
+        scope.charge(
+            work=_size_evidence_work(
+                edge_count,
+                vertex_count,
+                len(specification.size_compliance.target_statistics),
+            )
+            + 3 * mesh.topology.entities(3).count
+        )
         lengths, growth = edge_size_evidence(
             np.asarray(mesh.coordinates, dtype=np.float64), entities(mesh, 1)
         )
@@ -2484,12 +2653,44 @@ def _grid_ridge_associations(
     sets: tuple[EntitySet, ...],
     rounding: float,
     associations: list[GeometryAssociation],
+    /,
+    *,
+    scope: NativeExecutionScope,
 ) -> _GridRidgePhase:
-    """Grid ridge associations."""
+    """Grid ridge associations.
+
+    Source segments that vary along one chart axis are indexed by that axis
+    and their fixed chart coordinates, sorted by lower endpoint with running
+    upper maxima. A ridge visits only the indexed segments its interval can
+    stab and inherits the overlapping ones in source association order.
+    """
     old_edges = entities(old.mesh, 1)
+    old_vertex_count = old.mesh.coordinates.shape[0]
+    old_edge_set = old.mesh.topology.entities(1)
+    source_edge_count = sum(
+        association.target_global_ids.shape[0]
+        for association in old.associations
+        if association.target_entity_set_id == old_edge_set.entity_set_id
+    )
+    edge_count = edge_vertices.shape[0]
+    depth = max(source_edge_count, edge_count).bit_length() + 1
+    # Per old vertex its 3x3 frame system, solve and host copy; per old edge
+    # its row, identifier and keyed map entry; per source edge row its
+    # endpoint gather, identity, orientation, varying-axis test, line key,
+    # extrema and the per-line lower-endpoint sort with running maxima; the
+    # chart transform; per grid edge its facet test, endpoints, ridge axis,
+    # line lookup, two bisections, the sorted association row and columns.
+    scope.charge(
+        work=13 * old_vertex_count
+        + 3 * old_edges.shape[0]
+        + 16 * source_edge_count
+        + 2 * source_edge_count * depth
+        + 9 * points.shape[0]
+        + edge_count * (12 + 3 * depth)
+    )
     solve = solve_small_linear(
         SmallLinearSolvePlan(3),
-        np.broadcast_to(grid.frame.basis.T, (old.mesh.coordinates.shape[0], 3, 3)),
+        np.broadcast_to(grid.frame.basis.T, (old_vertex_count, 3, 3)),
         old.mesh.coordinates,
     )
     host_solution, host_success = jax.device_get((solve.value, solve.successful))
@@ -2499,14 +2700,11 @@ def _grid_ridge_associations(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             "grid.source_edge_pullback must solve every source chart coordinate; got an unsuccessful linear solve",
         )
-    old_ids = np.asarray(old.mesh.topology.entities(1).entity_ids, dtype=np.int64)
+    old_ids = np.asarray(old_edge_set.entity_ids, dtype=np.int64)
     old_rows = {identifier: row for row, identifier in enumerate(old_ids.tolist())}
     source_edges: list[tuple[np.ndarray, str, int]] = []
     for association in old.associations:
-        if (
-            association.target_entity_set_id
-            != old.mesh.topology.entities(1).entity_set_id
-        ):
+        if association.target_entity_set_id != old_edge_set.entity_set_id:
             continue
         target_ids, orientations = jax.device_get(
             (association.target_global_ids, association.orientations)
@@ -2521,10 +2719,80 @@ def _grid_ridge_associations(
                     int(host_orientations[row]),
                 )
             )
+    # A segment can cover a ridge only when it varies along exactly the ridge
+    # axis and both endpoints share the ridge's fixed chart coordinates. NaN
+    # extrema never satisfy the overlap comparisons, so they are not indexed.
+    line_rows: dict[
+        tuple[int, tuple[float, ...]], list[tuple[np.float64, np.float64, int]]
+    ] = {}
+    for index, (segment, _, _) in enumerate(source_edges):
+        varying = np.flatnonzero(segment[0] != segment[1])
+        if varying.size != 1:
+            continue
+        axis = int(varying[0])
+        first, last = np.min(segment[:, axis]), np.max(segment[:, axis])
+        if np.isnan(first) or np.isnan(last):
+            continue
+        fixed = [coordinate for coordinate in range(3) if coordinate != axis]
+        line_rows.setdefault((axis, tuple(segment[0, fixed].tolist())), []).append(
+            (first, last, index)
+        )
+    lines: dict[
+        tuple[int, tuple[float, ...]],
+        tuple[list[tuple[np.float64, np.float64, int]], list[float], list[float]],
+    ] = {}
+    for key, rows in line_rows.items():
+        rows.sort(key=lambda item: item[0])
+        lines[key] = (
+            rows,
+            [float(item[0]) for item in rows],
+            list(accumulate((float(item[1]) for item in rows), max)),
+        )
+    del line_rows
     chart = points @ grid.frame.basis.T
+    # Plan every ridge before visiting segments so the exact visit count is
+    # admitted first. Planning stops at the first multiaxis ridge, which the
+    # traversal below refuses in its original order.
+    plans: list[
+        tuple[
+            np.ndarray,
+            int,
+            np.float64,
+            list[tuple[np.float64, np.float64, int]],
+            int,
+            int,
+        ]
+    ] = []
+    multiaxis_row = -1
+    visits = 0
+    for row, adjacent in enumerate(edge_facets):
+        if len(adjacent) < 2:
+            continue
+        endpoints = chart[edge_vertices[row]]
+        variable = np.flatnonzero(endpoints[0] != endpoints[1])
+        if variable.size != 1:
+            multiaxis_row = row
+            break
+        axis = int(variable[0])
+        fixed = [coordinate for coordinate in range(3) if coordinate != axis]
+        lower, upper = np.min(endpoints[:, axis]), np.max(endpoints[:, axis])
+        line = lines.get((axis, tuple(endpoints[0, fixed].tolist())))
+        if line is None:
+            plans.append((endpoints, axis, lower, [], 0, 0))
+            continue
+        rows, firsts, reach = line
+        # Rows before ``start`` end at or below ``lower``; rows from ``stop``
+        # begin at or above ``upper``.
+        start, stop = bisect_right(reach, lower), bisect_left(firsts, upper)
+        plans.append((endpoints, axis, lower, rows, start, stop))
+        visits += max(0, stop - start)
+    # Per visited segment its overlap test, relative orientation, interval
+    # row, and its share of the source-order and covering-interval sorts.
+    scope.charge(work=visits * (8 + depth))
     edge_names: dict[int, str] = {}
     edge_orientations: dict[int, int] = {}
     ridge_names: dict[int, str] = {}
+    planned = iter(plans)
     for row, adjacent in enumerate(edge_facets):
         if not adjacent:
             continue
@@ -2532,35 +2800,30 @@ def _grid_ridge_associations(
             edge_names[row] = facet_names[next(iter(adjacent))]
             edge_orientations[row] = 0
             continue
-        endpoints = chart[edge_vertices[row]]
-        variable = np.flatnonzero(endpoints[0] != endpoints[1])
-        if variable.size != 1:
+        if row == multiaxis_row:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 "grid.ridge.logical_coordinates must vary along one axis; got a multiaxis ridge",
             )
-        axis = int(variable[0])
-        fixed = [coordinate for coordinate in range(3) if coordinate != axis]
-        lower, upper = np.min(endpoints[:, axis]), np.max(endpoints[:, axis])
+        endpoints, axis, lower, rows, start, stop = next(planned)
+        hits = sorted(
+            (index, first, last)
+            for first, last, index in rows[start:stop]
+            if last > lower
+        )
         intervals: dict[str, list[tuple[float, float, int]]] = {}
-        for segment, entity, orientation in source_edges:
-            if (
-                np.any(segment[:, fixed] != endpoints[0, fixed])
-                or np.count_nonzero(segment[0] != segment[1]) != 1
-            ):
-                continue
-            first, last = np.min(segment[:, axis]), np.max(segment[:, axis])
-            if first < upper and last > lower:
-                relative = orientation * (
-                    1
-                    if (segment[1, axis] - segment[0, axis])
-                    * (endpoints[1, axis] - endpoints[0, axis])
-                    > 0.0
-                    else -1
-                )
-                intervals.setdefault(entity, []).append(
-                    (float(first), float(last), relative)
-                )
+        for index, first, last in hits:
+            segment, entity, orientation = source_edges[index]
+            relative = orientation * (
+                1
+                if (segment[1, axis] - segment[0, axis])
+                * (endpoints[1, axis] - endpoints[0, axis])
+                > 0.0
+                else -1
+            )
+            intervals.setdefault(entity, []).append((float(first), float(last), relative))
+        del hits
+        upper = np.max(endpoints[:, axis])
         complete = []
         for entity, pieces in sorted(intervals.items()):
             end = float(lower)
@@ -2617,8 +2880,24 @@ def _grid_vertex_associations(
     sets: tuple[EntitySet, ...],
     rounding: float,
     associations: list[GeometryAssociation],
+    /,
+    *,
+    scope: NativeExecutionScope,
 ) -> _GridVertexPhase:
     """Grid vertex associations."""
+    source_vertex_count = grid.frame.solve.value.shape[0]
+    knot_depth = max(len(knots) for knots in grid.axis_knots).bit_length() + 1
+    vertex_count = points.shape[0]
+    # Per source vertex its logical copy, three knot searches and key row and
+    # the corner-name entry; per ridge edge two vertex incidences; per cell
+    # eight region incidences; per grid vertex its incidence sets, key lookup,
+    # resolution and association columns.
+    scope.charge(
+        work=source_vertex_count * (8 + 3 * knot_depth)
+        + 2 * len(ridge_names)
+        + 9 * cells.shape[0]
+        + 8 * vertex_count
+    )
     raw_logical = np.asarray(jax.device_get(grid.frame.solve.value), dtype=np.float64)
     raw_keys = np.stack(
         [

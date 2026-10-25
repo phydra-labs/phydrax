@@ -17,7 +17,10 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization._cell_geometry import coordinate_lagrange_element
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import Expression, Polynomial
 from phydrax.geometry import GlobalEmbeddingCertificate
+from phydrax.geometry._embedding_cells import Cell
 from phydrax.lifecycle._meshing_sources import (
     read_meshing_source_closure,
     write_meshing_source_closure,
@@ -324,15 +327,26 @@ def test_boundary_degree_evidence_requires_a_deciding_premise_for_violation() ->
         )
 
 
-def _actual_tet_trace_cells(mesh, geometry, budget):
+def _polynomial(value: Expression) -> Polynomial:
+    """Narrow an actual P2 trace coordinate, which is always a polynomial."""
+    assert isinstance(value, dict)
+    return value
+
+
+def _actual_tet_trace_cells(
+    mesh: phx.discretization.CellMesh,
+    geometry: phx.discretization.CellGeometrySpec,
+    budget: CoordinateEnclosureBudget,
+) -> list[Cell]:
     from phydrax.discretization._coordinate_enclosure import (
-        coordinate_expressions, prepared_coordinate_source_bank,
+        coordinate_expressions,
+        prepared_coordinate_source_bank,
     )
-    from phydrax.geometry._embedding_cells import Cell, vertices
+    from phydrax.geometry._embedding_cells import vertices
 
     elements, routes, _ = geometry.resolve(mesh, budget=budget)
     bank = prepared_coordinate_source_bank(geometry, budget=budget)
-    cells = []
+    cells: list[Cell] = []
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         for row, dofs in zip(np.asarray(block.vertices), np.asarray(route), strict=True):
             coordinates = coordinate_expressions(
@@ -349,8 +363,10 @@ def _actual_tet_trace_cells(mesh, geometry, budget):
 def test_actual_facet_proof_transports_connected_vertex_and_edge_stars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -369,9 +385,12 @@ def test_actual_facet_proof_transports_connected_vertex_and_edge_stars(
         restrictions = []
         original = owner.restrict_chart_expressions
 
-        def observed(*args, **kwargs):
-            restrictions.append(args)
-            return original(*args, **kwargs)
+        def observed(
+            coordinates: tuple[Expression, ...], source_kind: str, target_kind: str,
+            origin: np.ndarray, matrix: np.ndarray, *, budget: CoordinateEnclosureBudget,
+        ) -> tuple[Expression, ...]:
+            restrictions.append((coordinates, source_kind, target_kind, origin, matrix))
+            return original(coordinates, source_kind, target_kind, origin, matrix, budget=budget)
 
         monkeypatch.setattr(owner, "restrict_chart_expressions", observed)
         actual = owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
@@ -385,9 +404,12 @@ def test_actual_facet_proof_transports_connected_vertex_and_edge_stars(
 def test_facet_transport_requires_real_current_trace_identities(fault: str) -> None:
     from dataclasses import replace
     from fractions import Fraction
+
     from phydrax.discretization._coordinate_enclosure import add, multiply, Polynomial
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState, mesh_facets
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -420,7 +442,7 @@ def test_facet_transport_requires_real_current_trace_identities(fault: str) -> N
                     perturbation = multiply(
                         perturbation, barycentric[vertex], budget=budget,
                     )
-            changed = add(cell.coordinates[0], perturbation, budget=budget)
+            changed = add(_polynomial(cell.coordinates[0]), perturbation, budget=budget)
             cells[index] = replace(cell, coordinates=(changed, *cell.coordinates[1:]))
         state = EmbeddingState([], [])
         witness = mapped.trace_continuity(
@@ -441,9 +463,12 @@ def test_disconnected_entity_stars_keep_full_exact_component_comparisons(
 ) -> None:
     from dataclasses import replace
     from fractions import Fraction
+
     from phydrax.discretization._coordinate_enclosure import add, Polynomial
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -460,7 +485,7 @@ def test_disconnected_entity_stars_keep_full_exact_component_comparisons(
                 {(0, 0, 0): Fraction(1, 8)} if fault == "vertex" else
                 {(1, 0, 0): Fraction(1, 8), (2, 0, 0): Fraction(-1, 8)}
             )
-            changed = add(cells[1].coordinates[0], perturbation, budget=budget)
+            changed = add(_polynomial(cells[1].coordinates[0]), perturbation, budget=budget)
             cells[1] = replace(cells[1], coordinates=(changed, *cells[1].coordinates[1:]))
         legacy = owner._shared_entity_conformity(cells, budget=budget)
         state = EmbeddingState([], [])
@@ -472,9 +497,12 @@ def test_disconnected_entity_stars_keep_full_exact_component_comparisons(
         observed = []
         original = owner.restrict_chart_expressions
 
-        def restriction(*args, **kwargs):
-            observed.append(args)
-            return original(*args, **kwargs)
+        def restriction(
+            coordinates: tuple[Expression, ...], source_kind: str, target_kind: str,
+            origin: np.ndarray, matrix: np.ndarray, *, budget: CoordinateEnclosureBudget,
+        ) -> tuple[Expression, ...]:
+            observed.append((coordinates, source_kind, target_kind, origin, matrix))
+            return original(coordinates, source_kind, target_kind, origin, matrix, budget=budget)
 
         monkeypatch.setattr(owner, "restrict_chart_expressions", restriction)
         actual = owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
@@ -485,14 +513,17 @@ def test_disconnected_entity_stars_keep_full_exact_component_comparisons(
 
 
 def test_facet_proof_rejects_copies_changed_source_and_foreign_proof_context() -> None:
+    import pickle
     from dataclasses import replace
     from fractions import Fraction
-    import pickle
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
-    from phydrax._resource_ticket import HostBatchTicket
 
     mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
     geometry = p2_geometry(mesh, shear)
@@ -535,6 +566,7 @@ def test_facet_proof_rejects_copies_changed_source_and_foreign_proof_context() -
 def test_facet_trace_witness_does_not_keep_its_proof_or_cells_alive() -> None:
     import gc
     import weakref
+
     from phydrax.geometry import _mapped_embedding as mapped
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
@@ -560,11 +592,15 @@ def test_facet_trace_witness_does_not_keep_its_proof_or_cells_alive() -> None:
 def test_unsupported_facet_transport_retains_full_polynomial_fallback(kind: str) -> None:
     from dataclasses import replace
     from fractions import Fraction
+
     from phydrax.discretization._coordinate_enclosure import (
-        expression_reference_evaluate, RationalPolynomial,
+        expression_reference_evaluate,
+        RationalPolynomial,
     )
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -575,7 +611,7 @@ def test_unsupported_facet_transport_retains_full_polynomial_fallback(kind: str)
         if kind == "rational":
             cells = [
                 replace(cell, coordinates=tuple(
-                    RationalPolynomial(value, {(0, 0, 0): Fraction(1)})
+                    RationalPolynomial(_polynomial(value), {(0, 0, 0): Fraction(1)})
                     for value in cell.coordinates
                 ))
                 for cell in cells
@@ -599,8 +635,10 @@ def test_unsupported_facet_transport_retains_full_polynomial_fallback(kind: str)
 
 def test_constructive_entity_proof_still_requires_actual_admission() -> None:
     from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -622,10 +660,14 @@ def test_constructive_entity_proof_still_requires_actual_admission() -> None:
 
 
 def test_materialized_composed_geometry_keeps_full_entity_comparisons() -> None:
-    from phydrax.discretization._cell_geometry import PolynomialComposedCellGeometryElement
+    from phydrax.discretization._cell_geometry import (
+        PolynomialComposedCellGeometryElement,
+    )
     from phydrax.discretization.fem._reference_types import FiniteElementSpec
-    from phydrax.geometry import _boundary_degree_embedding as owner
-    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry import (
+        _boundary_degree_embedding as owner,
+        _mapped_embedding as mapped,
+    )
     from phydrax.geometry._embedding_state import EmbeddingState
     from tests._support.coordinate_references import coordinate_reference_budget
 

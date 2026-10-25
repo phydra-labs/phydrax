@@ -44,12 +44,10 @@ from phydrax.meshing.qualification import (
 from phydrax.units import METER
 from tools.meshing_qualification._controls import (
     capacity_meshing_limits,
+    qualification_archive_limits,
     QualificationControls,
 )
-from tools.meshing_qualification._family_progress import (
-    record_family_native_phase,
-    run_with_family_progress,
-)
+from tools.meshing_qualification._progress import record_native_phase
 from tools.meshing_qualification._records import FailureRecord, record_failure
 
 
@@ -350,13 +348,14 @@ def _family_qualification_solver(
     budget: CoordinateEnclosureBudget | None = None,
     prepared_space: phx.discretization.FiniteElementDiscretization | None = None,
 ) -> tuple[Any, Any, Any]:
-    """Join the tensor Q1 consumer, retaining its coordinate maps."""
+    """Join the profile-order scalar consumer, retaining its coordinate maps."""
 
     square = case["name"] in ("transfinite-quad", "multiblock-quad")
     curved_quad = case["name"] == "curved-quarter-extrusion-quad"
+    degree = int(case.get("geometry_order", 1))
     if case["name"] == "hex-dominant":
         templates = {
-            kind: family_solver_field_templates(kind)[0][1]
+            kind: family_solver_field_templates(kind, degree=degree)[0][1]
             for kind in {block.cell_kind for block in result.mesh.blocks}
         }
         template = next(iter(templates.values()))
@@ -369,7 +368,7 @@ def _family_qualification_solver(
             component_shape=template.component_shape,
         )
     else:
-        field = family_solver_field_templates(case["family"])[0][1]
+        field = family_solver_field_templates(case["family"], degree=degree)[0][1]
     plan = phx.discretization.FiniteElementPlan(
         result.mesh, field, coordinate_spec=result.geometry, budget=budget
     )
@@ -1075,12 +1074,13 @@ def _family_accepted_epoch(
     transition: phx.meshing.MeshAdaptationResult | None,
     *,
     field_spaces: dict[str, Any],
+    solver_kind: str,
     budget: CoordinateEnclosureBudget | None = None,
     fv: phx.discretization.UnstructuredFiniteVolumeDiscretization | None = None,
 ) -> phx.lifecycle.MeshingAcceptedEpoch:
     """Bind every primitive array to its physical owner."""
 
-    spaces = {"Q1": space, **(field_spaces if fields else {})}
+    spaces = {solver_kind: space, **(field_spaces if fields else {})}
     try:
         bindings = prepare_family_finite_element_bindings(
             result, spaces, problem, values, fields, epoch
@@ -1117,7 +1117,17 @@ def _family_epoch_state(epoch: Any) -> tuple[Any, Any, dict[str, Any]]:
             )
     if "FV/state/content" in epoch.fields:
         fields["material_content"] = epoch.fields["FV/state/content"]
-    return epoch.carrier, epoch.fields["Q1/u/coefficients"], fields
+    solver_entries = [
+        name
+        for name in epoch.fields
+        if name.endswith("/u/coefficients")
+        and name.partition("/")[0].startswith("Q")
+    ]
+    if len(solver_entries) != 1:
+        raise ValueError(
+            f"Family accepted epoch must retain one scalar PDE field; got {solver_entries!r}"
+        )
+    return epoch.carrier, epoch.fields[solver_entries[0]], fields
 
 
 from dataclasses import replace
@@ -1312,6 +1322,7 @@ def _family_solve_epoch(
             {"args": args, "physical": physical},
         )
 
+    solver_kind = f"Q{int(case.get('geometry_order', 1))}"
     accepted_epoch, measured = _ledger.run(
         f"canonical_field_epoch_binding_epoch_{epoch}",
         lambda: _measured(
@@ -1324,6 +1335,7 @@ def _family_solve_epoch(
                 epoch,
                 accepted_transition,
                 field_spaces=field_spaces,
+                solver_kind=solver_kind,
                 budget=budget,
                 fv=owners.fv,
             )
@@ -1448,14 +1460,21 @@ def _family_adapt_epoch(
     identifiers = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in result.mesh.blocks]
     )
+    # A lifecycle proves real local adaptation and all-field transport; it is
+    # not a uniform-refinement scaling campaign. Sample explicit global IDs
+    # across the domain while bounding exact closure work on curved grids.
+    ordered_identifiers = np.sort(identifiers)
+    stride = max(1, (ordered_identifiers.size + 15) // 16)
+    refined_identifiers = ordered_identifiers[::stride][:16]
     empty = np.empty((0,), dtype=np.int64)
     marks = phx.meshing.MarkedMeshAdaptation(
-        identifiers if refine else empty,
+        refined_identifiers if refine else empty,
         empty if refine else identifiers,
         hierarchy=hierarchy,
     )
     policy = phx.meshing.MeshAdaptationPolicy(
         phx.meshing.MeshAdaptationRoute.NATIVE_MIXED,
+        maximum_closure_iterations=2048,
         limits=request.limits,
         association_transfer=association_transfer,
         audit_policy=audit_policy,
@@ -1464,14 +1483,20 @@ def _family_adapt_epoch(
     prepared, measured = _ledger.run(
         f"adaptation_prepare_epoch_{epoch}",
         lambda: _measured(
-            lambda: phx.meshing.prepare_mesh_adaptation(result, marks, policy=policy)
+            lambda: phx.meshing.prepare_mesh_adaptation(
+                result, marks, policy=policy, observe_managed_admission=True
+            )
         ),
     )
     stages[record["active_phase"]] = measured["wall_seconds"]
 
     adaptation, measured = _ledger.run(
         f"adaptation_execute_epoch_{epoch}",
-        lambda: _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared)),
+        lambda: _measured(
+            lambda: phx.meshing.execute_mesh_adaptation(
+                prepared, observe_managed_admission=True
+            )
+        ),
     )
     stages[record["active_phase"]] = measured["wall_seconds"]
     if adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
@@ -1702,6 +1727,7 @@ def _family_qualification_epochs(
                 inputs, result, epoch, previous, adaptation, budget=budget
             ),
             failure_factory=qualification_failure,
+            observe_managed_admission=True,
         )
         result, paid = consumed.result, consumed.value
         sealed_transition = (
@@ -1792,15 +1818,21 @@ def _family_restore_checkpoint(
     oracle_path: str,
     oracle_content_id: str,
     expected: tuple[str, ...],
+    maximum_recipe_bytes: int | None,
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _FamilyColdCheckpoint:
     """Restore the bounded archive and authenticate source, controls, and accepted history."""
 
+    limits = (
+        ArrayArchiveLimits()
+        if maximum_recipe_bytes is None
+        else ArrayArchiveLimits(max_manifest_bytes=maximum_recipe_bytes)
+    )
     restored = read_meshing_source_closure(
         Path(path),
         expected_content_id=content_id,
-        limits=ArrayArchiveLimits(),
+        limits=limits,
         budget=budget,
     )
     source = restored["generation_source"]
@@ -1809,7 +1841,7 @@ def _family_restore_checkpoint(
     options = restored["generation_options"]
     try:
         case = read_family_oracle(
-            oracle_path, oracle_content_id, source, limits=phx.ArrayArchiveLimits()
+            oracle_path, oracle_content_id, source, limits=limits
         )
     except FamilyPreparationError as error:
         raise qualification_failure(
@@ -1878,10 +1910,8 @@ def _family_reanalyze_accepted_history(
     mapped_fv_history = []
     allfield_history = []
     replay_evidence = []
-    previous_fields = None
-    previous_spaces = None
-    previous_fv = None
     last_owners = None
+    solver_kind = f"Q{int(case.get('geometry_order', 1))}"
     for epoch in history:
         publication, values, fields = _family_epoch_state(epoch)
         field_spaces = {}
@@ -1904,7 +1934,7 @@ def _family_reanalyze_accepted_history(
                         {"declaration": declaration},
                     )
                 kind = next(iter(kinds))
-                if kind != "Q1":
+                if kind != solver_kind:
                     if kind not in LAYER_CORE_FIELD_KINDS or kind in field_spaces:
                         raise qualification_failure(
                             "_family_qualification_cold_worker",
@@ -1916,7 +1946,9 @@ def _family_reanalyze_accepted_history(
                     field_spaces[kind] = owner
                 else:
                     if solver_space is not None:
-                        raise ValueError("Cold family history must have exactly one Q1 owner")
+                        raise ValueError(
+                            "Cold family history must have exactly one scalar PDE owner"
+                        )
                     solver_space = owner
             elif isinstance(owner, phx.discretization.UnstructuredFiniteVolumeDiscretization):
                 if fv_owner is not None:
@@ -1944,7 +1976,7 @@ def _family_reanalyze_accepted_history(
                 case _:
                     continue
         if solver_space is None or fv_owner is None:
-            raise ValueError("Cold family history must retain actual Q1 and FV declarations")
+            raise ValueError("Cold family history must retain a scalar PDE and FV owner")
         if epoch.transition is not None and fields:
             if not isinstance(epoch.transition, phx.meshing.MeshAdaptationResult):
                 raise ValueError("Cold family history must retain its original refine/coarsen transitions")
@@ -1983,6 +2015,7 @@ def _family_reanalyze_accepted_history(
                 publication, specification, case, authority, budget=budget
             )
         )
+        solver_kind = f"Q{int(case.get('geometry_order', 1))}"
         solver = _family_qualification_solver(
             publication, case, budget=budget, prepared_space=solver_space
         )
@@ -1994,14 +2027,14 @@ def _family_reanalyze_accepted_history(
             .set(True)
         )
         if not np.array_equal(
-            np.asarray(mask), np.asarray(epoch.fields["Q1/u/boundary-mask"])
+            np.asarray(mask), np.asarray(epoch.fields[f"{solver_kind}/u/boundary-mask"])
         ) or not np.array_equal(
             np.asarray(epoch_problem.lift),
-            np.asarray(epoch.fields["Q1/u/boundary-values"]),
+            np.asarray(epoch.fields[f"{solver_kind}/u/boundary-values"]),
         ):
             raise qualification_failure(
                 "_family_qualification_cold_worker",
-                ("Cold Q1 source PDE changed its essential mask or boundary lift."),
+                ("Cold family source PDE changed its essential mask or boundary lift."),
                 {"epoch": epoch, "epoch_problem": epoch_problem, "mask": mask},
             )
         physical = _family_qualification_physical(space, values, case)
@@ -2095,13 +2128,15 @@ def _family_qualification_cold_worker(
     expected: tuple[str, ...],
     repeats: int,
     target_error: float,
+    maximum_recipe_bytes: int | None,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[phx.meshing.CellMeshingResult, ColdWorkerReport]:
     """Fresh-process source recertification of every accepted epoch and PDE."""
 
     started = perf_counter()
     checkpoint = _family_restore_checkpoint(
-        path, content_id, oracle_path, oracle_content_id, expected, budget=budget
+        path, content_id, oracle_path, oracle_content_id, expected,
+        maximum_recipe_bytes, budget=budget
     )
     read_seconds = perf_counter() - started
     analyzed = _family_reanalyze_accepted_history(
@@ -2152,6 +2187,7 @@ def _family_qualification_cold_worker(
             ],
             "history_epochs": len(history),
             "peak_process_resident_bytes": peak_resident_bytes(),
+            "process_peak_scope": PEAK_RESIDENT_SCOPE,
         },
         read_seconds=read_seconds,
     )
@@ -2173,7 +2209,7 @@ def _family_qualification_cold_reanalysis(
 
     _ledger = StageLedger(record, deadline=deadline)
 
-    limits = ArrayArchiveLimits()
+    limits = qualification_archive_limits(args)
     records = {
         "certification_inputs": result.certification.request,
         "report": result.certification,
@@ -2244,11 +2280,9 @@ def _family_qualification_cold_reanalysis(
                 receipt.path,
                 receipt.content_id,
                 {
-                    "oracle_path": str(oracle_path),
-                    "oracle_content_id": oracle_content_id,
-                    "expected": list(expected),
                     "repeats": args.repeats,
                     "target_error": args.target_error,
+                    "maximum_recipe_bytes": args.maximum_recipe_bytes,
                 },
             )
             timing = {"wall_seconds": perf_counter() - cold_started}
@@ -2275,6 +2309,7 @@ def _family_qualification_cold_reanalysis(
             "container_bytes": receipt.path.stat().st_size,
             "independent_oracle_container_bytes": oracle_path.stat().st_size,
             "archive_limits": {
+                "manifest": limits.max_manifest_bytes,
                 "members": limits.max_members,
                 "nesting": limits.max_manifest_nesting,
                 "rank": limits.max_array_rank,
@@ -2434,7 +2469,7 @@ def _family_prepare_publication(
     source, request, options, case = fixture
     if case["dimension"] == 3:
         case["manufactured_consumer_fields"] = {
-            "u": "original Q1 manufactured diffusion, actual accepted solution",
+            "u": f"original Q{case.get('geometry_order', 1)} manufactured diffusion, actual accepted solution",
             "H1": ("Q2", "1+y+z", ".5+.125*y+.1*z"),
             "DG": ("DG1", "1+y+z", ".5+.125*y+.1*z"),
             "Hcurl": (
@@ -2458,7 +2493,7 @@ def _family_prepare_publication(
     else:
         embedded = case["name"] == "curved-quarter-extrusion-quad"
         case["manufactured_consumer_fields"] = {
-            "u": "original Q1 manufactured diffusion, actual accepted solution",
+            "u": f"original Q{case.get('geometry_order', 1)} manufactured diffusion, actual accepted solution",
             "H1": ("Q2", "1+x", ".5+.125*x")
             if embedded
             else ("Q2", "1+x+y", ".5+.125*x+.1*y"),
@@ -2507,7 +2542,7 @@ def _family_prepare_publication(
                 source,
                 request,
                 coordinate_contract=phx.SpatialCoordinateContract.si(),
-                record_phase=partial(record_family_native_phase, phases, record),
+                record_phase=partial(record_native_phase, phases, record),
             )
         ),
     )
@@ -2531,7 +2566,7 @@ def _family_execute_publication(
     result, measured = _ledger.run(
         "generation_publication_certification",
         lambda: _measured(lambda: plan.execute(
-            record_phase=partial(record_family_native_phase, phases, record)
+            record_phase=partial(record_native_phase, phases, record)
         )),
     )
     stages[record["active_phase"]] = measured["wall_seconds"]
@@ -2549,6 +2584,7 @@ def _family_execute_publication(
             prepared, result, record, phases, deadline=deadline, budget=budget
         ),
         failure_factory=qualification_failure,
+        observe_managed_admission=True,
     )
     return _FamilyPublication(consumed.result, consumed.value, certification.request)
 
@@ -2586,7 +2622,7 @@ def _family_publication_consumers(
         lambda: _measured(
             lambda: prepare_family_association_transfer(
                 source, result, request, domain=case["domain"], limits=request.limits,
-                record_phase=partial(record_family_native_phase, phases, record),
+                record_phase=partial(record_native_phase, phases, record),
                 budget=budget, scope=scope,
             )
         ),
@@ -2598,6 +2634,38 @@ def _family_publication_consumers(
 
 def _family_obligation(passed: bool, **evidence: object) -> dict[str, object]:
     return {"passed": bool(passed), **evidence}
+
+
+def _family_measured_memory_obligation(
+    record: dict[str, Any], args: QualificationControls
+) -> dict[str, object]:
+    """Require both process high-water marks, not an execution-group hard cap."""
+    checkpoint = record.get("checkpoint") or {}
+    warm = record.get("peak_process_resident_bytes")
+    cold = checkpoint.get("peak_process_resident_bytes")
+    peaks = tuple(
+        value
+        for value in (warm, cold)
+        if isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and np.isfinite(value)
+        and value > 0
+    )
+    independent = (
+        checkpoint.get("process_id") is not None
+        and checkpoint.get("process_id") != os.getpid()
+    )
+    return _family_obligation(
+        len(peaks) == 2
+        and independent
+        and all(value <= args.maximum_memory_bytes for value in peaks),
+        warm_peak_process_resident_bytes=warm,
+        cold_peak_process_resident_bytes=cold,
+        maximum_memory_bytes=args.maximum_memory_bytes,
+        process_peak_scope=PEAK_RESIDENT_SCOPE,
+        enforcement="measured-per-process-high-water",
+        hard_execution_group_cap=False,
+    )
 
 
 def _family_completion_obligations(
@@ -2709,6 +2777,7 @@ def _family_completion_obligations(
         "wall_time": _family_obligation(
             elapsed <= args.timeout, elapsed=elapsed, timeout=args.timeout
         ),
+        "measured_process_memory": _family_measured_memory_obligation(record, args),
     }
     items["all_field_transfer_each_transition"] = _family_obligation(
         all(entry.get("allfield_transfer") is not None for entry in transitions)
@@ -2857,10 +2926,12 @@ def _family_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
             deadline=deadline,
         )
         elapsed = perf_counter() - started
+        record["peak_process_resident_bytes"] = peak_resident_bytes()
         obligations = _family_completion_obligations(record, case, args, len(history), elapsed)
         complete = all(item["passed"] for item in obligations.values())
         scientific = all(
-            item["passed"] for name, item in obligations.items() if name != "wall_time"
+            item["passed"] for name, item in obligations.items()
+            if name not in {"wall_time", "measured_process_memory"}
         )
         mixed = _family_obligation_class(case) == "declared-mixed-family-policy"
         record.update(
@@ -2868,7 +2939,7 @@ def _family_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
                 "status": "timeout"
                 if elapsed > args.timeout
                 else "passed"
-                if scientific
+                if complete
                 else "failed",
                 "target_error_reached": record["physical_error"] <= args.target_error,
                 "independent_scientific_certification": "passed"
@@ -2919,6 +2990,16 @@ def _family_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
         record["end_to_end_seconds"] = perf_counter() - started
         record["peak_process_resident_bytes"] = peak_resident_bytes()
         record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
+        if "completion_obligations" in record:
+            obligations = record["completion_obligations"]
+            obligations["measured_process_memory"] = _family_measured_memory_obligation(
+                record, args
+            )
+            if not obligations["measured_process_memory"]["passed"]:
+                record["case_contract_completion"] = "incomplete"
+                record["mandatory_workflow_completion"] = "incomplete"
+                if record["status"] == "passed":
+                    record["status"] = "failed"
         record["device_memory"] = [
             {
                 "device_id": device.id,
@@ -4738,11 +4819,13 @@ def _cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
             tuple(controls["expected"]),
             int(controls["repeats"]),
             float(controls["target_error"]),
+            controls["maximum_recipe_bytes"],
             budget,
         ),
         target=lambda value: value[0],
         failure_factory=qualification_failure,
         workflow_remaining_seconds=packet.deadline.remaining(),
+        observe_managed_admission=True,
     )
     _, report = requested.value
     receipt = requested.result.execution_evidence
@@ -4768,14 +4851,9 @@ def _cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
 
 
 def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
-    return run_with_family_progress(
-        {"scenario": "native-family-lifecycle", "role": "cold"},
-        lambda: _cold_worker(packet), cold=True,
-    )
+    return _cold_worker(packet)
 
 
 def run(args: QualificationControls) -> dict[str, object]:
     """Execute this scenario with host controls."""
-    return run_with_family_progress(
-        args.to_record(), lambda: _family_qualification_lifecycle(args)
-    )
+    return _family_qualification_lifecycle(args)

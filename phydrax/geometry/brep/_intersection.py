@@ -470,6 +470,29 @@ def original_trim_root_preparation_scope(
     yield preparations
 
 
+# Container metadata of one request-retained root or endpoint entry: a
+# three-tuple (64 B), an empty step mapping (64 B), its integer key (32 B) and
+# one amortized identity-keyed slot including table growth (96 B).
+_REQUEST_ENTRY_BYTES = 256
+# One step-keyed slot of an entry mapping, amortized including table growth.
+_REQUEST_SLOT_BYTES = 96
+
+
+def _retain_request_value[T](
+    memo: dict[int, T],
+    maximum_steps: int,
+    value: T,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Admit one contracted request value and its slot, then store it."""
+    budget.retain_operand_metadata(_REQUEST_SLOT_BYTES)
+    budget.retain_basis((maximum_steps, value))
+    memo[maximum_steps] = value
+
+
+
 def _trim_root_parameter_enclosure(
     root: TrimIntersectionRoot,
     maximum_steps: int,
@@ -504,7 +527,7 @@ def _trim_root_parameter_enclosure(
     )
     result = np.stack((lower[0], upper[0]))
     if entry is not None and entry[0] is root:
-        entry[2][maximum_steps] = result
+        _retain_request_value(entry[2], maximum_steps, result, budget=budget)
     return result.copy()
 
 
@@ -677,10 +700,10 @@ class CurveSurfaceIntersectionRoot(StrictModule):
         )
         result = np.stack((lower[0], upper[0]))
         # The contraction is a deterministic function of this immutable root
-        # and the step count; registered request roots retain it.
+        # and the step count; admitted request roots retain it.
         entry = owners.get(id(self))
         if entry is not None and entry[0] is self:
-            entry[2][maximum_steps] = result
+            _retain_request_value(entry[2], maximum_steps, result, budget=budget)
         return result.copy()
 
     def point_enclosure(
@@ -784,6 +807,46 @@ def _register_endpoint_preparations(
     for endpoint in endpoints:
         if isinstance(endpoint, (TrimRootEndpoint, BranchRootEndpoint)):
             preparations.root_endpoints.setdefault(id(endpoint), (endpoint, {}))
+
+
+def admit_segment_endpoint_roots(
+    endpoints: tuple[RootEndpoint | None, RootEndpoint | None],
+    preparations: TrimRequestPreparations,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Admit one trim segment's endpoint expressions to the request evaluating it.
+
+    Contracted root boxes and scalar endpoint enclosures are deterministic
+    functions of immutable source objects. The owning request mapping retains
+    them, keyed by identity and authenticated by the stored object, only for
+    its own lifetime; an existing entry for another object is never replaced.
+    Each new entry's container metadata is admitted to the live budget before
+    it is stored; an already admitted entry costs only its identity lookup.
+    """
+    for endpoint in endpoints:
+        if not isinstance(endpoint, (TrimRootEndpoint, BranchRootEndpoint)):
+            continue
+        if id(endpoint) not in preparations.root_endpoints:
+            budget.retain_operand_metadata(_REQUEST_ENTRY_BYTES)
+            preparations.root_endpoints[id(endpoint)] = (endpoint, {})
+        match endpoint.root:
+            case CurveSurfaceIntersectionRoot() as root:
+                if id(root) not in preparations.curve_surface_roots:
+                    budget.retain_operand_metadata(_REQUEST_ENTRY_BYTES)
+                    preparations.curve_surface_roots[id(root)] = (root, None, {})
+            case TripleSurfaceIntersectionRoot() as root:
+                if id(root) not in preparations.triple_roots:
+                    budget.retain_operand_metadata(_REQUEST_ENTRY_BYTES)
+                    preparations.triple_roots[id(root)] = (root, None, {})
+            case TrimIntersectionRoot() as root:
+                if id(root) not in preparations.trim_roots:
+                    budget.retain_operand_metadata(_REQUEST_ENTRY_BYTES)
+                    preparations.trim_roots[id(root)] = (root, None, {})
+            case _:
+                pass
+
 
 
 def _curve_surface_root_preparation(
@@ -1083,7 +1146,7 @@ class TripleSurfaceIntersectionRoot(StrictModule):
         result = np.stack((lower[0], upper[0]))
         entry = owners.get(id(self))
         if entry is not None and entry[0] is self:
-            entry[2][maximum_steps] = result
+            _retain_request_value(entry[2], maximum_steps, result, budget=budget)
             owners[id(self)] = (self, prepared, entry[2])
         return result.copy()
 
@@ -2549,7 +2612,7 @@ class TrimRootEndpoint(StrictModule):
         )
         result = float(bounds[0]), float(bounds[1])
         if entry is not None and entry[0] is self:
-            entry[1][maximum_steps] = result
+            _retain_request_value(entry[1], maximum_steps, result, budget=budget)
         return result
 
     def affine(self, scale: float, offset: float, /) -> TrimRootEndpoint:
@@ -3004,7 +3067,7 @@ class BranchRootEndpoint(StrictModule):
             )
         result = float(scalar[0]), float(scalar[1])
         if entry is not None and entry[0] is self:
-            entry[1][maximum_steps] = result
+            _retain_request_value(entry[1], maximum_steps, result, budget=budget)
         return result
 
     @property
@@ -3692,13 +3755,13 @@ type _System = (
 
 
 @eqx.filter_jit
-def _point_values(system: _System, points: Array) -> Array:
-    return jax.vmap(system.residual)(points)
+def _point_values(system: _System, points: Array | np.ndarray) -> Array:
+    return jax.vmap(system.residual)(jnp.asarray(points))
 
 
 @eqx.filter_jit
-def _point_jacobians(system: _System, points: Array) -> Array:
-    return jax.vmap(jax.jacfwd(system.residual))(points)
+def _point_jacobians(system: _System, points: Array | np.ndarray) -> Array:
+    return jax.vmap(jax.jacfwd(system.residual))(jnp.asarray(points))
 
 
 def _newton_values(
@@ -4293,8 +4356,8 @@ class Prepared:
     )
     dimension: int
     batch: int
-    source_values: Callable[[Array], Array] | None = None
-    source_jacobians: Callable[[Array], Array] | None = None
+    source_values: Callable[[np.ndarray], Array] | None = None
+    source_jacobians: Callable[[np.ndarray], Array] | None = None
     source_newton: (
         Callable[[Array, VectorLocalRootPlan], tuple[Array, Array, Array, Array]] | None
     ) = None
@@ -4302,9 +4365,9 @@ class Prepared:
     def point_values(self, points: np.ndarray, /) -> np.ndarray:
         (values,) = _padded_call(
             lambda chunk: (
-                self.source_values(jnp.asarray(chunk))
+                self.source_values(chunk)
                 if self.source_values is not None
-                else _point_values(self.system, jnp.asarray(chunk))
+                else _point_values(self.system, chunk)
             ),
             points,
             self.batch,
@@ -4321,9 +4384,9 @@ class Prepared:
     ) -> np.ndarray:
         (values,) = _padded_call(
             lambda chunk: (
-                self.source_jacobians(jnp.asarray(chunk))
+                self.source_jacobians(chunk)
                 if self.source_jacobians is not None
-                else _point_jacobians(self.system, jnp.asarray(chunk))
+                else _point_jacobians(self.system, chunk)
             ),
             points,
             self.batch,
@@ -4907,19 +4970,39 @@ def _contract(
     budget: CoordinateEnclosureBudget,
     preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Iterate Krawczyk on certified boxes; every iterate still holds the root."""
+    """Iterate Krawczyk on certified boxes; every iterate still holds the root.
+
+    A row whose box did not change has reached its fixed point: its next image
+    is the same row-independent function of the same box. Only changing rows
+    are re-evaluated, so the boxes equal those of iterating the whole batch.
+    """
     maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+    lower, upper = lower.copy(), upper.copy()
+    active = np.arange(lower.shape[0])
     for _ in range(maximum_steps):
+        if active.size == 0:
+            break
         budget.ticket.checkpoint()
+        current_lower, current_upper = lower[active], upper[active]
         result = krawczyk(
-            prepared, lower, upper, budget=budget, preparations=preparations
+            prepared,
+            current_lower,
+            current_upper,
+            budget=budget,
+            preparations=preparations,
         )
         shrink = result.certified[:, None]
-        new_lower = np.where(shrink, np.maximum(lower, result.lower), lower)
-        new_upper = np.where(shrink, np.minimum(upper, result.upper), upper)
-        if np.array_equal(new_lower, lower) and np.array_equal(new_upper, upper):
-            break
-        lower, upper = new_lower, new_upper
+        new_lower = np.where(
+            shrink, np.maximum(current_lower, result.lower), current_lower
+        )
+        new_upper = np.where(
+            shrink, np.minimum(current_upper, result.upper), current_upper
+        )
+        changed = np.any(
+            (new_lower != current_lower) | (new_upper != current_upper), axis=1
+        )
+        lower[active], upper[active] = new_lower, new_upper
+        active = active[changed]
     return lower, upper
 
 

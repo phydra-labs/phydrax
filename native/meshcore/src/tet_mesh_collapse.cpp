@@ -802,6 +802,10 @@ EditStatus TetMesh::commit_curved_collapse(PreparedReplacement& prepared,
     if (validation != EditStatus::kOk) return validation;
   }
   const std::size_t added = binding.faces.size();
+  if (added > (static_cast<std::size_t>(INT32_MAX) - original_points_.size() / 3) / 3 ||
+      added > static_cast<std::size_t>(INT32_MAX) - original_faces_.size()) {
+    return EditStatus::kBufferLimit;
+  }
   original_points_.reserve(original_points_.size() + 9 * added);
   original_faces_.reserve(original_faces_.size() + added);
   face_tolerance_.reserve(face_tolerance_.size() + added);
@@ -835,7 +839,7 @@ EditStatus TetMesh::commit_curved_collapse(PreparedReplacement& prepared,
     face_rows_.insert(std::upper_bound(face_rows_.begin(), face_rows_.end(), entry), entry);
     claimed_rows_.insert(std::upper_bound(claimed_rows_.begin(), claimed_rows_.end(), entry),
                          entry);
-    curved_claims_.push_back({row, patch, claims.deviations[i], claims.generation});
+    curved_claims_.push_back({row, patch, claims.deviations[i], accepted_generation_ + 1});
   }
   release_face_ancestry();
   largest_cavity_ = std::max(largest_cavity_, binding.cavity_size);

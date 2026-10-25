@@ -114,10 +114,13 @@ class OutlierRemovalEvidence:
 class SamplingCoverageEvidence:
     """Extracted surface unsupported by samples within ``coverage_distance``.
 
-    A triangle is unsupported when its centroid lies farther than
-    ``coverage_distance`` from every sample; ``unsupported_patches`` counts the
-    vertex-connected components of unsupported triangles, and
-    ``maximum_sample_distance`` is the largest centroid-to-sample distance.
+    A triangle is unsupported when both its centroid and at least one corner lie
+    farther than ``coverage_distance`` from every sample. A centroid-only
+    excursion whose complete boundary remains supported is interpolation across
+    the represented surface, not a disconnected repair patch.
+    ``unsupported_patches`` counts the vertex-connected components of
+    unsupported triangles, and ``maximum_sample_distance`` is the largest
+    centroid-to-sample distance.
     """
 
     coverage_distance: float
@@ -237,7 +240,10 @@ def sampling_coverage(
         axis=1,
     )
     distance = nearest_sample_distance(points, np.mean(triangles, axis=1))
-    unsupported = distance > coverage_distance
+    vertex_distance = nearest_sample_distance(points, vertices)
+    unsupported = (distance > coverage_distance) & np.any(
+        vertex_distance[faces] > coverage_distance, axis=1
+    )
     patches = 0
     if np.any(unsupported):
         corners = faces[unsupported].astype(np.int64)

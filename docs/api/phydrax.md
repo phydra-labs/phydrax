@@ -350,6 +350,10 @@ cochain incidence maps. `EdgeRelation` represents arbitrary source-to-target
 routes; `RowRelation` represents fixed-width target rows with explicit case
 boundaries. Invalid capacity slots are numerically inert under routing and
 reduction, including when their stored payloads are non-finite.
+`InjectiveRouteWindows` are host-prepared windows of lanes that each name a
+distinct destination row, validated once at construction; `route_replace`
+overwrites those rows of an existing array, selecting a window by a static or
+traced index, with work proportional to the window capacity.
 
 `SparseLinearMap` attaches scalar route coefficients and exposes forward,
 transpose, and conjugate-adjoint actions while preserving trailing payload
@@ -379,6 +383,10 @@ generic matrix-free callables remain in their semantic subsystems.
 
 ---
 
+::: phydrax.sparse.InjectiveRouteWindows
+
+---
+
 ::: phydrax.sparse.SparseLinearMap
 
 ---
@@ -402,6 +410,11 @@ generic matrix-free callables remain in their semantic subsystems.
 ---
 
 ::: phydrax.sparse.route_reduce
+
+---
+
+
+::: phydrax.sparse.route_replace
 
 ## Stochastic realizations and fields
 

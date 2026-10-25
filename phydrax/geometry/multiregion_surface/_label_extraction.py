@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import final, Literal, TYPE_CHECKING, TypeAlias
@@ -36,6 +36,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_storage import declared_integer_storage_bytes
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -44,6 +45,10 @@ from ..._validation import (
     nonnegative_integer,
     positive_finite_float,
     unique_identifiers,
+)
+from ...discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateTemporaryStorage,
 )
 from ...typing import checked, Dim, HostInt64, Identifier, parse, Scope
 from .._domain_coverage import PiecewiseLinearDomain
@@ -69,6 +74,44 @@ if TYPE_CHECKING:
 
 
 LabelFieldSurfaceExtractionRoute: TypeAlias = Literal["uniform-grid", "sparse-grid"]
+
+
+def _admit_label_field_phase(
+    budget: CoordinateEnclosureBudget,
+    work_units: int,
+    scratch_bytes: int,
+    result_bytes: int,
+    retained_work: int,
+    /,
+) -> None:
+    budget.ticket.checkpoint()
+    budget.admit_work_bound(
+        work_units + retained_work,
+        storage_upper=scratch_bytes + result_bytes,
+    )
+    budget.reserve(work_units, scratch_bytes + result_bytes)
+
+
+def _finish_label_field_phase(
+    budget: CoordinateEnclosureBudget,
+    lifetime: CoordinateTemporaryStorage,
+    result: object,
+    scratch_bytes: int,
+    result_bytes: int,
+    /,
+) -> None:
+    budget.ticket.checkpoint()
+    with budget.live_storage() as storage:
+        storage.promote_temporary_storage(lifetime, result_bytes)
+        budget.retain_owner(result, temporary_storage_credit=storage)
+    budget.release_temporary_storage(scratch_bytes)
+    budget.ticket.checkpoint()
+
+def _label_string_storage_upper(values: Iterable[str], /) -> int:
+    return sum(256 + 4 * len(value) for value in values)
+
+def _label_json_text_upper(values: Iterable[str], /) -> int:
+    return sum(12 * len(value) + 2 for value in values)
 
 
 class _ExtractionSiteDim(Dim, minimum=1):
@@ -346,37 +389,618 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
     def accepted(self) -> bool:
         return self.evidence.accepted
 
-    def validate_source_integrity(self) -> PreparedMultiRegionSurface | None:
+    def validate_source_integrity(
+        self, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> PreparedMultiRegionSurface | None:
         """Validate the accepted surface and its prepared descendants."""
-        LabelFieldSurfaceExtractionResult(
-            self.candidate_seed,
-            self.topology,
-            self.state,
-            self.surface,
-            self.lineage,
-            self.evidence,
-        )
-        if not self.accepted:
-            return None
-        if self.topology is None or self.state is None or self.surface is None:
-            raise ValueError(
-                "LabelFieldSurfaceExtractionResult.geometry must retain topology, state, and surface for accepted extraction; got absent retained geometry"
+        if budget is None:
+            return _validate_label_extraction_result(self)
+        work, scratch_bytes, result_bytes = _label_surface_validation_bounds(self)
+        if budget.retained_owner_objects.get(id(self)) is self:
+            result_bytes -= _label_surface_shared_topology_bytes(self)
+        with budget.temporary_scope() as lifetime:
+            _admit_label_field_phase(
+                budget, work, scratch_bytes, result_bytes, 256
             )
-        self.state.require_topology(self.topology)
-        rebuilt = self.surface.validate_restored(self.topology, self.state)
-        validation = self.evidence.validation
-        if (
-            validation is None
-            or validation.evidence_id != self.surface.evidence.evidence_id
-            or self.evidence.lineage_id != self.lineage.lineage_id
-            or self.lineage.region_ids != self.topology.region_ids
-        ):
-            raise ValueError(
-                "LabelFieldSurfaceExtractionResult.evidence must match retained validation, lineage, and regions; got inconsistent evidence"
-            )
+            rebuilt = _validate_label_extraction_result(self)
+            if rebuilt is None:
+                budget.release_temporary_storage(scratch_bytes + result_bytes)
+                budget.ticket.checkpoint()
+            else:
+                _finish_label_field_phase(
+                    budget, lifetime, rebuilt, scratch_bytes, result_bytes
+                )
         return rebuilt
 
 
+def _label_surface_validation_bounds(
+    extraction: LabelFieldSurfaceExtractionResult, /
+) -> tuple[int, int, int]:
+    topology = extraction.topology
+    surface = extraction.surface
+    if topology is None or surface is None:
+        return 64, 0, 0
+    vertices, edges, faces = (
+        topology.vertex_capacity,
+        topology.edge_capacity,
+        topology.face_capacity,
+    )
+    active_vertices, active_edges, active_faces = (
+        topology.vertex_count,
+        topology.edge_count,
+        topology.face_count,
+    )
+    regions, pairs = topology.region_capacity, topology.region_pair_capacity
+    valence, slots = topology.valence_width, topology.slot_width
+    candidate_capacity = surface.validation_policy.intersection_candidate_capacity
+    candidate_tests = min(
+        candidate_capacity, active_faces * max(0, active_faces - 1) // 2
+    )
+    candidate_block = min(1 << 20, active_faces * active_faces)
+    work = (
+        512
+        + active_faces * (64 + 24 * (4 * active_faces + 1).bit_length())
+        + active_edges * (8 + 8 * valence + 24 * valence * valence)
+        + active_vertices * (32 + 8 * slots)
+        + regions * 4
+        + pairs * 4
+        + 512 * candidate_tests
+    )
+    # The BVH overlap walker has a 16-KiB fixed frontier; its candidate blocks
+    # are separately bounded below. The edge-order kernel is quadratic in valence.
+    scratch = (
+        16384
+        + 48 * active_vertices
+        + 128 * active_faces
+        + 64 * active_edges * valence
+        + 64 * active_edges * valence * valence
+        + 32 * active_vertices * slots
+        + 512 * candidate_tests
+        + 64 * candidate_block
+    )
+    # Capacity terms cover topology arrays/routes/BVH; 1024 bytes per region
+    # covers the three scalar tuples plus finite-region ids in validation evidence.
+    # The fixed metadata term is 64 declared object owners at 256 bytes each.
+    result = (
+        vertices * (9 + 9 * slots)
+        + edges * (17 + 24 * valence)
+        + 512 * faces
+        + 1024 * regions
+        + 17 * pairs
+        + _label_string_storage_upper(
+            itertools.chain(
+                topology.region_ids,
+                (
+                    topology.plan.resource_id,
+                    topology.plan.plan_id,
+                    topology.topology_id,
+                    topology.lineage_id,
+                    topology.domain,
+                    surface.validation_policy.profile,
+                    surface.validation_policy.policy_id,
+                    surface.evidence.predicate_mode,
+                    surface.evidence.geometry_id,
+                    surface.evidence.evidence_id,
+                    surface.prepared_id,
+                ),
+            )
+        )
+        + 16384
+    )
+    return work, scratch, result
+
+def _label_surface_shared_topology_bytes(
+    extraction: LabelFieldSurfaceExtractionResult, /
+) -> int:
+    topology = extraction.topology
+    if topology is None:
+        return 0
+    surface = extraction.surface
+    vertices, edges, faces = (
+        topology.vertex_capacity,
+        topology.edge_capacity,
+        topology.face_capacity,
+    )
+    regions, pairs = topology.region_capacity, topology.region_pair_capacity
+    valence, slots = topology.valence_width, topology.slot_width
+    shared_strings = itertools.chain(
+        topology.region_ids,
+        (
+            topology.plan.resource_id,
+            topology.plan.plan_id,
+            topology.topology_id,
+            topology.lineage_id,
+            topology.domain,
+        ),
+        ()
+        if surface is None
+        else (
+            surface.validation_policy.profile,
+            surface.validation_policy.policy_id,
+        ),
+    )
+    return (
+        vertices * (9 + 9 * slots)
+        + edges * (17 + 16 * valence)
+        + 137 * faces
+        + 2 * regions
+        + 17 * pairs
+        + _label_string_storage_upper(shared_strings)
+    )
+
+
+def _validate_label_extraction_result(
+    extraction: LabelFieldSurfaceExtractionResult, /
+) -> PreparedMultiRegionSurface | None:
+    LabelFieldSurfaceExtractionResult(
+        extraction.candidate_seed,
+        extraction.topology,
+        extraction.state,
+        extraction.surface,
+        extraction.lineage,
+        extraction.evidence,
+    )
+    if not extraction.accepted:
+        return None
+    topology, state, surface = (
+        extraction.topology,
+        extraction.state,
+        extraction.surface,
+    )
+    if topology is None or state is None or surface is None:
+        raise ValueError(
+            "LabelFieldSurfaceExtractionResult.geometry must retain topology, state, and surface for accepted extraction; got absent retained geometry"
+        )
+    state.require_topology(topology)
+    rebuilt = surface.validate_restored(topology, state)
+    validation = extraction.evidence.validation
+    if (
+        validation is None
+        or validation.evidence_id != surface.evidence.evidence_id
+        or extraction.evidence.lineage_id != extraction.lineage.lineage_id
+        or extraction.lineage.region_ids != topology.region_ids
+    ):
+        raise ValueError(
+            "LabelFieldSurfaceExtractionResult.evidence must match retained validation, lineage, and regions; got inconsistent evidence"
+        )
+    return rebuilt
+
+
+def _label_extraction_storage_upper(
+    extraction: LabelFieldSurfaceExtractionResult, /
+) -> int:
+    seed = extraction.candidate_seed
+    lineage, evidence = extraction.lineage, extraction.evidence
+    validation = evidence.validation
+    seed_bytes = 8192
+    if seed is not None:
+        seed_bytes += sum(
+            value.nbytes
+            for value in (
+                seed.positions,
+                seed.faces,
+                seed.face_labels,
+                seed.vertex_global_ids,
+                seed.face_global_ids,
+            )
+        )
+    identity_groups = (
+        lineage.source_label_ids,
+        lineage.region_ids,
+        (
+            lineage.boundary_region_id,
+            lineage.source_state_id,
+            lineage.source_binding_id,
+            lineage.source_route_id,
+            lineage.source_prepared_id,
+            lineage.source_site_id,
+            lineage.prepared_id,
+            evidence.evidence_id,
+            evidence.lineage_id,
+        ),
+        () if seed is None else (seed.source, seed.seed_id),
+        () if validation is None else validation.finite_region_ids,
+        ()
+        if validation is None
+        else (
+            validation.predicate_mode,
+            validation.topology_id,
+            validation.lineage_id,
+            validation.geometry_id,
+            validation.evidence_id,
+        ),
+    )
+    identity_bytes = _label_string_storage_upper(
+        itertools.chain.from_iterable(identity_groups)
+    )
+    extraction_metadata_bytes = (
+        2048 * len(lineage.region_ids)
+        + 2048 * len(evidence.region_pairs)
+        + 512 * len(lineage.source_label_ids)
+        + (0 if validation is None else 1024 * len(validation.finite_region_ids))
+    )
+    topology = extraction.topology
+    state = extraction.state
+    if topology is None:
+        return seed_bytes + extraction_metadata_bytes + identity_bytes
+    state_bytes = 0
+    if state is not None:
+        state_bytes = (
+            2
+            * topology.vertex_capacity
+            * 3
+            * np.dtype(topology.plan.coordinate_dtype).itemsize
+        )
+    return (
+        seed_bytes
+        + state_bytes
+        + extraction_metadata_bytes
+        + identity_bytes
+        + _label_surface_validation_bounds(extraction)[2]
+    )
+
+
+def _label_binding_resource_bounds(
+    extraction: LabelFieldSurfaceExtractionResult,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+) -> tuple[int, int, int]:
+    topology = extraction.topology
+    if topology is None:
+        vertices = edges = faces = regions = pairs = 0
+        vertex_capacity = edge_capacity = face_capacity = 0
+        region_capacity = pair_capacity = slots = valence = 0
+    else:
+        vertices, edges, faces = (
+            topology.vertex_count,
+            topology.edge_count,
+            topology.face_count,
+        )
+        regions, pairs = topology.region_count, topology.region_pair_count
+        (
+            vertex_capacity,
+            edge_capacity,
+            face_capacity,
+            region_capacity,
+            pair_capacity,
+            slots,
+            valence,
+        ) = (
+            topology.vertex_capacity,
+            topology.edge_capacity,
+            topology.face_capacity,
+            topology.region_capacity,
+            topology.region_pair_capacity,
+            topology.slot_width,
+            topology.valence_width,
+        )
+    region_names = () if topology is None else topology.region_ids
+    maximum_region_name_length = max(
+        (len(value) for value in region_names), default=0
+    )
+    interface_count = regions * max(0, regions - 1) // 2
+    base_json_bytes = _label_json_text_upper(
+        itertools.chain(
+            region_names,
+            (
+                coordinate_contract.spatial_id,
+                extraction.evidence.evidence_id,
+                extraction.lineage.lineage_id,
+            ),
+        )
+    )
+    pair_label_json_bytes = 2 * (12 * maximum_region_name_length + 2)
+    pair_entry_json_bytes = pair_label_json_bytes + 12 * 64 + 2
+    binding_json_bytes = base_json_bytes + interface_count * pair_entry_json_bytes
+    binding_json_work = (
+        3 * base_json_bytes
+        + interface_count * (pair_label_json_bytes + pair_entry_json_bytes)
+    )
+    unit = coordinate_contract.length_unit
+    dimension = unit.dimension
+    coordinate_string_bytes = _label_string_storage_upper(
+        itertools.chain(
+            (
+                coordinate_contract.coordinate_system,
+                coordinate_contract.reference_frame,
+                coordinate_contract.length_coordinate_kind,
+                coordinate_contract.spatial_id,
+                unit.symbol,
+                unit.reference_system_id,
+                unit.unit_id,
+                dimension.dimension_id,
+            ),
+            (axis for axis, _, _ in dimension.terms),
+        )
+    )
+    coordinate_integer_bytes = (
+        declared_integer_storage_bytes(unit.scale_numerator.bit_length())
+        + declared_integer_storage_bytes(unit.scale_denominator.bit_length())
+        + sum(
+            declared_integer_storage_bytes(abs(value).bit_length())
+            for _, numerator, denominator in dimension.terms
+            for value in (numerator, denominator)
+        )
+    )
+    binding = (
+        8192
+        + 24 * vertices
+        + 40 * faces
+        + 16 * regions
+        + 1024 * interface_count
+        + coordinate_string_bytes
+        + coordinate_integer_bytes
+    )
+    work = (
+        512
+        + 16
+        * (
+            vertex_capacity
+            + edge_capacity
+            + face_capacity
+            + region_capacity
+            + pair_capacity
+        )
+        + 24 * faces * (4 * max(1, faces).bit_length())
+        + 32 * vertices
+        + 64 * faces
+        + regions * regions
+        + len(coordinate_contract.spatial_id)
+        + binding_json_work
+    )
+    scratch = (
+        8192
+        + 16
+        * (
+            vertex_capacity
+            + edge_capacity
+            + face_capacity
+            + region_capacity
+            + pair_capacity
+        )
+        + 8 * vertex_capacity * slots
+        + 64 * vertices
+        + 256 * faces
+        + 512 * region_capacity
+        + 1024 * pair_capacity
+        + 512
+        + 2 * binding_json_bytes
+    )
+    return work, scratch, binding
+
+
+def _prepare_label_field_binding_facts(
+    extraction: LabelFieldSurfaceExtractionResult,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+) -> tuple[
+    PiecewiseLinearDomain,
+    LabelFieldSurfaceExtractionResult,
+    SpatialCoordinateContract,
+    LabelFieldSurfaceLineage,
+    LabelFieldSurfaceExtractionEvidence,
+    str,
+    str,
+    str,
+    str,
+    tuple[tuple[str, str, str, bool], ...],
+]:
+    if not extraction.accepted or not extraction.evidence.collision_certified:
+        raise ValueError(
+            "LabelFieldVolumeBinding.extraction must be accepted and collision-certified; got refused or uncertified extraction"
+        )
+    topology = extraction.topology
+    state = extraction.state
+    if topology is None or state is None:
+        raise ValueError(
+            "LabelFieldVolumeBinding.extraction must retain represented topology and state; got absent geometry"
+        )
+    state.require_topology(topology)
+    for mask, count in (
+        (topology.vertex_active, topology.vertex_count),
+        (topology.edge_active, topology.edge_count),
+        (topology.face_active, topology.face_count),
+        (topology.region_active, topology.region_count),
+        (topology.pair_active, topology.region_pair_count),
+    ):
+        active = np.asarray(mask, dtype=np.bool_)
+        if not np.array_equal(active, np.arange(active.size) < count):
+            raise ValueError(
+                f"LabelFieldVolumeBinding.active_masks must use active prefixes; got a mask inconsistent with count {count}"
+            )
+    if (
+        not np.array_equal(state.vertex_active, topology.vertex_active)
+        or not np.array_equal(state.region_active, topology.region_active)
+        or not np.array_equal(state.slot_active, topology.slot_active)
+    ):
+        raise ValueError(
+            "LabelFieldVolumeBinding.state_masks must match topology masks; got inconsistent vertex, region, or slot masks"
+        )
+    positions = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
+    validation = extraction.evidence.validation
+    if (
+        validation is None
+        or validation.topology_id != topology.topology_id
+        or validation.lineage_id != topology.lineage_id
+        or validation.geometry_id != geometry_id(topology, positions)
+        or extraction.evidence.lineage_id != extraction.lineage.lineage_id
+        or extraction.lineage.region_ids != topology.region_ids
+    ):
+        raise ValueError(
+            "LabelFieldVolumeBinding.evidence must match reconstructed topology, geometry, lineage, and regions; got stale extraction evidence"
+        )
+    boundary = extraction.lineage.boundary_region_id
+    if boundary not in topology.region_ids:
+        raise ValueError(
+            f"LabelFieldVolumeBinding.boundary_region_id must identify an explicit exterior region; got {boundary!r}"
+        )
+    finite = tuple(value for value in topology.region_ids if value != boundary)
+    if not finite:
+        raise ValueError(
+            "LabelFieldVolumeBinding.regions must include a finite material region; got only the boundary region"
+        )
+    mapping = np.asarray(
+        [
+            -1 if value == boundary else finite.index(value)
+            for value in topology.region_ids
+        ],
+        dtype=np.int64,
+    )
+    source = canonical_fingerprint(
+        {
+            "kind": "label-field-volume-source",
+            "lineage": extraction.lineage.lineage_id,
+            "coordinates": coordinate_contract.spatial_id,
+        }
+    )
+    domain = PiecewiseLinearDomain(
+        positions,
+        topology.host_faces(),
+        mapping[topology.host_face_labels()],
+        finite,
+        source_id=source,
+    )
+    interior = np.unique(
+        np.sort(
+            domain.facet_regions[np.all(domain.facet_regions >= 0, axis=1)], axis=0
+        ),
+        axis=0,
+    )
+    interface_definitions = tuple(
+        (
+            canonical_fingerprint(
+                {
+                    "kind": "reconstructed-material-interface",
+                    "source": source,
+                    "regions": tuple(sorted((finite[first], finite[second]))),
+                }
+            ),
+            finite[first],
+            finite[second],
+            True,
+        )
+        for first, second in interior.tolist()
+    )
+    interpretation = "freudenthal-categorical-interface-reconstruction"
+    binding_id = canonical_fingerprint(
+        {
+            "kind": "label-field-volume-binding",
+            "source": source,
+            "domain": domain.domain_id,
+            "topology": topology.topology_id,
+            "surface_lineage": topology.lineage_id,
+            "vertex_global_ids": array_tree_fingerprint(
+                np.asarray(
+                    topology.vertex_global_ids[: topology.vertex_count],
+                    dtype=np.int64,
+                )
+            ),
+            "face_global_ids": array_tree_fingerprint(
+                np.asarray(
+                    topology.face_global_ids[: topology.face_count], dtype=np.int64
+                )
+            ),
+            "epoch": topology.epoch,
+            "validation": validation.evidence_id,
+            "extraction": extraction.evidence.evidence_id,
+            "interpretation": interpretation,
+            "interfaces": interface_definitions,
+        }
+    )
+    return (
+        domain,
+        extraction,
+        coordinate_contract,
+        extraction.lineage,
+        extraction.evidence,
+        interpretation,
+        source,
+        domain.source_revision,
+        binding_id,
+        interface_definitions,
+    )
+
+
+def _prepare_label_field_binding(
+    extraction: LabelFieldSurfaceExtractionResult,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[
+    PiecewiseLinearDomain,
+    LabelFieldSurfaceExtractionResult,
+    SpatialCoordinateContract,
+    LabelFieldSurfaceLineage,
+    LabelFieldSurfaceExtractionEvidence,
+    str,
+    str,
+    str,
+    str,
+    tuple[tuple[str, str, str, bool], ...],
+]:
+    if budget is None:
+        extraction.validate_source_integrity()
+        return _prepare_label_field_binding_facts(extraction, coordinate_contract)
+    work, scratch_bytes, result_bytes = _label_surface_validation_bounds(extraction)
+    result_bytes -= _label_surface_shared_topology_bytes(extraction)
+    with budget.temporary_scope():
+        _admit_label_field_phase(
+            budget, work, scratch_bytes, result_bytes, 256
+        )
+        rebuilt = _validate_label_extraction_result(extraction)
+        try:
+            facts = _prepare_label_field_binding_facts(
+                extraction, coordinate_contract
+            )
+        finally:
+            del rebuilt
+            budget.release_temporary_storage(scratch_bytes + result_bytes)
+            budget.ticket.checkpoint()
+    return facts
+
+
+def _require_label_field_binding_facts(
+    owner: LabelFieldVolumeBinding,
+    facts: tuple[
+        PiecewiseLinearDomain,
+        LabelFieldSurfaceExtractionResult,
+        SpatialCoordinateContract,
+        LabelFieldSurfaceLineage,
+        LabelFieldSurfaceExtractionEvidence,
+        str,
+        str,
+        str,
+        str,
+        tuple[tuple[str, str, str, bool], ...],
+    ],
+    /,
+) -> None:
+    (
+        domain,
+        _,
+        _,
+        lineage,
+        extraction_evidence,
+        interpretation,
+        source_id,
+        source_revision,
+        binding_id,
+        interface_definitions,
+    ) = facts
+    if (
+        binding_id != owner.binding_id
+        or source_id != owner.source_id
+        or source_revision != owner.source_revision
+        or interface_definitions != owner.interface_definitions
+        or interpretation != owner.interpretation
+        or array_tree_fingerprint(domain) != array_tree_fingerprint(owner.domain)
+        or lineage.lineage_id != owner.lineage.lineage_id
+        or extraction_evidence.evidence_id != owner.extraction_evidence.evidence_id
+    ):
+        raise ValueError(
+            "LabelFieldVolumeBinding.restored must match retained extraction and binding identity; got stale binding"
+        )
 @final
 class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
     """Bind represented volume to an accepted shared reconstructed interface.
@@ -405,156 +1029,90 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
         extraction: LabelFieldSurfaceExtractionResult,
         coordinate_contract: SpatialCoordinateContract,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        extraction.validate_source_integrity()
-        if not extraction.accepted or not extraction.evidence.collision_certified:
-            raise ValueError(
-                "LabelFieldVolumeBinding.extraction must be accepted and collision-certified; got refused or uncertified extraction"
+        if budget is None:
+            facts = _prepare_label_field_binding(
+                extraction, coordinate_contract, budget=None
             )
-        topology = extraction.topology
-        state = extraction.state
-        if topology is None or state is None:
-            raise ValueError(
-                "LabelFieldVolumeBinding.extraction must retain represented topology and state; got absent geometry"
-            )
-        state.require_topology(topology)
-        for mask, count in (
-            (topology.vertex_active, topology.vertex_count),
-            (topology.edge_active, topology.edge_count),
-            (topology.face_active, topology.face_count),
-            (topology.region_active, topology.region_count),
-            (topology.pair_active, topology.region_pair_count),
-        ):
-            active = np.asarray(mask, dtype=np.bool_)
-            if not np.array_equal(active, np.arange(active.size) < count):
-                raise ValueError(
-                    f"LabelFieldVolumeBinding.active_masks must use active prefixes; got a mask inconsistent with count {count}"
-                )
-        if (
-            not np.array_equal(state.vertex_active, topology.vertex_active)
-            or not np.array_equal(state.region_active, topology.region_active)
-            or not np.array_equal(state.slot_active, topology.slot_active)
-        ):
-            raise ValueError(
-                "LabelFieldVolumeBinding.state_masks must match topology masks; got inconsistent vertex, region, or slot masks"
-            )
-        positions = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
-        validation = extraction.evidence.validation
-        if (
-            validation is None
-            or validation.topology_id != topology.topology_id
-            or validation.lineage_id != topology.lineage_id
-            or validation.geometry_id != geometry_id(topology, positions)
-            or extraction.evidence.lineage_id != extraction.lineage.lineage_id
-            or extraction.lineage.region_ids != topology.region_ids
-        ):
-            raise ValueError(
-                "LabelFieldVolumeBinding.evidence must match reconstructed topology, geometry, lineage, and regions; got stale extraction evidence"
-            )
-        boundary = extraction.lineage.boundary_region_id
-        if boundary not in topology.region_ids:
-            raise ValueError(
-                f"LabelFieldVolumeBinding.boundary_region_id must identify an explicit exterior region; got {boundary!r}"
-            )
-        finite = tuple(value for value in topology.region_ids if value != boundary)
-        if not finite:
-            raise ValueError(
-                "LabelFieldVolumeBinding.regions must include a finite material region; got only the boundary region"
-            )
-        mapping = np.asarray(
-            [
-                -1 if value == boundary else finite.index(value)
-                for value in topology.region_ids
-            ],
-            dtype=np.int64,
-        )
-        source = canonical_fingerprint(
-            {
-                "kind": "label-field-volume-source",
-                "lineage": extraction.lineage.lineage_id,
-                "coordinates": coordinate_contract.spatial_id,
-            }
-        )
-        domain = PiecewiseLinearDomain(
-            positions,
-            topology.host_faces(),
-            mapping[topology.host_face_labels()],
-            finite,
-            source_id=source,
-        )
-        interior = np.unique(
-            np.sort(
-                domain.facet_regions[np.all(domain.facet_regions >= 0, axis=1)], axis=1
-            ),
-            axis=0,
-        )
-        self.interface_definitions = tuple(
             (
-                canonical_fingerprint(
-                    {
-                        "kind": "reconstructed-material-interface",
-                        "source": source,
-                        "regions": tuple(sorted((finite[first], finite[second]))),
-                    }
-                ),
-                finite[first],
-                finite[second],
-                True,
+                self.domain,
+                self.extraction,
+                self.coordinate_contract,
+                self.lineage,
+                self.extraction_evidence,
+                self.interpretation,
+                self.source_id,
+                self.source_revision,
+                self.binding_id,
+                self.interface_definitions,
+            ) = facts
+            return
+        work, scratch_bytes, binding_bytes = _label_binding_resource_bounds(
+            extraction, coordinate_contract
+        )
+        input_bytes = (
+            0
+            if budget.retained_owner_objects.get(id(extraction)) is extraction
+            else _label_extraction_storage_upper(extraction)
+        )
+        result_bytes = binding_bytes + input_bytes
+        with budget.temporary_scope() as lifetime:
+            _admit_label_field_phase(
+                budget, work, scratch_bytes, result_bytes, 512
             )
-            for first, second in interior.tolist()
-        )
-        self.domain = domain
-        self.extraction = extraction
-        self.coordinate_contract = coordinate_contract
-        self.lineage = extraction.lineage
-        self.extraction_evidence = extraction.evidence
-        self.interpretation = "freudenthal-categorical-interface-reconstruction"
-        self.source_id = source
-        self.source_revision = domain.source_revision
-        self.binding_id = canonical_fingerprint(
-            {
-                "kind": "label-field-volume-binding",
-                "source": source,
-                "domain": domain.domain_id,
-                "topology": topology.topology_id,
-                "surface_lineage": topology.lineage_id,
-                "vertex_global_ids": array_tree_fingerprint(
-                    np.asarray(
-                        topology.vertex_global_ids[: topology.vertex_count],
-                        dtype=np.int64,
-                    )
-                ),
-                "face_global_ids": array_tree_fingerprint(
-                    np.asarray(
-                        topology.face_global_ids[: topology.face_count], dtype=np.int64
-                    )
-                ),
-                "epoch": topology.epoch,
-                "validation": validation.evidence_id,
-                "extraction": extraction.evidence.evidence_id,
-                "interpretation": self.interpretation,
-                "interfaces": self.interface_definitions,
-            }
-        )
+            facts = _prepare_label_field_binding(
+                extraction, coordinate_contract, budget=budget
+            )
+            (
+                self.domain,
+                self.extraction,
+                self.coordinate_contract,
+                self.lineage,
+                self.extraction_evidence,
+                self.interpretation,
+                self.source_id,
+                self.source_revision,
+                self.binding_id,
+                self.interface_definitions,
+            ) = facts
+            del facts
+            _finish_label_field_phase(
+                budget, lifetime, self, scratch_bytes, result_bytes
+            )
 
-    def validate_source_integrity(self) -> None:
+    def validate_source_integrity(
+        self, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> None:
         """Re-admit the retained extraction and compare its binding identity."""
-        expected = LabelFieldVolumeBinding(self.extraction, self.coordinate_contract)
-        if (
-            expected.binding_id != self.binding_id
-            or expected.source_id != self.source_id
-            or expected.source_revision != self.source_revision
-            or expected.interface_definitions != self.interface_definitions
-            or expected.interpretation != self.interpretation
-            or array_tree_fingerprint(expected.domain)
-            != array_tree_fingerprint(self.domain)
-            or expected.lineage.lineage_id != self.lineage.lineage_id
-            or expected.extraction_evidence.evidence_id
-            != self.extraction_evidence.evidence_id
-        ):
-            raise ValueError(
-                "LabelFieldVolumeBinding.restored must match retained extraction and binding identity; got stale binding"
+        if budget is None:
+            facts = _prepare_label_field_binding(
+                self.extraction, self.coordinate_contract, budget=None
             )
+            _require_label_field_binding_facts(self, facts)
+            return
+        work, scratch_bytes, binding_bytes = _label_binding_resource_bounds(
+            self.extraction, self.coordinate_contract
+        )
+        input_bytes = (
+            0
+            if budget.retained_owner_objects.get(id(self.extraction))
+            is self.extraction
+            else _label_extraction_storage_upper(self.extraction)
+        )
+        result_bytes = binding_bytes + input_bytes
+        with budget.temporary_scope():
+            _admit_label_field_phase(
+                budget, work, scratch_bytes, result_bytes, 0
+            )
+            facts = _prepare_label_field_binding(
+                self.extraction, self.coordinate_contract, budget=budget
+            )
+            try:
+                _require_label_field_binding_facts(self, facts)
+            finally:
+                del facts
 
 
 @final
@@ -660,11 +1218,170 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
         /,
         *,
         site_coordinates: ArrayLike | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedLabelFieldSurfaceExtraction:
         """Prepare uniform sites or an explicit sparse subset of a 3D grid."""
         return PreparedLabelFieldSurfaceExtraction(
-            self, grid_shape, site_coordinates=site_coordinates
+            self, grid_shape, site_coordinates=site_coordinates, budget=budget
         )
+
+
+def _label_grid_shape(
+    grid_shape: tuple[int, int, int], /
+) -> tuple[int, int, int]:
+    if len(grid_shape) != 3:
+        raise ValueError(
+            f"PreparedLabelFieldSurfaceExtraction.grid_shape must contain three dimensions; got {grid_shape!r}"
+        )
+    shape: tuple[int, int, int] = (
+        nonnegative_integer(grid_shape[0], "grid_shape[0]"),
+        nonnegative_integer(grid_shape[1], "grid_shape[1]"),
+        nonnegative_integer(grid_shape[2], "grid_shape[2]"),
+    )
+    if any(value == 0 for value in shape):
+        raise ValueError(
+            f"PreparedLabelFieldSurfaceExtraction.grid_shape must have positive dimensions; got {shape!r}"
+        )
+    return shape
+
+
+def _label_site_layout(
+    shape: tuple[int, int, int],
+    site_coordinates: ArrayLike | None,
+    /,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    tuple[int, ...],
+    LabelFieldSurfaceExtractionRoute,
+]:
+    if site_coordinates is None:
+        coordinates = np.stack(
+            np.meshgrid(
+                *(np.arange(value, dtype=np.int64) for value in shape),
+                indexing="ij",
+            ),
+            axis=-1,
+        ).reshape((-1, 3))
+        order = np.arange(coordinates.shape[0], dtype=np.int64)
+        source_shape = shape
+        route: LabelFieldSurfaceExtractionRoute = "uniform-grid"
+    else:
+        raw = np.asarray(site_coordinates)
+        if raw.ndim != 2 or raw.shape[1] != 3 or raw.dtype.kind not in "iu":
+            raise ValueError(
+                f"PreparedLabelFieldSurfaceExtraction.site_coordinates must be an integer (sites, 3) array; got {raw.dtype} {raw.shape}"
+            )
+        coordinates_ = raw.astype(np.int64)
+        if coordinates_.shape[0] == 0:
+            raise ValueError(
+                "PreparedLabelFieldSurfaceExtraction.site_coordinates must be nonempty; got zero sites"
+            )
+        bounds = np.asarray(shape, dtype=np.int64)
+        if np.any(coordinates_ < 0) or np.any(coordinates_ >= bounds):
+            raise ValueError(
+                f"PreparedLabelFieldSurfaceExtraction.site_coordinates must lie inside grid_shape {shape!r}; got out-of-range coordinates"
+            )
+        order = np.lexsort(
+            (coordinates_[:, 2], coordinates_[:, 1], coordinates_[:, 0])
+        )
+        coordinates = coordinates_[order]
+        if np.any(np.all(coordinates[1:] == coordinates[:-1], axis=1)):
+            raise ValueError(
+                "PreparedLabelFieldSurfaceExtraction.site_coordinates must be unique; got duplicate sites"
+            )
+        source_shape = (coordinates.shape[0],)
+        route = "sparse-grid"
+    scope = Scope()
+    coordinates = parse(
+        coordinates,
+        HostInt64[_ExtractionSiteDim, Literal[3]],
+        "site_coordinates",
+        scope=scope,
+    )
+    order = parse(order, HostInt64[_ExtractionSiteDim], "source_order", scope=scope)
+    return coordinates, order, source_shape, route
+
+
+def _label_site_input_bounds(
+    grid_shape: tuple[int, int, int],
+    site_coordinates: ArrayLike | None,
+    /,
+) -> tuple[int, int]:
+    if site_coordinates is None:
+        return math.prod(grid_shape), 0
+    if isinstance(site_coordinates, np.ndarray):
+        return site_coordinates.shape[0], 0
+    if isinstance(site_coordinates, Sequence):
+        site_count = len(site_coordinates)
+        input_elements = 0
+        for row in site_coordinates:
+            row_shape = getattr(row, "shape", None)
+            if row_shape is not None:
+                if len(row_shape) > 1:
+                    raise TypeError(
+                        "PreparedLabelFieldSurfaceExtraction.site_coordinates sequence rows must be one-dimensional; got a nested row"
+                    )
+                input_elements += math.prod(row_shape) if row_shape else 1
+            elif isinstance(row, Sequence):
+                if any(
+                    isinstance(value, Sequence)
+                    or (
+                        isinstance(value, np.ndarray) and value.ndim > 0
+                    )
+                    or (
+                        getattr(value, "shape", None) is not None
+                        and len(value.shape) > 0
+                    )
+                    for value in row
+                ):
+                    raise TypeError(
+                        "PreparedLabelFieldSurfaceExtraction.site_coordinates sequence rows must contain scalar values; got nested coordinates"
+                    )
+                input_elements += len(row)
+            else:
+                input_elements += 1
+        return site_count, 8 * input_elements + 32 * site_count
+    site_shape = getattr(site_coordinates, "shape", None)
+    if site_shape is None:
+        raise TypeError(
+            "PreparedLabelFieldSurfaceExtraction.site_coordinates must expose an array shape or be a finite sequence; got an unbounded array-like"
+        )
+    site_count = int(site_shape[0]) if len(site_shape) else 0
+    input_elements = math.prod(site_shape) if site_shape else 1
+    dtype = getattr(site_coordinates, "dtype", None)
+    input_itemsize = 8 if dtype is None else np.dtype(dtype).itemsize
+    return site_count, input_elements * input_itemsize
+
+def _set_prepared_label_layout(
+    owner: PreparedLabelFieldSurfaceExtraction,
+    plan: LabelFieldSurfaceExtractionPlan,
+    shape: tuple[int, int, int],
+    layout: tuple[
+        np.ndarray,
+        np.ndarray,
+        tuple[int, ...],
+        LabelFieldSurfaceExtractionRoute,
+    ],
+    /,
+) -> None:
+    coordinates, order, source_shape, route = layout
+    owner.plan = plan
+    owner.site_coordinates = coordinates
+    owner.source_order = order
+    owner.grid_shape = shape
+    owner.source_shape = source_shape
+    owner.route = route
+    owner.site_count = coordinates.shape[0]
+    owner.prepared_id = canonical_fingerprint(
+        {
+            "kind": "prepared-label-field-surface-extraction",
+            "plan": plan.plan_id,
+            "grid_shape": list(shape),
+            "route": route,
+            "site_coordinates": array_tree_fingerprint(coordinates),
+        }
+    )
 
 
 @final
@@ -690,85 +1407,67 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         /,
         *,
         site_coordinates: ArrayLike | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        if len(grid_shape) != 3:
-            raise ValueError(
-                f"PreparedLabelFieldSurfaceExtraction.grid_shape must contain three dimensions; got {grid_shape!r}"
-            )
-        shape: tuple[int, int, int] = (
-            nonnegative_integer(grid_shape[0], "grid_shape[0]"),
-            nonnegative_integer(grid_shape[1], "grid_shape[1]"),
-            nonnegative_integer(grid_shape[2], "grid_shape[2]"),
-        )
-        if any(value == 0 for value in shape):
-            raise ValueError(
-                f"PreparedLabelFieldSurfaceExtraction.grid_shape must have positive dimensions; got {shape!r}"
-            )
+        shape = _label_grid_shape(grid_shape)
+        if budget is None:
+            layout = _label_site_layout(shape, site_coordinates)
+            _set_prepared_label_layout(self, plan, shape, layout)
+            return
+        if isinstance(site_coordinates, Sequence):
+            budget.reserve(len(site_coordinates))
+        site_count, input_bytes = _label_site_input_bounds(shape, site_coordinates)
         if site_coordinates is None:
-            coordinates = np.stack(
-                np.meshgrid(
-                    *(np.arange(value, dtype=np.int64) for value in shape),
-                    indexing="ij",
-                ),
-                axis=-1,
-            ).reshape((-1, 3))
-            order = np.arange(coordinates.shape[0], dtype=np.int64)
-            source_shape = shape
-            route: LabelFieldSurfaceExtractionRoute = "uniform-grid"
+            # The three meshgrid tables coexist with the stacked coordinates.
+            scratch_bytes = 48 * site_count + 8192
+            work_units = 12 * site_count + 256
         else:
-            raw = np.asarray(site_coordinates)
-            if raw.ndim != 2 or raw.shape[1] != 3 or raw.dtype.kind not in "iu":
-                raise ValueError(
-                    f"PreparedLabelFieldSurfaceExtraction.site_coordinates must be an integer (sites, 3) array; got {raw.dtype} {raw.shape}"
+            # Cast/sort copies coexist with the retained ordered coordinates.
+            scratch_bytes = 64 * site_count + input_bytes + 8192
+            work_units = (
+                8 + 4 * max(1, site_count.bit_length())
+            ) * site_count + 256
+            work_units += input_bytes
+        work_units += 8 * len(plan.label_ids)
+        result_bytes = (
+            32 * site_count
+            + 8192
+            + 512 * len(plan.label_ids)
+            + _label_string_storage_upper(
+                itertools.chain(
+                    plan.label_ids,
+                    (
+                        plan.boundary_region_id,
+                        plan.source,
+                        plan.plan_id,
+                        plan.capacity_plan.resource_id,
+                        plan.capacity_plan.plan_id,
+                        plan.validation_policy.profile,
+                        plan.validation_policy.policy_id,
+                    ),
                 )
-            coordinates_ = raw.astype(np.int64)
-            if coordinates_.shape[0] == 0:
-                raise ValueError(
-                    "PreparedLabelFieldSurfaceExtraction.site_coordinates must be nonempty; got zero sites"
-                )
-            bounds = np.asarray(shape, dtype=np.int64)
-            if np.any(coordinates_ < 0) or np.any(coordinates_ >= bounds):
-                raise ValueError(
-                    f"PreparedLabelFieldSurfaceExtraction.site_coordinates must lie inside grid_shape {shape!r}; got out-of-range coordinates"
-                )
-            order = np.lexsort(
-                (coordinates_[:, 2], coordinates_[:, 1], coordinates_[:, 0])
             )
-            coordinates = coordinates_[order]
-            if np.any(np.all(coordinates[1:] == coordinates[:-1], axis=1)):
-                raise ValueError(
-                    "PreparedLabelFieldSurfaceExtraction.site_coordinates must be unique; got duplicate sites"
-                )
-            source_shape = (coordinates.shape[0],)
-            route = "sparse-grid"
-        scope = Scope()
-        coordinates = parse(
-            coordinates,
-            HostInt64[_ExtractionSiteDim, Literal[3]],
-            "site_coordinates",
-            scope=scope,
         )
-        order = parse(order, HostInt64[_ExtractionSiteDim], "source_order", scope=scope)
-        self.plan = plan
-        self.site_coordinates = coordinates
-        self.source_order = order
-        self.grid_shape = shape
-        self.source_shape = source_shape
-        self.route = route
-        self.site_count = coordinates.shape[0]
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-label-field-surface-extraction",
-                "plan": plan.plan_id,
-                "grid_shape": list(shape),
-                "route": route,
-                "site_coordinates": array_tree_fingerprint(coordinates),
-            }
-        )
+        retained_work = 64 + 8 * len(plan.label_ids)
+        with budget.temporary_scope() as lifetime:
+            _admit_label_field_phase(
+                budget, work_units, scratch_bytes, result_bytes, retained_work
+            )
+            layout = _label_site_layout(shape, site_coordinates)
+            _set_prepared_label_layout(self, plan, shape, layout)
+            _finish_label_field_phase(
+                budget, lifetime, self, scratch_bytes, result_bytes
+            )
 
-    def extract(self, state: LabelFieldState, /) -> LabelFieldSurfaceExtractionResult:
+    def extract(
+        self,
+        state: LabelFieldState,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> LabelFieldSurfaceExtractionResult:
         """Extract and certify geometry from one label-field epoch."""
-        return _extract(self, state)
+        return _extract(self, state, budget=budget)
 
 
 @dataclass(frozen=True, slots=True)
@@ -995,11 +1694,16 @@ def _label_components(corner_labels: np.ndarray, label: int, /) -> int:
     return components
 
 
-def _ambiguities(labels: np.ndarray, /) -> tuple[int, int]:
+def _ambiguities(
+    labels: np.ndarray, /
+) -> tuple[int, int, int, int, int]:
     shape = labels.shape
     flat = labels.reshape(-1)
     ambiguous = 0
     multi_label_tetrahedra = 0
+    mixed_tetrahedra = 0
+    dual_face_count = 0
+    dual_face_centers = 0
     for i in range(shape[0] - 1):
         for j in range(shape[1] - 1):
             for k in range(shape[2] - 1):
@@ -1016,9 +1720,29 @@ def _ambiguities(labels: np.ndarray, /) -> tuple[int, int]:
                 base = (i, j, k)
                 for permutation in _TETRAHEDRON_PERMUTATIONS:
                     tetrahedron = _tetrahedron_vertices(base, permutation, shape)
-                    if np.unique(flat[list(tetrahedron)]).size >= 3:
+                    tetrahedron_labels = flat[list(tetrahedron)]
+                    tetrahedron_unique = np.unique(tetrahedron_labels)
+                    if tetrahedron_unique.size > 1:
+                        mixed_tetrahedra += 1
+                    if tetrahedron_unique.size >= 3:
                         multi_label_tetrahedra += 1
-    return ambiguous, multi_label_tetrahedra
+                    for local_face in _TETRAHEDRON_FACES:
+                        differing_edges = 0
+                        for first, second in _FACE_EDGES:
+                            if (
+                                tetrahedron_labels[local_face[first]]
+                                != tetrahedron_labels[local_face[second]]
+                            ):
+                                differing_edges += 1
+                        dual_face_count += differing_edges
+                        dual_face_centers += int(differing_edges > 0)
+    return (
+        ambiguous,
+        multi_label_tetrahedra,
+        dual_face_count,
+        dual_face_centers,
+        mixed_tetrahedra,
+    )
 
 
 def _interface_centroid(
@@ -1321,13 +2045,322 @@ def _evidence(
     )
 
 
-def _extract(
-    prepared: PreparedLabelFieldSurfaceExtraction, state: LabelFieldState, /
-) -> LabelFieldSurfaceExtractionResult:
-    regions = _region_map(prepared, state)
+def _label_field_region_bounds(
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    dense_shape: tuple[int, int, int],
+    state: LabelFieldState,
+    /,
+) -> tuple[int, int, int, int, int, int]:
+    site_count = prepared.site_count
+    dense_count = math.prod(dense_shape)
+    padded_count = math.prod(tuple(value + 2 for value in dense_shape))
+    cube_count = math.prod(tuple(value + 1 for value in dense_shape))
+    region_count = len(prepared.plan.label_ids) + 1
+    region_json_bytes = _label_json_text_upper(
+        itertools.chain(
+            (prepared.prepared_id,),
+            (state.binding_id, state.route_id, state.prepared_id, state.site_id),
+        )
+    )
+    region_work = (
+        512
+        + 16 * site_count
+        + 24 * dense_count
+        + 12 * padded_count
+        + 8 * region_count
+        + region_json_bytes
+    )
+    ambiguity_work = 128 + 256 * cube_count
+    region_scratch = 8192 + 64 * site_count + 2 * region_json_bytes
+    # Eight bounded cell labels, unique labels, and component sets/stack objects.
+    ambiguity_scratch = 4096
+    # Four region tuples hold references for ids/kinds and 272 bytes per integer or
+    # float entry for source indices and volumes; counts scale with all source labels.
+    region_bytes = (
+        2048
+        + 8 * dense_count
+        + 576 * region_count
+        + 272 * len(prepared.plan.label_ids)
+        + 512
+    )
+    padded_bytes = 256 + 8 * padded_count
+    return (
+        region_work + ambiguity_work,
+        region_scratch + ambiguity_scratch,
+        region_scratch,
+        ambiguity_scratch,
+        region_bytes,
+        padded_bytes,
+    )
+
+
+
+def _label_extraction_metadata_bytes(
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    state: LabelFieldState,
+    /,
+    *,
+    early_result: bool,
+) -> tuple[int, int, int]:
     plan = prepared.plan
-    padded = np.pad(regions.dense_labels, 1, constant_values=regions.boundary_index)
-    ambiguous, multi_label_tetrahedra = _ambiguities(padded)
+    strings = itertools.chain(
+        plan.label_ids,
+        (
+            plan.boundary_region_id,
+            plan.source,
+            plan.plan_id,
+            plan.capacity_plan.resource_id,
+            plan.capacity_plan.plan_id,
+            plan.validation_policy.profile,
+            plan.validation_policy.policy_id,
+            state.binding_id,
+            state.route_id,
+            state.prepared_id,
+            state.site_id,
+        ),
+    )
+    generated_hashes = 3 if early_result else 9
+    seed_source_length = (
+        0
+        if early_result
+        else len(plan.source) + len(".multilabel-marching-tetrahedra")
+    )
+    identity_bytes = 0
+    json_text_bytes = 0
+    for value in strings:
+        identity_bytes += 256 + 4 * len(value)
+        json_text_bytes += 12 * len(value) + 2
+    identity_bytes += 512 * generated_hashes
+    json_text_bytes += (12 * 64 + 2) * generated_hashes
+    if seed_source_length:
+        identity_bytes += 256 + 4 * seed_source_length
+        json_text_bytes += 12 * seed_source_length + 2
+    return identity_bytes, json_text_bytes, generated_hashes
+
+
+def _label_field_extraction_bounds(
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    dense_shape: tuple[int, int, int],
+    ambiguity: tuple[int, int, int, int, int],
+    early_result: bool,
+    state: LabelFieldState,
+    /,
+) -> tuple[int, int, int]:
+    metadata_bytes, metadata_json_bytes, metadata_hashes = (
+        _label_extraction_metadata_bytes(
+            prepared, state, early_result=early_result
+        )
+    )
+    if early_result:
+        region_capacity = max(
+            prepared.plan.capacity_plan.region_capacity,
+            len(prepared.plan.label_ids) + 1,
+        )
+        json_work = metadata_hashes * metadata_json_bytes
+        return (
+            256 + 64 * region_capacity + json_work,
+            4096 + 256 * region_capacity + 2 * metadata_json_bytes,
+            8192 + 512 * region_capacity + metadata_bytes,
+        )
+    capacity = prepared.plan.capacity_plan
+    vertices = capacity.vertex_capacity
+    edges = capacity.edge_capacity
+    faces = capacity.face_capacity
+    regions = capacity.region_capacity
+    pairs = capacity.region_pair_capacity
+    valence = capacity.maximum_edge_valence
+    slots = capacity.maximum_vertex_region_pairs
+    padded_count = math.prod(tuple(value + 2 for value in dense_shape))
+    cube_count = math.prod(tuple(value + 1 for value in dense_shape))
+    dual_faces = ambiguity[2]
+    dual_face_centers = ambiguity[3]
+    mixed_tetrahedra = ambiguity[4]
+    dual_vertices = dual_face_centers + mixed_tetrahedra
+    candidate_pairs = prepared.plan.validation_policy.intersection_candidate_capacity
+    validation_face_count = min(dual_faces, faces)
+    candidate_tests = min(
+        candidate_pairs,
+        validation_face_count * max(0, validation_face_count - 1) // 2,
+    )
+    candidate_block = min(1 << 20, validation_face_count * validation_face_count)
+    evidence_region_count = max(
+        regions, len(prepared.plan.label_ids) + 1
+    )
+    maximum_region_pairs = (
+        (len(prepared.plan.label_ids) + 1) * len(prepared.plan.label_ids) // 2
+    )
+    source_pair_upper = min(maximum_region_pairs, 3 * padded_count)
+    evidence_pair_count = min(maximum_region_pairs, source_pair_upper + dual_faces)
+    evidence_pair_storage = max(pairs, evidence_pair_count)
+    maximum_region_name_length = max(
+        (len(value) for value in itertools.chain(
+            prepared.plan.label_ids, (prepared.plan.boundary_region_id,)
+        )),
+        default=0,
+    )
+    pair_json_bytes = evidence_pair_count * 2 * (
+        12 * maximum_region_name_length + 2
+    )
+    json_payload_bytes = (
+        metadata_json_bytes
+        + pair_json_bytes
+        + 128 * evidence_region_count
+        + 128 * evidence_pair_count
+        + 2048
+    )
+    dual_sort = (4 * max(1, dual_faces) + 1).bit_length()
+    capacity_sort = (4 * max(1, faces) + 1).bit_length()
+    work_units = (
+        512
+        + 16 * len(prepared.plan.label_ids)
+        + 72 * cube_count
+        + dual_faces * (32 + 24 * dual_sort)
+        + faces * (32 + 24 * capacity_sort)
+        + edges * (8 + 4 * valence + 24 * valence * valence)
+        + vertices * (8 + 4 * slots)
+        + 512 * candidate_tests
+        + 16 * evidence_pair_count
+        + metadata_hashes * json_payload_bytes
+        + 8 * padded_count
+    )
+    scratch_bytes = (
+        65536
+        + 96 * padded_count
+        + 2048 * dual_faces
+        + 128 * dual_vertices
+        + 256 * faces
+        + 64 * edges * valence
+        + 64 * edges * valence * valence
+        + 32 * vertices * slots
+        + 512 * candidate_tests
+        + 32 * pairs
+        + 512 * evidence_pair_count
+        + 64 * candidate_block
+        + 2 * json_payload_bytes
+    )
+    # The seed stores 32 bytes per dual vertex and 48 per emitted face.
+    # Capacity terms cover padded topology/state/routes/BVH; evidence tuples use
+    # 3072 bytes per region and 2048 per pair for their retained scalar records.
+    result_bytes = (
+        32 * dual_vertices
+        + 48 * dual_faces
+        + vertices * (57 + 9 * slots)
+        + edges * (17 + 24 * valence)
+        + 512 * faces
+        + 3072 * evidence_region_count
+        + 2048 * evidence_pair_storage
+        + 24576
+        + metadata_bytes
+    )
+    return work_units, scratch_bytes, result_bytes
+
+
+def _extract(
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    state: LabelFieldState,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> LabelFieldSurfaceExtractionResult:
+    if budget is None:
+        return _extract_core(prepared, state)
+    budget.ticket.checkpoint()
+    match prepared.route:
+        case "uniform-grid":
+            dense_shape = prepared.grid_shape
+        case "sparse-grid":
+            sparse_scratch = 48 * prepared.site_count + 1024
+            with budget.temporary_scope():
+                budget.reserve(6 * prepared.site_count, sparse_scratch)
+                coordinates = np.asarray(prepared.site_coordinates, dtype=np.int64)
+                lower = np.min(coordinates, axis=0)
+                upper = np.max(coordinates, axis=0)
+                dense_shape = (
+                    int(upper[0] - lower[0] + 1),
+                    int(upper[1] - lower[1] + 1),
+                    int(upper[2] - lower[2] + 1),
+                )
+                del coordinates, lower, upper
+                budget.release_temporary_storage(sparse_scratch)
+        case _ as unreachable:
+            raise AssertionError(f"Unsupported label-field extraction route: {unreachable!r}")
+    (
+        region_work,
+        stage_one_scratch,
+        region_scratch,
+        ambiguity_scratch,
+        region_bytes,
+        padded_bytes,
+    ) = _label_field_region_bounds(prepared, dense_shape, state)
+    with budget.temporary_scope() as lifetime:
+        _admit_label_field_phase(
+            budget,
+            region_work,
+            stage_one_scratch + region_bytes + padded_bytes,
+            0,
+            0,
+        )
+        regions = None
+        padded = None
+        ambiguity = None
+        try:
+            regions = _region_map(prepared, state)
+            padded = np.pad(
+                regions.dense_labels, 1, constant_values=regions.boundary_index
+            )
+            ambiguity = _ambiguities(padded)
+            early_result = (
+                sum(kind == "finite" for kind in regions.region_kinds) == 0
+                or np.unique(padded).size < 2
+                or ambiguity[0] > prepared.plan.maximum_ambiguous_cells
+            )
+            budget.release_temporary_storage(region_scratch + ambiguity_scratch)
+        except BaseException:
+            del regions, padded, ambiguity
+            raise
+        work_units, scratch_bytes, result_bytes = _label_field_extraction_bounds(
+            prepared, dense_shape, ambiguity, early_result, state
+        )
+        try:
+            _admit_label_field_phase(
+                budget, work_units, scratch_bytes, result_bytes, 512
+            )
+            result = _extract_core(
+                prepared,
+                state,
+                regions=regions,
+                padded=padded,
+                ambiguity=ambiguity,
+            )
+            _finish_label_field_phase(
+                budget, lifetime, result, scratch_bytes, result_bytes
+            )
+        except BaseException:
+            del regions, padded, ambiguity
+            raise
+        else:
+            del regions, padded, ambiguity
+            budget.release_temporary_storage(region_bytes + padded_bytes)
+    return result
+
+
+def _extract_core(
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    state: LabelFieldState,
+    /,
+    *,
+    regions: _RegionMap | None = None,
+    padded: np.ndarray | None = None,
+    ambiguity: tuple[int, int, int, int, int] | None = None,
+) -> LabelFieldSurfaceExtractionResult:
+    if regions is None:
+        regions = _region_map(prepared, state)
+    plan = prepared.plan
+    if padded is None:
+        padded = np.pad(regions.dense_labels, 1, constant_values=regions.boundary_index)
+    if ambiguity is None:
+        ambiguity = _ambiguities(padded)
+    ambiguous, multi_label_tetrahedra = ambiguity[:2]
     empty = _empty_counts(len(regions.region_ids))
     empty_capacity = plan.capacity_plan.capacity_evidence(empty)
     finite_count = sum(kind == "finite" for kind in regions.region_kinds)

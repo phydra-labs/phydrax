@@ -427,6 +427,47 @@ def test_bounded_representation_gap_scales_to_target_length_unit(
     assert not bounded_loss.changes_interpretation
 
 
+def test_bounded_declaration_does_not_consume_loss_allowance(
+    bounded_iges_export: tuple[BRepModel, CadExportResult, Path],
+) -> None:
+    _, _, path = bounded_iges_export
+    data = path.read_bytes()
+    strict = CadImportPolicy(CONTRACT, replace(LIMITS, max_losses=0))
+    imported = decode_iges_bytes(data, strict)
+    assert imported.report.status == AdapterStatus.DECLARED_LOSS
+    assert [loss.path for loss in imported.report.losses] == [
+        "bounded-coupled-approximation"
+    ]
+    # Append one unreferenced null entity: its dropped record still consumes allowance.
+    sections = _iges._lines(data, "test")
+    number = len(sections["D"]) + 1
+    pointer = len(sections["P"]) + 1
+    dropped = _replace_iges_section(
+        _replace_iges_section(
+            data,
+            "D",
+            [
+                *(line[:72] for line in sections["D"]),
+                f"{0:8d}{pointer:8d}" + f"{0:8d}" * 7,
+                f"{0:8d}{0:8d}{0:8d}{1:8d}{0:8d}" + " " * 24 + f"{0:8d}",
+            ],
+        ),
+        "P",
+        [*(line[:72] for line in sections["P"]), f"{'0;':64s}{number:8d}"],
+    )
+    with pytest.raises(CadInterchangeError) as refused:
+        decode_iges_bytes(dropped, strict)
+    assert refused.value.refusal.reason == "limit"
+    assert refused.value.refusal.entity == "resource"
+    admitted = decode_iges_bytes(
+        dropped, CadImportPolicy(CONTRACT, replace(LIMITS, max_losses=1))
+    )
+    assert [loss.path for loss in admitted.report.losses] == [
+        "E0",
+        "bounded-coupled-approximation",
+    ]
+
+
 @pytest.mark.parametrize(
     "descriptor",
     (

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Protocol
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -37,13 +36,32 @@ from ._request_preparations import TrimRequestPreparations
 _UNIT = np.finfo(np.float64).eps
 
 
-@eqx.filter_jit
-def _inverses(matrices: Array, plan: SmallLinearSolvePlan) -> Array:
+# Supported preconditioner batch shapes. Smaller buckets were measured to move
+# 3x3/4x4 inverse rows by one ulp against the 64-row program, which would
+# change declared preconditioner and inclusion bits; only the original 64-row
+# shape is supported.
+_PRECONDITIONER_ROWS: tuple[int, ...] = (64,)
+
+
+def _preconditioner_rows(count: int, /) -> int:
+    """Smallest supported row bucket holding ``min(count, 64)`` matrices."""
+    if count < 1:
+        raise ValueError(f"approximate_inverses.count must be positive; got {count}")
+    rows = min(count, _PRECONDITIONER_ROWS[-1])
+    return next(bucket for bucket in _PRECONDITIONER_ROWS if bucket >= rows)
+
+
+@jax.jit
+def _small_preconditioners(matrices: Array) -> Array:
+    """Batched 1x1 through 4x4 inverses through the linalg small-system owner."""
+    plan = SmallLinearSolvePlan(matrices.shape[-1])
     return inverse_small_linear(plan, matrices).value
 
 
-@eqx.filter_jit
-def _dense_inverses(matrices: Array) -> Array:
+@jax.jit
+def _dense_preconditioners(matrices: Array) -> Array:
+    """Batched dense inverses through the linalg LU owner; failures become zero."""
+
     def one(matrix: Array) -> Array:
         result = solve(
             LinearSystem(DenseLinearOperator(matrix)),
@@ -55,6 +73,15 @@ def _dense_inverses(matrices: Array) -> Array:
         )
 
     return jax.vmap(one)(matrices)
+
+
+def _preconditioner_kernel(dimension: int, /) -> jax.stages.Wrapped:
+    """Select the stable compiled inverse callable of a matrix dimension.
+
+    Host float64 ``(rows, dimension, dimension)`` arrays enter it directly;
+    ``rows`` is always a ``_PRECONDITIONER_ROWS`` bucket.
+    """
+    return _small_preconditioners if dimension <= 4 else _dense_preconditioners
 
 
 def round_interval(
@@ -137,22 +164,23 @@ class KrawczykEvaluator(Protocol):
 
 def approximate_inverses(matrices: np.ndarray, /) -> np.ndarray:
     """Floating preconditioners for Krawczyk; any matrix keeps the test sound."""
-    dimension = matrices.shape[-1]
-    count = matrices.shape[0]
-    batch = 64
-    parts = []
-    for start in range(0, count, batch):
-        chunk = matrices[start : start + batch]
-        padding = batch - chunk.shape[0]
-        padded = np.concatenate(
-            (chunk, np.repeat(np.eye(dimension, dtype=np.float64)[None], padding, axis=0))
+    matrices = np.asarray(matrices, dtype=np.float64)
+    count, dimension = matrices.shape[0], matrices.shape[-1]
+    if count == 0:
+        return np.zeros_like(matrices)
+    kernel = _preconditioner_kernel(dimension)
+    identity = np.eye(dimension, dtype=np.float64)
+    inverses = np.empty_like(matrices)
+    largest = _PRECONDITIONER_ROWS[-1]
+    for start in range(0, count, largest):
+        chunk = matrices[start : start + largest]
+        active = chunk.shape[0]
+        padded = np.empty(
+            (_preconditioner_rows(active), dimension, dimension), dtype=np.float64
         )
-        if dimension <= 4:
-            inverse = _inverses(jnp.asarray(padded), SmallLinearSolvePlan(dimension))
-        else:
-            inverse = _dense_inverses(jnp.asarray(padded))
-        parts.append(np.asarray(inverse)[: chunk.shape[0]])
-    inverses = np.concatenate(parts) if parts else np.zeros_like(matrices)
+        padded[:active] = chunk
+        padded[active:] = identity
+        inverses[start : start + active] = np.asarray(kernel(padded))[:active]
     return np.where(np.isfinite(inverses), inverses, 0.0)
 
 

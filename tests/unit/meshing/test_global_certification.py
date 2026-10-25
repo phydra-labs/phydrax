@@ -621,6 +621,87 @@ def test_mapped_region_batch_refuses_before_completing_unadmitted_queries(
         assert (budget.work_units, ticket.geometry_queries) == before
 
 
+def test_created_vertex_uses_carrier_lineage_not_equal_boundary_labels() -> None:
+    from phydrax.meshing._association import PlcAssociationTransfer
+    from phydrax.meshing._association_routes import child_sources, PlcEntityClasses
+
+    # A bipyramid's polar edge is interior although both poles lie on one
+    # authored, nonplanar boundary label.
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        np.asarray(
+            (
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, -1.0),
+                (0.5, 0.0, 0.0),
+                (-0.25, 0.5, 0.0),
+                (-0.25, -0.5, 0.0),
+            ),
+            dtype=np.float64,
+        ),
+        np.asarray(((0, 1, 3, 2), (0, 1, 4, 3), (0, 1, 2, 4)), dtype=np.int64),
+        vertex_global_ids=np.asarray((10, 20, 30, 40, 50), dtype=np.int64),
+    )
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    adapted = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(np.asarray(mesh.entity_set(3).entity_ids)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=phx.meshing.BisectionCompatibility.WHOLE_EDGE_STAR,
+            ),
+        )
+    )
+    lineage = adapted.lineage
+    assert lineage is not None
+    target = adapted.target.mesh
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, phx.discretization.TetrahedralConnectivity)
+    boundary = (
+        connectivity.boundary_vertices,
+        connectivity.boundary_edges,
+        connectivity.boundary_faces,
+    )
+    old = []
+    for dimension in range(4):
+        count = mesh.entity_set(dimension).count
+        dimensions = np.full(count, 3, dtype=np.int64)
+        if dimension < 3:
+            dimensions[np.asarray(boundary[dimension])] = 2
+        old.append(
+            PlcEntityClasses(
+                dimensions,
+                np.zeros(count, dtype=np.int64),
+                np.ones(count, dtype=np.bool_),
+                np.zeros(count, dtype=np.int64),
+            )
+        )
+    vertex_lineage = lineage.entity_lineage(0)
+    parent_ids = np.asarray(vertex_lineage.source_global_ids)
+    target_ids = np.asarray(vertex_lineage.target_global_ids)
+    midpoint_ids = np.intersect1d(
+        target_ids[parent_ids == 10], target_ids[parent_ids == 20]
+    )
+    assert midpoint_ids.size == 1
+    midpoint_row = np.flatnonzero(
+        np.asarray(target.vertex_global_ids) == midpoint_ids[0]
+    ).item()
+    inherited = PlcAssociationTransfer._inherit_target_strata(
+        source, lineage, target, tuple(old)
+    )
+    assert inherited.table[0][0][midpoint_row] == -1
+    assert inherited.obligations[0][midpoint_row]
+    dimensions, rows = child_sources(lineage, mesh, target, midpoint_ids)
+    assert dimensions[0] == 1
+    assert old[1].dimensions[rows[0]] == 3
+    np.testing.assert_array_equal(
+        np.sort(
+            np.asarray(mesh.vertex_global_ids)[np.asarray(connectivity.edges)[rows[0]]]
+        ),
+        np.asarray((10, 20), dtype=np.int64),
+    )
+
+
 def test_mapped_source_simplex_reuse_authenticates_content_and_ledger(
     mapped_source_support: MappedPlcSupport,
     coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],

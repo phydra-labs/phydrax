@@ -11,7 +11,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from enum import StrEnum
-from typing import Any, assert_never, final, SupportsIndex
+from typing import Any, assert_never, cast, final, SupportsIndex
 
 import equinox as eqx
 import jax
@@ -28,6 +28,7 @@ from .._fingerprint import (
     canonical_fingerprint,
     tree_content_equal,
 )
+from .._host_storage import immutable_host_array
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._coordinate_budget import (
@@ -92,7 +93,7 @@ def _source_identity_key(
 
 
 def _require_source_identity(
-    entry: AssociationSourceIdentity, indexed_roles: bool, /
+    entry: object, indexed_roles: bool, /
 ) -> None:
     if type(entry) is not tuple or len(entry) != 3:
         raise TypeError(
@@ -133,7 +134,8 @@ def _require_source_identities(entries: object, indexed_roles: object, /) -> Non
         )
     for entry in entries:
         _require_source_identity(entry, indexed_roles)
-    if tuple(sorted(set(entries), key=_source_identity_key)) != entries:
+    validated = cast(tuple[AssociationSourceIdentity, ...], entries)
+    if tuple(sorted(set(validated), key=_source_identity_key)) != entries:
         raise ValueError(
             "GeometryAssociationSourceIdentities.entries must be sorted and unique; got duplicate or unordered identities"
         )
@@ -312,10 +314,10 @@ class GeometryAssociationSourceBank(StrictModule, NonTrainableState):
         self, identities: GeometryAssociationSourceIdentities, row_indices: np.ndarray
     ) -> None:
         _require_source_bank(identities, row_indices)
-        routes = np.array(row_indices, dtype=np.int64, order="C", copy=True)
-        routes.setflags(write=False)
         self.identities = identities
-        self.row_indices = routes
+        self.row_indices = immutable_host_array(
+            np.ascontiguousarray(row_indices, dtype=np.int64)
+        )
 
     @classmethod
     def from_rows(

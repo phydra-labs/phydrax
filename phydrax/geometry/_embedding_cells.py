@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from typing import Protocol, Self
+from typing import NamedTuple, Protocol, Self
 
 import numpy as np
 
+import phydrax._meshcore as meshcore_owner
 from phydrax.discretization._reference_subdivision import (
     prism_child_maps,
     simplex_child_maps,
@@ -35,6 +37,10 @@ from ..discretization._coordinate_enclosure import (
     expression_scale,
     expression_sum,
     ExpressionComposition as ArgumentComposition,
+    quadratic_simplex_controls,
+    quadratic_simplex_matrices,
+    quadratic_simplex_storage_upper,
+    QuadraticSimplexControls,
     RationalPolynomial,
 )
 from ..discretization._exact_algebraic_geometry import (
@@ -269,6 +275,126 @@ class BisectionWorklist:
         self._live.set_bound(
             self._QUEUE_BYTES + self._entry_bytes * (len(self._active) + 1)
         )
+
+
+# One retained chart box: the record, two (c,) float64 outputs and the
+# (1, m, m) barycentric input built for the native call.
+QUADRATIC_BOX_BYTES = 2048
+
+
+def quadratic_controls(
+    cell: Cell, live: CoordinateLiveStorage, /, *, budget: CoordinateEnclosureBudget
+) -> QuadraticSimplexControls | None:
+    """Prepare one actual simplex cell's numeric filter, or None for the exact route.
+
+    The native kernel is optional; without it no control net is prepared and
+    every chart pair keeps the exact composed-expression bounds. Unsupported
+    sources form no array, and ``live`` admits the retained arrays before
+    they are allocated.
+    """
+    if cell.domain != "simplex" or not meshcore_owner.meshcore_available():
+        return None
+    matrices = quadratic_simplex_matrices(cell.coordinates, cell.dimension, budget=budget)
+    if matrices is None:
+        return None
+    live.set_bound(
+        live.bound + quadratic_simplex_storage_upper(len(matrices), cell.dimension)
+    )
+    return quadratic_simplex_controls(matrices, cell.dimension, budget=budget)
+
+
+def _exact_float_sum(first: np.ndarray, second: np.ndarray, /) -> np.ndarray | None:
+    """Return ``first + second`` when binary64 addition is exact, else None.
+
+    Knuth's two-sum recovers the exact rounding error of a finite sum.
+    """
+    total = first + second
+    if not np.all(np.isfinite(total)):
+        return None
+    shifted = total - first
+    error = (first - (total - shifted)) + (second - shifted)
+    return None if np.any(error) else total
+
+
+def chart_barycentric(chart: Chart, /) -> np.ndarray | None:
+    """Root barycentric rows of a simplex chart's vertices, exactly, or None.
+
+    Row ``k`` holds ``lambda`` of child vertex ``k`` (``origin`` for ``k = 0``,
+    ``origin + matrix[:, k - 1]`` otherwise), with ``lambda_0 = 1 - sum(x)``.
+    Any inexact binary64 sum or vertex outside the closed root simplex
+    returns None, so that chart keeps the exact route.
+    """
+    origin, matrix = chart
+    dimension = origin.shape[0]
+    if (
+        matrix.shape != (dimension, dimension)
+        or not np.all(np.isfinite(origin))
+        or not np.all(np.isfinite(matrix))
+    ):
+        return None
+    edges = _exact_float_sum(origin[None, :], matrix.T)
+    if edges is None:
+        return None
+    rows = np.empty((dimension + 1, dimension + 1), dtype=np.float64)
+    rows[0, 1:] = origin
+    rows[1:, 1:] = edges
+    total = rows[:, 1].copy()
+    for axis in range(2, dimension + 1):
+        summed = _exact_float_sum(total, rows[:, axis])
+        if summed is None:
+            return None
+        total = summed
+    first = _exact_float_sum(np.ones((dimension + 1,), dtype=np.float64), -total)
+    if first is None:
+        return None
+    rows[:, 0] = first
+    if np.any(rows < 0) or np.any(rows > 1):
+        return None
+    return rows
+
+
+class QuadraticChartBox(NamedTuple):
+    """Outward native image box of one chart, shared by consecutive sibling pairs."""
+
+    chart: Chart
+    lower: np.ndarray
+    upper: np.ndarray
+
+
+def quadratic_chart_box(
+    controls: QuadraticSimplexControls | None,
+    chart: Chart,
+    previous: QuadraticChartBox | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> QuadraticChartBox | None:
+    """Enclose a chart image natively from root controls, without composing it.
+
+    The box contains every degree-two Bernstein control of the chart-composed
+    map; the outward binary64 endpoints of the exact composed controls therefore
+    lie inside it, so a box separation implies the exact box separation.
+    Infinite endpoints only mean an inconclusive side.
+    """
+    if previous is not None and previous.chart is chart:
+        return previous
+    if controls is None or chart[0].shape != (controls.dimension,):
+        return None
+    size = controls.dimension + 1
+    budget.reserve(2 * size * size, QUADRATIC_BOX_BYTES)
+    rows = chart_barycentric(chart)
+    if rows is None:
+        return None
+    rows = rows[None]
+    with (
+        budget.ticket.native_target()
+        if budget.ticket.native_accounting
+        else nullcontext()
+    ):
+        lower, upper = meshcore_owner.simplex_quadratic_bounds(
+            controls.lower, controls.upper, rows, rows
+        )
+    return QuadraticChartBox(chart, lower[0], upper[0])
 
 
 def domain(kind: str) -> BernsteinDomain:

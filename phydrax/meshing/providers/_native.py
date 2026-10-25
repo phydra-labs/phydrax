@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 import threading
 import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import assert_never, final, TYPE_CHECKING, TypedDict
 
@@ -717,6 +719,7 @@ def _prepare_bound_request(
     options: NativeMeshingOptions,
     coordinate_contract: SpatialCoordinateContract,
     scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
     *,
     record_phase: NativeMeshingPhaseRecorder | None,
     initial_partition: PreparedDistributedSurfaceGeneration
@@ -737,7 +740,7 @@ def _prepare_bound_request(
                 raise ValueError(
                     "NativeMeshingProvider.initial_partition must be a prepared planar generation for this route; got another source kind"
                 )
-            prepared = PreparedPlanarDomain(source, specification, lattice=True)
+            prepared = PreparedPlanarDomain(source, specification, scope=scope, lattice=True)
             return _PreparedRequest(prepared, specification)
         case (
             "implicit_surface",
@@ -866,13 +869,19 @@ def _prepare_bound_request(
                 source=source, specification=specification, schedule=schedule
             ),
         ):
-            prepared = PreparedCompartmentVolume(source, specification, schedule)
+            prepared = PreparedCompartmentVolume(
+                source,
+                specification,
+                schedule,
+                scope=scope,
+                workspace=workspace,
+            )
             return _PreparedRequest(prepared, specification)
         case (
             "planar_dual_quad",
             _PlanarRequest(source=source, specification=specification),
         ):
-            prepared = PreparedDualQuad(source, specification)
+            prepared = PreparedDualQuad(source, specification, scope=scope)
             return _PreparedRequest(prepared, specification)
         case (
             "plc_dual_hex",
@@ -923,6 +932,7 @@ def _prepare_bound_request(
                 schedule,
                 coordinate_contract,
                 scope=scope,
+                discovery=source.discovery,
             )
             return _PreparedRequest(prepared, specification)
         case (
@@ -956,6 +966,31 @@ class _ExecutionKeywords(TypedDict):
     scope: NativeExecutionScope
     workspace: NativeHostStorageWorkspace
     record_phase: NativeMeshingPhaseRecorder | None
+
+
+@contextmanager
+def _publication_observation(
+    scope: NativeExecutionScope,
+    options: NativeMeshingOptions,
+    /,
+    *,
+    serial_planar: bool,
+) -> Iterator[None]:
+    """Observe bounded publications before admitting their storage."""
+    match options.route:
+        case "plc_tetrahedral" | "image_material_tetrahedral":
+            mapped = True
+        case "planar_constrained_delaunay" if serial_planar:
+            mapped = True
+        case _:
+            mapped = False
+    if scope.parent is None or mapped:
+        scope.observe_managed_admission()
+    if mapped:
+        with scope.ticket_view() as view, view.native_target():
+            yield
+    else:
+        yield
 
 
 @final
@@ -1155,9 +1190,16 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         with native_volume_execution_budget(
             self.specification.limits, root_maximum_work_units=root_work
         ) as scope:
-            if scope.parent is None:
-                scope.observe_managed_admission()
-            with scope.host_workspace() as storage:
+            with (
+                _publication_observation(
+                    scope,
+                    self.options,
+                    serial_planar=not isinstance(
+                        self.prepared, PreparedDistributedPlanarGeneration
+                    ),
+                ),
+                scope.host_workspace() as storage,
+            ):
                 storage.retain_owner(self)
                 ledger = native_preparation_ledger(scope)
                 if preparation is None:
@@ -1711,6 +1753,9 @@ class NativeMeshingProvider:
         source: NativeMeshingSource,
         specification: MeshingSpecification,
         /,
+        *,
+        native_execution_scope: NativeExecutionScope | None = None,
+        workspace: NativeHostStorageWorkspace | None = None,
     ) -> ProviderSupportReport:
         """Admit one source and request on the selected route before any work."""
 
@@ -1847,7 +1892,12 @@ class NativeMeshingProvider:
             ):
                 unsupported = [
                     issue.detail
-                    for issue in compartment_support_issues(source, specification)
+                    for issue in compartment_support_issues(
+                        source,
+                        specification,
+                        scope=native_execution_scope,
+                        workspace=workspace,
+                    )
                 ]
             case _:
                 raise TypeError(
@@ -1931,9 +1981,16 @@ class NativeMeshingProvider:
         with native_volume_execution_budget(
             specification.limits, stage=MeshingStageKind.SOURCE_INSPECTION
         ) as scope:
-            if scope.parent is None:
-                scope.observe_managed_admission()
-            with scope.host_workspace() as storage:
+            with (
+                _publication_observation(
+                    scope,
+                    self.options,
+                    serial_planar=not isinstance(
+                        initial_partition, PreparedDistributedPlanarGeneration
+                    ),
+                ),
+                scope.host_workspace() as storage,
+            ):
                 history: tuple[NativeExecutionRecord, ...] = ()
                 if isinstance(source, NativeCadVolumeSource):
                     completed_surface = source.surface.execution_evidence
@@ -2012,7 +2069,16 @@ class NativeMeshingProvider:
                         f"kind and prepared route; got {self.options.route!r}"
                     )
         with measure_phase(record_phase, "source_preparation"):
-            support = self.validate(source, specification)
+            support = (
+                self.validate(
+                    source,
+                    specification,
+                    native_execution_scope=scope,
+                    workspace=workspace,
+                )
+                if self.options.route == "image_material_tetrahedral"
+                else self.validate(source, specification)
+            )
             support.require_supported()
             if (
                 isinstance(specification, SurfaceMeshingSpec)
@@ -2031,6 +2097,7 @@ class NativeMeshingProvider:
                 options,
                 coordinate_contract,
                 scope,
+                workspace,
                 record_phase=record_phase,
                 initial_partition=initial_partition,
                 source_preparation_accounted=source_preparation_accounted,

@@ -242,7 +242,9 @@ def test_private_restore_worksets_do_not_walk_scientific_trees() -> None:
 
     tree = CountedTree()
     recipes = ({"scientific_tree": tree},)
-    plan = checkpoint._MeshingRestorePlan((), recipes, (), frozenset(), frozenset())
+    plan = checkpoint._MeshingRestorePlan(
+        (), recipes, (), frozenset(), frozenset(), frozenset()
+    )
     arrays = checkpoint._RestoredMeshingArrays({}, None, 128)
     sources = checkpoint._RestoredMeshingSources((checkpoint_state(),), None)
     assert walks == 0

@@ -55,6 +55,12 @@ from tests._support.geometry_transfer_cases import (
     shear_term,
     transfer_triangles,
 )
+from phydrax.discretization._cell_geometry_transfer import (
+    transition_nested_cell_geometry,
+)
+from phydrax.meshing._mixed_adaptation import adapt_mixed_mesh
+from phydrax.meshing._topology_edit import assemble_topology_edit
+from tests._support.mapped_cells import curved_volume
 from tests._support.rational_mapped_cells import cylinder_source, six_quad_source
 
 
@@ -191,9 +197,11 @@ def test_issued_record_refuses_rebuilding_copies_and_array_writes(
 ) -> None:
     prepared = _centroid_split(budget)
     assert any(pair.exact_matrix is not None for pair in prepared.affine_pieces())
-    fields = tuple(getattr(prepared, item.name) for item in dataclasses.fields(prepared))
+    fields = {
+        item.name: getattr(prepared, item.name) for item in dataclasses.fields(prepared)
+    }
     with pytest.raises(TypeError, match=r"PreparedNestedReference\.issuer"):
-        PreparedNestedReference(*fields, object())
+        PreparedNestedReference(**fields, issuer=object())
     with pytest.raises(ValueError, match="issuer"):
         dataclasses.replace(prepared, geometry_bound=0.0)
     for duplicate in (copy.copy, copy.deepcopy, pickle.dumps):
@@ -289,6 +297,53 @@ def test_issue_provenance_retains_no_record() -> None:
         issued = weakref.ref(_prepare(_TILING, ledger))
     gc.collect()
     assert issued() is None
+
+
+def test_volume_dg_uses_witnesses_and_full_geometry_certification(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """A curved prism volume has no shared surface-root coordinate chart."""
+    source_mesh, source_geometry = curved_volume("prism")
+    adaptation = adapt_mixed_mesh(
+        source_mesh, refine_cell_ids=np.asarray((17,), dtype=np.int64)
+    )
+    target_mesh, _, _ = assemble_topology_edit(
+        source_mesh, adaptation.edit, numeric_version="volume-dg-refined", budget=budget
+    )
+    transition = transition_nested_cell_geometry(
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        CellGeometrySpec.affine(target_mesh),
+        refinement=adaptation.edit.refinement,
+        budget=budget,
+    )
+    target_mesh = target_mesh.with_coordinates(
+        transition.vertex_coordinates, numeric_version="volume-dg-transition"
+    )
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.discontinuous_element("prism", 1)
+    )
+    source_space = phx.discretization.FiniteElementPlan(
+        source_mesh, field, coordinate_spec=source_geometry, budget=budget
+    ).prepare(budget=budget)
+    target_space = phx.discretization.FiniteElementPlan(
+        target_mesh, field, coordinate_spec=transition.geometry, budget=budget
+    ).prepare(budget=budget)
+    transfer, reference = prepare_shared_nested_field_transfer(
+        source_space,
+        target_space,
+        None,
+        field_name="u",
+        source_geometry=source_geometry,
+        target_geometry=transition.geometry,
+        geometry_transition=transition,
+        budget=budget,
+    )
+
+    assert reference is not None and not reference.rooted
+    assert reference.certified_bound() == 0.0
+    assert transfer.evidence.passed
 
 
 def test_changed_polynomial_coefficients_are_refused(
@@ -677,7 +732,8 @@ def test_foreign_preparation_imports_and_refuses_rebuilt_or_stale_records() -> N
             fine,
             refined.parent_cells,
             field_name="w",
-            prepared=(lookalike,),
+            # Negative test: a duck-typed lookalike must be refused at runtime.
+            prepared=(lookalike,),  # ty: ignore[invalid-argument-type]
             **witnesses,
         )
     other_source, other = _refined((1,))

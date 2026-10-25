@@ -89,7 +89,10 @@ import phydrax.discretization._reference_cell_types as reference_cell_types_owne
 import phydrax.discretization.fem._reference_types as reference_types_owner
 from phydrax.geometry._rational import fraction_endpoint
 
-from .. import _geometry_predicates as geometry_predicates_owner
+from .. import (
+    _geometry_predicates as geometry_predicates_owner,
+    _meshcore as meshcore_owner,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import (
     polygon_simplicity_2d,
@@ -129,6 +132,7 @@ from ._coordinate_budget import (
 from ._coordinate_identity import coordinate_source_bank_key
 from ._exact_algebraic_geometry import coefficient_endpoint
 from ._reference_subdivision import box_child_maps, prism_child_maps, simplex_child_maps
+from .fem._reference import lagrange_element
 
 
 # A replaced preparer may run an arbitrary continuation after earning its
@@ -257,10 +261,7 @@ def cell_geometry_id(geometry: cell_geometry_owner.CellGeometrySpec, /) -> str:
     return canonical_fingerprint(
         {
             "layout": geometry.geometry_layout_id,
-            "source_definitions": [
-                coordinate_enclosure_owner.coordinate_source_signature(element)
-                for element in geometry.elements
-            ],
+            "source_element_ids": [element.element_id for element in geometry.elements],
             "source_arrays": array_tree_fingerprint(geometry.elements),
             "exact_source": None
             if geometry.exact_source is None
@@ -2460,6 +2461,199 @@ def _certify_factored_cell(
     )
 
 
+_QuadraticTetrahedronDerivativeTemplate: TypeAlias = tuple[
+    tuple[tuple[int, ...], ...], ...
+]
+
+
+def _canonical_quadratic_tetrahedron_element(
+    element: reference_cell_types_owner.CellGeometryElement, /
+) -> reference_types_owner.FiniteElementSpec | None:
+    if (
+        not isinstance(element, reference_types_owner.FiniteElementSpec)
+        or element.family != "SimplexLagrange"
+        or element.cell_kind != "tetrahedron"
+        or element.degree != 2
+        or element.topological_dimension != 3
+        or element.local_dof_count != 10
+        or element.conformity != "H1"
+        or element.mapping != "identity"
+        or element.representation != "point_value"
+        or element.value_shape
+    ):
+        return None
+    coordinate_element = cell_geometry_owner.coordinate_lagrange_element(
+        "tetrahedron", 2
+    )
+    if element.element_id == coordinate_element.element_id:
+        canonical = coordinate_element
+    else:
+        canonical = lagrange_element("tetrahedron", 2)
+        if element.element_id != canonical.element_id:
+            return None
+    if (
+        coordinate_enclosure_owner.coordinate_source_signature(element)
+        != coordinate_enclosure_owner.coordinate_source_signature(canonical)
+    ):
+        return None
+    return canonical
+
+
+def _quadratic_tetrahedron_native_input(
+    spec: cell_geometry_owner.CellGeometrySpec,
+    element: reference_cell_types_owner.CellGeometryElement,
+    cell_kind: str,
+    routes: np.ndarray,
+    coordinates: np.ndarray,
+    policy: CellValidityPolicy,
+    template_cache: dict[tuple[str, str], _QuadraticTetrahedronDerivativeTemplate],
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    _QuadraticTetrahedronDerivativeTemplate,
+] | None:
+    """Authenticate the exact canonical P2 source before considering array layout."""
+    int64_max = (1 << 63) - 1
+    if (
+        cell_kind != "tetrahedron"
+        or spec.exact_source is not None
+        or spec.periodic_source is not None
+        or spec.restriction_source is not None
+        or spec.storage is not None
+        or policy.maximum_bernstein_nodes > int64_max
+        or policy.maximum_subdivision_depth > int64_max
+        or not meshcore_owner.meshcore_provider_installed()
+    ):
+        return None
+    canonical = _canonical_quadratic_tetrahedron_element(element)
+    if (
+        canonical is None
+        or coordinates.ndim != 2
+        or coordinates.shape[1] != 3
+        or routes.ndim != 2
+        or routes.shape[1] != 10
+        or routes.shape[0] == 0
+        or routes.shape[0] > int64_max // 30
+        or routes.shape[0] * 30 * 8 > np.iinfo(np.intp).max
+    ):
+        return None
+    identity = coordinate_enclosure_owner.element_identity(element, budget=budget)
+    if identity != coordinate_enclosure_owner.element_identity(
+        canonical, budget=budget
+    ):
+        return None
+    template = template_cache.get(identity)
+    if template is None:
+        basis = coordinate_enclosure_owner.source_basis(element, budget=budget)
+        if basis is None or len(basis) != 10:
+            return None
+        powers = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+        axes: list[tuple[tuple[int, ...], ...]] = []
+        for axis in range(3):
+            partials = tuple(
+                coordinate_enclosure_owner.derivative(
+                    polynomial, axis, budget=budget
+                )
+                for polynomial in basis
+            )
+            if any(
+                exponent not in powers
+                for partial in partials
+                for exponent in partial
+            ):
+                return None
+            axis_weights: list[tuple[int, ...]] = []
+            for exponent in powers:
+                weights: list[int] = []
+                for partial in partials:
+                    value = partial.get(exponent, Fraction(0))
+                    if type(value) is not Fraction or value.denominator != 1:
+                        return None
+                    integer = value.numerator
+                    if not -(1 << 31) <= integer < (1 << 31):
+                        return None
+                    weights.append(integer)
+                axis_weights.append(tuple(weights))
+            axes.append(tuple(axis_weights))
+        template = tuple(axes)
+        budget.retain_basis(template)
+        template_cache[identity] = template
+    return coordinates, routes, template
+
+
+
+def _quadratic_tetrahedron_staging_bounds(count: int, /) -> tuple[int, int]:
+    nodes_bytes = count * 10 * 3 * np.dtype(np.float64).itemsize
+    weights_bytes = 3 * 4 * 10 * np.dtype(np.int32).itemsize
+    outputs_bytes = (
+        count
+        * (
+            np.dtype(np.int32).itemsize
+            + 2 * np.dtype(np.float64).itemsize
+        )
+        + 6 * np.dtype(np.int64).itemsize
+    )
+    return (
+        nodes_bytes + weights_bytes + 2 * 256,
+        nodes_bytes + weights_bytes + outputs_bytes + 6 * 256,
+    )
+
+
+
+def _run_quadratic_tetrahedron_native_root(
+    native_input: tuple[
+        np.ndarray,
+        np.ndarray,
+        _QuadraticTetrahedronDerivativeTemplate,
+    ],
+    policy: CellValidityPolicy,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> meshcore_owner.QuadraticTetrahedronValidityResult:
+    coordinates, routes, template = native_input
+    count = routes.shape[0]
+    int64_max = (1 << 63) - 1
+    host_staging, native_staging = _quadratic_tetrahedron_staging_bounds(count)
+    ticket = budget.ticket
+    staging_storage = (
+        host_staging
+        if ticket.native_accounting
+        else host_staging + native_staging
+    )
+    budget.reserve(count * 30 + 120, staging_storage)
+    nodes = coordinates[routes]
+    weights = np.asarray(template, dtype=np.int32)
+    work_limit = min(budget.remaining_work_units, int64_max)
+    scratch_headroom = budget.remaining_memory_bytes
+    if ticket.native_accounting:
+        scratch_headroom -= native_staging
+    scratch_limit = min(int64_max, max(0, scratch_headroom))
+    try:
+        with (
+            ticket.native_target()
+            if ticket.native_accounting
+            else nullcontext()
+        ):
+            result = meshcore_owner.quadratic_tetrahedron_validity(
+                nodes,
+                weights,
+                policy.relative_determinant_floor,
+                policy.maximum_bernstein_nodes,
+                policy.maximum_subdivision_depth,
+                work_limit,
+                scratch_limit,
+            )
+    except meshcore_owner.MeshcoreError as error:
+        if isinstance(error, meshcore_owner.QuadraticTetrahedronValidityError):
+            budget.record_native_work(int(error.evidence[0]))
+        elif error.work_counters is not None:
+            budget.record_native_work(error.work_counters.construction_work)
+        raise
+    budget.record_native_work(int(result.evidence[0]))
+    return result
+
 def _certify_polynomial_block(
     element: cell_geometry_owner.ScalarCoordinateElement,
     cell_kind: str,
@@ -2468,11 +2662,23 @@ def _certify_polynomial_block(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    quadratic_root: meshcore_owner.QuadraticTetrahedronValidityResult | None = None,
 ) -> _BlockCertificate:
 
     dimension = element.topological_dimension
-    cell_count = len(local)
-    embedded = cell_count > 0 and len(local[0][0]) != dimension
+    cell_count = (
+        quadratic_root.decisions.shape[0]
+        if quadratic_root is not None
+        else len(local)
+    )
+    if quadratic_root is not None and sum(
+        int(decision == meshcore_owner.QuadraticTetrahedronValidityDecision.NEEDS_SUBDIVISION)
+        for decision in quadratic_root.decisions
+    ) != len(local):
+        raise RuntimeError(
+            "_certify_polynomial_block.quadratic_root must align its subdivision rows with local source banks."
+        )
+    embedded = len(local) > 0 and len(local[0][0]) != dimension
     reference = _prepare_polynomial_reference_domain(
         cell_kind, dimension, element.degree, embedded
     )
@@ -2483,18 +2689,48 @@ def _certify_polynomial_block(
     upper = np.full((cell_count,), -np.inf, dtype=np.float64)
     depth = np.zeros((cell_count,), dtype=np.int32)
     reasons: list[CellValidityUnresolvedReason] = []
+
+    def publish_quadratic_root(cell: int, /) -> bool:
+        if quadratic_root is None:
+            return False
+        decision = meshcore_owner.QuadraticTetrahedronValidityDecision(
+            int(quadratic_root.decisions[cell])
+        )
+        if decision is meshcore_owner.QuadraticTetrahedronValidityDecision.NEEDS_SUBDIVISION:
+            return False
+        lower[cell] = quadratic_root.lower[cell]
+        upper[cell] = quadratic_root.upper[cell]
+        match decision:
+            case meshcore_owner.QuadraticTetrahedronValidityDecision.ROOT_VALID:
+                status[cell] = CellValidityStatus.CERTIFIED_VALID
+            case meshcore_owner.QuadraticTetrahedronValidityDecision.ROOT_INVALID:
+                status[cell] = CellValidityStatus.INVALID
+            case meshcore_owner.QuadraticTetrahedronValidityDecision.BERNSTEIN_NODE_LIMIT:
+                status[cell] = CellValidityStatus.UNRESOLVED
+                reasons.append("bernstein_node_budget")
+            case meshcore_owner.QuadraticTetrahedronValidityDecision.DEPTH_ZERO_UNRESOLVED:
+                status[cell] = CellValidityStatus.UNRESOLVED
+                reasons.append("subdivision_depth")
+            case meshcore_owner.QuadraticTetrahedronValidityDecision.NEEDS_SUBDIVISION:
+                assert_never(decision)
+        return True
+
+    if quadratic_root is not None and len(local) == 0:
+        for cell in range(cell_count):
+            publish_quadratic_root(cell)
+        return _BlockCertificate(status, lower, upper, depth, tuple(reasons))
     # Every cell of a block shares its element, hence one exact affine chart
     # or one polynomial chart over its affine source.
     chart: _AffineChart | _ComposedChart | None = (
-        _affine_chart(element, cell_kind, dimension, budget) if cell_count else None
+        _affine_chart(element, cell_kind, dimension, budget) if len(local) else None
     )
-    if chart is None and cell_count:
+    if chart is None and len(local):
         chart = _composed_chart(element, cell_kind, dimension, embedded, budget)
     # A rational collapsed pyramid decides through its shared chart factors,
     # while its declining cells keep the unchanged expanded polynomial route.
     pyramid = (
         _rational_pyramid_chart(element, reference.cell_kind, embedded, budget)
-        if chart is None and cell_count
+        if chart is None and len(local)
         else None
     )
     multilinear: _MultilinearChart | None = None
@@ -2506,15 +2742,20 @@ def _certify_polynomial_block(
         multilinear = _multilinear_chart(pyramid, "pyramid", dimension, policy, budget)
     factors = (
         _polynomial_chart_factors(element, dimension, budget, embedded=embedded)
-        if chart is None and cell_count
+        if chart is None and len(local)
         else None
     )
     ledger = budget
+    local_cursor = 0
     for cell in range(cell_count):
+        if publish_quadratic_root(cell):
+            continue
+        local_cell = local[local_cursor] if quadratic_root is not None else local[cell]
+        local_cursor += int(quadratic_root is not None)
         if multilinear is not None:
             with ledger.temporary_scope():
                 result = _certify_multilinear_cell(
-                    multilinear, local[cell], dimension, budget
+                    multilinear, local_cell, dimension, budget
                 )
             if result is not None:
                 status[cell], lower[cell], upper[cell], depth[cell] = (
@@ -2533,7 +2774,7 @@ def _certify_polynomial_block(
                 else _certify_factored_cell(
                     factors,
                     element,
-                    local[cell],
+                    local_cell,
                     reference,
                     dimension,
                     policy,
@@ -2543,7 +2784,7 @@ def _certify_polynomial_block(
             if result is None:
                 result = _certify_polynomial_cell(
                     element,
-                    local[cell],
+                    local_cell,
                     reference,
                     dimension,
                     embedded,
@@ -2559,6 +2800,7 @@ def _certify_polynomial_block(
             )
             reasons.extend(result.reasons)
     return _BlockCertificate(status, lower, upper, depth, tuple(reasons))
+
 
 
 def _pyramid_restriction_threshold(
@@ -3207,7 +3449,47 @@ def _polynomial_validity_preparation_bounds(
             ),
         )
     )
-    return source_work_upper + algebraic_work, source_memory_upper + algebraic_memory
+    native_staging_upper = 0
+    native_template_identities: set[str] = set()
+    native_template_upper = 0
+    if (
+        source is None
+        and geometry.periodic_source is None
+        and geometry.restriction_source is None
+        and values.ndim == 2
+        and values.shape[1] == 3
+        and policy.maximum_bernstein_nodes <= (1 << 63) - 1
+        and policy.maximum_subdivision_depth <= (1 << 63) - 1
+        and meshcore_owner.meshcore_available()
+    ):
+        for element, routes in zip(geometry.elements, host_routes, strict=True):
+            route_array = np.asarray(routes)
+            if route_array.ndim != 2 or route_array.shape[1] != 10:
+                continue
+            count = route_array.shape[0]
+            if (
+                _canonical_quadratic_tetrahedron_element(element) is None
+                or count == 0
+                or count > ((1 << 63) - 1) // 30
+                or count * 30 * 8 > np.iinfo(np.intp).max
+            ):
+                continue
+            host_staging, native_staging = (
+                _quadratic_tetrahedron_staging_bounds(count)
+            )
+            native_staging_upper = max(
+                native_staging_upper, host_staging + native_staging
+            )
+            if element.element_id not in native_template_identities:
+                native_template_identities.add(element.element_id)
+                native_template_upper += 4096
+    return (
+        source_work_upper + algebraic_work,
+        source_memory_upper
+        + algebraic_memory
+        + native_staging_upper
+        + native_template_upper,
+    )
 
 
 def _exact_star_validity_preparation_bounds(
@@ -4765,6 +5047,9 @@ def _certify_validity_blocks(
     offsets = [0]
     unsupported: list[str] = []
     blocks: list[_BlockCertificate] = []
+    quadratic_template_cache: dict[
+        tuple[str, str], _QuadraticTetrahedronDerivativeTemplate
+    ] = {}
     shared_corner_bank: coordinate_enclosure_owner.CoordinateSourceBank | None = None
     share_corners = mesh_ is not None and any(
         not isinstance(element, reference_types_owner.FiniteElementSpec)
@@ -4933,13 +5218,47 @@ def _certify_validity_blocks(
                                 corner_routes=corner_routes,
                             )
                     if block is None:
-                        local = tuple(
-                            tuple(sources.source_values[index] for index in row)
-                            for row in route
+                        native_input = _quadratic_tetrahedron_native_input(
+                            spec,
+                            element,
+                            kind,
+                            route,
+                            values,
+                            policy_,
+                            quadratic_template_cache,
+                            budget,
                         )
-                        block = _certify_polynomial_block(
-                            element, kind, local, policy_, budget=budget
-                        )
+                        if native_input is None:
+                            local = tuple(
+                                tuple(sources.source_values[index] for index in row)
+                                for row in route
+                            )
+                            block = _certify_polynomial_block(
+                                element, kind, local, policy_, budget=budget
+                            )
+                        else:
+                            with budget.temporary_scope():
+                                root = _run_quadratic_tetrahedron_native_root(
+                                    native_input, policy_, budget
+                                )
+                                local = tuple(
+                                    tuple(
+                                        sources.source_values[int(index)]
+                                        for index in route[cell]
+                                    )
+                                    for cell, decision in enumerate(root.decisions)
+                                    if int(decision)
+                                    == meshcore_owner.QuadraticTetrahedronValidityDecision.NEEDS_SUBDIVISION
+                                )
+                                block = _certify_polynomial_block(
+                                    element,
+                                    kind,
+                                    local,
+                                    policy_,
+                                    budget=budget,
+                                    quadratic_root=root,
+                                )
+                                del root
                     blocks.append(block)
                 case _:
                     unsupported.append(name)

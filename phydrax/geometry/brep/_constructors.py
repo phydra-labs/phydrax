@@ -28,6 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, tree_content_equal
 from ..._physical import SpatialCoordinateContract
@@ -3530,6 +3531,20 @@ class NormalizedTrimCurve(AbstractTrimCurve):
             - self.lower
         ) / self.extent
 
+    def host_points(
+        self,
+        parameters: ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        """Normalize concrete host points without per-operation device dispatch."""
+        points = type(self.curve).host_points(
+            self.curve, parameters, preparations=preparations, budget=budget
+        )
+        return (points - np.asarray(self.lower)) / np.asarray(self.extent)
+
     def enclosure(
         self,
         first: float,
@@ -3552,7 +3567,9 @@ class NormalizedTrimCurve(AbstractTrimCurve):
                 return self.enclosure(
                     first, last, preparations=preparations, budget=budget
                 )
-        box = self.curve.enclosure(first, last, preparations=preparations, budget=budget)
+        box = type(self.curve).enclosure(
+            self.curve, first, last, preparations=preparations, budget=budget
+        )
         lower = np.nextafter(box[0] - np.asarray(self.lower), -np.inf)
         upper = np.nextafter(box[1] - np.asarray(self.lower), np.inf)
         return np.stack(
@@ -3578,7 +3595,9 @@ class NormalizedTrimCurve(AbstractTrimCurve):
                 return self.enclosures(
                     intervals, preparations=preparations, budget=budget
                 )
-        boxes = self.curve.enclosures(intervals, preparations=preparations, budget=budget)
+        boxes = type(self.curve).enclosures(
+            self.curve, intervals, preparations=preparations, budget=budget
+        )
         lower = np.nextafter(boxes[:, 0] - np.asarray(self.lower), -np.inf)
         upper = np.nextafter(boxes[:, 1] - np.asarray(self.lower), np.inf)
         return np.stack(
@@ -3620,8 +3639,8 @@ class NormalizedTrimCurve(AbstractTrimCurve):
                     meridian_jets=meridian_jets,
                     budget=budget,
                 )
-        lower, upper = self.curve.derivative_bounds(
-            first,
+        lower, upper = type(self.curve).derivative_bounds(
+            self.curve, first,
             last,
             order=order,
             preparations=preparations,

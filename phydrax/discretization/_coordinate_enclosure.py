@@ -69,7 +69,10 @@ from ._coordinate_identity import (
     coordinate_identity_inputs,
     coordinate_scope_key,
     coordinate_source_bank_key,
+    CoordinateIdentityInputs,
     ElementIdentityAdmission,
+    operation_coordinate_identity_inputs,
+    OperationElementAdmission,
     require_coordinate_identity_inputs,
 )
 from ._coordinate_source_snapshot import BarycentricSourceSnapshot, SplineSourceSnapshot
@@ -157,6 +160,7 @@ class _CellGeometryDispatch(Protocol):
         /,
         *,
         budget: CoordinateEnclosureBudget,
+        admission: OperationElementAdmission | None = None,
     ) -> BarycentricSourceSnapshot: ...
 
     @staticmethod
@@ -1633,11 +1637,16 @@ def _authenticated_element_identity(
     /,
     *,
     retain_admission: bool,
+    verified: dict[int, CoordinateIdentityInputs] | None = None,
 ) -> tuple[str, str]:
-    """Pay complete current authentication, optionally retaining its memo record."""
+    """Pay complete current authentication, optionally retaining its memo record.
+
+    ``verified`` is the calling pure operation's record of shared graphs it
+    already rechecked; see ``require_coordinate_identity_inputs``.
+    """
     cached = budget.element_identity_admission_cache.get(id(element))
     if cached is not None and cached.owner is element:
-        if require_coordinate_identity_inputs(cached.inputs, budget):
+        if require_coordinate_identity_inputs(cached.inputs, budget, verified=verified):
             return cached.identity
         del budget.element_identity_admission_cache[id(element)]
     inputs = coordinate_identity_inputs(element, budget)
@@ -2236,10 +2245,11 @@ def barycentric_exact_rows(
     element: cell_geometry_types.BarycentricCellGeometryElement,
     *,
     budget: CoordinateEnclosureBudget,
+    admission: OperationElementAdmission | None = None,
 ) -> tuple[tuple[Fraction, ...], ...]:
     """Source-owned rational action rows; binary64 rows only when exactly representable."""
     snapshot = _cell_geometry_dispatch().prepare_barycentric_source_snapshot(
-        element, budget=budget
+        element, budget=budget, admission=admission
     )
     if snapshot.exact_weights is not None:
         return snapshot.exact_weights
@@ -3422,6 +3432,145 @@ def polynomial_bounds(
     ), _scalar_endpoint(max(coefficients), upper=True, budget=budget)
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class QuadraticSimplexControls:
+    """Outward binary64 enclosure of one simplex map's degree-two Bernstein matrices.
+
+    ``lower`` and ``upper`` are read-only C-contiguous ``(1, c, m, m)`` float64
+    arrays with ``m = dimension + 1``. Entry ``[0, k, i, j]`` encloses the exact
+    rational degree-two Bernstein coefficient of the barycentric multi-index
+    ``e_i + e_j`` of coordinate ``k``, so that coordinate ``k`` equals
+    ``lambda^T Q_k lambda`` with ``lambda_0 = 1 - sum(x)`` and ``lambda_i = x_i``.
+    These host arrays are a numeric filter input only; the exact coordinate
+    expressions remain the proof source of every undecided piece.
+    """
+
+    dimension: int
+    lower: np.ndarray
+    upper: np.ndarray
+
+
+def quadratic_simplex_storage_upper(components: int, dimension: int, /) -> int:
+    """Retained bytes of one control record: its slots and both owned float64 buffers."""
+    return 256 + 2 * (512 + 8 * components * (dimension + 1) ** 2)
+
+
+def quadratic_simplex_matrix(
+    polynomial: Mapping[tuple[int, ...], ExactScalar],
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Fraction, ...], ...] | None:
+    """Exact symmetric degree-two simplex Bernstein matrix, or None when unsupported.
+
+    Only rational polynomials of total degree at most two qualify. Their controls
+    come from :func:`bernstein_coefficients`; lower degrees are elevated exactly:
+    a constant fills every entry and degree-one vertex controls ``b`` give
+    ``Q_ii = b_i`` and ``Q_ij = (b_i + b_j) / 2``. Radical coefficients have no
+    rational matrix here and stay on the exact expression route.
+    """
+    if any(len(index) != dimension for index in polynomial) or not _all_rational(
+        polynomial
+    ):
+        return None
+    degree = max((sum(index) for index in polynomial), default=0)
+    if degree > 2:
+        return None
+    size = dimension + 1
+    coefficients = bernstein_coefficients(polynomial, "simplex", dimension, budget=budget)
+    if not _all_rational_values(coefficients):
+        return None
+    lattice = _bernstein_lattice("simplex", (degree,), dimension, budget=budget)
+    # Degree-one elevation forms the only new rationals: half sums of controls.
+    bits = max(
+        abs(value.numerator).bit_length() + value.denominator.bit_length()
+        for value in coefficients
+    )
+    reserve_polynomial(
+        size * size + len(lattice), size * size, dimension, bits + 2, budget=budget
+    )
+    if degree == 0:
+        (value,) = coefficients
+        return tuple((value,) * size for _ in range(size))
+    matrix = [[Fraction(0)] * size for _ in range(size)]
+    if degree == 1:
+        vertex = [Fraction(0)] * size
+        for beta, value in zip(lattice, coefficients, strict=True):
+            vertex[0 if not any(beta) else 1 + beta.index(1)] = value
+        for i in range(size):
+            for j in range(size):
+                matrix[i][j] = vertex[i] if i == j else (vertex[i] + vertex[j]) / 2
+    else:
+        for beta, value in zip(lattice, coefficients, strict=True):
+            first, second = [0] * (2 - sum(beta)) + [
+                axis + 1 for axis, count in enumerate(beta) for _ in range(count)
+            ]
+            matrix[first][second] = matrix[second][first] = value
+    return tuple(tuple(row) for row in matrix)
+
+
+def quadratic_simplex_matrices(
+    coordinates: Sequence[Expression],
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[tuple[Fraction, ...], ...], ...] | None:
+    """Exact matrices of every coordinate, or None so the caller keeps the exact route.
+
+    Rational quotients, radical coefficients, total degree above two, and layouts
+    outside one to three reference axes or ambient coordinates are unsupported.
+    Only temporary exact rationals are formed; no retained array exists yet.
+    """
+    if not 1 <= dimension <= 3 or not 1 <= len(coordinates) <= 3:
+        return None
+    polynomials: list[Polynomial] = []
+    for value in coordinates:
+        # Quotients have no polynomial control net; refuse before any matrix work.
+        if isinstance(value, RationalPolynomial):
+            return None
+        polynomials.append(value)
+    matrices = []
+    for polynomial in polynomials:
+        matrix = quadratic_simplex_matrix(polynomial, dimension, budget=budget)
+        if matrix is None:
+            return None
+        matrices.append(matrix)
+    return tuple(matrices)
+
+
+def quadratic_simplex_controls(
+    matrices: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> QuadraticSimplexControls:
+    """Round exact degree-two simplex Bernstein matrices outward into owned arrays.
+
+    The caller admits :func:`quadratic_simplex_storage_upper` on the retaining
+    owner before this allocation. Overflowing rationals saturate only their
+    outer endpoint to infinity (lower endpoints never reach ``+inf`` nor upper
+    endpoints ``-inf``), which the numeric filter treats as inconclusive.
+    """
+    size = dimension + 1
+    count = len(matrices) * size * size
+    budget.reserve(count + len(matrices) * size)
+    lower = np.empty((1, len(matrices), size, size), dtype=np.float64)
+    upper = np.empty_like(lower)
+    for axis, matrix in enumerate(matrices):
+        for i in range(size):
+            for j in range(i, size):
+                value = matrix[i][j]
+                lower[0, axis, i, j] = lower[0, axis, j, i] = _scalar_endpoint(
+                    value, upper=False, budget=budget
+                )
+                upper[0, axis, i, j] = upper[0, axis, j, i] = _scalar_endpoint(
+                    value, upper=True, budget=budget
+                )
+    lower.flags.writeable = False
+    upper.flags.writeable = False
+    return QuadraticSimplexControls(dimension, lower, upper)
+
+
 def _affine_polynomial_jacobian(
     coordinates: tuple[Expression, ...],
     dimension: int,
@@ -3648,13 +3797,19 @@ def corner_images(
 
 
 def affine_simplex_source(
-    element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget
+    element: CellGeometryElement,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    verified: dict[int, CoordinateIdentityInputs] | None = None,
 ) -> bool:
     """Prove the full simplex source map affine once per root source element.
 
     Simplex restriction, barycentric and degree-one Lagrange chart compositions
     are followed to their degree-one finite-element root, whose prepared basis
     must have total degree at most one; an affine chart of an affine map is affine.
+    ``verified`` is the calling pure operation's recheck record, so a root
+    shared by many elements is reauthenticated once per operation.
     """
     source = element
     geometry = _cell_geometry_dispatch()
@@ -3683,7 +3838,9 @@ def affine_simplex_source(
                 return False
         case _:
             return False
-    key = element_identity(source, budget=budget)
+    key = _authenticated_element_identity(
+        source, budget, retain_admission=True, verified=verified
+    )
     affine = budget.affine_simplex_source_cache.get(key)
     if affine is None:
         basis = source_basis(source, budget=budget)
@@ -3878,6 +4035,7 @@ def _barycentric_corner_weights(
     element: cell_geometry_types.BarycentricCellGeometryElement,
     *,
     budget: CoordinateEnclosureBudget,
+    admission: OperationElementAdmission | None = None,
 ) -> CoordinateCornerWeights:
     """Evaluate cardinal P1 corners by the retained exact coefficient actions."""
     geometry = _cell_geometry_dispatch()
@@ -3887,7 +4045,7 @@ def _barycentric_corner_weights(
     geometry.require_p1_cardinal_source(root)
     width = element.local_dof_count
     budget.reserve(width * width, 128 + 512 * width * width)
-    rows = barycentric_exact_rows(element, budget=budget)
+    rows = barycentric_exact_rows(element, budget=budget, admission=admission)
     current = element.source_element
     while isinstance(current, geometry.BarycentricCellGeometryElement):
         budget.reserve(width * width, 128 + 512 * width * width)
@@ -3908,6 +4066,9 @@ def _barycentric_corner_weights(
         )
         current = current.source_element
     budget.reserve(width * width, 256 + 128 * width * width)
+    # Barycentric rows share numerical values, not their authenticated source
+    # bindings. Reuse the existing exact-value pool before retaining sparse rows.
+    rows = tuple(_retained_coordinate_point(row, budget=budget) for row in rows)
     return tuple(
         tuple((column, value) for column, value in enumerate(row) if value)
         for row in rows
@@ -3915,15 +4076,31 @@ def _barycentric_corner_weights(
 
 
 def _prepare_coordinate_corner_weights(
-    element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
+    element: CellGeometryElement,
+    *,
+    budget: CoordinateEnclosureBudget,
+    admission: OperationElementAdmission | None = None,
 ) -> tuple[tuple[str, str], CoordinateCornerWeights] | None:
-    """Prepare sparse corner rows from the declared root and reference chain."""
+    """Prepare sparse corner rows from the declared root and reference chain.
+
+    ``admission`` carries the calling operation's authentication of ``element``;
+    when it is not current, the element is authenticated here in full.
+    """
+    carried = None if admission is None else admission.identity(element, budget)
     with budget.temporary_scope():
+        identity = element_identity(element, budget=budget) if carried is None else carried
+        cached_weights = budget.corner_weight_cache.get(identity)
+        if cached_weights is not None:
+            return cached_weights
         if isinstance(element, _cell_geometry_dispatch().BarycentricCellGeometryElement):
-            source_identity = element_identity(element, budget=budget)
-            weights = _barycentric_corner_weights(element, budget=budget)
-            budget.retain_basis((source_identity, weights))
-            return source_identity, weights
+            source_identity = identity
+            weights = _barycentric_corner_weights(
+                element, budget=budget, admission=admission
+            )
+            result = source_identity, weights
+            budget.retain_basis(result)
+            budget.corner_weight_cache[identity] = result
+            return result
         if has_cartesian_reference_chain(element):
             root, arguments = coordinate_reference_chain(element, budget=budget)
         else:
@@ -3939,7 +4116,11 @@ def _prepare_coordinate_corner_weights(
         basis = source_expressions(root, budget=budget)
         if basis is None:
             return None
-        source_identity = element_identity(root, budget=budget)
+        source_identity = (
+            carried
+            if carried is not None and root is element
+            else element_identity(root, budget=budget)
+        )
         if any(isinstance(term, RationalPolynomial) for term in basis):
             budget.reserve(1)
             prepared = budget.reference_denominator_group_cache.get(source_identity)
@@ -3996,8 +4177,10 @@ def _prepare_coordinate_corner_weights(
             budget.retain_basis((key, row))
             cache[key] = row
         weights = tuple(cache[key] for key in keys)
-        budget.retain_basis((source_identity, weights))
-    return source_identity, weights
+        result = source_identity, weights
+        budget.retain_basis(result)
+        budget.corner_weight_cache[identity] = result
+    return result
 
 
 def _retained_coordinate_point(
@@ -4005,7 +4188,7 @@ def _retained_coordinate_point(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[ExactScalar, ...]:
-    """Share immutable source point values without sharing source bindings."""
+    """Share immutable exact coordinate values without sharing source bindings."""
     with budget.temporary_scope():
         budget.reserve(
             len(point),
@@ -4110,13 +4293,9 @@ def _coordinate_corner_images_from_prepared(
     )
     if polynomial_images is not None:
         return polynomial_images
-    key = map_key[:2]
-    prepared_weights = budget.corner_weight_cache.get(key)
+    prepared_weights = _prepare_coordinate_corner_weights(element, budget=budget)
     if prepared_weights is None:
-        prepared_weights = _prepare_coordinate_corner_weights(element, budget=budget)
-        if prepared_weights is None:
-            return None
-        budget.corner_weight_cache[key] = prepared_weights
+        return None
     source_identity, weights = prepared_weights
     dimension = len(coefficients[0])
     budget.reserve(len(weights))
@@ -4252,6 +4431,49 @@ def prepared_coordinate_vertex_images(
     return images
 
 
+def _operation_element_admission(
+    element: CellGeometryElement,
+    roots: dict[int, tuple[object, CoordinateIdentityInputs | None]],
+    verified: dict[int, CoordinateIdentityInputs],
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> tuple[tuple[str, str], OperationElementAdmission | None]:
+    """Authenticate one routed element once within this pure operation.
+
+    A barycentric action's shared source element is captured once per
+    operation; each action then walks only its own fields. A registered
+    admission is rechecked with its own fields in full and a shared graph only
+    once per operation (``verified``); a new operation rechecks everything.
+    """
+    cached = budget.element_identity_admission_cache.get(id(element))
+    source = (
+        element.source_element
+        if isinstance(element, _cell_geometry_dispatch().BarycentricCellGeometryElement)
+        and (cached is None or cached.owner is not element)
+        else None
+    )
+    inputs = None
+    if source is not None:
+        entry = roots.get(id(source))
+        if entry is None or entry[0] is not source:
+            entry = roots[id(source)] = (source, coordinate_identity_inputs(source, budget))
+        if entry[1] is not None:
+            inputs = operation_coordinate_identity_inputs(element, entry[1], budget)
+    if inputs is None:
+        identity = _authenticated_element_identity(
+            element, budget, retain_admission=True, verified=verified
+        )
+        admission = budget.element_identity_admission_cache.get(id(element))
+        if admission is None or admission.owner is not element:
+            return identity, None
+    else:
+        identity = _canonical_element_identity(element)
+        admission = ElementIdentityAdmission(element, identity, inputs)
+        budget.retain_owner(admission)
+        budget.element_identity_admission_cache[id(element)] = admission
+    return identity, OperationElementAdmission(admission)
+
+
 def coordinate_vertex_images(
     blocks: tuple[tuple[CellGeometryElement, np.ndarray, np.ndarray], ...],
     controls: CoordinateSourceBank,
@@ -4277,14 +4499,21 @@ def coordinate_vertex_images(
     prepared_blocks: list[
         tuple[tuple[tuple[tuple[int, ExactScalar], ...], ...], np.ndarray, np.ndarray]
     ] = []
+    roots: dict[int, tuple[object, CoordinateIdentityInputs | None]] = {}
+    verified: dict[int, CoordinateIdentityInputs] = {}
     for element, route, vertices in blocks:
-        identity = element_identity(element, budget=budget)
-        prepared = budget.corner_weight_cache.get(identity)
-        if prepared is None:
-            prepared = _prepare_coordinate_corner_weights(element, budget=budget)
+        _, admission = _operation_element_admission(
+            element, roots, verified, budget
+        )
+        try:
+            prepared = _prepare_coordinate_corner_weights(
+                element, budget=budget, admission=admission
+            )
             if prepared is None:
                 return None
-            budget.corner_weight_cache[identity] = prepared
+        finally:
+            if admission is not None:
+                admission.close()
         weights = prepared[1]
         route = np.asarray(route, dtype=np.int64)
         vertices = np.asarray(vertices, dtype=np.int64)

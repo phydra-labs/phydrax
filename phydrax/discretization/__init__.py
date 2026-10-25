@@ -2083,6 +2083,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "PreparedReciprocalConnectivity": "._reciprocal",
     "PreparedReducedArticulation": ".particle._reduced_articulation",
     "PreparedRelaxationSpectrum": ".lattice_boltzmann._moments",
+    "PreparedRemapCSRView": ".finite_volume._unstructured_remap",
     "PreparedRetainedBandRestriction": ".spectral._transfer",
     "PreparedRigidBodySet": ".particle._rigid_body",
     "PreparedRigidConstraintDynamics": ".particle._rigid_constraint_dynamics",
@@ -5428,6 +5429,7 @@ if TYPE_CHECKING:
         UnstructuredOversetReport as UnstructuredOversetReport,
     )
     from .finite_volume._unstructured_remap import (
+        PreparedRemapCSRView as PreparedRemapCSRView,
         RemapCoverageLedger as RemapCoverageLedger,
         UnstructuredConservativeRemapPlan as UnstructuredConservativeRemapPlan,
         UnstructuredRemapLimiter as UnstructuredRemapLimiter,
@@ -9999,6 +10001,7 @@ __all__ = [
     "PreparedReciprocalConnectivity",
     "PreparedReducedArticulation",
     "PreparedRelaxationSpectrum",
+    "PreparedRemapCSRView",
     "PreparedRetainedBandRestriction",
     "PreparedRigidBodySet",
     "PreparedRigidConstraintDynamics",

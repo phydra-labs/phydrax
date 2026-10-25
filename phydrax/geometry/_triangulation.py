@@ -201,22 +201,34 @@ def _minimum_angle_degrees(points: np.ndarray, triangles: np.ndarray, /) -> floa
     return float(np.degrees(np.min(np.stack(angles, axis=1))))
 
 
-def _spans_space(points: np.ndarray, /) -> bool:
+def _spans_space(
+    points: np.ndarray, /, *, scope: NativeExecutionScope | None = None
+) -> bool:
     """Test affine spanning with host exact predicates."""
 
     dimension = points.shape[1]
+    if scope is not None:
+        scope.charge(work=len(points))
     if points.shape[0] <= dimension:
         return False
     origin = points[0]
+    if scope is not None:
+        scope.charge(work=(dimension + 1) * len(points))
     distinct = np.flatnonzero(np.any(points != origin, axis=1))
     if distinct.size == 0:
         return False
     second = points[distinct[0]]
     if dimension == 2:
+        if scope is not None:
+            scope.charge(work=8 * len(points))
         turns = orient2d_host(origin, second, points, mode=PredicateMode.EXACT)
         return bool(np.any(turns.signs != 0))
+    if scope is not None:
+        scope.charge(work=len(points))
     collinear = np.ones(points.shape[0], dtype=np.bool_)
     for axes in ((1, 2), (2, 0), (0, 1)):
+        if scope is not None:
+            scope.charge(work=6 + 10 * len(points))
         turns = orient2d_host(
             origin[list(axes)],
             second[list(axes)],
@@ -224,9 +236,13 @@ def _spans_space(points: np.ndarray, /) -> bool:
             mode=PredicateMode.EXACT,
         )
         collinear &= turns.signs == 0
+    if scope is not None:
+        scope.charge(work=2 * len(points))
     off_line = np.flatnonzero(~collinear)
     if off_line.size == 0:
         return False
+    if scope is not None:
+        scope.charge(work=3 + 14 * len(points))
     third = points[off_line[0]]
     volumes = orient3d_host(origin, second, third, points, mode=PredicateMode.EXACT)
     return bool(np.any(volumes.signs != 0))
@@ -469,6 +485,24 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         segment_ids = result.segment_ids
         status = result.status
         count = point_array.shape[0]
+        scope = meshcore_owner.current_native_execution_scope()
+        if scope is not None:
+            # Admit the host passes below from the actual output sizes before
+            # they run: the triangle-vertex and input-point np.unique sorts
+            # (n * w * (ceil(log2 n) + 1)), the minimum-angle scan (about 30
+            # visits per triangle), the three frozen copies, and four visits per
+            # fingerprinted element of the six content banks.
+            corners = triangles.size
+            inputs = point_array.size
+            witnessed = sum(int(np.size(array)) for array in witnesses[0])
+            banks = mesh_points.size + corners + segment_ids.size
+            scope.charge(
+                work=corners * ((max(corners, 2) - 1).bit_length() + 1)
+                + inputs * ((max(count, 2) - 1).bit_length() + 1)
+                + 30 * triangles.shape[0]
+                + banks
+                + 4 * (banks + witnessed)
+            )
         used = np.unique(triangles)
         self.points = frozen_array(mesh_points)
         self.triangles = frozen_array(triangles)
@@ -2404,8 +2438,7 @@ def _execute_restricted_source(
         edges = np.zeros((0, 2), dtype=np.int32)
     else:
         prepared_sites, prepared_weights = sites, values
-        scope.charge(work=len(sites))
-        if not _spans_space(sites):
+        if not _spans_space(sites, scope=scope):
             # Binary64 fractions have at most 1075 exponent bits.
             # Differences, squares and a three-term sum need at most
             # 4*1075+16 bits. The 32 simultaneously reachable fractions are
@@ -2423,6 +2456,9 @@ def _execute_restricted_source(
             # domain bounding box: the difference is affine, and its
             # minimum is evaluated exactly at all eight box corners.
             scope.charge(work=2 * domain.size)
+            # Bounding-box arithmetic, guard generation/finite scan, reference
+            # fraction conversion and the fixed eight-corner product bank.
+            scope.charge(work=128)
             lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
             scale = max(1.0, float(np.max(upper - lower)))
             base = lower - 4.0 * scale
@@ -2430,7 +2466,7 @@ def _execute_restricted_source(
                 ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
                 dtype=np.float64,
             )
-            if not np.all(np.isfinite(guards)) or not _spans_space(guards):
+            if not np.all(np.isfinite(guards)) or not _spans_space(guards, scope=scope):
                 raise ValueError(
                     "RestrictedPowerDiagram.domain_points must admit finite spanning guards; got an unrepresentable domain scale."
                 )
@@ -2443,6 +2479,9 @@ def _execute_restricted_source(
                 # power difference. Construction predicates are not source
                 # geometry queries.
                 scope.charge(work=len(corners))
+                # Each corner evaluates three exact squared differences and
+                # their reduction; retain the existing one-per-corner tariff.
+                scope.charge(work=32 * len(corners) + 16)
                 g = [Fraction(float(x)) for x in guard]
                 minimum = min(
                     sum(
@@ -2473,10 +2512,16 @@ def _execute_restricted_source(
             else _restricted_array_storage(prepared_sites, prepared_weights)
         )
         regular_base = source_bytes + prepared_bytes + 16 * 256
+        def admit_regular_output(size: int) -> None:
+            storage.set_bound(regular_base + size)
+            scope.charge(work=2 * ((size - 6 * 256 + 3) // 4))
+
+        storage.set_bound(max(storage.bound, regular_base + 4 * len(prepared_sites) + 16 * 256))
+        scope.charge(work=3 * prepared_sites.size + 3 * prepared_weights.size)
         started = 0.0 if record_native_phase is None else perf_counter()
         simplices, _ = regular_3d(
             prepared_sites, prepared_weights, max_tetrahedra=max_pieces,
-            admit_host_output=lambda size: storage.set_bound(regular_base + size),
+            admit_host_output=admit_regular_output,
         )
         # Six pair incidences per tet: pair gathers/concatenation (int32),
         # cast/sort/unique banks (int64), unique mask and sort indices.
@@ -2486,6 +2531,9 @@ def _execute_restricted_source(
             + 16 * 256 + 6 * len(simplices) * (2 * 4 * 2 + 2 * 8 * 5 + 1 + 8)
         )
         scope.charge(work=6 * len(simplices))
+        # Pair gather/cast, row sorting and unique's permutation/mask/scatter.
+        incidences = 6 * len(simplices)
+        scope.charge(work=incidences * (2 * incidences.bit_length() + 8))
         edges = _simplex_edges(simplices)
         del simplices, _
         if record_native_phase is not None:
@@ -2505,6 +2553,13 @@ def _execute_restricted_source(
         + (len(prepared_sites) + 1) * (4 * 8 + 2)
     )
     scope.charge(work=2 * len(edges) + len(prepared_sites))
+    # The existing incidence tariff does not include lexsort comparisons,
+    # sorted-row gather, bincount accumulation, offsets or neighbor casting.
+    directed_count = 2 * len(edges)
+    scope.charge(
+        work=directed_count * (2 * directed_count.bit_length() + 5)
+        + 3 * len(prepared_sites) + 1
+    )
     directed = np.concatenate((edges, edges[:, ::-1]), axis=0)
     if directed.size:
         directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
@@ -2520,6 +2575,7 @@ def _execute_restricted_source(
         + 48 * 256 + (len(prepared_sites) + 4) * 10
         + (tetrahedra_.size + tetrahedron_regions_.size + tet_face_facets_.size) * 14
         + len(neighbors) * 14
+        + domain.size
     )
     storage.set_bound(request_bytes)
     scope.charge(
@@ -2528,6 +2584,19 @@ def _execute_restricted_source(
             + len(neighbors) + len(prepared_sites)
         )
     )
+    # The native wrapper repeats input finite/range checks before construction.
+    scope.charge(
+        work=3 * (prepared_sites.size + prepared_weights.size + domain.size)
+        + 5 * (tetrahedra_.size + tetrahedron_regions_.size + tet_face_facets_.size
+               + len(neighbors) + len(offsets))
+        + 3 * len(split) + guard_count + 64
+    )
+
+    def admit_power_output(size: int) -> None:
+        storage.set_bound(request_bytes + size)
+        payload = size - (20 * 256 + 23 * (128 + 4 * 8))
+        scope.charge(work=(payload + 3) // 4)
+
     construction = meshcore_owner.restricted_power_cells(
         prepared_sites,
         prepared_weights,
@@ -2542,7 +2611,7 @@ def _execute_restricted_source(
         max_vertices=max_vertices,
         work_limit=work_limit,
         record_native_phase=record_native_phase,
-        admit_host_output=lambda size: storage.set_bound(request_bytes + size),
+        admit_host_output=admit_power_output,
         output_limits=controls.output_limits,
     )
     storage.set_bound(storage.bound + 256 + len(construction.cell_sites))

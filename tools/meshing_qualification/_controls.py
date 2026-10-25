@@ -12,6 +12,7 @@ import equinox as eqx
 
 import phydrax as phx
 from phydrax import StrictModule
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax.meshing import BisectionCompatibility
 from phydrax.typing import parse
 from tools._meshing_cases import POLYHEDRAL_CASE_NAMES
@@ -572,8 +573,21 @@ def authored_resource_envelope(
         "policy": "finite-authored-whole-workflow-envelope",
         **(
             {
-                "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
-                "external_cgroup_properties": {"MemoryMax": limits["maximum_memory_bytes"]},
+                "process_memory_acceptance": {
+                    "darwin": {
+                        "mode": "measured-process-high-water",
+                        "maximum_bytes": limits["maximum_memory_bytes"],
+                        "required_execution_group_hard_cap": False,
+                        "descendants_included": False,
+                        "approval": "macOS measured-memory contract; scientific requirements unchanged",
+                    },
+                    "linux": {
+                        "mode": "external-systemd-cgroup-wrapper",
+                        "maximum_bytes": limits["maximum_memory_bytes"],
+                        "required_execution_group_hard_cap": True,
+                        "external_cgroup_properties": {"MemoryMax": limits["maximum_memory_bytes"]},
+                    },
+                },
             }
             if scenario in ("native-distributed-lifecycle", "native-family-lifecycle") else {}
         ),
@@ -1195,6 +1209,26 @@ def add_case_arguments(parser: argparse.ArgumentParser) -> None:
         choices=RECONSTRUCTION_CASES,
         default=defaults.reconstruction_case,
     )
+
+
+def qualification_archive_limits(
+    args: QualificationControls | BenchmarkControls,
+) -> ArrayArchiveLimits:
+    """Lower the explicit recipe allowance without changing other archive limits."""
+    return (
+        ArrayArchiveLimits()
+        if args.maximum_recipe_bytes is None
+        else ArrayArchiveLimits(max_manifest_bytes=args.maximum_recipe_bytes)
+    )
+
+
+def archive_limit_values(limits: ArrayArchiveLimits) -> dict[str, Any]:
+    """Record the exact bounded archive policy in portable canonical order."""
+    from dataclasses import asdict
+
+    policy = asdict(limits)
+    policy["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
+    return policy
 
 
 def meshing_limit_values(limits: phx.meshing.MeshingLimits) -> dict[str, int | float]:
@@ -1894,9 +1928,9 @@ def _family_qualification_requirements() -> FamilyRequirementsRecord:
             "surface_minimum_angle": 0.01,
             "limits": "all MeshingLimits frozen from capacity and timeout",
         },
-        "consumer": "geometry-aware scalar Q1 manufactured diffusion",
+        "consumer": "geometry-aware scalar Lagrange manufactured diffusion with order matched to authored geometry",
         "adaptation": "canonical NATIVE_MIXED refine then complete-sibling coarsen per round",
-        "state": "actual accepted Q1 solution; 3D canonical Q2 H1/DG1/Hcurl2/Hdiv2 two-component scalar/history moments and complete stationary Euler content, retained each epoch",
+        "state": "actual accepted profile-order Q1/Q2/Q3 solution; 3D canonical Q2 H1/DG1/Hcurl2/Hdiv2 two-component scalar/history moments and complete stationary Euler content, retained each epoch",
         "nonclaims": [
             "The swept box is only a declared sweep profile, never a general nonsweepable all-hex case.",
             "The PL material cavity is routine exact-family evidence, not broad curved all-hex closure.",

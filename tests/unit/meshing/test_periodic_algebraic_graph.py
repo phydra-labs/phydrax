@@ -11,7 +11,7 @@ from math import ceil, floor
 from random import Random
 from sys import getsizeof
 from types import SimpleNamespace
-from typing import cast
+from typing import cast, NoReturn
 
 import numpy as np
 import pytest
@@ -152,7 +152,10 @@ def test_periodic_graph_matches_independent_exhaustive_reference(
     visited: list[tuple[int, int]] = []
     indices = {id(segment): index for index, segment in enumerate(segments)}
 
-    def recorded(first, second, grid, work):
+    def recorded(
+        first: algebraic._Segment, second: algebraic._Segment,
+        grid: algebraic._Grid, work: algebraic._Work,
+    ) -> bool:
         visited.append((indices[id(first)], indices[id(second)]))
         return original(first, second, grid, work)
 
@@ -288,7 +291,10 @@ def test_recursive_search_releases_owners_without_cyclic_collection() -> None:
 def test_adjacency_refuses_before_any_pair_predicate(monkeypatch: pytest.MonkeyPatch) -> None:
     grid, _, segments = _geometry(_disjoint_rows(280))
 
-    def forbidden(*args):
+    def forbidden(
+        first: algebraic._Segment, second: algebraic._Segment,
+        grid: algebraic._Grid, work: algebraic._Work,
+    ) -> NoReturn:
         raise AssertionError("unadmitted adjacency reached a predicate")
 
     monkeypatch.setattr(algebraic, "_conflict", forbidden)
@@ -368,7 +374,9 @@ def test_target_graph_matches_exhaustive_pair_order_and_performed_predicates(
         assert len(indexed) == 3 * len(points)
         assert not work.boxes
 
-    def exhaustive(self, segment, *, stop=None):
+    def exhaustive(
+        self: algebraic._PeriodicBins, segment: algebraic._Segment, *, stop: int | None = None
+    ) -> Iterator[int]:
         yield from range(len(self.segments) if stop is None else stop)
 
     # Restore the original all-pairs traversal at every predicate consumer:
@@ -397,7 +405,9 @@ def test_bigint_bound_includes_python_digits_and_header(width: int) -> None:
 @pytest.mark.parametrize("resolution", (4, 8))
 def test_original_source_action_construction_fits_frozen_cap(resolution: int) -> None:
     from tools.meshing_qualification._controls import QualificationControls
-    from tools.meshing_qualification.scenarios.periodic import _periodic_qualification_fixture
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_qualification_fixture,
+    )
 
     source, specification, _, case = _periodic_qualification_fixture(
         QualificationControls(

@@ -4,6 +4,7 @@
 
 from dataclasses import replace
 from fractions import Fraction
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +22,7 @@ from phydrax.geometry import (
     box_boundary_atlas,
     CurveTrimLoop,
     PolygonTrimLoop,
+    TrimClassification,
     TrimDomain,
 )
 from phydrax.geometry._atlas import _affine_chord_within_tolerance, _certified_arcs
@@ -661,3 +663,213 @@ def test_overlapping_cells_share_new_arc_splits_per_refinement_level() -> None:
     np.testing.assert_array_equal(repeated.inside, shared.inside)
     np.testing.assert_array_equal(repeated.resolved, shared.resolved)
     np.testing.assert_array_equal(repeated.refinements, np.zeros(4, dtype=np.int32))
+
+
+def _diamond_domain(offset: float = 0.0) -> TrimDomain:
+    vertices = np.asarray(
+        ((0.0, 0.0), (1.0, 1.0), (0.0, 2.0), (-1.0, 1.0)), dtype=np.float64
+    ) + np.asarray((offset, 0.0))
+    curves = tuple(
+        CurveTrimSegment(LineCurve(first, second - first), 0.0, 1.0)
+        for first, second in zip(vertices, np.roll(vertices, -1, axis=0), strict=True)
+    )
+    return TrimDomain(CurveTrimLoop(curves, tolerance=2.0, maximum_arcs=4))
+
+
+# Repeated, nearby and on-boundary probes against several arcs and a junction.
+_DIAMOND_PROBES = np.asarray(
+    (
+        (0.5, 0.52),
+        (0.5, 0.52),
+        (0.5, 0.48),
+        (0.5, 1.49),
+        (0.5, 1.51),
+        (-0.5, 0.5),
+        (-0.5, 0.5),
+        (0.0, 1.0),
+        (0.0, 0.0),
+        (-0.75, 1.2),
+    ),
+    dtype=np.float64,
+)
+
+
+_CLASSIFICATION_FIELDS = ("inside", "boundary", "resolved", "winding", "refinements")
+
+
+def _assert_same_classification(
+    actual: TrimClassification, expected: dict[str, np.ndarray]
+) -> None:
+    for name in _CLASSIFICATION_FIELDS:
+        np.testing.assert_array_equal(getattr(actual, name), expected[name])
+
+
+def _independent_classification(
+    domain: TrimDomain, maximum_depth: int
+) -> dict[str, np.ndarray]:
+    """Classify each probe in its own fresh request."""
+    rows = [
+        domain.classify(point[None, :], maximum_depth=maximum_depth)
+        for point in _DIAMOND_PROBES
+    ]
+    return {
+        name: np.concatenate([np.asarray(getattr(row, name)) for row in rows])
+        for name in _CLASSIFICATION_FIELDS
+    }
+
+
+@pytest.mark.parametrize("maximum_depth", [0, 1, 8])
+def test_point_classification_retains_request_arc_boxes_without_changing_queries(
+    maximum_depth: int,
+) -> None:
+    domain = _diamond_domain()
+    independent = _independent_classification(domain, maximum_depth)
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((domain, _DIAMOND_PROBES)) as budget:
+        # Earned box-classification facts and a shallower point pass share the
+        # same request arc tree; every later query still decides on its own.
+        domain.classify_boxes(
+            np.asarray((((0.05, 0.8), (0.1, 0.85)),), dtype=np.float64),
+            maximum_depth=2,
+            maximum_refinements=10,
+            budget=budget,
+            preparations=preparations,
+        )
+        domain.classify(
+            _DIAMOND_PROBES, maximum_depth=0, budget=budget, preparations=preparations
+        )
+        for _ in range(2):
+            shared = domain.classify(
+                _DIAMOND_PROBES,
+                maximum_depth=maximum_depth,
+                budget=budget,
+                preparations=preparations,
+            )
+            _assert_same_classification(shared, independent)
+        # A different (shifted) source loop in the same request earns its own
+        # boxes; retained facts are bound to the loop object, not its shape.
+        shifted = _diamond_domain(0.25)
+        _assert_same_classification(
+            shifted.classify(
+                _DIAMOND_PROBES,
+                maximum_depth=maximum_depth,
+                budget=budget,
+                preparations=preparations,
+            ),
+            _independent_classification(shifted, maximum_depth),
+        )
+
+
+def test_point_classification_retains_private_copies_of_reused_provider_buffers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain = _diamond_domain()
+    enclosure = CurveTrimSegment.enclosure
+    scratch = np.empty((2, 2), dtype=np.float64)
+
+    def reused_buffer(
+        self: CurveTrimSegment, first: float, last: float, /, **kwargs: Any
+    ) -> np.ndarray:
+        # A provider returning one mutable scratch buffer for every interval.
+        scratch[...] = enclosure(self, first, last, **kwargs)
+        return scratch
+
+    monkeypatch.setattr(CurveTrimSegment, "enclosure", reused_buffer)
+    independent = _independent_classification(domain, 8)
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((domain, _DIAMOND_PROBES)) as budget:
+        for _ in range(2):
+            _assert_same_classification(
+                domain.classify(
+                    _DIAMOND_PROBES,
+                    maximum_depth=8,
+                    budget=budget,
+                    preparations=preparations,
+                ),
+                independent,
+            )
+
+
+def test_point_classification_refuses_nonfinite_provider_boxes_every_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain = _diamond_domain()
+    query = np.asarray(((0.5, 0.52),), dtype=np.float64)
+
+    def unbounded(
+        self: CurveTrimSegment, first: float, last: float, /, **kwargs: Any
+    ) -> np.ndarray:
+        return np.asarray(((-np.inf, -np.inf), (np.inf, np.inf)), dtype=np.float64)
+
+    monkeypatch.setattr(CurveTrimSegment, "enclosure", unbounded)
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((domain, query)) as budget:
+        for _ in range(2):
+            with pytest.raises(ValueError, match=r"finite \(2, 2\) boxes"):
+                domain.classify(query, budget=budget, preparations=preparations)
+        # Box classification keeps its bounded unresolved refusal for the same
+        # unretained provider bounds.
+        boxes = domain.classify_boxes(
+            np.asarray((((0.45, 0.5), (0.55, 0.54)),), dtype=np.float64),
+            maximum_depth=2,
+            maximum_refinements=4,
+            budget=budget,
+            preparations=preparations,
+        )
+    np.testing.assert_array_equal(boxes.resolved, (False,))
+
+
+def test_curved_box_classification_shares_request_chords_without_changing_decisions() -> None:
+    domain = _charged_implicit_circle_domain()
+    match domain.outer:
+        case CurveTrimLoop() as loop:
+            probe = _interior_arc_probe(loop)
+        case _:
+            raise AssertionError(
+                "atlas_fixture.trim_loop must retain its source curve; got another loop kind"
+            )
+    center = 0.5 * (probe[0] + probe[1])
+    half = 0.5 * (probe[1] - probe[0])
+    # Shrinking and shifted boxes revisit left/right descendants whose first
+    # source parameters coincide with earlier visited parents.
+    queries = np.asarray(
+        [
+            np.stack((center + shift * half - half / scale, center + shift * half + half / scale))
+            for scale in (1.0, 2.0, 8.0, 64.0)
+            for shift in (-1.0, 0.0, 1.0)
+        ],
+        dtype=np.float64,
+    )
+    independent = [
+        domain.classify_boxes(query[None, :], maximum_depth=12, maximum_refinements=512)
+        for query in queries
+    ]
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((domain, queries), rows=queries.shape[0]) as budget:
+        shared = [
+            domain.classify_boxes(
+                query[None, :],
+                maximum_depth=12,
+                maximum_refinements=512,
+                budget=budget,
+                preparations=preparations,
+            )
+            for query in queries
+        ]
+        repeated = [
+            domain.classify_boxes(
+                query[None, :],
+                maximum_depth=12,
+                maximum_refinements=512,
+                budget=budget,
+                preparations=preparations,
+            )
+            for query in queries
+        ]
+    for fresh, first, again in zip(independent, shared, repeated, strict=True):
+        np.testing.assert_array_equal(first.inside, fresh.inside)
+        np.testing.assert_array_equal(first.resolved, fresh.resolved)
+        np.testing.assert_array_equal(again.inside, fresh.inside)
+        np.testing.assert_array_equal(again.resolved, fresh.resolved)
+        np.testing.assert_array_equal(again.refinements, 0)
+    assert any(bool(row.resolved[0]) for row in shared)

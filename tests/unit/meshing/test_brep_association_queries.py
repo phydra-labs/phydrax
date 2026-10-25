@@ -226,7 +226,7 @@ def test_created_tetra_centers_inherit_solid_and_allow_full_family_inverse(
         fine,
         phx.meshing.MarkedMeshAdaptation(
             np.zeros(0, dtype=np.int64),
-            coarsen_cell_ids=fine_cell_ids,
+            fine_cell_ids,
             hierarchy=refined.hierarchy,
         ),
         policy=policy,
@@ -236,6 +236,7 @@ def test_created_tetra_centers_inherit_solid_and_allow_full_family_inverse(
     )
     restored = phx.meshing.execute_mesh_adaptation(prepared)
     assert restored.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert isinstance(restored.evidence, phx.meshing.MixedAdaptationEvidence)
     assert restored.evidence.rejected_coarsening_ids.size == 0
     np.testing.assert_array_equal(restored.target.mesh.vertex_global_ids, source_ids)
     np.testing.assert_array_equal(

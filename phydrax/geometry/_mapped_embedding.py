@@ -55,10 +55,12 @@ import sys
 from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import closing
 from fractions import Fraction
+from functools import cache, lru_cache
 from itertools import chain, combinations
 from typing import assert_never, cast, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
@@ -73,11 +75,14 @@ import phydrax.geometry._prism_embedding as prism_embedding_owner
 from phydrax.discretization._coordinate_budget import reserve_polynomial
 from phydrax.discretization._reference_cell_types import CellGeometryElement
 
-if TYPE_CHECKING:
-    from ._domain_chart_chain import _CarrierAdmission
 
+if TYPE_CHECKING:
+    from .brep._carrier_pieces import CarrierAdmission
+
+from .. import _meshcore as meshcore_owner
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
+from .._jax_config import numerics
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
@@ -113,6 +118,7 @@ from ..discretization._coordinate_enclosure import (
     multi_affine_coordinates,
     Polynomial,
     prepared_coordinate_source_bank,
+    QuadraticSimplexControls,
     RationalPolynomial,
     restrict_chart_expressions,
 )
@@ -128,6 +134,7 @@ from ._embedding_cells import (
     BisectionWorklist,
     bounds,
     Cell,
+    Chart,
     children as embedding_children,
     convex_triangle_union,
     domain as embedding_domain,
@@ -135,19 +142,24 @@ from ._embedding_cells import (
     IntervalBoundaryCell,
     IntervalBoundaryHomotopy,
     IntervalSurfaceMap,
+    QUADRATIC_BOX_BYTES,
+    quadratic_chart_box,
+    quadratic_controls as prepare_quadratic_controls,
+    QuadraticChartBox,
     vertices as embedding_vertices,
 )
 from ._embedding_state import ContactDecision, EmbeddingState, MeshCertificateLimits
-from ._mesh_check_names import MeshCertificateCheck
-from ._rational import rational_cross, rational_vector
 from ._interval_enclosure import (
     interval_add,
     interval_dot,
     interval_multiply,
     interval_subtract,
+    NativeIntervalProgram,
+    prepare_interval_function,
 )
-from ._rational import fraction_endpoint
+from ._mesh_check_names import MeshCertificateCheck
 from ._planar_primitives import reserve_fraction_work
+from ._rational import fraction_endpoint, rational_cross, rational_vector
 
 
 def _planar_boundary_edges(
@@ -957,6 +969,121 @@ def _box_p_matrix_univalent(
     return True
 
 
+# Convex reference cells whose source maps are plain polynomials. The pyramid's
+# collapsed coordinates make its source map rational, so it is absent.
+_CONVEX_POLYNOMIAL_KINDS = frozenset(
+    ("interval", "triangle", "tetrahedron", "quadrilateral", "hexahedron", "prism")
+)
+
+
+def _quadratic_rank_injective(
+    cell: Cell,
+    limits: MeshCertificateLimits,
+    maximum_work: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[bool, int]:
+    """Prove closed-cell injectivity of a quadratic map with full-rank Jacobian.
+
+    For a polynomial ``F`` of total degree at most two, ``J`` is affine, so
+    ``F(x) - F(y) = integral_0^1 J(y + t (x - y)) dt (x - y) = J((x + y) / 2) (x - y)``.
+    The midpoint lies in the convex closed reference cell, so full column rank
+    of ``J`` on the whole closed cell makes ``F(x) != F(y)`` whenever ``x != y``.
+
+    Rank is earned here from the actual coordinate expressions, never imported
+    from a supplied certificate: on every piece of a bounded reference
+    subdivision, some maximal minor of the exact Jacobian has sign-definite
+    rational Bernstein controls. Degree, denominators and exponent layout are
+    read from the expressions. Returns ``(proved, pieces)``: unsupported maps and
+    an exhausted allowance visit zero subdivision pieces, although coefficient
+    inspection already reserved on ``budget`` stays charged; a refused attempt
+    still reports its visited pieces. The LIFO stack of chart owners is admitted
+    on a live-storage owner before each array is created and released per pop.
+
+    Mesh certificate checks
+    -----------------------
+    [
+    {"checks":["mapped_local_injectivity"],"owner":"phydrax.geometry._mapped_embedding._quadratic_rank_injective","premises":[{"tag":"X","statement":"Every actual source coordinate expression is a polynomial without denominator of total degree at most two in the reference variables of an interval, triangle, tetrahedron, quadrilateral, hexahedron or prism, all of which are convex."},{"tag":"N","statement":"On every piece of a reference subdivision covering the closed cell, some maximal minor of the exact source Jacobian has rational Bernstein controls that are all strictly positive or all strictly negative, so the Jacobian has full column rank on the whole closed cell."},{"tag":"T","statement":"For such a map F the Jacobian is affine, so F(x) - F(y) = J((x + y) / 2)(x - y) with the midpoint in the cell; full column rank there makes the difference nonzero whenever x and y differ."}],"conclusion":"The closed source cell map is injective; every visited rank piece counts in subdivision_pieces.","citation":{"kind":"mathematical","reference":"Mathlib, Fundamental Theorem of Calculus","locator":"intervalIntegral.integral_eq_sub_of_hasDerivAt, applied along the segment from y to x; the affine Jacobian integrates to its midpoint value","url":"https://leanprover-community.github.io/mathlib4_docs/Mathlib/MeasureTheory/Integral/IntervalIntegral/FundThmCalculus.html#intervalIntegral.integral_eq_sub_of_hasDerivAt"},"failure_statuses":[]}
+    ]
+    End mesh certificate checks
+    """
+    dimension = cell.dimension
+    if (
+        maximum_work <= 0
+        or cell.kind not in _CONVEX_POLYNOMIAL_KINDS
+        or not 1 <= dimension <= len(cell.coordinates)
+    ):
+        return False, 0
+    budget.reserve(1 + len(cell.coordinates))
+    for value in cell.coordinates:
+        if isinstance(value, RationalPolynomial):
+            return False, 0
+        budget.reserve(len(value))
+        if any(len(index) != dimension or sum(index) > 2 for index in value):
+            return False, 0
+    physical = physical_jacobian(cell.coordinates, cell.kind, dimension, budget=budget)
+    if physical is None:
+        return False, 0
+    minors = tuple(
+        coordinate_enclosure_owner.expression_determinant(
+            tuple(physical[row] for row in rows),
+            variable_dimension=dimension,
+            budget=budget,
+        )
+        for rows in combinations(range(len(physical)), dimension)
+    )
+    # Each stack entry owns an origin, a chart matrix, and its tuple; the
+    # bisection worklist meters the same chart owners per entry.
+    entry = 1024 + 32 * dimension * dimension
+    # Simplex children number 2^d, prism children 8 = 2^3, box halves 2.
+    split = 2**dimension
+    with budget.live_storage() as live:
+        live.set_bound(1024 + entry)
+        active = [
+            (
+                np.zeros((dimension,), dtype=np.float64),
+                np.eye(dimension, dtype=np.float64),
+                0,
+            )
+        ]
+        work = 0
+        while active:
+            if work >= maximum_work:
+                return False, work
+            # The popped entry stays charged until its payload is released.
+            origin, matrix, depth = active.pop()
+            work += 1
+            # Composed minors are discarded with this piece; the root minors
+            # remain owned by this proof across the whole subdivision.
+            with budget.temporary_scope():
+                arguments = affine_arguments(origin, matrix, budget=budget)
+                definite = False
+                for minor in minors:
+                    lower, upper = polynomial_bounds(
+                        compose(minor, arguments, budget=budget),
+                        cell.domain,
+                        dimension,
+                        budget=budget,
+                    )
+                    if lower > 0.0 or upper < 0.0:
+                        definite = True
+                        break
+            if not definite:
+                if depth >= limits.maximum_subdivision_depth:
+                    return False, work
+                # Admit the in-flight parent and every child before creation.
+                live.set_bound(1024 + entry * (len(active) + 1 + split))
+                children = embedding_children(cell, origin, matrix)
+                if work + len(active) + len(children) > maximum_work:
+                    return False, work
+                active.extend((start, child, depth + 1) for start, child in children)
+                del children
+            del origin, matrix
+            live.set_bound(1024 + entry * len(active))
+    return True, work
+
+
 def root_injective(
     cell: Cell,
     element: CellGeometryElement,
@@ -972,6 +1099,10 @@ def root_injective(
     coefficient bank. The reference family, ordered incidence, and every proof
     limit remain bound to the result. Logical subdivision coverage still counts
     against the receiving certificate, although its arithmetic is not repeated.
+
+    A quadratic map on a convex cell first tries :func:`_quadratic_rank_injective`;
+    its visited pieces count against the same allowance, and a refusal keeps
+    the general :func:`injective` proof with only the remaining pieces.
     """
     _, source_key = coordinate_enclosure_owner.coordinate_preparation_key(
         element, local, budget=budget
@@ -986,8 +1117,17 @@ def root_injective(
     if proof is None:
         proved = embedding_state_owner.EmbeddingState([], [])
         with budget.polynomial_preparation_scope():
-            reason = injective(
-                cell, limits, proved, maximum_work=remaining, budget=budget
+            ranked, rank_work = _quadratic_rank_injective(
+                cell, limits, remaining, budget=budget
+            )
+            proved.subdivision_pieces += rank_work
+            reason = (
+                None
+                if ranked
+                else injective(
+                    cell, limits, proved, maximum_work=remaining - rank_work,
+                    budget=budget,
+                )
             )
         proof = proved.subdivision_pieces, cast(
             tuple[MeshCertificateCheck, ...], tuple(proved.checks)
@@ -2646,6 +2786,18 @@ def _triangle_atlas(
     )
     if rank != 2:
         return None
+    return _projected_triangle_atlas(first, second, shared, projection, budget=budget)
+
+
+def _projected_triangle_atlas(
+    first: Cell,
+    second: Cell,
+    shared: set[int],
+    projection: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _TriangleAtlas | None:
+    """Chart two triangles by their exact projected corners if the union is convex."""
     projected = [
         _projected_corner_images(cell, projection, budget=budget)
         for cell in (first, second)
@@ -3007,21 +3159,35 @@ def pair_decision(
     second: Cell,
     limits: MeshCertificateLimits,
     maximum_work: int,
-    prepared_controls: tuple[_PlaneControls | None, _PlaneControls | None] | None = None,
+    prepared_controls: (
+        tuple[_PlaneControls | None, _PlaneControls | None]
+        | Callable[[], tuple[_PlaneControls | None, _PlaneControls | None]]
+        | None
+    ) = None,
     *,
     authenticated_first_traces: tuple[tuple[int, ...], ...] = (),
     tangent_cone: bool = True,
     checks: list[str] | None = None,
     locally_injective: bool = False,
+    quadratic_controls: Callable[
+        [], tuple[QuadraticSimplexControls | None, QuadraticSimplexControls | None]
+    ]
+    | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> ContactDecision:
     if not cell_traces_equal(first, second, budget=budget):
         return ContactDecision("unresolved", 0, check="mapped_trace_mismatch")
+    # A bulk caller prepares each source net once, but only after this pair's
+    # exact trace check. A mismatched trace must not spend control-net capacity.
+    if prepared_controls is None or isinstance(prepared_controls, tuple):
+        resolved_controls = prepared_controls
+    else:
+        resolved_controls = prepared_controls()
     # Multi-affine box pairs decide the whole ordered candidate family,
     # coordinate axes included, on rational corner images before any
     # other contact route; a refusal there is final for that family.
     multi_affine = _multi_affine_box(first) and _multi_affine_box(second)
-    if multi_affine and separating_plane(first, second, prepared_controls, budget=budget):
+    if multi_affine and separating_plane(first, second, resolved_controls, budget=budget):
         return ContactDecision("separated", 0)
 
     affine = affine_mapped_contact_owner.contact_decision(
@@ -3061,7 +3227,7 @@ def pair_decision(
             if proved:
                 return ContactDecision("separated", cone_work)
     if not multi_affine and separating_plane(
-        first, second, prepared_controls, budget=budget
+        first, second, resolved_controls, budget=budget
     ):
         return ContactDecision("separated", cone_work)
     adjacent, adjacency_work = _adjacent_triangle_injectivity(
@@ -3120,8 +3286,54 @@ def pair_decision(
             return ContactDecision("overlap", adjacency_work)
 
     return _bisect_cell_contact(
-        first, second, limits, maximum_work, adjacency_work, budget=budget
+        first,
+        second,
+        limits,
+        maximum_work,
+        adjacency_work,
+        quadratic=None if quadratic_controls is None else quadratic_controls(),
+        budget=budget,
     )
+
+
+class _BisectionPiece(NamedTuple):
+    """One chart's composed map and outward image box, shared by sibling pairs."""
+
+    chart: Chart
+    cell: Cell
+    lower: np.ndarray
+    upper: np.ndarray
+    storage: int
+
+
+def _bisection_piece(
+    cell: Cell,
+    chart: Chart,
+    previous: _BisectionPiece | None,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _BisectionPiece:
+    """Compose one chart once for its image box and every later contact witness.
+
+    Splitting one side queues siblings with the identical other-side chart
+    object; those consecutive pairs read the same composed piece and box.
+    """
+    if previous is not None and previous.chart is chart:
+        return previous
+    origin, matrix = chart
+    identity = np.eye(cell.dimension, dtype=np.float64)
+    if identity_reference_map(origin, matrix):
+        lower, upper = bounds(cell, origin, matrix, budget=budget)
+        return _BisectionPiece(chart, cell, lower, upper, 0)
+    piece = cell.composed(
+        ArgumentComposition(affine_arguments(origin, matrix, budget=budget), budget=budget),
+        budget=budget,
+    )
+    lower, upper = bounds(
+        piece, np.zeros((cell.dimension,), dtype=np.float64), identity, budget=budget
+    )
+    storage = budget.live_object_storage_upper((piece.coordinates, lower, upper))
+    return _BisectionPiece(chart, piece, lower, upper, storage)
 
 
 def _bisect_cell_contact(
@@ -3131,13 +3343,34 @@ def _bisect_cell_contact(
     maximum_work: int,
     adjacency_work: int,
     *,
+    quadratic: tuple[QuadraticSimplexControls | None, QuadraticSimplexControls | None]
+    | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> ContactDecision:
-    """Decide the remaining chart pairs under one bounded FIFO storage owner."""
-    with budget.live_storage() as live:
+    """Decide the remaining chart pairs under one bounded FIFO storage owner.
+
+    Optional root quadratic controls first enclose both chart images natively.
+    Those boxes contain the exact boxes, so their strict separation is a
+    separation the exact boxes would also prove; the pair is then retired
+    without composing either chart. Every other pair, including each pair
+    whose native box is unavailable or inconclusive, takes the exact route.
+    Visit counts, limits, and statuses are those of the exact route alone.
+    """
+    # A numeric box is useful only against another numeric box; one unsupported
+    # side keeps every pair, and its native work, on the exact route.
+    controls_a, controls_b = (
+        quadratic
+        if quadratic is not None and None not in quadratic
+        else (None, None)
+    )
+    with budget.live_storage() as live, budget.live_storage() as shared:
         active = BisectionWorklist(first.dimension, second.dimension, live)
         work = adjacency_work
         undecided: MeshCertificateCheck | None = None
+        piece_a: _BisectionPiece | None = None
+        piece_b: _BisectionPiece | None = None
+        box_a: QuadraticChartBox | None = None
+        box_b: QuadraticChartBox | None = None
         while active:
             with budget.temporary_scope():
                 a, b, depth = active.pop()
@@ -3152,30 +3385,44 @@ def _bisect_cell_contact(
                     + _CONTACT_BOUND_COORDINATE_BYTES
                     * max(len(first.coordinates), len(second.coordinates)),
                 )
-                lo_a, hi_a = bounds(first, *a, budget=budget)
-                lo_b, hi_b = bounds(second, *b, budget=budget)
+                box_a = quadratic_chart_box(controls_a, a, box_a, budget=budget)
+                box_b = quadratic_chart_box(controls_b, b, box_b, budget=budget)
+                # Retained pieces and boxes outlive this pair until replaced.
+                shared.set_bound(
+                    (0 if piece_a is None else piece_a.storage)
+                    + (0 if piece_b is None else piece_b.storage)
+                    + QUADRATIC_BOX_BYTES * ((box_a is not None) + (box_b is not None))
+                )
+                if (
+                    box_a is not None
+                    and box_b is not None
+                    and (
+                        np.any(box_a.upper < box_b.lower)
+                        or np.any(box_b.upper < box_a.lower)
+                    )
+                ):
+                    del a, b
+                    active.release_piece()
+                    continue
+                piece_a = _bisection_piece(first, a, piece_a, budget=budget)
+                piece_b = _bisection_piece(second, b, piece_b, budget=budget)
+                shared.set_bound(
+                    piece_a.storage
+                    + piece_b.storage
+                    + QUADRATIC_BOX_BYTES * ((box_a is not None) + (box_b is not None))
+                )
+                lo_a, hi_a = piece_a.lower, piece_a.upper
+                lo_b, hi_b = piece_b.lower, piece_b.upper
                 if np.any(hi_a < lo_b) or np.any(hi_b < lo_a):
                     del a, b, lo_a, hi_a, lo_b, hi_b
                     active.release_piece()
                     continue
-                if depth > 0:
-                    composition_a, composition_b = (
-                        ArgumentComposition(
-                            affine_arguments(*a, budget=budget), budget=budget
-                        ),
-                        ArgumentComposition(
-                            affine_arguments(*b, budget=budget), budget=budget
-                        ),
-                    )
-                    piece_a = first.composed(composition_a, budget=budget)
-                    piece_b = second.composed(composition_b, budget=budget)
-                    if (
-                        _overlap_witness(piece_a, piece_b, budget=budget)
-                        or _overlap_witness(piece_b, piece_a, budget=budget)
-                        or _crossing_witness(piece_a, piece_b, budget=budget)
-                    ):
-                        return ContactDecision("overlap", work)
-                    del piece_a, piece_b, composition_a, composition_b
+                if depth > 0 and (
+                    _overlap_witness(piece_a.cell, piece_b.cell, budget=budget)
+                    or _overlap_witness(piece_b.cell, piece_a.cell, budget=budget)
+                    or _crossing_witness(piece_a.cell, piece_b.cell, budget=budget)
+                ):
+                    return ContactDecision("overlap", work)
                 if depth == limits.maximum_subdivision_depth:
                     undecided = "mapped_intersection_subdivision_depth"
                     del a, b, lo_a, hi_a, lo_b, hi_b
@@ -3397,8 +3644,12 @@ def _trace_continuity(
     storage.set_bound(1024)
     decided: dict[tuple[int, ...], bool | None] = {}
     connections = []
+    # One stable grouping replaces a full facet scan per interior group; each
+    # group's occurrences keep their ascending facet order.
+    order = np.argsort(facets.group, kind="stable")
+    starts = np.searchsorted(facets.group[order], np.arange(facets.counts.size))
     for group in np.flatnonzero(facets.counts == 2):
-        occurrences = np.flatnonzero(facets.group == group)
+        occurrences = order[starts[group] : starts[group] + 2]
         if (
             cell_groups is not None
             and cell_groups[int(facets.cells[occurrences[0]])]
@@ -4486,6 +4737,15 @@ def _certify_affine_source_embedding(
     exact = collected.values
     ledger = budget
     ledger.retain_basis(exact)
+    predicate_points, binary = mesh_certificates_owner.exact_source_predicate_view(
+        np.asarray(exact, dtype=object), budget=budget
+    )
+    if not binary:
+        budget.reserve(predicate_points.size)
+        if any(not isinstance(value, Fraction) for value in predicate_points.flat):
+            # Rational contact kernels cannot consume genuine field radicals.
+            # Decline this specialization; the mapped-field owner keeps authority.
+            return False
     state.checks.extend(
         (
             "mapped_affine_source_maps",
@@ -4495,18 +4755,12 @@ def _certify_affine_source_embedding(
     )
     if surface:
         state.checks.append("mapped_exact_affine_surface_contact")
-        predicate_points, binary = mesh_certificates_owner.exact_source_predicate_view(
-            np.asarray(exact, dtype=object), budget=budget
-        )
         if binary:
             state.checks.append("exact_source_binary64_value_equivalence")
         mesh_certificates_owner.surface_embedding(
             state, mesh, predicate_points, cell_ids, limits, budget=budget
         )
     else:
-        predicate_points, binary = mesh_certificates_owner.exact_source_predicate_view(
-            np.asarray(exact, dtype=object), budget=budget
-        )
         if binary:
             state.checks.append("exact_source_binary64_value_equivalence")
         mesh_certificates_owner.volume_embedding(
@@ -4762,14 +5016,8 @@ def _certify_embedding_pairs(
     """Certify candidate pairs in deterministic order and publish contact findings."""
     ledger = budget
     prepared_controls: dict[int, _PlaneControls | None] = {}
-    for a, b in zip(first.tolist(), second.tolist(), strict=True):
-        if atlas_labels[a] >= 0 and atlas_labels[a] == atlas_labels[b]:
-            continue
-        with ledger.polynomial_preparation_scope():
-            trace_equal = cell_traces_equal(cells[a], cells[b], budget=budget)
-        if not trace_equal:
-            state.add("mapped_trace_mismatch", "violated", "cell", cell_ids[[a, b]])
-            continue
+
+    def prepare_pair(a: int, b: int) -> tuple[_PlaneControls | None, _PlaneControls | None]:
         for index in (a, b):
             if index in prepared_controls:
                 continue
@@ -4782,15 +5030,37 @@ def _certify_embedding_pairs(
                         live.bound + _plane_controls_storage_upper(prepared, ledger)
                     )
             prepared_controls[index] = prepared
+        return prepared_controls[a], prepared_controls[b]
+
+    prepared_quadratics: dict[int, QuadraticSimplexControls | None] = {}
+
+    def prepare_quadratic_pair(
+        a: int, b: int
+    ) -> tuple[QuadraticSimplexControls | None, QuadraticSimplexControls | None]:
+        # Root controls are prepared once per actual cell in this request,
+        # only after a pair reaches bisection, and never outlive the proof.
+        for index in (a, b):
+            if index in prepared_quadratics:
+                continue
+            with ledger.polynomial_preparation_scope():
+                # ``live`` admits the retained arrays before their allocation.
+                prepared = prepare_quadratic_controls(cells[index], live, budget=budget)
+            prepared_quadratics[index] = prepared
+        return prepared_quadratics[a], prepared_quadratics[b]
+
+    for a, b in zip(first.tolist(), second.tolist(), strict=True):
+        if atlas_labels[a] >= 0 and atlas_labels[a] == atlas_labels[b]:
+            continue
         with ledger.polynomial_preparation_scope():
             contact_decision_2 = pair_decision(
                 cells[a],
                 cells[b],
                 limits,
                 limits.maximum_subdivision_pieces - state.subdivision_pieces,
-                (prepared_controls[a], prepared_controls[b]),
+                lambda: prepare_pair(a, b),
                 checks=state.checks,
                 locally_injective=state.clean,
+                quadratic_controls=lambda: prepare_quadratic_pair(a, b),
                 budget=budget,
             )
         state.subdivision_pieces += contact_decision_2.work
@@ -4982,10 +5252,13 @@ class _IntervalHomotopyWork:
         self.vertices: dict[tuple[int, int], _HomotopyVertex] = {}
         self._source_tokens: dict[int, tuple[object, str | tuple[str, int]]] = {}
         self._source_carriers: dict[int, tuple[object, str]] = {}
-        self._source_admissions: dict[int, _CarrierAdmission] = {}
+        self._source_admissions: dict[int, CarrierAdmission] = {}
+        # Bytes of retained admission summaries, bank layouts, definition
+        # records and receipts, each admitted before it is created.
+        self._source_retained_bytes = 0
         self.storage(0)
 
-    def storage(self, pending: int, *, additional_source_admissions: int = 0) -> None:
+    def storage(self, pending: int) -> None:
         # Each entry owns at most two (3,2) references, time bounds, depths,
         # interval vectors/matrices and the worklist tuple. The live bound is
         # this request's high-water mark: it is raised, never lowered early.
@@ -4995,17 +5268,17 @@ class _IntervalHomotopyWork:
             + 4096 * (pending + self.limits.maximum_subdivision_depth + 3)
             + _HOMOTOPY_MEMO_ENTRY_BYTES * len(self.memo)
             + _HOMOTOPY_RECORD_BYTES * (
-                self.records + len(self.vertices)
-                + len(self._source_tokens) + len(self._source_carriers)
+                self.records + len(self.vertices) + len(self._source_tokens)
             )
-            + 512 * (len(self._source_admissions) + additional_source_admissions)
+            + self._source_retained_bytes
         )
         if size > self.live.bound:
             self.live.set_bound(size)
 
-    def _retain_source_admission(self) -> None:
-        """Admit each persistent proof-local entry before creating it."""
-        self.storage(self.pending, additional_source_admissions=1)
+    def _retain_source_memo(self, size: int) -> None:
+        """Admit one proof-local source summary or definition before creating it."""
+        self._source_retained_bytes += size
+        self.storage(self.pending)
 
     def retain(self, records: int) -> None:
         self.records += records
@@ -5038,7 +5311,11 @@ class _IntervalHomotopyWork:
 
     def _source_token(self, cell: IntervalBoundaryCell) -> str | tuple[str, int]:
         source = cell.source
-        from ._domain_chart_chain import SourceChartMap, SourceChartMapError, source_chart_enclosure_identity
+        from ._domain_chart_chain import (
+            source_chart_enclosure_identity,
+            SourceChartMap,
+            SourceChartMapError,
+        )
 
         previous = self._source_tokens.get(id(source))
         immutable_native = self._source_carriers.get(id(source))
@@ -5047,15 +5324,17 @@ class _IntervalHomotopyWork:
             or (immutable_native is not None and immutable_native[0] is source)
         ):
             # This work object owns one pure proof. Only a fully authenticated
-            # immutable native source enters its root memo; new proofs and
-            # actual native evaluations still authenticate their own inputs.
+            # immutable native source without byte-backed banks enters its
+            # root memo. A bank-bound source is reauthenticated through its
+            # issued preparation, root fields and layout receipts every time.
             return previous[1]
 
         identity = (
             source_chart_enclosure_identity(
                 source, self.budget, self._source_carriers,
                 admissions=self._source_admissions,
-                retain_admission=self._retain_source_admission,
+                retain_admission=self._retain_source_memo,
+                retain_definition=self._retain_source_memo,
             )
             if type(source) is SourceChartMap else None
         )
@@ -5068,8 +5347,9 @@ class _IntervalHomotopyWork:
         self.storage(self.pending)
         return token
 
-    def _source_lookup(self, cell, kind: str, raw: bytes):
-        token = self._source_token(cell)
+    def _source_lookup(
+        self, kind: str, token: str | tuple[str, int], raw: bytes
+    ) -> tuple[_HomotopyInterval, ...] | None:
         key = (kind, token, raw)
         value = self._lookup(key)
         if value is None and isinstance(token, str):
@@ -5111,9 +5391,12 @@ class _IntervalHomotopyWork:
                     _homotopy_checked_interval(cast(_HomotopyInterval, part), shape)
                     for part in parts
                 ]
+                # The source callback returned one batch. Authenticate its
+                # definition once before publishing that batch's rows; no
+                # further source callback occurs inside this copy loop.
+                token = self._source_token(cell)
                 for index, reference in enumerate(references):
                     raw = reference.tobytes()
-                    token = self._source_token(cell)
                     rows = tuple((lower[index], upper[index]) for lower, upper in checked)
                     if isinstance(token, str):
                         stored = self.budget.source_homotopy_enclosure(
@@ -5132,9 +5415,10 @@ class _IntervalHomotopyWork:
             reference = np.asarray(reference, dtype=np.float64)
             raw = reference.tobytes()
             kind = "jet" if jet else "image"
-            if self._source_lookup(cell, kind, raw) is not None:
+            token = self._source_token(cell)
+            if self._source_lookup(kind, token, raw) is not None:
                 continue
-            groups.setdefault((self._source_token(cell), jet), (cell, {}))[1].setdefault(raw, reference)
+            groups.setdefault((token, jet), (cell, {}))[1].setdefault(raw, reference)
         for wanted in (False, True):
             batch: list[tuple[IntervalBoundaryCell, list[np.ndarray]]] = []
             rows = 0
@@ -5159,7 +5443,7 @@ class _IntervalHomotopyWork:
     ) -> _HomotopyInterval:
         reference = np.asarray(reference, dtype=np.float64)
         kind, raw = "jet" if jet else "image", reference.tobytes()
-        value = self._source_lookup(cell, kind, raw)
+        value = self._source_lookup(kind, self._source_token(cell), raw)
         if value is None:
             self._enclose([(cell, [reference])], jet)
             value = self.memo[kind, self._source_token(cell), raw]
@@ -5346,6 +5630,70 @@ def _homotopy_jets(
     return source, (lower.reshape(3, 2), upper.reshape(3, 2))
 
 
+def _homotopy_product_expression(left: Array, right: Array) -> Array:
+    """Trace the host interval product's exact reduction order, not dot_general."""
+    products = left[:, :, None] * right[None, :, :]
+    total = jnp.zeros((left.shape[0], right.shape[1]), dtype=jnp.float64)
+    for index in range(left.shape[1]):
+        total = total + products[:, index, :]
+    return total
+
+
+def _homotopy_native_program(
+    function: Callable[[Array], Array], input_size: int
+) -> NativeIntervalProgram:
+    # This traces host float64 arithmetic only; no caller numerical arrays or
+    # device precision policy enter the retained program.
+    with numerics(
+        enable_x64=True, matmul_precision=None, dtype_promotion=None,
+        rank_promotion=None, transfer_guard_device_to_host=None, disable_jit=None,
+    ):
+        prepared = prepare_interval_function(function, input_size, batch_capacity=1)
+    if prepared.native is None:
+        raise RuntimeError("Homotopy scalar arithmetic must admit a native interval program.")
+    return prepared.native
+
+
+@lru_cache(maxsize=27)
+def _homotopy_product_program(rows: int, inner: int, columns: int) -> NativeIntervalProgram:
+    def product(values: Array) -> Array:
+        left = values[: rows * inner].reshape(rows, inner)
+        right = values[rows * inner :].reshape(inner, columns)
+        return _homotopy_product_expression(left, right)
+
+    return _homotopy_native_program(product, rows * inner + inner * columns)
+
+
+@cache
+def _homotopy_spd_program() -> NativeIntervalProgram:
+    def principal_minors(values: Array) -> Array:
+        projection = values[:6].reshape(2, 3)
+        jacobian = values[6:12].reshape(3, 2)
+        transform = values[12:].reshape(2, 2)
+        projected = _homotopy_product_expression(
+            _homotopy_product_expression(projection, jacobian), transform
+        )
+        off = (projected[0, 1] + projected[1, 0]) * jnp.float64(0.5)
+        determinant = projected[0, 0] * projected[1, 1] - off * off
+        return jnp.stack((projected[0, 0], determinant))
+
+    return _homotopy_native_program(principal_minors, 16)
+
+
+@lru_cache(maxsize=64)
+def _homotopy_net_program(count: int) -> NativeIntervalProgram:
+    def projections(values: Array) -> Array:
+        direction = values[:3]
+        net = values[3:].reshape(count, 3)
+        products = direction[None, :] * net
+        total = jnp.zeros((count,), dtype=jnp.float64)
+        for axis in range(3):
+            total = total + products[:, axis]
+        return total
+
+    return _homotopy_native_program(projections, 3 + 3 * count)
+
+
 def _homotopy_linear(
     left: _HomotopyInterval, right: _HomotopyInterval
 ) -> _HomotopyInterval:
@@ -5356,6 +5704,23 @@ def _homotopy_linear(
     ``interval_dot`` per entry; leading batch axes never mix entries.
     """
     left_lower, left_upper = np.asarray(left[0]), np.asarray(left[1])
+    right_lower, right_upper = np.asarray(right[0]), np.asarray(right[1])
+    if (
+        left_lower.ndim == right_lower.ndim == 2
+        and left_lower.shape == left_upper.shape
+        and right_lower.shape == right_upper.shape
+        and left_lower.shape[1] == right_lower.shape[0]
+        and all(0 < extent <= 3 for extent in (*left_lower.shape, right_lower.shape[1]))
+        and all(value.dtype == np.float64 for value in (left_lower, left_upper, right_lower, right_upper))
+        and meshcore_owner.meshcore_provider_installed()
+    ):
+        rows, inner = left_lower.shape
+        columns = right_lower.shape[1]
+        program = _homotopy_product_program(rows, inner, columns)
+        lower, upper = meshcore_owner.interval_program_execute(
+            program, (left_lower, right_lower), (left_upper, right_upper)
+        )
+        return lower[0], upper[0]
     products = interval_multiply(
         (left_lower[..., :, :, None], left_upper[..., :, :, None]),
         (np.asarray(right[0])[..., None, :, :], np.asarray(right[1])[..., None, :, :]),
@@ -5375,6 +5740,19 @@ def _homotopy_spd(
     projection: np.ndarray,
     transform: _HomotopyInterval,
 ) -> bool:
+    if (
+        jacobian[0].shape == jacobian[1].shape == (3, 2)
+        and projection.shape == (2, 3)
+        and transform[0].shape == transform[1].shape == (2, 2)
+        and all(value.dtype == np.float64 for value in (*jacobian, projection, *transform))
+        and meshcore_owner.meshcore_provider_installed()
+    ):
+        program = _homotopy_spd_program()
+        lower, _ = meshcore_owner.interval_program_execute(
+            program, (projection, jacobian[0], transform[0]),
+            (projection, jacobian[1], transform[1]),
+        )
+        return bool(lower[0, 0] > 0 and lower[0, 1] > 0)
     projected = _homotopy_linear(
         _homotopy_linear((projection, projection), jacobian), transform
     )
@@ -5475,12 +5853,18 @@ def _homotopy_common_atlas(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _TriangleAtlas | None:
-    atlas = _triangle_atlas(first, second, shared, budget=budget)
-    if atlas is not None:
-        return atlas
-    # A first-face tangent projection can collapse a perpendicular second face.
-    # Propose a bisector projection instead, with a convex ABSTRACT diamond.
-    # Its straight common edge lives in reference space, never in physical space.
+    """Fixed balanced chart of two faces sharing an edge; a proposal, not evidence.
+
+    The projection keeps the common-edge direction and the unit bisector of
+    the two faces' transverse directions. Among planes containing the edge it
+    maximizes the smaller linear transverse foreshortening, sin(phi/2) for
+    transverse angle phi, so neither face collapses. A first-face tangent
+    projection keeps the first face exact but foreshortens a nearly
+    perpendicular second face by |cos(phi)|; the inverse chart of that sliver
+    amplifies curvature until the projected Jacobian is pointwise indefinite.
+    The exact projected corners chart both faces when their union is convex;
+    otherwise a convex abstract diamond is the chart.
+    """
     a, b = sorted(shared)
     corners = [
         np.asarray(_plane_corner_images(cell, budget=budget), dtype=np.float64)
@@ -5501,8 +5885,18 @@ def _homotopy_common_atlas(
     if any(not math.isfinite(value) or value <= 0 for value in lengths):
         return None
     normal_row = transverse[0] / lengths[0] - transverse[1] / lengths[1]
-    if not np.any(normal_row):
+    normal_length = float(np.linalg.norm(normal_row))
+    if not math.isfinite(normal_length) or normal_length <= 0:
         return None
+    atlas = _projected_triangle_atlas(
+        first, second, shared,
+        np.stack((tangent / math.sqrt(length_squared), normal_row / normal_length)),
+        budget=budget,
+    )
+    if atlas is not None:
+        return atlas
+    # Abstract diamond: its straight common edge lives in reference space,
+    # never in physical space.
     projection = np.stack((edge_row, normal_row))
     projected_outer = [projection @ value for value in outer]
     if projected_outer[0][1] <= 0 or projected_outer[1][1] >= 0:
@@ -6056,16 +6450,46 @@ def _homotopy_vertex_cone(
                         jacobian: tuple[Expression, ...] = jacobian,
                         oriented: np.ndarray = oriented,
                         directions: np.ndarray = data.directions,
+                        vertex_reference: np.ndarray = data.point,
                     ) -> bool:
                         source, target = _homotopy_jets(
                             cell, jacobian, reference, work=work
                         )
-                        jet = _homotopy_blend(source, target, time)
-                        rays = _homotopy_linear(
-                            _homotopy_linear((oriented, oriented), jet),
+                        # The separator and reference rays are fixed across time.
+                        # Project each endpoint first: hulling Jacobian entries
+                        # first would discard their shared homotopy parameter.
+                        source_rays = _homotopy_linear(
+                            _homotopy_linear((oriented, oriented), source),
                             (directions, directions),
                         )
-                        return bool(np.all(rays[0] > 0))
+                        target_rays = _homotopy_linear(
+                            _homotopy_linear((oriented, oriented), target),
+                            (directions, directions),
+                        )
+                        rays = _homotopy_blend(source_rays, target_rays, time)
+                        if np.all(rays[0] > 0):
+                            return True
+                        # The original simplex vertex is extreme: a closed
+                        # bisection child contains it only as one of its corners.
+                        if np.any(np.all(reference == vertex_reference[0], axis=1)):
+                            return False
+                        work.distance()
+                        source_delta = interval_subtract(
+                            work.source_interval(cell, reference, jet=False),
+                            work.source_interval(cell, vertex_reference, jet=False),
+                        )
+                        target_delta = interval_subtract(
+                            work.target_interval(cell, "target", cell.target, reference),
+                            work.target_interval(cell, "target", cell.target, vertex_reference),
+                        )
+                        source_margin = interval_dot((oriented[0], oriented[0]), source_delta)
+                        target_margin = interval_dot((oriented[0], oriented[0]), target_delta)
+                        displacement = _homotopy_blend(
+                            (np.asarray(source_margin[0]), np.asarray(source_margin[1])),
+                            (np.asarray(target_margin[0]), np.asarray(target_margin[1])),
+                            time,
+                        )
+                        return bool(np.all(displacement[0] > 0))
 
                     def requests(
                         reference: np.ndarray, cell: IntervalBoundaryCell = cell
@@ -6094,9 +6518,10 @@ def _homotopy_vertex_cone(
             raise _IntervalHomotopyRefusal("interval_homotopy_time_resolution", entities)
         work.storage(len(active) + 2)
         active.extend((((time[0], middle), depth + 1), ((middle, time[1]), depth + 1)))
-    # For x=v+a*d0+b*d1, a,b>=0, absolute continuity along [v,x] and
-    # the a.e. one-sided-jet inequality give n.(H(x,t)-H(v,t)) the strict
-    # prescribed sign unless a=b=0; a derivative at every join is unnecessary.
+    # Along each segment [v,x], derivative-certified leaves strictly increase
+    # the signed displacement; image-certified leaves already prove it positive.
+    # The finite convex cover and continuity propagate positivity from v,
+    # whose containing leaves must use the derivative proof.
     # The authenticated vertex trace makes H(v,t) the SAME moving vertex.
 
 
@@ -6177,6 +6602,18 @@ def _homotopy_tube_separated(
 
 def _homotopy_net_range(direction: np.ndarray, net: _HomotopyInterval) -> tuple[float, float]:
     """Outward range of the scalar net n.b_k, which bounds n.P on its subtriangle."""
+    if (
+        direction.shape == (3,)
+        and net[0].ndim == 2 and net[0].shape == net[1].shape
+        and net[0].shape[1] == 3 and 0 < net[0].shape[0] <= 64
+        and all(value.dtype == np.float64 for value in (direction, *net))
+        and meshcore_owner.meshcore_provider_installed()
+    ):
+        program = _homotopy_net_program(net[0].shape[0])
+        lower, upper = meshcore_owner.interval_program_execute(
+            program, (direction, net[0]), (direction, net[1])
+        )
+        return float(np.min(lower)), float(np.max(upper))
     lower, upper = interval_multiply((direction[None, :], direction[None, :]), net)
     products = np.asarray(lower), np.asarray(upper)
     total: _HomotopyInterval = (np.zeros(len(net[0])), np.zeros(len(net[0])))
