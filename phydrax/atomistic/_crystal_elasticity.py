@@ -21,42 +21,17 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    AbstractParticleNeighborhoodPlan,
-    AbstractPreparedParticleNeighborhood,
-    DenseParticleNeighborhoodPlan,
-    MetricCellListParticleNeighborhoodPlan,
-    PeriodicCell,
-)
+from ..discretization import PeriodicCell
 from ..linalg import DenseLinearOperator, OperatorProperties
 from ..linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
 from ..typing import checked
 from ..units import UnitDefinition
 from ._many_body import ManyBodyPotential
 from ._potential_program import PreparedAtomisticPotentialProgram
+from ._rerun import frame_resources
 
 
 _VOIGT_COMPONENTS = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
-
-
-def _strained_neighborhood_plan(
-    plan: AbstractParticleNeighborhoodPlan, cell: PeriodicCell, /
-) -> AbstractParticleNeighborhoodPlan:
-    """Bind the reference neighborhood policy to one homogeneously strained cell."""
-
-    match plan:
-        case DenseParticleNeighborhoodPlan():
-            return DenseParticleNeighborhoodPlan(plan.maximum_pairs, box=cell)
-        case MetricCellListParticleNeighborhoodPlan():
-            return MetricCellListParticleNeighborhoodPlan(
-                plan.search_radius,
-                plan.maximum_particles_per_cell,
-                plan.maximum_pairs,
-                cell,
-                maximum_candidate_slots=plan.maximum_candidate_slots,
-            )
-        case _:
-            raise RuntimeError("Validated neighborhood plan unexpectedly unsupported.")
 
 
 class CrystalElasticityResult(StrictModule, NonTrainableState):
@@ -145,12 +120,15 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
 class CrystalElasticityPlan(StrictModule, NonTrainableState):
     """Finite-difference homogeneous-strain response for EAM/SW/Tersoff crystals.
 
-    Every strained cell re-prepares the system, potential, and the reference
-    neighborhood policy, because the fixed cell is part of each prepared identity.
+    Every strained cell re-prepares the system and the potential program with
+    the program's own neighborhood-bundle plan, because the fixed cell is part
+    of each prepared identity; each strained configuration then owns
+    independently initialized and certified resources (capacity-only failures
+    replay on the declared grown capacities, an exhausted ladder or any
+    scientific resource failure makes the result unsuccessful).
     """
 
     potential: PreparedAtomisticPotentialProgram
-    neighborhood: AbstractPreparedParticleNeighborhood
     equilibrium_fractional_positions: Array
     strain_step: float = eqx.field(static=True)
     stability_tolerance: float = eqx.field(static=True)
@@ -162,7 +140,6 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         potential: PreparedAtomisticPotentialProgram,
-        neighborhood: AbstractPreparedParticleNeighborhood,
         equilibrium_fractional_positions: ArrayLike,
         /,
         *,
@@ -182,20 +159,6 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         cell = potential.system.cell
         if cell is None or cell.rank != 3 or not cell.fully_periodic:
             raise ValueError("Crystal elasticity requires a fully periodic rank-3 cell.")
-        if (
-            not isinstance(neighborhood.box, PeriodicCell)
-            or neighborhood.box.cell_id != cell.cell_id
-        ):
-            raise ValueError(
-                "Neighborhood periodic cell must exactly match the potential system cell."
-            )
-        if not isinstance(
-            neighborhood.plan,
-            (DenseParticleNeighborhoodPlan, MetricCellListParticleNeighborhoodPlan),
-        ):
-            raise ValueError(
-                "Crystal elasticity requires a dense or metric cell-list periodic neighborhood."
-            )
         fractional = np.asarray(equilibrium_fractional_positions)
         if fractional.shape != (potential.system.capacity, 3) or np.any(
             ~np.isfinite(fractional)
@@ -217,7 +180,6 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Strain step and elasticity tolerances are invalid.")
         self.potential = potential
-        self.neighborhood = neighborhood
         self.equilibrium_fractional_positions = jnp.asarray(fractional)
         self.strain_step = step
         self.stability_tolerance = stability
@@ -227,7 +189,6 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
             {
                 "kind": "crystal-elasticity-plan",
                 "potential": potential.prepared_id,
-                "neighborhood": neighborhood.prepared_id,
                 "cell": cell.cell_id,
                 "strain_step": step,
                 "stability_tolerance": stability,
@@ -277,13 +238,27 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
                 numeric_version=self.potential.system.numeric_version
             )
             potential = self.potential.plan.prepare(
-                system, graph_execution=self.potential.graph_execution
+                system,
+                neighborhood_bundle=self.potential.neighborhood_bundle.plan,
+                graph_execution=self.potential.graph_execution,
             )
-            neighborhood = _strained_neighborhood_plan(
-                self.neighborhood.plan, deformed_cell
-            ).prepare(system.particles)
-            positions = deformed_cell.cartesian(fractional)
-            evaluation = potential.evaluate(positions, neighborhood.build(positions))
+            resources = frame_resources(
+                potential,
+                None,
+                jnp.asarray(deformed_cell.cartesian(fractional)),
+                jnp.asarray(vectors),
+            )
+            evaluation = resources.potential.evaluate(
+                resources.positions,
+                resources.neighborhoods,
+                cell_vectors=resources.cell_vectors,
+                image_counts=resources.image_counts,
+            )
+            all_successful = (
+                all_successful
+                and not resources.exhausted
+                and bool(np.asarray(resources.neighborhoods.successful)[0])
+            )
             all_successful = all_successful and bool(evaluation.successful)
             return float(evaluation.energy)
 

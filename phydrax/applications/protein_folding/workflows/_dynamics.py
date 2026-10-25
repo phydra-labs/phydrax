@@ -21,7 +21,6 @@ from ....atomistic import (
     PreparedThermodynamicStateTable,
     VelocityVerletPlan,
 )
-from ....discretization import AbstractPreparedParticleNeighborhood
 from ....dynamics import StateLayout, TrajectoryData
 from ....typing import PRNGKey
 from ....units import conversion_factor, UnitDefinition
@@ -67,11 +66,15 @@ class ProteinDynamicsResult:
 
 def prepare_protein_dynamics(
     binding: PreparedProteinBinding,
-    neighborhood: AbstractPreparedParticleNeighborhood,
     integrator: VelocityVerletPlan | BAOABLangevinPlan,
     thermodynamic_state: AtomisticThermodynamicStatePlan,
 ) -> tuple[PreparedAtomisticDynamics, PreparedThermodynamicStateTable]:
-    """Compose one declared native thermodynamic state without a new engine."""
+    """Compose one declared native thermodynamic state without a new engine.
+
+    The neighborhood resources are those the bound force field was prepared
+    with (``AtomisticForceFieldPlan.prepare(neighborhood_bundle=...)``); none
+    are inferred here.
+    """
     if not isinstance(binding, PreparedProteinBinding):
         raise TypeError("binding must be a PreparedProteinBinding.")
     if not isinstance(integrator, (VelocityVerletPlan, BAOABLangevinPlan)):
@@ -82,7 +85,6 @@ def prepare_protein_dynamics(
     dynamics = AtomisticDynamicsPlan(
         field.system,
         field.potential,
-        neighborhood,
         integrator,
         constraints=field.constraints,
     ).prepare()
@@ -91,7 +93,6 @@ def prepare_protein_dynamics(
 
 def run_protein_dynamics(
     binding: PreparedProteinBinding,
-    neighborhood: AbstractPreparedParticleNeighborhood,
     integrator: VelocityVerletPlan | BAOABLangevinPlan,
     qualification: PreparedProteinQualification,
     thermodynamic_state: AtomisticThermodynamicStatePlan,
@@ -132,7 +133,6 @@ def run_protein_dynamics(
         )
     dynamics, thermodynamic_states = prepare_protein_dynamics(
         binding,
-        neighborhood,
         integrator,
         thermodynamic_state,
     )

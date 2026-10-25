@@ -2,6 +2,27 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Bundle-backed isotropic Monte Carlo volume move (scheduled cell owner).
+
+One move proposes ``ln V' = ln V + u``, ``u ~ U(-a, a)``, scales the declared
+entities of the phase-space measure (molecule centers, or every active atom)
+at fixed fractional coordinates, refreshes a pure candidate of the accepted
+neighborhood bundle at the proposed geometry and evaluates the complete
+scalar Hamiltonian (every term, including any embedded bias) there.  With the
+symmetric ``ln V`` proposal the scaled-coordinate NPT measure ``V^N dV``
+contributes the exact Jacobian ``(N + 1) ln(V'/V)``::
+
+    ln alpha = -beta (U' - U + P (V' - V)) + (N + 1) ln(V' / V).
+
+A hydrostatic scalar pressure enters as ``P V``; tensor targets are refused.
+Draws are addressed by run key, realization, the move operator identity, the
+typed move counter of the state and the draw index.  A completed
+Metropolis decision (accept or reject) advances the counter; a capacity,
+scientific, resource or stale-force failure advances nothing, so a
+capacity-only replay re-attempts the identical move.  Kinematics, cell,
+bundle, force cache, counters and ledger commit together.
+"""
+
 from __future__ import annotations
 
 import math
@@ -9,28 +30,42 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._tree_math import tree_where
-from ..discretization import AbstractPreparedParticleNeighborhood
+from .._tree_math import tree_allfinite, tree_where
+from ..discretization import PeriodicCell
+from ._cell_dynamics import cell_volume
 from ._dynamics import (
+    _flag,
+    _neighborhood_reasons,
+    _strain_reasons,
+    advance_atomistic_energy_ledger,
     AtomisticDynamicsState,
-    AtomisticEnergyLedgerState,
     AtomisticKinematics,
+    AtomisticStepRejectionReason,
     PreparedAtomisticDynamics,
 )
 from ._thermodynamic import PreparedThermodynamicStateTable
 
 
+MONTE_CARLO_VOLUME_OPERATOR_ID = 64
+
+
 class IsotropicMonteCarloBarostatPlan(StrictModule, NonTrainableState):
-    maximum_log_volume_change: float = eqx.field(static=True)
+    """Uniform ``ln V`` proposal width and declared random stream of the move.
+
+    ``maximum_log_volume_change`` is a dynamic ``float64`` scalar (proposal
+    width revisions share one executable); ``realization_id`` is a static
+    stream label.  The digest of the exact host values is the dynamic
+    ``plan_identity`` (host ``plan_id``, unchanged digest).
+    """
+
+    maximum_log_volume_change: Array
     realization_id: int = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -43,18 +78,27 @@ class IsotropicMonteCarloBarostatPlan(StrictModule, NonTrainableState):
         realization = int(realization_id)
         if not math.isfinite(maximum) or maximum <= 0.0 or realization < 0:
             raise ValueError("Monte Carlo barostat parameters are invalid.")
-        self.maximum_log_volume_change = maximum
+        self.maximum_log_volume_change = jnp.asarray(maximum, dtype=jnp.float64)
         self.realization_id = realization
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "isotropic-monte-carlo-barostat",
+                "proposal": "uniform-log-volume",
+                "jacobian": "scaled-entities-plus-one",
                 "maximum_log_volume_change": maximum,
                 "realization_id": realization,
             }
         )
 
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
+
 
 class AtomisticBarostatEvaluation(StrictModule):
+    """One Monte Carlo volume move; ``plan_identity`` (host ``plan_id``) is dynamic."""
+
     candidate_state: AtomisticDynamicsState
     accepted_state: AtomisticDynamicsState
     accepted: Array
@@ -64,26 +108,65 @@ class AtomisticBarostatEvaluation(StrictModule):
     energy_before: Array
     energy_after: Array
     successful: Array
-    plan_id: str = eqx.field(static=True)
+    rejection_reasons: Array
+    plan_identity: IdentityWords
+
+    @property
+    def plan_id(self) -> str:
+        return self.plan_identity.fingerprint()
 
 
-def _volume(vectors: Array, /) -> Array:
-    return jnp.abs(jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2])))
+def _admit(
+    dynamics: PreparedAtomisticDynamics,
+    thermodynamic: PreparedThermodynamicStateTable,
+    /,
+) -> tuple[PeriodicCell, Array]:
+    """Admit the cell and return traced constraint-molecule admission.
+
+    Holonomic constraints must stay within one scaled molecule.  The
+    constraint rows are material content, so the check is a traced boolean
+    folded into the move's ``BAROSTAT`` rejection, never a host decode.
+    """
+    from ._cell_dynamics import MTKNPHPlan, MTKNPTPlan
+
+    cell = dynamics.system.cell
+    if cell is None or not cell.fully_periodic:
+        raise ValueError("Isotropic barostat requires a fully periodic cell.")
+    if isinstance(dynamics.integrator, (MTKNPTPlan, MTKNPHPlan)):
+        raise ValueError(
+            "The integrator already owns the cell; a thermodynamic run has exactly "
+            "one cell-evolution owner."
+        )
+    dynamics.require_conservative_force_definition("A Monte Carlo volume move")
+    if not dynamics.integrator.canonical:
+        raise ValueError(
+            "A Monte Carlo NPT move requires a canonical NVT particle method."
+        )
+    if dynamics.constraints is None:
+        return cell, jnp.asarray(True)
+    if thermodynamic.volume_coordinate_convention == "atomic":
+        raise ValueError(
+            "Atomic volume scaling would deform holonomic constraints; declare "
+            "molecular-center scaling."
+        )
+    indices = dynamics.system.topology.constraint_indices
+    if indices.shape[0] == 0:
+        return cell, jnp.asarray(True)
+    molecules = dynamics.system.plan.molecule_ids
+    return cell, jnp.all(molecules[indices[:, 0]] == molecules[indices[:, 1]])
 
 
+# Proposal, Jacobian/energy ledger, acceptance draw and rollback form one move.
+# Keep their source-faithful arithmetic and key/counter order explicit rather than
+# fragmenting the numerical transaction solely because its result record is long.
 def apply_isotropic_monte_carlo_barostat(
     dynamics: PreparedAtomisticDynamics,
     state: AtomisticDynamicsState,
     thermodynamic: PreparedThermodynamicStateTable,
     plan: IsotropicMonteCarloBarostatPlan,
-    move_index: ArrayLike,
     /,
 ) -> AtomisticBarostatEvaluation:
-    """Propose and atomically accept or reject one addressed volume move.
-
-    Admission, RNG addressing, cache replacement, evidence, and rollback stay
-    in one transaction during cache migration to preserve rejection ordering.
-    """
+    """Propose and atomically accept or reject the state's next volume move."""
     if not isinstance(dynamics, PreparedAtomisticDynamics):
         raise TypeError("dynamics must be PreparedAtomisticDynamics.")
     if not isinstance(state, AtomisticDynamicsState):
@@ -92,180 +175,182 @@ def apply_isotropic_monte_carlo_barostat(
         raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
     if not isinstance(plan, IsotropicMonteCarloBarostatPlan):
         raise TypeError("plan must be IsotropicMonteCarloBarostatPlan.")
-    thermodynamic.validate_dynamics(dynamics)
-    if (
-        state.prepared_dynamics_id != dynamics.prepared_id
-        or state.thermodynamic_table_id != thermodynamic.table_id
-    ):
-        raise ValueError("State belongs to another dynamics runtime or state table.")
-    if state.force.program_id != dynamics.potential.prepared_id:
-        raise ValueError("State force cache belongs to another potential program.")
-    expected_neighborhood_epoch = (
-        jnp.zeros((), dtype=jnp.int32)
-        if state.neighborhood_cache is None
-        else state.neighborhood_cache.epoch
-    )
-    force_valid = (
-        state.force.successful
-        & (state.force.position_epoch == state.step_index)
-        & (state.force.neighborhood_epoch == expected_neighborhood_epoch)
-    )
-    checked_positions = eqx.error_if(
-        state.kinematics.positions,
-        ~force_valid,
-        "Barostat requires a current successful force cache.",
-    )
-    state = eqx.tree_at(
-        lambda value: value.kinematics.positions, state, checked_positions
-    )
+    dynamics._require_state(state, thermodynamic)
+    cell, constraints_admitted = _admit(dynamics, thermodynamic)
+    bound = dynamics.binding_valid(state, thermodynamic)
     row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
-    if dynamics.system.cell is None or not dynamics.system.cell.fully_periodic:
-        raise ValueError("Isotropic barostat requires a fully periodic cell.")
-    if dynamics.potential.plan.requirements.directed_graph:
-        raise ValueError("Dynamic-cell barostat does not support learned graph terms.")
-    if (
-        not isinstance(dynamics.neighborhood, AbstractPreparedParticleNeighborhood)
-        or dynamics.neighborhood.backend != "dense_pairs"
-    ):
-        raise ValueError("Dynamic-cell barostat currently requires dense pair authority.")
-    if dynamics.constraints is not None:
-        indices = np.asarray(dynamics.system.topology.constraint_indices)
-        molecules = np.asarray(dynamics.system.plan.molecule_ids)
-        if indices.size and np.any(molecules[indices[:, 0]] != molecules[indices[:, 1]]):
-            raise ValueError(
-                "Barostat constraints must remain within one scaled molecule."
-            )
+    force_valid = dynamics.force_cache_valid(state, row.controls)
+    controllers = state.controllers
+    counter = controllers.move_counter
     key = jr.wrap_key_data(state.random_key)
     key = jr.fold_in(key, jnp.asarray(plan.realization_id, dtype=jnp.uint32))
-    key = jr.fold_in(key, jnp.asarray(move_index, dtype=jnp.uint32))
-    proposal_key = jr.fold_in(key, jnp.uint32(0))
-    acceptance_key = jr.fold_in(key, jnp.uint32(1))
+    key = jr.fold_in(key, jnp.uint32(MONTE_CARLO_VOLUME_OPERATOR_ID))
+    key = jr.fold_in(key, counter)
     dtype = state.kinematics.positions.dtype
     log_volume_change = jr.uniform(
-        proposal_key,
+        jr.fold_in(key, jnp.uint32(0)),
         (),
         minval=-plan.maximum_log_volume_change,
         maxval=plan.maximum_log_volume_change,
         dtype=dtype,
     )
+    log_uniform = jnp.log(jr.uniform(jr.fold_in(key, jnp.uint32(1)), (), dtype=dtype))
     linear_scale = jnp.exp(log_volume_change / 3.0)
     old_vectors = state.cell_vectors
     new_vectors = old_vectors * linear_scale
-    cell = dynamics.system.cell
     old_unwrapped = dynamics._unwrapped(state.kinematics, old_vectors)
-    labels = jnp.asarray(dynamics.system.molecule_labels, dtype=jnp.int32)
-    molecule_indices = jnp.searchsorted(
-        labels,
-        dynamics.system.plan.molecule_ids,
-    )
     active = dynamics.system.active_mask
-    masses = dynamics.system.plan.masses.astype(dtype)
-    molecule_mass = (
-        jnp.zeros((labels.shape[0],), dtype=dtype)
-        .at[molecule_indices]
-        .add(jnp.where(active, masses, 0.0))
-    )
-    weighted_position = (
-        jnp.zeros((labels.shape[0], 3), dtype=dtype)
-        .at[molecule_indices]
-        .add(jnp.where(active[:, None], masses[:, None] * old_unwrapped, 0.0))
-    )
-    centers = weighted_position / molecule_mass[:, None]
-    center_fractional = cell.fractional_with_vectors(centers, old_vectors)
-    proposed_centers = cell.cartesian_with_vectors(center_fractional, new_vectors)
-    displacement = proposed_centers[molecule_indices] - centers[molecule_indices]
-    proposed_unwrapped = jnp.where(
-        active[:, None],
-        old_unwrapped + displacement,
-        old_unwrapped,
-    )
+    if thermodynamic.volume_coordinate_convention == "atomic":
+        fractional = cell.fractional_with_vectors(old_unwrapped, old_vectors)
+        scaled = cell.cartesian_with_vectors(fractional, new_vectors)
+        proposed_unwrapped = jnp.where(active[:, None], scaled, old_unwrapped)
+    else:
+        # ``molecule_labels`` holds the sorted active labels in its first
+        # ``molecule_count`` rows and int32-max padding after; padded rows have
+        # no mass and are masked so they never produce 0/0 centers.
+        labels = dynamics.system.molecule_labels
+        rows = labels.shape[0]
+        label_valid = jnp.arange(rows, dtype=jnp.int32) < dynamics.system.molecule_count
+        molecule_indices = jnp.searchsorted(labels, dynamics.system.plan.molecule_ids)
+        masses = dynamics.system.plan.masses.astype(dtype)
+        molecule_mass = (
+            jnp.zeros((rows,), dtype=dtype)
+            .at[molecule_indices]
+            .add(jnp.where(active, masses, 0.0))
+        )
+        weighted = (
+            jnp.zeros((rows, 3), dtype=dtype)
+            .at[molecule_indices]
+            .add(jnp.where(active[:, None], masses[:, None] * old_unwrapped, 0.0))
+        )
+        occupied = label_valid & (molecule_mass > 0.0)
+        safe_mass = jnp.where(occupied, molecule_mass, 1.0)
+        centers = jnp.where(occupied[:, None], weighted / safe_mass[:, None], 0.0)
+        proposed_centers = cell.cartesian_with_vectors(
+            cell.fractional_with_vectors(centers, old_vectors), new_vectors
+        )
+        displacement = jnp.where(
+            occupied[molecule_indices][:, None],
+            proposed_centers[molecule_indices] - centers[molecule_indices],
+            0.0,
+        )
+        proposed_unwrapped = jnp.where(
+            active[:, None], old_unwrapped + displacement, old_unwrapped
+        )
     proposed_positions, proposed_images = cell.wrap_with_vectors(
         proposed_unwrapped, new_vectors
     )
-    neighborhood, cache = dynamics._build_neighborhood(
-        proposed_positions, None, new_vectors, proposed_images
-    )
-    evaluation = dynamics._evaluate_configuration(
+    neighborhoods = dynamics.refresh_neighborhoods(
+        state.neighborhoods,
         proposed_positions,
-        proposed_unwrapped,
-        state.species,
-        new_vectors,
-        neighborhood,
-        cache,
-        row.controls,
+        cell_vectors=new_vectors,
+        image_counts=proposed_images,
     )
-    volume_before = _volume(old_vectors)
-    volume_after = _volume(new_vectors)
-    entity_count = thermodynamic.scaled_entity_count
-    beta = row.beta
+    evaluation = dynamics.evaluate_configuration(
+        proposed_positions,
+        neighborhoods,
+        unwrapped_positions=proposed_unwrapped,
+        image_counts=proposed_images,
+        species=state.species,
+        cell_vectors=new_vectors,
+        controls=row.controls,
+        term_states=state.term_states,
+    )
+    volume_before = cell_volume(old_vectors)
+    volume_after = cell_volume(new_vectors)
     energy_change = evaluation.energy - state.force.potential_energy
     pressure_work = row.pressure * (volume_after - volume_before)
-    log_acceptance = -beta * (energy_change + pressure_work) + entity_count * jnp.log(
-        volume_after / volume_before
+    log_acceptance = -row.beta * (energy_change + pressure_work) + jnp.asarray(
+        thermodynamic.scaled_entity_count + 1, dtype=dtype
+    ) * jnp.log(volume_after / volume_before)
+    revision = state.configuration_revision + 1
+    force = dynamics.force_state(
+        evaluation,
+        neighborhoods,
+        revision,
+        row.hamiltonian_index,
+        row.controls,
+        state.random_key,
+        term_states=state.term_states,
+        ports=None,
     )
-    log_uniform = jnp.log(jr.uniform(acceptance_key, (), dtype=dtype))
-    cutoff = dynamics.potential.plan.requirements.cutoff
-    image_valid = (
-        jnp.asarray(True)
-        if cutoff is None
-        else linear_scale * cell.unique_image_radius > cutoff
+    accepted_controllers = eqx.tree_at(
+        lambda value: (
+            value.move_counter,
+            value.accepted_moves,
+            value.cell_epoch,
+        ),
+        controllers,
+        (counter + 1, controllers.accepted_moves + 1, controllers.cell_epoch + 1),
+    )
+    kinetic = dynamics.kinetic_energy(state.kinematics.momenta)
+    terms = dynamics.extended_terms(accepted_controllers, new_vectors, thermodynamic, row)
+    ledger = advance_atomistic_energy_ledger(
+        state.energy,
+        kinetic,
+        evaluation.energy,
+        terms,
+        thermostat_heat=jnp.zeros_like(kinetic),
+        reservoir_heat=energy_change,
+        constraint_work=jnp.zeros_like(kinetic),
+        barostat_work=pressure_work,
+        external_work=jnp.zeros_like(kinetic),
+        balanced=False,
+        accepted_increment=0,
     )
     thermodynamic_valid = (
         row.valid & row.temperature_mask & row.pressure_mask & (row.ensemble_code == 2)
     )
-    accepted = (
-        thermodynamic_valid
-        & evaluation.successful
-        & neighborhood.successful
-        & image_valid
-        & jnp.isfinite(log_acceptance)
-        & (log_uniform < jnp.minimum(log_acceptance, 0.0))
+    resources = _neighborhood_reasons(neighborhoods)
+    reasons = (
+        resources
+        | _flag(~evaluation.successful, AtomisticStepRejectionReason.POTENTIAL)
+        | _flag(~thermodynamic_valid, AtomisticStepRejectionReason.THERMODYNAMIC_STATE)
+        | _flag(~force_valid, AtomisticStepRejectionReason.STALE_FORCE)
+        | _flag(~bound, AtomisticStepRejectionReason.BINDING)
+        | _flag(~constraints_admitted, AtomisticStepRejectionReason.BAROSTAT)
+        | _flag(
+            ~(
+                jnp.isfinite(log_acceptance)
+                & dynamics.force_cache_finite(force)
+                & tree_allfinite((ledger, new_vectors))
+            ),
+            AtomisticStepRejectionReason.NONFINITE,
+        )
+        | _flag(
+            counter == jnp.iinfo(jnp.uint32).max, AtomisticStepRejectionReason.BAROSTAT
+        )
+        | _strain_reasons(dynamics.strain_response, force.strain_available, resources)
     )
-    force = dynamics._force_state(evaluation, cache, state.step_index)
-    kinetic = dynamics.kinetic_energy(state.kinematics.momenta)
-    total = kinetic + evaluation.energy
-    candidate_energy = AtomisticEnergyLedgerState(
-        initial_kinetic_energy=state.energy.initial_kinetic_energy,
-        initial_potential_energy=state.energy.initial_potential_energy,
-        kinetic_energy=kinetic,
-        potential_energy=evaluation.energy,
-        total_energy=total,
-        thermostat_heat=state.energy.thermostat_heat,
-        barostat_work=state.energy.barostat_work + pressure_work,
-        external_work=state.energy.external_work,
-        constraint_work=state.energy.constraint_work,
-        cumulative_balance_residual=state.energy.cumulative_balance_residual,
-        last_relative_energy_change=jnp.abs(energy_change)
-        / jnp.maximum(jnp.abs(state.energy.total_energy), 1.0e-30),
-        accepted_steps=state.energy.accepted_steps,
-    )
-    candidate = AtomisticDynamicsState(
-        time=state.time,
-        step_index=state.step_index,
-        kinematics=AtomisticKinematics(
-            proposed_positions,
-            state.kinematics.momenta,
-            proposed_images,
+    successful = reasons == 0
+    accepted = successful & (log_uniform < jnp.minimum(log_acceptance, 0.0))
+    candidate = eqx.tree_at(
+        lambda value: (
+            value.configuration_revision,
+            value.kinematics,
+            value.cell_vectors,
+            value.neighborhoods,
+            value.force,
+            value.controllers,
+            value.energy,
         ),
-        species=state.species,
-        cell_vectors=new_vectors,
-        neighborhood=neighborhood,
-        neighborhood_cache=cache,
-        force=force,
-        constraint_lagrange=state.constraint_lagrange,
-        constraint_position_residual=state.constraint_position_residual,
-        constraint_velocity_residual=state.constraint_velocity_residual,
-        thermostat_state=state.thermostat_state,
-        barostat_state=state.barostat_state,
-        random_key=state.random_key,
-        energy=candidate_energy,
-        last_status=state.last_status,
-        last_rejection_reasons=state.last_rejection_reasons,
-        thermodynamic_state_index=state.thermodynamic_state_index,
-        thermodynamic_table_id=thermodynamic.table_id,
-        prepared_dynamics_id=state.prepared_dynamics_id,
+        state,
+        (
+            revision,
+            AtomisticKinematics(
+                proposed_positions, state.kinematics.momenta, proposed_images
+            ),
+            new_vectors,
+            neighborhoods,
+            force,
+            accepted_controllers,
+            ledger,
+        ),
     )
-    successor = tree_where(accepted, candidate, state)
+    rejected = eqx.tree_at(
+        lambda value: value.controllers.move_counter, state, counter + 1
+    )
+    successor = tree_where(accepted, candidate, tree_where(successful, rejected, state))
     return AtomisticBarostatEvaluation(
         candidate,
         successor,
@@ -275,17 +360,15 @@ def apply_isotropic_monte_carlo_barostat(
         volume_after,
         state.force.potential_energy,
         evaluation.energy,
-        thermodynamic_valid
-        & evaluation.successful
-        & neighborhood.successful
-        & image_valid
-        & jnp.isfinite(log_acceptance),
-        plan.plan_id,
+        successful,
+        reasons,
+        plan.plan_identity,
     )
 
 
 __all__ = [
     "AtomisticBarostatEvaluation",
     "IsotropicMonteCarloBarostatPlan",
+    "MONTE_CARLO_VOLUME_OPERATOR_ID",
     "apply_isotropic_monte_carlo_barostat",
 ]

@@ -5,6 +5,18 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
+
+
+# Finite two-atom pair: nonperiodic search frame enclosing the trajectory and
+# the one-pair storage of the former dense neighborhood.
+_FRAME = phx.discretization.PeriodicCell(
+    20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+)
 
 
 def _constrained_baoab() -> Any:
@@ -24,20 +36,24 @@ def _constrained_baoab() -> Any:
         atom_type_ids=[0, 0],
         topology=topology,
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.1], [0.8], 2.0)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
+        frame=_FRAME,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [0.8], 2.0)]
-    ).prepare(system)
     constraints = phx.atomistic.DistanceConstraintPlan(
         maximum_iterations=64, tolerance=1.0e-9
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.BAOABLangevinPlan(1.0e-3, 0.5),
         constraints=constraints,
     ).prepare()
@@ -91,7 +107,17 @@ def test_dynamics_thermal_scenario_1() -> None:
     distance = jnp.sqrt(jnp.sum((unwrapped[0] - unwrapped[1]) ** 2))
     np.testing.assert_allclose(distance, 1.0, atol=1.0e-8)
     assert float(step.accepted_state.constraint_velocity_residual) <= 1.0e-9
-    assert bool(jnp.all(jnp.isfinite(step.accepted_state.thermostat_state)))
+    # BAOAB owns no chain, memory or cell controller; its exchanged heat is
+    # booked in the ledger over the constrained kinetic degrees of freedom.
+    assert thermodynamic.degrees_of_freedom == 5
+    controllers = step.accepted_state.controllers
+    assert controllers.particle_chain is None
+    assert controllers.gle is None
+    assert controllers.cell is None
+    ledger = step.accepted_state.energy
+    assert bool(jnp.isfinite(ledger.thermostat_heat))
+    assert bool(jnp.isfinite(ledger.reservoir_heat))
+    assert int(ledger.accepted_steps) == 1
     dynamics, thermodynamic = _constrained_baoab()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     state = dynamics.initialize_state(

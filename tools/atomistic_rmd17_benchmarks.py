@@ -39,7 +39,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run a matched finite-molecule PaiNN-versus-NequIP campaign on one "
-            "local or checksum-verified cached rMD17 NPZ."
+            "local or checksum-verified cached rMD17 NPZ through the native "
+            "training source/loader frontend."
         )
     )
     source = parser.add_mutually_exclusive_group(required=True)
@@ -55,6 +56,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation-size", type=int, default=50)
     parser.add_argument("--test-size", type=int, default=1000)
     parser.add_argument("--steps", type=int, default=500)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Draws per global batch (one accumulated update); default: full batch.",
+    )
+    parser.add_argument(
+        "--payload-cases",
+        type=int,
+        default=None,
+        help="Cases per payload; below --batch-size each update accumulates payloads.",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--energy-weight", type=float, default=1.0)
     parser.add_argument("--force-weight", type=float, default=100.0)
@@ -221,19 +234,24 @@ def _gates(metrics: Any) -> Any:
 
 
 def _potential(model_name: Any, dataset: Any, arguments: Any, seed: Any) -> Any:
-    common = {
-        "cutoff": arguments.cutoff,
-        "feature_count": arguments.features,
-        "interaction_count": arguments.interactions,
-        "radial_basis_count": arguments.radial_basis,
-        "key": jr.key(seed),
-    }
     if model_name == "painn":
-        # ty: ignore[invalid-argument-type]
-        return phx.nn.atomistic.PaiNNPotential(dataset.scale, **common)
+        return phx.nn.atomistic.PaiNNPotential(
+            dataset.scale,
+            cutoff=arguments.cutoff,
+            feature_count=arguments.features,
+            interaction_count=arguments.interactions,
+            radial_basis_count=arguments.radial_basis,
+            key=jr.key(seed),
+        )
     if model_name == "nequip":
-        # ty: ignore[invalid-argument-type]
-        return phx.nn.atomistic.NequIPPotential(dataset.scale, **common)
+        return phx.nn.atomistic.NequIPPotential(
+            dataset.scale,
+            cutoff=arguments.cutoff,
+            feature_count=arguments.features,
+            interaction_count=arguments.interactions,
+            radial_basis_count=arguments.radial_basis,
+            key=jr.key(seed),
+        )
     raise ValueError(f"Unknown atomistic benchmark model {model_name!r}.")
 
 
@@ -281,6 +299,8 @@ def _run_model(
             "training_termination": result.termination,
             "training_final_loss": float(result.final_loss),
             "training_best_loss": float(result.best_loss),
+            "training_accepted_updates": int(result.progress.update_step),
+            "training_skipped_windows": int(result.skipped_windows),
             "training_seconds": training_seconds,
             "compile_first_prediction_seconds": compile_first_seconds,
             "steady_prediction_seconds": steady_seconds,
@@ -292,12 +312,14 @@ def _run_model(
         }
     )
     model_evidence = {
-        "potential_revision_id": phx.atomistic.atomistic_potential_revision(
+        "potential_revision_id": phx.atomistic.atomistic_model_revision(
             potential
         ).revision_id,
         "method_id": potential.method_id,
     }
     if model_name == "nequip":
+        if not isinstance(potential, phx.nn.atomistic.NequIPPotential):
+            raise TypeError("The NequIP benchmark must return a NequIP potential.")
         model_evidence.update(
             {
                 "maximum_degree": potential.configuration.maximum_degree,
@@ -306,7 +328,6 @@ def _run_model(
                 ),
                 "tensor_product_parameter_count_per_interaction": [
                     interaction.tensor_product.plan.parameter_count
-                    # ty: ignore[unresolved-attribute]
                     for interaction in potential.interactions
                 ],
             }
@@ -320,6 +341,50 @@ def _run_model(
     }
 
 
+def _loader(
+    dataset: Any,
+    indices: Any,
+    arguments: Any,
+    seed: Any,
+    /,
+    *,
+    stream: str,
+) -> Any:
+    """Immutable source of one split and its (optionally accumulating) loader."""
+    batch, energy, forces = dataset.take(indices)
+    source = phx.atomistic.atomistic_training_source(
+        batch, mass_unit=dataset.source_mass_unit, energy=energy, forces=forces
+    )
+    batch_size = arguments.batch_size if stream == "training" else None
+    loader = phx.atomistic.atomistic_training_loader(
+        source, batch_size=batch_size, stream=stream, seed=seed
+    )
+    if stream != "training" or arguments.payload_cases is None:
+        return loader
+    atom_level = loader.mixture.schema.atom_level
+    rows = loader.buckets.buckets[0].capacity(atom_level).rows
+    return phx.atomistic.AtomisticStructureLoader(
+        loader.mixture,
+        loader.bindings,
+        phx.atomistic.AtomisticWorkloadBuckets(
+            (
+                phx.atomistic.AtomisticWorkloadBucket(
+                    "accumulated",
+                    cases=arguments.payload_cases,
+                    levels=(
+                        phx.atomistic.AtomisticLevelCapacity(
+                            atom_level, layout="per-case", rows=rows
+                        ),
+                    ),
+                    max_bytes=loader.buckets.buckets[0].max_bytes,
+                ),
+            )
+        ),
+        batch_size=loader.batch_size,
+        stream=stream,
+    )
+
+
 def _run_seed(dataset: Any, arguments: Any, seed: Any) -> Any:
     split = phx.atomistic.split_rmd17(
         dataset,
@@ -328,39 +393,49 @@ def _run_seed(dataset: Any, arguments: Any, seed: Any) -> Any:
         test_size=arguments.test_size,
         seed=seed,
     )
-    train_batch, train_energy, train_forces = dataset.take(split.train_indices)
-    validation_batch, validation_energy, validation_forces = dataset.take(
-        split.validation_indices
-    )
     test_batch, test_energy, test_forces = dataset.take(split.test_indices)
     execution = phx.atomistic.AtomisticGraphExecutionPlan(
         arguments.maximum_neighbors,
         maximum_dense_atoms=arguments.maximum_dense_atoms,
     )
+    # Matched objectives: fitted per-atom energy and force-component scales,
+    # literally weighted as declared on the command line.
     problem = phx.atomistic.AtomisticTrainingProblem(
-        train_batch,
+        _loader(dataset, split.train_indices, arguments, seed, stream="training"),
         execution,
+        (
+            phx.atomistic.AtomisticEnergyObjective(
+                schedule=phx.atomistic.AtomisticObjectiveSchedule.constant(
+                    arguments.energy_weight
+                )
+            ),
+            phx.atomistic.AtomisticForceObjective(
+                schedule=phx.atomistic.AtomisticObjectiveSchedule.constant(
+                    arguments.force_weight
+                )
+            ),
+        ),
+        scale=dataset.scale,
         cutoff=arguments.cutoff,
-        training_energy=train_energy,
-        training_forces=train_forces,
-        validation_batch=validation_batch,
-        validation_energy=validation_energy,
-        validation_forces=validation_forces,
+        validation=_loader(
+            dataset, split.validation_indices, arguments, seed, stream="validation"
+        ),
+        weighting="literal",
     )
     policy = phx.atomistic.AtomisticTrainingPolicy(
         maximum_steps=arguments.steps,
         learning_rate=arguments.learning_rate,
-        energy_weight=arguments.energy_weight,
-        force_weight=arguments.force_weight,
     )
-    graph = phx.atomistic.realize_atomistic_graph(
-        test_batch,
-        execution,
-        cutoff=arguments.cutoff,
+    graph = (
+        phx.atomistic.AtomisticGraphLayout.for_batch(
+            test_batch, execution, cutoff=arguments.cutoff
+        )
+        .prepare(test_batch)
+        .graph(cutoff=arguments.cutoff)
     )
     candidate_per_case = test_batch.atom_capacity * (test_batch.atom_capacity - 1)
-    # ty: ignore[invalid-argument-type]
-    active_total = int(jnp.sum(graph.graph.edge_mask))
+    active_total = int(jnp.sum(graph.neighbor_counts))
+    training = problem.training
     neighborhood_work = {
         "dense_candidate_directed_edges_per_case": int(candidate_per_case),
         "dense_candidate_directed_edges_total": int(
@@ -368,6 +443,8 @@ def _run_seed(dataset: Any, arguments: Any, seed: Any) -> Any:
         ),
         "active_directed_edges_total": active_total,
         "mean_active_directed_edges_per_case": active_total / test_batch.case_count,
+        "training_windows_per_epoch": int(training.batch_count),
+        "training_payloads_per_window": int(training.payload_count(0, 0)),
     }
     models = {
         model_name: _run_model(
@@ -472,6 +549,10 @@ def main() -> None:
         arguments.radial_basis = min(arguments.radial_basis, 3)
     if arguments.timing_repeats <= 0:
         raise ValueError("--timing-repeats must be positive.")
+    for name in ("batch_size", "payload_cases"):
+        value = getattr(arguments, name)
+        if value is not None and value <= 0:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive.")
     source, source_sha256 = _resolved_source(arguments)
     dataset = phx.atomistic.load_rmd17_npz(source)
     configuration = {
@@ -486,6 +567,8 @@ def main() -> None:
         "validation_size": arguments.validation_size,
         "test_size": arguments.test_size,
         "steps": arguments.steps,
+        "batch_size": arguments.batch_size,
+        "payload_cases": arguments.payload_cases,
         "learning_rate": arguments.learning_rate,
         "energy_weight": arguments.energy_weight,
         "force_weight": arguments.force_weight,

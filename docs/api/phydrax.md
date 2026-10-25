@@ -354,6 +354,15 @@ does not promise reproducibility for arbitrary surrounding callbacks or differen
 compiled algorithms. Native symmetric-contraction projections select deterministic
 execution without changing coefficient identity or model artifact layout.
 
+`route_dot`, `route_multiply`, `route_matvec`, and `route_rms` also accept
+a relation or its prepared `RelationExecutionState`. Dot is bilinear over the
+payload axes; multiply and matvec gather target values onto the route layout.
+`route_support` returns exact counts, execution admission, and per-target
+availability. Empty or failed targets have an inert zero fill. RMS uses
+per-target scaling without an epsilon: its value is not differentiable at an
+available all-zero target, while `mean_square` remains smooth there. Consult
+`regular` before differentiating the norm itself.
+
 `SparseLinearMap` attaches scalar route coefficients and exposes forward,
 transpose, and conjugate-adjoint actions while preserving trailing payload
 dimensions. `SparseCoordinateOperator` binds the same route algebra to
@@ -405,6 +414,21 @@ generic matrix-free callables remain in their semantic subsystems.
 ---
 
 ::: phydrax.sparse.route_reduce
+
+::: phydrax.sparse.route_support
+
+::: phydrax.sparse.RouteSupport
+
+::: phydrax.sparse.route_dot
+
+::: phydrax.sparse.route_multiply
+
+::: phydrax.sparse.route_matvec
+
+::: phydrax.sparse.route_rms
+
+::: phydrax.sparse.RouteRootMeanSquare
+
 
 ## Stochastic realizations and fields
 

@@ -165,6 +165,11 @@ def set_matmul_precision(value: str, /) -> None:
     jax.config.update("jax_default_matmul_precision", value)
 
 
+def set_compilation_cache(enabled: bool, /) -> None:
+    """Enable or disable JAX's persistent compilation cache for the process."""
+    jax.config.update("jax_enable_compilation_cache", enabled)
+
+
 def default_device_selection() -> jax.Device | str | None:
     """Effective default placement: unset, a live device, or a platform name."""
     return jax.default_device.value
@@ -463,6 +468,7 @@ __all__ = [
     "platforms",
     "process_x64_enabled",
     "rank_promotion",
+    "set_compilation_cache",
     "set_cpu_collectives_implementation",
     "set_cpu_device_count",
     "set_platforms",

@@ -15,10 +15,11 @@ from phydrax.atomistic import (
     atomistic_energy_derivatives,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphInputs,
+    AtomisticGraphLayout,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     energy_and_forces,
-    prepare_atomistic_graph_topology,
 )
 from phydrax.atomistic._model_artifact import (
     read_atomistic_model_artifact,
@@ -244,15 +245,15 @@ def test_ordered_periodic_derivatives_match_provider_and_replay_exactly(
     batch = AtomisticBatch.from_structure(_structure("crystal"))
 
     def compiled(execution: AtomisticGraphExecutionPlan) -> Any:
-        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
+        payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=3.0).prepare(
+            batch
+        )
 
         def evaluate(positions: jax.Array, cells: jax.Array) -> tuple[jax.Array, ...]:
             result = atomistic_energy_derivatives(
                 potential,
-                batch,
-                execution,
+                payload,
                 positions,
-                topology=topology,
                 cell_vectors=cells,
                 compute_stress=True,
             )
@@ -837,13 +838,11 @@ def test_float32_periodic_source_energy_forces_stress_track_float64() -> None:
     # The numerical helper canonicalizes a float64 cell override once into the
     # float32 coordinate contract before the image matmul.
     batch = AtomisticBatch.from_structure(structure)
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
+    payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=3.0).prepare(batch)
     derivatives = atomistic_energy_derivatives(
         single,
-        batch,
-        execution,
+        payload,
         batch.positions,
-        topology=topology,
         cell_vectors=np.asarray(batch.cells, dtype=np.float64),
         compute_stress=True,
     )
@@ -864,3 +863,64 @@ def _require_close_at_scale(observed: Any, expected: Any, relative: float) -> No
     expected_ = np.asarray(expected, dtype=np.float64)
     scale = float(np.max(np.abs(expected_)))
     np.testing.assert_allclose(observed_, expected_, rtol=0.0, atol=relative * scale)
+
+
+def test_default_declaration_is_the_bessel_o3_family_without_conditioning() -> None:
+    potential = _native()
+    architecture = potential.configuration
+    assert architecture.radial_basis == "bessel"
+    assert architecture.distance_transform == "none"
+    assert architecture.soft_alpha is None
+    assert architecture.parity == "o3"
+    assert architecture.edge_channel_count is None
+    assert architecture.edge_feature_degree is None
+    assert not architecture.edge_irreps_first
+    assert not architecture.keep_last_layer_irreps
+    assert architecture.readout_variant == "nonlinear"
+    assert architecture.gate_scales is None
+    assert architecture.embedding_features == ()
+    assert not architecture.embedding_readout
+    assert potential.conditioning.fields == ()
+    assert potential.joint_embedding is None and potential.embedding_readout is None
+    for index in range(architecture.interaction_count):
+        assert (
+            architecture.edge_layout(index).layout_id
+            == architecture.input_layout(index).layout_id
+        )
+
+
+def test_node_states_carry_every_layer_state_and_match_node_energies() -> None:
+    potential = _native()
+    architecture = potential.configuration
+    batch = AtomisticBatch.from_structure(_structure("molecule"))
+    graph = (
+        AtomisticGraphLayout.for_batch(batch, _molecule_execution(), cutoff=3.0)
+        .prepare(batch)
+        .graph(cutoff=3.0)
+    )
+    inputs = AtomisticGraphInputs(
+        graph, SCALE, species_kind=potential.capabilities.species_kind
+    )
+    species, states, relation = potential.graph_node_states(inputs)
+    ir = graph.graph
+    assert ir.edge_mask is not None
+    energies, successful = potential.node_energies(
+        species,
+        inputs.atom_mask,
+        relation,
+        jnp.asarray(ir.edges["displacement"]),
+        edge_active=jnp.asarray(ir.edge_mask, dtype=jnp.bool_),
+    )
+    assert bool(successful) and bool(states.successful)
+    np.testing.assert_array_equal(np.asarray(energies), np.asarray(states.atom_energy))
+    assert len(states.states) == architecture.interaction_count
+    for index, state in enumerate(states.states):
+        assert state.shape == (
+            batch.atom_capacity,
+            architecture.output_layout(index).packed_size,
+        )
+    result = potential.evaluate_graph(inputs)
+    assert result.atom_energy_complete
+    np.testing.assert_allclose(
+        result.energy[0], jnp.sum(states.atom_energy), rtol=1e-13, atol=1e-13
+    )

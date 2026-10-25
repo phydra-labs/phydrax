@@ -294,7 +294,10 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
         scale_factors: ArrayLike,
         /,
     ) -> None:
-        if particles.particles.prepared_id != gravity.transfer.particles.prepared_id:
+        if (
+            particles.particles.prepared_id
+            != gravity.transfer.physical_particles().prepared_id
+        ):
             raise ValueError("Gas-particle coupling must share one particle support.")
         if (
             gas.dynamics.discretization.grid.prepared_id

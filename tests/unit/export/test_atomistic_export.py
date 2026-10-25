@@ -13,9 +13,16 @@ import pytest
 import phydrax as phx
 from phydrax.export._atomistic import (
     _contract,
+    _decoded,
+    _exported_evaluation,
+    _native_provider,
+    _provider_recipe,
+    _require_runtime_free_lowering,
     _require_status_complete,
+    _restored_provider_plan,
     _runtime_guard_sites,
     AtomisticExportRefusal,
+    prepare_atomistic_iree_contract,
 )
 from tests._support.mace_deployment import electronvolt_units, provider_plan, tiny_mace
 
@@ -83,8 +90,18 @@ def _with_geometry(request: Any, *, positions: Any = None, cell: Any = None) -> 
         request.unwrapped_positions,
         request.cell_vectors if cell is None else cell,
         request.image_counts,
-        request.neighborhood,
+        request.neighborhoods,
     )
+
+
+def _epochs(request: Any) -> np.ndarray:
+    return np.asarray(request.neighborhoods.epochs)
+
+
+def _inputs(request: Any, *, periodic: bool) -> tuple[Any, ...]:
+    if not periodic:
+        return (request.positions,)
+    return (request.positions, request.cell_vectors, request.image_counts)
 
 
 def _assert_native_parity(frozen: Any, native: Any) -> None:
@@ -111,14 +128,14 @@ def test_frozen_periodic_export_matches_native_across_the_frozen_epoch(
     assert bundle.contract.failure_policy == "equinox-nan-status"
     assert bundle.contract.input_names == ("positions", "cell_vectors", "image_counts")
     request = provider.prepare_request(jnp.asarray(WATER), None, None)
-    moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhood)
+    moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhoods)
     # Atom 0 leaves the cell through a face: same epoch, new runtime image count.
     unwrapped = np.asarray(request.unwrapped_positions).copy()
     unwrapped[0] -= 0.05 * CELL[0] / np.linalg.norm(CELL[0])
     rewrapped = provider.prepare_request(
-        jnp.asarray(unwrapped), None, request.neighborhood
+        jnp.asarray(unwrapped), None, request.neighborhoods
     )
-    assert int(rewrapped.neighborhood.epoch) == int(request.neighborhood.epoch)
+    np.testing.assert_array_equal(_epochs(rewrapped), _epochs(request))
     assert not np.array_equal(rewrapped.image_counts, request.image_counts)
     for current in (request, moved, rewrapped):
         frozen = loaded(current)
@@ -152,7 +169,7 @@ def test_frozen_export_succeeds_exactly_while_the_native_lifecycle_reuses_its_ep
 ) -> None:
     provider, _, loaded = periodic_export
     request = provider.prepare_request(jnp.asarray(WATER), None, None)
-    epoch = int(request.neighborhood.epoch)
+    epoch = _epochs(request)
     for positions, cell in (
         (WATER, CELL),
         (MOVED, CELL),
@@ -162,9 +179,9 @@ def test_frozen_export_succeeds_exactly_while_the_native_lifecycle_reuses_its_ep
     ):
         # Independent native lifecycle probe: does the frozen epoch survive?
         current = provider.prepare_request(
-            jnp.asarray(positions), jnp.asarray(cell), request.neighborhood
+            jnp.asarray(positions), jnp.asarray(cell), request.neighborhoods
         )
-        reused = int(current.neighborhood.epoch) == epoch
+        reused = np.array_equal(_epochs(current), epoch)
         # The frozen module sees the same runtime geometry within its own epoch.
         frozen = loaded(
             phx.atomistic.NativeAtomisticRequest(
@@ -172,7 +189,7 @@ def test_frozen_export_succeeds_exactly_while_the_native_lifecycle_reuses_its_ep
                 current.unwrapped_positions,
                 current.cell_vectors,
                 current.image_counts,
-                request.neighborhood,
+                request.neighborhoods,
             )
         )
         expected = (
@@ -208,10 +225,10 @@ def test_frozen_export_refuses_unpinned_mismatched_or_other_epoch_inputs(
     with pytest.raises(TypeError, match="dtype"):
         loaded(_with_geometry(request, positions=request.positions.astype(jnp.float32)))
     stretched = provider.prepare_request(
-        jnp.asarray(WATER * 1.6), None, request.neighborhood
+        jnp.asarray(WATER * 1.6), None, request.neighborhoods
     )
-    assert int(stretched.neighborhood.epoch) != int(request.neighborhood.epoch)
-    with pytest.raises(ValueError, match="candidate graph differs"):
+    assert not np.array_equal(_epochs(stretched), _epochs(request))
+    with pytest.raises(ValueError, match="neighborhood epoch differs"):
         loaded(stretched)
 
 
@@ -273,10 +290,126 @@ def test_frozen_aperiodic_export_matches_native(tmp_path: Path) -> None:
     )
     assert not bundle.contract.stress and bundle.contract.input_names == ("positions",)
     request = provider.prepare_request(jnp.asarray(WATER), None, None)
-    moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhood)
+    moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhoods)
     for current in (request, moved):
         _assert_native_parity(loaded(current), provider.evaluate_request(current))
         assert loaded(current).stress is None
+
+
+def _frozen_program(*, periodic: bool) -> tuple[Any, Any, Any, Any]:
+    """The exact frozen-epoch JAX program a module compiles, without IREE."""
+    provider, request = _native_provider(
+        provider_plan(tiny_mace(seed=2)),
+        _structure(periodic=periodic),
+        electronvolt_units(),
+    )
+    contract = prepare_atomistic_iree_contract(provider, request)
+    forward = _exported_evaluation(provider, request, contract)
+    return provider, request, contract, forward
+
+
+def test_jax_frozen_program_follows_changing_geometry_and_cell_in_its_epoch() -> None:
+    provider, request, contract, forward = _frozen_program(periodic=True)
+    program = jax.jit(forward)
+    strain = np.eye(3) + 0.004 * np.asarray(
+        [[1.0, 0.3, 0.0], [0.3, -0.5, 0.2], [0.0, 0.2, 0.8]]
+    )
+    unwrapped = np.asarray(request.unwrapped_positions).copy()
+    unwrapped[0] -= 0.05 * CELL[0] / np.linalg.norm(CELL[0])
+    reused = 0
+    for positions, cell in (
+        (WATER, CELL),
+        (MOVED, CELL),
+        (WATER @ strain.T, CELL @ strain.T),
+        (unwrapped, CELL),
+        (MOVED @ strain.T, CELL @ strain.T),
+    ):
+        current = provider.prepare_request(
+            jnp.asarray(positions), jnp.asarray(cell), request.neighborhoods
+        )
+        assert np.array_equal(_epochs(current), _epochs(request))
+        frozen = _decoded(contract, program(*_inputs(current, periodic=True)))
+        _assert_native_parity(frozen, provider.evaluate_request(current))
+        assert frozen.active_routes > 0
+        reused += 1
+    assert reused == 5
+    # A changed cell changes the physical energy and stress of the same epoch.
+    base = provider.evaluate_request(request)
+    strained = provider.evaluate_request(
+        provider.prepare_request(
+            jnp.asarray(WATER @ strain.T),
+            jnp.asarray(CELL @ strain.T),
+            request.neighborhoods,
+        )
+    )
+    assert float(strained.evaluation.energy) != float(base.evaluation.energy)
+    assert strained.program.stress_convention is not None
+
+
+def test_jax_frozen_program_reports_out_of_epoch_and_invalid_geometry() -> None:
+    provider, request, contract, forward = _frozen_program(periodic=True)
+    program = jax.jit(forward)
+    compressed = provider.prepare_request(
+        jnp.asarray(WATER), jnp.asarray(0.55 * CELL), request.neighborhoods
+    )
+    assert not np.array_equal(_epochs(compressed), _epochs(request))
+    vectors, images = request.cell_vectors, request.image_counts
+    if vectors is None or images is None:
+        pytest.fail("A periodic request must carry its lattice and image counts.")
+    far = np.asarray(request.positions).copy()
+    far[0, 0] += 3.0
+    cases = (
+        (
+            (compressed.positions, compressed.cell_vectors, compressed.image_counts),
+            phx.atomistic.AtomisticStatus.NEIGHBOR_OVERFLOW,
+        ),
+        (
+            (jnp.asarray(far), vectors, images),
+            phx.atomistic.AtomisticStatus.NEIGHBOR_OVERFLOW,
+        ),
+        (
+            (request.positions.at[1, 2].set(jnp.nan), vectors, images),
+            phx.atomistic.AtomisticStatus.NONFINITE,
+        ),
+        (
+            (request.positions, jnp.zeros_like(vectors), images),
+            phx.atomistic.AtomisticStatus.NONFINITE,
+        ),
+    )
+    for values, status in cases:
+        failed = _decoded(contract, program(*values))
+        assert failed.status is status
+        assert np.isnan(failed.energy) and np.all(np.isnan(failed.forces))
+        assert failed.stress is not None
+        assert np.all(np.isnan(failed.stress))
+
+
+def test_jax_frozen_program_is_status_complete_and_runtime_free() -> None:
+    for periodic in (True, False):
+        _, request, _, forward = _frozen_program(periodic=periodic)
+        inputs = _inputs(request, periodic=periodic)
+        _require_status_complete(forward, inputs)
+        _require_runtime_free_lowering(forward, inputs)
+
+
+def test_jax_frozen_aperiodic_program_matches_native_in_its_frame() -> None:
+    provider, request, contract, forward = _frozen_program(periodic=False)
+    assert contract.input_names == ("positions",) and not contract.stress
+    moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhoods)
+    assert np.array_equal(_epochs(moved), _epochs(request))
+    frozen = _decoded(contract, jax.jit(forward)(moved.positions))
+    _assert_native_parity(frozen, provider.evaluate_request(moved))
+    assert frozen.stress is None
+
+
+def test_provider_recipe_replays_resources_through_constructors() -> None:
+    plan = provider_plan(tiny_mace(seed=2))
+    recipe = json.loads(json.dumps(_provider_recipe(plan), allow_nan=False))
+    restored = _restored_provider_plan(recipe, plan.model)
+    assert restored.plan_id == plan.plan_id
+    forged = {**recipe, "name": "other"}
+    with pytest.raises(AtomisticExportRefusal):
+        _restored_provider_plan(forged, plan.model)
 
 
 def test_guard_audit_separates_frozen_constant_guards_from_runtime_guards() -> None:

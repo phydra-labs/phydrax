@@ -1029,6 +1029,37 @@ without routing through an unscaled backend determinant. Use it when
 orientation, folding, or measure evidence needs the determinant but no inverse
 action is required.
 
+`polar_rotation3(frame, /, *, plan=None)` returns the rotation factor `R` of
+the polar decomposition `F = R U` of one real `3 x 3` frame (vmap for
+batches) as a `PolarRotation3Result`: `value`, `singular_values` (descending),
+`determinant`, `condition_estimate` (`s₁/s₃`),
+`derivative_condition_estimate`, `successful`, and a `PolarRotation3Status`.
+The `SmallLinearSolvePlan(3)` (default plan when `None`) owns every admission
+threshold, checked in order: finite entries (`NONFINITE`; a non-finite frame
+never reaches the SVD), `s₃ > singular_tolerance·s₁` (`SINGULAR`),
+`s₁/s₃ ≤ maximum_condition` (`ILL_CONDITIONED`), `det F > 0` (`IMPROPER`),
+and the plan's own small-solve admission of the derivative operator
+`tr(U) I − U` (`DERIVATIVE_OPERATOR_FAILED`). An inadmissible frame has a NaN
+value; no reflection or singular frame is repaired into a rotation. Wrong
+shape, dtype kind, or plan dimension raises `ValueError`/`TypeError`.
+Orientation is checked on the scale-free orthogonal factor. The separate raw
+`determinant` evidence can underflow to zero or overflow even for an admitted,
+well-conditioned frame; consumers use `successful` and `status` for admission.
+
+The value is `W Vᵀ` of the economy SVD `F = W S Vᵀ`, but its derivative never
+differentiates SVD factors, which are singular at repeated singular values
+(`F = I` and every isotropic or uniaxial frame). With `X = Rᵀ dF`, the tangent
+is `dR = R [ω]ₓ` where `(tr(U) I − U) ω = vee(X − Xᵀ)`, the axial form of
+`[ω]ₓ U + U [ω]ₓ = X − Xᵀ`; that operator has eigenvalues `sᵢ + sⱼ` and is
+applied by a symmetric `custom_linear_solve` with the native small solve,
+whose failure poisons the tangent with NaN rather than zero. The rule
+re-enters the factorization, so `jvp`, `vjp`, `jacfwd`, `jacrev`, and higher
+derivatives (forward-over-reverse curvature included) are exact at repeated
+spectra. Evidence fields are nondifferentiable. The rigid crystal symmetry
+chart uses this action. NorSand retains the native Hermitian inverse square
+root because its absolute positive-spectrum floor is a different constitutive
+admission contract.
+
 NumPy/SciPy plan construction remains host-native. Host code should solve
 against its actual right-hand side, retain a factor when reused, and form an
 explicit inverse only for a protocol value or persistent transform. It must not

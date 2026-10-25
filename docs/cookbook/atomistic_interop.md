@@ -23,7 +23,7 @@ potential = phx.atomistic.AtomisticPotentialProgram(
     [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
 ).prepare(system)
 neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-    system.particles
+    system.particle_discretization()
 )
 frame = phx.atomistic.AtomisticFrame(
     0.0,

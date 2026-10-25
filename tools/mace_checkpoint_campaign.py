@@ -48,13 +48,14 @@ from phydrax.atomistic import (
     atomistic_energy_derivatives,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphLayout,
     AtomisticPrecisionPolicy,
-    prepare_atomistic_graph_topology,
 )
 from phydrax.atomistic.interchange import (
     convert_mace_checkpoint,
     create_mace_provider_fixture,
     evaluate_mace_source,
+    MACE_PROVIDER_RELEASES,
     mace_source_gradients,
     MACECheckpointConversion,
     MACEProviderConfiguration,
@@ -263,8 +264,10 @@ GATES: Mapping[str, Mapping[str, tuple[float, float]]] = {
 }
 
 # One-interaction ScaleShiftMACE with residual interaction, Agnesi transform and
-# ZBL: the deterministic lawful provider fixture of the installed provider.
+# ZBL: the deterministic lawful provider fixture of the installed provider, as
+# declared by mace-torch 0.3.16 (``fixture_declaration`` adapts the release).
 FIXTURE_DECLARATION: Mapping[str, Any] = {
+    "mace_torch_release": "0.3.16",
     "model_class": "ScaleShiftMACE",
     "r_max": 4.5,
     "num_bessel": 6,
@@ -275,6 +278,7 @@ FIXTURE_DECLARATION: Mapping[str, Any] = {
     "atomic_numbers": [1, 8],
     "hidden_irreps": "8x0e",
     "MLP_irreps": None,
+    "readout_class": None,
     "avg_num_neighbors": 2.5,
     "correlation": [3],
     "gate": None,
@@ -287,10 +291,34 @@ FIXTURE_DECLARATION: Mapping[str, Any] = {
     "use_reduced_cg": False,
     "use_agnostic_product": False,
     "use_last_readout_only": False,
+    "use_so3": False,
+    "edge_irreps": None,
+    "use_edge_irreps_first": False,
+    "embedding_specs": None,
+    "use_embedding_readout": False,
+    "keep_last_layer_irreps": False,
     "atomic_energies": [-13.6, -2041.8],
     "atomic_inter_scale": 1.3,
     "atomic_inter_shift": 0.05,
 }
+
+
+def fixture_declaration(release: str, /, *, reduced_cg: bool) -> dict[str, Any]:
+    """The campaign fixture declared by the provider's mace-torch ``release``.
+
+    0.3.15 has no ``keep_last_layer_irreps`` argument (its default is implied).
+    """
+
+    declaration = {
+        **FIXTURE_DECLARATION,
+        "mace_torch_release": release,
+        "use_reduced_cg": reduced_cg,
+    }
+    if release == "0.3.15":
+        del declaration["keep_last_layer_irreps"]
+    return declaration
+
+
 FIXTURE_SEED = 20261003
 _STRUCTURE_SEED = 20260903
 _DISPLACEMENT_SIGMA = 0.03
@@ -413,22 +441,20 @@ def _bound(
         )
     batch = AtomisticBatch.from_structure(atomic)
     execution = _execution(configuration)
-    topology = prepare_atomistic_graph_topology(
+    payload = AtomisticGraphLayout.for_batch(
         batch, execution, cutoff=potential.configuration.cutoff
-    )
-    return batch, execution, topology
+    ).prepare(batch)
+    return batch, payload
 
 
 def native_case(
     potential: Any, configuration: MACEProviderConfiguration, /
 ) -> dict[str, np.ndarray]:
-    batch, execution, topology = _bound(potential, configuration)
+    batch, payload = _bound(potential, configuration)
     result = atomistic_energy_derivatives(
         potential,
-        batch,
-        execution,
+        payload,
         batch.positions,
-        topology=topology,
         compute_stress=configuration.periodic,
     )
     atoms = len(configuration.numbers)
@@ -608,15 +634,13 @@ def parameter_directions(
         source, [configuration], [weights], provider=provider, head=head
     )
     parameters, model_state, fixed = partition_parameters(conversion.potential)
-    batch, execution, topology = _bound(conversion.potential, configuration)
+    batch, payload = _bound(conversion.potential, configuration)
     atoms = len(configuration.numbers)
     weight_array = jnp.asarray(weights)
 
     def scalars(values: Any, /) -> tuple[jax.Array, jax.Array]:
         potential = combine_parameters(values, model_state, fixed)
-        result = atomistic_energy_derivatives(
-            potential, batch, execution, batch.positions, topology=topology
-        )
+        result = atomistic_energy_derivatives(potential, payload, batch.positions)
         if result.forces is None:
             raise RuntimeError("Native forces were not returned.")
         return result.energy[0], jnp.sum(result.forces[0, :atoms] * weight_array)
@@ -774,7 +798,7 @@ def run_fixture(provider: MACEProviderRuntime, /, *, reduced_cg: bool) -> dict[s
     release = "provider-fixture-one-interaction" + ("-reduced-cg" if reduced_cg else "")
     if reduced_cg and provider.cuequivariance_version is None:
         return {"release": release, "status": "blocked-provider-prerequisite"}
-    declaration = {**FIXTURE_DECLARATION, "use_reduced_cg": reduced_cg}
+    declaration = fixture_declaration(provider.mace_torch_version, reduced_cg=reduced_cg)
     with tempfile.TemporaryDirectory(prefix="mace-campaign-fixture-") as directory:
         fixture = create_mace_provider_fixture(
             declaration, directory, provider=provider, seed=FIXTURE_SEED
@@ -817,7 +841,13 @@ def main(arguments: Sequence[str] | None = None, /) -> int:
     parser.add_argument("--provider-python-version", required=True)
     parser.add_argument("--provider-site-packages", type=Path, required=True)
     parser.add_argument("--torch-version", required=True)
+    parser.add_argument(
+        "--mace-torch-version",
+        required=True,
+        choices=MACE_PROVIDER_RELEASES["mace-torch"],
+    )
     parser.add_argument("--cuequivariance-version")
+    parser.add_argument("--openequivariance-version")
     parser.add_argument("--sources", type=Path, required=True)
     parser.add_argument("--held-license", action="append", default=[])
     parser.add_argument("--trust-pinned-releases", action="store_true")
@@ -833,6 +863,8 @@ def main(arguments: Sequence[str] | None = None, /) -> int:
         site_packages=str(options.provider_site_packages),
         torch_version=options.torch_version,
         cuequivariance_version=options.cuequivariance_version,
+        openequivariance_version=options.openequivariance_version,
+        mace_torch_version=options.mace_torch_version,
     )
     selected = [
         row

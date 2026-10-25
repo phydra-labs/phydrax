@@ -149,76 +149,48 @@ def reduced_potential_dataset_from_alchemical_evaluation(
 def reduced_potential_dataset_from_multistate(
     result: AtomisticMultistateSegmentResult,
 ) -> ReducedPotentialDataset:
-    """Flatten one committed multistate segment in canonical draw-major order."""
+    """Flatten one committed multistate segment in canonical draw-major order.
 
-    from ..atomistic.sampling._multistate import AtomisticMultistateSegmentResult
+    Admission is :class:`AtomisticMultistateEquilibriumSamples`, the single
+    canonical admission of multistate draws: adaptive draws (SAMS or an
+    advancing bias history) are never samples, every frozen bias-history
+    declaration is authenticated against the bound history content and its
+    per-draw revisions, and every active draw must have evaluated each row's
+    declared history owner, so each row is one fixed Hamiltonian at every
+    column (walker-dependent rows are refused).  Identical bias labels alone
+    do not authenticate a frozen Hamiltonian.
+    """
+
+    from ..atomistic.sampling._multistate import (
+        AtomisticMultistateEquilibriumSamples,
+        AtomisticMultistateSegmentResult,
+    )
 
     if not isinstance(result, AtomisticMultistateSegmentResult):
         raise TypeError("result must be AtomisticMultistateSegmentResult.")
-    if not result.successful:
-        raise ValueError("Multistate segment must be successful before UQ conversion.")
-    values = jnp.asarray(result.reduced_potentials)
-    coverage = jnp.asarray(result.coverage, dtype=jnp.bool_)
-    active = jnp.asarray(result.sample_active, dtype=jnp.bool_)
-    if values.ndim != 3:
-        raise ValueError(
-            "Segment reduced_potentials must have shape (capacity,states,replicas)."
-        )
-    capacity, state_count, replica_count = values.shape
-    expected_matrix = (capacity, state_count, replica_count)
-    expected_samples = (capacity, replica_count)
-    if coverage.shape != expected_matrix:
-        raise ValueError("Segment coverage must match reduced_potentials.")
-    for name, array in (
-        ("sample_active", active),
-        ("origin_state", result.origin_state),
-        ("chain_index", result.chain_index),
-        ("draw_index", result.draw_index),
-        ("repeat_index", result.repeat_index),
-        ("dependence_group_index", result.dependence_group_index),
-        ("sams_adapting", result.sams_adapting),
-    ):
-        if jnp.asarray(array).shape != expected_samples:
-            raise ValueError(f"Segment {name} must have shape (capacity,replicas).")
-    if bool(jnp.any(active & jnp.asarray(result.sams_adapting, dtype=jnp.bool_))):
-        raise ValueError(
-            "SAMS adaptation draws must be inactive for free-energy analysis."
-        )
-    if len(result.state_ids) != state_count or len(result.potential_ids) != state_count:
-        raise ValueError(
-            "Segment state/potential identities do not match the state axis."
-        )
-    if len(result.bias_ids) != state_count:
-        raise ValueError("Segment bias identities do not match the state axis.")
-    if result.unit_id != "1":
-        raise ValueError("Multistate reduced potentials must use unit_id='1'.")
-    if result.producer_id != result.runtime_id:
-        raise ValueError("Segment producer_id must identify its prepared runtime.")
-    unit_system_id = result.units.unit_system_id
-    flattened_values = values.transpose((1, 0, 2)).reshape((state_count, -1))
-    flattened_coverage = coverage.transpose((1, 0, 2)).reshape((state_count, -1))
+    samples = AtomisticMultistateEquilibriumSamples(result)
     return ReducedPotentialDataset(
-        flattened_values,
-        flattened_coverage,
-        active.reshape((-1,)),
-        jnp.asarray(result.origin_state).reshape((-1,)),
-        jnp.asarray(result.chain_index).reshape((-1,)),
-        jnp.asarray(result.draw_index).reshape((-1,)),
-        jnp.asarray(result.repeat_index).reshape((-1,)),
-        jnp.asarray(result.dependence_group_index).reshape((-1,)),
-        state_ids=result.state_ids,
-        potential_ids=result.potential_ids,
-        inverse_temperatures=result.inverse_temperatures,
-        reduced_convention_id=result.reduced_convention_id,
-        qualification_id=result.qualification_id,
-        sampling_exact=result.sampling_exact,
-        sampling_bias_bound=result.sampling_bias_bound,
-        measure_id=result.measure_id,
-        producer_id=result.producer_id,
-        run_id=result.run_id,
-        bias_ids=result.bias_ids,
-        unit_system_id=unit_system_id,
-        unit_id=result.unit_id,
+        samples.reduced_potentials,
+        samples.coverage,
+        samples.sample_active,
+        samples.origin_state,
+        samples.chain_index,
+        samples.draw_index,
+        samples.repeat_index,
+        samples.dependence_group_index,
+        state_ids=samples.state_ids,
+        potential_ids=samples.potential_ids,
+        inverse_temperatures=samples.inverse_temperatures,
+        reduced_convention_id=samples.reduced_convention_id,
+        qualification_id=samples.qualification_id,
+        sampling_exact=samples.sampling_exact,
+        sampling_bias_bound=samples.sampling_bias_bound,
+        measure_id=samples.measure_id,
+        producer_id=samples.producer_id,
+        run_id=samples.run_id,
+        bias_ids=samples.bias_ids,
+        unit_system_id=samples.unit_system_id,
+        unit_id=samples.unit_id,
     )
 
 
@@ -247,9 +219,12 @@ def reduced_work_dataset_from_alchemical_switching(
 
     if not isinstance(record, AlchemicalSwitchingRecord):
         raise TypeError("record must be AlchemicalSwitchingRecord.")
-    biases = tuple(bias_ids)
-    if biases != (None, None):
-        raise ValueError("The current switching protocol is bias-free.")
+    biases = _exact_tuple(record.bias_ids, bias_ids, "bias_ids")
+    # The record's bias identities come from its table rows and every frozen
+    # history was authenticated against bound content during execution; the
+    # switching plan already refused adaptive histories and force ports.
+    if len(biases) != 2 or biases[0] != biases[1]:
+        raise ValueError("Switching endpoints must share one exact fixed bias identity.")
     if direction not in ("forward", "reverse", "both"):
         raise ValueError("direction must be 'forward', 'reverse', or 'both'.")
     states = _exact_tuple(

@@ -13,7 +13,7 @@ from phydrax.atomistic._alchemical import (
     ControlledHamiltonianPlan,
 )
 from phydrax.atomistic._classical import HarmonicBondPotential, LennardJonesPotential
-from phydrax.atomistic._dynamics import AtomisticDynamicsPlan, VelocityVerletPlan
+from phydrax.atomistic._dynamics import AtomisticDynamicsPlan
 from phydrax.atomistic._electrostatics import (
     DirectCoulombPotential,
     EwaldReferencePotential,
@@ -23,9 +23,11 @@ from phydrax.atomistic._force_field import (
     AtomisticForceFieldProvenance,
     AtomisticNonbondedPolicy,
 )
+from phydrax.atomistic._neighborhood_bundle import AtomisticCellListImageSearch
 from phydrax.atomistic._potential_program import AtomisticPotentialProgram
 from phydrax.atomistic._stress import atomistic_cell_energy_and_stress
 from phydrax.atomistic._system import AtomisticSystemPlan
+from phydrax.atomistic._thermal import NoseHooverChainParameters, NoseHooverChainPlan
 from phydrax.atomistic._thermodynamic import (
     AtomisticPhaseSpaceMeasurePlan,
     AtomisticThermodynamicStatePlan,
@@ -48,8 +50,35 @@ from phydrax.atomistic.free_energy import (
     SymmetryCorrectionPlan,
 )
 from phydrax.atomistic.sampling import AtomisticCanonicalSamplingQualification
-from phydrax.discretization import DenseParticleNeighborhoodPlan, PeriodicCell
+from phydrax.discretization import PeriodicCell
 from phydrax.uq import FreeEnergyResult, ReducedWorkDataset
+from tests._support.atomistic_bundles import (
+    bundle_state,
+    prepare_force_field,
+    role_capacity,
+    search_capacity,
+)
+
+
+def _periodic_resources(pairs: int, degree: int) -> dict[str, Any]:
+    """One cell-list source and the complete pair storage of a few atoms."""
+    return {
+        "search": AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        "skin": 0.5,
+        "search_capacities": (search_capacity(16, particles_per_cell=3, images=27),),
+        "role_capacities": (role_capacity(pairs, degree),),
+    }
+
+
+def _finite_resources(pairs: int, degree: int) -> dict[str, Any]:
+    """Finite systems: explicit nonperiodic frame and complete-pair budget."""
+    return {
+        **_periodic_resources(pairs, degree),
+        "maximum_pairs": pairs,
+        "frame": PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
+    }
 
 
 def _force_field() -> Any:
@@ -76,20 +105,22 @@ def _force_field() -> Any:
             DirectCoulombPotential(),
         ]
     )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        potential,
-        AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
-        AtomisticForceFieldProvenance(
-            "native", ("test-parameters",), "test", "controlled"
+    force_field = prepare_force_field(
+        AtomisticForceFieldPlan(
+            system,
+            potential,
+            AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
+            AtomisticForceFieldProvenance(
+                "native", ("test-parameters",), "test", "controlled"
+            ),
         ),
-    ).prepare()
-    neighborhood = DenseParticleNeighborhoodPlan(3).prepare(force_field.system.particles)
-    return force_field, neighborhood
+        **_finite_resources(3, 2),
+    )
+    return force_field
 
 
 def _controlled() -> Any:
-    force_field, neighborhood = _force_field()
+    force_field = _force_field()
     schedule = AlchemicalControlSchedulePlan(
         ("coupled", "middle", "decoupled"),
         ("solute-sterics", "solute-electrostatics"),
@@ -103,17 +134,16 @@ def _controlled() -> Any:
         # ty: ignore[invalid-argument-type]
         mapped_particle_ids=[[10, 10], [20, 20]],
     )
-    return ControlledHamiltonianPlan(
-        force_field, schedule, partition
-    ).prepare(), neighborhood
+    return ControlledHamiltonianPlan(force_field, schedule, partition).prepare()
 
 
-def _runtime(controlled: Any, neighborhood: Any, *, temperature: Any = 1.0) -> Any:
+def _runtime(controlled: Any, *, temperature: Any = 1.0) -> Any:
+    # Velocity Verlet is NVE only; the deterministic canonical NVT method is a
+    # Nose-Hoover chain bound to each row temperature.
     dynamics = AtomisticDynamicsPlan(
         controlled.system,
         controlled,
-        neighborhood,
-        VelocityVerletPlan(1.0e-3),
+        NoseHooverChainPlan(1.0e-3, NoseHooverChainParameters(0.5)),
     ).prepare()
     measure = AtomisticPhaseSpaceMeasurePlan(controlled.system)
     plans = tuple(
@@ -135,14 +165,14 @@ def _runtime(controlled: Any, neighborhood: Any, *, temperature: Any = 1.0) -> A
 
 
 def test_controlled_free_energy_scenario_1() -> None:
-    controlled, neighborhood = _controlled()
+    controlled = _controlled()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
-    relation = neighborhood.build(positions)
+    relation = bundle_state(controlled, positions)
     base = controlled.potential.evaluate(positions, relation)
     coupled = controlled.evaluate(positions, relation, state_index=0)
     np.testing.assert_allclose(coupled.energy, base.energy, rtol=1.0e-12)
     np.testing.assert_allclose(coupled.forces, base.forces, rtol=1.0e-12)
-    np.testing.assert_allclose(coupled.virial, base.virial, rtol=1.0e-12)
+    np.testing.assert_allclose(coupled.atom_energy, base.atom_energy, rtol=1.0e-12)
     assert bool(coupled.status.successful)
 
     controls = jnp.asarray([0.4, 0.6])
@@ -178,15 +208,18 @@ def test_controlled_free_energy_scenario_1() -> None:
         atom_type_ids=[0, 0],
         cell=cell,
     )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        # ty: ignore[invalid-argument-type]
-        AtomisticPotentialProgram([LennardJonesPotential([0.5], [1.0], 3.0)]),
-        AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
-        AtomisticForceFieldProvenance(
-            "native", ("periodic-parameters",), "test", "controlled-cell"
+    force_field = prepare_force_field(
+        AtomisticForceFieldPlan(
+            system,
+            # ty: ignore[invalid-argument-type]
+            AtomisticPotentialProgram([LennardJonesPotential([0.5], [1.0], 3.0)]),
+            AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
+            AtomisticForceFieldProvenance(
+                "native", ("periodic-parameters",), "test", "controlled-cell"
+            ),
         ),
-    ).prepare()
+        **_periodic_resources(1, 1),
+    )
     schedule = AlchemicalControlSchedulePlan(
         ("on", "off"),
         ("sterics",),
@@ -201,21 +234,18 @@ def test_controlled_free_energy_scenario_1() -> None:
     ).prepare()
     fractional = jnp.asarray([[0.1, 0.1, 0.1], [0.25, 0.1, 0.1]])
     positions = fractional @ cell.vectors
-    neighborhood = DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        force_field.system.particles
-    )
     result = atomistic_cell_energy_and_stress(
         controlled,
         fractional,
-        neighborhood.build(positions),
+        bundle_state(controlled, positions),
         control_values=jnp.asarray([0.4]),
     )
     assert result.control_derivatives.shape == (1,)
     assert bool(jnp.all(jnp.isfinite(result.stress)))
     assert bool(result.successful)
-    controlled, neighborhood = _controlled()
+    controlled = _controlled()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    relation = neighborhood.build(positions)
+    relation = bundle_state(controlled, positions)
     decoupled = controlled.evaluate(positions, relation, state_index=2)
     assert bool(decoupled.successful)
     assert bool(jnp.all(jnp.isfinite(decoupled.forces)))
@@ -225,10 +255,10 @@ def test_controlled_free_energy_scenario_1() -> None:
 
     first = positions.at[2, 0].set(2.0)
     second = positions.at[2, 0].set(2.2)
-    _, thermodynamic = _runtime(controlled, neighborhood)
+    _, thermodynamic = _runtime(controlled)
     cross = controlled.reduced_potentials(
         jnp.stack((first, second)),
-        (neighborhood.build(first), neighborhood.build(second)),
+        (bundle_state(controlled, first), bundle_state(controlled, second)),
         thermodynamic,
     )
     assert cross.values.shape == (3, 2)
@@ -248,11 +278,11 @@ def test_controlled_free_energy_scenario_1() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         controlled.reduced_potentials(
             first[None],
-            (neighborhood.build(first),),
+            (bundle_state(controlled, first),),
             negative_beta,
             state_indices=[0],
         )
-    force_field, _ = _force_field()
+    force_field = _force_field()
     schedule = AlchemicalControlSchedulePlan(
         ("on", "off"),
         ("charged-region",),
@@ -312,14 +342,17 @@ def test_controlled_free_energy_scenario_1() -> None:
         charges=[1.0, -1.0, 0.0],
         cell=cell,
     )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        AtomisticPotentialProgram([EwaldReferencePotential(0.3, 3.0, 1)]),
-        AtomisticNonbondedPolicy(3.0, electrostatics="ewald"),
-        AtomisticForceFieldProvenance(
-            "native", ("ewald-parameters",), "test", "controlled-ewald"
+    force_field = prepare_force_field(
+        AtomisticForceFieldPlan(
+            system,
+            AtomisticPotentialProgram([EwaldReferencePotential(0.3, 3.0, 1)]),
+            AtomisticNonbondedPolicy(3.0, electrostatics="ewald"),
+            AtomisticForceFieldProvenance(
+                "native", ("ewald-parameters",), "test", "controlled-ewald"
+            ),
         ),
-    ).prepare()
+        **_periodic_resources(3, 2),
+    )
     schedule = AlchemicalControlSchedulePlan(
         ("on", "off"),
         ("electrostatics",),
@@ -344,15 +377,17 @@ def test_controlled_free_energy_scenario_2() -> None:
         units,
         topology=MolecularTopologyPlan(bonds=[[10, 20]]),
     )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        # ty: ignore[invalid-argument-type]
-        AtomisticPotentialProgram([HarmonicBondPotential([3.0], [1.0])]),
-        AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
-        AtomisticForceFieldProvenance(
-            "native", ("bond-parameters",), "test", "controlled-bond"
-        ),
-    ).prepare()
+    force_field = prepare_force_field(
+        AtomisticForceFieldPlan(
+            system,
+            # ty: ignore[invalid-argument-type]
+            AtomisticPotentialProgram([HarmonicBondPotential([3.0], [1.0])]),
+            AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
+            AtomisticForceFieldProvenance(
+                "native", ("bond-parameters",), "test", "controlled-bond"
+            ),
+        )
+    )
     schedule = AlchemicalControlSchedulePlan(
         ("bonded", "unbonded"),
         ("bond-control",),
@@ -365,17 +400,16 @@ def test_controlled_free_energy_scenario_2() -> None:
         # ty: ignore[invalid-argument-type]
         AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],)),
     ).prepare()
-    neighborhood = DenseParticleNeighborhoodPlan(1).prepare(force_field.system.particles)
     positions = jnp.zeros((2, 3))
     evaluation = controlled.evaluate(
-        positions, neighborhood.build(positions), state_index=1
+        positions, bundle_state(controlled, positions), state_index=1
     )
     np.testing.assert_allclose(evaluation.energy, 0.0, atol=0.0)
     np.testing.assert_allclose(evaluation.forces, 0.0, atol=0.0)
     assert bool(jnp.all(jnp.isfinite(evaluation.dU_dcontrols)))
     assert bool(evaluation.successful)
-    controlled, neighborhood = _controlled()
-    _, thermodynamic = _runtime(controlled, neighborhood)
+    controlled = _controlled()
+    _, thermodynamic = _runtime(controlled)
     vacuum_plan = _leg(controlled, thermodynamic, "vacuum")
     solvent_plan = _leg(controlled, thermodynamic, "solvent")
     correction_plan = StandardStateCorrectionPlan(
@@ -401,7 +435,7 @@ def test_controlled_free_energy_scenario_2() -> None:
     )
     with pytest.raises(ValueError, match="mapping"):
         plan.evaluate(vacuum, mapped_solvent, (correction,), covariance)
-    _, hot = _runtime(controlled, neighborhood, temperature=2.0)
+    _, hot = _runtime(controlled, temperature=2.0)
     hot_solvent_plan = _leg(controlled, hot, "solvent")
     hot_solvent = hot_solvent_plan.project(
         *_analysis(hot_solvent_plan, 2.0, 0.09, "hot-solvent")
@@ -410,8 +444,8 @@ def test_controlled_free_energy_scenario_2() -> None:
         NeutralAbsoluteSolvationPlan(
             vacuum_plan, hot_solvent_plan, corrections=(correction_plan,)
         ).evaluate(vacuum, hot_solvent, (correction,), covariance)
-    controlled, neighborhood = _controlled()
-    _, thermodynamic = _runtime(controlled, neighborhood)
+    controlled = _controlled()
+    _, thermodynamic = _runtime(controlled)
     solvent_plan = _leg(controlled, thermodynamic, "solvent")
     complex_plan = _leg(controlled, thermodynamic, "complex")
     restraint_plan = RestraintCorrectionPlan(
@@ -556,8 +590,8 @@ def _analysis(
 
 
 def test_switching_executes_native_dynamics_and_emits_lineage() -> None:
-    controlled, neighborhood = _controlled()
-    dynamics, thermodynamic = _runtime(controlled, neighborhood)
+    controlled = _controlled()
+    dynamics, thermodynamic = _runtime(controlled)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
     zeros = jnp.zeros_like(positions)
     forward = tuple(

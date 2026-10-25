@@ -16,6 +16,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....atomistic import PreparedAtomisticSystem
 from ....atomistic.sampling import (
+    CollectiveVariableGeometry,
     CollectiveVariableKind,
     CollectiveVariablePlan,
     PreparedCollectiveVariable,
@@ -198,8 +199,10 @@ class IntervalDistanceReconstruction(StrictModule):
         )
 
     def distances(self, positions: ArrayLike) -> Array:
+        # Finite (nonperiodic) systems only: plain coordinates are the geometry.
+        geometry = CollectiveVariableGeometry(jnp.asarray(positions))
         return jnp.stack(
-            tuple(variable.evaluate(positions).value for variable in self.variables)
+            tuple(variable.evaluate(geometry).value for variable in self.variables)
         )
 
     def chirality(self, positions: ArrayLike) -> ChiralityEvaluation:

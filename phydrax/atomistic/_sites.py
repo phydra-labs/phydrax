@@ -16,16 +16,16 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
-    DenseParticleNeighborhoodPlan,
     ParticleDiscretization,
-    ParticleNeighborhoodState,
     ParticleSetPlan,
     PeriodicCell,
 )
+from ..discretization._periodic_cell import _minimum_image_from_fractional
 from ..typing import checked
 
 
@@ -42,11 +42,18 @@ class VirtualSiteKind(StrEnum):
 
 
 class VirtualSiteRule(StrictModule, NonTrainableState):
+    """Construction of one virtual interaction site from stable parent IDs.
+
+    The construction kind and parent count are layout; the stable site ID,
+    parent IDs and coefficients are dynamic leaves, and the canonical rule
+    digest is the dynamic ``rule_identity`` (``rule_id`` decodes it on the host).
+    """
+
     kind: VirtualSiteKind = eqx.field(static=True)
-    site_id: int = eqx.field(static=True)
+    site_id: Array
     parent_ids: Array
     coefficients: Array
-    rule_id: str = eqx.field(static=True)
+    rule_identity: IdentityWords
 
     def __init__(
         self,
@@ -83,10 +90,10 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
         if identifier < 0:
             raise ValueError("Virtual-site IDs must be non-negative.")
         self.kind = kind
-        self.site_id = identifier
+        self.site_id = jnp.asarray(identifier, dtype=jnp.int64)
         self.parent_ids = jnp.asarray(parents, dtype=jnp.int64)
         self.coefficients = jnp.asarray(values)
-        self.rule_id = canonical_fingerprint(
+        self.rule_identity = IdentityWords.of(
             {
                 "kind": "atomistic-virtual-site-rule",
                 "site_kind": kind.value,
@@ -96,6 +103,11 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
                 ),
             }
         )
+
+    @property
+    def rule_id(self) -> str:
+        """Host decoding of the canonical virtual-site rule digest."""
+        return self.rule_identity.fingerprint()
 
 
 class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
@@ -107,7 +119,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
     element_mask: Array
     physical_mask: Array
     output_mask: Array
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -188,12 +200,17 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         }
         for name, value in arrays.items():
             setattr(self, name, jnp.asarray(value))
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "atomistic-interaction-site-plan",
                 "arrays": array_tree_fingerprint(arrays),
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical interaction-site plan digest."""
+        return self.plan_identity.fingerprint()
 
     @property
     def capacity(self) -> int:
@@ -207,12 +224,17 @@ class AtomisticInteractionSiteState(StrictModule):
     output_mask: Array
     frame_margin: Array
     successful: Array
-    coordinate_map_id: str = eqx.field(static=True)
+    coordinate_map_identity: IdentityWords
 
 
 class AbstractAtomisticCoordinateMapPlan(StrictModule, NonTrainableState):
-    plan_id: eqx.AbstractVar[str]
+    plan_identity: eqx.AbstractVar[IdentityWords]
     sites: eqx.AbstractVar[AtomisticInteractionSitePlan]
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical coordinate-map plan digest."""
+        return self.plan_identity.fingerprint()
 
     @abc.abstractmethod
     def prepare(
@@ -226,7 +248,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
     sites: AtomisticInteractionSitePlan
     physical_dof_indices: Array
     virtual_rules: tuple[VirtualSiteRule, ...]
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -250,10 +272,10 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         rules = tuple(virtual_rules)
         if any(not isinstance(rule, VirtualSiteRule) for rule in rules):
             raise TypeError("virtual_rules must contain VirtualSiteRule values.")
-        rule_ids = tuple(rule.site_id for rule in rules)
+        rule_ids = tuple(int(rule.site_id) for rule in rules)
         if len(set(rule_ids)) != len(rule_ids):
             raise ValueError("Virtual-site rules must target unique site IDs.")
-        virtual_by_id = {rule.site_id: rule for rule in rules}
+        virtual_by_id = {int(rule.site_id): rule for rule in rules}
         site_ids = np.asarray(sites.site_ids, dtype=np.int64)
         active_mask = np.asarray(sites.active_mask, dtype=np.bool_)
         physical_mask = np.asarray(sites.physical_mask, dtype=np.bool_)
@@ -279,7 +301,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         self.sites = sites
         self.physical_dof_indices = jnp.asarray(physical, dtype=jnp.int32)
         self.virtual_rules = rules
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "atomistic-coordinate-map-plan",
                 "dof_ids": array_tree_fingerprint(dof_ids),
@@ -326,16 +348,40 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         return PreparedAtomisticCoordinateMap(self, particles)
 
 
+def _site_particles(
+    plan: AtomisticCoordinateMapPlan, coordinate_dtype: str, numeric_version: str, /
+) -> ParticleDiscretization:
+    return ParticleSetPlan(
+        plan.sites.site_ids,
+        np.ones((plan.sites.capacity,), dtype=np.dtype(coordinate_dtype)),
+        ambient_dimension=3,
+        active_mask=plan.sites.active_mask,
+        name="atomistic-interaction-sites",
+        domain_labels=("atomistic", "interaction_site"),
+        coordinate_dtype=coordinate_dtype,
+    ).prepare(numeric_version=numeric_version)
+
+
 class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
+    """Slot-resolved site construction bound to one prepared particle support.
+
+    Layout statics are the DOF capacity, coordinate dtype, numeric-version
+    label and the rule kinds/parent counts.  The canonical digest (plan,
+    prepared DOF particles and prepared site particles) is the dynamic
+    ``prepared_identity``.  Particle discretizations carry content-derived
+    static identities, so they are never retained; `site_discretization`
+    prepares the site support on the host for resource preparation.
+    """
+
     plan: AtomisticCoordinateMapPlan
-    particles: ParticleDiscretization
-    site_particles: ParticleDiscretization
+    dof_active_mask: Array
     physical_dof_indices: Array
     virtual_site_indices: Array
     virtual_parent_indices: tuple[Array, ...]
-    pair_left: Array
-    pair_right: Array
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+    dof_capacity: int = eqx.field(static=True)
+    coordinate_dtype: str = eqx.field(static=True)
+    numeric_version: str = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -352,17 +398,8 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         )
         if np.any(~particle_active[physical_indices[active_physical]]):
             raise ValueError("Active physical sites must map to active DOF particles.")
-        site_particles = ParticleSetPlan(
-            plan.sites.site_ids,
-            np.ones(
-                (plan.sites.capacity,), dtype=np.asarray(particles.safe_masses).dtype
-            ),
-            ambient_dimension=3,
-            active_mask=plan.sites.active_mask,
-            name="atomistic-interaction-sites",
-            domain_labels=("atomistic", "interaction_site"),
-            coordinate_dtype=particles.safe_masses.dtype,
-        ).prepare(numeric_version=particles.numeric_version)
+        dtype = np.dtype(particles.safe_masses.dtype).name
+        site_particles = _site_particles(plan, dtype, particles.numeric_version)
         dof_rank = {
             int(value): index
             for index, value in enumerate(np.asarray(particles.particle_ids))
@@ -387,17 +424,13 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                         f"Virtual-site parent ID {key} is not an active DOF particle."
                     )
             parent_indices.append(jnp.asarray(resolved, dtype=jnp.int32))
-            virtual_indices.append(site_rank[rule.site_id])
-        left, right = np.triu_indices(plan.sites.capacity, 1)
+            virtual_indices.append(site_rank[int(rule.site_id)])
         self.plan = plan
-        self.particles = particles
-        self.site_particles = site_particles
+        self.dof_active_mask = jnp.asarray(particle_active, dtype=jnp.bool_)
         self.physical_dof_indices = plan.physical_dof_indices
         self.virtual_site_indices = jnp.asarray(virtual_indices, dtype=jnp.int32)
         self.virtual_parent_indices = tuple(parent_indices)
-        self.pair_left = jnp.asarray(left, dtype=jnp.int32)
-        self.pair_right = jnp.asarray(right, dtype=jnp.int32)
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-atomistic-coordinate-map",
                 "plan": plan.plan_id,
@@ -405,6 +438,18 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                 "sites": site_particles.prepared_id,
             }
         )
+        self.dof_capacity = particles.capacity
+        self.coordinate_dtype = dtype
+        self.numeric_version = particles.numeric_version
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the canonical prepared coordinate-map digest."""
+        return self.prepared_identity.fingerprint()
+
+    def site_discretization(self) -> ParticleDiscretization:
+        """Host preparation of the interaction-site particle support."""
+        return _site_particles(self.plan, self.coordinate_dtype, self.numeric_version)
 
     def realize(
         self,
@@ -415,8 +460,8 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> AtomisticInteractionSiteState:
-        positions = jnp.asarray(dof_positions, dtype=self.particles.safe_masses.dtype)
-        expected = (self.particles.capacity, 3)
+        positions = jnp.asarray(dof_positions, dtype=self.coordinate_dtype)
+        expected = (self.dof_capacity, 3)
         if positions.shape != expected:
             raise ValueError(f"dof_positions must have shape {expected}.")
         dynamic_fractional = (
@@ -436,8 +481,8 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         if dynamic_fractional is not None and (
             cell is None
             or dynamic_vectors is None
-            or dynamic_fractional.shape != expected
-            or dynamic_vectors.shape != (3, 3)
+            or dynamic_fractional.shape != (self.dof_capacity, cell.rank)
+            or dynamic_vectors.shape != cell.vectors.shape
         ):
             raise ValueError("Dynamic coordinate-map cell geometry is invalid.")
         safe_indices = jnp.maximum(self.physical_dof_indices, 0)
@@ -445,7 +490,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         sites = jnp.where(self.plan.sites.physical_mask[:, None], sites, 0.0)
         margin = jnp.asarray(jnp.inf, dtype=positions.dtype)
         successful = jnp.all(
-            jnp.isfinite(jnp.where(self.particles.active_mask[:, None], positions, 0.0))
+            jnp.isfinite(jnp.where(self.dof_active_mask[:, None], positions, 0.0))
         )
         for index, rule in enumerate(self.plan.virtual_rules):
             parent_indices = self.virtual_parent_indices[index]
@@ -453,6 +498,12 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             dynamic_parents = (
                 None if dynamic_fractional is None else dynamic_fractional[parent_indices]
             )
+            if dynamic_parents is not None:
+                # Nonfinite chart values must not disappear in integer image casts.
+                successful = successful & (
+                    ~self.plan.sites.active_mask[self.virtual_site_indices[index]]
+                    | jnp.all(jnp.isfinite(dynamic_parents))
+                )
             if rule.kind is VirtualSiteKind.WEIGHTED:
                 anchor = parents[0]
                 if (
@@ -460,16 +511,14 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                     and cell is not None
                     and dynamic_vectors is not None
                 ):
-                    relative_fractional = dynamic_parents - dynamic_parents[0]
-                    central = jax.lax.stop_gradient(
-                        jnp.round(relative_fractional).astype(jnp.int32)
-                    )
-                    central = jnp.where(cell.periodic_mask, central, 0)
-                    parents = anchor + contract(
-                        "pi,ij->pj",
-                        relative_fractional - central.astype(positions.dtype),
+                    relative = _minimum_image_from_fractional(
+                        parents - anchor,
                         dynamic_vectors,
+                        dynamic_parents - dynamic_parents[0],
+                        cell.periodic_mask,
+                        cell.image_shifts,
                     )
+                    parents = anchor + relative
                 elif cell is not None:
                     relative = cell.minimum_image(parents - anchor)
                     parents = anchor + relative
@@ -488,15 +537,12 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                     and cell is not None
                     and dynamic_vectors is not None
                 ):
-                    relative_fractional = dynamic_parents[1:3] - dynamic_parents[0]
-                    central = jax.lax.stop_gradient(
-                        jnp.round(relative_fractional).astype(jnp.int32)
-                    )
-                    central = jnp.where(cell.periodic_mask, central, 0)
-                    relative = contract(
-                        "pi,ij->pj",
-                        relative_fractional - central.astype(positions.dtype),
+                    relative = _minimum_image_from_fractional(
+                        parents[1:3] - origin,
                         dynamic_vectors,
+                        dynamic_parents[1:3] - dynamic_parents[0],
+                        cell.periodic_mask,
+                        cell.image_shifts,
                     )
                     first, second = relative[0], relative[1]
                 else:
@@ -530,7 +576,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             self.plan.sites.output_mask,
             margin,
             successful,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
     def force_pullback(
@@ -543,7 +589,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> Array:
-        positions = jnp.asarray(dof_positions, dtype=self.particles.safe_masses.dtype)
+        positions = jnp.asarray(dof_positions, dtype=self.coordinate_dtype)
         forces = jnp.asarray(site_forces, dtype=positions.dtype)
         if forces.shape != (self.plan.sites.capacity, 3):
             raise ValueError("site_forces must match interaction-site capacity.")
@@ -560,31 +606,12 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         )
         return pullback(forces)[0]
 
-    def dense_neighborhood(
-        self,
-        site_state: AtomisticInteractionSiteState,
-        /,
-        *,
-        cell: PeriodicCell | None = None,
-    ) -> ParticleNeighborhoodState:
-        pair_capacity = self.plan.sites.capacity * (self.plan.sites.capacity - 1) // 2
-        plan = DenseParticleNeighborhoodPlan(pair_capacity, box=cell)
-        return plan.prepare(self.site_particles).build(site_state.positions)
-
-
-class AtomisticNeighborhoodBundleState(StrictModule):
-    physical_atoms: ParticleNeighborhoodState
-    interaction_sites: ParticleNeighborhoodState
-    physical_and_site_aliased: bool = eqx.field(static=True)
-    bundle_id: str = eqx.field(static=True)
-
 
 __all__ = [
     "AbstractAtomisticCoordinateMapPlan",
     "AtomisticCoordinateMapPlan",
     "AtomisticInteractionSitePlan",
     "AtomisticInteractionSiteState",
-    "AtomisticNeighborhoodBundleState",
     "AtomisticSiteDomain",
     "PreparedAtomisticCoordinateMap",
     "VirtualSiteKind",

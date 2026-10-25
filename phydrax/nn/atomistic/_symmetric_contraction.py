@@ -45,6 +45,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._host_table_cache import host_table_cache
 from ..._identity import NumericRevision, SemanticProvenance
 from ..._model import register_artifact_value
+from ..._model._fixed_binding import require_identical, require_realized
 from ..._polynomial import ProductGraphPlan, project_tuple_coefficients
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
@@ -70,7 +71,6 @@ from ..operator.representations._irreps import (
     O3IrrepBlock,
     O3IrrepLayout,
 )
-from ._fixed_binding import require_identical, require_realized
 
 
 SymmetricBasisOrigin: TypeAlias = Literal["native-coupling", "imported-source"]

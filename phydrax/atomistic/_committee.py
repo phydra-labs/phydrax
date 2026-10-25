@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -18,9 +18,13 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
 from ..typing import checked
+from ._cell_dynamics import bind_atomistic_bundle_geometry
 from ._frame import AtomisticFrame
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodBundleState,
+    PreparedAtomisticNeighborhoodBundle,
+)
 from ._potential_program import PreparedAtomisticPotentialProgram
 
 
@@ -103,8 +107,20 @@ class CommitteeEvaluation(StrictModule):
 
 
 class CommitteeAtomisticPotential(StrictModule):
+    """Committee of prepared potential programs over independently valid resources.
+
+    Members of one prepared system may declare different scientific
+    neighborhoods.  ``bundles`` are the members' distinct prepared resource
+    bundles in first-appearance order and ``member_bundles`` maps each member
+    to its bundle; members with the same prepared bundle share one accepted
+    state.  ``evaluate`` consumes one bundle state per entry of ``bundles``,
+    each certified at the evaluated geometry.
+    """
+
     members: tuple[PreparedAtomisticPotentialProgram, ...]
     policy: CommitteeReductionPolicy
+    bundles: tuple[PreparedAtomisticNeighborhoodBundle, ...]
+    member_bundles: tuple[int, ...] = eqx.field(static=True)
     committee_id: str = eqx.field(static=True)
 
     def __init__(
@@ -123,8 +139,19 @@ class CommitteeAtomisticPotential(StrictModule):
         system_id = values[0].system.prepared_id
         if any(value.system.prepared_id != system_id for value in values[1:]):
             raise ValueError("Committee members belong to different atomistic systems.")
+        bundles: list[PreparedAtomisticNeighborhoodBundle] = []
+        identifiers: list[str] = []
+        owners: list[int] = []
+        for value in values:
+            bundle = value.neighborhood_bundle
+            if bundle.prepared_id not in identifiers:
+                identifiers.append(bundle.prepared_id)
+                bundles.append(bundle)
+            owners.append(identifiers.index(bundle.prepared_id))
         self.members = values
         self.policy = policy
+        self.bundles = tuple(bundles)
+        self.member_bundles = tuple(owners)
         self.committee_id = canonical_fingerprint(
             {
                 "kind": "atomistic-committee",
@@ -133,15 +160,111 @@ class CommitteeAtomisticPotential(StrictModule):
             }
         )
 
+    def with_neighborhood_bundles(
+        self, bundles: Sequence[PreparedAtomisticNeighborhoodBundle], /
+    ) -> CommitteeAtomisticPotential:
+        """Rebind grown resources; member numerical preparations are retained."""
+        grown = tuple(bundles)
+        if len(grown) != len(self.bundles) or any(
+            new.plan.plan_id != old.plan.plan_id
+            for new, old in zip(grown, self.bundles, strict=True)
+        ):
+            raise ValueError("Grown bundles must align with the committee bundles.")
+        return CommitteeAtomisticPotential(
+            tuple(
+                member
+                if grown[owner].prepared_id == member.neighborhood_bundle.prepared_id
+                else member.with_neighborhood_bundle(grown[owner])
+                for member, owner in zip(self.members, self.member_bundles, strict=True)
+            ),
+            self.policy,
+        )
+
+    def resources(
+        self,
+        positions: ArrayLike,
+        previous: Sequence[AtomisticNeighborhoodBundleState] | None = None,
+        /,
+        *,
+        cell_vectors: ArrayLike | None = None,
+        image_counts: ArrayLike | None = None,
+    ) -> CommitteeResources:
+        """Host lifecycle: certified states of every bundle at one geometry.
+
+        ``positions``, ``cell_vectors`` and ``image_counts`` are exactly the
+        values later passed to ``evaluate``.  Each bundle refreshes its
+        ``previous`` accepted state (or initializes) and replays capacity-only
+        failures on its declared grown capacities; the returned committee is
+        rebound to the grown resources.  An exhausted ladder is reported.
+        """
+        accepted = None if previous is None else tuple(previous)
+        if accepted is not None and len(accepted) != len(self.bundles):
+            raise ValueError("previous must hold one state per committee bundle.")
+        system = self.members[0].system
+        bundles = list(self.bundles)
+        states: list[AtomisticNeighborhoodBundleState] = []
+        growths = 0
+        exhausted = False
+        for index, bundle in enumerate(self.bundles):
+            geometry = bind_atomistic_bundle_geometry(
+                bundle,
+                system,
+                positions,
+                cell_vectors=cell_vectors,
+                image_counts=image_counts,
+            )
+            prior = None if accepted is None else accepted[index]
+
+            def attempt(
+                prepared: PreparedAtomisticNeighborhoodBundle,
+                prior: AtomisticNeighborhoodBundleState | None = prior,
+                geometry: Any = geometry,
+            ) -> AtomisticNeighborhoodBundleState:
+                if prior is None:
+                    return prepared.initialize(geometry)
+                return prepared.refresh(prepared.rebase(prior), geometry)
+
+            state = attempt(bundle)
+            while bool(np.asarray(state.capacity_only)[0]):
+                try:
+                    bundle = bundle.grow_capacities(state)
+                except RuntimeError:
+                    exhausted = True
+                    break
+                state = attempt(bundle)
+                growths += 1
+            bundles[index] = bundle
+            states.append(state)
+        committee = (
+            self
+            if all(
+                new.prepared_id == old.prepared_id
+                for new, old in zip(bundles, self.bundles, strict=True)
+            )
+            else self.with_neighborhood_bundles(bundles)
+        )
+        return CommitteeResources(committee, tuple(states), growths, exhausted)
+
+    def _member_states(
+        self, neighborhoods: Sequence[AtomisticNeighborhoodBundleState], /
+    ) -> tuple[AtomisticNeighborhoodBundleState, ...]:
+        states = tuple(neighborhoods)
+        if len(states) != len(self.bundles):
+            raise ValueError("neighborhoods must hold one state per committee bundle.")
+        return tuple(states[owner] for owner in self.member_bundles)
+
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhoods: Sequence[AtomisticNeighborhoodBundleState],
         /,
         **kwargs: Any,
     ) -> CommitteeEvaluation:
         evaluations = tuple(
-            member.evaluate(positions, neighborhood, **kwargs) for member in self.members
+            member.evaluate(positions, state, **kwargs)
+            for member, state in zip(
+                self.members, self._member_states(neighborhoods), strict=True
+            )
         )
         energies = jnp.stack(tuple(value.energy for value in evaluations))
         forces = jnp.stack(tuple(value.forces for value in evaluations))
@@ -187,6 +310,15 @@ class CommitteeAtomisticPotential(StrictModule):
         )
 
 
+class CommitteeResources(StrictModule):
+    """Committee rebound to its final resource levels and their certified states."""
+
+    committee: CommitteeAtomisticPotential
+    neighborhoods: tuple[AtomisticNeighborhoodBundleState, ...]
+    capacity_growths: int = eqx.field(static=True)
+    exhausted: bool = eqx.field(static=True)
+
+
 class ConservativeUncertaintyBlend(StrictModule):
     committee: CommitteeAtomisticPotential
     baseline: PreparedAtomisticPotentialProgram
@@ -213,17 +345,25 @@ class ConservativeUncertaintyBlend(StrictModule):
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhoods: Sequence[AtomisticNeighborhoodBundleState],
+        baseline_neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         **kwargs: Any,
     ) -> tuple[Array, Array, AtomisticUncertaintyEvidence, Array]:
+        """One conservative blended energy and its force at a certified point.
+
+        ``neighborhoods`` holds one state per committee bundle and
+        ``baseline_neighborhoods`` the baseline program's own state, all
+        certified at ``positions``.
+        """
         position = jnp.asarray(positions)
+        states = self.committee._member_states(neighborhoods)
 
         def energy(value: Array) -> tuple[Array, Array]:
             member_energies = jnp.stack(
                 tuple(
-                    member.energy(value, neighborhood, **kwargs)[0]
-                    for member in self.committee.members
+                    member.energy(value, state, **kwargs)[0]
+                    for member, state in zip(self.committee.members, states, strict=True)
                 )
             )
             mean_energy = jnp.mean(member_energies)
@@ -234,7 +374,7 @@ class ConservativeUncertaintyBlend(StrictModule):
             energy_deviation = (
                 jnp.sqrt(jnp.mean(centered * centered) + epsilon**2) - epsilon
             )
-            baseline = self.baseline.energy(value, neighborhood, **kwargs)[0]
+            baseline = self.baseline.energy(value, baseline_neighborhoods, **kwargs)[0]
             threshold = self.committee.policy.energy_threshold
             width = self.committee.policy.transition_width
             weight = jax.nn.sigmoid((threshold - energy_deviation) / width)
@@ -244,7 +384,7 @@ class ConservativeUncertaintyBlend(StrictModule):
             position
         )
         uncertainty = self.committee.evaluate(
-            position, neighborhood, **kwargs
+            position, neighborhoods, **kwargs
         ).uncertainty
         return energy_value, -gradient, uncertainty, weight
 
@@ -459,6 +599,7 @@ __all__ = [
     "CommitteeAtomisticPotential",
     "CommitteeEvaluation",
     "CommitteeReductionPolicy",
+    "CommitteeResources",
     "ConservativeUncertaintyBlend",
     "OODPolicy",
     "SegmentFallbackPolicy",

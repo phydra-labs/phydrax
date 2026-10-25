@@ -25,6 +25,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_finite_float
+from ..discretization import ParticleDiscretization, PeriodicCell
 from ._polarization import (
     PermanentMultipoleSiteData,
     PolarizationPlan,
@@ -973,10 +974,14 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
         *,
         multipoles: PermanentMultipoleSiteData | None = None,
         scaling: PolarizationScaleData | None = None,
+        cell: PeriodicCell | None = None,
+        particles: ParticleDiscretization | None = None,
     ) -> PreparedPolarizableForceField:
         if self.polarization is None:
-            if multipoles is not None or scaling is not None:
-                raise ValueError("multipoles and scaling require a polarization plan.")
+            if any(item is not None for item in (multipoles, scaling, cell, particles)):
+                raise ValueError(
+                    "multipoles, scaling, cell and particles require a polarization plan."
+                )
             polarization = None
             capacity = self.site_capacity
         else:
@@ -986,7 +991,9 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
                 )
             if self.site_capacity >= 0 and multipoles.site_capacity != self.site_capacity:
                 raise ValueError("Term and multipole capacities differ.")
-            polarization = self.polarization.prepare(multipoles, scaling=scaling)
+            polarization = self.polarization.prepare(
+                multipoles, scaling=scaling, cell=cell, particles=particles
+            )
             capacity = multipoles.site_capacity
         return PreparedPolarizableForceField(self, polarization, capacity)
 

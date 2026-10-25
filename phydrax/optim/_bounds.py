@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
-from math import isfinite
-from typing import Any, NamedTuple, TypeAlias, TypeVar
+from math import isfinite, isnan
+from typing import Any, final, NamedTuple, Protocol, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -14,16 +15,17 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, core
 from jax.flatten_util import ravel_pytree
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
+from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,
     tree_inner as _tree_inner,
     tree_negative as _tree_negative,
     tree_norm as _tree_norm,
-    tree_scale as _tree_scale,
     tree_where as _tree_where,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
@@ -38,6 +40,8 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ..typing import Bool, Float, Int32
+from ._group_layout import OptimizerGroupDim, OptimizerGroupLayout
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -51,11 +55,26 @@ from ._iterative._types import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ._lbfgs_kernel import (
+    admit_lbfgs_pair,
+    append_lbfgs_pair,
+    initial_lbfgs_history,
+    lbfgs_direction,
+    lbfgs_pair_curvature,
+    LBFGSHistory,
+    reset_lbfgs_history,
+)
 from ._trust_region import (
     solve_trust_region_subproblem,
     SteihaugToint,
     TrustRegionQuadraticProblem,
 )
+
+
+_SINGLE_GROUP = OptimizerGroupLayout()
+_ITERATING = int(OptimizationStatus.ITERATING)
+_SUCCESS = int(OptimizationStatus.SUCCESS)
+_NONFINITE_EVALUATION = int(OptimizationStatus.NONFINITE_EVALUATION)
 
 
 def _default_active_set_linear_policy() -> LinearSolvePolicy:
@@ -129,12 +148,17 @@ def _complementarity_residual(
         jax.tree.leaves(upper),
         strict=True,
     ):
-        lower_active = jnp.isfinite(lo) & (value <= lo + tolerance * (1.0 + jnp.abs(lo)))
-        upper_active = jnp.isfinite(hi) & (value >= hi - tolerance * (1.0 + jnp.abs(hi)))
+        # Infinite bounds are inactive; never form inf - inf arithmetic for them.
+        lower_finite = jnp.isfinite(lo)
+        upper_finite = jnp.isfinite(hi)
+        lo_ = jnp.where(lower_finite, lo, 0.0)
+        hi_ = jnp.where(upper_finite, hi, 0.0)
+        lower_active = lower_finite & (value <= lo_ + tolerance * (1.0 + jnp.abs(lo_)))
+        upper_active = upper_finite & (value >= hi_ - tolerance * (1.0 + jnp.abs(hi_)))
         lower_multiplier = jnp.where(lower_active, jnp.maximum(grad, 0.0), 0.0)
         upper_multiplier = jnp.where(upper_active, jnp.maximum(-grad, 0.0), 0.0)
-        lower_gap = jnp.where(jnp.isfinite(lo), value - lo, 0.0)
-        upper_gap = jnp.where(jnp.isfinite(hi), hi - value, 0.0)
+        lower_gap = jnp.where(lower_finite, value - lo_, 0.0)
+        upper_gap = jnp.where(upper_finite, hi_ - value, 0.0)
         residual = jnp.maximum(
             residual,
             jnp.max(
@@ -412,6 +436,359 @@ class ProjectedLBFGS(AbstractMinimizationMethod):
         )
 
 
+@final
+class TrustScaledLBFGSState(StrictModule):
+    """Complete stepwise state of `TrustScaledLBFGS` for every optimizer group.
+
+    ``parameters`` is the point the caller evaluates next. ``accepted_*`` holds the
+    last accepted evaluation (point, gradient, bound activity and value) from which
+    ``parameters`` was proposed; it is the reported iterate, so its value and
+    gradient always belong to one evaluated point. ``direction``,
+    ``step_length``, ``directional_derivative`` and ``step_norm`` describe the
+    latest step a group took; the boolean flags describe the latest evaluation a
+    group consumed; the integer fields count events over the run. ``status`` is
+    an `OptimizationStatus` per group: ``ITERATING``, ``SUCCESS`` (the accepted
+    evaluation satisfied convergence and the group did not move) or
+    ``NONFINITE_EVALUATION`` (the evaluation was rejected and the group returned
+    to its accepted point).
+    """
+
+    __strict_contract__ = True
+
+    parameters: PyTree[Array]
+    accepted_parameters: PyTree[Array]
+    accepted_gradient: PyTree[Array]
+    accepted_activity: PyTree[Array]
+    accepted_value: Float[OptimizerGroupDim]
+    has_accepted: Bool[OptimizerGroupDim]
+    history: LBFGSHistory
+    direction: PyTree[Array]
+    step_length: Float[OptimizerGroupDim]
+    directional_derivative: Float[OptimizerGroupDim]
+    optimality: Float[OptimizerGroupDim]
+    maximum_site_gradient: Float[OptimizerGroupDim]
+    initial_optimality: Float[OptimizerGroupDim]
+    step_norm: Float[OptimizerGroupDim]
+    status: Int32[OptimizerGroupDim]
+    evaluation_accepted: Bool[OptimizerGroupDim]
+    curvature_rejected: Bool[OptimizerGroupDim]
+    direction_reset: Bool[OptimizerGroupDim]
+    trust_limited: Bool[OptimizerGroupDim]
+    bound_limited: Bool[OptimizerGroupDim]
+    evaluations: Int32[OptimizerGroupDim]
+    iterations: Int32[OptimizerGroupDim]
+    curvature_rejections: Int32[OptimizerGroupDim]
+    direction_resets: Int32[OptimizerGroupDim]
+    trust_limited_steps: Int32[OptimizerGroupDim]
+    nonfinite_evaluations: Int32[OptimizerGroupDim]
+    layout: OptimizerGroupLayout
+
+    @property
+    def accepted_step_size(self) -> Array:
+        return self.step_length
+
+    @property
+    def damping(self) -> Array:
+        return jnp.full_like(self.step_length, jnp.nan)
+
+    @property
+    def direction_fallbacks(self) -> Array:
+        return self.direction_resets
+
+    @property
+    def rejected_steps(self) -> Array:
+        return self.nonfinite_evaluations
+
+
+@final
+class TrustScaledLBFGS(AbstractMinimizationMethod):
+    """Force-driven limited-memory BFGS with a trust-scaled step and no line search.
+
+    Every finite evaluation is an accepted point. It forms one secant pair with the
+    previous accepted point of its group, and the two-loop direction
+    ``d = -H g`` is taken with step length ``min(1, maximum_step / max_site |d|)``,
+    so the largest site displacement never exceeds ``maximum_step``. No energy is
+    compared: the method does not claim monotone decrease, and `ProjectedLBFGS`
+    remains the line-search method for a true scalar objective.
+
+    A pair is admitted only when ``s·y > curvature_tolerance |s| |y|`` (a weak or
+    negative curvature pair is rejected and counted); without an explicit
+    tolerance the floor is ``1e-6`` for single-precision and ``1e-10`` for wider
+    parameters. A two-loop direction that is not a descent direction
+    (``g·d >= 0``) discards the group's history and the group restarts along the
+    unit steepest-descent direction, as does a group without history.
+
+    With bounds, activity follows `Bounds.active_mask`, the direction is
+    restricted to free variables, a change of active set forgets that group's
+    history, and the trust-scaled trial point is projected onto the bounds.
+    """
+
+    history_size: int = eqx.field(static=True)
+    maximum_step: float = eqx.field(static=True)
+    curvature_tolerance: float | None = eqx.field(static=True)
+    active_tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        history_size: int = 6,
+        maximum_step: float = 0.2,
+        curvature_tolerance: float | None = None,
+        active_tolerance: float = 1e-10,
+    ) -> None:
+        if isinstance(history_size, bool) or not isinstance(history_size, int):
+            raise TypeError("history_size must be an int.")
+        if history_size < 1:
+            raise ValueError("history_size must be positive.")
+        step = float(maximum_step)
+        if isnan(step) or step <= 0.0:
+            raise ValueError(
+                "maximum_step must be positive; inf disables the trust scale."
+            )
+        curvature = None if curvature_tolerance is None else float(curvature_tolerance)
+        if curvature is not None and (not isfinite(curvature) or curvature < 0.0):
+            raise ValueError("curvature_tolerance must be finite and non-negative.")
+        active = float(active_tolerance)
+        if not isfinite(active) or active < 0.0:
+            raise ValueError("active_tolerance must be finite and non-negative.")
+        self.history_size = history_size
+        self.maximum_step = step
+        self.curvature_tolerance = curvature
+        self.active_tolerance = active
+
+    @property
+    def method_id(self) -> str:
+        return "trust-scaled-lbfgs"
+
+    @property
+    def capabilities(self) -> OptimizationCapabilities:
+        return _bound_capabilities()
+
+    def init(
+        self,
+        parameters: PyTree[ArrayLike],
+        /,
+        *,
+        layout: OptimizerGroupLayout | None = None,
+        value_dtype: DTypeLike | None = None,
+    ) -> TrustScaledLBFGSState:
+        """Prepare a state whose ``parameters`` are the first point to evaluate."""
+
+        parameters_, layout_, dtype, value_dtype_ = _force_driven_admission(
+            parameters, layout, value_dtype
+        )
+        groups = layout_.group_count
+        zero = jnp.zeros((groups,), dtype=dtype)
+        unset = jnp.full((groups,), jnp.nan, dtype=dtype)
+        no = jnp.zeros((groups,), dtype=jnp.bool_)
+        none = jnp.zeros((groups,), dtype=jnp.int32)
+        zero_tree = jax.tree.map(jnp.zeros_like, parameters_)
+        return TrustScaledLBFGSState(
+            parameters=parameters_,
+            accepted_parameters=parameters_,
+            accepted_gradient=zero_tree,
+            accepted_activity=jax.tree.map(
+                lambda leaf: jnp.zeros(leaf.shape, dtype=jnp.bool_), parameters_
+            ),
+            accepted_value=jnp.full((groups,), jnp.nan, dtype=value_dtype_),
+            has_accepted=no,
+            history=initial_lbfgs_history(parameters_, self.history_size, layout_, dtype),
+            direction=zero_tree,
+            step_length=zero,
+            directional_derivative=unset,
+            optimality=unset,
+            maximum_site_gradient=unset,
+            initial_optimality=unset,
+            step_norm=zero,
+            status=jnp.full((groups,), _ITERATING, dtype=jnp.int32),
+            evaluation_accepted=no,
+            curvature_rejected=no,
+            direction_reset=no,
+            trust_limited=no,
+            bound_limited=no,
+            evaluations=none,
+            iterations=none,
+            curvature_rejections=none,
+            direction_resets=none,
+            trust_limited_steps=none,
+            nonfinite_evaluations=none,
+            layout=layout_,
+        )
+
+    def step(
+        self,
+        state: TrustScaledLBFGSState,
+        value: ArrayLike,
+        gradient: PyTree[ArrayLike],
+        /,
+        *,
+        bounds: Bounds | None = None,
+        termination: OptimizationTermination | None = None,
+        converged: ArrayLike | None = None,
+        active: ArrayLike | None = None,
+    ) -> TrustScaledLBFGSState:
+        """Consume one evaluation at ``state.parameters`` and propose the next point.
+
+        ``value`` holds one objective value per group and ``gradient`` the
+        gradient at ``state.parameters``. Groups outside ``active`` are left
+        unchanged. An active group whose evaluation is finite becomes accepted; it
+        stays in place with status ``SUCCESS`` when ``converged`` selects it or its
+        projected-gradient norm meets ``termination``, and otherwise takes one
+        trust-scaled step. A nonfinite evaluation returns the group to its accepted
+        point with status ``NONFINITE_EVALUATION``.
+        """
+
+        if not isinstance(state, TrustScaledLBFGSState):
+            raise TypeError("state must be a TrustScaledLBFGSState.")
+        layout = state.layout
+        x = state.parameters
+        value_, gradient_, active_, converged_ = _force_driven_inputs(
+            layout, x, state.accepted_value.dtype, value, gradient, active, converged
+        )
+        evaluation = _evaluate_force_driven(
+            layout, bounds, x, value_, gradient_, self.active_tolerance
+        )
+        activity = (
+            state.accepted_activity
+            if evaluation.activity is None
+            else evaluation.activity
+        )
+        accepted = active_ & evaluation.finite
+        initial_optimality = jnp.where(
+            accepted & ~state.has_accepted,
+            evaluation.optimality,
+            state.initial_optimality,
+        )
+        converged_ = _group_converged(
+            termination, evaluation.optimality, initial_optimality, converged_
+        )
+        moving = accepted & ~converged_
+
+        dtype = state.step_length.dtype
+        same_activity = (
+            layout.count_true(
+                jax.tree.map(jnp.not_equal, activity, state.accepted_activity)
+            )
+            == 0
+        )
+        continuing = moving & state.has_accepted
+        pair_step = jax.tree.map(jnp.subtract, x, state.accepted_parameters)
+        pair_change = jax.tree.map(jnp.subtract, gradient_, state.accepted_gradient)
+        curvature, step_squared, change_squared = lbfgs_pair_curvature(
+            pair_step, pair_change, layout
+        )
+        formed = continuing & same_activity
+        admitted = formed & admit_lbfgs_pair(
+            curvature,
+            step_squared,
+            change_squared,
+            _curvature_floor(self.curvature_tolerance, dtype),
+        )
+        history = reset_lbfgs_history(state.history, continuing & ~same_activity)
+        history = append_lbfgs_pair(
+            history, pair_step, pair_change, curvature, change_squared, admitted, layout
+        )
+
+        free_gradient = evaluation.free_gradient
+        direction = lbfgs_direction(free_gradient, history, layout)
+        if evaluation.activity is not None:
+            direction = _tree_zeros_on_mask(direction, activity)
+        slope = layout.inner(free_gradient, direction).astype(dtype)
+        descent = (history.count > 0) & jnp.isfinite(slope) & (slope < 0.0)
+        restart = moving & ~descent
+        direction_reset = restart & (history.count > 0)
+        history = reset_lbfgs_history(history, restart)
+        gradient_norm = layout.norm(free_gradient).astype(dtype)
+        has_force = gradient_norm > 0.0
+        inverse_norm = jnp.where(
+            has_force, 1.0 / jnp.where(has_force, gradient_norm, 1.0), 0.0
+        )
+        steepest = layout.scale(-inverse_norm, free_gradient)
+        direction = layout.select(restart, steepest, direction)
+        slope = jnp.where(restart, -gradient_norm, slope)
+
+        largest = layout.site_norm_max(direction).astype(dtype)
+        trust_limited = moving & (largest > self.maximum_step)
+        step_length = jnp.where(
+            trust_limited,
+            self.maximum_step / jnp.where(trust_limited, largest, 1.0),
+            jnp.ones_like(largest),
+        ).astype(dtype)
+        trial = jax.tree.map(jnp.add, x, layout.scale(step_length, direction))
+        trial, bound_limited = _admit_trial(layout, bounds, trial)
+        bound_limited = moving & bound_limited
+
+        retreat = active_ & ~evaluation.finite & state.has_accepted
+        held = layout.select(retreat, state.accepted_parameters, x)
+        proposal = layout.select(moving, trial, held)
+        step_norm = layout.norm(jax.tree.map(jnp.subtract, trial, x)).astype(dtype)
+        curvature_rejected = formed & ~admitted
+        return dataclasses.replace(
+            state,
+            parameters=proposal,
+            accepted_parameters=layout.select(accepted, x, state.accepted_parameters),
+            accepted_gradient=layout.select(accepted, gradient_, state.accepted_gradient),
+            accepted_activity=layout.select(accepted, activity, state.accepted_activity),
+            accepted_value=jnp.where(accepted, value_, state.accepted_value),
+            has_accepted=state.has_accepted | accepted,
+            history=history,
+            direction=layout.select(moving, direction, state.direction),
+            step_length=jnp.where(moving, step_length, state.step_length),
+            directional_derivative=jnp.where(moving, slope, state.directional_derivative),
+            optimality=jnp.where(accepted, evaluation.optimality, state.optimality),
+            maximum_site_gradient=jnp.where(
+                accepted,
+                evaluation.maximum_site_gradient,
+                state.maximum_site_gradient,
+            ),
+            initial_optimality=initial_optimality,
+            step_norm=jnp.where(moving, step_norm, state.step_norm),
+            status=_group_status(state.status, active_, evaluation.finite, converged_),
+            evaluation_accepted=jnp.where(active_, accepted, state.evaluation_accepted),
+            curvature_rejected=jnp.where(
+                active_, curvature_rejected, state.curvature_rejected
+            ),
+            direction_reset=jnp.where(active_, direction_reset, state.direction_reset),
+            trust_limited=jnp.where(active_, trust_limited, state.trust_limited),
+            bound_limited=jnp.where(active_, bound_limited, state.bound_limited),
+            evaluations=state.evaluations + active_.astype(jnp.int32),
+            iterations=state.iterations + moving.astype(jnp.int32),
+            curvature_rejections=(
+                state.curvature_rejections + curvature_rejected.astype(jnp.int32)
+            ),
+            direction_resets=state.direction_resets + direction_reset.astype(jnp.int32),
+            trust_limited_steps=(
+                state.trust_limited_steps + trust_limited.astype(jnp.int32)
+            ),
+            nonfinite_evaluations=(
+                state.nonfinite_evaluations
+                + (active_ & ~evaluation.finite).astype(jnp.int32)
+            ),
+        )
+
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
+        return _solve_force_driven(
+            self,
+            problem,
+            initial_parameters,
+            termination=termination,
+            args=args,
+            globalization="displacement-trust-scale",
+            notes=(
+                "Force-driven step without line search; objective decrease is not "
+                "enforced. Reported iterate is the last accepted evaluation."
+            ),
+        )
+
+
 def _bound_capabilities() -> OptimizationCapabilities:
     return OptimizationCapabilities(
         scalar_objective=True,
@@ -570,10 +947,7 @@ class _LBFGSState(NamedTuple):
     previous_gradient: PyTree[Any]
     previous_active: PyTree[Any]
     has_previous: Array
-    steps: PyTree[Any]
-    gradient_changes: PyTree[Any]
-    inverse_curvatures: Array
-    history_count: Array
+    history: LBFGSHistory
 
 
 _ValueFunction: TypeAlias = Callable[[PyTree[Any]], Array]
@@ -581,155 +955,6 @@ _Linearized: TypeAlias = Callable[[PyTree[Any]], tuple[Array, PyTree[Array]]]
 _MethodState = TypeVar("_MethodState")
 _EmptyCarry: TypeAlias = tuple[_BoundState, tuple[()]]
 _LBFGSCarry: TypeAlias = tuple[_BoundState, _LBFGSState]
-
-
-def _lbfgs_direction(
-    gradient: PyTree[Any],
-    steps: PyTree[Any],
-    gradient_changes: PyTree[Any],
-    inverse_curvatures: Array,
-    history_count: Array,
-    /,
-) -> PyTree[Array]:
-    """Apply two-loop L-BFGS recursion over fixed-capacity staged buffers."""
-
-    history_size = inverse_curvatures.shape[0]
-    alphas = jnp.zeros_like(inverse_curvatures)
-
-    def reverse_body(
-        index: Array, carry: tuple[PyTree[Array], Array]
-    ) -> tuple[PyTree[Array], Array]:
-        q, stored_alphas = carry
-        buffer_index = jnp.maximum(history_count - 1 - index, 0)
-        step = jax.tree.map(lambda values: values[buffer_index], steps)
-        change = jax.tree.map(
-            lambda values: values[buffer_index],
-            gradient_changes,
-        )
-        inverse_curvature = inverse_curvatures[buffer_index]
-        active = index < history_count
-        alpha = jnp.where(
-            active,
-            inverse_curvature * _tree_inner(step, q),
-            0.0,
-        )
-        next_q = _tree_add_scaled(q, change, -alpha)
-        return next_q, stored_alphas.at[index].set(alpha)
-
-    q, alphas = jax.lax.fori_loop(
-        0,
-        history_size,
-        reverse_body,
-        (gradient, alphas),
-    )
-    latest_index = jnp.maximum(history_count - 1, 0)
-    latest_step = jax.tree.map(lambda values: values[latest_index], steps)
-    latest_change = jax.tree.map(
-        lambda values: values[latest_index],
-        gradient_changes,
-    )
-    scale = _tree_inner(latest_step, latest_change) / jnp.maximum(
-        _tree_inner(latest_change, latest_change),
-        1e-30,
-    )
-    scale = jnp.where(history_count > 0, scale, 1.0)
-    initial_result = _tree_scale(scale, q)
-
-    def forward_body(index: Array, result: PyTree[Array]) -> PyTree[Array]:
-        step = jax.tree.map(lambda values: values[index], steps)
-        change = jax.tree.map(
-            lambda values: values[index],
-            gradient_changes,
-        )
-        active = index < history_count
-        alpha_index = jnp.maximum(history_count - 1 - index, 0)
-        alpha = jnp.where(active, alphas[alpha_index], 0.0)
-        beta = jnp.where(
-            active,
-            inverse_curvatures[index] * _tree_inner(change, result),
-            0.0,
-        )
-        return _tree_add_scaled(result, step, alpha - beta)
-
-    result = jax.lax.fori_loop(
-        0,
-        history_size,
-        forward_body,
-        initial_result,
-    )
-    return _tree_negative(result)
-
-
-def _append_lbfgs_history(
-    state: _LBFGSState,
-    step: PyTree[Any],
-    change: PyTree[Any],
-    inverse_curvature: Array,
-    /,
-) -> _LBFGSState:
-    history_size = state.inverse_curvatures.shape[0]
-
-    def append_open_slot(
-        _: None,
-    ) -> tuple[PyTree[Array], PyTree[Array], Array, Array]:
-        updated_steps = jax.tree.map(
-            lambda values, new: values.at[state.history_count].set(new),
-            state.steps,
-            step,
-        )
-        updated_changes = jax.tree.map(
-            lambda values, new: values.at[state.history_count].set(new),
-            state.gradient_changes,
-            change,
-        )
-        updated_inverse = state.inverse_curvatures.at[state.history_count].set(
-            inverse_curvature
-        )
-        return updated_steps, updated_changes, updated_inverse, state.history_count + 1
-
-    def replace_oldest(_: None) -> tuple[PyTree[Array], PyTree[Array], Array, Array]:
-        updated_steps = jax.tree.map(
-            lambda values, new: jnp.concatenate(
-                (values[1:], jnp.expand_dims(new, 0)),
-                axis=0,
-            ),
-            state.steps,
-            step,
-        )
-        updated_changes = jax.tree.map(
-            lambda values, new: jnp.concatenate(
-                (values[1:], jnp.expand_dims(new, 0)),
-                axis=0,
-            ),
-            state.gradient_changes,
-            change,
-        )
-        updated_inverse = jnp.concatenate(
-            (
-                state.inverse_curvatures[1:],
-                jnp.reshape(inverse_curvature, (1,)),
-            ),
-            axis=0,
-        )
-        return (
-            updated_steps,
-            updated_changes,
-            updated_inverse,
-            state.history_count,
-        )
-
-    steps, changes, inverse, count = jax.lax.cond(
-        state.history_count < history_size,
-        append_open_slot,
-        replace_oldest,
-        None,
-    )
-    return state._replace(
-        steps=steps,
-        gradient_changes=changes,
-        inverse_curvatures=inverse,
-        history_count=count,
-    )
 
 
 def _active_set_newton_direction(
@@ -1377,22 +1602,17 @@ def _initial_lbfgs_state(
         lambda value: jnp.zeros(value.shape, dtype=jnp.bool_),
         parameters,
     )
-    steps = jax.tree.map(
-        lambda value: jnp.zeros((history_size, *value.shape), dtype=value.dtype),
-        parameters,
-    )
     return _LBFGSState(
         previous_parameters=parameters,
         previous_gradient=zero_gradient,
         previous_active=inactive,
         has_previous=jnp.asarray(False),
-        steps=steps,
-        gradient_changes=steps,
-        inverse_curvatures=jnp.zeros(
-            (history_size,),
-            dtype=_tree_inner(parameters, parameters).dtype,
+        history=initial_lbfgs_history(
+            parameters,
+            history_size,
+            _SINGLE_GROUP,
+            _tree_inner(parameters, parameters).dtype,
         ),
-        history_count=jnp.asarray(0, dtype=jnp.int32),
     )
 
 
@@ -1403,30 +1623,12 @@ def _update_lbfgs_history(
     active: PyTree[Any],
     state: _LBFGSState,
     /,
-) -> _LBFGSState:
+) -> LBFGSHistory:
     same_active = (~state.has_previous) | _tree_mask_equal(
         active,
         state.previous_active,
     )
-    empty_steps = jax.tree.map(jnp.zeros_like, state.steps)
-    retained = state._replace(
-        steps=_tree_where(same_active, state.steps, empty_steps),
-        gradient_changes=_tree_where(
-            same_active,
-            state.gradient_changes,
-            empty_steps,
-        ),
-        inverse_curvatures=jnp.where(
-            same_active,
-            state.inverse_curvatures,
-            jnp.zeros_like(state.inverse_curvatures),
-        ),
-        history_count=jnp.where(
-            same_active,
-            state.history_count,
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
-    )
+    retained = reset_lbfgs_history(state.history, jnp.reshape(~same_active, (1,)))
     step = jax.tree.map(
         lambda current, previous: current - previous,
         parameters,
@@ -1437,24 +1639,27 @@ def _update_lbfgs_history(
         gradient,
         state.previous_gradient,
     )
-    curvature = _tree_inner(step, change)
-    threshold = method.curvature_tolerance * _tree_norm(step) * _tree_norm(change)
-    add_pair = (
+    curvature, step_squared, change_squared = lbfgs_pair_curvature(
+        step, change, _SINGLE_GROUP
+    )
+    admitted = (
         state.has_previous
         & same_active
-        & jnp.isfinite(curvature)
-        & (curvature > threshold)
+        & admit_lbfgs_pair(
+            curvature,
+            step_squared,
+            change_squared,
+            method.curvature_tolerance,
+        )
     )
-    return jax.lax.cond(
-        add_pair,
-        lambda current: _append_lbfgs_history(
-            current,
-            step,
-            change,
-            1.0 / curvature,
-        ),
-        lambda current: current,
+    return append_lbfgs_pair(
         retained,
+        step,
+        change,
+        curvature,
+        change_squared,
+        admitted,
+        _SINGLE_GROUP,
     )
 
 
@@ -1496,13 +1701,7 @@ def _run_projected_lbfgs(
                 active,
                 history,
             )
-            raw_direction = _lbfgs_direction(
-                gradient,
-                updated_history.steps,
-                updated_history.gradient_changes,
-                updated_history.inverse_curvatures,
-                updated_history.history_count,
-            )
+            raw_direction = lbfgs_direction(gradient, updated_history, _SINGLE_GROUP)
             next_state = _take_bound_step(
                 evaluated,
                 value_function,
@@ -1516,11 +1715,12 @@ def _run_projected_lbfgs(
                 termination,
             )
             accepted = next_state.accepted_steps > evaluated.accepted_steps
-            accepted_history = updated_history._replace(
+            accepted_history = _LBFGSState(
                 previous_parameters=evaluated.parameters,
                 previous_gradient=gradient,
                 previous_active=active,
                 has_previous=jnp.asarray(True),
+                history=updated_history,
             )
             next_history = _tree_where(
                 accepted,
@@ -1734,6 +1934,365 @@ def _solve_bound_constrained(
     )
 
 
+class _ForceDrivenState(Protocol):
+    parameters: PyTree[Array]
+    accepted_parameters: PyTree[Array]
+    initial_optimality: Array
+    step_norm: Array
+    status: Array
+    evaluations: Array
+    iterations: Array
+
+    @property
+    def accepted_step_size(self) -> Array: ...
+
+    @property
+    def damping(self) -> Array: ...
+
+    @property
+    def direction_fallbacks(self) -> Array: ...
+
+    @property
+    def rejected_steps(self) -> Array: ...
+
+
+_ForceDrivenStateT = TypeVar("_ForceDrivenStateT", bound=_ForceDrivenState)
+
+
+class _ForceDrivenMethod(Protocol[_ForceDrivenStateT]):
+    active_tolerance: float
+
+    @property
+    def method_id(self) -> str: ...
+
+    @property
+    def capabilities(self) -> OptimizationCapabilities: ...
+
+    def init(
+        self,
+        parameters: PyTree[ArrayLike],
+        /,
+        *,
+        layout: OptimizerGroupLayout | None = None,
+        value_dtype: DTypeLike | None = None,
+    ) -> _ForceDrivenStateT: ...
+
+    def step(
+        self,
+        state: _ForceDrivenStateT,
+        value: ArrayLike,
+        gradient: PyTree[ArrayLike],
+        /,
+        *,
+        bounds: Bounds | None = None,
+        termination: OptimizationTermination | None = None,
+        converged: ArrayLike | None = None,
+        active: ArrayLike | None = None,
+    ) -> _ForceDrivenStateT: ...
+
+
+class _ForceDrivenEvaluation(NamedTuple):
+    free_gradient: PyTree[Array]
+    activity: PyTree[Array] | None
+    optimality: Array
+    maximum_site_gradient: Array
+    finite: Array
+
+
+def _force_driven_admission(
+    parameters: PyTree[ArrayLike],
+    layout: OptimizerGroupLayout | None,
+    value_dtype: DTypeLike | None,
+    /,
+) -> tuple[PyTree[Array], OptimizerGroupLayout, np.dtype, np.dtype]:
+    parameters_ = _validate_real_inexact_tree(parameters, name="parameters")
+    layout_ = _SINGLE_GROUP if layout is None else layout
+    if not isinstance(layout_, OptimizerGroupLayout):
+        raise TypeError("layout must be an OptimizerGroupLayout or None.")
+    layout_.validate(parameters_)
+    dtype = inexact_result_type(*(leaf.dtype for leaf in jax.tree.leaves(parameters_)))
+    value_dtype_ = dtype if value_dtype is None else jnp.dtype(value_dtype)
+    if not jnp.issubdtype(value_dtype_, jnp.floating):
+        raise TypeError("value_dtype must be a real floating dtype.")
+    return parameters_, layout_, dtype, value_dtype_
+
+
+def _group_mask(
+    mask: ArrayLike | None, groups: int, /, *, default: bool, name: str
+) -> Array:
+    if mask is None:
+        return jnp.full((groups,), default, dtype=jnp.bool_)
+    mask_ = jnp.asarray(mask)
+    if mask_.dtype != jnp.bool_ or mask_.shape != (groups,):
+        raise ValueError(f"{name} must be a boolean array with one entry per group.")
+    return mask_
+
+
+def _force_driven_inputs(
+    layout: OptimizerGroupLayout,
+    parameters: PyTree[Array],
+    value_dtype: DTypeLike,
+    value: ArrayLike,
+    gradient: PyTree[ArrayLike],
+    active: ArrayLike | None,
+    converged: ArrayLike | None,
+    /,
+) -> tuple[Array, PyTree[Array], Array, Array]:
+    groups = layout.group_count
+    value_ = jnp.asarray(value)
+    if value_.shape != (groups,) or not jnp.issubdtype(value_.dtype, jnp.floating):
+        raise ValueError("value must hold one real objective value per optimizer group.")
+    gradient_ = _validate_real_inexact_tree(gradient, name="gradient")
+    if jax.tree.structure(gradient_) != jax.tree.structure(parameters) or any(
+        leaf.shape != parameter.shape
+        for leaf, parameter in zip(
+            jax.tree.leaves(gradient_), jax.tree.leaves(parameters), strict=True
+        )
+    ):
+        raise ValueError("gradient must match the parameter PyTree and leaf shapes.")
+    # Stored gradients keep the parameter leaf dtypes so staged state is stable.
+    gradient_ = jax.tree.map(
+        lambda leaf, parameter: leaf.astype(parameter.dtype), gradient_, parameters
+    )
+    return (
+        value_.astype(value_dtype),
+        gradient_,
+        _group_mask(active, groups, default=True, name="active"),
+        _group_mask(converged, groups, default=False, name="converged"),
+    )
+
+
+def _evaluate_force_driven(
+    layout: OptimizerGroupLayout,
+    bounds: Bounds | None,
+    parameters: PyTree[Array],
+    value: Array,
+    gradient: PyTree[Array],
+    active_tolerance: float,
+    /,
+) -> _ForceDrivenEvaluation:
+    dtype = inexact_result_type(*(leaf.dtype for leaf in jax.tree.leaves(parameters)))
+    finite = (
+        jnp.isfinite(value)
+        & layout.group_all_finite(gradient)
+        & layout.group_all_finite(parameters)
+    )
+    if bounds is None:
+        activity = None
+        free_gradient = gradient
+        projected_gradient = gradient
+    else:
+        if not isinstance(bounds, Bounds):
+            raise TypeError("bounds must be Bounds or None.")
+        activity = bounds.active_mask(parameters, gradient, tolerance=active_tolerance)
+        free_gradient = _tree_zeros_on_mask(gradient, activity)
+        projected_gradient = bounds.projected_gradient(parameters, gradient)
+    return _ForceDrivenEvaluation(
+        free_gradient=free_gradient,
+        activity=activity,
+        optimality=layout.norm(projected_gradient).astype(dtype),
+        maximum_site_gradient=layout.site_norm_max(projected_gradient).astype(dtype),
+        finite=finite,
+    )
+
+
+def _group_converged(
+    termination: OptimizationTermination | None,
+    optimality: Array,
+    initial_optimality: Array,
+    converged: Array,
+    /,
+) -> Array:
+    if termination is None:
+        return converged
+    if not isinstance(termination, OptimizationTermination):
+        raise TypeError("termination must be an OptimizationTermination or None.")
+    return converged | (
+        optimality <= termination.optimality_threshold(initial_optimality)
+    )
+
+
+def _group_status(
+    previous: Array,
+    active: Array,
+    finite: Array,
+    converged: Array,
+    /,
+) -> Array:
+    return jnp.where(
+        ~active,
+        previous,
+        jnp.where(
+            ~finite,
+            _NONFINITE_EVALUATION,
+            jnp.where(converged, _SUCCESS, _ITERATING),
+        ),
+    ).astype(jnp.int32)
+
+
+def _admit_trial(
+    layout: OptimizerGroupLayout,
+    bounds: Bounds | None,
+    trial: PyTree[Array],
+    /,
+) -> tuple[PyTree[Array], Array]:
+    """Project a trial point onto the bounds; report groups the bounds shortened."""
+
+    if bounds is None:
+        return trial, jnp.zeros((layout.group_count,), dtype=jnp.bool_)
+    projected = bounds.project(trial)
+    changed = layout.count_true(jax.tree.map(jnp.not_equal, projected, trial)) > 0
+    return projected, changed
+
+
+def _curvature_floor(tolerance: float | None, dtype: DTypeLike, /) -> float:
+    if tolerance is not None:
+        return tolerance
+    return 1e-6 if jnp.finfo(dtype).bits <= 32 else 1e-10
+
+
+def _solve_force_driven(
+    method: _ForceDrivenMethod[_ForceDrivenStateT],
+    problem: MinimizationProblem,
+    initial_parameters: PyTree[ArrayLike],
+    /,
+    *,
+    termination: OptimizationTermination,
+    args: Any,
+    globalization: str,
+    notes: str,
+) -> MinimizationResult:
+    """Run one single-group force-driven method to a terminal status.
+
+    Each loop iteration evaluates the pending point once and consumes it with
+    ``method.step``. The result reports the last accepted evaluation, never an
+    unevaluated proposal; its value, auxiliary output and gradient are taken from
+    one final evaluation of that point.
+    """
+
+    if not isinstance(problem, MinimizationProblem):
+        raise TypeError("problem must be a MinimizationProblem.")
+    if problem.constraints:
+        raise ValueError(
+            f"{method.method_id} does not accept general nonlinear constraints."
+        )
+    if problem.derivative_execution != "automatic-jax":
+        raise ValueError(f"{method.method_id} requires automatic JAX derivatives.")
+    if not isinstance(termination, OptimizationTermination):
+        raise TypeError("termination must be an OptimizationTermination.")
+    bounds = problem.bounds
+    parameters = _validate_real_inexact_tree(initial_parameters, name="parameters")
+    PyTreeSpace(parameters)
+    if bounds is not None:
+        parameters = bounds.project(parameters)
+
+    def value_function(candidate: PyTree[Array]) -> Array:
+        return problem.value(candidate, args)[0]
+
+    value_and_gradient = jax.value_and_grad(value_function)
+    abstract_value = jax.eval_shape(value_function, parameters)
+    state = method.init(parameters, value_dtype=abstract_value.dtype)
+    maximum_evaluations = termination.maximum_evaluations
+    evaluation_limited = (
+        maximum_evaluations is not None
+        and maximum_evaluations <= termination.maximum_steps
+    )
+    budget = maximum_evaluations if evaluation_limited else termination.maximum_steps
+
+    def condition(current: _ForceDrivenStateT) -> Array:
+        return (current.status[0] == _ITERATING) & (current.evaluations[0] < budget)
+
+    def body(current: _ForceDrivenStateT) -> _ForceDrivenStateT:
+        value, gradient = value_and_gradient(current.parameters)
+        return method.step(
+            current,
+            jnp.reshape(value, (1,)),
+            gradient,
+            bounds=bounds,
+            termination=termination,
+        )
+
+    state = jax.lax.while_loop(condition, body, state)
+    exhausted = int(
+        OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+        if evaluation_limited
+        else OptimizationStatus.MAXIMUM_STEPS_REACHED
+    )
+    status = jnp.where(state.status[0] == _ITERATING, exhausted, state.status[0]).astype(
+        jnp.int32
+    )
+
+    accepted = state.accepted_parameters
+    (final_value, auxiliary), final_gradient = problem.value_and_gradient(accepted, args)
+    if bounds is None:
+        final_optimality = _tree_norm(final_gradient)
+        primal_feasibility = jnp.zeros_like(final_optimality)
+        complementarity = jnp.zeros_like(final_optimality)
+        active_constraints = jnp.asarray(0, dtype=jnp.int32)
+        certificate = None
+    else:
+        final_optimality = _tree_norm(bounds.projected_gradient(accepted, final_gradient))
+        primal_feasibility = bounds.violation(accepted)
+        complementarity = _complementarity_residual(
+            bounds,
+            accepted,
+            final_gradient,
+            tolerance=method.active_tolerance,
+        )
+        active_constraints = _active_count(
+            bounds.active_mask(
+                accepted, final_gradient, tolerance=method.active_tolerance
+            )
+        )
+        certificate = (
+            _bound_certificate(
+                bounds,
+                accepted,
+                final_gradient,
+                active_tolerance=method.active_tolerance,
+            )
+            if _bound_layout_is_static(bounds)
+            else None
+        )
+    evaluations = state.evaluations[0] + 1
+    diagnostics = OptimizationDiagnostics(
+        iterations=state.iterations[0],
+        accepted_steps=state.iterations[0],
+        rejected_steps=state.rejected_steps[0],
+        objective_evaluations=evaluations,
+        gradient_evaluations=evaluations,
+        initial_optimality_norm=state.initial_optimality[0],
+        final_optimality_norm=final_optimality,
+        final_step_norm=state.step_norm[0],
+        accepted_step_size=state.accepted_step_size[0],
+        damping=state.damping[0],
+        direction_fallbacks=state.direction_fallbacks[0],
+        primal_feasibility=primal_feasibility,
+        dual_feasibility=final_optimality,
+        complementarity=complementarity,
+        active_constraints=active_constraints,
+    )
+    provenance = OptimizationProvenance(
+        problem_id=problem.problem_id,
+        method=method.method_id,
+        backend="phydrax",
+        globalization=globalization,
+        matrix_free=True,
+        implicit_differentiation=method.capabilities.implicit_differentiation,
+        notes=notes,
+    )
+    return MinimizationResult(
+        accepted,
+        final_value,
+        auxiliary,
+        status,
+        diagnostics,
+        provenance,
+        certificate=certificate,
+        method_evidence=state,
+    )
+
+
 def _infeasible_result(
     method: (
         ProjectedGradient | ActiveSetNewton | BoundedNewtonTrustRegion | ProjectedLBFGS
@@ -1770,4 +2329,6 @@ __all__ = [
     "BoundedNewtonTrustRegion",
     "ProjectedGradient",
     "ProjectedLBFGS",
+    "TrustScaledLBFGS",
+    "TrustScaledLBFGSState",
 ]

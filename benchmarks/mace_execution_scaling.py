@@ -82,10 +82,11 @@ from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphInputs,
+    AtomisticGraphLayout,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     bind_atomistic_graph,
-    prepare_atomistic_graph_topology,
 )
 from phydrax.backends._types import BackendUnavailableError
 from phydrax.backends.atomistic import (
@@ -844,8 +845,12 @@ def model_rows(
             source_arguments,
         ) = initialized
         source_topology, topology_seconds = measure_synchronized(
-            lambda: prepare_atomistic_graph_topology(
-                source_batch, execution, cutoff=source_topology_cutoff
+            lambda: (
+                AtomisticGraphLayout.for_batch(
+                    source_batch, execution, cutoff=source_topology_cutoff
+                )
+                .prepare(source_batch)
+                .topology
             )
         )
     source_evidence = {
@@ -924,15 +929,12 @@ def model_rows(
         ) -> Array:
             deformed = values @ (jnp.eye(3, dtype=values.dtype) + strain).T
             graph = bind_atomistic_graph(topology, execution, deformed, cutoff=cutoff)
-            total, _ = current.graph_energy(
-                batch.atomic_numbers,
-                batch.atom_mask,
-                batch.atom_cases,
-                batch.case_count,
-                batch.atom_capacity,
-                graph,
+            result = current.evaluate_graph(
+                AtomisticGraphInputs(
+                    graph, batch.scale, species_kind=current.capabilities.species_kind
+                )
             )
-            return jnp.sum(total)
+            return jnp.sum(result.energy)
 
         functions: dict[ModelTransform, Callable[..., Any]] = {
             "energy_forces": lambda values, strain: jax.value_and_grad(energy)(
@@ -1002,15 +1004,12 @@ def _model_force_loss(
         def energy(coordinates: Array) -> Array:
             deformed = coordinates @ (jnp.eye(3, dtype=coordinates.dtype) + strain).T
             graph = bind_atomistic_graph(topology, execution, deformed, cutoff=cutoff)
-            total, _ = current.graph_energy(
-                batch.atomic_numbers,
-                batch.atom_mask,
-                batch.atom_cases,
-                batch.case_count,
-                batch.atom_capacity,
-                graph,
+            result = current.evaluate_graph(
+                AtomisticGraphInputs(
+                    graph, batch.scale, species_kind=current.capabilities.species_kind
+                )
             )
-            return jnp.sum(total)
+            return jnp.sum(result.energy)
 
         forces = -jax.grad(energy)(positions)
         return jnp.sum(forces * forces)

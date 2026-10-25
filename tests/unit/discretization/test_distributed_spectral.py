@@ -955,3 +955,150 @@ def test_composed_payloads_after_prior_executable(
         np.testing.assert_allclose(
             actual, values[..., :2] + offset, rtol=1e-12, atol=1e-12
         )
+
+
+# --- owner-region pencil topologies ---------------------------------------------------
+
+
+def _owner_blocks(values: np.ndarray, grid: tuple[int, int]) -> np.ndarray:
+    """Owner-major pencil blocks: owner r holds coordinate (r % px, r // px)."""
+    px, py = grid
+    b0, b1 = values.shape[0] // px, values.shape[1] // py
+    return np.stack(
+        [
+            values[
+                (owner % px) * b0 : (owner % px + 1) * b0,
+                (owner // px) * b1 : (owner // px + 1) * b1,
+            ]
+            for owner in range(px * py)
+        ]
+    )
+
+
+@pytest.mark.parametrize("grid", [(2, 3), (3, 2)], ids=["2x3", "3x2"])
+def test_owner_region_lane_pencil_matches_reference_and_exact_transposes(
+    grid: tuple[int, int],
+) -> None:
+    """A non-square pencil grid factoring one lane owner axis (first axis fastest)."""
+    px, py = grid
+    owners = px * py
+    topology = SpectralMeshTopology.owner_region(
+        grid, owner_axis="owner", devices=(jax.devices()[0],), lanes=True
+    )
+    assert topology.lanes == owners and topology.mesh_shape == grid
+    assert topology.owner_axis == "owner"
+    lane = SpectralMeshTopology.lane_reference(owners, axis_name="owner")
+    assert topology.topology_id != lane.topology_id
+    shape = (2 * px, 2 * py, 2 * owners)
+    plan = DistributedSpectralExecutionPlan(
+        topology,
+        shape,
+        owner_id="owner-region-lane-pencil",
+        admitted_payload_shapes=(),
+        precision=_single_precision(),
+        schedule="pencil",
+    )
+    names = topology.mesh_axis_names
+    assert plan.physical_layout.partition == (names[0], names[1], None)
+    assert plan.modal_layout.partition == (None, None, (names[1], names[0]))
+    assert plan.physical_layout.local_shape(topology) == (2, 2, 2 * owners)
+    assert plan.modal_layout.local_shape(topology) == (2 * px, 2 * py, 2)
+    assert plan.report.collective_count == 1
+    values = np.random.default_rng(3).normal(size=shape)
+    with pytest.raises(ValueError, match="lane-reference|owner-region"):
+        plan.to_modal(values)
+    blocks = jnp.asarray(_owner_blocks(values, grid))
+    modal = jax.vmap(plan.forward_local, axis_name="owner")(blocks)
+    expected = np.fft.fftn(values, norm="ortho")
+    for owner in range(owners):
+        np.testing.assert_allclose(
+            modal[owner],
+            expected[:, :, 2 * owner : 2 * owner + 2],
+            rtol=1e-5,
+            atol=1e-5,
+        )
+    back = jax.vmap(plan.inverse_local, axis_name="owner")(modal)
+    np.testing.assert_allclose(jnp.real(back), blocks, rtol=1e-5, atol=1e-5)
+
+    # The pencil transposes run on the owner axis in the canonical flattened
+    # (axis_1, axis_0) order; the reverse transpose is their exact transpose.
+    (forward,) = (
+        stage.transpose for stage in plan._forward_sequence if stage.transpose is not None
+    )
+    (reverse,) = (
+        stage.transpose for stage in plan._inverse_sequence if stage.transpose is not None
+    )
+    assert forward.mesh_axis == (names[1], names[0])
+    assert forward.collective_axis == "owner" and reverse.collective_axis == "owner"
+    to_slab = jax.vmap(forward.apply_local, axis_name="owner")
+    to_pencil = jax.vmap(reverse.apply_local, axis_name="owner")
+    cotangent = jnp.asarray(
+        np.random.default_rng(4).normal(size=(owners, 2 * px, 2 * py, 2))
+    )
+    (transposed,) = jax.linear_transpose(to_slab, blocks)(cotangent)
+    np.testing.assert_array_equal(transposed, to_pencil(cotangent))
+    np.testing.assert_array_equal(to_pencil(to_slab(blocks)), blocks)
+
+    # A pencil layout whose flattened order is not the owner order is refused.
+    square = (6, 6, 2 * owners)
+    swapped = SpectralLayout(square, (names[1], names[0], None), "physical", topology)
+    slab_order = SpectralLayout(square, (None, None, names), "modal", topology)
+    with pytest.raises(ValueError, match="owner order"):
+        SpectralTranspose(swapped, slab_order, topology)
+
+
+def test_owner_region_device_pencil_is_the_canonical_pencil_collective() -> None:
+    """Owner devices bound per coordinate; one owner-axis all-to-all = 2-D pencil."""
+    devices = tuple(jax.devices())
+    if len(devices) < 4:
+        pytest.skip("Needs 4 physical or explicitly configured devices.")
+    grid = (2, 2)
+    owners_devices = devices[:4]
+    topology = SpectralMeshTopology.owner_region(
+        grid, owner_axis="owner", devices=owners_devices
+    )
+    for owner, device in enumerate(owners_devices):
+        assert topology.mesh.devices[owner % 2, owner // 2] == device
+    assert topology.device_ids == tuple(int(device.id) for device in owners_devices)
+    shape = (4, 6, 8)
+    plan = DistributedSpectralExecutionPlan(
+        topology,
+        shape,
+        owner_id="owner-region-device-pencil",
+        admitted_payload_shapes=(),
+        precision=_single_precision(),
+        schedule="pencil",
+    )
+    values = np.random.default_rng(5).normal(size=shape)
+    with pytest.raises(ValueError, match="owner-region"):
+        plan.to_modal(values)
+    owner_mesh = jax.sharding.Mesh(np.asarray(owners_devices, dtype=object), ("owner",))
+    blocks = _owner_blocks(values, grid).reshape((-1, 3, 8))
+    mapped = jax.shard_map(
+        plan.forward_local,
+        mesh=owner_mesh,
+        in_specs=jax.sharding.PartitionSpec("owner"),
+        out_specs=jax.sharding.PartitionSpec("owner"),
+        check_vma=False,
+    )
+    modal = np.asarray(mapped(jnp.asarray(blocks))).reshape((4, 4, 6, 2))
+    canonical_topology = SpectralMeshTopology(
+        jax.sharding.Mesh(topology.mesh.devices, ("px", "py"))
+    )
+    canonical = DistributedSpectralExecutionPlan(
+        canonical_topology,
+        shape,
+        owner_id="owner-region-device-pencil",
+        admitted_payload_shapes=(),
+        precision=_single_precision(),
+        schedule="pencil",
+    )
+    reference = np.asarray(canonical.to_modal(values))
+    expected = np.fft.fftn(values, norm="ortho")
+    for owner in range(4):
+        np.testing.assert_allclose(
+            modal[owner], reference[:, :, 2 * owner : 2 * owner + 2], rtol=1e-6, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            modal[owner], expected[:, :, 2 * owner : 2 * owner + 2], rtol=1e-5, atol=1e-5
+        )

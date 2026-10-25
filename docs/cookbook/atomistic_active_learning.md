@@ -20,6 +20,13 @@ plan = phx.atomistic.AtomisticLearningCampaignPlan(
     particle_runtime_graph,
     training_policy,
     committee_reduction,
+    objectives=(
+        phx.atomistic.AtomisticEnergyObjective(),
+        phx.atomistic.AtomisticForceObjective(),
+        phx.atomistic.AtomisticStressObjective(),  # periodic systems with provider stress
+    ),
+    runtime_resources=(member_bundle_plan,),
+    batch_size=8,
 )
 state = phx.atomistic.AtomisticLearningCampaignState(initial_labels)
 result = phx.atomistic.run_atomistic_campaign_round(
@@ -41,16 +48,19 @@ Provider failure never appends a label. Member or qualification failure advances
 label revision but preserves the previously promoted committee. Persist the returned
 state and its label-set `RevisionLineage` at every accepted round boundary.
 
-`training_graph` is any `AtomisticGraphExecutionPlan`; `particle_runtime_graph` must
-use the particle backend. Stress returned by the authoritative provider is kept on each
-label and lowered into the retraining problem's stress targets, weighted by the
-training policy; labels without stress are masked out rather than given zero targets.
-To inspect the supervision a round trains on, lower the labels yourself with an
-explicit candidate cutoff:
+`training_graph` is any `AtomisticGraphExecutionPlan` (periodic or particle-backend plans
+declare `search_cell`); `particle_runtime_graph` must use the particle backend.
+`member_bundle_plan` is an explicit `AtomisticNeighborhoodBundlePlan` over
+`phx.atomistic.LearnedGraphPotentialTerm(model).requirements.neighborhoods` (finite systems
+add a nonperiodic search `frame`). Stress returned by the authoritative provider is kept
+on each label as tensile stress and supervised by the stress objective; labels without
+stress are unavailable rather than zero targets. To inspect the data and problem a round
+trains on:
 
 ```text
+source = result.state.labels.source(system, split="train")
 problem = result.state.labels.training_problem(
-    system, training_graph, cutoff=member_cutoff, skin=0.0
+    system, training_graph, plan.objectives, cutoff=member_cutoff, batch_size=8
 )
 ```
 

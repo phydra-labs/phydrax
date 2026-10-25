@@ -13,14 +13,16 @@ from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.atomistic import (
     AtomicStructure,
     atomistic_energy_derivatives,
-    atomistic_potential_revision,
+    atomistic_model_revision,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphInputs,
+    AtomisticGraphLayout,
+    AtomisticGraphPayload,
     AtomisticScaleContract,
     AtomisticSpeciesKind,
-    prepare_atomistic_graph_topology,
+    bind_atomistic_graph,
 )
-from phydrax.atomistic._graph import realize_atomistic_graph
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic._mace import MACEArchitecture, MACEPotential
 from phydrax.nn.atomistic._mace_kernels import MACEAcceleratedCoupling, MACEKernelPlan
@@ -28,6 +30,7 @@ from phydrax.nn.atomistic._mace_prepare import (
     prepare_mace_potential,
     StaleMACEPreparation,
 )
+from phydrax.nn.atomistic._radial import BesselRadialBasis
 from phydrax.nn.atomistic._radial_projection import RadialTableDeclaration
 from phydrax.sparse import StreamedRelationPlan
 from phydrax.units import ANGSTROM, ELECTRONVOLT
@@ -87,18 +90,21 @@ def _batch() -> AtomisticBatch:
     )
 
 
+def _payload(
+    batch: AtomisticBatch, execution: Any, *, cutoff: float
+) -> AtomisticGraphPayload:
+    return AtomisticGraphLayout.for_batch(batch, execution, cutoff=cutoff).prepare(batch)
+
+
 def _energy(model: Any, positions: Any) -> Any:
     batch = _batch()
-    graph = realize_atomistic_graph(batch, EXECUTION, cutoff=2.5, positions=positions)
-    energy, _ = model.graph_energy(
-        batch.atomic_numbers,
-        batch.atom_mask,
-        batch.atom_cases,
-        batch.case_count,
-        batch.atom_capacity,
-        graph,
+    graph = _payload(batch, EXECUTION, cutoff=2.5).graph(cutoff=2.5, positions=positions)
+    result = model.evaluate_graph(
+        AtomisticGraphInputs(
+            graph, batch.scale, species_kind=model.capabilities.species_kind
+        )
     )
-    return energy[0]
+    return result.energy[0]
 
 
 def _positions() -> Any:
@@ -209,12 +215,15 @@ def test_tabulated_publication_refuses_a_stale_fixed_radial_field() -> None:
         tables=RadialTableDeclaration(0.3, 256, layout="projected-width"),
     )
     tabulated.validate()
+    # The default MACE radial basis is the fixed-frequency Bessel basis.
+    basis = tabulated.model.geometry.radial.basis
+    assert isinstance(basis, BesselRadialBasis)
     # The prefactor changes the exact model and every table it binds, while
     # every recorded identity (model, embedding, tables, preparation) is kept.
     mutated = eqx.tree_at(
         lambda value: value.model.geometry.radial.basis.prefactor,
         tabulated,
-        tabulated.model.geometry.radial.basis.prefactor * 2.0,
+        basis.prefactor * 2.0,
     )
     with pytest.raises(ValueError, match="Radial embedding"):
         mutated.validate()
@@ -249,18 +258,22 @@ def test_atom_type_id_zero_tabulated_realization_matches_exact() -> None:
     tabulated.validate()
     batch = _batch()
     type_ids = jnp.where(batch.atomic_numbers == 8, 0, 2)
+    topology = _payload(batch, EXECUTION, cutoff=2.5).topology
 
     def energy(potential: Any, positions: Any) -> Any:
-        graph = realize_atomistic_graph(batch, EXECUTION, cutoff=2.5, positions=positions)
-        value, _ = potential.graph_energy(
-            type_ids,
-            batch.atom_mask,
-            batch.atom_cases,
-            batch.case_count,
-            batch.atom_capacity,
-            graph,
+        graph = bind_atomistic_graph(
+            topology,
+            EXECUTION,
+            positions,
+            cutoff=2.5,
+            atom_type_ids=type_ids.reshape((-1,)),
         )
-        return value[0]
+        result = potential.evaluate_graph(
+            AtomisticGraphInputs(
+                graph, batch.scale, species_kind=potential.capabilities.species_kind
+            )
+        )
+        return result.energy[0]
 
     positions = _positions()
     np.testing.assert_allclose(
@@ -396,13 +409,11 @@ def _variant(name: str, *, channels: int = 3) -> MACEPotential:
     )
 
 
-def _efs(model: MACEPotential, topology: Any, positions: Any) -> tuple[Any, Any, Any]:
+def _efs(model: MACEPotential, payload: Any, positions: Any) -> tuple[Any, Any, Any]:
     derivatives = atomistic_energy_derivatives(
         model,
-        _periodic_batch(),
-        _periodic_execution(),
+        payload,
         positions,
-        topology=topology,
         compute_stress=True,
     )
     return derivatives.energy, derivatives.forces, derivatives.stress
@@ -426,16 +437,16 @@ def test_accelerated_fragments_match_exact_energy_forces_stress_and_training_gra
     # An execution policy: identical scientific identity and parameter revision.
     assert accelerated.architecture_id == exact.architecture_id
     assert (
-        atomistic_potential_revision(accelerated).revision_id
-        == atomistic_potential_revision(exact).revision_id
+        atomistic_model_revision(accelerated).revision_id
+        == atomistic_model_revision(exact).revision_id
     )
     batch = _periodic_batch()
-    topology = prepare_atomistic_graph_topology(batch, _periodic_execution(), cutoff=3.0)
-    assert int(topology.streamed.schedule.fragmented_receivers) > 0
+    payload = _payload(batch, _periodic_execution(), cutoff=3.0)
+    assert int(payload.topology.streamed.schedule.fragmented_receivers) > 0
     positions = batch.positions
 
-    observed = _efs(accelerated, topology, positions)
-    expected = _efs(exact, topology, positions)
+    observed = _efs(accelerated, payload, positions)
+    expected = _efs(exact, payload, positions)
     for left, right in zip(observed, expected, strict=True):
         assert bool(jnp.all(jnp.isfinite(left)))
         np.testing.assert_allclose(left, right, rtol=1e-11, atol=1e-12)
@@ -444,7 +455,7 @@ def test_accelerated_fragments_match_exact_energy_forces_stress_and_training_gra
     def supervision(lane: Any, model: MACEPotential) -> Any:
         _, state, fixed = partition_parameters(model)
         energy, forces, stress = _efs(
-            combine_parameters(lane, state, fixed), topology, positions
+            combine_parameters(lane, state, fixed), payload, positions
         )
         return energy[0] ** 2 + jnp.sum(forces * forces) + 10.0 * jnp.sum(stress * stress)
 

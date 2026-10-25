@@ -11,6 +11,7 @@ import functools
 import hashlib
 import sys
 from collections.abc import Mapping, Sequence
+from fractions import Fraction
 from inspect import getclosurevars
 from types import CodeType, FunctionType, ModuleType
 from typing import Any
@@ -24,7 +25,7 @@ from jax.extend import core as jax_core
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._jax_program import stock_high_operation
 from ._strict import StrictModule
-from ._trainable import _global_reads, _hidden_arrays
+from ._trainable import _global_reads, _hidden_arrays, NonTrainableState
 
 
 RecordInput = Mapping[str, Any] | Sequence[tuple[str, Any]]
@@ -60,12 +61,22 @@ def _named_records(value: RecordInput, name: str, /) -> tuple[tuple[str, Any], .
 def _array_payload(value: Any, path: str, /) -> dict[str, Any]:
     if isinstance(value, jax.ShapeDtypeStruct):
         raise TypeError(f"Numeric identity cannot realize abstract array {path}.")
-    array = np.ascontiguousarray(np.asarray(value))
+    if isinstance(value, jax.Array) and jax.dtypes.issubdtype(
+        value.dtype, jax.dtypes.prng_key
+    ):
+        return {
+            "kind": "prng-key",
+            "shape": list(value.shape),
+            "implementation": str(jax.random.key_impl(value)),
+            "words": _array_payload(jax.random.key_data(value), f"{path}.words"),
+        }
+    original = np.asarray(value)
+    array = np.ascontiguousarray(original)
     if array.dtype.hasobject:
         raise TypeError(f"Numeric identity cannot encode object-dtype array {path}.")
     return {
         "kind": "array",
-        "shape": list(array.shape),
+        "shape": list(original.shape),
         "dtype": array.dtype.str,
         "storage_bytes": array.nbytes,
         "sha256": hashlib.sha256(array.tobytes(order="C")).hexdigest(),
@@ -392,7 +403,21 @@ class _CompilerPayload:
         self.array_memo[key] = (value, reference)
         return reference
 
+    # Keep the exact compiler-owner type grammar in one fail-closed dispatch.
+    # Reordering or generic introspection can alter canonical DAG payloads and
+    # admission of opaque callbacks even when the numerical program is unchanged.
     def parameter_payload(self, value: Any, path: str, /) -> Any:
+        if isinstance(value, Fraction):
+            return {
+                "kind": "rational",
+                "numerator": value.numerator,
+                "denominator": value.denominator,
+            }
+        if isinstance(value, (float, np.floating)) and np.isinf(value):
+            # Infinite bounds are valid compiler layout metadata (for example,
+            # a complete finite-domain pair search). Scientific payloads still
+            # require finite scalars, and NaN metadata remains refused.
+            return {"kind": "infinite-real", "sign": -1 if value < 0 else 1}
         # JAX's explicit owner types, not general object introspection. These
         # interpreter-only adapters are localized here, like native primitives.
         if isinstance(value, jax_core.Primitive):
@@ -1106,6 +1131,15 @@ def _dynamic_payload(value: Any, path: str, /) -> tuple[Any, Any]:
         return _dynamic_payload(value.item(), path)
     if isinstance(value, _ARRAY_TYPES):
         array = _array_payload(value, path)
+        if array["kind"] == "prng-key":
+            return (
+                {
+                    "kind": "prng-key",
+                    "shape": array["shape"],
+                    "implementation": array["implementation"],
+                },
+                array,
+            )
         return (
             {
                 "kind": "array",
@@ -1569,10 +1603,87 @@ class ArtifactBindingIdentity(StrictModule):
         return identity
 
 
+_IDENTITY_WORD_COUNT = 8
+_IDENTITY_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+class IdentityWords(StrictModule, NonTrainableState):
+    """One canonical SHA-256 digest as eight dynamic big-endian ``uint32`` words.
+
+    Representation change, not a new identity: the words are exactly the 64
+    hexadecimal digits of the owning contract's canonical digest, so
+    ``IdentityWords.from_fingerprint(digest).fingerprint() == digest``.  Only
+    digests produced by an owning contract are encoded; arbitrary external
+    labels are never hashed into words and presented as the original label.
+
+    The words are ordinary dynamic leaves: compiled code compares them with
+    `equals` (a traced boolean the owner folds into its status), while the
+    exact string is recovered only at host boundaries with `fingerprint`.
+    Leading axes are lane/case axes of a vectorized bank.
+    """
+
+    words: jax.Array
+
+    def __init__(self, words: jax.Array, /) -> None:
+        value = jax.numpy.asarray(words)
+        if (
+            value.dtype != np.uint32
+            or value.ndim < 1
+            or value.shape[-1] != _IDENTITY_WORD_COUNT
+        ):
+            raise ValueError("Identity words must be uint32 with a trailing axis of 8.")
+        self.words = value
+
+    @classmethod
+    def from_fingerprint(cls, fingerprint: str, /) -> "IdentityWords":
+        """Encode one canonical 64-digit lowercase hexadecimal digest (host)."""
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 8 * _IDENTITY_WORD_COUNT
+            or not set(fingerprint) <= _IDENTITY_HEX_DIGITS
+        ):
+            raise ValueError("Identity words encode one canonical SHA-256 digest.")
+        return cls(
+            jax.numpy.asarray(
+                np.asarray(
+                    [
+                        int(fingerprint[offset : offset + 8], 16)
+                        for offset in range(0, len(fingerprint), 8)
+                    ],
+                    dtype=np.uint32,
+                )
+            )
+        )
+
+    @classmethod
+    def of(cls, payload: Any, /) -> "IdentityWords":
+        """Encode the canonical digest of one host identity payload."""
+        return cls.from_fingerprint(canonical_fingerprint(payload))
+
+    def fingerprint(self) -> str:
+        """Decode the exact digest string; a host boundary, never traced."""
+        if isinstance(self.words, jax_public_core.Tracer):
+            raise TypeError(
+                "Identity strings are host provenance; compare words with `equals` "
+                "inside transformed code."
+            )
+        if self.words.shape != (_IDENTITY_WORD_COUNT,):
+            raise ValueError("Only one unbatched identity decodes to a digest.")
+        values = np.asarray(jax.device_get(self.words), dtype=np.uint32)
+        return "".join(f"{int(value):08x}" for value in values)
+
+    def equals(self, other: "IdentityWords", /) -> jax.Array:
+        """Traced exact equality over the trailing word axis."""
+        if not isinstance(other, IdentityWords):
+            raise TypeError("Identity words compare only with identity words.")
+        return jax.numpy.all(self.words == other.words, axis=-1)
+
+
 __all__ = [
     "ArtifactBindingIdentity",
     "callable_payload",
     "ExecutableSignature",
+    "IdentityWords",
     "NumericRevision",
     "SemanticProvenance",
     "strict_module_payload",

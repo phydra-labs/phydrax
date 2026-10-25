@@ -89,7 +89,13 @@ is a separate, complete enumeration: it returns a `PeriodicImageStencil` holding
 every integer translation `n` for which `d = x_receiver - x_source + n @ H` can
 satisfy `|d| < radius`. It bounds the extent on each periodic axis by
 `floor(fractional_excursion + radius * ||H^+[:, a]||)` using the host right
-inverse. Nonperiodic axes have zero extent. The cell's condition certificate
+inverse, with the axis reach scaled outward by a small relative roundoff headroom
+(64 float32 epsilons) for sizing only. Where that outward interval crosses an
+integer the stencil holds the larger extent, so the reference lattice keeps a positive
+completeness margin under the traced solve. `axis_reach` records the raw reach.
+The headroom is not an error certificate for arbitrary conditioning. The image
+route searches size their stencils with the same rule. Nonperiodic axes have zero
+extent. The cell's condition certificate
 applies, and a stencil larger than `maximum_image_count` is refused rather than
 truncated. `lattice_right_inverse_with_status` and `lattice_measure` are the
 traced, non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both return
@@ -153,7 +159,7 @@ conservatively selects the image aliases that can reach each owner's receivers,
 and `local_alias_exchange` packs them into fixed-capacity `ImageAliasPackets`
 inside one mapped owner region. Completeness over translations is the caller's
 `PeriodicImageStencil` contract. See the
-[distributed atomistic guide](../../guides_atomistic_distributed_execution.md#owner-local-learned-execution).
+[distributed atomistic guide](../../guides_atomistic_distributed_execution.md#domain-plan-and-ownership).
 
 ::: phydrax.discretization.PeriodicCell
 

@@ -1,5 +1,6 @@
 import os
 import socket
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,50 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._identity import IdentityWords
+from phydrax.atomistic._ensemble_advanced import EulerMaruyamaGeneralizedLangevinPlan
+from phydrax.atomistic._reciprocal_mesh import ReciprocalMeshPlan
+from phydrax.atomistic._thermal import (
+    initial_nose_hoover_chain_state,
+    NoseHooverChainParameters,
+    propagate_nose_hoover_chain,
+)
 from phydrax.units import KILOJOULE_PER_MOLE
+from tests._support.atomistic_bundles import (
+    bundle_state,
+    prepare_force_field,
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
+
+
+def _periodic_resources(particles: int) -> dict[str, Any]:
+    """Explicit storage of every pair of a few atoms: all directed routes."""
+    directed = particles * (particles - 1)
+    return {
+        "search": phx.atomistic.AtomisticCellListImageSearch(
+            maximum_candidate_slots=4096
+        ),
+        "skin": 0.5,
+        "search_capacities": (
+            search_capacity(16, particles_per_cell=particles, images=27),
+        ),
+        "role_capacities": (role_capacity(directed, particles - 1),),
+    }
+
+
+def _finite_resources(particles: int, *, extent: float = 20.0) -> dict[str, Any]:
+    """Finite systems: nonperiodic frame enclosing the fixture and pair budget."""
+    return {
+        **_periodic_resources(particles),
+        "maximum_pairs": particles * (particles - 1) // 2,
+        "frame": phx.discretization.PeriodicCell(
+            extent * jnp.eye(3),
+            origin=jnp.full((3,), -0.5 * extent),
+            periodic_axes=(False,) * 3,
+        ),
+    }
 
 
 def _runtime(
@@ -34,17 +78,18 @@ def _runtime(
         cell=cell,
     )
     system = system_plan.prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3, box=cell).prepare(
-        system.particles
+    resources = _finite_resources(3) if cell is None else _periodic_resources(3)
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
+        ),
+        system,
+        **resources,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
-    ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -60,7 +105,7 @@ def _runtime(
     return (
         system_plan,
         system,
-        neighborhood,
+        resources,
         potential,
         dynamics,
         thermodynamic,
@@ -121,15 +166,15 @@ def test_force_field_contracts() -> None:
     assert serialized["unit_system"]["unit_system_id"] == units.unit_system_id
     restored = phx.atomistic.interchange.force_field_from_mapping(serialized)
     assert restored.report.units.unit_system_id == units.unit_system_id
-    first = force_field.prepare()
-    second = restored.force_field.prepare()
+    first = prepare_force_field(force_field, **_finite_resources(3))
+    second = prepare_force_field(restored.force_field, **_finite_resources(3))
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 1.3, 0.0]])
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
-        first.system.particles
+    first_evaluation = first.potential.evaluate(
+        positions, bundle_state(first.potential, positions)
     )
-    relation = neighborhood.build(positions)
-    first_evaluation = first.potential.evaluate(positions, relation)
-    second_evaluation = second.potential.evaluate(positions, relation)
+    second_evaluation = second.potential.evaluate(
+        positions, bundle_state(second.potential, positions)
+    )
     np.testing.assert_allclose(
         second_evaluation.energy, first_evaluation.energy, rtol=1.0e-12, atol=1.0e-12
     )
@@ -200,11 +245,12 @@ def test_force_field_contracts() -> None:
         phx.atomistic.ReactionFieldPotential(78.5, 2.5),
         phx.atomistic.LennardJonesDispersionCorrection(0.1),
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(terms).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6, box=cell).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(terms),
+        system,
+        **_periodic_resources(4),
     )
-    evaluation = potential.evaluate(positions, neighborhood.build(positions))
+    evaluation = potential.evaluate(positions, bundle_state(potential, positions))
     assert bool(evaluation.successful)
     assert bool(jnp.isfinite(evaluation.energy))
     assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
@@ -251,18 +297,19 @@ def test_ecosystem_advanced_scenario_1() -> None:
         charges=[1.0, -1.0],
         topology=topology,
     ).prepare()
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [
-            # ty: ignore[invalid-argument-type]
-            phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5),
-            phx.atomistic.ReactionFieldPotential(78.5, 2.5),
-        ]
-    ).prepare(system)
-    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                # ty: ignore[invalid-argument-type]
+                phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5),
+                phx.atomistic.ReactionFieldPotential(78.5, 2.5),
+            ]
+        ),
+        system,
+        **_finite_resources(2),
     )
-    result = potential.evaluate(positions, neighborhood.build(positions))
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+    result = potential.evaluate(positions, bundle_state(potential, positions))
     assert bool(result.successful)
     np.testing.assert_allclose(result.energy, 0.0, atol=1.0e-12)
     np.testing.assert_allclose(result.forces, 0.0, atol=1.0e-12)
@@ -298,15 +345,13 @@ def test_ecosystem_advanced_scenario_1() -> None:
     )
     evaluations = []
     for record in (mapping, reordered):
-        prepared = phx.atomistic.interchange.force_field_from_mapping(
-            record
-        ).force_field.prepare()
-        neighbors = (
-            phx.discretization.DenseParticleNeighborhoodPlan(6)
-            .prepare(prepared.system.particles)
-            .build(positions)
+        prepared = prepare_force_field(
+            phx.atomistic.interchange.force_field_from_mapping(record).force_field,
+            **_finite_resources(4, extent=40.0),
         )
-        result = prepared.potential.evaluate(positions, neighbors)
+        result = prepared.potential.evaluate(
+            positions, bundle_state(prepared.potential, positions)
+        )
         assert bool(result.successful)
         evaluations.append(result)
     np.testing.assert_allclose(evaluations[0].energy, evaluations[1].energy, atol=1e-12)
@@ -411,11 +456,16 @@ def test_ecosystem_advanced_scenario_1() -> None:
             # ty: ignore[invalid-argument-type]
             **arguments,
         ).prepare(system)
-        evaluation = prepared.evaluate(
+        # In-cell coordinates are the declared material (unwrapped) coordinates.
+        geometry = phx.atomistic.sampling.CollectiveVariableGeometry(
             positions,
+            unwrapped_positions=positions,
             cell=cell,
-            **({} if evaluation_arguments is None else evaluation_arguments),
+            cell_vectors=None
+            if evaluation_arguments is None
+            else evaluation_arguments["cell_vectors"],
         )
+        evaluation = prepared.evaluate(geometry)
         assert bool(evaluation.successful), kind
         assert bool(jnp.isfinite(evaluation.value)), kind
 
@@ -445,15 +495,13 @@ def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip()
     bundle = phx.atomistic.interchange.force_field_from_mapping(
         phx.atomistic.interchange.force_field_to_mapping(bundle)
     )
-    prepared = bundle.force_field.prepare()
+    prepared = prepare_force_field(
+        bundle.force_field, **_finite_resources(4, extent=40.0)
+    )
     positions = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.7, 1.2, 0.9]]
     )
-    neighbors = (
-        phx.discretization.DenseParticleNeighborhoodPlan(6)
-        .prepare(prepared.system.particles)
-        .build(positions)
-    )
+    neighbors = bundle_state(prepared.potential, positions)
     native = jax.jit(lambda value: prepared.potential.evaluate(value, neighbors))(
         positions
     )
@@ -541,12 +589,13 @@ def test_openmm_import_export_energy_force_parity() -> None:
         units.scale.energy_unit,
         constant_set_id=units.constant_set_id,
     )
-    prepared = bundle.force_field.prepare()
-    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(
-        prepared.system.particles
+    prepared = prepare_force_field(
+        bundle.force_field, **_finite_resources(2, extent=40.0)
     )
-    native = prepared.potential.evaluate(positions, neighborhood.build(positions))
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+    native = prepared.potential.evaluate(
+        positions, bundle_state(prepared.potential, positions)
+    )
 
     def openmm_evaluation(system: Any) -> Any:
         integrator = openmm.VerletIntegrator(0.001)
@@ -606,14 +655,14 @@ def test_openmm_import_export_energy_force_parity() -> None:
     parmed = pytest.importorskip("parmed")
     with pytest.warns(parmed.exceptions.OpenMMWarning, match="incomplete exceptions"):
         structure = parmed.openmm.load_topology(exported_topology, exported)
-    parmed_bundle = phx.atomistic.interchange.from_parmed_structure(
-        structure, units, cutoff=10.0
-    ).force_field.prepare()
+    parmed_bundle = prepare_force_field(
+        phx.atomistic.interchange.from_parmed_structure(
+            structure, units, cutoff=10.0
+        ).force_field,
+        **_finite_resources(2, extent=40.0),
+    )
     parmed_evaluation = parmed_bundle.potential.evaluate(
-        positions,
-        phx.discretization.DenseParticleNeighborhoodPlan(2)
-        .prepare(parmed_bundle.system.particles)
-        .build(positions),
+        positions, bundle_state(parmed_bundle.potential, positions)
     )
     np.testing.assert_allclose(
         parmed_evaluation.energy, reference_energy, rtol=1.0e-10, atol=1.0e-10
@@ -624,7 +673,7 @@ def test_openmm_import_export_energy_force_parity() -> None:
 
 
 def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path) -> None:
-    _, _, neighborhood, potential, dynamics, _, state = _runtime()
+    _, _, _, potential, dynamics, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         state.time,
         state.step_index,
@@ -699,7 +748,6 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path) -> None:
     result = phx.atomistic.AtomisticRerunPlan(
         h5md,
         potential,
-        neighborhood,
         force_groups=(0,),
         reporter=reporter,
     ).run()
@@ -722,60 +770,35 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path) -> None:
         h5md.open()
 
 
-def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path) -> None:
-    _, system, _, _, dynamics, thermodynamic, state = _runtime()
+def test_bias_term_and_abf_sample_contracts() -> None:
+    _, system, _, _, _, _, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
     ).prepare(system)
     variables = phx.atomistic.sampling.CollectiveVariableProgram((cv,))
-    bias = phx.atomistic.sampling.PreparedAtomisticBias(
-        phx.atomistic.sampling.AtomisticBiasPlan(
-            phx.atomistic.sampling.BiasKind.HARMONIC,
-            variables,
-            # ty: ignore[invalid-argument-type]
-            center=[1.0],
-            # ty: ignore[invalid-argument-type]
-            stiffness=[2.0],
-        ),
-        dynamics,
+    geometry = phx.atomistic.sampling.CollectiveVariableGeometry(
+        state.kinematics.positions
     )
-    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias, thermodynamic)
-    biased_state = runtime.initialize(state)
-    checkpoint_plan = phx.atomistic.sampling.BiasedDynamicsCheckpointPlan(runtime)
-    path = tmp_path / "biased.npz"
-    written = phx.atomistic.sampling.write_biased_dynamics_checkpoint(
-        path, checkpoint_plan, biased_state
-    )
-    restored = phx.atomistic.sampling.read_biased_dynamics_checkpoint(
-        path, checkpoint_plan, biased_state
-    )
-    assert restored.units.unit_system_id == runtime.base.system.plan.units.unit_system_id
-    assert restored.payload_id == written.payload_id
-    replay = runtime.replay(restored.state, 1)
-    assert replay.accepted.shape == (1,)
+    bias = phx.atomistic.sampling.AtomisticBiasTerm(
+        variables,
+        phx.atomistic.sampling.HarmonicBiasForm(np.asarray([1.0]), 2.0),
+        name="distance-umbrella",
+        force_group=1,
+    ).prepare(system)
+    energy, _, successful = bias.bias(geometry, bias.initial_term_state(jnp.float64))
+    assert bool(successful)
+    np.testing.assert_allclose(energy, 0.04, atol=1e-12)
 
-    abf = phx.atomistic.sampling.PreparedAtomisticBias(
-        phx.atomistic.sampling.AtomisticBiasPlan(
-            phx.atomistic.sampling.BiasKind.ABF,
-            variables,
-            # ty: ignore[invalid-argument-type]
-            grid_minimum=[0.5],
-            # ty: ignore[invalid-argument-type]
-            grid_maximum=[2.0],
-            grid_bins=16,
-        ),
-        dynamics,
-    )
-    abf_state = abf.plan.initialize(state.kinematics.positions.dtype)
-    evaluation = abf.evaluate(state.kinematics.positions, abf_state, state.time)
-    updated = abf.update(abf_state, evaluation, jnp.ones_like(state.force.forces))
-    assert int(jnp.sum(updated.abf_counts)) == 1
-    assert bool(updated.successful)
+    abf = phx.atomistic.sampling.AtomisticABFPlan(
+        variables, minimum=0.5, maximum=2.0, bins=16, temperature=1.0
+    ).prepare(system)
+    sample = abf.sample(geometry, jnp.zeros_like(state.force.forces))
+    updated = abf.accumulate(abf.initialize(), sample)
+    assert int(jnp.sum(updated.counts)) == 1
+    np.testing.assert_allclose(sample.mean_force[0], -2.0 / 1.2, rtol=1e-12)
     with pytest.raises(ValueError):
-        phx.atomistic.sampling.AtomisticBiasPlan(
-            phx.atomistic.sampling.BiasKind.METADYNAMICS,
-            variables,
-            maximum_hills=0,
+        phx.atomistic.sampling.AtomisticBiasHistoryPlan(
+            1, height=1.0, widths=0.1, capacity=0
         )
 
 
@@ -890,8 +913,8 @@ def test_mdanalysis_frame_contracts() -> None:
         )
 
 
-def test_committee_diversity_and_advanced_methods() -> None:
-    _, system, neighborhood, _, _, _, state = _runtime()
+def test_committee_acquisition_preserves_descriptor_diversity() -> None:
+    _, system, resources, _, _, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         0.0,
         0,
@@ -934,39 +957,66 @@ def test_committee_diversity_and_advanced_methods() -> None:
         # ty: ignore[invalid-argument-type]
     ).select(frames, evidence, descriptors=[[0.0], [0.1], [10.0]])
     assert tuple(record.source_index for record in records) == (0, 2)
-    fallback = phx.atomistic.SegmentFallbackPolicy("reference-provider").decide(
-        evidence[0]
+
+
+def test_supported_committee_evidence_keeps_primary_segment() -> None:
+    evidence = phx.atomistic.AtomisticUncertaintyEvidence(
+        jnp.asarray(3.0),
+        jnp.zeros((3, 3)),
+        jnp.zeros((3,)),
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        jnp.asarray(False),
+        jnp.asarray(True),
+        "committee",
     )
+    fallback = phx.atomistic.SegmentFallbackPolicy("reference-provider").decide(evidence)
     assert not fallback.use_fallback
     assert fallback.reason == "primary"
+
+
+def test_nose_hoover_chain_heats_cold_momenta_across_substeps() -> None:
+    _, system, _, _, _, _, _ = _runtime()
 
     masses = system.plan.masses
     mobile = system.active_mask
     momenta = jnp.ones((3, 3)) * 0.1
-    nhc = phx.atomistic.NoseHooverChainPlan(1.0, chain_length=3)
-    first = nhc.apply(
-        momenta,
-        masses,
-        mobile,
-        jax.random.key(2),
-        0,
-        0.001,
-        system.plan.units,
-    )
-    second = nhc.apply(
-        first.momenta,
-        masses,
-        mobile,
-        jax.random.key(2),
-        1,
-        0.001,
-        system.plan.units,
-        auxiliary=first.auxiliary,
-    )
-    assert first.auxiliary.shape == (3,)
-    assert bool(second.successful)
+    # One Nose-Hoover chain coupled to all nine kinetic degrees of freedom at
+    # kT = k_B * 1.0, applied over two consecutive substeps.
+    chain = NoseHooverChainParameters(1.0, chain_length=3)
+    thermal = system.plan.units.boltzmann_constant * 1.0
 
-    gle = phx.atomistic.GeneralizedLangevinPlan(
+    def twice_kinetic(value: Any) -> Any:
+        return system.plan.units.kinetic_to_energy * jnp.sum(
+            jnp.where(mobile[:, None], value * value / masses[:, None], 0.0)
+        )
+
+    first = propagate_nose_hoover_chain(
+        chain,
+        initial_nose_hoover_chain_state(chain, momenta.dtype),
+        twice_kinetic(momenta),
+        9,
+        thermal,
+        0.001,
+    )
+    scaled = momenta * first.scale
+    second = propagate_nose_hoover_chain(
+        chain, first.state, twice_kinetic(scaled), 9, thermal, 0.001
+    )
+    assert first.state.velocities.shape == (3,)
+    assert first.state.positions.shape == (3,)
+    assert bool(first.successful)
+    assert bool(second.successful)
+    # Kinetic energy below N_f kT / 2 (2K = 0.09 < 9 kT) is heated by the chain.
+    assert float(first.scale) > 1.0
+
+
+def test_generalized_langevin_carries_auxiliary_memory() -> None:
+    _, system, _, _, _, _, _ = _runtime()
+    masses = system.plan.masses
+    mobile = system.active_mask
+    momenta = jnp.ones((3, 3)) * 0.1
+    gle = EulerMaruyamaGeneralizedLangevinPlan(
         # ty: ignore[invalid-argument-type]
         [[1.0, 0.1], [0.1, 1.5]],
         # ty: ignore[invalid-argument-type]
@@ -984,17 +1034,37 @@ def test_committee_diversity_and_advanced_methods() -> None:
     )
     assert gle_result.auxiliary.shape == (3, 3, 1)
 
+
+def test_ring_polymer_normal_modes_roundtrip() -> None:
+    _, _, _, _, _, _, state = _runtime()
     normal_modes = phx.atomistic.RingPolymerNormalModePlan(4, 1.0)
     beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     np.testing.assert_allclose(
         normal_modes.inverse(normal_modes.forward(beads)), beads, atol=1.0e-6
     )
+
+
+def test_ring_polymer_staging_coordinates_roundtrip() -> None:
+    _, _, _, _, _, _, state = _runtime()
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     staging = phx.atomistic.StagingCoordinatePlan(4)
     np.testing.assert_allclose(
         staging.inverse(staging.forward(beads)), beads, atol=1.0e-12
     )
+
+
+def test_ring_polymer_contraction_preserves_centroid() -> None:
+    _, _, _, _, _, _, state = _runtime()
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     contracted = phx.atomistic.ring_polymer_contract(beads, 2)
     np.testing.assert_allclose(jnp.mean(contracted, axis=0), jnp.mean(beads, axis=0))
+
+
+def test_ring_polymer_mode_thermostat_reports_success() -> None:
+    _, system, _, _, _, _, state = _runtime()
+    masses = system.plan.masses
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
+    normal_modes = phx.atomistic.RingPolymerNormalModePlan(4, 1.0)
     # ty: ignore[invalid-argument-type]
     trpmd = phx.atomistic.ThermostattedRPMDPlan(normal_modes, [0.0, 1.0, 1.0, 1.0])
     trpmd_result = trpmd.apply(
@@ -1006,6 +1076,19 @@ def test_committee_diversity_and_advanced_methods() -> None:
         system.plan.units,
     )
     assert bool(trpmd_result.successful)
+
+
+def test_piglet_applies_generalized_mode_controllers() -> None:
+    _, system, _, _, _, _, state = _runtime()
+    masses = system.plan.masses
+    mobile = system.active_mask
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
+    normal_modes = phx.atomistic.RingPolymerNormalModePlan(4, 1.0)
+    gle = EulerMaruyamaGeneralizedLangevinPlan(
+        jnp.asarray([[1.0, 0.1], [0.1, 1.5]], dtype=jnp.float64),
+        jnp.asarray([[0.2, 0.0], [0.0, 0.2]], dtype=jnp.float64),
+        1.0,
+    )
     piglet = phx.atomistic.PIGLETPlan((gle,) * 4, normal_modes)
     piglet_result = piglet.apply(
         jnp.zeros_like(beads),
@@ -1017,6 +1100,12 @@ def test_committee_diversity_and_advanced_methods() -> None:
         system.plan.units,
     )
     assert bool(piglet_result.successful)
+
+
+def test_ring_polymer_estimators_admit_isotope_masses() -> None:
+    _, system, _, _, _, _, state = _runtime()
+    masses = system.plan.masses
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     polymer = phx.atomistic.RingPolymerState(
         beads,
         jnp.zeros_like(beads),
@@ -1025,7 +1114,7 @@ def test_committee_diversity_and_advanced_methods() -> None:
         jnp.asarray(0.0),
         jnp.asarray(0.0),
         jnp.asarray(True),
-        "barostat-test",
+        IdentityWords.of("barostat-test"),
     )
     estimators = phx.atomistic.quantum_estimators(
         polymer,
@@ -1037,43 +1126,52 @@ def test_committee_diversity_and_advanced_methods() -> None:
         isotope_masses=masses * 2.0,
     )
     assert bool(estimators.successful)
+
+
+def test_open_path_momentum_distribution_has_one_value_per_bead() -> None:
+    _, _, _, _, _, _, state = _runtime()
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     momentum_distribution = phx.atomistic.open_path_momentum_distribution(
         beads, jnp.zeros_like(beads)
     )
     assert momentum_distribution.shape == (4,)
+
+
+def test_suzuki_chin_correction_retains_finite_directional_response() -> None:
+    _, _, _, _, _, _, state = _runtime()
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
     correction, directional = phx.atomistic.suzuki_chin_correction(
         lambda value: -value, beads, 0.1
     )
     assert bool(jnp.isfinite(correction) & jnp.all(jnp.isfinite(directional)))
+
+
+def test_ring_polymer_pressure_step_retains_a_finite_cell() -> None:
+    _, _, _, _, _, _, state = _runtime()
+    beads = jnp.stack(tuple(state.kinematics.positions + 0.01 * i for i in range(4)))
+    polymer = phx.atomistic.RingPolymerState(
+        beads,
+        jnp.zeros_like(beads),
+        jnp.asarray(0),
+        jax.random.key(6),
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        jnp.asarray(True),
+        IdentityWords.of("barostat-test"),
+    )
     barostat = phx.atomistic.ConstantPressureRingPolymerPlan(1.0, 10.0)
     barostat_state = barostat.initialize(polymer, jnp.eye(3) * 6.0)
     barostat_state = barostat.step(barostat_state, 1.1, 0.001)
     assert bool(barostat_state.successful)
     assert bool(jnp.all(jnp.isfinite(barostat_state.cell_vectors)))
 
+
+def test_cylindrical_manifold_projection_preserves_radius() -> None:
     manifold = phx.atomistic.ManifoldConstraintPlan(
         phx.atomistic.WallKind.CYLINDER,
         # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0],
     )
-    pressure = phx.atomistic.AnisotropicPressurePlan(
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0, 1.0],
-        # ty: ignore[invalid-argument-type]
-        [0.01, 0.01, 0.01],
-        semi_isotropic=True,
-    )
-    # ty: ignore[invalid-argument-type]
-    updated_cell = pressure.update_cell(jnp.eye(3) * 6.0, [1.1, 0.9, 1.2], 0.01)
-    assert bool(jnp.all(jnp.isfinite(updated_cell)))
-    brownian = phx.atomistic.BrownianDynamicsPlan(0.1, 1.0).step(
-        state.kinematics.positions,
-        state.force.forces,
-        0.001,
-        jax.random.key(8),
-        system.plan.units,
-    )
-    assert bool(jnp.all(jnp.isfinite(brownian)))
     projection = manifold.project(
         # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
@@ -1084,6 +1182,34 @@ def test_committee_diversity_and_advanced_methods() -> None:
     np.testing.assert_allclose(
         jnp.sqrt(jnp.sum(projection.positions[:, :2] ** 2, axis=-1)), 2.0
     )
+
+
+def test_anisotropic_pressure_update_retains_a_finite_cell() -> None:
+    pressure = phx.atomistic.AnisotropicPressurePlan(
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [0.01, 0.01, 0.01],
+        semi_isotropic=True,
+    )
+    # ty: ignore[invalid-argument-type]
+    updated_cell = pressure.update_cell(jnp.eye(3) * 6.0, [1.1, 0.9, 1.2], 0.01)
+    assert bool(jnp.all(jnp.isfinite(updated_cell)))
+
+
+def test_brownian_step_retains_finite_coordinates() -> None:
+    _, system, _, _, _, _, state = _runtime()
+    brownian = phx.atomistic.BrownianDynamicsPlan(0.1, 1.0).step(
+        state.kinematics.positions,
+        state.force.forces,
+        0.001,
+        jax.random.key(8),
+        system.plan.units,
+    )
+    assert bool(jnp.all(jnp.isfinite(brownian)))
+
+
+def test_active_force_preserves_unit_orientations() -> None:
     active = phx.atomistic.ActiveForcePlan(1.0, 0.1).evaluate(
         jnp.ones((3, 3)), jax.random.key(7), 0.01
     )
@@ -1091,6 +1217,9 @@ def test_committee_diversity_and_advanced_methods() -> None:
     np.testing.assert_allclose(
         jnp.sqrt(jnp.sum(active.orientations**2, axis=-1)), 1.0, atol=1.0e-12
     )
+
+
+def test_dissipative_particle_pair_force_is_finite() -> None:
     dpd_force = phx.atomistic.DissipativeParticleDynamicsPlan(
         1.0, 0.5, 1.0, 2.5
     ).pair_force(
@@ -1101,36 +1230,59 @@ def test_committee_diversity_and_advanced_methods() -> None:
         0.01,
     )
     assert bool(jnp.all(jnp.isfinite(dpd_force)))
-    wall = phx.atomistic.AtomisticPotentialProgram(
-        [
-            phx.atomistic.ScalarWallPotential(
-                phx.atomistic.WallKind.PLANE,
-                # ty: ignore[invalid-argument-type]
-                [1.0, 0.0, 0.0, 0.5],
-                2.0,
-            )
-        ]
-    ).prepare(system)
+
+
+def test_wall_term_evaluates_on_explicit_resources() -> None:
+    _, system, resources, _, _, _, state = _runtime()
+    wall = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                phx.atomistic.ScalarWallPotential(
+                    phx.atomistic.WallKind.PLANE,
+                    # ty: ignore[invalid-argument-type]
+                    [1.0, 0.0, 0.0, 0.5],
+                    2.0,
+                )
+            ]
+        ),
+        system,
+        **resources,
+    )
     wall_evaluation = wall.evaluate(
-        state.kinematics.positions, neighborhood.build(state.kinematics.positions)
+        state.kinematics.positions,
+        bundle_state(wall, state.kinematics.positions),
     )
     assert bool(wall_evaluation.successful)
+
+
+def test_eam_evaluates_on_explicit_graph_resources() -> None:
+    _, system, resources, _, _, _, state = _runtime()
     graph_execution = phx.atomistic.AtomisticGraphExecutionPlan(
         system.capacity - 1,
         backend="particle",
     )
 
-    eam = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.EAMPotential([2.0, 1.0, 1.0, 0.5, 2.0], 2.5)]
-    ).prepare(system, graph_execution=graph_execution)
+    eam = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.EAMPotential([2.0, 1.0, 1.0, 0.5, 2.0], 2.5)]
+        ),
+        system,
+        graph_execution=graph_execution,
+        **resources,
+    )
     eam_result = eam.evaluate(
-        state.kinematics.positions, neighborhood.build(state.kinematics.positions)
+        state.kinematics.positions,
+        bundle_state(eam, state.kinematics.positions),
     )
     assert bool(eam_result.successful)
 
     assert bool(jnp.isfinite(eam_result.energy))
-    many_body_cases = (
+
+
+@pytest.mark.parametrize(
+    ("factory", "parameters", "cutoff"),
+    (
         (
             phx.atomistic.StillingerWeberPotential,
             [1.0, 1.0, 7.049556277, 0.6022245584, 4.0, 0.0, 1.8, 21.0, 1.2, -1.0 / 3.0],
@@ -1141,18 +1293,32 @@ def test_committee_diversity_and_advanced_methods() -> None:
             [1.0, 0.5, 2.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, -0.3, 2.0, 0.5, 3.0],
             2.5,
         ),
+    ),
+    ids=["stillinger-weber", "tersoff"],
+)
+def test_many_body_terms_evaluate_on_explicit_graph_resources(
+    factory: Callable[[jax.Array, float], phx.atomistic.ManyBodyPotential],
+    parameters: list[float],
+    cutoff: float,
+) -> None:
+    _, system, resources, _, _, _, state = _runtime()
+    graph_execution = phx.atomistic.AtomisticGraphExecutionPlan(
+        system.capacity - 1, backend="particle"
     )
-    for factory, parameters, cutoff in many_body_cases:
-        many_body = phx.atomistic.AtomisticPotentialProgram(
-            # ty: ignore[invalid-argument-type]
-            [factory(parameters, cutoff)]
-        ).prepare(system, graph_execution=graph_execution)
-        evaluation = many_body.evaluate(
-            state.kinematics.positions,
-            neighborhood.build(state.kinematics.positions),
-        )
-        assert bool(evaluation.successful)
-        assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
+    many_body = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [factory(jnp.asarray(parameters, dtype=jnp.float64), cutoff)]
+        ),
+        system,
+        graph_execution=graph_execution,
+        **resources,
+    )
+    evaluation = many_body.evaluate(
+        state.kinematics.positions,
+        bundle_state(many_body, state.kinematics.positions),
+    )
+    assert bool(evaluation.successful)
+    assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
 
 
 def test_ecosystem_advanced_scenario_2() -> None:
@@ -1206,9 +1372,7 @@ def test_ecosystem_advanced_scenario_2() -> None:
         atol=1.0e-12,
     )
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
-    _, system, neighborhood, _, _, _, state = _runtime(
-        cell=cell, charges=[0.4, -0.2, -0.2]
-    )
+    _, system, resources, _, _, _, state = _runtime(cell=cell, charges=[0.4, -0.2, -0.2])
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
         # ty: ignore[invalid-argument-type]
         [0.4, -0.2, -0.2],
@@ -1219,27 +1383,44 @@ def test_ecosystem_advanced_scenario_2() -> None:
         # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
     )
-    plan = phx.atomistic.PolarizationPlan(maximum_iterations=200, tolerance=1.0e-6)
-    primal, tangent = phx.atomistic.implicit_polarization_jvp(
-        plan,
+    plan = phx.atomistic.PolarizationPlan(
+        coulomb_constant=system.plan.units.coulomb_constant,
+        maximum_iterations=200,
+        tolerance=1.0e-6,
+    )
+    response = phx.atomistic.evaluate_implicit_polarization_jvp(
+        plan.prepare(multipoles),
         state.kinematics.positions,
         jnp.ones_like(state.kinematics.positions) * 0.01,
-        multipoles,
     )
-    assert bool(jnp.all(jnp.isfinite(primal)))
-    assert bool(jnp.all(jnp.isfinite(tangent)))
-    site_state = system.coordinate_map.realize(
-        state.kinematics.positions, cell=system.cell
+    assert bool(response.successful)
+    assert bool(jnp.all(jnp.isfinite(response.primal)))
+    assert bool(jnp.all(jnp.isfinite(response.tangent)))
+    multipole_pme = phx.atomistic.MultipoleElectrostaticsPlan(
+        phx.atomistic.MultipoleElectrostaticsDefinition(
+            "point", 2, coulomb_constant=system.plan.units.coulomb_constant
+        ),
+        phx.atomistic.ParticleMeshMultipoleRoute(0.4, 2.5, ReciprocalMeshPlan((8, 8, 8))),
+    ).prepare(
+        system.capacity, cell=system.cell, particles=system.particle_discretization()
     )
-    pme = phx.atomistic.MultipolePMEPlan((8, 8, 8), 0.4)
-    energy = pme.energy(site_state, multipoles, cell.vectors, 1.0)
-    assert bool(jnp.isfinite(energy))
-    dispersion = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))]
-    ).prepare(system)
+    energy = multipole_pme.energy(
+        state.kinematics.positions,
+        phx.atomistic.MultipoleSiteSet(multipoles.moments(), active=system.active_mask),
+        cell_vectors=cell.vectors,
+    )
+    assert bool(energy.successful & jnp.isfinite(energy.energy))
+    dispersion = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))]
+        ),
+        system,
+        **resources,
+    )
     dispersion_result = dispersion.evaluate(
-        state.kinematics.positions, neighborhood.build(state.kinematics.positions)
+        state.kinematics.positions,
+        bundle_state(dispersion, state.kinematics.positions),
     )
     assert bool(dispersion_result.successful)
     assert bool(jnp.all(jnp.isfinite(dispersion_result.forces)))
@@ -1265,7 +1446,7 @@ def test_ecosystem_advanced_scenario_2() -> None:
     assert bool(jnp.isfinite(gb) & jnp.isfinite(gk))
     assert not bool(jnp.isclose(gb, gk))
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
-    _, system, _, _, _, _, _ = _runtime(cell=cell)
+    _, system, resources, _, _, _, _ = _runtime(cell=cell)
     # ty: ignore[invalid-argument-type]
     reference = phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))
     term = phx.atomistic.GeneralForceFieldTerm(
@@ -1273,8 +1454,14 @@ def test_ecosystem_advanced_scenario_2() -> None:
         reference.arrays,
         cutoff=None,
     )
-    with pytest.raises(ValueError, match="requires a cutoff"):
-        phx.atomistic.AtomisticPotentialProgram([term]).prepare(system)
+    # A cutoff-free pair relation has unbounded periodic support: refused.
+    with pytest.raises(ValueError, match="requires a cutoff|unbounded periodic support"):
+        prepare_program(
+            phx.atomistic.AtomisticPotentialProgram([term]),
+            system,
+            maximum_pairs=3,
+            **resources,
+        )
 
 
 def _ipi_roundtrip(plan: Any, system: Any, positions: Any) -> None:
@@ -1287,7 +1474,7 @@ def _ipi_roundtrip(plan: Any, system: Any, positions: Any) -> None:
             -2.0 * coordinate,
             None,
             jnp.asarray(True),
-            "local-provider",
+            provider_label="local-provider",
         )
 
     provider = phx.atomistic.CallableBornOppenheimerProvider(evaluator, "local-provider")

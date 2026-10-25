@@ -37,10 +37,23 @@ margin. Ambiguous groups fail rather than averaging wrapped coordinates.
 
 ## Force matching
 
-`CoarseForceMatchingProblem` maps fine batches and instantaneous forces to a coarse
-batch. Optional analytic prior forces are subtracted only when accompanied by a stable
-prior ID. `fit_coarse_potential` requires an `ATOM_TYPE_ID` potential and delegates the
-actual force-only optimization to `fit_atomistic_potential`.
+`CoarseForceMatchingProblem(mapping, fine_batch, fine_forces, dense_graph, cutoff=...)`
+maps fine configurations and instantaneous forces onto beads and lowers the projected
+forces into an immutable canonical `AtomisticStructureSource` (`training_source`): one
+record per configuration with bead positions, bead atom-type IDs as `ATOM_TYPE_ID`
+species, coarse masses in the system mass unit, stable bead IDs and the projected forces
+as `forces` labels. A record's independent-unit lineage is its fine structure ID, so a
+validation batch (`validation_source`) must carry structure IDs disjoint from training.
+Optional analytic prior forces are subtracted only when accompanied by a stable prior ID.
+
+`problem.training` is a force-only `AtomisticTrainingProblem` with one
+`AtomisticForceObjective` (default: component-balanced squared residuals with a fitted
+force scale; pass `objective=` for another reduction, loss, scale or schedule), prepared
+for `cutoff + skin`, with optional `batch_size`, `seed` and `precision`.
+`fit_coarse_potential(potential, problem, policy, key)` requires an `ATOM_TYPE_ID`
+potential and delegates the optimization to `fit_atomistic_potential`. The result keeps
+the root-mean-square projected and prior-corrected (residual) training force scales as
+evidence.
 
 The fitted scalar potential approximates an equilibrium potential of mean force. The
 reported projected and residual force scales are not kinetic-error estimates. Correct

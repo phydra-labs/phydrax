@@ -5,6 +5,22 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    bundle_state,
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
+
+
+# Two charged atoms in a cubic cell: one cell-list source over the real-space
+# radius plus skin, and one stored pair route of the former dense neighborhood.
+_PERIODIC: dict[str, Any] = {
+    "search": phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+    "skin": 0.5,
+    "search_capacities": (search_capacity(8, particles_per_cell=2, images=27),),
+    "role_capacities": (role_capacity(1, 1),),
+}
 
 
 def _system(*, cell: Any = None) -> Any:
@@ -25,51 +41,61 @@ def _system(*, cell: Any = None) -> Any:
     ).prepare()
 
 
-def test_dynamics_electrostatics_scenario_1() -> None:
+def test_finite_direct_coulomb_has_balanced_forces() -> None:
     system = _system()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Finite direct Coulomb: the complete pair relation of two atoms.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram([phx.atomistic.DirectCoulombPotential()]),
+        system,
+        maximum_pairs=1,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.DirectCoulombPotential()]
-    ).prepare(system)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    state = neighborhood.build(positions)
-    evaluation = potential.evaluate(positions, state)
+    evaluation = potential.evaluate(positions, bundle_state(potential, positions))
     np.testing.assert_allclose(evaluation.energy, -0.5, atol=1.0e-12)
     np.testing.assert_allclose(jnp.sum(evaluation.forces, axis=0), 0.0, atol=1.0e-12)
+
+
+def test_periodic_pme_matches_ewald_reference() -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
-    )
     positions = jnp.asarray([[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]])
-    relation = neighborhood.build(positions)
-    reference = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.EwaldReferencePotential(0.8, 2.5, 5)]
-    ).prepare(system)
-    pme = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (16, 16, 16))]
-    ).prepare(system)
-    expected = reference.evaluate(positions, relation)
-    observed = pme.evaluate(positions, relation)
+    reference = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [phx.atomistic.EwaldReferencePotential(0.8, 2.5, 5)]
+        ),
+        system,
+        **_PERIODIC,
+    )
+    pme = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (16, 16, 16))]
+        ),
+        system,
+        **_PERIODIC,
+    )
+    expected = reference.evaluate(positions, bundle_state(reference, positions))
+    observed = pme.evaluate(positions, bundle_state(pme, positions))
     assert bool(expected.successful)
     assert bool(observed.successful)
     np.testing.assert_allclose(observed.energy, expected.energy, rtol=2e-1, atol=2e-1)
     np.testing.assert_allclose(jnp.sum(observed.forces, axis=0), 0.0, atol=1.0e-3)
+
+
+def test_pme_monte_carlo_cell_move_commits_controller_state() -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (8, 8, 8))]
+        ),
+        system,
+        **_PERIODIC,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (8, 8, 8))]
-    ).prepare(system)
+    # A Monte Carlo volume move is scheduled beside a canonical NVT method.
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-3),
+        phx.atomistic.BAOABLangevinPlan(1.0e-3, 1.0),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
         phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
@@ -89,24 +115,27 @@ def test_dynamics_electrostatics_scenario_1() -> None:
         state,
         thermodynamic,
         phx.atomistic.IsotropicMonteCarloBarostatPlan(0.01),
-        0,
     )
     assert bool(move.successful)
     assert bool(jnp.isfinite(move.energy_after))
+    assert int(move.accepted_state.controllers.move_counter) == 1
+
+
+def test_molecular_volume_measure_controls_monte_carlo_cell_move() -> None:
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.0)]
+        ),
+        system,
+        **_PERIODIC,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.0)]
-    ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-3),
+        phx.atomistic.BAOABLangevinPlan(1.0e-3, 1.0),
     ).prepare()
     measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(
         system,
@@ -133,9 +162,9 @@ def test_dynamics_electrostatics_scenario_1() -> None:
         state,
         thermodynamic,
         phx.atomistic.IsotropicMonteCarloBarostatPlan(0.05),
-        0,
     )
     assert bool(move.successful)
     assert bool(jnp.isfinite(move.log_acceptance_probability))
     assert float(move.volume_after) > 0.0
     assert move.accepted_state.cell_vectors.shape == (3, 3)
+    assert int(move.accepted_state.controllers.move_counter) == 1

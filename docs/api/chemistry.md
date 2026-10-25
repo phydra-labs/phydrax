@@ -87,6 +87,17 @@ fixed-factor/direct analytic-force substitution. See the
 
 ::: phydrax.chemistry.PotentialEnergySurfaceEvaluation
 
+`AtomisticPotentialEnergySurface(system, potential)` presents a native prepared
+atomistic Hamiltonian, which owns its neighborhood bundle, as a chemistry surface.
+Its host `evaluate` grows declared capacities when a point does not fit, and
+reports an exhausted ladder or a resource failure as an unsuccessful evaluation.
+Device NEB uses its `potential` directly. `ExternalAtomisticPotentialEnergySurface`
+keeps an external atomistic provider on the host.
+
+::: phydrax.chemistry.AtomisticPotentialEnergySurface
+
+::: phydrax.chemistry.ExternalAtomisticPotentialEnergySurface
+
 
 ::: phydrax.chemistry.MolecularKohnShamPlan
 
@@ -162,6 +173,38 @@ If DIIS has not run, this field is `None`.
 ::: phydrax.chemistry.DimerSaddleRefinementPlan
 
 ::: phydrax.chemistry.NudgedElasticBandPlan
+
+`NudgedElasticBandPlan` is the host-provider route. Each round evaluates every
+interior image through `surface.evaluate` and consumes the result with one native
+optimizer step. `AtomisticNudgedElasticBandPlan` is the bounded device route over
+an `AtomisticPotentialEnergySurface`. It moves `G` whole fixed-cell bands as
+groups of one optimizer layout, commits them band-atomically, and replays
+capacity-only failures after `grow`. Both routes share
+`nudged_elastic_band_forces`, report images, energies, physical forces, and NEB
+forces from one accepted iterate, and refuse a downhill-checked FIRE. Periodic
+paths take an explicit image branch or the certified shortest-image policy.
+Variable-cell NEB is not provided. See
+[native reaction paths](../guides_atomistic_dynamics.md#native-reaction-paths).
+
+::: phydrax.chemistry.reaction.AtomisticNudgedElasticBandPlan
+
+::: phydrax.chemistry.reaction.PreparedAtomisticNudgedElasticBand
+
+::: phydrax.chemistry.reaction.ReactionPathBranch
+
+::: phydrax.chemistry.reaction.ReactionPathBranchCertificate
+
+::: phydrax.chemistry.reaction.resolve_reaction_path_branch
+
+::: phydrax.chemistry.reaction.AtomisticReactionPathState
+
+::: phydrax.chemistry.reaction.AtomisticPathHamiltonianTransitionResult
+
+::: phydrax.chemistry.reaction.ReactionPathResult
+
+::: phydrax.chemistry.reaction.nudged_elastic_band_forces
+
+::: phydrax.chemistry.reaction.NudgedElasticBandProjection
 
 ::: phydrax.chemistry.IntrinsicReactionCoordinatePlan
 

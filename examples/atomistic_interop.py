@@ -6,6 +6,50 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
+def finite_resources(
+    program: phx.atomistic.AtomisticPotentialProgram,
+) -> phx.atomistic.AtomisticNeighborhoodBundlePlan:
+    """Explicit resources of one finite pair program in a nonperiodic frame."""
+    requirements = program.requirements.neighborhoods
+    return phx.atomistic.AtomisticNeighborhoodBundlePlan(
+        requirements,
+        (
+            phx.atomistic.AtomisticNeighborhoodSource(
+                "pairs",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                requirements,
+                phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+                phx.discretization.ParticleImageCapacityLadder(
+                    (
+                        phx.discretization.ParticleImageCapacity(
+                            maximum_particles_per_cell=2,
+                            maximum_edges=8,
+                            maximum_degree=2,
+                            maximum_images=27,
+                            maximum_case_edges=8,
+                        ),
+                    )
+                ),
+                skin=0.5,
+            ),
+        ),
+        tuple(
+            phx.atomistic.AtomisticRoleCapacityLadder(
+                requirement,
+                (
+                    phx.atomistic.AtomisticRoleCapacity(
+                        maximum_routes=4, maximum_degree=4
+                    ),
+                ),
+            )
+            for requirement in requirements
+        ),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
+    )
+
+
 system = phx.atomistic.AtomisticSystemPlan(
     # ty: ignore[invalid-argument-type]
     [10, 20],
@@ -17,13 +61,11 @@ system = phx.atomistic.AtomisticSystemPlan(
     # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0],
 ).prepare()
-potential = phx.atomistic.AtomisticPotentialProgram(
+program = phx.atomistic.AtomisticPotentialProgram(
     # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
-).prepare(system)
-neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(
-    system.particles
 )
+potential = program.prepare(system, neighborhood_bundle=finite_resources(program))
 frame = phx.atomistic.AtomisticFrame(
     0.0,
     0,
@@ -46,11 +88,8 @@ with tempfile.TemporaryDirectory(prefix="phydrax-example-") as directory:
         jnp.array_equal(recovered[0].positions, frame.positions)
     ):
         raise RuntimeError("H5MD roundtrip failed")
-    rerun = phx.atomistic.AtomisticRerunPlan(
-        trajectory,
-        potential,
-        neighborhood,
-    ).run()
+    # Each frame binds its own certified resources from the potential's bundle.
+    rerun = phx.atomistic.AtomisticRerunPlan(trajectory, potential).run()
     if not bool(rerun.successful) or rerun.reduction.frame_count != 1:
         raise RuntimeError("H5MD rerun failed")
     print(rerun.reduction.mean_energies)

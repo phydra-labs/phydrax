@@ -63,7 +63,7 @@ def _provider(*, with_stress: bool) -> Any:
             jnp.asarray(forces),
             jnp.asarray(stress) if with_stress else None,
             jnp.asarray(True),
-            "oracle",
+            provider_label="oracle",
         )
 
     return phx.atomistic.CallableBornOppenheimerProvider(evaluator, "oracle")

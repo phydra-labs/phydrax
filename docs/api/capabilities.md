@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `29cddd3b04bdfbfacbfefec2ef7e1b09d2d4b435ceb15d9341abbf1000c6d11f`
+Catalog ID: `8a358800146cc625750f2abd5734e37edf66c692f4f615249a98cd0a50bcca13`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 316 |
+| candidate | 340 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -122,8 +122,32 @@ Catalog ID: `29cddd3b04bdfbfacbfefec2ef7e1b09d2d4b435ceb15d9341abbf1000c6d11f`
 | `application.vascular-devices` | `phydrax.applications.vascular_devices` | research | application-research | 0 |
 | `application.vortex-flow` | `phydrax.applications.vortex_flow` | research | application-research | 0 |
 | `application.wind-energy` | `phydrax.applications.wind_energy` | research | application-research | 0 |
+| `atomistic.aimnet2-inference` | `phydrax.nn.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.campaign` | `phydrax.atomistic` | candidate | unreleased-candidate | 2 |
+| `atomistic.crystal-structure-prediction` | `phydrax.atomistic.crystal` | candidate | unreleased-candidate | 5 |
+| `atomistic.dispersion-d3` | `phydrax.atomistic` | candidate | unreleased-candidate | 2 |
+| `atomistic.distillation` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.domain-execution` | `phydrax.atomistic` | candidate | unreleased-candidate | 4 |
+| `atomistic.dynamics` | `phydrax.atomistic` | candidate | unreleased-candidate | 3 |
+| `atomistic.electrostatics` | `phydrax.atomistic` | candidate | unreleased-candidate | 4 |
+| `atomistic.enhanced-sampling` | `phydrax.atomistic.sampling` | candidate | unreleased-candidate | 3 |
+| `atomistic.generation` | `phydrax.atomistic` | candidate | unreleased-candidate | 2 |
+| `atomistic.latent-electrostatics` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.mace-extended-inference` | `phydrax.nn.atomistic` | candidate | unreleased-candidate | 2 |
 | `atomistic.mace-inference` | `phydrax.atomistic` | candidate | candidate | 4 |
+| `atomistic.maceles-inference` | `phydrax.nn.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.model-artifact-interchange` | `phydrax.atomistic.interchange` | candidate | unreleased-candidate | 1 |
+| `atomistic.multipole-electrostatics` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.neighborhood-resources` | `phydrax.atomistic` | candidate | unreleased-candidate | 4 |
+| `atomistic.particle-grid-spline` | `phydrax.discretization.splatting` | candidate | unreleased-candidate | 1 |
+| `atomistic.reaction-path` | `phydrax.chemistry.reaction` | candidate | unreleased-candidate | 1 |
+| `atomistic.reciprocal-distribution` | `phydrax.atomistic` | candidate | unreleased-candidate | 2 |
+| `atomistic.relaxation` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.segmented-route-reduction` | `phydrax.sparse` | candidate | unreleased-candidate | 1 |
+| `atomistic.training` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
+| `atomistic.training-distribution` | `phydrax.atomistic` | candidate | unreleased-candidate | 1 |
 | `atomistic.transport.green-kubo` | `phydrax.applications` | candidate | candidate | 1 |
+| `atomistic.uma-inference` | `phydrax.nn.atomistic` | candidate | unreleased-candidate | 3 |
 | `battery.dfn.isothermal-finite-volume` | `phydrax.applications.battery` | candidate | candidate | 1 |
 | `battery.pack.series-dfn` | `phydrax.applications.battery` | candidate | candidate | 1 |
 | `boundary.integral-platform` | `phydrax.operators.integral` | research | Q0 | 0 |

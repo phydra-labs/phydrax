@@ -2,7 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Bidirectional adapters between chemistry surfaces and atomistic execution."""
+"""Bidirectional adapters between chemistry surfaces and atomistic execution.
+
+`AtomisticPotentialEnergySurface` is the native PES bridge: it binds a prepared
+atomistic Hamiltonian whose program owns its neighborhood resources.  Its host
+`evaluate` initializes resources for the given (finite or fixed-cell periodic)
+point, grows declared capacities when the point does not fit, and evaluates
+energy and forces natively; device-resident consumers (native NEB, relaxation)
+use ``potential`` directly through `phydrax.atomistic._relaxation`.
+`ExternalAtomisticPotentialEnergySurface` remains the honest host-provider
+route; no host callback is ever hidden inside a compiled native path.
+"""
 
 from __future__ import annotations
 
@@ -13,14 +23,15 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import IdentityWords
 from ..atomistic import (
     AbstractExternalAtomisticProvider,
     AtomisticUnitSystem,
     ExternalAtomisticEvaluation,
-    PreparedAtomisticPotentialProgram,
     PreparedAtomisticSystem,
 )
-from ..discretization import AbstractPreparedParticleNeighborhood
+from ..atomistic._potential_program import AbstractPreparedAtomisticHamiltonian
+from ..atomistic._relaxation import trial_geometry
 from ..typing import checked
 from ._surface import (
     AbstractPreparedPotentialEnergySurface,
@@ -30,12 +41,28 @@ from ._surface import (
 
 
 class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
+    """Native prepared atomistic Hamiltonian as a chemistry energy surface.
+
+    Finite and periodic systems are admitted.  ``evaluate(positions,
+    cell_vectors)`` takes unwrapped Cartesian positions and, for a periodic
+    system, optional cell rows (default: the prepared cell); integer image
+    counts are bound outside differentiation.  A capacity-limited point is
+    replayed at the next declared capacity level; an exhausted ladder or a
+    scientific resource failure reports an unsuccessful evaluation.
+
+    PyTree: the system, provider (prepared Hamiltonian binding) and surface
+    digests are dynamic `IdentityWords` (``system_identity``,
+    ``provider_identity``, ``surface_identity``); the host properties
+    ``system_id``, ``provider_id`` and ``surface_id`` decode the same strings,
+    so device NEB/relaxation runtimes holding this surface compile once per
+    layout.
+    """
+
     system: PreparedAtomisticSystem
-    potential: PreparedAtomisticPotentialProgram
-    neighborhood: AbstractPreparedParticleNeighborhood
-    system_id: str = eqx.field(static=True)
-    provider_id: str = eqx.field(static=True)
-    surface_id: str = eqx.field(static=True)
+    potential: AbstractPreparedAtomisticHamiltonian
+    system_identity: IdentityWords
+    provider_identity: IdentityWords
+    surface_identity: IdentityWords
     units: AtomisticUnitSystem
     capabilities: PotentialEnergySurfaceCapabilities
 
@@ -43,18 +70,11 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     def __init__(
         self,
         system: PreparedAtomisticSystem,
-        potential: PreparedAtomisticPotentialProgram,
-        neighborhood: AbstractPreparedParticleNeighborhood,
+        potential: AbstractPreparedAtomisticHamiltonian,
         /,
     ) -> None:
         if potential.system.prepared_id != system.prepared_id:
             raise ValueError("Atomistic potential belongs to another prepared system.")
-        if neighborhood.particle_discretization_id != system.particles.prepared_id:
-            raise ValueError("Atomistic neighborhood belongs to another particle system.")
-        if system.cell is not None and any(system.cell.periodic_axes):
-            raise ValueError(
-                "The initial atomistic chemistry surface supports finite systems only."
-            )
         capabilities = PotentialEnergySurfaceCapabilities(
             forces=True,
             hessian=False,
@@ -63,19 +83,29 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         )
         self.system = system
         self.potential = potential
-        self.neighborhood = neighborhood
-        self.system_id = system.plan.system_id
-        self.provider_id = potential.prepared_id
+        self.system_identity = system.plan.system_identity
+        self.provider_identity = potential.prepared_identity
         self.units = system.plan.units
         self.capabilities = capabilities
-        self.surface_id = canonical_fingerprint(
+        self.surface_identity = IdentityWords.of(
             {
                 "kind": "atomistic-potential-energy-surface",
                 "system": system.prepared_id,
                 "potential": potential.prepared_id,
-                "neighborhood": neighborhood.prepared_id,
             }
         )
+
+    @property
+    def system_id(self) -> str:
+        return self.system_identity.fingerprint()
+
+    @property
+    def provider_id(self) -> str:
+        return self.provider_identity.fingerprint()
+
+    @property
+    def surface_id(self) -> str:
+        return self.surface_identity.fingerprint()
 
     def evaluate(
         self,
@@ -83,19 +113,51 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         cell_vectors: ArrayLike | None = None,
         /,
     ) -> PotentialEnergySurfaceEvaluation:
-        if cell_vectors is not None:
-            raise ValueError("Finite atomistic chemistry surfaces reject cell vectors.")
-        coordinate = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
-        relation = self.neighborhood.build(
-            coordinate, active_mask=self.system.active_mask
-        )
-        value = self.potential.evaluate(
-            coordinate,
-            relation,
-            species=self.system.plan.atom_type_ids,
-        )
+        dtype = self.system.plan.coordinate_dtype
+        coordinate = jnp.asarray(positions, dtype=dtype)
+        if coordinate.shape != (self.system.capacity, 3):
+            raise ValueError(f"positions must have shape {(self.system.capacity, 3)}.")
+        cell = self.system.cell
+        if cell is None:
+            if cell_vectors is not None:
+                raise ValueError("Finite atomistic surfaces reject cell vectors.")
+            vectors = None
+        else:
+            vectors = (
+                cell.vectors.astype(coordinate.dtype)
+                if cell_vectors is None
+                else jnp.asarray(cell_vectors, dtype=coordinate.dtype)
+            )
+            if vectors.shape != cell.vectors.shape:
+                raise ValueError(f"cell_vectors must have shape {cell.vectors.shape}.")
+        active = jnp.asarray(self.system.active_mask)[:, None]
+        point = jnp.where(active, coordinate, 0.0)
+        program = self.potential
+        bundle = program.neighborhood_bundle
+        geometry, wrapped, images = trial_geometry(program, bundle, point, vectors)
+        resources = bundle.initialize(geometry)
+        exhausted = False
+        while bool(np.asarray(resources.capacity_only)[0]):
+            try:
+                bundle = bundle.grow_capacities(resources)
+            except RuntimeError:
+                exhausted = True
+                break
+            geometry, wrapped, images = trial_geometry(program, bundle, point, vectors)
+            resources = bundle.initialize(geometry)
+        if bundle.prepared_id != program.neighborhood_bundle.prepared_id:
+            program = program.with_neighborhood_bundle(bundle)
+        if vectors is None:
+            value = program.evaluate(wrapped, resources)
+        else:
+            value = program.evaluate(
+                wrapped, resources, cell_vectors=vectors, image_counts=images
+            )
+        successful = value.successful & resources.successful[0] & (not exhausted)
+        energy = jnp.where(successful, value.energy, jnp.nan)
+        forces = jnp.where(successful, value.forces, jnp.nan)
         host_coordinate, host_energy, host_forces, host_successful = jax.device_get(
-            (coordinate, value.energy, value.forces, value.successful)
+            (coordinate, energy, forces, successful)
         )
         source_id = canonical_fingerprint(
             {
@@ -111,10 +173,10 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
             }
         )
         return PotentialEnergySurfaceEvaluation(
-            value.energy,
-            value.forces,
+            energy,
+            forces,
             None,
-            value.successful,
+            successful,
             provider_id=self.provider_id,
             source_result_id=source_id,
             _identity_leaves=(
@@ -127,11 +189,19 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
 
 
 class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
+    """An external atomistic provider as a host chemistry energy surface.
+
+    PyTree: the system and surface digests are dynamic `IdentityWords`
+    (``system_identity``, ``surface_identity``); the provider binding stays
+    with ``provider``.  The host properties ``system_id``, ``provider_id``
+    (the provider's label or decoded digest) and ``surface_id`` decode the
+    same strings.
+    """
+
     system: PreparedAtomisticSystem
     provider: AbstractExternalAtomisticProvider
-    system_id: str = eqx.field(static=True)
-    provider_id: str = eqx.field(static=True)
-    surface_id: str = eqx.field(static=True)
+    system_identity: IdentityWords
+    surface_identity: IdentityWords
     units: AtomisticUnitSystem
     capabilities: PotentialEnergySurfaceCapabilities
 
@@ -149,11 +219,10 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
         )
         self.system = system
         self.provider = provider
-        self.system_id = system.plan.system_id
-        self.provider_id = provider.provider_id
+        self.system_identity = system.plan.system_identity
         self.units = system.plan.units
         self.capabilities = capabilities
-        self.surface_id = canonical_fingerprint(
+        self.surface_identity = IdentityWords.of(
             {
                 "kind": "external-atomistic-potential-energy-surface",
                 "system": system.prepared_id,
@@ -162,6 +231,18 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
             }
         )
 
+    @property
+    def system_id(self) -> str:
+        return self.system_identity.fingerprint()
+
+    @property
+    def provider_id(self) -> str:
+        return self.provider.provider_id
+
+    @property
+    def surface_id(self) -> str:
+        return self.surface_identity.fingerprint()
+
     def evaluate(
         self,
         positions: ArrayLike,
@@ -169,7 +250,7 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
         /,
     ) -> PotentialEnergySurfaceEvaluation:
         value = self.provider.evaluate(self.system, positions, cell_vectors)
-        if value.provider_id != self.provider_id:
+        if not bool(value.bound_to(self.provider)):
             raise ValueError("External atomistic provider changed its bound identity.")
         host_energy, host_forces, host_stress, host_successful = jax.device_get(
             (value.energy, value.forces, value.stress, value.successful)
@@ -204,20 +285,29 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
 
 
 class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
+    """A chemistry energy surface served through the atomistic provider boundary.
+
+    A digest provider: ``provider_identity`` is the dynamic exact digest of
+    the adapted surface (``provider_label`` is ``None``); the host
+    ``provider_id`` decodes it.
+    """
+
     surface: AbstractPreparedPotentialEnergySurface
-    provider_id: str = eqx.field(static=True)
+    provider_identity: IdentityWords
+    provider_label: str | None = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
     @checked
     def __init__(self, surface: AbstractPreparedPotentialEnergySurface, /) -> None:
         self.surface = surface
-        self.provider_id = canonical_fingerprint(
+        self.provider_identity = IdentityWords.of(
             {
                 "kind": "surface-external-atomistic-provider",
                 "surface": surface.surface_id,
             }
         )
+        self.provider_label = None
         self.conservative = surface.capabilities.conservative
         self.differentiable = surface.capabilities.differentiable
 
@@ -237,7 +327,7 @@ class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
             result.forces,
             None,
             result.successful,
-            self.provider_id,
+            provider_identity=self.provider_identity,
         )
 
 

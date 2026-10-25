@@ -20,19 +20,38 @@ dY_r = [-f(Y_r, T-r) + g(T-r)^2 s(Y_r, T-r)] dr
        + g(T-r) dW_r.
 ```
 
-`ReverseDiffusion` separates random-object materialization from numerical solving:
+`ReverseDiffusion` separates immutable preparation from numerical realization and
+solving:
 
-1. `realize(key, sample_shape)` draws prefix-stable terminal states, one fixed score
-   evaluation key, and a global `WienerRealization`;
-2. `solve(realization, save_times=...)` advances those exact terminal states;
-3. `sample_with_diagnostics` composes both operations;
-4. `sample` returns final states only and rejects any failed path.
+1. `prepare(sample_shape, save_times=...)` returns a `PreparedReverseDiffusion`, the
+   fixed solve layout. Its host-validated static save times, realization `law_id`,
+   differential `problem_id` and `prepared_id` never depend on a key.
+2. `prepared.realize(key)` draws prefix-stable terminal states, one fixed score
+   evaluation key, and a global `WienerRealization`, all derived from `key` by fixed
+   tags. The complete realization identity is `(law_id, root key data)`;
+   `realization_id` materializes it on the host, and traced code carries the
+   realization itself. Realizing therefore works under `jax.jit` and `jax.vmap`, and
+   a new key never retraces.
+3. `prepared.solve(realization, context=...)` advances those exact terminal states.
+   A score declared with `context_labels` reads a `ScoreContext` shared by every
+   sample of the realization. The context is dynamic data of the solve (passed with
+   the score key as differential-problem arguments), so independently conditioned
+   lanes map one prepared solve over `(key, context)` pairs.
+4. `ReverseDiffusion.realize`, `solve`, `sample_with_diagnostics`, and `sample` are
+   the same operations with an ad hoc layout; `sample` returns final states only and
+   rejects any failed path.
 
 The diagonal diffusion coefficient lowers to `lineax.DiagonalLinearOperator`; no dense
 identity factor is allocated. Solver status, temporal precision, Wiener identity, and
-backend result remain on the returned `DifferentialSolution`.
+backend result remain on the returned `DifferentialSolution`, and
+`ReverseDiffusionResult` keeps the realization's root key and law beside the
+prepared and context identities.
 
 ::: phydrax.transport.ReverseDiffusion
+
+---
+
+::: phydrax.transport.PreparedReverseDiffusion
 
 ---
 
@@ -70,6 +89,12 @@ transport = phx.transport.ContinuousTransport(
 )
 law = phx.transport.ContinuousFlowLaw(transport)
 ```
+
+By default the system binds one fixed score key (`score_inputs="bound"`). With
+`score_inputs="args"` and `context_labels=(...)`, the system reads
+`(score_key, ScoreContext)` from its evolution arguments instead, for example
+`ContinuousTransport(..., args=(score_key, context))`. One prepared system then
+serves every conditioned or independently keyed sample without being rebuilt.
 
 Exact finite-dimensional traces and uncertainty-bearing Hutchinson estimates retain
 the existing continuous-flow restrictions and diagnostics.

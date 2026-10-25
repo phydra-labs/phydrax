@@ -160,22 +160,25 @@ def test_workflows_scenario_1() -> None:
         atom_type_ids=[0, 0],
         # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0],
+        topology=phx.atomistic.MolecularTopologyPlan(bonds=[[1, 2]]),
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
-    )
     potential = phx.atomistic.AtomisticPotentialProgram(
         # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
-    ).prepare(system)
-    surface = phx.chemistry.AtomisticPotentialEnergySurface(
-        system, potential, neighborhood
+        [phx.atomistic.HarmonicBondPotential([4.0], [1.0])]
+    ).prepare(
+        system,
+        neighborhood_bundle=phx.atomistic.AtomisticNeighborhoodBundlePlan((), (), ()),
     )
+    surface = phx.chemistry.AtomisticPotentialEnergySurface(system, potential)
     result = surface.evaluate(np.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]]))
 
     assert bool(result.successful)
     assert np.isfinite(float(result.energy))
     assert np.all(np.isfinite(np.asarray(result.forces)))
+    np.testing.assert_allclose(
+        result.forces, [[0.8, 0.0, 0.0], [-0.8, 0.0, 0.0]], atol=1e-12
+    )
+    np.testing.assert_allclose(result.energy, 0.5 * 4.0 * 0.2**2, atol=1e-12)
     coordinate = np.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
     expected_source = canonical_fingerprint(
         {

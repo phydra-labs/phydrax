@@ -73,6 +73,7 @@ from ._cell_list import (
     PreparedCellListParticleNeighborhood,
 )
 from ._charged import ChargedParticlePlan, PreparedChargedParticles
+from ._cluster_image_search import ClusterTileImageRouteSearch
 from ._convex_contact import (
     convex_sat_contact,
     ConvexContactResult,
@@ -318,14 +319,36 @@ from ._image_neighborhood import (
     DenseParticleImageNeighborhoodPlan,
     image_certificate,
     ImageCertificate,
+    ImageNeighborSelection,
+    ImageNeighborSelectionPolicy,
+    ImageReceiverRows,
+    ImageReceiverSubset,
     ImageRouteSearchResult,
+    ImageSelectionCapacity,
+    ImageSelectionEvidence,
     ParticleImageCapacity,
     ParticleImageCapacityLadder,
     ParticleImageNeighborhoodState,
     PreparedCellListParticleImageNeighborhood,
     PreparedDenseParticleImageNeighborhood,
+    PreparedImageNeighborSelection,
 )
-from ._image_relation import ParticleImageRelation, ParticleImageRelationEvidence
+from ._image_radius_tiers import (
+    ImageRadiusTier,
+    ImageRadiusTierPlan,
+    ImageRadiusTierView,
+    ImageRadiusTierViews,
+    ImageTierEvidence,
+    PreparedImageRadiusTiers,
+)
+from ._image_relation import (
+    compact_image_routes,
+    ImageReversalMap,
+    ImageRouteCompaction,
+    ParticleImageHalfView,
+    ParticleImageRelation,
+    ParticleImageRelationEvidence,
+)
 from ._implicit_contact import (
     ImplicitContactResult,
     ImplicitRigidShapePlan,
@@ -822,6 +845,11 @@ from ._superquadric_wall import (
     SuperquadricTriangleContactPlan,
     SuperquadricWallContactResult,
 )
+from ._tiled_image_search import (
+    ImageTilePolicy,
+    ImageTileSchedule,
+    TiledImageRouteSearch,
+)
 from ._topology_events import (
     initialize_topology_event_record,
     split_preallocated_owner,
@@ -862,6 +890,9 @@ from ._verlet import (
     ParticleVerletState,
     PreparedImageVerletParticleNeighborhood,
     PreparedVerletParticleNeighborhood,
+    SegmentedImageVerletCertificate,
+    SegmentedImageVerletPlan,
+    SegmentedImageVerletState,
     VerletParticleNeighborhoodPlan,
 )
 from ._wall import (
@@ -882,6 +913,27 @@ from ._wcsph import (
 
 
 __all__ = [
+    "ClusterTileImageRouteSearch",
+    "compact_image_routes",
+    "ImageNeighborSelection",
+    "ImageNeighborSelectionPolicy",
+    "ImageRadiusTier",
+    "ImageRadiusTierPlan",
+    "ImageRadiusTierView",
+    "ImageRadiusTierViews",
+    "ImageReceiverRows",
+    "ImageReceiverSubset",
+    "ImageReversalMap",
+    "ImageRouteCompaction",
+    "ImageSelectionCapacity",
+    "ImageSelectionEvidence",
+    "ImageTierEvidence",
+    "ParticleImageHalfView",
+    "PreparedImageNeighborSelection",
+    "PreparedImageRadiusTiers",
+    "SegmentedImageVerletCertificate",
+    "SegmentedImageVerletPlan",
+    "SegmentedImageVerletState",
     "PreparedRigidConstraintRank",
     "RigidConstraintRankAudit",
     "RigidConstraintRankAuditKind",
@@ -1242,6 +1294,9 @@ __all__ = [
     "ParticleImageVerletState",
     "PreparedCellListParticleImageNeighborhood",
     "PreparedDenseParticleImageNeighborhood",
+    "ImageTilePolicy",
+    "ImageTileSchedule",
+    "TiledImageRouteSearch",
     "PreparedImageVerletParticleNeighborhood",
     "DEMCheckpointPolicy",
     "DEMCheckpointVJPResult",

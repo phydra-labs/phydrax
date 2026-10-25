@@ -59,8 +59,9 @@ def test_particle_grid_splat_scenario_1() -> None:
     assert state.valid_route_count == 4
     assert prepared.properties.constant_preserving
     assert prepared.properties.adjoint_paired
-    assert result.balance.source_support_id == prepared.particles.support.support_id
-    assert result.balance.source_support_id != prepared.particles.measures[0].measure_id
+    support = prepared.physical_particles()
+    assert result.balance.source_support_id == support.support.support_id
+    assert result.balance.source_support_id != support.measures[0].measure_id
     assert jnp.array_equal(result.require_success(result.content), result.content)
     assert jnp.array_equal(
         result.balance.require_closed_conservation(result.content), result.content
@@ -330,3 +331,80 @@ def test_mesh_splat_barycentric_and_compact_routes_are_conservative() -> None:
     )
     assert bool(compact_deposit.successful)
     np.testing.assert_allclose(compact_deposit.content, (3.0,))
+
+
+def test_indexed_support_splat_matches_physical_particle_splat() -> None:
+    from phydrax.discretization.splatting import PreparedParticleGridSplat
+
+    ids = np.asarray((7, 2, 5, 3), dtype=np.int64)
+    active = np.asarray((True, True, False, True))
+    plan = phx.discretization.ParticleGridSplatPlan(_grid(6, periodic=True))
+    physical = plan.prepare(_particles(4, particle_ids=ids, active_mask=active))
+    schema = PreparedParticleGridSplat(
+        plan,
+        particle_ids=ids,
+        active_mask=active,
+        support_id="test-indexed-support-schema",
+        coordinate_dtype="float64",
+    )
+    with pytest.raises(ValueError, match="indexed-support schema"):
+        schema.physical_particles()
+    assert schema.source_capacity == physical.source_capacity == 4
+    assert schema.ambient_dimension == physical.ambient_dimension == 1
+    assert schema.source_support_id == "test-indexed-support-schema"
+    physical_support = physical.physical_particles().support
+    assert physical.source_support_id == physical_support.support_id
+    np.testing.assert_array_equal(
+        schema.stable_source_order, physical.stable_source_order
+    )
+    np.testing.assert_array_equal(schema.source_active_mask, physical.source_active_mask)
+
+    # The schema statics are content-free: other IDs and masks of the same
+    # layout share the prepared identity and treedef.
+    other = PreparedParticleGridSplat(
+        plan,
+        particle_ids=np.asarray((1, 9, 4, 6), dtype=np.int64),
+        active_mask=np.asarray((True, False, True, True)),
+        support_id="test-indexed-support-schema",
+        coordinate_dtype="float64",
+    )
+    assert other.prepared_id == schema.prepared_id
+    assert jax.tree.structure(other) == jax.tree.structure(schema)
+
+    positions = jnp.asarray([[0.1], [0.45], [jnp.nan], [0.8]])
+    values = jnp.asarray([2.0, -1.5, jnp.nan, 0.75])
+    physical_state = physical.build(positions)
+    schema_state = schema.build(positions)
+    physical_deposit = physical.deposit_content(physical_state, values)
+    schema_deposit = schema.deposit_content(schema_state, values)
+    np.testing.assert_array_equal(schema_deposit.content, physical_deposit.content)
+    np.testing.assert_array_equal(schema_deposit.density, physical_deposit.density)
+    assert schema_deposit.balance.source_support_id == "test-indexed-support-schema"
+    grid_values = jnp.linspace(-1.0, 1.0, 6)
+    np.testing.assert_array_equal(
+        schema.gather(schema_state, grid_values).values,
+        physical.gather(physical_state, grid_values).values,
+    )
+    # Adjoint pairing <deposit(v), g> = <v, gather(g)> on active sources.
+    active_values = jnp.where(active, values, 0.0)
+    np.testing.assert_allclose(
+        jnp.sum(schema_deposit.content * grid_values),
+        jnp.sum(active_values * schema.gather(schema_state, grid_values).values),
+        rtol=1e-13,
+        atol=1e-14,
+    )
+
+    with pytest.raises(ValueError, match="unique and nonnegative"):
+        PreparedParticleGridSplat(
+            plan,
+            particle_ids=np.asarray((1, 1, 2, 3), dtype=np.int64),
+            active_mask=active,
+            support_id="test-indexed-support-schema",
+            coordinate_dtype="float64",
+        )
+    with pytest.raises(ValueError, match="not both"):
+        PreparedParticleGridSplat(
+            plan,
+            _particles(4, particle_ids=ids, active_mask=active),
+            support_id="test-indexed-support-schema",
+        )

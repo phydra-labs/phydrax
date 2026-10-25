@@ -67,11 +67,14 @@ def validate_axisymmetric_assignment(splat: PreparedParticleGridSplat) -> None:
                 "deformed-domain ring integration and parity are not implemented. "
                 "Use fixed UniformGIMPSplatAssignment (evolving=False)."
             )
-        assignment.validate_input(None, splat.particles.capacity, 2)
+        assignment.validate_input(None, splat.source_capacity, 2)
     elif isinstance(assignment, TensorBSplineSplatAssignment):
+        # Point ring routes are the degree-generic cardinal stencil, its odd
+        # radial reflection, and N/r; no per-degree ring rule enters them. The
+        # B-bar cell average owns its degree-specific quadrature admission.
         if any(degree == 0 for degree in assignment._axis_degrees(2)):
             raise ValueError(
-                "Axisymmetric B-spline routes require degree one, two, or three "
+                "Axisymmetric B-spline routes require degree one through five "
                 "on each axis; degree-zero routes have no meridional gradient."
             )
     elif isinstance(assignment, (AffineCPDISplatAssignment, CPDI2SplatAssignment)):
@@ -82,7 +85,7 @@ def validate_axisymmetric_assignment(splat: PreparedParticleGridSplat) -> None:
     elif not isinstance(assignment, MultilinearSplatAssignment):
         raise ValueError(
             "Axisymmetric routes support multilinear, tensor B-spline degrees "
-            "one to three, and fixed uniform GIMP assignments only."
+            "one to five, and fixed uniform GIMP assignments only."
         )
     radial_axis = splat.plan.target.structured_axes[0]
     if radial_axis.periodic:
@@ -311,7 +314,7 @@ def build_axisymmetric_routes(
     active_mask: Array | None = None,
 ) -> ParticleGridSplatState:
     """Build reflected meridional routes and ring-consistent hoop operators."""
-    expected = (splat.particles.capacity, 2)
+    expected = (splat.source_capacity, 2)
     if position.shape != expected:
         raise ValueError(f"Axisymmetric particle positions must have shape {expected}.")
     if jnp.issubdtype(position.dtype, jnp.complexfloating):
@@ -320,7 +323,7 @@ def build_axisymmetric_routes(
     geometry = splat.plan.precision.geometry(position)
     if splat.plan.execution.geometry_ad == "frozen":
         geometry = jax.lax.stop_gradient(geometry)
-    active = splat.particles.active_mask
+    active = splat.source_active_mask
     if active_mask is not None:
         if active_mask.shape != active.shape:
             raise ValueError("active_mask must have particle-capacity shape.")

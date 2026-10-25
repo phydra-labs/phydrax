@@ -32,6 +32,61 @@ from ..linalg import (
 
 
 _TWO_PI = 2.0 * np.pi
+# Relative outward roundoff headroom of host-prepared image stencil sizing
+# (`_padded_reference_reach`).
+_REFERENCE_REACH_HEADROOM = 64.0 * float(np.finfo(np.float32).eps)
+
+
+def _padded_reference_reach(reach: np.ndarray, /) -> np.ndarray:
+    """Host reference axis reach with outward roundoff headroom, for sizing only.
+
+    Prepared image stencil extents are integer functions of ``radius * reach``.
+    Runtime consumers recompute the reach of the same lattice with a different
+    solve (``lattice_right_inverse_with_status``) in their own dtype, so an
+    ordinary reference lattice whose ``radius * reach`` sits on an integer can
+    round to a larger runtime requirement (or a zero completeness margin) than
+    the host value and be refused by its own prepared stencil. Host preparation
+    therefore sizes extents from the reach scaled outward by
+    ``_REFERENCE_REACH_HEADROOM`` (64 float32 epsilons, relative). Integer
+    extents increase when that outward interval crosses an integer; the
+    resulting images are charged to the resource budgets. This is allocation
+    headroom for ordinary reference preparation, not a numerical-error
+    certificate for arbitrary conditioning. Recorded reach evidence stays the
+    raw host reach; runtime completeness checks and exact distance filters
+    remain the fail-closed authority, and no cutoff changes.
+    """
+    value = np.asarray(reach, dtype=np.float64)
+    return np.nextafter(value * (1.0 + _REFERENCE_REACH_HEADROOM), np.inf)
+
+
+def _minimum_image_from_fractional(
+    displacement: Array,
+    vectors: Array,
+    fractional: Array,
+    periodic_mask: Array,
+    image_shifts: Array,
+    /,
+) -> Array:
+    """Select the nearest Cartesian displacement using the prepared image stencil.
+
+    Callers own lattice and shape admission. The fractional chart selects only
+    nondifferentiable integer images; Cartesian subtraction preserves transverse
+    components of lower-rank lattices and the displacement/cell derivatives.
+    """
+    central = jax.lax.stop_gradient(jnp.round(fractional).astype(jnp.int32))
+    central = jnp.where(periodic_mask, central, 0)
+    shifts = central[..., None, :] + image_shifts
+    translations = contract(
+        "...si,ij->...sj",
+        shifts.astype(displacement.dtype),
+        vectors.astype(displacement.dtype),
+        backend="jax",
+    )
+    candidates = displacement[..., None, :] - translations
+    selected = jax.lax.stop_gradient(
+        jnp.argmin(jnp.sum(candidates * candidates, axis=-1), axis=-1)
+    )
+    return jnp.take_along_axis(candidates, selected[..., None, None], axis=-2)[..., 0, :]
 
 
 def lattice_right_inverse_with_status(vectors: ArrayLike, /) -> tuple[Array, Array]:
@@ -409,22 +464,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
             self.inverse_vectors.astype(value.dtype),
             backend="jax",
         )
-        central = jax.lax.stop_gradient(jnp.round(fractional).astype(jnp.int32))
-        central = jnp.where(self.periodic_mask, central, 0)
-        shifts = central[..., None, :] + self.image_shifts
-        translations = contract(
-            "...si,ij->...sj",
-            shifts.astype(value.dtype),
-            self.vectors.astype(value.dtype),
-            backend="jax",
+        return _minimum_image_from_fractional(
+            value, self.vectors, fractional, self.periodic_mask, self.image_shifts
         )
-        candidates = value[..., None, :] - translations
-        selected = jax.lax.stop_gradient(
-            jnp.argmin(jnp.sum(candidates * candidates, axis=-1), axis=-1)
-        )
-        return jnp.take_along_axis(candidates, selected[..., None, None], axis=-2)[
-            ..., 0, :
-        ]
 
     def inverse_for_vectors_with_status(
         self, vectors: ArrayLike, /
@@ -488,8 +530,10 @@ class PeriodicCell(StrictModule, NonTrainableState):
         for ``d = x_receiver - x_source + n @ vectors`` with ``|d| < radius``
         whenever the endpoint fractional separation on each periodic axis is
         below ``fractional_excursion`` (``1`` for wrapped coordinates).  The
-        bound uses the host right inverse and refuses conditioning outside the
-        cell certificate or a stencil larger than ``maximum_image_count``.
+        bound uses the host right inverse, sized with the shared outward
+        roundoff headroom (`_padded_reference_reach`; ``axis_reach`` records the
+        raw reach), and refuses conditioning outside the cell certificate or a
+        stencil larger than ``maximum_image_count``.
         """
         value = float(radius)
         if not np.isfinite(value) or value <= 0.0:
@@ -528,8 +572,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
         )
         inverse = np.asarray(coordinate_solve.value).T
         reach = np.sqrt(np.sum(inverse * inverse, axis=0))
+        sizing = _padded_reference_reach(reach)
         extents = tuple(
-            int(np.floor(excursion[axis] + value * reach[axis])) if periodic else 0
+            int(np.floor(excursion[axis] + value * sizing[axis])) if periodic else 0
             for axis, periodic in enumerate(self.periodic_axes)
         )
         count = 1
@@ -623,19 +668,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
         matrix = jnp.asarray(vectors, dtype=value.dtype)
         inverse = self.inverse_for_vectors(matrix).astype(value.dtype)
         fractional = contract("...i,ij->...j", value, inverse, backend="jax")
-        central = jax.lax.stop_gradient(jnp.round(fractional).astype(jnp.int32))
-        central = jnp.where(self.periodic_mask, central, 0)
-        shifts = central[..., None, :] + self.image_shifts
-        translations = contract(
-            "...si,ij->...sj", shifts.astype(value.dtype), matrix, backend="jax"
+        return _minimum_image_from_fractional(
+            value, matrix, fractional, self.periodic_mask, self.image_shifts
         )
-        candidates = value[..., None, :] - translations
-        selected = jax.lax.stop_gradient(
-            jnp.argmin(jnp.sum(candidates * candidates, axis=-1), axis=-1)
-        )
-        return jnp.take_along_axis(candidates, selected[..., None, None], axis=-2)[
-            ..., 0, :
-        ]
 
     def require_unique_image(self, radius: float, /) -> None:
         value = float(radius)

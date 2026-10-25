@@ -16,6 +16,7 @@ from phydrax.applications.protein_folding.cotranslation import (
     RibosomeBoundaryPotential,
 )
 from phydrax.atomistic import (
+    AtomisticCellListImageSearch,
     AtomisticDynamicsPlan,
     AtomisticPhaseSpaceMeasurePlan,
     AtomisticPotentialProgram,
@@ -33,8 +34,27 @@ from phydrax.atomistic._topology_epoch import (
     activate_topology_epoch,
     prepare_dormant_system,
 )
-from phydrax.discretization import DenseParticleNeighborhoodPlan
+from phydrax.discretization import PeriodicCell
 from phydrax.qualification import ReferenceArtifactManifest
+from tests._support.atomistic_bundles import (
+    bundle_state,
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
+
+
+# Three-bead nascent chain: explicit nonperiodic frame and the three-pair
+# storage of the former dense neighborhood of every stage.
+_RESOURCES: dict[str, Any] = {
+    "search": AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+    "skin": 0.5,
+    "search_capacities": (search_capacity(8, particles_per_cell=3, images=27),),
+    "role_capacities": (role_capacity(3, 2),),
+    "frame": PeriodicCell(
+        20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+    ),
+}
 
 
 def _source(label: Any = "analytical-fixture", *, commercial: Any = True) -> Any:
@@ -96,19 +116,22 @@ def _fixture(
             sphere_radii=[1.0],
             exclusion_stiffness=0.2,
         )
-        potential = AtomisticPotentialProgram(
-            [
-                # ty: ignore[invalid-argument-type]
-                HarmonicBondPotential([2.0], [1.0]),
-                # ty: ignore[invalid-argument-type]
-                LennardJonesPotential([0.02], [0.5], 3.0, switch_distance=2.5),
-                boundary,
-            ]
-        ).prepare(system)
+        potential = prepare_program(
+            AtomisticPotentialProgram(
+                [
+                    # ty: ignore[invalid-argument-type]
+                    HarmonicBondPotential([2.0], [1.0]),
+                    # ty: ignore[invalid-argument-type]
+                    LennardJonesPotential([0.02], [0.5], 3.0, switch_distance=2.5),
+                    boundary,
+                ]
+            ),
+            system,
+            **_RESOURCES,
+        )
         runtime = AtomisticDynamicsPlan(
             system,
             potential,
-            DenseParticleNeighborhoodPlan(3).prepare(system.particles),
             BAOABLangevinPlan(1e-3, 0.2) if thermal else VelocityVerletPlan(1e-3),
             constraints=DistanceConstraintPlan(tolerance=1e-10).prepare(system)
             if constrained
@@ -157,7 +180,7 @@ def test_cotranslation_epochs_scenario_1() -> None:
         jnp.array([[0.01, 0, 0], [0.02, 0, 0]])
     )
     evaluation = runtime.potential.evaluate(
-        positions, runtime.neighborhood.build(positions)
+        positions, bundle_state(runtime.potential, positions)
     )
     np.testing.assert_array_equal(evaluation.forces, state.force.forces)
     np.testing.assert_array_equal(evaluation.energy, state.energy.potential_energy)
@@ -166,9 +189,13 @@ def test_cotranslation_epochs_scenario_1() -> None:
     activation = activate_topology_epoch(transition, state, [[1.2, 0, 0]], [[0.03, 0, 0]])
     assert activation.successful
     assert activation.runtime.system.prepared_id != runtime.system.prepared_id
+    # The activated epoch binds a bundle prepared for its own particle support.
+    assert activation.runtime.bundle.system.prepared_id != (
+        runtime.bundle.system.prepared_id
+    )
+    assert activation.runtime.bundle.prepared_id != runtime.bundle.prepared_id
     assert (
-        activation.runtime.neighborhood.particle_discretization_id
-        != runtime.neighborhood.particle_discretization_id
+        activation.state.neighborhoods.bundle_id == activation.runtime.bundle.prepared_id
     )
     np.testing.assert_array_equal(
         activation.runtime.system.topology.plan.bonds, [[101, 205]]
@@ -397,7 +424,7 @@ def test_cotranslation_epochs_scenario_3() -> None:
     _, protocol = _fixture()
     runtime = protocol.stages[0].runtime
     positions = jnp.array([[-1.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    neighborhood = runtime.neighborhood.build(positions)
+    neighborhood = bundle_state(runtime.potential, positions)
     evaluated = eqx.filter_jit(runtime.potential.evaluate)(positions, neighborhood)
     assert bool(evaluated.successful)
     # The soft sphere contributes +0.1 and the tether contributes +0.15.

@@ -130,7 +130,10 @@ class CosmologicalParticleMeshPlan(StrictModule):
         scale_factors: ArrayLike,
         /,
     ) -> None:
-        if kinematics.particles.prepared_id != gravity.transfer.particles.prepared_id:
+        if (
+            kinematics.particles.prepared_id
+            != gravity.transfer.physical_particles().prepared_id
+        ):
             raise ValueError("Cosmological KDK and PM must share one particle support.")
         grid = gravity.transfer.plan.target
         if len(grid.axes) != len(kinematics.box_size):

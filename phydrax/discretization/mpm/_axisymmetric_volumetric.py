@@ -56,6 +56,12 @@ class PreparedAxisymmetricCellAverage(StrictModule, NonTrainableState):
         assignment = splat.plan.assignment
         if isinstance(assignment, TensorBSplineSplatAssignment):
             degrees = assignment._axis_degrees(2)
+            if max(degrees) > 3:
+                # The ring rules below are exact only through cubic bases.
+                raise ValueError(
+                    "Axisymmetric B-bar ring averaging supports tensor B-spline "
+                    "degrees up to three."
+                )
             factors = []
             for degree in degrees:
                 # Quadratic basis knots bisect cells; cubic bases are quartic

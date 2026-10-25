@@ -66,9 +66,8 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
             raise ValueError("Reporter state belongs to another dynamics runtime.")
         if state.force.program_id != dynamics.potential.prepared_id:
             raise ValueError("Reporter force cache belongs to another potential program.")
-        force_current = state.force.successful & (
-            state.force.position_epoch == state.step_index
-        )
+        # Frames report the Hamiltonian controls the force cache is bound to.
+        force_current = dynamics.force_cache_valid(state, state.force.controls)
         if self.coordinate_domain is AtomisticSiteDomain.INTERACTION_SITES:
             site_state = dynamics.interaction_sites(state)
             positions = site_state.positions

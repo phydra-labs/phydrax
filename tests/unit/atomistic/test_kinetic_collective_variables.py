@@ -8,9 +8,15 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 class _ScaledCoordinate(AbstractArrayModel):
@@ -31,27 +37,34 @@ class _ScaledCoordinate(AbstractArrayModel):
 def _runtime() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [10, 20],
-        # ty: ignore[invalid-argument-type]
-        [1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0],
+        np.asarray([10, 20], dtype=np.int64),
+        np.asarray([1, 1], dtype=np.int32),
+        np.asarray([1.0, 1.0], dtype=np.float64),
         units,
-        # ty: ignore[invalid-argument-type]
-        atom_type_ids=[0, 0],
+        atom_type_ids=np.asarray([0, 0], dtype=np.int32),
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Finite pair: explicit nonperiodic frame and the one-pair storage of the
+    # former dense neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            (
+                phx.atomistic.LennardJonesPotential(
+                    np.asarray([0.1]), np.asarray([1.0]), 2.5
+                ),
+            )
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-    ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -81,26 +94,36 @@ def test_kinetic_collective_variables_scenario_1() -> None:
         model_id="scaled-distance",
         names=("slow-distance",),
     )
-    plan = phx.atomistic.sampling.AtomisticBiasPlan(
-        phx.atomistic.sampling.BiasKind.HARMONIC,
+    bias = phx.atomistic.sampling.AtomisticBiasTerm(
         learned,
-        # ty: ignore[invalid-argument-type]
-        center=[2.0],
-        # ty: ignore[invalid-argument-type]
-        stiffness=[1.5],
+        phx.atomistic.sampling.HarmonicBiasForm(jnp.asarray([2.0]), 1.5),
+        name="slow-umbrella",
+        force_group=1,
+    ).prepare(system)
+    term_state = bias.initial_term_state(jnp.float64)
+
+    def energy(value: jax.Array) -> jax.Array:
+        geometry = phx.atomistic.sampling.CollectiveVariableGeometry(value)
+        return bias.bias(geometry, term_state)[0]
+
+    _, evaluation, successful = bias.bias(
+        phx.atomistic.sampling.CollectiveVariableGeometry(state.kinematics.positions),
+        term_state,
     )
-    bias = phx.atomistic.sampling.PreparedAtomisticBias(plan, dynamics)
-    evaluation = bias.evaluate(state.kinematics.positions, plan.initialize(), state.time)
 
     assert learned.output_size == 1
     assert learned.names == ("slow-distance",)
-    assert bool(evaluation.successful)
-    assert evaluation.variables.shape == (1,)
-    assert jnp.all(jnp.isfinite(evaluation.forces))
-    numerical = jax.grad(
-        lambda value: bias.energy(value, plan.initialize(), state.time)[0]
-    )(state.kinematics.positions)
-    assert jnp.allclose(evaluation.forces, -numerical)
+    assert bool(successful)
+    assert evaluation.values.shape == (1,)
+    gradient = jax.grad(energy)(state.kinematics.positions)
+    assert jnp.all(jnp.isfinite(gradient))
+    step = 1e-6
+    direction = jnp.zeros_like(gradient).at[1, 0].set(1.0)
+    finite = (
+        energy(state.kinematics.positions + step * direction)
+        - energy(state.kinematics.positions - step * direction)
+    ) / (2.0 * step)
+    assert jnp.allclose(jnp.sum(gradient * direction), finite, rtol=1e-5)
     system, dynamics, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]

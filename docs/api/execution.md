@@ -507,6 +507,39 @@ assert evaluation.values.shape == (3, 2)
 
 ::: phydrax.execution.restore_execution_workset_checkpoint
 
+### Atomistic lane campaigns as a workset consumer
+
+`phydrax.atomistic.PreparedAtomisticCampaign` composes these owners. It adds no
+scheduler of its own.
+
+- **Signatures.** Each lane bank's `AtomisticStageSignature` wraps a
+  `PoolExecutionSignature` (`.pool`). Its topology and method IDs come from the system,
+  resource-bundle, and Hamiltonian layouts, together with the derivative request, the
+  method-state layout, and an optional `ExecutionGroupSpec` placement. Task identity,
+  material identity, and numeric revisions stay out of the signature, so every material
+  and revision of one layout shares an executable.
+- **RNG.** At refill, an `ExecutionWorksetPlan` is prepared over the candidates, and
+  `PreparedExecutionWorksets.semantic_keys` supplies the admission keys.
+  The semantic IDs are `stage/task`, and each task's stage entry count is the counter,
+  so the keys are independent of lane, bucket, round, and completion order.
+- **Admission.** The pool's internal bounded-frontier allocator admits whole task groups
+  and pending outputs with prefix semantics, and its refill router places admitted tasks
+  into free lanes. Neither helper is a public API.
+- **Observation.** `run_round(..., session=IterationSession)` emits one commit-phase
+  `IterationRecord` per round. Its scope is `atomistic-campaign:<campaign_id>` with role
+  `atomistic-campaign`, and its metrics are lane utilization, admissions, parked lanes,
+  pending and published outputs, backpressure, shared evaluations, and capacity events.
+
+Outputs and the continuation envelope are written as atomically published lifecycle
+array archives. A fresh-process `resume` restores the last durable commit. In a lane
+campaign, each lane advances a whole system or a whole path band, and no task is
+partitioned across child groups. Distributed stage x domain campaigns run each stage's
+domain dynamics on its own child `ExecutionGroup` through one fixed root-group stage
+transport schedule; see
+[stage x domain campaigns](../guides_atomistic_distributed_execution.md#stage-x-domain-campaigns).
+The campaign API is documented under
+[staged campaigns](atomistic.md#staged-campaigns).
+
 ## Process-local ingress and distributed checkpointing
 
 `DistributedIndexEpochPlan` preserves one global ordering while returning
@@ -523,6 +556,37 @@ Replicated scalars and arrays with one locally addressable replica use JAX's
 public local-data view rather than its globally sharded shard-view shortcut.
 Canonical owner selection, replica IDs, dtypes, shapes, and checkpoint layout
 identities are preserved; no global gather or device-to-device copy is introduced.
+
+`phydrax.lifecycle.publish_process_checkpoint(..., writer_id, writer_index=None,
+...)` publishes under a checkpoint writer slot: the `process-{slot}` artifact, the
+artifact and shard `process_index` metadata, and the slot range
+`[0, expected_process_count)` that assembly requires. The slot defaults to
+`jax.process_index()` for a whole-job publication; an execution subgroup passes
+its group-local rank and is validated before anything is written. Every shard
+also records `source_process_index`, the physical process that held the snapshot,
+and its layout identity keeps binding the physical device. The writer slot and
+the physical source process are therefore distinct metadata.
+
+Each process artifact stores its canonical shard-descriptor inventory in the
+authenticated `checkpoint-shard-inventory` chunk stream. Small metadata binds
+its digest, shard count, lifecycle identities and parent lineage; inventories
+are not embedded in a metadata value. `ArrayArchiveLimits.max_manifest_bytes`,
+`max_manifest_nesting` and `max_members` admit inventory bytes, depth and count
+before decoding, without enlarging the repository's metadata-value ceiling.
+Use the same sufficient limits for publication, assembly, commit, loading and
+restore. Array payload bytes, layout, placement and typed-key guarantees remain
+unchanged.
+
+The repository's `maximum_metadata_bytes` separately bounds the complete
+artifact manifest, including its chunk records. Size that allocation for the
+writer's complete inventory, especially when one process owns several execution
+groups. A larger explicit artifact-manifest allocation does not change the fixed
+per-value metadata ceiling.
+
+This is a clean wire cutover: checkpoints using the retired metadata-embedded
+inventory must be republished. Process artifact IDs, global manifest IDs and
+republished descendant lineage change; there is no legacy reader or historical
+identity substitution.
 
 
 ### Numerical-relativity specialization

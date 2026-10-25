@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Accelerated Pallas Mosaic GPU kernels for MACE's radial-weighted ``uvu`` coupling.
+"""Accelerated Pallas Mosaic GPU kernels for MACE's edge-weighted ``uvu`` coupling.
 
 The accelerated operation is the seeded receiver aggregation of ONE prepared
 streamed edge fragment. On a fragment of ``F`` lanes, ``R`` receiver slots and
@@ -11,21 +11,32 @@ streamed edge fragment. On a fragment of ``F`` lanes, ``R`` receiver slots and
     A[r, (b, o), k] = seed[r] + sum_{l -> r} a_l sum_{p -> b} R[l, p, k]
                       sum_{(o, i', j)} C_p[o, i', j] H[s(l), i', k] Y[l, j],
 
-the radial-weighted O(3) coupling of the fragment's source rows ``H`` with its
+the edge-weighted O(3) coupling of the fragment's source rows ``H`` with its
 lane harmonics ``Y``, streamed in stable lane order into the incoming
 ``(high, correction)`` accumulator of each receiver slot. Receiver, source and
 lane extents are independent; nothing in the kernel family is shaped by the
 graph's node or edge capacity. The streamed relation owns the fragment
 schedule, carries each receiver's seeded accumulator across its fragments,
-generates local radial weights and harmonics inside the fragment and applies
+generates local edge weights and harmonics inside the fragment and applies
 the receiver epilogue once after the final fragment. Fragment source rows are
 the caller's gather of loop-invariant node features, so the source cotangent
 returns to the single node cotangent through that gather's transpose.
 
+The per-lane path weights ``R`` are an explicit operand produced by the
+interaction family's exact edge network before the kernel runs: the standard
+radial MLP, the attention network over radial features and both endpoint
+projections, or the residual-nonlinear network over radial features and
+species embeddings. The kernel is therefore family-agnostic; cotangents of
+``R`` (the ``"radial"`` role) flow back through that network, including into
+endpoint contexts. Its structural assumptions are those of the lowered
+coupling: the source (the layer's edge-irreps ``linear_up`` output) and the
+message have one uniform channel multiplicity and harmonics multiplicity one;
+layouts violating that are refused when the structure is lowered.
+
 Static model structure lowers into the kernels: packed column placement, the
 coupling rows ``(o, i', j)`` of every nonzero entry of the executed coefficient
 tables (their constructor-prepared support, imported residuals included), and
-tiles. Coupling coefficient values, radial path weights, source rows,
+tiles. Coupling coefficient values, edge path weights, source rows,
 harmonics, lane masks and fragment routing are explicit array operands, so a
 parameter update changes the numeric revision without changing the executable
 signature.
@@ -144,7 +155,8 @@ def _uniform_multiplicity(layout: O3IrrepLayout, expected: int, role: str, /) ->
         if block.multiplicity != expected:
             raise ValueError(
                 f"The accelerated MACE coupling requires every {role} block to have "
-                f"multiplicity {expected}; block {block.name!r} has {block.multiplicity}."
+                f"multiplicity {expected}; block {block.name!r} has {block.multiplicity}. "
+                "Non-uniform edge irreps are not an admitted kernel route."
             )
 
 

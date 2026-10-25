@@ -5,7 +5,8 @@
 
 import functools
 import sys
-from typing import Any
+from fractions import Fraction
+from typing import Any, final
 
 import equinox as eqx
 import jax
@@ -28,6 +29,42 @@ from phydrax._identity import (
 from phydrax._strict import StrictModule
 
 
+class _StaticBounds(StrictModule):
+    lower: float = eqx.field(static=True)
+    upper: float = eqx.field(static=True)
+
+
+def test_compiler_metadata_preserves_infinite_bounds_without_relaxing_scientific_identity() -> (
+    None
+):
+    unbounded = _StaticBounds(-float("inf"), float("inf"))
+    nonnegative = _StaticBounds(0.0, float("inf"))
+    record = execution_metadata_payload(jax.tree.structure(unbounded))
+    assert record == execution_metadata_payload(
+        jax.tree.structure(_StaticBounds(-float("inf"), float("inf")))
+    )
+    assert record != execution_metadata_payload(jax.tree.structure(nonnegative))
+    with pytest.raises(ValueError):
+        strict_module_payload(unbounded)
+    with pytest.raises(ValueError):
+        execution_metadata_payload(jax.tree.structure(_StaticBounds(0.0, float("nan"))))
+
+
+class _StaticRational(StrictModule):
+    value: Fraction = eqx.field(static=True)
+
+
+def test_compiler_rational_metadata_preserves_exact_value() -> None:
+    def record(value: Fraction) -> Any:
+        return execution_metadata_payload(jax.tree.structure(_StaticRational(value)))
+
+    assert record(Fraction(1, 2)) == record(Fraction(2, 4))
+    whole = Fraction(1, 1)
+    nearby = Fraction(2**54 + 1, 2**54)
+    assert float(whole) == float(nearby)
+    assert record(whole) != record(nearby)
+
+
 class _AffineCallable(StrictModule):
     weight: Array
     enabled: bool = eqx.field(static=True)
@@ -38,6 +75,47 @@ class _AffineCallable(StrictModule):
 
     def __call__(self, value: Any) -> Any:
         return self.weight * value if self.enabled else value
+
+
+def test_callable_identity_distinguishes_scalar_and_singleton_array() -> None:
+    scalar = _AffineCallable(jnp.asarray(2.0, dtype=jnp.float32))
+    vector = _AffineCallable(jnp.asarray([2.0], dtype=jnp.float32))
+    value = jnp.asarray(3.0, dtype=jnp.float32)
+    assert scalar(value).shape == ()
+    assert vector(value).shape == (1,)
+    scalar_identity, vector_identity = callable_payload(scalar), callable_payload(vector)
+    assert (
+        scalar_identity["semantic_content_id"] != vector_identity["semantic_content_id"]
+    )
+    assert scalar_identity["numeric_content_id"] != vector_identity["numeric_content_id"]
+
+
+@final
+class _KeyedCallable(StrictModule):
+    __strict_contract__ = True
+    key: pt.PRNGKey
+
+    def __call__(self, value: Array) -> Array:
+        return value + jax.random.normal(self.key, value.shape, dtype=value.dtype)
+
+
+def test_callable_key_identity_binds_seed_and_random_implementation() -> None:
+    first = callable_payload(_KeyedCallable(jax.random.key(7)))
+    second = callable_payload(_KeyedCallable(jax.random.key(8)))
+    assert first["semantic_content_id"] == second["semantic_content_id"]
+    assert first["numeric_content_id"] != second["numeric_content_id"]
+    safe = jax.random.key(7, impl="rbg")
+    unsafe = jax.random.key(7, impl="unsafe_rbg")
+    assert bool(jnp.array_equal(jax.random.key_data(safe), jax.random.key_data(unsafe)))
+    safe_identity = callable_payload(_KeyedCallable(safe))
+    unsafe_identity = callable_payload(_KeyedCallable(unsafe))
+    assert safe_identity["semantic_content_id"] != unsafe_identity["semantic_content_id"]
+    assert safe_identity["numeric_content_id"] != unsafe_identity["numeric_content_id"]
+    provenance = SemanticProvenance({"kind": "typed-key-content"})
+    assert (
+        NumericRevision(provenance, safe).content_id
+        != NumericRevision(provenance, jax.random.key_data(safe)).content_id
+    )
 
 
 class _ActivatedCallable(StrictModule):

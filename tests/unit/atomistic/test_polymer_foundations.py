@@ -6,6 +6,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    bundle_state,
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 def _polymer_runtime() -> Any:
@@ -32,27 +38,31 @@ def _polymer_runtime() -> Any:
         cell=cell,
     ).prepare()
     cutoff = 2.0 ** (1.0 / 6.0)
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [
-            # ty: ignore[invalid-argument-type]
-            phx.atomistic.FiniteExtensibleNonlinearElasticBondPotential([30.0], [1.5]),
-            phx.atomistic.LennardJonesPotential(
-                # ty: ignore[invalid-argument-type]
-                [1.0],
-                # ty: ignore[invalid-argument-type]
-                [1.0],
-                cutoff,
-                shift_energy_at_cutoff=True,
-            ),
-        ]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6, box=cell).prepare(
-        system.particles
+    # Explicit resources: one cell-list source and the six-pair storage of the
+    # former dense four-bead neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                phx.atomistic.FiniteExtensibleNonlinearElasticBondPotential(
+                    np.asarray([30.0]), np.asarray([1.5])
+                ),
+                phx.atomistic.LennardJonesPotential(
+                    np.asarray([1.0]),
+                    np.asarray([1.0]),
+                    cutoff,
+                    shift_energy_at_cutoff=True,
+                ),
+            ]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(16, particles_per_cell=4, images=27),),
+        role_capacities=(role_capacity(6, 3),),
     )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.BAOABLangevinPlan(1.0e-3, 1.0, realization_id=3),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -96,7 +106,7 @@ def test_polymer_foundations_scenario_1() -> None:
     # Only the LJ term is zero at its cutoff; FENE bonds still contribute.
     context = dynamics.potential.context(
         state.kinematics.positions,
-        state.neighborhood,
+        state.neighborhoods,
         unwrapped_positions=dynamics._unwrapped(state.kinematics),
         species=state.species,
         cell=dynamics.system.cell,
@@ -182,7 +192,7 @@ def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
     def fene_energy(coordinates: Any) -> Any:
         context = dynamics.potential.context(
             coordinates,
-            state.neighborhood,
+            state.neighborhoods,
             unwrapped_positions=coordinates,
             species=state.species,
             cell=dynamics.system.cell,
@@ -200,7 +210,7 @@ def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
     np.testing.assert_allclose(jnp.sum(force, axis=0), 0.0, atol=1.0e-12)
 
     invalid_positions = positions.at[1, 0].set(2.6)
-    neighborhood = dynamics.neighborhood.build(invalid_positions)
+    neighborhood = bundle_state(dynamics.potential, invalid_positions)
     invalid = dynamics.potential.evaluate(
         invalid_positions,
         neighborhood,

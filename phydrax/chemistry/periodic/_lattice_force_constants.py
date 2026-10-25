@@ -22,7 +22,8 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._many_body import ManyBodyPotential
 from ...atomistic._potential_program import PreparedAtomisticPotentialProgram
-from ...discretization import AbstractPreparedParticleNeighborhood, PeriodicCell
+from ...atomistic._rerun import frame_resources
+from ...discretization import PeriodicCell
 from ...sparse import EdgeRelation
 from ...typing import checked
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
@@ -809,10 +810,15 @@ class FiniteDisplacementIFC2Result(StrictModule, NonTrainableState):
 
 
 class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
-    """Native central h/h2 IFC2 plan over a fixed Phydrax force/neighborhood path."""
+    """Native central h/h2 IFC2 plan over a fixed Phydrax force path.
+
+    Every displaced configuration binds its own certified state of the
+    potential's prepared neighborhood bundle (declared capacity replay
+    included); a scientific failure or exhausted capacity ladder makes the
+    result unsuccessful.
+    """
 
     potential: PreparedAtomisticPotentialProgram
-    neighborhood: AbstractPreparedParticleNeighborhood
     image_map: PrimitiveSupercellImageMap
     equilibrium_positions: Array
     relation: EdgeRelation
@@ -828,7 +834,6 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
     def __init__(
         self,
         potential: PreparedAtomisticPotentialProgram,
-        neighborhood: AbstractPreparedParticleNeighborhood,
         equilibrium_positions: ArrayLike,
         image_map: PrimitiveSupercellImageMap,
         relation: EdgeRelation,
@@ -891,7 +896,6 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
         if not isinstance(policy, IFCConstraintPolicy):
             raise TypeError("constraint_policy must be IFCConstraintPolicy or None.")
         self.potential = potential
-        self.neighborhood = neighborhood
         self.equilibrium_positions = jnp.asarray(positions)
         self.image_map = image_map
         self.relation = relation
@@ -905,7 +909,6 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
             {
                 "kind": "finite-displacement-ifc2-plan",
                 "potential": potential.prepared_id,
-                "neighborhood": neighborhood.prepared_id,
                 "cell": image_map.primitive_cell.cell_id,
                 "image_map": image_map.map_id,
                 "policy": policy.policy_id,
@@ -936,33 +939,47 @@ class PreparedFiniteDisplacementIFC2(StrictModule, NonTrainableState):
 
     def evaluate(self, /) -> FiniteDisplacementIFC2Result:
         plan = self.plan
+        cell = plan.potential.system.cell
+        if cell is None:
+            raise RuntimeError("Validated periodic cell unexpectedly absent.")
+        coordinate_dtype = plan.potential.system.plan.coordinate_dtype
+        vectors = cell.vectors.astype(coordinate_dtype)
         positions = np.asarray(plan.equilibrium_positions)
-        equilibrium = plan.potential.evaluate(
-            plan.equilibrium_positions,
-            plan.neighborhood.build(plan.equilibrium_positions),
-        )
-        equilibrium_residual = float(
-            np.max(np.abs(np.asarray(equilibrium.forces)), initial=0.0)
-        )
+
+        def forces_at(position: np.ndarray, /) -> tuple[np.ndarray, bool]:
+            resources = frame_resources(
+                plan.potential,
+                None,
+                jnp.asarray(position, dtype=coordinate_dtype),
+                vectors,
+            )
+            evaluation = resources.potential.evaluate(
+                resources.positions,
+                resources.neighborhoods,
+                cell_vectors=resources.cell_vectors,
+                image_counts=resources.image_counts,
+            )
+            successful = (
+                not resources.exhausted
+                and bool(np.asarray(resources.neighborhoods.successful)[0])
+                and bool(evaluation.successful)
+            )
+            return np.asarray(evaluation.forces), successful
+
+        equilibrium_forces, all_successful = forces_at(positions)
+        equilibrium_residual = float(np.max(np.abs(equilibrium_forces), initial=0.0))
         hessians: list[np.ndarray] = []
         antisymmetry = 0.0
-        all_successful = bool(equilibrium.successful)
         for step in (plan.displacement, 0.5 * plan.displacement):
             columns: list[np.ndarray] = []
             for coordinate in range(positions.size):
                 shift = np.zeros_like(positions).reshape((-1,))
                 shift[coordinate] = step
                 shift = shift.reshape(positions.shape)
-                plus_position = jnp.asarray(positions + shift)
-                minus_position = jnp.asarray(positions - shift)
-                plus = plan.potential.evaluate(
-                    plus_position, plan.neighborhood.build(plus_position)
-                )
-                minus = plan.potential.evaluate(
-                    minus_position, plan.neighborhood.build(minus_position)
-                )
-                plus_force = np.asarray(plus.forces).reshape((-1,))
-                minus_force = np.asarray(minus.forces).reshape((-1,))
+                plus_forces, plus_successful = forces_at(positions + shift)
+                minus_forces, minus_successful = forces_at(positions - shift)
+                plus_force = plus_forces.reshape((-1,))
+                minus_force = minus_forces.reshape((-1,))
                 columns.append(-(plus_force - minus_force) / (2.0 * step))
                 antisymmetry = max(
                     antisymmetry,
@@ -971,15 +988,13 @@ class PreparedFiniteDisplacementIFC2(StrictModule, NonTrainableState):
                             np.abs(
                                 plus_force
                                 + minus_force
-                                - 2.0 * np.asarray(equilibrium.forces).reshape((-1,))
+                                - 2.0 * equilibrium_forces.reshape((-1,))
                             ),
                             initial=0.0,
                         )
                     ),
                 )
-                all_successful = (
-                    all_successful and bool(plus.successful) and bool(minus.successful)
-                )
+                all_successful = all_successful and plus_successful and minus_successful
             hessians.append(np.stack(columns, axis=1))
         refinement = float(np.max(np.abs(hessians[1] - hessians[0]), initial=0.0))
         source, target = plan.image_map.route_supercell_indices(

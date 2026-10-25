@@ -18,9 +18,9 @@ from jax.typing import ArrayLike, DTypeLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..linalg import AbstractLinearOperator
 from ..typing import checked, parse, PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
@@ -28,6 +28,7 @@ from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
     AbstractPreparedHydrodynamicMobility,
 )
+from ._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from ._potential_program import AtomisticHamiltonianEvaluation
 
 
@@ -113,14 +114,19 @@ class HydrodynamicBrownianState(StrictModule):
     positions: Array
     image_counts: Array
     cell_vectors: Array
-    neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState
+    neighborhoods: AtomisticNeighborhoodBundleState
     forces: Array
     potential_energy: Array
     step_index: Array
     key_data: Array
     successful: Array
     mobility_route_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
 
 class HydrodynamicBrownianStepResult(StrictModule):
@@ -131,7 +137,12 @@ class HydrodynamicBrownianStepResult(StrictModule):
     displacement_norm: Array
     mobility_configuration_valid: Array
     successful: Array
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
 
 class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
@@ -139,7 +150,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
     dynamics: PreparedAtomisticDynamics
     mobility: AbstractPreparedHydrodynamicMobility
     fib: Any
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
 
     @checked
     def __init__(
@@ -168,7 +179,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         self.dynamics = dynamics
         self.mobility = prepared_mobility
         self.fib = fib
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-hydrodynamic-brownian",
                 "plan": plan.plan_id,
@@ -177,6 +188,11 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
                 "fib": fib.plan_id,
             }
         )
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
     def _initial_cell_vectors(self, dtype: DTypeLike) -> Array:
         cell = self.dynamics.system.cell
@@ -204,26 +220,20 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         positions: Array,
         image_counts: Array,
         cell_vectors: Array,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
-    ) -> tuple[
-        ParticleNeighborhoodState | ParticleImageNeighborhoodState,
-        AtomisticHamiltonianEvaluation,
-    ]:
-        neighborhood, _ = self.dynamics._build_neighborhood(
-            positions, None, cell_vectors, image_counts
+    ) -> AtomisticHamiltonianEvaluation:
+        # The program derives fractional coordinates of ``positions`` under the
+        # runtime vectors and reports the lattice solve status.
+        return self.dynamics.evaluate_configuration(
+            positions,
+            neighborhoods,
+            unwrapped_positions=self._unwrapped(positions, image_counts, cell_vectors),
+            image_counts=image_counts,
+            species=self.dynamics.system.plan.atom_type_ids,
+            cell_vectors=cell_vectors,
+            controls=jnp.zeros((0,), dtype=positions.dtype),
         )
-        unwrapped = self._unwrapped(positions, image_counts, cell_vectors)
-        kwargs: dict[str, Any] = {
-            "unwrapped_positions": unwrapped,
-            "species": self.dynamics.system.plan.atom_type_ids,
-            "cell": self.dynamics.system.cell,
-        }
-        if self.dynamics.system.cell is not None:
-            # The program derives fractional coordinates of ``positions`` under
-            # these runtime vectors and reports the lattice solve status.
-            kwargs["cell_vectors"] = cell_vectors
-        evaluation = self.dynamics.potential.evaluate(positions, neighborhood, **kwargs)
-        return neighborhood, evaluation
 
     def initialize(
         self,
@@ -241,24 +251,32 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             raise ValueError("key must contain two uint32 words.")
         vectors = self._initial_cell_vectors(value.dtype)
         wrapped, images = self._wrap(value, vectors)
-        neighborhood, evaluation = self._evaluate(wrapped, images, vectors)
+        neighborhoods = self.dynamics.initialize_neighborhoods(
+            wrapped, cell_vectors=vectors, image_counts=images
+        )
+        evaluation = self._evaluate(wrapped, images, vectors, neighborhoods)
         unwrapped = self._unwrapped(wrapped, images, vectors)
         mobility_valid = self.mobility.configuration_valid(
             unwrapped[self.mobility.active_slots]
         )
-        successful = evaluation.successful & mobility_valid & jnp.all(jnp.isfinite(value))
+        successful = (
+            evaluation.successful
+            & jnp.all(neighborhoods.successful)
+            & mobility_valid
+            & jnp.all(jnp.isfinite(value))
+        )
         return HydrodynamicBrownianState(
             wrapped,
             images,
             vectors,
-            neighborhood,
+            neighborhoods,
             evaluation.forces,
             evaluation.energy,
             jnp.zeros((), dtype=jnp.int32),
             key_data,
             successful,
             self.mobility.route_id,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
     @checked
@@ -269,11 +287,9 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         *,
         background_velocity: ArrayLike | None = None,
     ) -> HydrodynamicBrownianStepResult:
-        if (
-            state.prepared_id != self.prepared_id
-            or state.mobility_route_id != self.mobility.route_id
-        ):
+        if state.mobility_route_id != self.mobility.route_id:
             raise ValueError("Hydrodynamic Brownian state belongs to another route.")
+        owned = state.prepared_identity.equals(self.prepared_identity)
         unwrapped = self._unwrapped(
             state.positions, state.image_counts, state.cell_vectors
         )
@@ -307,7 +323,13 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         proposed_active = fib.position + background_increment
         proposed_unwrapped = unwrapped.at[self.mobility.active_slots].set(proposed_active)
         positions, images = self._wrap(proposed_unwrapped, state.cell_vectors)
-        neighborhood, evaluation = self._evaluate(positions, images, state.cell_vectors)
+        neighborhoods = self.dynamics.refresh_neighborhoods(
+            state.neighborhoods,
+            positions,
+            cell_vectors=state.cell_vectors,
+            image_counts=images,
+        )
+        evaluation = self._evaluate(positions, images, state.cell_vectors, neighborhoods)
         displacement = proposed_active - active_positions
         displacement_norm = jnp.sqrt(jnp.sum(displacement * displacement))
         displacement_valid = (
@@ -317,9 +339,11 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         )
         successful = (
             state.successful
+            & owned
             & mobility_configuration_valid
             & fib.accepted
             & evaluation.successful
+            & jnp.all(neighborhoods.successful)
             & displacement_valid
             & jnp.all(jnp.isfinite(background))
             & jnp.all(jnp.isfinite(positions))
@@ -328,14 +352,14 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             positions,
             images,
             state.cell_vectors,
-            neighborhood,
+            neighborhoods,
             evaluation.forces,
             evaluation.energy,
             state.step_index + 1,
             state.key_data,
             successful,
             self.mobility.route_id,
-            self.prepared_id,
+            self.prepared_identity,
         )
         accepted = jax.tree.map(
             lambda new, old: jnp.where(successful, new, old), candidate, state
@@ -348,7 +372,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             displacement_norm,
             mobility_configuration_valid,
             successful,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
 

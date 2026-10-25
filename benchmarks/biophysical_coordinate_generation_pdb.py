@@ -15,12 +15,11 @@ python -m benchmarks.biophysical_coordinate_generation_pdb \
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -34,6 +33,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import ValuePort
 from phydrax.applications.protein_folding._construct import (
     ProteinAtomKey,
     ProteinConstruct,
@@ -48,13 +48,44 @@ from phydrax.applications.protein_folding.generation import (
     prepare_coordinate_sampler,
     prepare_coordinate_training_data,
     prepare_protein_coordinate_support,
-    qualify_coordinate_proposals,
+    sample_coordinate_proposals,
 )
 from phydrax.artifacts import ScientificArtifactEnvelope
-from phydrax.atomistic import AtomisticBatch, AtomisticScaleContract
+from phydrax.atomistic import (
+    AtomisticBatch,
+    AtomisticConditionField,
+    AtomisticConditioning,
+    AtomisticConditioningSpec,
+    AtomisticScaleContract,
+)
+from phydrax.atomistic._generation import (
+    AtomisticMemoryGenerationSink,
+    proposal_address,
+    proposal_keys,
+)
 from phydrax.atomistic.interchange import read_pdb_atom_records, select_pdb_model
 from phydrax.qualification import ReferenceArtifactManifest
-from phydrax.units import ANGSTROM, ELECTRONVOLT
+from phydrax.units import ANGSTROM, DIMENSIONLESS, ELECTRONVOLT
+
+
+_CAMPAIGN = "wwPDB-1L2Y-same-construct-reconstruction-benchmark"
+_CONDITION = "nmr_temperature_over_282_kelvin"
+_CONDITIONING = AtomisticConditioningSpec(
+    (
+        AtomisticConditionField(
+            _CONDITION,
+            ValuePort(
+                "benchmark.1L2Y.nmr-temperature-ratio",
+                event_shape=(),
+                component_ids=("ratio",),
+                dimensions=(DIMENSIONLESS,),
+                representation="acquisition-temperature-divided-by-282-kelvin",
+                normalization_id="identity",
+            ),
+            minimum=0.0,
+        ),
+    )
+)
 
 
 _PINNED_SHA256 = "5d1bbb545a312dfff1ae1e64b6d8addecb2f561ddc4011aeb5bee9d1dfcd4438"
@@ -254,8 +285,8 @@ def prepare_pdb_reconstruction_data(pdb_path: Any, source_path: Any) -> Any:
     return prepare_coordinate_training_data(
         support,
         np.stack(mapped),
-        np.ones((len(model_ids), 1)),
-        condition_names=("NMR_temperature_kelvin_over_282",),
+        {_CONDITION: np.ones(len(model_ids))},
+        conditioning=_CONDITIONING,
         record_ids=tuple("1L2Y:model:" + i for i in model_ids),
         source_manifest_ids=(rights.manifest_id,) * len(model_ids),
         split_group_ids=groups,
@@ -269,7 +300,7 @@ def prepare_pdb_reconstruction_data(pdb_path: Any, source_path: Any) -> Any:
     )
 
 
-def run(pdb_path: Any, source_path: Any, *, steps: Any=200, repeats: Any=3) -> Any:
+def run(pdb_path: Any, source_path: Any, *, steps: Any = 200, repeats: Any = 3) -> Any:
     data = prepare_pdb_reconstruction_data(pdb_path, source_path)
     fit, fit_seconds = measure_synchronized(
         lambda: fit_coordinate_model(
@@ -283,19 +314,42 @@ def run(pdb_path: Any, source_path: Any, *, steps: Any=200, repeats: Any=3) -> A
         )
     )
     sampler = prepare_coordinate_sampler(fit)
-    conditions = jnp.ones((8, 1))
+    values = jnp.ones(8)
+    conditioning = AtomisticConditioning(
+        fit.conditioning,
+        {_CONDITION: values},
+        case_count=8,
+        atom_capacity=data.support.template.atom_capacity,
+    )
+    ordinals = jnp.arange(8, dtype=jnp.int64)
+    # The stream's own ordinal-addressed lane keys (same proposals as below).
+    keys = proposal_keys(
+        jr.key(32),
+        proposal_address(
+            _CAMPAIGN, sampler.support.support_id, sampler.sampler_id, role="proposal"
+        ),
+        ordinals,
+    )
     compiled, compilation = measure_lower_and_compile(
-        lambda: eqx.filter_jit(sampler).lower(jr.key(32), conditions),
+        lambda: eqx.filter_jit(sampler.propose).lower(keys, ordinals, conditioning),
         lambda lowered: lowered.compile(),
     )
-    result, timing = measure_repeated(
-        lambda: compiled(jr.key(32), conditions), warmup=1, repeats=repeats
+    _, timing = measure_repeated(
+        lambda: compiled(keys, ordinals, conditioning), warmup=1, repeats=repeats
     )
-    raw, valid, status = result
-    canonical, gauge_valid = data.support.canonicalize(raw)
-    qualification = qualify_coordinate_proposals(
-        data.support, canonical, solver_valid=valid & gauge_valid
+    batch, stream_seconds = measure_synchronized(
+        lambda: sample_coordinate_proposals(
+            fit,
+            jr.key(32),
+            {_CONDITION: values},
+            campaign_id=_CAMPAIGN,
+            start_ordinal=0,
+            lanes_per_member=8,
+            sink=AtomisticMemoryGenerationSink("benchmark-memory"),
+        )
     )
+    canonical = batch.canonical_positions
+    qualification = batch.qualification
     reference = data.canonical_positions[jnp.array(data.validation_indices)]
     pair_mse = jnp.mean((canonical[:, None] - reference[None]) ** 2, axis=(-1, -2))
     return {
@@ -314,6 +368,7 @@ def run(pdb_path: Any, source_path: Any, *, steps: Any=200, repeats: Any=3) -> A
         "sampling_lowering_seconds": compilation.lowering_seconds,
         "sampling_compilation_seconds": compilation.compilation_seconds,
         "sampling_steady_seconds": timing.to_dict(),
+        "stream_publication_seconds_including_host_materialization": stream_seconds,
         "model_logical_array_bytes": logical_array_bytes(fit.model),
         "initial_training_loss": fit.initial_training_loss,
         "final_training_loss": fit.final_training_loss,
@@ -321,8 +376,9 @@ def run(pdb_path: Any, source_path: Any, *, steps: Any=200, repeats: Any=3) -> A
         "nearest_correlated_holdout_coordinate_rmse_angstrom": np.sqrt(
             np.asarray(jnp.min(pair_mse, axis=1))
         ).tolist(),
-        "solver_status": np.asarray(status).tolist(),
-        "all_samples_retained": len(raw),
+        "solver_status": np.asarray(batch.solver_status).tolist(),
+        "proposal_status_bits": np.asarray(batch.proposal_status).tolist(),
+        "all_samples_retained": len(batch.sample_ids),
         "geometry_accepted_fraction": float(jnp.mean(qualification.accepted)),
         "confidence": "uncalibrated",
         "Boltzmann_weights": "not available",

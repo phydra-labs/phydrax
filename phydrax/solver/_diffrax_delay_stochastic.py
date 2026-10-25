@@ -853,6 +853,9 @@ def _native_stochastic_delay_solution(
     )
 
 
+# Retain the certified fixed-step path and its bounded history/event bookkeeping
+# together: stochastic increments, discontinuity order and replay boundaries are
+# part of the numerical law, not interchangeable orchestration steps.
 def _solve_diffrax_delay_stochastic(
     problem: DelayDifferentialProblem,
     /,
@@ -1197,8 +1200,6 @@ def _solve_diffrax_delay_stochastic(
             "wiener_term_slices": problem.wiener_term_slices,
             "noise_structures": tuple(term.structure for term in problem.wiener_terms),
             "basis_ids": tuple(term.basis_id for term in problem.wiener_terms),
-            "realization_id": realization.realization_id,
-            "coupling_id": realization.coupling_id,
             "levy_area": realization.levy_area,
             "continuous_extension": extension,
             "history_mode": history_mode,

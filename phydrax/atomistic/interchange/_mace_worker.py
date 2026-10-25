@@ -12,8 +12,13 @@ runs this file as ``__main__`` with the arguments::
 
     worker.py <site-packages> request.json result.zip
 
-torch, e3nn, mace-torch and ASE come from that ``site-packages`` after their
-installed releases and the mace-torch/e3nn RECORD file digests are verified. A
+torch, e3nn, mace-torch (an admitted 0.3.15 or 0.3.16 release), the optional
+LES/cuEquivariance/OpenEquivariance releases and ASE come from that
+``site-packages`` after their installed releases and the RECORD file digests
+of every numerics-defining distribution are verified. Declarations are
+release-specific; a cuEquivariance/OpenEquivariance source is first expressed
+in the exact e3nn layout by the release's own ``mace.cli`` converter and the
+conversion's reproduction of the optimized source is proven and recorded. A
 subprocess is not a security sandbox: full-object torch deserialization runs
 only when the host has admitted the exact source digest under an explicit
 trusted-source capability, and the source bytes are re-hashed here before any
@@ -71,36 +76,105 @@ import numpy as np
 _REFUSED_EXIT = 3
 _FIBONACCI_DIRECTIONS = 64
 _REPRODUCTION_ULPS = 64
+# A cuEquivariance/OpenEquivariance source and its e3nn-layout conversion run
+# different fused kernels (different summation orders); their outputs must
+# agree within this multiple of the source epsilon.
+_LAYOUT_REPRODUCTION_ULPS = 4096
 
-# Exact provider classes admitted for standard MACE conversion. Generated
+# Source releases whose provider code was read to define this contract; each
+# has its own declaration fields and module types.
+_ADMITTED_RELEASES = ("0.3.15", "0.3.16")
+_ADMITTED_E3NN = "0.4.4"
+_ADMITTED_LES = ("0.2.0",)
+# Exact provider classes admitted for MACE conversion. Generated
 # e3nn/opt_einsum code modules are admitted only under their generated names.
 _ADMITTED_MODEL_CLASSES = {
     ("mace.modules.models", "MACE"): "MACE",
     ("mace.modules.models", "ScaleShiftMACE"): "ScaleShiftMACE",
+    ("mace.modules.extensions", "MACELES"): "MACELES",
 }
-_ADMITTED_INTERACTIONS = (
+# Provider property/field models: their outputs are not one scalar energy of a
+# MACE energy wrapper, so no native energy route exists for them.
+_PROPERTY_MODEL_CLASSES = frozenset(
+    {
+        ("mace.modules.models", "AtomicDipolesMACE"),
+        ("mace.modules.models", "AtomicDielectricMACE"),
+        ("mace.modules.models", "EnergyDipolesMACE"),
+        ("mace.modules.extensions", "PolarMACE"),
+    }
+)
+_STANDARD_INTERACTIONS = (
     "RealAgnosticInteractionBlock",
     "RealAgnosticResidualInteractionBlock",
     "RealAgnosticDensityInteractionBlock",
     "RealAgnosticDensityResidualInteractionBlock",
 )
-_ADMITTED_MODULE_TYPES = frozenset(
+_ATTENTION_INTERACTION = "RealAgnosticAttResidualInteractionBlock"
+_NONLINEAR_INTERACTION = "RealAgnosticResidualNonLinearInteractionBlock"
+_ADMITTED_INTERACTIONS = (
+    *_STANDARD_INTERACTIONS,
+    _ATTENTION_INTERACTION,
+    _NONLINEAR_INTERACTION,
+)
+_READOUT_CLASSES = ("NonLinearReadoutBlock", "NonLinearBiasReadoutBlock")
+_RADIAL_TYPES = {
+    ("mace.modules.radial", "BesselBasis"): "bessel",
+    ("mace.modules.radial", "GaussianBasis"): "gaussian",
+    ("mace.modules.radial", "ChebychevBasis"): "chebyshev",
+}
+_DISTANCE_TRANSFORMS = {
+    ("mace.modules.radial", "AgnesiTransform"): "Agnesi",
+    ("mace.modules.radial", "SoftTransform"): "Soft",
+}
+# Fixed widths of the source attention block (``64x0e`` projections and a
+# ``3 * [256]`` edge network) and the nonlinear block's density network.
+_ATTENTION_DOWN = 64
+_ATTENTION_HIDDEN = (256, 256, 256)
+_NONLINEAR_DENSITY = 64
+# Joint-embedding features the provider's own data pipeline supplies
+# (``AtomicData.total_charge``/``total_spin``); any other feature has no
+# provider input and cannot be reproduced or evaluated.
+_EMBEDDING_FEATURES = ("total_charge", "total_spin")
+_EMBEDDING_SPEC_KEYS = frozenset(
+    {"type", "per", "num_classes", "emb_dim", "offset", "use_bias", "key"}
+)
+# ``Les._parse_arguments`` attributes, then the two MACELES BEC attributes.
+_LES_ATTRIBUTES = (
+    "n_layers",
+    "n_hidden",
+    "add_linear_nn",
+    "output_scaling_factor",
+    "sigma",
+    "dl",
+    "remove_self_interaction",
+    "is_periodic",
+    "N_max",
+    "remove_mean",
+    "epsilon_factor",
+    "use_atomwise",
+    "use_fixed_atomic_charges",
+    "fixed_atomic_charges_scaling_factor",
+    "use_atomic_alpha",
+    "use_epsilon_r_scaling",
+)
+_COMMON_MODULE_TYPES = frozenset(
     {
-        ("mace.modules.models", "MACE"),
-        ("mace.modules.models", "ScaleShiftMACE"),
+        *_ADMITTED_MODEL_CLASSES,
         ("mace.modules.blocks", "LinearNodeEmbeddingBlock"),
         ("mace.modules.blocks", "RadialEmbeddingBlock"),
         ("mace.modules.blocks", "AtomicEnergiesBlock"),
         ("mace.modules.blocks", "EquivariantProductBasisBlock"),
         ("mace.modules.blocks", "LinearReadoutBlock"),
-        ("mace.modules.blocks", "NonLinearReadoutBlock"),
+        *(("mace.modules.blocks", name) for name in _READOUT_CLASSES),
         ("mace.modules.blocks", "ScaleShiftBlock"),
         *(("mace.modules.blocks", name) for name in _ADMITTED_INTERACTIONS),
         ("mace.modules.irreps_tools", "reshape_irreps"),
-        ("mace.modules.radial", "BesselBasis"),
+        *_RADIAL_TYPES,
+        *_DISTANCE_TRANSFORMS,
         ("mace.modules.radial", "PolynomialCutoff"),
-        ("mace.modules.radial", "AgnesiTransform"),
         ("mace.modules.radial", "ZBLBasis"),
+        ("mace.modules.radial", "RadialMLP"),
+        ("mace.modules.embeddings", "GenericJointEmbedding"),
         ("mace.modules.symmetric_contraction", "SymmetricContraction"),
         ("mace.modules.symmetric_contraction", "Contraction"),
         ("e3nn.math._normalize_activation", "normalize2mom"),
@@ -111,10 +185,44 @@ _ADMITTED_MODULE_TYPES = frozenset(
         ("e3nn.o3._spherical_harmonics", "SphericalHarmonics"),
         ("e3nn.o3._tensor_product._sub", "FullyConnectedTensorProduct"),
         ("e3nn.o3._tensor_product._tensor_product", "TensorProduct"),
+        ("torch.nn.modules.activation", "SiLU"),
+        ("torch.nn.modules.container", "ModuleDict"),
         ("torch.nn.modules.container", "ModuleList"),
         ("torch.nn.modules.container", "ParameterList"),
+        ("torch.nn.modules.container", "Sequential"),
+        ("torch.nn.modules.linear", "Linear"),
+        ("torch.nn.modules.normalization", "LayerNorm"),
+        ("torch.nn.modules.sparse", "Embedding"),
+        # MACELES latent Ewald modules of the pinned LES release. MACELES feeds
+        # them latent charges only; the atomwise head, fixed charges and atomic
+        # polarizabilities hold no state and never act.
+        ("les.les", "Les"),
+        ("les.les", "_DummyAtomwise"),
+        ("les.module.atomwise", "Atomwise"),
+        ("les.module.ewald", "Ewald"),
+        ("les.module.ewald_vectorized", "Ewald_vectorized"),
+        ("les.module.bec", "BEC"),
+        ("les.module.fixedcharges", "FixedCharges"),
+        ("les.module.atomicalpha", "AtomicAlpha"),
     }
 )
+# The residual-nonlinear gate: e3nn's ``nn.Gate`` in 0.3.15, mace-torch's
+# pure-torch ``GatedEquivariantBlock`` in 0.3.16.
+_GATE_TYPES = {
+    "0.3.15": ("e3nn.nn._gate", "Gate"),
+    "0.3.16": ("mace.modules.gate", "GatedEquivariantBlock"),
+}
+_RELEASE_MODULE_TYPES = {
+    "0.3.15": frozenset(
+        {
+            _GATE_TYPES["0.3.15"],
+            ("e3nn.nn._gate", "_Sortcut"),
+            ("e3nn.nn._extract", "Extract"),
+            ("e3nn.o3._tensor_product._sub", "ElementwiseTensorProduct"),
+        }
+    ),
+    "0.3.16": frozenset({_GATE_TYPES["0.3.16"]}),
+}
 _GENERATED_MODULE_TYPES = frozenset(
     {
         ("torch.fx.graph_module", "GraphModule.__new__.<locals>.GraphModuleImpl"),
@@ -126,6 +234,7 @@ _GENERATED_MODULE_NAMES = frozenset(
         "_compiled_main",
         "_compiled_main_left_right",
         "_compiled_main_right",
+        "_compiled_forward",
         "graph_opt_main",
         "contractions_weighting",
         "contractions_features",
@@ -133,11 +242,17 @@ _GENERATED_MODULE_NAMES = frozenset(
 )
 _VERIFIED_DISTRIBUTIONS = ("mace-torch", "e3nn")
 # cuequivariance computes reduced generalized-CG U bases; mace-torch builds
-# them only when cuequivariance-torch is importable as well.
+# them only when cuequivariance-torch is importable as well. Both, and
+# openequivariance, also define the optimized source layouts the pinned
+# converters express in e3nn layout.
 _REDUCED_CG_DISTRIBUTIONS = ("cuequivariance", "cuequivariance-torch")
+_OPENEQUIVARIANCE = "openequivariance"
+# The MACELES latent Ewald package.
+_LES = "les"
+_OPTIONAL_DISTRIBUTIONS = (*_REDUCED_CG_DISTRIBUTIONS, _OPENEQUIVARIANCE, _LES)
 # Distributions whose installed files define provider numerics; every file of
 # each is verified against its RECORD digest.
-_GENERATING_DISTRIBUTIONS = (*_VERIFIED_DISTRIBUTIONS, *_REDUCED_CG_DISTRIBUTIONS)
+_GENERATING_DISTRIBUTIONS = (*_VERIFIED_DISTRIBUTIONS, *_OPTIONAL_DISTRIBUTIONS)
 _ZBL_TYPE = ("mace.modules.radial", "ZBLBasis")
 _CUTOFF_TYPE = ("mace.modules.radial", "PolynomialCutoff")
 _CONTRACTION_TYPE = ("mace.modules.symmetric_contraction", "Contraction")
@@ -322,14 +437,27 @@ def _provider_identity(
     for name in _VERIFIED_DISTRIBUTIONS:
         if not any(_normalized_name(key) == name for key in required):
             raise _refuse(f"The provider request must declare the {name} release.")
-    # cuequivariance changes which U basis mace-torch constructs; an installed
-    # but undeclared release would make rebuilt bases depend on the host.
+    pinned = {
+        "mace-torch": _ADMITTED_RELEASES,
+        "e3nn": (_ADMITTED_E3NN,),
+        _LES: _ADMITTED_LES,
+    }
+    for name, record in distributions.items():
+        admitted = pinned.get(_normalized_name(name))
+        if admitted is not None and record["version"] not in admitted:
+            raise _refuse(
+                f"Provider {name} {record['version']} is not an admitted source "
+                f"release {admitted}."
+            )
+    # cuequivariance changes which U basis mace-torch constructs, and the
+    # optimized-layout and LES packages define what a source executes; an
+    # installed but undeclared release would make results depend on the host.
     installed_names = {
         _normalized_name(item.metadata["Name"])
         for item in metadata.distributions(path=[site_packages])
     }
     declared_names = {_normalized_name(key) for key in required}
-    for name in _REDUCED_CG_DISTRIBUTIONS:
+    for name in _OPTIONAL_DISTRIBUTIONS:
         if name in installed_names and name not in declared_names:
             raise _refuse(f"The provider has {name} installed; declare its release.")
     return {
@@ -337,6 +465,17 @@ def _provider_identity(
         "python": ".".join(str(part) for part in sys.version_info[:3]),
         "site_packages": site_packages,
     }
+
+
+def _installed_release() -> str:
+    """The verified mace-torch release this provider executes."""
+
+    from mace import __version__
+
+    release = str(__version__)
+    if release not in _ADMITTED_RELEASES:
+        raise _refuse(f"mace-torch {release} is not an admitted source release.")
+    return release
 
 
 def _array(value: Any, /) -> np.ndarray:
@@ -960,6 +1099,74 @@ def _indices(state: Mapping[str, Any], prefix: str, /) -> set[int]:
     }
 
 
+def _layer_irreps(declaration: Mapping[str, Any], /) -> dict[str, Any]:
+    """Irreps of every declared provider layer, from the declaration alone.
+
+    Mirrors the admitted MACE constructor: layer inputs, ``linear_up`` outputs
+    (the edge irreps, uniform scalars in the first layer when
+    ``use_edge_irreps_first``), coupling targets, product outputs (scalars in
+    the last layer unless ``keep_last_layer_irreps``) and the edge harmonics
+    under the declared parity convention.
+    """
+
+    from e3nn import o3
+
+    count = declaration["num_interactions"]
+    hidden = o3.Irreps(declaration["hidden_irreps"])
+    channels = hidden.count(o3.Irrep(0, 1))
+    degree = declaration["max_ell"]
+    harmonics = o3.Irreps.spherical_harmonics(
+        degree, p=1 if declaration["use_so3"] else -1
+    )
+    coupled = (
+        o3.Irreps("+".join(f"1x{l}e+1x{l}o" for l in range(degree + 1)))
+        if hidden.count(o3.Irrep(0, -1)) > 0
+        else harmonics
+    )
+    node = o3.Irreps([(channels, (0, 1))])
+    edge = (
+        None
+        if declaration["edge_irreps"] is None
+        else o3.Irreps(declaration["edge_irreps"])
+    )
+    first = node
+    if declaration["use_edge_irreps_first"] and edge is not None:
+        first = o3.Irreps([(edge.count(o3.Irrep(0, 1)), (0, 1))])
+    keep = bool(declaration.get("keep_last_layer_irreps", False)) and count > 1
+    scalars = o3.Irreps(str(hidden[0]))
+    return {
+        "hidden": hidden,
+        "channels": channels,
+        "harmonics": harmonics,
+        "node": node,
+        "attributes": o3.Irreps([(len(declaration["atomic_numbers"]), (0, 1))]),
+        "inputs": [node if index == 0 else hidden for index in range(count)],
+        "edges": [
+            first if index == 0 else (hidden if edge is None else edge)
+            for index in range(count)
+        ],
+        "targets": [
+            _channelwise(harmonics if index == 0 else coupled, channels)
+            for index in range(count)
+        ],
+        "outputs": [
+            scalars if index == count - 1 and not keep else hidden
+            for index in range(count)
+        ],
+    }
+
+
+def _gate_irreps(target: Any, /) -> Any:
+    """Input irreps of the source gate over ``target``: sorted, simplified."""
+
+    from e3nn import o3
+
+    scalars = o3.Irreps([(mul, ir) for mul, ir in target if ir.l == 0])
+    gated = o3.Irreps([(mul, ir) for mul, ir in target if ir.l > 0])
+    gates = o3.Irreps([(mul, (0, 1)) for mul, _ in gated])
+    return (scalars + gates + gated).sort()[0].simplify()
+
+
 def _admit_declared_dimensions(
     declaration: Mapping[str, Any], state: Mapping[str, Any], /
 ) -> None:
@@ -967,25 +1174,27 @@ def _admit_declared_dimensions(
 
     The provider constructor allocates the declared model, including its
     generalized-CG U bases, before its layout can be compared with the state.
-    Elements, interactions, Bessel and radial widths, spherical-harmonic
-    degree, hidden irreps and channels, correlation orders, heads and readout
-    MLP widths are each read off admitted tensors here (whose sizes are within
-    the source limits), so construction realizes exactly the admitted
-    dimensions; the exact name/shape/dtype comparison follows construction.
+    Elements, interactions, the radial basis and edge networks, edge irreps,
+    spherical-harmonic degree, hidden irreps and channels, correlation orders,
+    heads, readout MLP widths and joint-embedding tables are each read off
+    admitted tensors here (whose sizes are within the source limits), so
+    construction realizes exactly the admitted dimensions; the exact
+    name/shape/dtype comparison follows construction.
     """
 
     from e3nn import o3
 
     numbers = declaration["atomic_numbers"]
     count = declaration["num_interactions"]
-    widths = [declaration["num_bessel"], *declaration["radial_MLP"]]
     heads = declaration["heads"]
+    basis = declaration["num_bessel"]
     harmonics = (declaration["max_ell"] + 1) ** 2
     try:
-        hidden = o3.Irreps(declaration["hidden_irreps"])
+        irreps = _layer_irreps(declaration)
         mlp = None if count == 1 else o3.Irreps(declaration["MLP_irreps"])
     except (AssertionError, TypeError, ValueError) as error:
         raise _refuse("The declared irreps are not e3nn irreps.") from error
+    channels = irreps["channels"]
 
     def require(condition: bool, field: str, /) -> None:
         if not condition:
@@ -1003,53 +1212,105 @@ def _admit_declared_dimensions(
         and _indices(state, "products.") == set(range(count)),
         "num_interactions",
     )
+    radial = {
+        "bessel": ("radial_embedding.bessel_fn.bessel_weights", (basis,)),
+        "gaussian": ("radial_embedding.bessel_fn.gaussian_weights", (basis,)),
+        "chebyshev": ("radial_embedding.bessel_fn.n", (1, basis)),
+    }.get(declaration["radial_type"])
     require(
-        _state_shape(state, "radial_embedding.bessel_fn.bessel_weights") == (widths[0],),
-        "num_bessel",
+        radial is not None and _state_shape(state, radial[0]) == radial[1],
+        "num_bessel or radial_type",
     )
+    require(
+        _state_shape(state, "node_embedding.linear.weight") == (len(numbers) * channels,),
+        "hidden_irreps",
+    )
+    last = 0 if declaration["use_last_readout_only"] and count > 1 else count - 1
+    final = f"readouts.{last}.linear" if count == 1 else f"readouts.{last}.linear_2"
     require(
         _state_shape(state, "atomic_energies_fn.atomic_energies")
         == np.shape(declaration["atomic_energies"])
-        and _state_shape(state, "readouts.0.linear.output_mask") == (len(heads),),
+        and _state_shape(state, f"{final}.output_mask") == (len(heads),),
         "heads",
     )
     if mlp is not None:
         require(
-            _state_shape(state, f"readouts.{count - 1}.linear_1.output_mask")
+            _state_shape(state, f"readouts.{last}.linear_1.output_mask")
             == (len(heads) * mlp.dim,),
             "MLP_irreps",
         )
     for index in range(count):
-        radial = f"interactions.{index}.conv_tp_weights.layer"
+        prefix = f"interactions.{index}."
+        kind = declaration["interaction_classes"][index]
         require(
-            all(
-                _state_shape(state, f"{radial}{layer}.weight")[0] == width
-                for layer, width in enumerate(widths)
-            )
-            and f"{radial}{len(widths)}.weight" not in state,
-            "radial_MLP",
+            _state_shape(state, prefix + "linear_up.weight")
+            == (_linear_numel(irreps["inputs"][index], irreps["edges"][index]),),
+            "edge_irreps",
         )
-        # The last product keeps only the first (scalar) hidden irrep.
-        target = hidden[:1] if index == count - 1 else hidden
+        if kind == _NONLINEAR_INTERACTION:
+            widths = [basis + 2 * channels, *declaration["radial_MLP"]]
+            network = f"{prefix}conv_tp_weights.net."
+            require(
+                all(
+                    _state_shape(state, f"{network}{3 * layer}.weight")[1:] == (width,)
+                    for layer, width in enumerate(widths)
+                )
+                and f"{network}{3 * len(widths)}.weight" not in state,
+                "radial_MLP",
+            )
+        else:
+            widths = (
+                [basis + 2 * _ATTENTION_DOWN, *_ATTENTION_HIDDEN]
+                if kind == _ATTENTION_INTERACTION
+                else [basis, *declaration["radial_MLP"]]
+            )
+            network = f"{prefix}conv_tp_weights.layer"
+            require(
+                all(
+                    _state_shape(state, f"{network}{layer}.weight")[0] == width
+                    for layer, width in enumerate(widths)
+                )
+                and f"{network}{len(widths)}.weight" not in state,
+                "radial_MLP",
+            )
+        target = irreps["outputs"][index]
         contractions = f"products.{index}.symmetric_contractions.contractions."
         require(_indices(state, contractions) == set(range(len(target))), "hidden_irreps")
         for order, (multiplicity, irrep) in enumerate(target):
-            prefix = f"{contractions}{order}."
+            base = f"{contractions}{order}."
             output = () if irrep.l == 0 else (2 * irrep.l + 1,)
             require(
-                _state_shape(state, prefix + "weights_max")[-1:] == (multiplicity,),
+                _state_shape(state, base + "weights_max")[-1:] == (multiplicity,),
                 "hidden_irreps",
             )
             degree = declaration["correlation"][index]
             require(
                 all(
-                    _state_shape(state, f"{prefix}U_matrix_{nu}")[:-1]
+                    _state_shape(state, f"{base}U_matrix_{nu}")[:-1]
                     == output + (harmonics,) * nu
                     for nu in range(1, degree + 1)
                 )
-                and f"{prefix}U_matrix_{degree + 1}" not in state,
+                and f"{base}U_matrix_{degree + 1}" not in state,
                 "max_ell, hidden_irreps or correlation",
             )
+    specs = declaration["embedding_specs"] or {}
+    for name, spec in specs.items():
+        require(
+            _state_shape(state, f"joint_embedding.embedders.{name}.weight")
+            == (spec["num_classes"], spec["emb_dim"]),
+            "embedding_specs",
+        )
+    if specs:
+        require(
+            _state_shape(state, "joint_embedding.project.0.weight")
+            == (channels, sum(spec["emb_dim"] for spec in specs.values())),
+            "embedding_specs",
+        )
+    if declaration["use_embedding_readout"]:
+        require(
+            _state_shape(state, "embedding_readout.linear.output_mask") == (len(heads),),
+            "use_embedding_readout",
+        )
 
 
 def _load_source(
@@ -1143,21 +1404,49 @@ def _type_key(value: Any, /) -> tuple[str, str]:
     return kind.__module__, kind.__qualname__
 
 
-def _admit_module_tree(model: Any, /) -> str:
-    model_class = _ADMITTED_MODEL_CLASSES.get(_type_key(model))
+def _admitted_root(model: Any, /) -> str:
+    """The admitted energy-wrapper class of a loaded source, or an explicit refusal."""
+
+    import torch
+
+    if isinstance(model, torch.jit.ScriptModule):
+        raise _refuse(
+            "TorchScript sources are compiled executables without a recoverable e3nn "
+            "parameter map; admit the eager module (or its state dict) instead."
+        )
+    key = _type_key(model)
+    if key[1] == "OptimizedModule":
+        raise _refuse(
+            "torch.compile wrappers are compiled executables; admit the eager module "
+            "(or its state dict) instead."
+        )
+    if key in _PROPERTY_MODEL_CLASSES:
+        raise _refuse(
+            f"Model class {key} predicts dipoles, polarizabilities or field "
+            "responses; it is not a MACE energy-wrapper route and has no native "
+            "conversion."
+        )
+    model_class = _ADMITTED_MODEL_CLASSES.get(key)
     if model_class is None:
-        raise _refuse(f"Model class {_type_key(model)} is not an admitted standard MACE.")
+        raise _refuse(f"Model class {key} is not an admitted MACE energy model.")
+    return model_class
+
+
+def _admit_module_tree(model: Any, release: str, /) -> str:
+    model_class = _admitted_root(model)
+    admitted = _COMMON_MODULE_TYPES | _RELEASE_MODULE_TYPES[release]
     for name, module in model.named_modules():
         key = _type_key(module)
-        if key in _ADMITTED_MODULE_TYPES:
+        if key in admitted:
             continue
         generated = any(part in _GENERATED_MODULE_NAMES for part in name.split("."))
         if key in _GENERATED_MODULE_TYPES and generated:
             continue
         raise _refuse(f"Module {name or '<root>'} of type {key} is not admitted.")
-    for refused in ("joint_embedding", "embedding_readout", "lora"):
-        if hasattr(model, refused):
-            raise _refuse(f"Model extension {refused!r} is outside standard MACE.")
+    if hasattr(model, "lora"):
+        raise _refuse("Model extension 'lora' is outside the admitted MACE families.")
+    if hasattr(model, "embedding_readout") and not hasattr(model, "joint_embedding"):
+        raise _refuse("An embedding readout without its joint embedding is inconsistent.")
     return model_class
 
 
@@ -1168,6 +1457,8 @@ def _activation_name(function: Any, /) -> str:
         return "silu"
     if function is torch.tanh:
         return "tanh"
+    if function is torch.nn.functional.sigmoid or function is torch.sigmoid:
+        return "sigmoid"
     raise _refuse("Provider activation is not an admitted source function.")
 
 
@@ -1199,12 +1490,18 @@ def _fully_connected(module: Any, /) -> dict[str, Any]:
     return {"hs": [int(value) for value in module.hs], "layers": layers}
 
 
-def _linear(module: Any, /) -> dict[str, Any]:
+def _linear(module: Any, /, *, biases: bool = False) -> dict[str, Any]:
+    """One e3nn ``Linear``: weight instructions and (``biases``) its bias paths."""
+
     if _type_key(module) != ("e3nn.o3._linear", "Linear"):
         raise _refuse("Provider linear map is not an e3nn Linear.")
-    if module.bias.numel() != 0:
-        raise _refuse("Standard MACE linear maps carry no bias.")
-    return {
+    weights = [item for item in module.instructions if item.i_in != -1]
+    bias_paths = [item for item in module.instructions if item.i_in == -1]
+    if not biases and (module.bias.numel() != 0 or bias_paths):
+        raise _refuse(
+            "This provider linear map carries no bias in the admitted families."
+        )
+    record: dict[str, Any] = {
         "irreps_in": str(module.irreps_in),
         "irreps_out": str(module.irreps_out),
         "instructions": [
@@ -1214,9 +1511,16 @@ def _linear(module: Any, /) -> dict[str, Any]:
                 "path_shape": [int(value) for value in instruction.path_shape],
                 "path_weight": float(instruction.path_weight),
             }
-            for instruction in module.instructions
+            for instruction in weights
         ],
     }
+    if biases:
+        record["biases"] = [
+            {"i_out": int(item.i_out), "path_weight": float(item.path_weight)}
+            for item in bias_paths
+        ]
+        record["bias_numel"] = int(module.bias.numel())
+    return record
 
 
 def _tensor_product(module: Any, /) -> dict[str, Any]:
@@ -1241,14 +1545,135 @@ def _tensor_product(module: Any, /) -> dict[str, Any]:
     }
 
 
+def _layer_norm_mlp(module: Any, /) -> dict[str, Any]:
+    """A source ``RadialMLP``: ``Linear -> LayerNorm -> SiLU`` stacks, then ``Linear``."""
+
+    import torch
+
+    if _type_key(module) != ("mace.modules.radial", "RadialMLP"):
+        raise _refuse("A nonlinear-block edge network is not the source RadialMLP.")
+    widths = [int(value) for value in module.hs]
+    layers = list(module.net)
+    if len(widths) < 2 or len(layers) != 3 * (len(widths) - 1) - 2:
+        raise _refuse("The source RadialMLP layer sequence is not admitted.")
+    epsilons = []
+    for index, (fan_in, fan_out) in enumerate(zip(widths[:-1], widths[1:])):
+        linear = layers[3 * index]
+        if (
+            not isinstance(linear, torch.nn.Linear)
+            or type(linear) is not torch.nn.Linear
+            or (linear.in_features, linear.out_features) != (fan_in, fan_out)
+            or linear.bias is None
+        ):
+            raise _refuse("A RadialMLP layer is not the biased torch Linear.")
+        if index == len(widths) - 2:
+            continue
+        norm, activation = layers[3 * index + 1], layers[3 * index + 2]
+        if (
+            type(norm) is not torch.nn.LayerNorm
+            or tuple(norm.normalized_shape) != (fan_out,)
+            or not norm.elementwise_affine
+            or norm.bias is None
+            or type(activation) is not torch.nn.SiLU
+        ):
+            raise _refuse("A RadialMLP hidden layer is not LayerNorm then plain SiLU.")
+        epsilons.append(float(norm.eps))
+    return {"hs": widths, "layer_norm_epsilons": epsilons}
+
+
 def _flag(module: Any, name: str, default: bool, /) -> bool:
     # Provider forwards read these attributes through ``hasattr``; an absent
     # attribute selects the forward's documented default, not a guess.
     return bool(getattr(module, name)) if hasattr(module, name) else default
 
 
-def _interaction_record(interaction: Any, /) -> dict[str, Any]:
+def _require_e3nn_layout(module: Any, name: str, /) -> None:
+    """Refuse optimized-layout residue after the source was expressed in e3nn layout."""
+
+    if (
+        hasattr(module, "conv_fusion")
+        or getattr(module, "cueq_config", None) is not None
+        or getattr(module, "oeq_config", None) is not None
+        or getattr(module, "transpose_mul_ir", None) is not None
+        or getattr(module, "transpose_ir_mul", None) is not None
+    ):
+        raise _refuse(f"{name} keeps an optimized (non-e3nn) module layout.")
+
+
+def _gate_record(gate: Any, target: Any, release: str, dtype: Any, /) -> dict[str, Any]:
+    """Constants of the residual-nonlinear gate, proven by executing it.
+
+    The release's gate module must be the normalized SiLU/sigmoid gate in the
+    ``mul_ir`` layout; its recorded constants then reproduce its own output on
+    a fixed input exactly as the native gate evaluates them.
+    """
+
+    import torch
+    from e3nn import o3
+
+    if _type_key(gate) != _GATE_TYPES[release]:
+        raise _refuse(f"The nonlinear-block gate is not the {release} provider gate.")
+    if release == "0.3.16":
+        if gate._layout_is_ir_mul:
+            raise _refuse("The nonlinear-block gate uses the ir_mul layout.")
+        functions = (_activation_name(gate._act_scalar), _activation_name(gate._act_gate))
+        scalar_constant, gate_constant = float(gate._scalar_cst), float(gate._gate_cst)
+    else:
+        constants = []
+        names = []
+        for activation in (gate.act_scalars, gate.act_gates):
+            records = [_normalized_activation(item) for item in activation.acts]
+            if (
+                not records
+                or len({(item["function"], item["constant"]) for item in records}) != 1
+            ):
+                raise _refuse("Gate activations of one kind must share one function.")
+            names.append(records[0]["function"])
+            constants.append(records[0]["constant"])
+        functions = (names[0], names[1])
+        scalar_constant, gate_constant = constants
+    if functions != ("silu", "sigmoid"):
+        raise _refuse(
+            "The nonlinear-block gate must be the normalized SiLU/sigmoid gate."
+        )
+    target = o3.Irreps(target)
+    irreps_in = o3.Irreps(gate.irreps_in)
+    if irreps_in != _gate_irreps(target) or o3.Irreps(gate.irreps_out) != target:
+        raise _refuse("The nonlinear-block gate irreps are not the admitted layout.")
+    channels = target[0].mul
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    values = torch.randn(4, irreps_in.dim, generator=generator, dtype=torch.float64)
+    values = values.to(dtype)
+    gates = gate_constant * torch.sigmoid(values[:, channels : irreps_in[0].mul])
+    expected = [scalar_constant * torch.nn.functional.silu(values[:, :channels])]
+    start, offset = irreps_in[0].mul, 0
+    for multiplicity, irrep in target[1:]:
+        block = values[:, start : start + multiplicity * irrep.dim]
+        block = block.reshape(-1, multiplicity, irrep.dim)
+        selected = gates[:, offset : offset + multiplicity, None]
+        expected.append((block * selected).reshape(values.shape[0], -1))
+        start += multiplicity * irrep.dim
+        offset += multiplicity
+    with torch.no_grad():
+        actual = gate(values)
+    reference = torch.cat(expected, dim=-1)
+    tolerance = _REPRODUCTION_ULPS * float(torch.finfo(dtype).eps)
+    scale = max(1.0, float(reference.abs().max()))
+    if (
+        actual.shape != reference.shape
+        or float((actual - reference).abs().max()) > tolerance * scale
+    ):
+        raise _refuse("The nonlinear-block gate is not the admitted normalized gate.")
+    return {
+        "irreps_in": str(irreps_in),
+        "scalar_constant": scalar_constant,
+        "gate_constant": gate_constant,
+    }
+
+
+def _interaction_record(interaction: Any, release: str, dtype: Any, /) -> dict[str, Any]:
     kind = type(interaction).__qualname__
+    _require_e3nn_layout(interaction, f"Interaction {kind}")
     record: dict[str, Any] = {
         "class": kind,
         "avg_num_neighbors": float(interaction.avg_num_neighbors),
@@ -1265,33 +1690,50 @@ def _interaction_record(interaction: Any, /) -> dict[str, Any]:
         "hidden_irreps": str(interaction.hidden_irreps),
         "linear_up": _linear(interaction.linear_up),
         "conv_tp": _tensor_product(interaction.conv_tp),
-        "conv_tp_weights": _fully_connected(interaction.conv_tp_weights),
-        "linear": _linear(interaction.linear),
-        "skip_tp": _tensor_product(interaction.skip_tp),
-        "density_fn": _fully_connected(interaction.density_fn)
-        if hasattr(interaction, "density_fn")
-        else None,
     }
-    if hasattr(interaction, "conv_fusion"):
-        raise _refuse("Fused provider convolutions are outside the admitted layout.")
-    if (
-        getattr(interaction, "cueq_config", None) is not None
-        or getattr(interaction, "oeq_config", None) is not None
-    ):
-        raise _refuse(
-            "cuEquivariance/OpenEquivariance module layouts are refused; convert the "
-            "source to the e3nn layout with the provider's mace.cli.convert_cueq_e3nn "
-            "(or convert_oeq_e3nn) and admit the converted bytes."
+    if kind in _STANDARD_INTERACTIONS:
+        record.update(
+            {
+                "conv_tp_weights": _fully_connected(interaction.conv_tp_weights),
+                "linear": _linear(interaction.linear),
+                "skip_tp": _tensor_product(interaction.skip_tp),
+                "density_fn": _fully_connected(interaction.density_fn)
+                if hasattr(interaction, "density_fn")
+                else None,
+            }
         )
+    elif kind == _ATTENTION_INTERACTION:
+        record.update(
+            {
+                "linear_down": _linear(interaction.linear_down),
+                "conv_tp_weights": _fully_connected(interaction.conv_tp_weights),
+                "linear": _linear(interaction.linear),
+                "skip_linear": _linear(interaction.skip_linear),
+            }
+        )
+    elif kind == _NONLINEAR_INTERACTION:
+        record.update(
+            {
+                "source_embedding": _linear(interaction.source_embedding),
+                "target_embedding": _linear(interaction.target_embedding),
+                "conv_tp_weights": _layer_norm_mlp(interaction.conv_tp_weights),
+                "density_fn": _layer_norm_mlp(interaction.density_fn),
+                "linear_res": _linear(interaction.linear_res),
+                "linear_1": _linear(interaction.linear_1),
+                "linear_2": _linear(interaction.linear_2),
+                "skip_tp": _linear(interaction.skip_tp),
+                "gate": _gate_record(
+                    interaction.equivariant_nonlin, interaction.irreps_out, release, dtype
+                ),
+            }
+        )
+    else:
+        raise _refuse(f"Interaction {kind!r} is not admitted.")
     return record
 
 
 def _product_record(product: Any, /) -> dict[str, Any]:
-    if getattr(product, "cueq_config", None) is not None:
-        raise _refuse(
-            "cuEquivariance symmetric-contraction modules are refused; convert the "
-            "source with the provider's mace.cli.convert_cueq_e3nn first."
-        )
+    _require_e3nn_layout(product, "A product basis")
     contraction = product.symmetric_contractions
     if _type_key(contraction) != (
         "mace.modules.symmetric_contraction",
@@ -1312,15 +1754,62 @@ def _readout_record(readout: Any, /) -> dict[str, Any]:
     kind = type(readout).__qualname__
     if kind == "LinearReadoutBlock":
         return {"class": kind, "linear": _linear(readout.linear)}
+    if kind not in _READOUT_CLASSES:
+        raise _refuse(f"Readout {kind!r} is not admitted.")
     activation = readout.non_linearity
     if len(activation.acts) != 1:
         raise _refuse("Nonlinear readouts must use one scalar activation.")
-    return {
+    record = {
         "class": kind,
         "num_heads": int(readout.num_heads) if hasattr(readout, "num_heads") else 1,
         "linear_1": _linear(readout.linear_1),
-        "linear_2": _linear(readout.linear_2),
         "activation": _normalized_activation(activation.acts[0]),
+    }
+    if kind == "NonLinearBiasReadoutBlock":
+        record["linear_mid"] = _linear(readout.linear_mid, biases=True)
+        record["linear_2"] = _linear(readout.linear_2, biases=True)
+    else:
+        record["linear_2"] = _linear(readout.linear_2)
+    return record
+
+
+def _joint_embedding_record(model: Any, /) -> dict[str, Any] | None:
+    """Structure of the source ``GenericJointEmbedding`` and its projection."""
+
+    import torch
+
+    if not hasattr(model, "joint_embedding"):
+        return None
+    joint = model.joint_embedding
+    features = []
+    for name, spec in joint.specs.items():
+        embedder = joint.embedders[name]
+        if (
+            type(embedder) is not torch.nn.Embedding
+            or embedder.padding_idx is not None
+            or embedder.max_norm is not None
+            or embedder.scale_grad_by_freq
+            or embedder.sparse
+        ):
+            raise _refuse(f"Joint-embedding feature {name!r} is not a plain table.")
+        features.append(
+            {
+                "name": str(name),
+                "classes": int(embedder.num_embeddings),
+                "width": int(embedder.embedding_dim),
+            }
+        )
+    project = list(joint.project)
+    if (
+        len(project) != 2
+        or type(project[0]) is not torch.nn.Linear
+        or project[0].bias is not None
+        or type(project[1]) is not torch.nn.SiLU
+    ):
+        raise _refuse("The joint-embedding projection is not bias-free Linear then SiLU.")
+    return {
+        "features": features,
+        "projection": [int(project[0].in_features), int(project[0].out_features)],
     }
 
 
@@ -1330,7 +1819,91 @@ def _scalar_count(irreps: Any, /) -> int:
     return o3.Irreps(irreps).count(o3.Irrep(0, 1))
 
 
-def _declaration(model: Any, model_class: str, /) -> dict[str, Any]:
+def _json_scalar(value: Any, name: str, /) -> Any:
+    """One plain JSON value of a provider attribute, or an explicit refusal."""
+
+    if value is None or isinstance(value, (bool, np.bool_)):
+        return None if value is None else bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)) and math.isfinite(float(value)):
+        return float(value)
+    if isinstance(value, (list, tuple)) and all(
+        isinstance(item, (int, np.integer)) and not isinstance(item, (bool, np.bool_))
+        for item in value
+    ):
+        return [int(item) for item in value]
+    raise _refuse(f"Provider attribute {name} is not a plain finite value.")
+
+
+def _les_arguments(model: Any, /) -> dict[str, Any]:
+    """The complete ``les_arguments`` MACELES executes, from its module attributes."""
+
+    les = model.les
+    arguments = {name: _json_scalar(getattr(les, name), name) for name in _LES_ATTRIBUTES}
+    arguments["compute_bec"] = _json_scalar(model.compute_bec, "compute_bec")
+    arguments["bec_output_index"] = _json_scalar(
+        model.bec_output_index, "bec_output_index"
+    )
+    return arguments
+
+
+def _embedding_specs(model: Any, /) -> dict[str, Any] | None:
+    """Canonical joint-embedding specifications the provider can evaluate.
+
+    Only graph-level categorical ``total_charge``/``total_spin`` features are
+    supplied by the provider's own data pipeline; every other feature refuses.
+    """
+
+    if not hasattr(model, "joint_embedding"):
+        return None
+    specs = model.embedding_specs
+    if not isinstance(specs, Mapping) or dict(model.joint_embedding.specs) != dict(specs):
+        raise _refuse("The joint-embedding specifications are inconsistent.")
+    declared: dict[str, Any] = {}
+    for name, spec in specs.items():
+        if name not in _EMBEDDING_FEATURES:
+            raise _refuse(
+                f"Joint-embedding feature {name!r} has no provider input; only "
+                f"{_EMBEDDING_FEATURES} are admitted."
+            )
+        if (
+            not isinstance(spec, Mapping)
+            or set(spec) - _EMBEDDING_SPEC_KEYS
+            or spec.get("type") != "categorical"
+            or spec.get("per") != "graph"
+            or spec.get("key", name) != name
+        ):
+            raise _refuse(
+                f"Joint-embedding feature {name!r} must be a graph-level categorical "
+                "feature read from its own data field."
+            )
+        classes, width, offset = (
+            spec["num_classes"],
+            spec["emb_dim"],
+            spec.get("offset", 0),
+        )
+        if (
+            type(classes) is not int
+            or type(width) is not int
+            or type(offset) is not int
+            or classes <= 0
+            or width <= 0
+        ):
+            raise _refuse(f"Joint-embedding feature {name!r} has invalid extents.")
+        declared[name] = {
+            "type": "categorical",
+            "per": "graph",
+            "num_classes": classes,
+            "emb_dim": width,
+            "offset": offset,
+        }
+    return declared
+
+
+# Keep provider introspection and the resulting declaration adjacent and ordered:
+# every admitted field must correspond to the executed source module, not a default.
+def _declaration(model: Any, model_class: str, release: str, /) -> dict[str, Any]:
     from e3nn import o3
 
     interactions = list(model.interactions)
@@ -1339,7 +1912,7 @@ def _declaration(model: Any, model_class: str, /) -> dict[str, Any]:
         raise _refuse("Interaction count is inconsistent.")
     classes = [type(item).__qualname__ for item in interactions]
     if any(name not in _ADMITTED_INTERACTIONS for name in classes):
-        raise _refuse("An interaction class is outside the admitted standard set.")
+        raise _refuse("An interaction class is outside the admitted MACE families.")
     if len(set(classes[1:])) > 1:
         raise _refuse("Interactions after the first must share one source class.")
     averages = {float(item.avg_num_neighbors) for item in interactions}
@@ -1347,42 +1920,61 @@ def _declaration(model: Any, model_class: str, /) -> dict[str, Any]:
     if len(averages) != 1 or len(radial) != 1:
         raise _refuse("Interactions disagree on neighbor normalization or radial MLP.")
     radial_embedding = model.radial_embedding
-    if _type_key(radial_embedding.bessel_fn) != ("mace.modules.radial", "BesselBasis"):
-        raise _refuse("Only the Bessel radial basis is admitted.")
+    radial_type = _RADIAL_TYPES.get(_type_key(radial_embedding.bessel_fn))
+    if radial_type is None:
+        raise _refuse(
+            "The radial basis is not an admitted Bessel/Gaussian/Chebyshev basis."
+        )
     if hasattr(radial_embedding, "distance_transform"):
-        transform = radial_embedding.distance_transform
-        if _type_key(transform) != ("mace.modules.radial", "AgnesiTransform"):
-            raise _refuse("Only the Agnesi distance transform is admitted.")
-        distance_transform = "Agnesi"
+        distance_transform = _DISTANCE_TRANSFORMS.get(
+            _type_key(radial_embedding.distance_transform)
+        )
+        if distance_transform is None:
+            raise _refuse("Only the Agnesi and Soft distance transforms are admitted.")
     else:
         distance_transform = "None"
+    use_so3 = _flag(model, "use_so3", False)
     harmonics = model.spherical_harmonics
     max_ell = int(harmonics._lmax)
     if (
         not bool(harmonics.normalize)
         or harmonics.normalization != "component"
-        or o3.Irreps(harmonics.irreps_out) != o3.Irreps.spherical_harmonics(max_ell)
+        or o3.Irreps(harmonics.irreps_out)
+        != o3.Irreps.spherical_harmonics(max_ell, p=1 if use_so3 else -1)
     ):
-        raise _refuse("Edge harmonics must be normalized O(3) component harmonics.")
+        raise _refuse(
+            "Edge harmonics must be normalized component harmonics of the declared "
+            "O(3)/SO(3) parity convention."
+        )
     hidden = (
         o3.Irreps(str(interactions[1].node_feats_irreps))
         if count > 1
         else o3.Irreps(str(model.products[0].linear.irreps_out))
     )
+    scalars = o3.Irreps(str(hidden[0]))
     last_target = o3.Irreps(str(model.products[-1].linear.irreps_out))
-    if last_target != o3.Irreps(str(hidden[0])):
-        raise _refuse("The last product must output only hidden scalars.")
+    keep = count > 1 and last_target == hidden and hidden != scalars
+    if not keep and last_target != scalars:
+        raise _refuse(
+            "The last product must output the hidden scalars or, with "
+            "keep_last_layer_irreps, the whole hidden irreps."
+        )
+    if keep and release == "0.3.15":
+        raise _refuse("mace-torch 0.3.15 cannot keep the last layer's irreps.")
     readouts = list(model.readouts)
     readout_kinds = [type(item).__qualname__ for item in readouts]
     last_only = len(readouts) == 1 and count > 1
+    readout_class = readout_kinds[-1] if count > 1 else None
+    if count > 1 and readout_class not in _READOUT_CLASSES:
+        raise _refuse(f"Final readout {readout_class!r} is not admitted.")
     expected_kinds = (
-        ["NonLinearReadoutBlock"]
+        [readout_class]
         if last_only
         else ["LinearReadoutBlock"] * (count - 1)
-        + (["NonLinearReadoutBlock"] if count > 1 else ["LinearReadoutBlock"])
+        + ([readout_class] if count > 1 else ["LinearReadoutBlock"])
     )
     if readout_kinds != expected_kinds:
-        raise _refuse("Readout sequence is not the standard MACE readout layout.")
+        raise _refuse("Readout sequence is not the MACE readout layout.")
     heads = _heads(model)
     gate = None
     mlp_irreps = None
@@ -1393,8 +1985,18 @@ def _declaration(model: Any, model_class: str, /) -> dict[str, Any]:
             raise _refuse("Nonlinear readout width is not divisible by the head count.")
         mlp_irreps = f"{hidden_scalars // len(heads)}x0e"
         gate = _activation_name(final.non_linearity.acts[0].f)
+    edge_irreps = getattr(model, "edge_irreps", None)
+    specs = _embedding_specs(model)
+    embedding_readout = hasattr(model, "embedding_readout")
+    if embedding_readout and len(heads) > 1 and model_class in ("MACE", "MACELES"):
+        raise _refuse(
+            f"{model_class} broadcasts its embedding readout over every head instead "
+            "of selecting one; multihead embedding readouts are admitted only for "
+            "ScaleShiftMACE."
+        )
     atomic_numbers = [int(value) for value in model.atomic_numbers.tolist()]
     declaration: dict[str, Any] = {
+        "mace_torch_release": release,
         "model_class": model_class,
         "r_max": float(model.r_max),
         "num_bessel": int(radial_embedding.out_dim),
@@ -1414,19 +2016,32 @@ def _declaration(model: Any, model_class: str, /) -> dict[str, Any]:
         "pair_repulsion": hasattr(model, "pair_repulsion"),
         "distance_transform": distance_transform,
         "radial_MLP": list(radial.pop()),
-        "radial_type": "bessel",
+        "radial_type": radial_type,
         "heads": heads,
         "apply_cutoff": _flag(model, "apply_cutoff", True),
         "use_reduced_cg": _reduced_cg_basis(model),
         "use_agnostic_product": _flag(model, "use_agnostic_product", False),
         "use_last_readout_only": last_only,
+        "use_so3": use_so3,
+        "edge_irreps": None if edge_irreps is None else str(o3.Irreps(edge_irreps)),
+        "use_edge_irreps_first": _flag(model, "use_edge_irreps_first", False),
+        "readout_class": readout_class,
+        "embedding_specs": specs,
+        "use_embedding_readout": embedding_readout,
         "atomic_energies": model.atomic_energies_fn.atomic_energies.double().tolist(),
     }
-    if model_class == "ScaleShiftMACE":
+    if release == "0.3.16":
+        declaration["keep_last_layer_irreps"] = keep
+    if model_class in ("ScaleShiftMACE", "MACELES"):
         declaration["atomic_inter_scale"] = model.scale_shift.scale.double().tolist()
         declaration["atomic_inter_shift"] = model.scale_shift.shift.double().tolist()
-    if _flag(model, "use_so3", False) or getattr(model, "edge_irreps", None) is not None:
-        raise _refuse("SO(3)-only or custom edge-irreps variants are not admitted.")
+    if model_class == "MACELES":
+        latent = [type(item).__qualname__ for item in model.les_readouts]
+        if latent != readout_kinds or "NonLinearBiasReadoutBlock" in latent:
+            raise _refuse(
+                "MACELES latent readouts must copy the linear/nonlinear energy readouts."
+            )
+        declaration["les_arguments"] = _les_arguments(model)
     return declaration
 
 
@@ -1549,9 +2164,10 @@ def _reparameterized_u(model: Any, reduced: bool, /) -> list[str]:
 # with, and of e3nn's own einsum-optimization examples.
 _CONTRACTION_EXAMPLE_BATCH = 10
 _E3NN_EXAMPLE_BATCH = 4
-# Fixed buffers: Agnesi transform (q, p, a, 119 covalent radii) and ZBL
-# repulsion (4 coefficients, p, 119 covalent radii, exponent, prefactor).
-_AGNESI_ELEMENTS = (1, 1, 1, 119)
+# Fixed buffers: Agnesi transform (q, p, a, 119 covalent radii), Soft
+# transform (alpha, 119 covalent radii) and ZBL repulsion (4 coefficients, p,
+# 119 covalent radii, exponent, prefactor).
+_TRANSFORM_ELEMENTS = {"None": (), "Agnesi": (1, 1, 1, 119), "Soft": (1, 119)}
 _ZBL_ELEMENTS = (4, 1, 119, 1, 1)
 
 
@@ -1718,6 +2334,27 @@ def _plan_contraction(
         plan.charge(_einsum_peak(operands, output, sizes), kept=False)
 
 
+def _plan_linear(
+    plan: _ConstructionPlan, irreps_in: Any, irreps_out: Any, /, *, bias: int = 0
+) -> None:
+    """One e3nn ``Linear``: weights, bias (empty unless biased) and output mask."""
+
+    plan.charge(_linear_numel(irreps_in, irreps_out))
+    plan.charge(bias)
+    plan.charge(irreps_out.dim)
+
+
+def _plan_layer_norm_mlp(plan: _ConstructionPlan, widths: Sequence[int], /) -> None:
+    """One source ``RadialMLP``: biased Linears and hidden LayerNorm gains/shifts."""
+
+    for index, (fan_in, fan_out) in enumerate(zip(widths, widths[1:])):
+        plan.charge(fan_in * fan_out)
+        plan.charge(fan_out)
+        if index < len(widths) - 2:
+            plan.charge(fan_out)
+            plan.charge(fan_out)
+
+
 def _plan_interaction(
     plan: _ConstructionPlan,
     declaration: Mapping[str, Any],
@@ -1727,42 +2364,65 @@ def _plan_interaction(
 ) -> Any:
     """One interaction block; returns its target irreps (the product input)."""
 
+    from e3nn import o3
     from mace.modules.irreps_tools import tp_out_irreps_with_instructions
 
-    node = irreps["node"] if index == 0 else irreps["hidden"]
-    target = irreps["first"] if index == 0 else irreps["interaction"]
+    node = irreps["inputs"][index]
+    edges = irreps["edges"][index]
+    target = irreps["targets"][index]
     output = irreps["outputs"][index]
     attributes = irreps["attributes"]
     harmonics = irreps["harmonics"]
+    channels = irreps["channels"]
+    basis = declaration["num_bessel"]
     kind = declaration["interaction_classes"][index]
-    plan.charge(_linear_numel(node, node))
-    plan.charge(0)
-    plan.charge(node.dim)
-    middle, instructions = tp_out_irreps_with_instructions(node, harmonics, target)
-    weights = sum(node[i].mul * harmonics[j].mul for i, j, _, _, _ in instructions)
+    _plan_linear(plan, node, edges)
+    middle, instructions = tp_out_irreps_with_instructions(edges, harmonics, target)
+    weights = sum(edges[i].mul * harmonics[j].mul for i, j, _, _, _ in instructions)
     plan.charge(0)
     plan.charge(middle.dim)
     for l1, l2, l3 in sorted(
         {
-            (node[i].ir.l, harmonics[j].ir.l, middle[k].ir.l)
+            (edges[i].ir.l, harmonics[j].ir.l, middle[k].ir.l)
             for i, j, k, _, _ in instructions
         }
     ):
         if min(l1, l2, l3) > 0:
             plan.charge((2 * l1 + 1) * (2 * l2 + 1) * (2 * l3 + 1))
-    plan.charge(_E3NN_EXAMPLE_BATCH * node.dim * harmonics.dim, kept=False)
-    widths = [declaration["num_bessel"], *declaration["radial_MLP"], weights]
+    plan.charge(_E3NN_EXAMPLE_BATCH * edges.dim * harmonics.dim, kept=False)
+    if kind == _NONLINEAR_INTERACTION:
+        scalars = o3.Irreps([(channels, (0, 1))])
+        _plan_linear(plan, attributes, scalars)
+        _plan_linear(plan, attributes, scalars)
+        _plan_layer_norm_mlp(
+            plan, [basis + 2 * channels, *declaration["radial_MLP"], weights]
+        )
+        _plan_linear(plan, node, output)
+        gated = _gate_irreps(target)
+        _plan_linear(plan, edges, gated)
+        _plan_linear(plan, middle, gated)
+        _plan_linear(plan, target, target)
+        _plan_layer_norm_mlp(plan, [basis + 2 * channels, _NONLINEAR_DENSITY, 1])
+        plan.charge(1)
+        plan.charge(1)
+        return target
+    if kind == _ATTENTION_INTERACTION:
+        _plan_linear(plan, node, o3.Irreps([(_ATTENTION_DOWN, (0, 1))]))
+        widths = [basis + 2 * _ATTENTION_DOWN, *_ATTENTION_HIDDEN, weights]
+    else:
+        widths = [basis, *declaration["radial_MLP"], weights]
     for fan_in, fan_out in zip(widths, widths[1:]):
         plan.charge(fan_in * fan_out)
-    plan.charge(_linear_numel(middle, target))
-    plan.charge(0)
-    plan.charge(target.dim)
+    _plan_linear(plan, middle, target)
+    if kind == _ATTENTION_INTERACTION:
+        _plan_linear(plan, node, output)
+        return target
     skip_in, skip_out = (node, output) if "Residual" in kind else (target, target)
     plan.charge(_full_product_numel(skip_in, attributes, skip_out))
     plan.charge(skip_out.dim)
     plan.charge(_E3NN_EXAMPLE_BATCH * skip_in.dim * attributes.dim, kept=False)
     if "Density" in kind:
-        plan.charge(declaration["num_bessel"])
+        plan.charge(basis)
     return target
 
 
@@ -1770,24 +2430,47 @@ def _plan_readouts(
     plan: _ConstructionPlan,
     declaration: Mapping[str, Any],
     irreps: Mapping[str, Any],
+    mlp: Any,
     /,
 ) -> None:
+    """Energy readouts, their MACELES latent copies, and the embedding readout."""
+
     from e3nn import o3
 
     count = declaration["num_interactions"]
     heads = o3.Irreps(f"{len(declaration['heads'])}x0e")
+    copies = 2 if declaration["model_class"] == "MACELES" else 1
     for index, output in enumerate(irreps["outputs"]):
         if index > 0 and index == count - 1:
-            hidden = (len(declaration["heads"]) * irreps["mlp"]).simplify()
-            stages = ((output, hidden), (hidden, heads))
+            hidden = (len(declaration["heads"]) * mlp).simplify()
+            if declaration["readout_class"] == "NonLinearBiasReadoutBlock":
+                stages = (
+                    (output, hidden, 0),
+                    (hidden, hidden, hidden.dim),
+                    (hidden, heads, heads.dim),
+                )
+            else:
+                stages = ((output, hidden, 0), (hidden, heads, 0))
         elif declaration["use_last_readout_only"]:
             continue
         else:
-            stages = ((output, heads),)
-        for irreps_in, irreps_out in stages:
-            plan.charge(_linear_numel(irreps_in, irreps_out))
-            plan.charge(0)
-            plan.charge(irreps_out.dim)
+            stages = ((output, heads, 0),)
+        for _ in range(copies):
+            for irreps_in, irreps_out, bias in stages:
+                _plan_linear(plan, irreps_in, irreps_out, bias=bias)
+    if declaration["use_embedding_readout"]:
+        _plan_linear(plan, irreps["node"], heads)
+
+
+def _plan_joint_embedding(
+    plan: _ConstructionPlan, declaration: Mapping[str, Any], channels: int, /
+) -> None:
+    specs = declaration["embedding_specs"]
+    if not specs:
+        return
+    for spec in specs.values():
+        plan.charge(spec["num_classes"] * spec["emb_dim"])
+    plan.charge(sum(spec["emb_dim"] for spec in specs.values()) * channels)
 
 
 def _admit_declared_extents(
@@ -1827,6 +2510,12 @@ def _admit_declared_extents(
             f"The declared hidden irreps hold {len(hidden)} entries, above the member "
             f"limit {limits.max_members}."
         )
+    edges = declaration["edge_irreps"]
+    if edges is not None and len(o3.Irreps(edges)) > limits.max_members:
+        raise _refuse(
+            f"The declared edge irreps hold {len(o3.Irreps(edges))} entries, above the "
+            f"member limit {limits.max_members}."
+        )
     if declaration["num_interactions"] == 1:
         return hidden, None
     mlp = o3.Irreps(declaration["MLP_irreps"]).simplify()
@@ -1856,10 +2545,12 @@ def _admit_construction(
 ) -> _ConstructionPlan:
     """Plan and charge a provider construction before anything is allocated.
 
-    Mirrors the admitted mace-torch 0.3.16 constructors from irreps metadata
-    alone (mace-torch's own ``tp_out_irreps_with_instructions`` gives the
+    Mirrors the admitted mace-torch constructors from irreps metadata alone
+    (mace-torch's own ``tp_out_irreps_with_instructions`` gives the
     convolution paths), after the declared degree and irreps entry counts are
-    bounded (``_admit_declared_extents``): every parameter and buffer, every
+    bounded (``_admit_declared_extents``): every parameter and buffer (radial
+    basis and transform, edge networks of every interaction family, gates,
+    biased readouts and their MACELES copies, joint-embedding tables), every
     coupling-basis recursion depth, traced example input and worst-order
     einsum intermediate must fit the per-tensor limits, and the model's
     parameters and buffers together within ``max_source_bytes``.
@@ -1870,28 +2561,19 @@ def _admit_construction(
     count = declaration["num_interactions"]
     if sum(declaration["correlation"]) > limits.max_members:
         raise _refuse("The declared correlation orders exceed the member limit.")
-    hidden, mlp = _admit_declared_extents(declaration, itemsize, limits)
+    _, mlp = _admit_declared_extents(declaration, itemsize, limits)
+    irreps = _layer_irreps(declaration)
     numbers = len(declaration["atomic_numbers"])
-    channels = hidden.count(o3.Irrep(0, 1))
-    harmonics = o3.Irreps.spherical_harmonics(declaration["max_ell"])
-    coupled = (
-        o3.Irreps("+".join(f"1x{l}e+1x{l}o" for l in range(declaration["max_ell"] + 1)))
-        if hidden.count(o3.Irrep(0, -1)) > 0
-        else harmonics
-    )
-    irreps = {
-        "hidden": hidden,
-        "harmonics": harmonics,
-        "attributes": o3.Irreps([(numbers, (0, 1))]),
-        "node": o3.Irreps([(channels, (0, 1))]),
-        "first": _channelwise(harmonics, channels),
-        "interaction": _channelwise(coupled, channels),
-        "outputs": [
-            o3.Irreps(str(hidden[0])) if index == count - 1 else hidden
-            for index in range(count)
-        ],
-        "mlp": mlp,
-    }
+    channels = irreps["channels"]
+    basis = declaration["num_bessel"]
+    radial = {
+        "bessel": (basis, 1, 1),
+        "gaussian": (basis,),
+        "chebyshev": (basis,),
+    }.get(declaration["radial_type"])
+    transform = _TRANSFORM_ELEMENTS.get(declaration["distance_transform"])
+    if radial is None or transform is None:
+        raise _refuse("The declared radial basis or distance transform is not admitted.")
     plan = _ConstructionPlan(limits, itemsize, [], [])
     for elements in (
         numbers,
@@ -1900,17 +2582,16 @@ def _admit_construction(
         numbers * channels,
         0,
         channels,
-        declaration["num_bessel"],
-        1,
-        1,
-        *(_AGNESI_ELEMENTS if declaration["distance_transform"] == "Agnesi" else ()),
+        *radial,
+        *transform,
         1,
         1,
         *(_ZBL_ELEMENTS if declaration["pair_repulsion"] else ()),
         int(np.size(declaration["atomic_energies"])),
-        *((1, 1) if declaration["model_class"] == "ScaleShiftMACE" else ()),
+        *((1, 1) if declaration["model_class"] in ("ScaleShiftMACE", "MACELES") else ()),
     ):
         plan.charge(elements)
+    _plan_joint_embedding(plan, declaration, channels)
     elements = 1 if declaration["use_agnostic_product"] else numbers
     for index in range(count):
         target = _plan_interaction(plan, declaration, index, irreps)
@@ -1926,10 +2607,8 @@ def _admit_construction(
                 target.count(o3.Irrep(0, 1)),
                 declaration["use_reduced_cg"],
             )
-        plan.charge(_linear_numel(output, output))
-        plan.charge(0)
-        plan.charge(output.dim)
-    _plan_readouts(plan, declaration, irreps)
+        _plan_linear(plan, output, output)
+    _plan_readouts(plan, declaration, irreps, mlp)
     if sum(plan.persistent) * itemsize > limits.max_source_bytes:
         raise _refuse(
             f"The declared model holds {sum(plan.persistent)} parameter and buffer "
@@ -1941,30 +2620,37 @@ def _admit_construction(
 def _build(declaration: Mapping[str, Any], dtype: Any, limits: _Limits, /) -> Any:
     import torch
 
+    release = _installed_release()
+    if declaration["mace_torch_release"] != release:
+        raise _refuse(
+            f"The declaration was extracted by mace-torch "
+            f"{declaration['mace_torch_release']}; this provider is {release}."
+        )
+    if any(
+        name not in _ADMITTED_INTERACTIONS for name in declaration["interaction_classes"]
+    ):
+        raise _refuse("Declared interaction class is not admitted.")
     _admit_construction(declaration, torch.finfo(dtype).bits // 8, limits)
     from e3nn import o3
     from mace.modules import blocks, models
 
     classes = [getattr(blocks, name) for name in declaration["interaction_classes"]]
-    if any(
-        name not in _ADMITTED_INTERACTIONS for name in declaration["interaction_classes"]
-    ):
-        raise _refuse("Declared interaction class is not admitted.")
     gates = {"silu": torch.nn.functional.silu, "tanh": torch.tanh, None: None}
     if declaration["gate"] not in gates:
         raise _refuse("Declared readout gate is not admitted.")
-    if declaration["radial_type"] != "bessel" or declaration[
-        "distance_transform"
-    ] not in (
-        "None",
-        "Agnesi",
+    if declaration["radial_type"] not in ("bessel", "gaussian", "chebyshev") or (
+        declaration["distance_transform"] not in ("None", "Agnesi", "Soft")
     ):
         raise _refuse("Declared radial family is not admitted.")
+    readout = declaration["readout_class"] or "NonLinearReadoutBlock"
+    if readout not in _READOUT_CLASSES:
+        raise _refuse("Declared readout class is not admitted.")
     if declaration["use_reduced_cg"] and not _cuequivariance_available():
         # mace-torch would silently build the original basis instead.
         raise _refuse(
             "The reduced-CG U basis requires the declared cuequivariance provider package."
         )
+    specs = declaration["embedding_specs"]
     previous = torch.get_default_dtype()
     torch.set_default_dtype(dtype)
     try:
@@ -1991,20 +2677,40 @@ def _build(declaration: Mapping[str, Any], dtype: Any, limits: _Limits, /) -> An
             "pair_repulsion": declaration["pair_repulsion"],
             "distance_transform": declaration["distance_transform"],
             "radial_MLP": list(declaration["radial_MLP"]),
-            "radial_type": "bessel",
+            "radial_type": declaration["radial_type"],
             "heads": list(declaration["heads"]),
             "apply_cutoff": declaration["apply_cutoff"],
             "use_reduced_cg": declaration["use_reduced_cg"],
             "use_agnostic_product": declaration["use_agnostic_product"],
             "use_last_readout_only": declaration["use_last_readout_only"],
+            "use_so3": declaration["use_so3"],
+            "edge_irreps": None
+            if declaration["edge_irreps"] is None
+            else o3.Irreps(declaration["edge_irreps"]),
+            "use_edge_irreps_first": declaration["use_edge_irreps_first"],
+            "readout_cls": getattr(blocks, readout),
+            "embedding_specs": None
+            if specs is None
+            else {name: dict(spec) for name, spec in specs.items()},
+            "use_embedding_readout": declaration["use_embedding_readout"],
+        }
+        if release == "0.3.16":
+            keywords["keep_last_layer_irreps"] = declaration["keep_last_layer_irreps"]
+        scaled = {
+            "atomic_inter_scale": declaration.get("atomic_inter_scale"),
+            "atomic_inter_shift": declaration.get("atomic_inter_shift"),
         }
         match declaration["model_class"]:
             case "MACE":
                 return models.MACE(**keywords)
             case "ScaleShiftMACE":
-                return models.ScaleShiftMACE(
-                    atomic_inter_scale=declaration["atomic_inter_scale"],
-                    atomic_inter_shift=declaration["atomic_inter_shift"],
+                return models.ScaleShiftMACE(**scaled, **keywords)
+            case "MACELES":
+                from mace.modules.extensions import MACELES
+
+                return MACELES(
+                    les_arguments=dict(declaration["les_arguments"]),
+                    **scaled,
                     **keywords,
                 )
             case other:
@@ -2045,7 +2751,7 @@ def _probe_configurations(declaration: Mapping[str, Any], /) -> list[dict[str, A
     close = np.array(
         [[0.0, 0.0, 0.0], [0.55, 0.0, 0.0], [0.1, 0.85, 0.2]], dtype=np.float64
     )
-    return [
+    configurations: list[dict[str, Any]] = [
         {
             "numbers": species,
             "positions": finite,
@@ -2060,6 +2766,17 @@ def _probe_configurations(declaration: Mapping[str, Any], /) -> list[dict[str, A
             "pbc": [False] * 3,
         },
     ]
+    # Joint-embedding probes read distinct admitted codes, starting from the
+    # provider's own defaults (neutral charge, singlet multiplicity).
+    defaults = {"total_charge": 0, "total_spin": 1}
+    for index, configuration in enumerate(configurations):
+        conditions: dict[str, int] = {}
+        for name, spec in (declaration["embedding_specs"] or {}).items():
+            codes = list(range(-spec["offset"], spec["num_classes"] - spec["offset"]))
+            start = codes.index(defaults[name]) if defaults[name] in codes else 0
+            conditions[name] = codes[(start + index) % len(codes)]
+        configuration["conditions"] = conditions
+    return configurations
 
 
 def _heads(model: Any, /) -> list[str]:
@@ -2179,6 +2896,13 @@ def _batch(
         pbc=[bool(value) for value in configuration["pbc"]],
     )
     config = mace_data.config_from_atoms(atoms, head_name=head)
+    # The provider data pipeline reads net charge and spin multiplicity from
+    # the configuration properties (absent values become its 0 and 1).
+    conditions = configuration.get("conditions", {})
+    if set(conditions) - set(_EMBEDDING_FEATURES):
+        raise _refuse("Configuration conditions name an unadmitted provider field.")
+    for name, value in conditions.items():
+        config.properties[name] = float(value)
     table = AtomicNumberTable([int(value) for value in model.atomic_numbers.tolist()])
     item = mace_data.AtomicData.from_config(
         config, z_table=table, cutoff=float(model.r_max), heads=heads
@@ -2507,12 +3231,41 @@ def _basis_evidence(
     return arrays
 
 
-def _module_records(model: Any, /) -> dict[str, Any]:
+def _radial_record(radial_embedding: Any, /) -> dict[str, Any]:
+    """Python-side constants of the radial basis (not stored in the state)."""
+
+    basis = radial_embedding.bessel_fn
+    kind = _RADIAL_TYPES.get(_type_key(basis))
+    if kind is None:
+        raise _refuse(
+            "The radial basis is not an admitted Bessel/Gaussian/Chebyshev basis."
+        )
+    record: dict[str, Any] = {"type": kind, "out_dim": int(radial_embedding.out_dim)}
+    match kind:
+        case "gaussian":
+            record["coefficient"] = float(basis.coeff)
+        case "chebyshev":
+            record["num_basis"] = int(basis.num_basis)
+    return record
+
+
+def _module_records(model: Any, release: str, /) -> dict[str, Any]:
+    dtype = _parameter_dtype(model)
     return {
         "node_embedding": _linear(model.node_embedding.linear),
-        "interactions": [_interaction_record(item) for item in model.interactions],
+        "radial": _radial_record(model.radial_embedding),
+        "interactions": [
+            _interaction_record(item, release, dtype) for item in model.interactions
+        ],
         "products": [_product_record(item) for item in model.products],
         "readouts": [_readout_record(item) for item in model.readouts],
+        "les_readouts": [_readout_record(item) for item in model.les_readouts]
+        if hasattr(model, "les_readouts")
+        else None,
+        "joint_embedding": _joint_embedding_record(model),
+        "embedding_readout": _linear(model.embedding_readout.linear)
+        if hasattr(model, "embedding_readout")
+        else None,
     }
 
 
@@ -2526,12 +3279,25 @@ def _configurations(request: Mapping[str, Any], /) -> list[dict[str, Any]]:
         numbers = [int(value) for value in item["numbers"]]
         cell = np.asarray(item["cell"], dtype=np.float64)
         pbc = [bool(value) for value in item["pbc"]]
+        conditions = item.get("conditions", {})
         if positions.shape != (len(numbers), 3) or cell.shape != (3, 3) or len(pbc) != 3:
             raise _refuse("Provider configuration shapes are inconsistent.")
         if any(pbc) and not all(pbc):
             raise _refuse("Partially periodic provider configurations are not admitted.")
+        if (
+            not isinstance(conditions, Mapping)
+            or set(conditions) - set(_EMBEDDING_FEATURES)
+            or any(type(value) is not int for value in conditions.values())
+        ):
+            raise _refuse("Configuration conditions must be integer charge/spin codes.")
         parsed.append(
-            {"numbers": numbers, "positions": positions, "cell": cell, "pbc": pbc}
+            {
+                "numbers": numbers,
+                "positions": positions,
+                "cell": cell,
+                "pbc": pbc,
+                "conditions": dict(conditions),
+            }
         )
     return parsed
 
@@ -2690,16 +3456,137 @@ def _run_fixture(
         if size > limits.max_source_bytes:
             raise _refuse("The provider fixture exceeds the source byte limit.")
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    release = _installed_release()
     return {
         "seed": seed,
         "source_kind": kind,
         "source_dtype": str(dtype).removeprefix("torch."),
         # Exactly what extraction declares for these bytes (reference
         # energies and scales at the source precision).
-        "declaration": _declaration(model, _admit_module_tree(model)),
+        "declaration": _declaration(model, _admit_module_tree(model, release), release),
         "fixture_sha256": digest,
         "fixture_byte_size": size,
     }
+
+
+# Pinned source converters that express an optimized module layout in the
+# exact e3nn parameter layout (the provider's own ``mace.cli`` programs).
+_LAYOUT_CONVERTERS = {
+    "cuequivariance": ("mace.cli.convert_cueq_e3nn", _REDUCED_CG_DISTRIBUTIONS),
+    "openequivariance": ("mace.cli.convert_oeq_e3nn", (_OPENEQUIVARIANCE,)),
+}
+
+
+def _optimized_layouts(model: Any, /) -> set[str]:
+    """Optimized layouts any module of ``model`` was constructed with."""
+
+    kinds = set()
+    for _, module in model.named_modules():
+        if getattr(module, "cueq_config", None) is not None:
+            kinds.add("cuequivariance")
+        if getattr(module, "oeq_config", None) is not None:
+            kinds.add("openequivariance")
+    return kinds
+
+
+def _e3nn_layout(
+    model: Any, provider: Mapping[str, Any], /
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """Express a cuEquivariance/OpenEquivariance source in the exact e3nn layout.
+
+    The pinned source's own converter rebuilds the model without its optimized
+    configuration and transfers every parameter (splitting fused symmetric
+    contraction weights back into per-irrep ``W``). Returns the converted
+    model, the original optimized model (for the reproduction proof) and the
+    converter record, or ``model`` unchanged when it is already e3nn layout.
+    """
+
+    import importlib
+
+    import torch
+
+    kinds = _optimized_layouts(model)
+    if not kinds:
+        return model, None, None
+    if len(kinds) != 1:
+        raise _refuse("The source mixes cuEquivariance and OpenEquivariance layouts.")
+    kind = kinds.pop()
+    converter, required = _LAYOUT_CONVERTERS[kind]
+    declared = {_normalized_name(name) for name in provider["distributions"]}
+    missing = [name for name in required if name not in declared]
+    if missing:
+        raise _refuse(
+            f"Converting a {kind} source to the e3nn layout requires the declared "
+            f"{missing} provider release."
+        )
+    dtype = _parameter_dtype(model)
+    previous = torch.get_default_dtype()
+    try:
+        converted = importlib.import_module(converter).run(model, return_model=True)
+    except ProviderRefusal:
+        raise
+    except Exception as error:
+        raise _refuse(
+            f"The pinned {converter} conversion of this source failed "
+            f"({type(error).__name__}); it has no recoverable e3nn parameter map."
+        ) from error
+    finally:
+        torch.set_default_dtype(previous)
+    if _optimized_layouts(converted) or _parameter_dtype(converted) != dtype:
+        raise _refuse(f"The pinned {converter} did not produce the e3nn layout.")
+    _admitted_root(converted)
+    return converted, model, {"kind": kind, "converter": converter}
+
+
+def _layout_deviation(
+    source: Any,
+    converted: Any,
+    declaration: Mapping[str, Any],
+    limits: _Limits,
+    /,
+) -> float:
+    """Prove the e3nn conversion reproduces the optimized source; return its deviation."""
+
+    import torch
+
+    dtype = _parameter_dtype(converted)
+    epsilon = float(torch.finfo(dtype).eps)
+    previous = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    deviation = 0.0
+    try:
+        head = _heads(converted)[0]
+        cutoff = float(converted.r_max)
+        for index, configuration in enumerate(_probe_configurations(declaration)):
+            edges = _admitted_edges(
+                configuration, cutoff, limits, f"layout probe configuration {index}"
+            )
+            try:
+                expected = _evaluate_case(source, configuration, head, edges)
+            except ProviderRefusal:
+                raise
+            except Exception as error:
+                raise _refuse(
+                    "The optimized-layout source cannot execute in this provider, so "
+                    f"its e3nn conversion cannot be verified ({type(error).__name__})."
+                ) from error
+            actual = _evaluate_case(converted, configuration, head, edges)
+            for name, value in expected.items():
+                if value.dtype.kind in "iub":
+                    if not np.array_equal(value, actual[name]):
+                        raise _refuse(f"The e3nn conversion changes source {name}.")
+                    continue
+                scale = max(1.0, float(np.max(np.abs(value), initial=0.0)))
+                difference = float(np.max(np.abs(value - actual[name]), initial=0.0))
+                deviation = max(deviation, difference / scale)
+                if difference > _LAYOUT_REPRODUCTION_ULPS * epsilon * scale:
+                    raise _refuse(
+                        f"The e3nn conversion does not reproduce the optimized source "
+                        f"{name}."
+                    )
+    finally:
+        torch.set_default_dtype(previous)
+    return deviation
 
 
 def _execute(site_packages: str, request_path: Path, output: Path, /) -> None:
@@ -2726,13 +3613,21 @@ def _execute(site_packages: str, request_path: Path, output: Path, /) -> None:
         manifest["fixture"] = _run_fixture(request, output, limits)
         _write_archive(output, manifest, {}, limits)
         return
+    release = _installed_release()
     model, source_kind = _load_source(request, request_path.parent, limits)
-    model_class = _admit_module_tree(model)
-    declaration = _declaration(model, model_class)
+    _admitted_root(model)
+    model, optimized_source, optimized = _e3nn_layout(model, provider)
+    model_class = _admit_module_tree(model, release)
+    declaration = _declaration(model, model_class, release)
     declared = request.get("architecture")
     if declared is not None and dict(declared) != declaration:
         raise _refuse("The source does not match the declared architecture exactly.")
+    if optimized is not None:
+        optimized["reproduction_deviation"] = _layout_deviation(
+            optimized_source, model, declaration, limits
+        )
     verification = _verify_declaration(model, declaration, limits)
+    verification["layout"]["optimized_layout"] = optimized
     manifest["source"] = {
         "kind": source_kind,
         "sha256": request["source"]["sha256"],
@@ -2744,7 +3639,7 @@ def _execute(site_packages: str, request_path: Path, output: Path, /) -> None:
     manifest["declaration"] = declaration
     match operation:
         case "extract":
-            manifest["modules"] = _module_records(model)
+            manifest["modules"] = _module_records(model, release)
             arrays = {
                 f"state/{name}": value for name, value in verification["state"].items()
             }

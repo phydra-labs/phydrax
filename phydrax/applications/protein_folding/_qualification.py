@@ -14,7 +14,11 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...atomistic.sampling import CollectiveVariableKind, CollectiveVariablePlan
+from ...atomistic.sampling import (
+    CollectiveVariableGeometry,
+    CollectiveVariableKind,
+    CollectiveVariablePlan,
+)
 from ...units import ANGSTROM, conversion_factor, UnitDefinition
 from ._binding import PreparedProteinBinding
 from ._construct import ProteinAtomKey
@@ -240,7 +244,10 @@ class PreparedProteinQualification(StrictModule):
         delta = x[self.clash_indices[:, 0]] - x[self.clash_indices[:, 1]]
         distances = jnp.sqrt(jnp.sum(delta * delta, axis=-1))
         clash_free = distances >= self.clash_distance
-        peptide = tuple(variable.evaluate(x) for variable in self.peptide_variables)
+        geometry = CollectiveVariableGeometry(x, unwrapped_positions=x)
+        peptide = tuple(
+            variable.evaluate(geometry) for variable in self.peptide_variables
+        )
         angles = (
             jnp.stack(tuple(value.value for value in peptide))
             if peptide
@@ -254,7 +261,9 @@ class PreparedProteinQualification(StrictModule):
         planar = peptide_valid & (
             jnp.abs(jnp.sin(angles)) <= jnp.sin(self.peptide_tolerance)
         )
-        torsion = tuple(variable.evaluate(x) for variable in self.torsion_variables)
+        torsion = tuple(
+            variable.evaluate(geometry) for variable in self.torsion_variables
+        )
         torsion_angles = (
             jnp.stack(tuple(value.value for value in torsion))
             if torsion

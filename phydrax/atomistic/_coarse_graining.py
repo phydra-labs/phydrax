@@ -2,9 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Disjoint center-of-mass coarse maps and projected-force matching.
+
+`CoarseForceMatchingProblem` maps fine configurations and forces onto beads,
+lowers the projected (optionally prior-corrected) forces into an immutable
+canonical source of atom-type-ID beads with coarse masses, and binds a
+force-only `AtomisticTrainingProblem`; `fit_coarse_potential` delegates to
+`fit_atomistic_potential`.
+"""
+
 from __future__ import annotations
 
-from typing import cast
+from typing import cast, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,16 +28,21 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked, PRNGKey
 from ._graph import AtomisticGraphExecutionPlan
-from ._potential import AbstractAtomisticPotential, AtomisticSpeciesKind
+from ._potential import AbstractAtomisticPotential
+from ._structure_store import AtomisticStructureSource
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
 from ._topology import MolecularTopologyPlan
 from ._training import (
+    atomistic_training_loader,
+    atomistic_training_source,
+    AtomisticTrainingFields,
     AtomisticTrainingPolicy,
     AtomisticTrainingProblem,
     AtomisticTrainingResult,
     fit_atomistic_potential,
 )
-from ._types import AtomisticBatch
+from ._training_objectives import AtomisticForceObjective, AtomisticTrainingPrecision
+from ._types import AtomisticBatch, AtomisticSpeciesKind
 
 
 class MolecularCoarseMapPlan(StrictModule, NonTrainableState):
@@ -314,14 +328,30 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         )
 
 
+@final
 class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
+    """Projected-force matching of a coarse potential as a streaming problem.
+
+    Every fine configuration is mapped onto beads; the projected forces (minus
+    ``prior_forces`` when a ``prior_id`` declares a prior) become the
+    ``forces`` labels of one canonical source record per configuration, whose
+    species are bead atom-type IDs and whose masses are the coarse masses in
+    the system mass unit. A record's independent-unit lineage is its fine
+    structure ID, so validation configurations must carry structure IDs
+    disjoint from training. ``training`` is the force-only problem over those
+    sources (``objective``, default component-balanced squared force matching
+    with a fitted scale) prepared for ``cutoff + skin``. ``projected_forces``
+    and ``residual_forces`` keep the training force-scale evidence and
+    ``validation_forces`` the validation residual targets.
+    """
+
     mapping: PreparedMolecularCoarseMap
-    training_batch: AtomisticBatch
+    training_source: AtomisticStructureSource
+    validation_source: AtomisticStructureSource | None
+    training: AtomisticTrainingProblem
     projected_forces: Array
     residual_forces: Array
-    validation_batch: AtomisticBatch | None
     validation_forces: Array | None
-    graph_execution: AtomisticGraphExecutionPlan
     prior_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
@@ -334,6 +364,12 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         graph_execution: AtomisticGraphExecutionPlan,
         /,
         *,
+        cutoff: float,
+        skin: float = 0.0,
+        objective: AtomisticForceObjective | None = None,
+        batch_size: int | None = None,
+        seed: int = 0,
+        precision: AtomisticTrainingPrecision | None = None,
         prior_forces: ArrayLike | None = None,
         prior_id: str | None = None,
         validation_batch: AtomisticBatch | None = None,
@@ -345,9 +381,14 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
             or graph_execution.backend != "dense"
         ):
             raise TypeError("graph_execution must be a dense graph plan.")
+        force_objective = AtomisticForceObjective() if objective is None else objective
+        if not isinstance(force_objective, AtomisticForceObjective):
+            raise TypeError("objective must be an AtomisticForceObjective or None.")
         force = jnp.asarray(fine_forces, dtype=fine_batch.positions.dtype)
         if force.shape != fine_batch.positions.shape:
             raise ValueError("fine_forces must match fine_batch positions.")
+        coarse = mapping.coarse_system.plan
+        capacity = mapping.coarse_system.capacity
 
         def mapped_batch(
             batch: AtomisticBatch, labels: Array
@@ -367,29 +408,20 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
             )
             projected = jnp.stack(mapped_forces)
             count = batch.case_count
-            coarse = mapping.coarse_system.plan
             cells = None
             periodic_axes = None
             if coarse.cell is not None:
                 cells = jnp.broadcast_to(coarse.cell.vectors, (count, 3, 3))
                 periodic_axes = jnp.broadcast_to(coarse.cell.periodic_mask, (count, 3))
             result = AtomisticBatch(
-                jnp.zeros((count, mapping.coarse_system.capacity), dtype=jnp.int32),
+                jnp.zeros((count, capacity), dtype=jnp.int32),
                 positions,
-                jnp.broadcast_to(coarse.masses, (count, mapping.coarse_system.capacity)),
+                jnp.broadcast_to(coarse.masses, (count, capacity)),
                 coarse.units.scale,
-                particle_ids=jnp.broadcast_to(
-                    coarse.particle_ids, (count, mapping.coarse_system.capacity)
-                ),
-                atom_type_ids=jnp.broadcast_to(
-                    coarse.atom_type_ids, (count, mapping.coarse_system.capacity)
-                ),
-                element_mask=jnp.zeros(
-                    (count, mapping.coarse_system.capacity), dtype=jnp.bool_
-                ),
-                atom_mask=jnp.ones(
-                    (count, mapping.coarse_system.capacity), dtype=jnp.bool_
-                ),
+                particle_ids=jnp.broadcast_to(coarse.particle_ids, (count, capacity)),
+                atom_type_ids=jnp.broadcast_to(coarse.atom_type_ids, (count, capacity)),
+                element_mask=jnp.zeros((count, capacity), dtype=jnp.bool_),
+                atom_mask=jnp.ones((count, capacity), dtype=jnp.bool_),
                 cells=cells,
                 periodic_axes=periodic_axes,
                 structure_ids=tuple(
@@ -398,6 +430,16 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
                 ),
             )
             return result, projected
+
+        def source(
+            batch: AtomisticBatch, fine: AtomisticBatch, labels: Array
+        ) -> AtomisticStructureSource:
+            return atomistic_training_source(
+                batch,
+                mass_unit=coarse.units.mass_unit,
+                forces=np.asarray(labels, dtype=np.float64),
+                lineage_ids=fine.structure_ids,
+            )
 
         training_batch, projected = mapped_batch(fine_batch, force)
         prior = (
@@ -413,7 +455,7 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         if validation_batch is None:
             if validation_fine_forces is not None or validation_prior_forces is not None:
                 raise ValueError("Validation forces require validation_batch.")
-            coarse_validation = None
+            validation_source = None
             validation_residual = None
         else:
             if validation_fine_forces is None:
@@ -441,29 +483,59 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
                         "validation_prior_forces must match projected validation forces."
                     )
                 validation_residual = validation_projected - validation_prior
+            validation_source = source(
+                coarse_validation, validation_batch, validation_residual
+            )
+        training_source = source(training_batch, fine_batch, residual)
+        fields = (
+            AtomisticTrainingFields(species_kind=AtomisticSpeciesKind.ATOM_TYPE_ID)
+            if coarse.cell is None
+            else AtomisticTrainingFields(
+                cell="cell",
+                periodic="periodic",
+                species_kind=AtomisticSpeciesKind.ATOM_TYPE_ID,
+            )
+        )
+        training = AtomisticTrainingProblem(
+            atomistic_training_loader(
+                training_source, batch_size=batch_size, stream="training", seed=seed
+            ),
+            graph_execution,
+            (force_objective,),
+            scale=coarse.units.scale,
+            cutoff=cutoff,
+            skin=skin,
+            fields=fields,
+            validation=(
+                None
+                if validation_source is None
+                else atomistic_training_loader(validation_source, stream="validation")
+            ),
+            precision=precision,
+        )
         self.mapping = mapping
-        self.training_batch = training_batch
+        self.training_source = training_source
+        self.validation_source = validation_source
+        self.training = training
         self.projected_forces = projected
         self.residual_forces = residual
-        self.validation_batch = coarse_validation
         self.validation_forces = validation_residual
-        self.graph_execution = graph_execution
         self.prior_id = prior_id
         self.problem_id = canonical_fingerprint(
             {
                 "kind": "coarse-force-matching-problem",
                 "mapping": mapping.prepared_id,
-                "training": training_batch.batch_id,
-                "validation": None
-                if coarse_validation is None
-                else coarse_validation.batch_id,
-                "graph": graph_execution.plan_id,
+                "training": training.problem_id,
+                "execution": training.execution_id,
                 "prior": prior_id,
             }
         )
 
 
+@final
 class CoarseForceMatchingResult(StrictModule, NonTrainableState):
+    """Fitted coarse potential with projected and residual force-scale evidence."""
+
     training: AtomisticTrainingResult
     projected_force_rms: Array
     residual_force_rms: Array
@@ -480,19 +552,19 @@ def fit_coarse_potential(
     key: PRNGKey,
     /,
 ) -> CoarseForceMatchingResult:
+    """Fit an atom-type-ID potential on ``problem.training``.
+
+    ``projected_force_rms`` and ``residual_force_rms`` are the root mean square
+    of the projected and prior-corrected training forces; ``valid`` requires a
+    successful fit and finite force scales.
+    """
     if not isinstance(potential, AbstractAtomisticPotential):
         raise TypeError("potential must implement AbstractAtomisticPotential.")
+    if not isinstance(problem, CoarseForceMatchingProblem):
+        raise TypeError("problem must be a CoarseForceMatchingProblem.")
     if potential.capabilities.species_kind is not AtomisticSpeciesKind.ATOM_TYPE_ID:
         raise ValueError("Coarse force matching requires an atom-type-ID potential.")
-    training_problem = AtomisticTrainingProblem(
-        problem.training_batch,
-        problem.graph_execution,
-        cutoff=potential.configuration.cutoff,
-        training_forces=problem.residual_forces,
-        validation_batch=problem.validation_batch,
-        validation_forces=problem.validation_forces,
-    )
-    result = fit_atomistic_potential(potential, training_problem, policy, key=key)
+    result = fit_atomistic_potential(potential, problem.training, policy, key=key)
     projected_rms = jnp.sqrt(jnp.mean(problem.projected_forces**2))
     residual_rms = jnp.sqrt(jnp.mean(problem.residual_forces**2))
     result_id = canonical_fingerprint(

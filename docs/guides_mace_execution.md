@@ -192,18 +192,23 @@ converter that calls this owner.
 
 ## Graph topology and streamed layers
 
-Topology preparation and numerical differentiation are separate boundaries:
+Graph preparation and numerical differentiation are separate boundaries:
 
-- `prepare_atomistic_graph_topology(batch, execution, cutoff=..., skin=...)` runs
-  once on the host with concrete positions and cells. It searches directed
-  image routes within `cutoff + skin` with explicit integer shifts, stable
-  receiver-major route IDs, case isolation, and separately charged
-  `ParticleImageCapacity` budgets. It also prepares the streamed schedule once
-  per topology epoch. `backend="particle"` uses the case-batched fractional cell
-  list. `backend="dense"` is the bounded named all-pairs-times-stencil reference
-  and requires `maximum_dense_atoms`.
-- `bind_atomistic_graph` and `atomistic_energy_derivatives` only compute
-  geometry `d_e = x[receiver] - x[sender] + n_e @ H[case_e]`, cutoff masks, and
+- `AtomisticGraphLayout(...).prepare(batch)` (or the one-batch
+  `AtomisticGraphLayout.for_batch(batch, execution, cutoff=..., skin=...)`)
+  runs once on the host with concrete positions and cells. It searches directed
+  image routes within `cutoff + skin`, rounded outward by one value of the
+  coordinate dtype so the closed bound is covered, with explicit integer
+  shifts, stable receiver-major route IDs, case isolation, and separately
+  charged `ParticleImageCapacity` budgets. It also prepares the streamed
+  schedule once per topology epoch. `backend="particle"` uses the case-batched
+  fractional cell list. `backend="dense"` is the bounded named
+  all-pairs-times-stencil reference and requires `maximum_dense_atoms`. A
+  reusable periodic layout declares its search envelope with the plan's
+  `search_cell` and `search_margin`.
+- `AtomisticGraphPayload.graph`, `bind_atomistic_graph`, and
+  `atomistic_energy_derivatives` only compute geometry
+  `d_e = x[receiver] - x[sender] + n_e @ H[case_e]`, cutoff masks, and
   derivatives. They never discover, sort, or hash topology, so they are valid
   under `jit`, JVP/VJP, and mixed derivatives.
 
@@ -271,10 +276,15 @@ coordinate HVP for the exact network. Continuity is part of the route:
 ## Training
 
 `MACEPotential` trains with the shared `fit_atomistic_potential` on energy,
-force, and stress labels (see
-[atomistic learning](guides_atomistic.md#energy-force-and-stress-training)).
-Every accepted update changes the canonical `NumericRevision` from
-`atomistic_potential_revision`. Folded, merged, and tabulated bindings of the
+force, and stress objectives over streamed training sources (see
+[atomistic learning](guides_atomistic.md#energy-force-and-stress-training) and
+the [training-data guide](guides_atomistic_training_data.md)). Periodic MACE
+problems declare the training layout's search envelope on the particle plan
+(`search_cell=`, `search_margin=`). `AtomisticIrrepLowRankAdaptation` adapts
+selected `O3IrrepLinear` maps inside their multiplicity spaces, so a fine-tuned
+MACE stays O(3) equivariant; `AtomisticParameterSelection` freezes every other
+leaf exactly. Every accepted update changes the canonical `NumericRevision` from
+`atomistic_model_revision`. Folded, merged, and tabulated bindings of the
 previous revision then refuse.
 
 ## Prepared frozen inference
@@ -296,11 +306,13 @@ model's validators, recomputes every fold, and raises `StaleMACEPreparation`
 when the embedded model drifted. `active_species` bounds the folded and tabulated
 species data. Particles of other species refuse at evaluation instead of being
 mapped to another element. Training and `energy_and_forces` use the exact
-`MACEPotential`. The prepared form evaluates a bound graph through `graph_energy`
-and is a registered artifact type.
+`MACEPotential`. The prepared form evaluates a bound graph through the same typed
+`evaluate_graph(inputs, request)` boundary and is a registered artifact type.
 
 ```python
-topology = phx.atomistic.prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
+payload = phx.atomistic.AtomisticGraphLayout.for_batch(
+    batch, execution, cutoff=3.0
+).prepare(batch)
 prepared = phx.nn.atomistic.prepare_mace_potential(
     model,
     radial="tabulated",
@@ -319,17 +331,20 @@ qualifications = [
     )
     for index, layer in enumerate(prepared.layers)
 ]
-graph = phx.atomistic.bind_atomistic_graph(
-    topology, execution, batch.positions.reshape((-1, 3)), cutoff=3.0, cell_vectors=batch.cells
+outputs = prepared.evaluate_graph(
+    phx.atomistic.AtomisticGraphInputs(
+        payload.graph(cutoff=3.0),
+        units.scale,
+        species_kind=phx.atomistic.AtomisticSpeciesKind.ATOMIC_NUMBER,
+    ),
+    phx.atomistic.AtomisticObservableRequest(
+        (
+            phx.atomistic.AtomisticObservable.ENERGY,
+            phx.atomistic.AtomisticObservable.ATOM_ENERGY,
+        )
+    ),
 )
-energy, atom_energy = prepared.graph_energy(
-    batch.atomic_numbers,
-    batch.atom_mask,
-    batch.atom_cases,
-    batch.case_count,
-    batch.atom_capacity,
-    graph,
-)
+energy, atom_energy = outputs.energy, outputs.atom_energy
 ```
 
 In one local run, the tabulated energy of this random model differed from the
@@ -517,8 +532,9 @@ numerical leaves; stale support after a table mutation is refused.
 
 ## Distributed execution
 
-Owner-local multilayer execution applies the same layer kernels to owned
-receivers with halo source rows per layer. Reverse cotangents are returned in
+Domain-owned multilayer execution (`AtomisticDomainPlan` with halo or
+graph-partition strategies) applies the same layer kernels to owned receivers
+with halo source rows per layer. Reverse cotangents are returned in
 reverse layer order. See
 [distributed atomistic execution](guides_atomistic_distributed_execution.md).
 The local owner-lane oracle is a numerical check, not hardware qualification.
@@ -552,7 +568,7 @@ admitted row.
 ## Identity and persistence
 
 - `MACEArchitecture.architecture_id` content-addresses the declaration.
-- `atomistic_potential_revision` covers only parameter leaves.
+- `atomistic_model_revision` covers only parameter leaves.
 - A model artifact's `content_id` also covers fixed bases, coefficients, and
   tables.
 - `prepared_id` names a prepared realization.

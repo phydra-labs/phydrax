@@ -308,8 +308,12 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             multipoles.polarizabilities[indices],
             multipoles.damping[indices],
         )
-        if scaling is not None and scaling.direct.shape != (indices.size, indices.size):
+        if scaling is not None and scaling.site_capacity != indices.size:
             raise ValueError("Polarization scaling must align with MM sites.")
+        if polarization_operator.coulomb_constant != system.units.coulomb_constant:
+            raise ValueError(
+                "The polarization operator Coulomb constant must equal the system's."
+            )
         prepared_operator = polarization_operator.prepare(selected, scaling=scaling)
         damping_ = float(damping)
         tolerance = float(residual_tolerance)

@@ -18,8 +18,8 @@ from ..atomistic._alchemical import (
     AlchemicalRegionInteractionMode,
     PreparedControlledHamiltonian,
 )
+from ..atomistic._cell_dynamics import bind_atomistic_bundle_geometry
 from ..atomistic._thermodynamic import PreparedThermodynamicStateTable
-from ..discretization import AbstractPreparedParticleNeighborhood
 from ..typing import checked
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
@@ -141,11 +141,15 @@ class CenterOfMassPreservingBijector(AbstractBijector):
 
 
 class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
-    """Adapt one normalized controlled-Hamiltonian state to targeted free energy."""
+    """Adapt one normalized controlled-Hamiltonian state to targeted free energy.
+
+    Resources are the Hamiltonian's own prepared neighborhood bundle: every
+    evaluation initializes the bundle state certified at that configuration,
+    and a capacity or scientific bundle failure makes the evaluation invalid.
+    """
 
     hamiltonian: PreparedControlledHamiltonian
     thermodynamic: PreparedThermodynamicStateTable
-    neighborhood: AbstractPreparedParticleNeighborhood
     state_index: int = eqx.field(static=True)
     event_shape: tuple[int, int] = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
@@ -155,15 +159,9 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
         self,
         hamiltonian: PreparedControlledHamiltonian,
         thermodynamic: PreparedThermodynamicStateTable,
-        neighborhood: AbstractPreparedParticleNeighborhood,
         state_index: int,
         /,
     ) -> None:
-        if (
-            neighborhood.particle_discretization_id
-            != hamiltonian.system.particles.prepared_id
-        ):
-            raise ValueError("Neighborhood belongs to another atomistic support.")
         if (
             thermodynamic.program_id != hamiltonian.prepared_id
             or thermodynamic.system_id != hamiltonian.system.prepared_id
@@ -196,7 +194,6 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
             )
         self.hamiltonian = hamiltonian
         self.thermodynamic = thermodynamic
-        self.neighborhood = neighborhood
         self.state_index = index
         self.event_shape = (hamiltonian.system.capacity, 3)
         self.potential_id = canonical_fingerprint(
@@ -204,7 +201,6 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
                 "kind": "controlled-hamiltonian-reduced-potential",
                 "hamiltonian": hamiltonian.prepared_id,
                 "thermodynamic": thermodynamic.table_id,
-                "neighborhood": neighborhood.prepared_id,
                 "state": thermodynamic.state_ids[index],
             }
         )
@@ -213,17 +209,19 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
         positions = jnp.asarray(value)
         if positions.shape != self.event_shape:
             raise ValueError(f"value must have event shape {self.event_shape}.")
-        neighborhood = self.neighborhood.build(
-            positions,
-            active_mask=self.hamiltonian.system.active_mask,
+        bundle = self.hamiltonian.neighborhood_bundle
+        neighborhoods = bundle.initialize(
+            bind_atomistic_bundle_geometry(bundle, self.hamiltonian.system, positions)
         )
         evaluation = self.hamiltonian.evaluate(
             positions,
-            neighborhood,
+            neighborhoods,
             state_index=self.state_index,
         )
         reduced = self.thermodynamic.beta[self.state_index] * evaluation.energy
-        valid = evaluation.successful & jnp.isfinite(reduced)
+        valid = (
+            evaluation.successful & neighborhoods.successful[0] & jnp.isfinite(reduced)
+        )
         return ReducedPotentialEvaluation(reduced, valid, self.potential_id)
 
 

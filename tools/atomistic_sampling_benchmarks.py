@@ -22,7 +22,9 @@ cv = phx.atomistic.sampling.CollectiveVariablePlan(
     phx.atomistic.sampling.CollectiveVariableKind.RADIUS_OF_GYRATION,
     jnp.arange(64),
 ).prepare(system)
-evaluate = eqx.filter_jit(cv.evaluate)
+evaluate = eqx.filter_jit(
+    lambda value: cv.evaluate(phx.atomistic.sampling.CollectiveVariableGeometry(value))
+)
 started = time.perf_counter()
 first = evaluate(positions)
 jax.block_until_ready(first.value)

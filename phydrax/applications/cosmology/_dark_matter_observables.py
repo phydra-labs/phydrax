@@ -809,7 +809,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         radial_edges: ArrayLike,
         /,
     ) -> None:
-        dimension = transfer.particles.ambient_dimension
+        dimension = transfer.ambient_dimension
         if dimension != 3:
             raise ValueError(
                 "Particle dark-matter anisotropy and gravothermal diagnostics require three dimensions."
@@ -1064,7 +1064,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         source_product_id: str,
     ) -> ParticleDarkMatterObservableProduct:
         source = _identifier(source_product_id, "source_product_id")
-        particles = self.transfer.particles
+        particles = self.transfer.physical_particles()
         if (
             state.positions.shape
             != (

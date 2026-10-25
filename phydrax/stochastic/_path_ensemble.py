@@ -463,12 +463,20 @@ class StochasticPathEnsemblePlan(StrictModule):
 
 
 class PreparedStochasticPathEnsemble(StrictModule):
-    """Validated path-ensemble inputs with a stable realization identity."""
+    """Validated path-ensemble inputs bound to one fixed Wiener realization.
+
+    ``realization_id`` and ``coupling_id`` are materialized from the concrete
+    realization once, at host preparation, together with ``prepared_id``; the
+    prepared ensemble is a fixed-realization binding, so execution never reads
+    identities from (possibly traced) path data.
+    """
 
     problem: Any
     plan: StochasticPathEnsemblePlan
     realization: WienerRealization
     initial_states: Array | None
+    realization_id: str = eqx.field(static=True)
+    coupling_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
 
@@ -562,13 +570,14 @@ def prepare_stochastic_path_ensemble(
             "content": array_tree_fingerprint(initials),
         }
     )
+    realization_id = selected.realization_id
     prepared_id = canonical_fingerprint(
         {
             "kind": "prepared-stochastic-path-ensemble",
             "problem": problem.problem_id,
             "plan": plan.plan_id,
             "execution_configuration": plan.configuration_id,
-            "realization": selected.realization_id,
+            "realization": realization_id,
             "initial_states": initial_states_identity,
         }
     )
@@ -577,6 +586,8 @@ def prepare_stochastic_path_ensemble(
         plan=plan,
         realization=selected,
         initial_states=initials,
+        realization_id=realization_id,
+        coupling_id=selected.coupling_id,
         prepared_id=prepared_id,
     )
 
@@ -646,8 +657,8 @@ def solve_stochastic_path_ensemble(
         plan_id=plan.plan_id,
         prepared_id=prepared.prepared_id,
         result_id=result_id,
-        realization_id=prepared.realization.realization_id,
-        coupling_id=prepared.realization.coupling_id,
+        realization_id=prepared.realization_id,
+        coupling_id=prepared.coupling_id,
         approximation_kind="finite-keyed-path-ensemble",
     )
 

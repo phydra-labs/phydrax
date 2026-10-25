@@ -5,6 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 def _periodic_dynamics() -> Any:
@@ -23,18 +28,26 @@ def _periodic_dynamics() -> Any:
         element_mask=[False, False],
         cell=cell,
     ).prepare()
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
+    # Explicit resources: one cell-list source and the single pair route of the
+    # former dense two-atom neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
     )
+    # Driven stress and SLLOD consume the strain derivative of the same scalar
+    # Hamiltonian; the runtime declares it explicitly.
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
+        strain_response=True,
     ).prepare()
     return cell, dynamics
 

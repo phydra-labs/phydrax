@@ -126,11 +126,11 @@ def _surface_splat(
             maximum_condition=assignment.maximum_condition,
         )
     particles = ParticleSetPlan(
-        np.asarray(splat.particles.particle_ids)[slots],
-        np.asarray(splat.particles.masses)[slots],
-        ambient_dimension=splat.particles.ambient_dimension,
-        active_mask=np.asarray(splat.particles.active_mask)[slots],
-        coordinate_dtype=splat.particles.plan.coordinate_dtype,
+        np.asarray(splat.physical_particles().particle_ids)[slots],
+        np.asarray(splat.physical_particles().masses)[slots],
+        ambient_dimension=splat.ambient_dimension,
+        active_mask=np.asarray(splat.source_active_mask)[slots],
+        coordinate_dtype=splat.physical_particles().plan.coordinate_dtype,
         name="mpm-boundary-particles",
     ).prepare()
     plan = ParticleGridSplatPlan(
@@ -202,7 +202,7 @@ class PreparedMPMBoundaryLoad(StrictModule, NonTrainableState):
         if load.semantics.support != "boundary":
             raise ValueError("MPM boundary quadrature requires boundary load support.")
         slot = _field_slot(field_slot)
-        dimension = splat.particles.ambient_dimension
+        dimension = splat.ambient_dimension
         selected_geometry = (
             MPMGeometryPlan(spatial_dimension=dimension) if geometry is None else geometry
         )
@@ -241,7 +241,7 @@ class PreparedMPMBoundaryLoad(StrictModule, NonTrainableState):
             np.arange(coordinates.shape[0], dtype=np.int64),
             measure,
             ambient_dimension=dimension,
-            coordinate_dtype=splat.particles.plan.coordinate_dtype,
+            coordinate_dtype=splat.physical_particles().plan.coordinate_dtype,
             name="mpm-boundary-quadrature",
         ).prepare()
         boundary_splat = splat.plan.prepare(particles)
@@ -319,16 +319,16 @@ class PreparedMPMBoundaryLoad(StrictModule, NonTrainableState):
             raise ValueError("particle_slots must be a nonempty integer vector.")
         if (
             np.any(slots < 0)
-            or np.any(slots >= splat.particles.capacity)
+            or np.any(slots >= splat.source_capacity)
             or np.unique(slots).size != slots.size
         ):
             raise ValueError("particle_slots must contain distinct valid source slots.")
         if coordinates.shape != (
-            splat.particles.capacity,
-            splat.particles.ambient_dimension,
+            splat.source_capacity,
+            splat.ambient_dimension,
         ):
             raise ValueError("reference_coordinates must contain every source particle.")
-        if not np.all(np.asarray(splat.particles.active_mask)[slots]):
+        if not np.all(np.asarray(splat.source_active_mask)[slots]):
             raise ValueError("Surface particles must be active.")
         selected = _surface_splat(splat, slots)
         return cls(selected, coordinates[slots], reference_area_vectors, load, **kwargs)

@@ -8,9 +8,17 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax import Array
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel
+from phydrax._trainable import partition_parameters
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 class _QuadraticFreeEnergy(AbstractArrayModel):
@@ -43,17 +51,25 @@ def _runtime() -> Any:
         # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Finite pair: explicit nonperiodic frame and the one-pair storage of the
+    # former dense neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-    ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -67,6 +83,30 @@ def _runtime() -> Any:
         key=jax.random.key(0),
     )
     return system, dynamics, thermodynamic, state
+
+
+def test_runtime_bias_freezes_its_trained_committee_but_keeps_coordinate_response() -> (
+    None
+):
+    model = _QuadraticFreeEnergy(2.0, 3.0)
+    model_parameters, _, _ = partition_parameters(model)
+    np.testing.assert_array_equal(model_parameters.stiffness, 2.0)
+    form = phx.atomistic.sampling.LearnedFreeEnergyBiasForm(
+        (model,),
+        model_ids=("quadratic",),
+        reference=jnp.asarray([1.0], dtype=jnp.float64),
+    )
+    parameters, model_state, fixed = partition_parameters(form)
+    assert parameters is None and model_state is None
+    point = jnp.asarray([2.0], dtype=jnp.float64)
+    np.testing.assert_allclose(fixed.committee(point).mean, 3.0)
+
+    def mean(values: Array) -> Array:
+        return form.committee(values).mean
+
+    np.testing.assert_array_equal(
+        jax.grad(mean)(point), np.asarray([4.0], dtype=np.float64)
+    )
 
 
 def test_learned_free_energy_bias_scenario_1() -> None:
@@ -112,8 +152,7 @@ def test_learned_free_energy_bias_scenario_1() -> None:
     variables = phx.atomistic.sampling.CollectiveVariableProgram(
         (distance,), names=("distance",)
     )
-    plan = phx.atomistic.sampling.LearnedFreeEnergyBiasPlan(
-        variables,
+    form = phx.atomistic.sampling.LearnedFreeEnergyBiasForm(
         (_QuadraticFreeEnergy(1.0, 3.0), _QuadraticFreeEnergy(1.0, -2.0)),
         model_ids=("quadratic-a", "quadratic-b"),
         # ty: ignore[invalid-argument-type]
@@ -121,17 +160,23 @@ def test_learned_free_energy_bias_scenario_1() -> None:
         trusted_uncertainty=1.0e-8,
         rejected_uncertainty=0.5,
     )
-    bias = plan.prepare(dynamics)
-    evaluation = bias.evaluate(state.kinematics.positions, plan.initialize(), state.time)
+    term = phx.atomistic.sampling.AtomisticBiasTerm(
+        variables, form, name="learned-bias", force_group=1
+    ).prepare(system)
+    geometry = phx.atomistic.sampling.CollectiveVariableGeometry(
+        state.kinematics.positions
+    )
+    energy, evaluation, successful = term.bias(geometry, None)
+    committee = form.committee(evaluation.values)
 
-    assert bool(evaluation.successful)
-    assert evaluation.uncertainty < 1.0e-10
-    assert jnp.allclose(evaluation.trust, 1.0)
-    numerical = jax.grad(
-        lambda value: bias.energy(value, plan.initialize(), state.time)[0]
+    assert bool(successful)
+    assert committee.uncertainty < 1.0e-10
+    assert jnp.allclose(committee.trust, 1.0)
+    gradient = jax.grad(
+        lambda value: term.bias(
+            phx.atomistic.sampling.CollectiveVariableGeometry(value), None
+        )[0]
     )(state.kinematics.positions)
-    assert jnp.allclose(evaluation.forces, -numerical)
-
-    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias, thermodynamic)
-    biased_state = runtime.initialize(state)
-    assert bool(biased_state.bias.successful)
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.isfinite(energy)
+    assert not term.plan.stateful

@@ -17,11 +17,14 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import Any, get_args, Literal, NamedTuple, TYPE_CHECKING, TypeAlias
 
 
 if TYPE_CHECKING:
-    import jax
+    from jax import Array, Device
+
+
+Accelerator: TypeAlias = Literal["oneapi", "tpu", "rocm10"]
 
 
 class PoissonTraining(NamedTuple):
@@ -29,13 +32,18 @@ class PoissonTraining(NamedTuple):
 
     parameters: Any
     state: Any
-    residual: Callable[[Any], jax.Array]
-    objective: Callable[[Any], jax.Array]
-    step: Callable[[Any, Any], tuple[Any, Any, jax.Array, Any]]
+    residual: Callable[[Any], Array]
+    objective: Callable[[Any], Array]
+    step: Callable[[Any, Any], tuple[Any, Any, Array, Any]]
 
 
-def poisson_training() -> PoissonTraining:
-    """Prepare a normal domain-bound MLP Poisson PINN and its Adam update step."""
+def poisson_training(*, device: Device) -> PoissonTraining:
+    """Prepare a normal domain-bound MLP Poisson PINN and its Adam update step.
+
+    The key, domain bounds, collocation points, parameters, and optimizer state
+    are committed to `device`, so every residual, objective, and update derived
+    from them runs on that one device without per-step transfers.
+    """
     import equinox as eqx
     import jax
     import jax.numpy as jnp
@@ -47,7 +55,9 @@ def poisson_training() -> PoissonTraining:
     from phydrax.optim import adam
 
     box = phx.domain.HyperRectangle(
-        np.zeros(2, np.float32), np.ones(2, np.float32), dtype=jnp.float32
+        jax.device_put(np.zeros(2, np.float32), device),
+        jax.device_put(np.ones(2, np.float32), device),
+        dtype=jnp.float32,
     )
     model = phx.nn.models.MLP(
         in_size=2,
@@ -56,13 +66,16 @@ def poisson_training() -> PoissonTraining:
         depth=2,
         activation=jnp.tanh,
         dtype=jnp.float32,
-        key=jax.random.key(7),
+        key=jax.device_put(jax.random.key(7), device),
     )
-    points = jnp.asarray(
-        [[0.2, 0.3], [0.4, 0.7], [0.7, 0.5], [0.8, 0.9]], dtype=jnp.float32
+    points = jax.device_put(
+        np.asarray([[0.2, 0.3], [0.4, 0.7], [0.7, 0.5], [0.8, 0.9]], np.float32),
+        device,
     )
     parameters, static = eqx.partition(model, eqx.is_inexact_array)
+    parameters = jax.device_put(parameters, device)
     optimizer = adam(1e-3)
+    state = jax.device_put(optimizer.init(parameters), device)
 
     def residual(candidate: Any) -> jax.Array:
         field = box.Model("x")(eqx.combine(candidate, static))
@@ -85,20 +98,25 @@ def poisson_training() -> PoissonTraining:
         updates, next_state = optimizer.update(gradient, current_state, current)
         return eqx.apply_updates(current, updates), next_state, value, gradient
 
-    return PoissonTraining(
-        parameters, optimizer.init(parameters), residual, objective, step
-    )
+    return PoissonTraining(parameters, state, residual, objective, step)
 
 
-def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]]:
-    """Differentiate a normal domain-bound MLP twice in space and train it."""
+def poisson_steps(
+    *, device: Device, steps: int = 20
+) -> tuple[dict[str, float], tuple[Array, ...]]:
+    """Differentiate a normal domain-bound MLP twice in space and train it.
+
+    Training, every compiled step, and every returned array run on `device`,
+    where `poisson_training` commits the prepared PINN.
+    """
     import equinox as eqx
     import jax
     import jax.numpy as jnp
+    import numpy as np
 
     if steps < 1:
         raise ValueError("steps must be positive")
-    parameters, state, residual, objective, update = poisson_training()
+    parameters, state, residual, objective, update = poisson_training(device=device)
     step = eqx.filter_jit(update)
 
     initial, initial_gradient = eqx.filter_value_and_grad(objective)(parameters)
@@ -107,12 +125,12 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
     )
     direction = jax.tree.map(lambda value: value / directional, initial_gradient)
     plus = jax.tree.map(
-        lambda value, delta: value + jnp.float32(0.01) * delta, parameters, direction
+        lambda value, delta: value + np.float32(0.01) * delta, parameters, direction
     )
     minus = jax.tree.map(
-        lambda value, delta: value - jnp.float32(0.01) * delta, parameters, direction
+        lambda value, delta: value - np.float32(0.01) * delta, parameters, direction
     )
-    finite_difference = (objective(plus) - objective(minus)) / jnp.float32(0.02)
+    finite_difference = (objective(plus) - objective(minus)) / np.float32(0.02)
     gradient = initial_gradient
     trained = parameters
     for _ in range(steps):
@@ -151,26 +169,28 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
     }, arrays
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--accelerator", required=True, choices=("oneapi", "tpu", "rocm10")
-    )
-    parser.add_argument("--device-id", type=int, default=0)
-    parser.add_argument("--steps", type=int, default=20)
-    parser.add_argument("--tpu-autodetect", action="store_true")
-    args = parser.parse_args()
+def selected_device_record(
+    accelerator: Accelerator,
+    *,
+    device_id: int = 0,
+    steps: int = 20,
+    tpu_autodetect: bool = False,
+) -> dict[str, Any]:
+    """Configure the runtime, train on the selected device, and return its record.
+
+    An unavailable accelerator or device raises; a completed run that misses an
+    acceptance criterion returns ``status="failed"``.
+    """
     import phydrax as phx
 
-    if args.tpu_autodetect and args.accelerator != "tpu":
-        parser.error("--tpu-autodetect requires --accelerator tpu")
-    if args.device_id < 0:
-        parser.error("--device-id must be nonnegative")
-    is_rocm = args.accelerator == "rocm10"
-    runtime_platform = "rocm" if is_rocm else args.accelerator
-    bootstrap = (
-        phx.config.RuntimeBootstrap(autodetect=True) if args.tpu_autodetect else None
-    )
+    accelerator = phx.typing.parse(accelerator, Accelerator, "accelerator")
+    if tpu_autodetect and accelerator != "tpu":
+        raise ValueError("TPU autodetection requires the tpu accelerator")
+    if device_id < 0:
+        raise ValueError("device_id must be nonnegative")
+    is_rocm = accelerator == "rocm10"
+    runtime_platform = "rocm" if is_rocm else accelerator
+    bootstrap = phx.config.RuntimeBootstrap(autodetect=True) if tpu_autodetect else None
     phx.config.configure(
         phx.config.RuntimeConfig(
             platforms=("rocm", "cpu") if is_rocm else (runtime_platform,),
@@ -187,9 +207,8 @@ def main() -> int:
         rocm_environment,
         tpu_environment,
     )
-    from phydrax.execution import default_device
 
-    match args.accelerator:
+    match accelerator:
         case "oneapi":
             report = oneapi_environment(initialize_backend=True)
         case "tpu":
@@ -205,12 +224,11 @@ def main() -> int:
         raise RuntimeError(
             "This example requires one process with an actual local selected device"
         )
-    matching = [device for device in devices if device.id == args.device_id]
+    matching = [device for device in devices if device.id == device_id]
     if len(matching) != 1:
-        raise RuntimeError(f"Device ID {args.device_id} is not a unique local device")
+        raise RuntimeError(f"Device ID {device_id} is not a unique local device")
     device = matching[0]
-    with default_device(device):
-        values, arrays = poisson_steps(steps=args.steps)
+    values, arrays = poisson_steps(device=device, steps=steps)
     placed = all(
         array.devices() == {device} and array.dtype == np.dtype("float32")
         for array in arrays
@@ -230,27 +248,42 @@ def main() -> int:
             atol=0.02,
         )
     )
-    print(
-        json.dumps(
-            {
-                "accelerator": args.accelerator,
-                "platform": device.platform,
-                "platform_version": device.client.platform_version,
-                "device_kind": device.device_kind,
-                "qualified_device_id": device.id,
-                "execution_device_count": 1,
-                "global_device_count": jax.device_count(runtime_platform),
-                "local_device_count": jax.local_device_count(runtime_platform),
-                "frontend_index_patch": frontend_index_patch_identity(),
-                "results_on_device": placed,
-                "steps": args.steps,
-                "values": values,
-                "status": "passed" if passed else "failed",
-            },
-            sort_keys=True,
-        )
+    return {
+        "accelerator": accelerator,
+        "platform": device.platform,
+        "platform_version": device.client.platform_version,
+        "device_kind": device.device_kind,
+        "qualified_device_id": device.id,
+        "execution_device_count": 1,
+        "global_device_count": jax.device_count(runtime_platform),
+        "local_device_count": jax.local_device_count(runtime_platform),
+        "frontend_index_patch": frontend_index_patch_identity(),
+        "results_on_device": placed,
+        "steps": steps,
+        "values": values,
+        "status": "passed" if passed else "failed",
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--accelerator", required=True, choices=get_args(Accelerator))
+    parser.add_argument("--device-id", type=int, default=0)
+    parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--tpu-autodetect", action="store_true")
+    args = parser.parse_args()
+    if args.tpu_autodetect and args.accelerator != "tpu":
+        parser.error("--tpu-autodetect requires --accelerator tpu")
+    if args.device_id < 0:
+        parser.error("--device-id must be nonnegative")
+    record = selected_device_record(
+        args.accelerator,
+        device_id=args.device_id,
+        steps=args.steps,
+        tpu_autodetect=args.tpu_autodetect,
     )
-    return 0 if passed else 1
+    print(json.dumps(record, sort_keys=True))
+    return 0 if record["status"] == "passed" else 1
 
 
 if __name__ == "__main__":

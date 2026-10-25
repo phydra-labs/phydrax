@@ -50,9 +50,9 @@ def test_particle_grid_route_scatter_scenario_1() -> None:
         position = jnp.asarray([[0.13], [0.52], [0.88]])
         state = prepared.build(position)
         payload = jnp.arange(
-            prepared.particles.capacity * prepared.route_width * 2,
+            prepared.source_capacity * prepared.route_width * 2,
             dtype=jnp.float64,
-        ).reshape((prepared.particles.capacity, prepared.route_width, 2))
+        ).reshape((prepared.source_capacity, prepared.route_width, 2))
 
         result = prepared.scatter_route_payload(state, payload)
         expected = _manual(state, payload, prepared.target_size).reshape(

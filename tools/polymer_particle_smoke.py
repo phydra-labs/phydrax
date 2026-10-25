@@ -31,7 +31,7 @@ def main() -> int:
         cell=cell,
     ).prepare()
     cutoff = 2.0 ** (1.0 / 6.0)
-    potential = phx.atomistic.AtomisticPotentialProgram(
+    program = phx.atomistic.AtomisticPotentialProgram(
         [
             # ty: ignore[invalid-argument-type]
             phx.atomistic.FiniteExtensibleNonlinearElasticBondPotential([30.0], [1.5]),
@@ -44,14 +44,45 @@ def main() -> int:
                 shift_energy_at_cutoff=True,
             ),
         ]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3, box=cell).prepare(
-        system.particles
     )
+    (pairs,) = program.requirements.neighborhoods
+    bundle = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+        (pairs,),
+        (
+            phx.atomistic.AtomisticNeighborhoodSource(
+                "wca-pairs",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                (pairs,),
+                phx.atomistic.AtomisticDenseImageSearch(maximum_dense_routes=243),
+                phx.discretization.ParticleImageCapacityLadder(
+                    (
+                        phx.discretization.ParticleImageCapacity(
+                            maximum_particles_per_cell=3,
+                            maximum_edges=6,
+                            maximum_degree=2,
+                            maximum_images=27,
+                            maximum_case_edges=6,
+                        ),
+                    )
+                ),
+                skin=0.3,
+            ),
+        ),
+        (
+            phx.atomistic.AtomisticRoleCapacityLadder(
+                pairs,
+                (
+                    phx.atomistic.AtomisticRoleCapacity(
+                        maximum_routes=3, maximum_degree=2
+                    ),
+                ),
+            ),
+        ),
+    )
+    potential = program.prepare(system, neighborhood_bundle=bundle)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.BAOABLangevinPlan(1.0e-3, 1.0, realization_id=4),
     ).prepare()
     thermo = phx.atomistic.AtomisticThermodynamicStatePlan(

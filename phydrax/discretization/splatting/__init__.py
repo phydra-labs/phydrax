@@ -10,7 +10,7 @@ from ._assignment import (
     SplatAssignmentCapabilities,
     SplatAssignmentState,
 )
-from ._bspline import TensorBSplineSplatAssignment
+from ._bspline import cardinal_bspline_periodic_symbol, TensorBSplineSplatAssignment
 from ._cpdi import (
     AffineCPDISplatAssignment,
     CPDI2AssignmentInput,
@@ -53,6 +53,7 @@ from ._types import (
 
 
 __all__ = [
+    "cardinal_bspline_periodic_symbol",
     "AbstractStructuredSplatAssignment",
     "AffineCPDISplatAssignment",
     "CPDI2AssignmentInput",

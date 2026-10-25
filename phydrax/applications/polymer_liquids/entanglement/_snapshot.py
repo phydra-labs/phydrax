@@ -221,7 +221,8 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         )
         continuity = jnp.all(~bond_mask | (lengths <= self.plan.maximum_bond_length))
         topology_matches = jnp.asarray(True)
-        successful = state.force.successful & finite & continuity & topology_matches
+        force_current = self.dynamics.force_cache_valid(state, state.force.controls)
+        successful = force_current & finite & continuity & topology_matches
         source_state_id = canonical_fingerprint(
             {
                 "kind": "primitive-path-source-state",

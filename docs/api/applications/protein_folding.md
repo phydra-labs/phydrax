@@ -90,7 +90,9 @@ to discard unsupported force terms.
 ## P1/P3: physical dynamics, free energy, and kinetic workflows
 
 `prepare_protein_dynamics` and `run_protein_dynamics` accept native
-`VelocityVerletPlan` (NVE) or `BAOABLangevinPlan` (NVT). The run requires qualified
+`VelocityVerletPlan` (NVE) or `BAOABLangevinPlan` (NVT); neighborhood resources
+are those the bound force field was prepared with (`neighborhood_bundle=`), never
+inferred. The run requires qualified
 initial geometry, explicit velocity units and PRNG key, and retains initial/final
 geometry, rollout, ensemble label, bias identity, and separate trajectory
 lineage. Check native rollout success, geometry success, and artifact status.

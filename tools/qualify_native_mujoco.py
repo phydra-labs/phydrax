@@ -1160,7 +1160,7 @@ def _mjx_tier(
             "versions": [list(item) for item in availability.versions],
             "comparisons": [],
         }
-    from mujoco import mjx
+    import mujoco.mjx as mjx
 
     evidence = adaptation.evidence
     assert isinstance(evidence, MujocoModelEvidence)

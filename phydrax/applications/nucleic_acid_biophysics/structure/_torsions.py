@@ -15,7 +15,11 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....atomistic import PreparedAtomisticSystem
-from ....atomistic.sampling import CollectiveVariableKind, CollectiveVariablePlan
+from ....atomistic.sampling import (
+    CollectiveVariableGeometry,
+    CollectiveVariableKind,
+    CollectiveVariablePlan,
+)
 from ....series import SampledSeries
 from .._binding import NucleotideAtomMapping, prepare_nucleotide_binding
 from .._construct import NucleotideKey
@@ -141,8 +145,13 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
     def evaluate(self, positions: ArrayLike) -> NucleotideTorsionEvaluation:
         shape = (self.nucleotide_count * 12,)
         values, valid, margin = jnp.zeros(shape), jnp.zeros(shape, bool), jnp.zeros(shape)
+        # Nonperiodic or caller-unwrapped coordinates: one branch, no images.
+        coordinates = jnp.asarray(positions)
+        geometry = CollectiveVariableGeometry(
+            coordinates, unwrapped_positions=coordinates
+        )
         for index, variable in zip(self.output_indices, self.variables, strict=True):
-            result = variable.evaluate(positions)
+            result = variable.evaluate(geometry)
             values = values.at[index].set(jnp.where(result.successful, result.value, 0.0))
             valid = valid.at[index].set(result.successful)
             margin = margin.at[index].set(result.branch_margin)

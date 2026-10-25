@@ -129,12 +129,14 @@ def _pack(
     capacity: int,
     fill: ArrayLike,
 ) -> Array:
-    """Scatter items into a ``(buckets, capacity, ...)`` packet buffer."""
+    """Pack injective fitting ``(destination, rank)`` pairs; drop excluded rows."""
     sentinel = buckets * capacity
     index = jnp.where(fits, destination * capacity + rank, sentinel)
-    buffer = jnp.full((sentinel + 1,) + values.shape[1:], fill, dtype=values.dtype)
-    buffer = buffer.at[index].set(values)
-    return buffer[:sentinel].reshape((buckets, capacity) + values.shape[1:])
+    buffer = jnp.full((sentinel,) + values.shape[1:], fill, dtype=values.dtype)
+    # Bucket ranks make all in-bounds writes unique. Excluded rows must be
+    # dropped, not collide in a writable sentinel that prevents transposition.
+    buffer = buffer.at[index].set(values, mode="drop", unique_indices=True)
+    return buffer.reshape((buckets, capacity) + values.shape[1:])
 
 
 def _owner_box_distances(

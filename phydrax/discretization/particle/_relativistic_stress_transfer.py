@@ -302,7 +302,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Relativistic stress transfer requires a materialized tensor grid."
             )
-        if transfer.particles.ambient_dimension != 3:
+        if transfer.ambient_dimension != 3:
             raise ValueError("Relativistic stress transfer requires three dimensions.")
         species_host = np.asarray(species_ids)
         masses_host = np.asarray(rest_masses, dtype=np.float64)
@@ -396,7 +396,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         self, state: RelativisticParticleState, frame: LocalRelativisticFramePlan, /
     ) -> None:
         self._require_frame(frame)
-        particles = self.transfer.particles
+        particles = self.transfer.physical_particles()
         if state.capacity != particles.capacity:
             raise ValueError("Particle state and transfer capacities differ.")
         if state.topology_id != self.topology_id:
@@ -501,7 +501,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         lineage_ids: ArrayLike | None = None,
     ) -> RelativisticParticleState:
         self._require_frame(frame)
-        particles = self.transfer.particles
+        particles = self.transfer.physical_particles()
         capacity = particles.capacity
         active = (
             particles.active_mask
@@ -679,6 +679,9 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    # Keep the source-faithful stress/flux contractions and conservation evidence
+    # in their declared order. This straight numerical kernel is not split merely
+    # for line count; rearrangement can change floating-point and adjoint behavior.
     def deposit(
         self,
         state: RelativisticParticleState,
@@ -686,7 +689,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         /,
     ) -> RelativisticStressDepositResult:
         self._require_state(state, frame)
-        particles = self.transfer.particles
+        particles = self.transfer.physical_particles()
         ids_match = jnp.all(state.particle_ids == particles.particle_ids)
         active_compatible = jnp.all(~state.active_mask | particles.active_mask)
         frame_match = state.frame_token == _frame_token(frame)

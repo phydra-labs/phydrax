@@ -10,7 +10,6 @@ NOT number of pairs. The cutoff is continuous but not globally differentiable.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -20,11 +19,16 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._identity import IdentityWords
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....atomistic import PreparedAtomisticSystem
 from ....atomistic.sampling import (
     AbstractCollectiveVariableProgram,
+    CollectiveVariableGeometry,
     CollectiveVariableMetric,
+    CollectiveVariableProgramEvaluation,
+    CollectiveVariableStatus,
 )
 from ....ein import contract
 from ....series import SampledSeries
@@ -33,10 +37,6 @@ from ....units import ANGSTROM, conversion_factor, UnitDefinition
 from .._binding import PreparedNucleotideBinding
 from .._construct import NucleotideKey
 from ._frames import base_frames
-
-
-if TYPE_CHECKING:
-    from ....discretization import PeriodicCell
 
 
 class GFeatureEvaluation(StrictModule):
@@ -215,9 +215,19 @@ class ERMSDCollectiveVariableProgram(
     output_size: int = eqx.field(static=True, default=1)
     names: tuple[str, ...] = eqx.field(static=True, default=("ermsd",))
     metrics: tuple[CollectiveVariableMetric, ...]
-    program_id: str = eqx.field(static=True)
+    program_identity: IdentityWords
+    system_identity: IdentityWords
+    requirements: tuple = ()
+    cell_dependent: bool = eqx.field(static=True, default=False)
 
-    def __init__(self, descriptor: NucleotideGDescriptor, reference: ArrayLike) -> None:
+    def __init__(
+        self,
+        descriptor: NucleotideGDescriptor,
+        reference: ArrayLike,
+        /,
+        *,
+        system: PreparedAtomisticSystem,
+    ) -> None:
         evaluated = descriptor.evaluate(reference)
         if not bool(jnp.all(evaluated.pair_valid)):
             raise ValueError(
@@ -225,28 +235,42 @@ class ERMSDCollectiveVariableProgram(
             )
         self.descriptor, self.reference = descriptor, jnp.asarray(reference)
         self.metrics = (CollectiveVariableMetric(),)
-        self.program_id = canonical_fingerprint(
+        self.system_identity = system.prepared_identity
+        self.requirements = ()
+        self.cell_dependent = False
+        self.program_identity = IdentityWords.of(
             {
                 "descriptor": descriptor.descriptor_id,
                 "reference": np.asarray(reference).tolist(),
+                "system": system.prepared_id,
             }
         )
 
+    @property
+    def support(self) -> tuple[int, ...]:
+        """Host: sorted physical particle slots of the bound nucleotide atoms."""
+        indices = np.asarray(self.descriptor.binding.atom_indices).reshape((-1,))
+        mask = np.asarray(self.descriptor.binding.atom_mask).reshape((-1,))
+        return tuple(sorted({int(i) for i in indices[mask.astype(bool)]}))
+
     def evaluate(
-        self,
-        positions: ArrayLike,
-        /,
-        *,
-        cell: PeriodicCell | None = None,
-        cell_vectors: ArrayLike | None = None,
-    ) -> tuple[Array, Array]:
-        """Native program ABI; geometry is already unwrapped before evaluation."""
-        if cell is not None or cell_vectors is not None:
-            raise ValueError(
-                "eRMSD accepts already-unwrapped coordinates, not an implicit cell policy."
-            )
-        result = self.descriptor.compare(positions, self.reference)
-        return result.value[None], result.successful
+        self, geometry: CollectiveVariableGeometry, /
+    ) -> CollectiveVariableProgramEvaluation:
+        """eRMSD of the geometry's material (unwrapped) coordinates."""
+        declared = geometry.unwrapped_declared
+        result = self.descriptor.compare(geometry.unwrapped_positions, self.reference)
+        successful = result.successful & declared
+        status = jnp.where(
+            declared, 0, int(CollectiveVariableStatus.BRANCH_UNCERTIFIED)
+        ).astype(jnp.int32)
+        return CollectiveVariableProgramEvaluation(
+            values=result.value[None],
+            successful=successful,
+            regular=successful,
+            status=status[None],
+            branch_margins=jnp.full((1,), jnp.inf, dtype=result.value.dtype),
+            program_identity=self.program_identity,
+        )
 
 
 __all__ = [

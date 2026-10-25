@@ -37,35 +37,80 @@ class ParticlePairKeys(StrictModule, NonTrainableState):
 
 
 class ParticlePairKeySpace(StrictModule, NonTrainableState):
-    """Stable unordered-pair identities built from physical particle IDs."""
+    """Stable unordered-pair identities built from physical particle IDs.
+
+    Two bindings share one key algorithm.  ``ParticlePairKeySpace(particles)``
+    binds a prepared particle discretization: its static identity includes the
+    particle content.  ``ParticlePairKeySpace(particle_ids=..., support_id=...)``
+    binds a declared indexed-support schema (slots of one executable layout):
+    its statics are the schema, capacity and key width only, the sorted IDs are
+    dynamic leaves, and ``particle_discretization_id`` is ``None``.  A schema is
+    never a material identity; its owning runtime must validate the material
+    identity numerically before relying on keys from it.
+    """
 
     sorted_particle_ids: Array
-    particle_discretization_id: str = eqx.field(static=True)
+    particle_discretization_id: str | None = eqx.field(static=True)
     particle_support_id: str = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
     pair_count: int = eqx.field(static=True)
     key_space_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, particles: ParticleDiscretization, /) -> None:
-        ids = np.asarray(particles.particle_ids, dtype=np.int64)
+    def __init__(
+        self,
+        particles: ParticleDiscretization | None = None,
+        /,
+        *,
+        particle_ids: ArrayLike | None = None,
+        support_id: str | None = None,
+    ) -> None:
+        if particles is not None:
+            if particle_ids is not None or support_id is not None:
+                raise ValueError(
+                    "Bind a pair key space to particles or to a support schema, not both."
+                )
+            ids = np.asarray(particles.particle_ids, dtype=np.int64)
+        else:
+            if particle_ids is None or support_id is None:
+                raise ValueError(
+                    "A support-schema pair key space requires particle_ids and support_id."
+                )
+            ids = np.asarray(particle_ids)
+            if ids.ndim != 1 or ids.size == 0 or not np.issubdtype(ids.dtype, np.integer):
+                raise TypeError("particle_ids must be a non-empty integer vector.")
+            ids = ids.astype(np.int64, copy=False)
+            if not isinstance(support_id, str) or not support_id.strip():
+                raise ValueError("support_id must be a non-empty schema identifier.")
         if np.any(ids < 0) or np.unique(ids).size != ids.size:
             raise ValueError("Particle pair identities require unique nonnegative IDs.")
         capacity = ids.size
         pair_count = capacity * (capacity - 1) // 2
         self.sorted_particle_ids = jnp.asarray(np.sort(ids), dtype=jnp.int64)
-        self.particle_discretization_id = particles.prepared_id
-        self.particle_support_id = particles.support.support_id
         self.particle_capacity = capacity
         self.pair_count = pair_count
-        self.key_space_id = canonical_fingerprint(
-            {
-                "kind": "particle-pair-identity-space",
-                "particles": particles.prepared_id,
-                "sorted_particle_ids": np.sort(ids).tolist(),
-                "identity_width": INTERACTION_KEY_WIDTH,
-            }
-        )
+        if particles is not None:
+            self.particle_discretization_id = particles.prepared_id
+            self.particle_support_id = particles.support.support_id
+            self.key_space_id = canonical_fingerprint(
+                {
+                    "kind": "particle-pair-identity-space",
+                    "particles": particles.prepared_id,
+                    "sorted_particle_ids": np.sort(ids).tolist(),
+                    "identity_width": INTERACTION_KEY_WIDTH,
+                }
+            )
+        else:
+            self.particle_discretization_id = None
+            self.particle_support_id = str(support_id).strip()
+            self.key_space_id = canonical_fingerprint(
+                {
+                    "kind": "particle-pair-identity-space-schema",
+                    "support": self.particle_support_id,
+                    "particle_capacity": capacity,
+                    "identity_width": INTERACTION_KEY_WIDTH,
+                }
+            )
 
     @checked
     def keys(self, pairs: ParticlePairRelation, /) -> ParticlePairKeys:

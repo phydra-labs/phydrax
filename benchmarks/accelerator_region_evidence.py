@@ -53,7 +53,7 @@ def main() -> int:
         parser.error(f"Device ID {args.device_id} is not a unique {args.platform} device")
     device = matching[0]
     with default_device(device):
-        training = poisson_training()
+        training = poisson_training(device=device)
         (_, _, loss, _), evidence = compiled_region_evidence(
             training.step,
             (training.parameters, training.state),

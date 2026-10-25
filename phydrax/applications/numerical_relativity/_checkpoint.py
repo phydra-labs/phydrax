@@ -20,6 +20,7 @@ from jax import Array
 from jax.sharding import SingleDeviceSharding
 from jax.typing import ArrayLike
 
+from ..._array_archive import ArrayArchiveLimits
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -30,6 +31,7 @@ from ...lifecycle._chunk_repository import (
 )
 from ...lifecycle._distributed_checkpoint import (
     _NO_PARENT_ID,
+    _read_process_inventory,
     assemble_distributed_checkpoint_from_repository,
     ProcessCheckpointPublication,
     publish_process_checkpoint,
@@ -978,6 +980,11 @@ def read_numerical_relativity_checkpoint(
 _MAX_RECONSTRUCTION_METADATA_BYTES = 65_536
 _MAX_RESTART_LEAVES = 4096
 _MAX_RESTART_SHARDS = 262_144
+# NR's existing descriptor byte and shard bounds admit each process inventory.
+_DESCRIPTOR_INVENTORY_LIMITS = ArrayArchiveLimits(
+    max_members=_MAX_RESTART_SHARDS,
+    max_manifest_bytes=_MAX_RECONSTRUCTION_METADATA_BYTES,
+)
 
 
 class DistributedNumericalRelativityRestart(StrictModule):
@@ -1270,15 +1277,10 @@ def _validate_publication(
         for key, value in expected.items()
     ):
         raise ValueError("Distributed checkpoint committed metadata is incompatible.")
-    descriptor_payload = metadata["shards"]
-    if len(descriptor_payload.encode("utf-8")) > _MAX_RECONSTRUCTION_METADATA_BYTES:
-        raise ValueError("Distributed checkpoint shard descriptors exceed bounds.")
-    descriptors = json.loads(descriptor_payload)
-    if (
-        not isinstance(descriptors, list)
-        or len(descriptors) != len(publication.shards)
-        or len(descriptors) > _MAX_RESTART_SHARDS
-    ):
+    descriptors = _read_process_inventory(
+        repository, durable, _DESCRIPTOR_INVENTORY_LIMITS
+    )
+    if len(descriptors) != len(publication.shards):
         raise ValueError("Distributed checkpoint shard descriptors are invalid.")
     for descriptor, shard in zip(descriptors, publication.shards, strict=True):
         shard_metadata = dict(shard.metadata)
@@ -1382,7 +1384,6 @@ def _validate_manifest_repository_binding(
         if artifact_id not in durable_by_artifact:
             durable = repository.get_manifest(artifact_id)
             durable_metadata = dict(durable.metadata)
-            descriptor_payload = durable_metadata.get("shards", "")
             if (
                 durable.provider_id != repository.provider_id
                 or durable.artifact_id != artifact_id
@@ -1395,20 +1396,13 @@ def _validate_manifest_repository_binding(
                 or durable_metadata.get("topology_epoch") != str(plan.topology_epoch)
                 or durable_metadata.get("parent_checkpoint_id") != parent_checkpoint_id
                 or durable_metadata.get("parent_manifest_id") != parent_manifest_id
-                or len(descriptor_payload.encode("utf-8"))
-                > _MAX_RECONSTRUCTION_METADATA_BYTES
             ):
                 raise ValueError(
                     "Distributed checkpoint repository artifact is incompatible."
                 )
-            descriptors = json.loads(descriptor_payload)
-            if (
-                not isinstance(descriptors, list)
-                or len(descriptors) > _MAX_RESTART_SHARDS
-            ):
-                raise ValueError(
-                    "Distributed checkpoint repository descriptors are invalid."
-                )
+            descriptors = _read_process_inventory(
+                repository, durable, _DESCRIPTOR_INVENTORY_LIMITS
+            )
             durable_by_artifact[artifact_id] = durable
             descriptors_by_artifact[artifact_id] = {
                 str(value["shard_id"]): value for value in descriptors

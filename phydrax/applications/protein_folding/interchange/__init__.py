@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from ....artifacts import ScientificArtifactEnvelope
-from ....atomistic import AtomisticUnitSystem
+from ....atomistic import (
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticPotentialProgram,
+    AtomisticUnitSystem,
+)
 from ....atomistic.interchange import AtomisticInterchangeReport
 from ....atomistic.interchange._structure_records import PDBAtomRecord
 from ....qualification import ReferenceArtifactManifest
@@ -179,6 +183,9 @@ def bind_protein_openmm(
     parameter_rights: Sequence[ReferenceArtifactManifest],
     source_id: str,
     cutoff: float,
+    neighborhood_resources: Callable[
+        [AtomisticPotentialProgram], AtomisticNeighborhoodBundlePlan
+    ],
     accept_bounded_no_cutoff: bool = False,
     commercial_use: bool = False,
 ) -> ProteinOpenMMBinding:
@@ -188,6 +195,10 @@ def bind_protein_openmm(
     charges or protonation states are generated here. OpenMM NoCutoff LJ is
     bounded by the existing native adapter's cutoff; explicit acceptance retains
     that approximation warning and is required for this particular profile.
+    ``neighborhood_resources`` declares the explicit neighborhood bundle plan
+    (sources, skins and capacity ladders) for the converted program's own
+    ``requirements.neighborhoods``; preparation refuses a plan that does not
+    cover them exactly, and no resource is inferred here.
     """
     from ....atomistic.interchange import from_openmm_system
 
@@ -221,7 +232,9 @@ def bind_protein_openmm(
             "Native interchange emitted approximation warnings; explicitly admit "
             "the bounded NoCutoff profile or supply a matching source model."
         )
-    field = bundle.force_field.prepare()
+    field = bundle.force_field.prepare(
+        neighborhood_bundle=neighborhood_resources(bundle.force_field.potential)
+    )
     binding = bind_protein(
         hypothesis,
         chemistry,

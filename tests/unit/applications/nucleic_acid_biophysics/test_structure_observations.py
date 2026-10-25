@@ -253,64 +253,85 @@ def test_structure_observations_scenario_2() -> None:
     # ty: ignore[not-subscriptable]
     assert not bool(jnp.any(incomplete.value_valid[1]))
     from phydrax.atomistic import (
-        AtomisticDynamicsPlan,
+        AtomisticCellListImageSearch,
         AtomisticPotentialProgram,
+        evaluate_force_group,
         LennardJonesPotential,
-        VelocityVerletPlan,
     )
     from phydrax.atomistic.sampling import (
-        AtomisticBiasPlan,
-        BiasKind,
-        PreparedAtomisticBias,
+        AtomisticBiasTerm,
+        CollectiveVariableGeometry,
+        HarmonicBiasForm,
     )
-    from phydrax.discretization import DenseParticleNeighborhoodPlan
+    from phydrax.discretization import PeriodicCell
+    from tests._support.atomistic_bundles import (
+        bundle_state,
+        prepare_program,
+        role_capacity,
+        search_capacity,
+    )
+    from tests._support.atomistic_sampling_fixtures import initial_bindings
 
     mapping, reference = fixture()
     units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     count = len(mapping.atom_ids)
     system = AtomisticSystemPlan(
         mapping.atom_ids,
-        # ty: ignore[invalid-argument-type]
-        [6] * count,
-        # ty: ignore[invalid-argument-type]
-        [12.0] * count,
+        np.full(count, 6),
+        np.full(count, 12.0),
         units,
-        # ty: ignore[invalid-argument-type]
-        atom_type_ids=[0] * count,
-    ).prepare()
-    neighborhood = DenseParticleNeighborhoodPlan(count * (count - 1) // 2).prepare(
-        system.particles
-    )
-    potential = AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [LennardJonesPotential([0.2], [1.0], 2.5)]
-    ).prepare(system)
-    dynamics = AtomisticDynamicsPlan(
-        system, potential, neighborhood, VelocityVerletPlan(1e-3)
+        atom_type_ids=np.zeros(count, dtype=np.int64),
     ).prepare()
     descriptor = NucleotideGDescriptor(
         prepare_nucleotide_binding(mapping, system),
         length_unit=ANGSTROM,
         image_policy="nonperiodic",
     )
-    program = ERMSDCollectiveVariableProgram(descriptor, reference)
+    program = ERMSDCollectiveVariableProgram(descriptor, reference, system=system)
     stiffness = 2.5
-    bias = PreparedAtomisticBias(
-        AtomisticBiasPlan(
-            BiasKind.HARMONIC,
-            program,
-            # ty: ignore[invalid-argument-type]
-            center=[0.0],
-            # ty: ignore[invalid-argument-type]
-            stiffness=[stiffness],
-        ),
-        dynamics,
+    umbrella = AtomisticBiasTerm(
+        program,
+        HarmonicBiasForm(np.asarray([0.0]), stiffness),
+        name="ermsd-umbrella",
+        force_group=1,
     )
-    state = bias.plan.initialize()
+    # The umbrella is one force group of the physical scalar program.  Finite
+    # fragment: explicit nonperiodic frame and the all-pair storage of the
+    # Lennard-Jones pair view; the eRMSD CV declares no neighborhood.
+    pairs = count * (count - 1) // 2
+    potential = prepare_program(
+        AtomisticPotentialProgram(
+            (
+                LennardJonesPotential(np.asarray([0.2]), np.asarray([1.0]), 2.5),
+                umbrella,
+            )
+        ),
+        system,
+        search=AtomisticCellListImageSearch(maximum_candidate_slots=10**5),
+        skin=0.5,
+        search_capacities=(
+            search_capacity(2 * pairs, particles_per_cell=count, images=27),
+        ),
+        role_capacities=(role_capacity(pairs, count - 1),),
+        frame=PeriodicCell(
+            100.0 * jnp.eye(3), origin=jnp.full((3,), -50.0), periodic_axes=(False,) * 3
+        ),
+    )
+    bindings = initial_bindings(potential)
+    evaluate = eqx.filter_jit(
+        lambda value, neighborhoods: evaluate_force_group(
+            potential, 1, value, neighborhoods, term_states=bindings
+        )
+    )
+
+    def umbrella_group(value: jax.Array) -> Any:
+        # Every configuration binds its own certified bundle state.
+        return evaluate(value, bundle_state(potential, value))
+
     positions = reference.at[3:6, 1].add(0.25)
-    evaluate = eqx.filter_jit(bias.evaluate)
-    result = evaluate(positions, state, jnp.asarray(0.0))
+    result = umbrella_group(positions)
     assert bool(result.successful)
+    assert result.term_slots == ("ermsd-umbrella",)
     expected_energy = (
         0.5 * stiffness * descriptor.compare(positions, reference).squared_distance
     )
@@ -318,8 +339,8 @@ def test_structure_observations_scenario_2() -> None:
     # Independent directional finite difference through the actual bias consumer.
     direction = jnp.zeros_like(positions).at[3:6, 1].set(1.0)
     step = 1e-5
-    plus = evaluate(positions + step * direction, state, jnp.asarray(0.0)).energy
-    minus = evaluate(positions - step * direction, state, jnp.asarray(0.0)).energy
+    plus = umbrella_group(positions + step * direction).energy
+    minus = umbrella_group(positions - step * direction).energy
     np.testing.assert_allclose(
         jnp.sum(result.forces * direction),
         -(plus - minus) / (2 * step),
@@ -329,9 +350,13 @@ def test_structure_observations_scenario_2() -> None:
     np.testing.assert_allclose(jnp.sum(result.forces, axis=0), 0.0, atol=1e-12)
     # Loss of a required base frame propagates a failed bias, not stale forces.
     collapsed = positions.at[:3].set(positions[0])
-    assert not bool(evaluate(collapsed, state, jnp.asarray(0.0)).successful)
-    with pytest.raises(ValueError):
-        program.evaluate(positions, cell_vectors=jnp.eye(3))
+    assert not bool(umbrella_group(collapsed).successful)
+    # A periodic geometry without declared material coordinates is refused.
+    assert not bool(
+        program.evaluate(
+            CollectiveVariableGeometry(positions, cell=PeriodicCell(100.0 * jnp.eye(3)))
+        ).successful
+    )
     mapping, positions = fixture()
     mask = np.ones(9, bool)
     mask[1] = False

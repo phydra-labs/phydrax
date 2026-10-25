@@ -21,6 +21,7 @@ import phydrax.linalg as la
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparationReport
@@ -34,6 +35,13 @@ from ._electrostatics import (
     ParticleMeshEwaldPotential,
 )
 from ._graph import AtomisticGraphExecutionPlan
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticNeighborhoodRequirement,
+    AtomisticNeighborhoodRole,
+    AtomisticPairExclusions,
+    PreparedAtomisticNeighborhoodBundle,
+)
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -42,6 +50,11 @@ from ._potential_program import (
     AtomisticPotentialProgram,
     AtomisticTermEvaluation,
     PreparedAtomisticPotentialProgram,
+)
+from ._reciprocal_mesh import (
+    PreparedReciprocalMesh,
+    ReciprocalInfluence,
+    ReciprocalMeshPlan,
 )
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
 
@@ -314,13 +327,21 @@ def _validate_general_term_data(
 
 
 class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """One general force-field term family over explicit or topology routes.
+
+    Parameter arrays and routes are dynamic leaves; ``kind`` is a selector and
+    ``cutoff`` the resource-defining neighborhood requirement cutoff, both
+    static. The canonical term digest is the dynamic ``term_identity``
+    (``term_id`` decodes it on the host).
+    """
+
     kind: ForceFieldTermKind = eqx.field(static=True)
     arrays: tuple[Array, ...]
     route_indices: Array
     cutoff: float | None = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -383,14 +404,23 @@ class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=False,
         )
         self.requirements = AtomisticPotentialRequirements(
-            cutoff=cutoff_,
-            pair_geometry=pair,
-            interaction_site_geometry=pair,
+            neighborhoods=(
+                (
+                    AtomisticNeighborhoodRequirement(
+                        identifier,
+                        AtomisticNeighborhoodRole.INTERACTION_SITE_PAIRS,
+                        cutoff_,
+                        exclusions=AtomisticPairExclusions.TOPOLOGY_EXCEPTIONS,
+                    ),
+                )
+                if pair
+                else ()
+            ),
             bonded_geometry=not pair
             and kind is not ForceFieldTermKind.DISPERSION_CORRECTION,
             reciprocal_grid=reciprocal,
         )
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "general-force-field-term",
                 "term_kind": kind.value,
@@ -487,16 +517,90 @@ class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
         return PreparedGeneralForceFieldTerm(self, system)
 
 
+def lennard_jones_pme_influence(alpha: Array, volume: Array, /) -> ReciprocalInfluence:
+    """LJ-PME reciprocal influence of the current cell volume.
+
+    Dispersion keeps its k = 0 term: b = |k| / (2 alpha) and
+    f(0) = 1/3 in E_rec = -pi^(3/2) alpha^3 / (2V) sum_k f(b) |S(k)|^2.
+    """
+    prefactor = -(jnp.pi**1.5) * alpha**3 / (2.0 * volume)
+
+    def influence(wave: Array, squared_wave: Array) -> Array:
+        del wave
+        reciprocal_coordinate = jnp.sqrt(
+            jnp.where(squared_wave > 0.0, squared_wave, 1.0)
+        ) / (2.0 * alpha)
+        kernel = jnp.where(
+            squared_wave > 0.0,
+            (
+                (1.0 - 2.0 * reciprocal_coordinate**2)
+                * jnp.exp(-(reciprocal_coordinate**2))
+                + 2.0
+                * jnp.sqrt(jnp.pi)
+                * reciprocal_coordinate**3
+                * jsp.erfc(reciprocal_coordinate)
+            )
+            / 3.0,
+            1.0 / 3.0,
+        )
+        return prefactor * kernel
+
+    return influence
+
+
+def lennard_jones_pme_self_energy(
+    alpha: Array, c6: Array, type_ids: Array, active: Array, /
+) -> Array:
+    """LJ-PME self term ``alpha^6 / 12 sum_i C6_ii`` over active sites."""
+    diagonal = jnp.diag(c6)[type_ids].astype(alpha.dtype)
+    return alpha**6 / 12.0 * jnp.sum(jnp.where(active, diagonal, 0.0))
+
+
+def lennard_jones_pme_pair_energy(
+    c6: Array,
+    alpha: Array,
+    left_types: Array,
+    right_types: Array,
+    distance: Array,
+    lennard_jones_scales: Array,
+    /,
+) -> Array:
+    """LJ-PME real-space energy of pairs at positive ``distance`` (unmasked).
+
+    ``-C6 g(alpha r) / r^6`` with ``g(x) = exp(-x^2) (1 + x^2 + x^4 / 2)``, plus
+    the exception correction ``(s_LJ - 1) (-C6 / r^6)`` that removes the
+    scaled share of the full dispersion the reciprocal sum contains. The one
+    definition of the single-device term and of its domain execution.
+    """
+    coefficient = c6[left_types, right_types]
+    scaled_distance = alpha * distance
+    screening = jnp.exp(-(scaled_distance**2)) * (
+        1.0 + scaled_distance**2 + 0.5 * scaled_distance**4
+    )
+    values = -coefficient * screening / distance**6
+    full_dispersion = -coefficient / distance**6
+    return values + (lennard_jones_scales - 1.0) * full_dispersion
+
+
 class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
+    """A general force-field term bound to one system.
+
+    ``site_anchor`` (the first active interaction site, the LJ-PME mesh
+    anchor) is a dynamic int32 scalar; the LJ-PME mesh is prepared from the
+    system's host site support and is layout-only. ``term_identity`` and
+    ``prepared_identity`` are dynamic.
+    """
+
     plan: GeneralForceFieldTerm
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    site_anchor: int = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    site_anchor: Array
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
+    reciprocal_mesh: PreparedReciprocalMesh | None
 
     def __init__(
         self, plan: GeneralForceFieldTerm, system: PreparedAtomisticSystem, /
@@ -505,7 +609,7 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         active_sites = np.flatnonzero(
             np.asarray(system.coordinate_map.plan.sites.active_mask)
         )
@@ -513,14 +617,41 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
             raise ValueError(
                 "General force-field terms require at least one active interaction site."
             )
-        self.site_anchor = int(active_sites[0])
+        anchor = int(active_sites[0])
+        self.site_anchor = jnp.asarray(anchor, dtype=jnp.int32)
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        mesh = None
+        if plan.kind is ForceFieldTermKind.LENNARD_JONES_PME:
+            cell = system.cell
+            if cell is None:
+                raise ValueError("Lennard-Jones PME requires a fully periodic cell.")
+            # The preserved LJ-PME numerical definition: linear (CIC) assignment,
+            # continuous sinc deconvolution and an anchor-relative frame, which
+            # keeps the mesh energy exactly translation invariant.
+            grid_template = plan.arrays[3]
+            mesh = ReciprocalMeshPlan(
+                (
+                    int(grid_template.shape[0]),
+                    int(grid_template.shape[1]),
+                    int(grid_template.shape[2]),
+                ),
+                spline_degree=1,
+                modulus="continuous-sinc-window",
+                frame="anchor-source",
+                channel_chunk=min(8, int(plan.arrays[2].shape[1])),
+            ).prepare(
+                cell,
+                system.site_discretization(),
+                anchor_index=anchor,
+            )
+        self.reciprocal_mesh = mesh
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-general-force-field-term",
                 "term": plan.term_id,
                 "system": system.prepared_id,
+                **({} if mesh is None else {"reciprocal_mesh": mesh.prepared_id}),
             }
         )
 
@@ -674,132 +805,53 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
                     * (ratio6**2 - ratio6)
                 )
             elif kind is ForceFieldTermKind.LENNARD_JONES_PME:
-                c6, alpha_value, factors, _ = arrays
-                coefficient = c6[left_type, right_type]
-                alpha = alpha_value.reshape(())
-                scaled_distance = alpha * safe
-                screening = jnp.exp(-(scaled_distance**2)) * (
-                    1.0 + scaled_distance**2 + 0.5 * scaled_distance**4
+                c6, alpha_value, _, _ = arrays
+                values = lennard_jones_pme_pair_energy(
+                    c6,
+                    alpha_value.reshape(()),
+                    left_type,
+                    right_type,
+                    safe,
+                    context.site_lennard_jones_scales,
                 )
-                values = -coefficient * screening / safe**6
             else:
                 raise RuntimeError(f"Unhandled force-field term kind {kind.value!r}.")
             if kind is ForceFieldTermKind.REACTION_FIELD:
                 values = values * context.site_electrostatic_scales
-            elif kind is ForceFieldTermKind.LENNARD_JONES_PME:
-                full_dispersion = -coefficient / safe**6
-                values = (
-                    values + (context.site_lennard_jones_scales - 1.0) * full_dispersion
-                )
-            else:
+            elif kind is not ForceFieldTermKind.LENNARD_JONES_PME:
                 values = values * context.site_lennard_jones_scales
             values = jnp.where(active, values, 0.0)
             success = jnp.all(~valid | ((distance > 0.0) & jnp.isfinite(values)))
             energy = jnp.sum(values)
             if kind is ForceFieldTermKind.LENNARD_JONES_PME:
-                c6, alpha_value, factors, grid_template = arrays
-                alpha = alpha_value.reshape(())
-                vectors = context.cell_vectors
-                determinant = jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2]))
-                inverse = (
-                    jnp.stack(
-                        (
-                            jnp.cross(vectors[1], vectors[2]),
-                            jnp.cross(vectors[2], vectors[0]),
-                            jnp.cross(vectors[0], vectors[1]),
-                        ),
-                        axis=1,
-                    )
-                    / determinant
-                )
-                grid_shape = grid_template.shape
-                shape = jnp.asarray(grid_shape, dtype=context.site_positions.dtype)
-                fractional = contract("nd,di->ni", context.site_positions, inverse)
-                anchor_index = self.site_anchor
-                relative_fractional = fractional - fractional[anchor_index]
-                scaled_position = jnp.mod(relative_fractional + 0.5, 1.0) * shape
-                base = jax.lax.stop_gradient(jnp.floor(scaled_position).astype(jnp.int32))
-                remainder = scaled_position - base
-                channel_count = factors.shape[1]
-                grid = jnp.zeros(
-                    grid_shape + (channel_count,), dtype=context.site_positions.dtype
-                )
-                site_factor = factors[context.site_type_ids]
+                c6, alpha_value, factors, _ = arrays
+                mesh = self.reciprocal_mesh
+                if mesh is None:
+                    raise RuntimeError("Prepared LJ-PME has no reciprocal mesh.")
+                alpha = alpha_value.reshape(()).astype(dtype)
+                geometry = mesh.geometry(context.cell_vectors.astype(dtype))
+                routes = mesh.build(context.site_positions, geometry)
+                site_factor = factors[context.site_type_ids].astype(dtype)
                 site_factor = site_factor * context.site_state.active_mask[:, None]
-                for x_offset in (0, 1):
-                    for y_offset in (0, 1):
-                        for z_offset in (0, 1):
-                            corner = jnp.asarray((x_offset, y_offset, z_offset))
-                            axis_weight = jnp.where(
-                                corner[None, :] == 1,
-                                remainder,
-                                1.0 - remainder,
-                            )
-                            weight = jnp.prod(axis_weight, axis=-1)
-                            index = (base + corner[None, :]) % jnp.asarray(
-                                grid_shape, dtype=jnp.int32
-                            )
-                            grid = grid.at[index[:, 0], index[:, 1], index[:, 2]].add(
-                                weight[:, None] * site_factor
-                            )
-                modes_by_axis = tuple(jnp.fft.fftfreq(size) * size for size in grid_shape)
-                mode_components = jnp.meshgrid(*modes_by_axis, indexing="ij")
-                modes = jnp.stack(mode_components, axis=-1)
-                wave = 2.0 * jnp.pi * contract("...i,ji->...j", modes, inverse)
-                squared_wave = jnp.sum(wave * wave, axis=-1)
-                transformed = jnp.fft.fftn(grid, axes=(0, 1, 2))
-                window = jnp.prod(
-                    jnp.stack(
-                        tuple(
-                            jnp.sinc(mode_components[axis] / grid_shape[axis]) ** 2
-                            for axis in range(3)
-                        ),
-                        axis=-1,
-                    ),
-                    axis=-1,
+                influence = lennard_jones_pme_influence(alpha, geometry.volume)
+                reciprocal = mesh.quadratic_energy(
+                    routes, site_factor, geometry, influence, zero_mode="include"
                 )
-                transformed = transformed / jnp.where(
-                    jnp.abs(window[..., None]) > 0.0,
-                    window[..., None],
-                    1.0,
+                self_energy = lennard_jones_pme_self_energy(
+                    alpha, c6, context.site_type_ids, context.site_state.active_mask
                 )
-                structure_power = jnp.sum(
-                    jnp.real(transformed * jnp.conj(transformed)), axis=-1
-                )
-                safe_wave = jnp.where(squared_wave > 0.0, squared_wave, 1.0)
-                reciprocal_coordinate = jnp.sqrt(safe_wave) / (2.0 * alpha)
-                reciprocal_kernel = (
-                    (1.0 - 2.0 * reciprocal_coordinate**2)
-                    * jnp.exp(-(reciprocal_coordinate**2))
-                    + 2.0
-                    * jnp.sqrt(jnp.pi)
-                    * reciprocal_coordinate**3
-                    * jsp.erfc(reciprocal_coordinate)
-                ) / 3.0
-                reciprocal_kernel = jnp.where(squared_wave > 0.0, reciprocal_kernel, 0.0)
-                volume = jnp.abs(determinant)
-                reciprocal = (
-                    jnp.pi**1.5
-                    * alpha**3
-                    / (2.0 * volume)
-                    * jnp.sum(reciprocal_kernel * structure_power)
-                )
-                diagonal = jnp.diag(c6)[context.site_type_ids]
-                self_energy = (
-                    -(alpha**6)
-                    / 12.0
-                    * jnp.sum(jnp.where(context.site_state.active_mask, diagonal, 0.0))
-                )
-                energy = energy + reciprocal + self_energy
+                energy = energy + reciprocal.value + self_energy
                 success = (
                     success
-                    & jnp.isfinite(volume)
-                    & (volume > 0.0)
-                    & jnp.isfinite(reciprocal)
+                    & geometry.successful
+                    & reciprocal.successful
                     & jnp.isfinite(self_energy)
                 )
         return AtomisticTermEvaluation(
-            jnp.where(success, energy, jnp.nan), zero_atoms, success
+            jnp.where(success, energy, jnp.nan),
+            zero_atoms,
+            success,
+            atom_energy_complete=False,
         )
 
 
@@ -1053,13 +1105,128 @@ def LennardJonesPMEPotential(
     )
 
 
+def _require_general_term_policy(
+    term: GeneralForceFieldTerm, nonbonded: AtomisticNonbondedPolicy, /
+) -> None:
+    """Refuse a general term whose cutoff or nonbonded family the policy does not select.
+
+    A declared cutoff equals the policy cutoff; reaction-field, dispersion
+    correction and LJ-PME terms require their electrostatics/dispersion selection.
+    """
+    if term.cutoff is not None and term.cutoff != nonbonded.cutoff:
+        raise ValueError(f"Term {term.name!r} cutoff disagrees with nonbonded policy.")
+    if (
+        term.kind is ForceFieldTermKind.REACTION_FIELD
+        and nonbonded.electrostatics != "reaction-field"
+    ):
+        raise ValueError("Reaction-field term disagrees with nonbonded policy.")
+    if (
+        term.kind is ForceFieldTermKind.DISPERSION_CORRECTION
+        and nonbonded.dispersion != "tail-correction"
+    ):
+        raise ValueError("Dispersion correction disagrees with nonbonded policy.")
+    if (
+        term.kind is ForceFieldTermKind.LENNARD_JONES_PME
+        and nonbonded.dispersion != "lj-pme"
+    ):
+        raise ValueError("LJ-PME term disagrees with nonbonded policy.")
+
+
+def _require_terms_match_policy(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...], nonbonded: AtomisticNonbondedPolicy, /
+) -> None:
+    """Refuse, in program term order, the first term the nonbonded policy contradicts.
+
+    Lennard-Jones terms share the policy cutoff, switch and combining rule;
+    direct, Ewald and PME Coulomb terms require their electrostatics selection,
+    the Ewald/PME real-space cutoff equals the policy cutoff, and general terms
+    satisfy `_require_general_term_policy`.
+    """
+    for term in terms:
+        if isinstance(term, LennardJonesPotential) and (
+            term.cutoff != nonbonded.cutoff
+            or term.switch_distance != nonbonded.switch_distance
+            or term.combining_rule != nonbonded.combining_rule
+        ):
+            raise ValueError("Lennard-Jones term disagrees with nonbonded policy.")
+        if isinstance(term, DirectCoulombPotential) and (
+            nonbonded.electrostatics != "direct"
+        ):
+            raise ValueError("Direct Coulomb term disagrees with nonbonded policy.")
+        if isinstance(term, EwaldReferencePotential) and (
+            nonbonded.electrostatics != "ewald" or term.real_cutoff != nonbonded.cutoff
+        ):
+            raise ValueError("Ewald term disagrees with nonbonded policy.")
+        if isinstance(term, ParticleMeshEwaldPotential) and (
+            nonbonded.electrostatics != "pme" or term.real_cutoff != nonbonded.cutoff
+        ):
+            raise ValueError("PME term disagrees with nonbonded policy.")
+        if isinstance(term, GeneralForceFieldTerm):
+            _require_general_term_policy(term, nonbonded)
+
+
+def _require_policy_terms_present(
+    system: AtomisticSystemPlan,
+    terms: tuple[AbstractAtomisticEnergyTerm, ...],
+    nonbonded: AtomisticNonbondedPolicy,
+    /,
+) -> None:
+    """Refuse a program lacking a term the system charges or the policy selects.
+
+    A charged system carries exactly one electrostatic term (direct, Ewald,
+    PME or reaction field); tail-correction and LJ-PME dispersion policies
+    require their dispersion term.
+    """
+    if np.any(np.asarray(system.charges) != 0.0):
+        electrostatic_terms = tuple(
+            term
+            for term in terms
+            if isinstance(
+                term,
+                (
+                    DirectCoulombPotential,
+                    EwaldReferencePotential,
+                    ParticleMeshEwaldPotential,
+                ),
+            )
+            or (
+                isinstance(term, GeneralForceFieldTerm)
+                and term.kind is ForceFieldTermKind.REACTION_FIELD
+            )
+        )
+        if len(electrostatic_terms) != 1:
+            raise ValueError(
+                "Charged force fields require exactly one electrostatic term."
+            )
+    dispersion_kind_present = {
+        term.kind for term in terms if isinstance(term, GeneralForceFieldTerm)
+    }
+    if (
+        nonbonded.dispersion == "tail-correction"
+        and ForceFieldTermKind.DISPERSION_CORRECTION not in dispersion_kind_present
+    ):
+        raise ValueError("Tail-correction policy requires a dispersion term.")
+    if (
+        nonbonded.dispersion == "lj-pme"
+        and ForceFieldTermKind.LENNARD_JONES_PME not in dispersion_kind_present
+    ):
+        raise ValueError("LJ-PME policy requires an LJ-PME term.")
+
+
 class AtomisticForceFieldPlan(StrictModule):
+    """A complete force-field bundle: system, scalar program, policy, provenance.
+
+    The canonical plan digest (system, program, nonbonded policy,
+    provenance, constraints) is the dynamic ``plan_identity``; ``plan_id``
+    decodes it on the host.
+    """
+
     system: AtomisticSystemPlan
     potential: AtomisticPotentialProgram
     nonbonded: AtomisticNonbondedPolicy
     provenance: AtomisticForceFieldProvenance
     constraint_plan: DistanceConstraintPlan | None
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -1085,92 +1252,14 @@ class AtomisticForceFieldPlan(StrictModule):
             constraint_plan, DistanceConstraintPlan
         ):
             raise TypeError("constraint_plan must be DistanceConstraintPlan or None.")
-        for term in potential.terms:
-            if isinstance(term, LennardJonesPotential) and (
-                term.cutoff != nonbonded.cutoff
-                or term.switch_distance != nonbonded.switch_distance
-                or term.combining_rule != nonbonded.combining_rule
-            ):
-                raise ValueError("Lennard-Jones term disagrees with nonbonded policy.")
-            if isinstance(term, DirectCoulombPotential) and (
-                nonbonded.electrostatics != "direct"
-            ):
-                raise ValueError("Direct Coulomb term disagrees with nonbonded policy.")
-            if isinstance(term, EwaldReferencePotential) and (
-                nonbonded.electrostatics != "ewald"
-                or term.real_cutoff != nonbonded.cutoff
-            ):
-                raise ValueError("Ewald term disagrees with nonbonded policy.")
-            if isinstance(term, ParticleMeshEwaldPotential) and (
-                nonbonded.electrostatics != "pme" or term.real_cutoff != nonbonded.cutoff
-            ):
-                raise ValueError("PME term disagrees with nonbonded policy.")
-            if isinstance(term, GeneralForceFieldTerm):
-                if term.cutoff is not None and term.cutoff != nonbonded.cutoff:
-                    raise ValueError(
-                        f"Term {term.name!r} cutoff disagrees with nonbonded policy."
-                    )
-                if (
-                    term.kind is ForceFieldTermKind.REACTION_FIELD
-                    and nonbonded.electrostatics != "reaction-field"
-                ):
-                    raise ValueError(
-                        "Reaction-field term disagrees with nonbonded policy."
-                    )
-                if (
-                    term.kind is ForceFieldTermKind.DISPERSION_CORRECTION
-                    and nonbonded.dispersion != "tail-correction"
-                ):
-                    raise ValueError(
-                        "Dispersion correction disagrees with nonbonded policy."
-                    )
-                if (
-                    term.kind is ForceFieldTermKind.LENNARD_JONES_PME
-                    and nonbonded.dispersion != "lj-pme"
-                ):
-                    raise ValueError("LJ-PME term disagrees with nonbonded policy.")
-        if np.any(np.asarray(system.charges) != 0.0):
-            electrostatic_terms = tuple(
-                term
-                for term in potential.terms
-                if isinstance(
-                    term,
-                    (
-                        DirectCoulombPotential,
-                        EwaldReferencePotential,
-                        ParticleMeshEwaldPotential,
-                    ),
-                )
-                or (
-                    isinstance(term, GeneralForceFieldTerm)
-                    and term.kind is ForceFieldTermKind.REACTION_FIELD
-                )
-            )
-            if len(electrostatic_terms) != 1:
-                raise ValueError(
-                    "Charged force fields require exactly one electrostatic term."
-                )
-        dispersion_kind_present = {
-            term.kind
-            for term in potential.terms
-            if isinstance(term, GeneralForceFieldTerm)
-        }
-        if (
-            nonbonded.dispersion == "tail-correction"
-            and ForceFieldTermKind.DISPERSION_CORRECTION not in dispersion_kind_present
-        ):
-            raise ValueError("Tail-correction policy requires a dispersion term.")
-        if (
-            nonbonded.dispersion == "lj-pme"
-            and ForceFieldTermKind.LENNARD_JONES_PME not in dispersion_kind_present
-        ):
-            raise ValueError("LJ-PME policy requires an LJ-PME term.")
+        _require_terms_match_policy(potential.terms, nonbonded)
+        _require_policy_terms_present(system, potential.terms, nonbonded)
         self.system = system
         self.potential = potential
         self.nonbonded = nonbonded
         self.provenance = provenance
         self.constraint_plan = constraint_plan
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "atomistic-force-field-plan",
                 "system": system.system_id,
@@ -1183,19 +1272,45 @@ class AtomisticForceFieldPlan(StrictModule):
             }
         )
 
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical force-field plan digest."""
+        return self.plan_identity.fingerprint()
+
     def prepare(
         self,
         /,
         *,
+        neighborhood_bundle: AtomisticNeighborhoodBundlePlan
+        | PreparedAtomisticNeighborhoodBundle,
         graph_execution: AtomisticGraphExecutionPlan | None = None,
         numeric_version: str = "0",
     ) -> "PreparedAtomisticForceField":
         system = self.system.prepare(numeric_version=numeric_version)
-        potential = self.potential.prepare(system, graph_execution=graph_execution)
+        potential = self.potential.prepare(
+            system,
+            neighborhood_bundle=neighborhood_bundle,
+            graph_execution=graph_execution,
+        )
         constraints = (
             None if self.constraint_plan is None else self.constraint_plan.prepare(system)
         )
-        counts = {
+        return PreparedAtomisticForceField(self, system, potential, constraints)
+
+
+def _force_field_preparation(
+    system: PreparedAtomisticSystem,
+    potential: PreparedAtomisticPotentialProgram,
+    /,
+) -> PreparationReport:
+    """Host preparation report of one prepared force-field bundle."""
+    return PreparationReport(
+        diagnostics=(
+            "complete force-field bundle",
+            "explicit source provenance",
+            "unsupported terms are rejected by adapters",
+        ),
+        resource_counts={
             "dof_atoms": system.capacity,
             "interaction_sites": system.coordinate_map.plan.sites.capacity,
             "virtual_sites": int(
@@ -1206,25 +1321,24 @@ class AtomisticForceFieldPlan(StrictModule):
             ),
             "terms": len(potential.terms),
             "constraints": system.topology.constraint_count,
-        }
-        report = PreparationReport(
-            diagnostics=(
-                "complete force-field bundle",
-                "explicit source provenance",
-                "unsupported terms are rejected by adapters",
-            ),
-            resource_counts=counts,
-        )
-        return PreparedAtomisticForceField(self, system, potential, constraints, report)
+        },
+    )
 
 
 class PreparedAtomisticForceField(StrictModule):
+    """A prepared force-field bundle as a layout-only PyTree.
+
+    The preparation report counts active virtual sites (material content), so
+    it is not retained: `preparation` re-derives it on the host. The
+    canonical prepared digest (plan, system, program, report) is the dynamic
+    ``prepared_identity``; ``prepared_id`` decodes it on the host.
+    """
+
     plan: AtomisticForceFieldPlan
     system: PreparedAtomisticSystem
     potential: PreparedAtomisticPotentialProgram
     constraints: PreparedDistanceConstraints | None
-    preparation: PreparationReport
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
 
     def __init__(
         self,
@@ -1232,15 +1346,14 @@ class PreparedAtomisticForceField(StrictModule):
         system: PreparedAtomisticSystem,
         potential: PreparedAtomisticPotentialProgram,
         constraints: PreparedDistanceConstraints | None,
-        preparation: PreparationReport,
         /,
     ) -> None:
+        preparation = _force_field_preparation(system, potential)
         self.plan = plan
         self.system = system
         self.potential = potential
         self.constraints = constraints
-        self.preparation = preparation
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-atomistic-force-field",
                 "plan": plan.plan_id,
@@ -1250,13 +1363,31 @@ class PreparedAtomisticForceField(StrictModule):
             }
         )
 
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the canonical prepared force-field digest."""
+        return self.prepared_identity.fingerprint()
+
+    @property
+    def preparation(self) -> PreparationReport:
+        """Host preparation report (resource counts) of this bundle."""
+        return _force_field_preparation(self.system, self.potential)
+
 
 class SETTLEPlan(StrictModule, NonTrainableState):
+    """Rigid SETTLE water geometry for disjoint O-H-H groups.
+
+    Water groups and the O-H/H-H target distances are dynamic leaves;
+    ``tolerance`` is the static solver acceptance threshold (it configures
+    the host distance-constraint plan). The canonical plan digest is the
+    dynamic ``plan_identity``; ``plan_id`` decodes it on the host.
+    """
+
     water_groups: Array
-    oxygen_hydrogen_distance: float = eqx.field(static=True)
-    hydrogen_hydrogen_distance: float = eqx.field(static=True)
+    oxygen_hydrogen_distance: Array
+    hydrogen_hydrogen_distance: Array
     tolerance: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -1285,10 +1416,10 @@ class SETTLEPlan(StrictModule, NonTrainableState):
         if min(oh, hh, tol) <= 0.0 or hh >= 2.0 * oh:
             raise ValueError("SETTLE geometry is invalid.")
         self.water_groups = jnp.asarray(groups, dtype=jnp.int32)
-        self.oxygen_hydrogen_distance = oh
-        self.hydrogen_hydrogen_distance = hh
+        self.oxygen_hydrogen_distance = jnp.asarray(oh)
+        self.hydrogen_hydrogen_distance = jnp.asarray(hh)
         self.tolerance = tol
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "settle-plan",
                 "groups": array_tree_fingerprint(groups),
@@ -1297,6 +1428,11 @@ class SETTLEPlan(StrictModule, NonTrainableState):
                 "tolerance": tol,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical SETTLE plan digest."""
+        return self.plan_identity.fingerprint()
 
     def distance_constraint_plan(
         self, system: PreparedAtomisticSystem, /
@@ -1319,20 +1455,27 @@ class SETTLEProjection(StrictModule):
 
 
 class PreparedSETTLE(StrictModule, NonTrainableState):
+    """SETTLE bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: SETTLEPlan
     system: PreparedAtomisticSystem
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
 
     def __init__(self, plan: SETTLEPlan, system: PreparedAtomisticSystem, /) -> None:
         self.plan = plan
         self.system = system
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-settle",
                 "plan": plan.plan_id,
                 "system": system.prepared_id,
             }
         )
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the canonical prepared SETTLE digest."""
+        return self.prepared_identity.fingerprint()
 
     def project(self, positions: ArrayLike, momenta: ArrayLike, /) -> SETTLEProjection:
         q = jnp.asarray(positions)
@@ -1370,8 +1513,10 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
             y_axis = y_raw - jnp.sum(y_raw * x_axis) * x_axis
             y_axis_norm = jnp.sqrt(jnp.sum(y_axis**2))
             y_axis = y_axis / jnp.where(y_axis_norm > 0.0, y_axis_norm, 1.0)
-            half_hh = 0.5 * self.plan.hydrogen_hydrogen_distance
-            along = jnp.sqrt(self.plan.oxygen_hydrogen_distance**2 - half_hh**2)
+            half_hh = 0.5 * self.plan.hydrogen_hydrogen_distance.astype(q.dtype)
+            along = jnp.sqrt(
+                self.plan.oxygen_hydrogen_distance.astype(q.dtype) ** 2 - half_hh**2
+            )
             reference = jnp.stack(
                 (
                     jnp.zeros((3,), dtype=q.dtype),
@@ -1407,14 +1552,13 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
                     axis=-1,
                 )
             )
-            targets = jnp.asarray(
+            targets = jnp.stack(
                 (
                     self.plan.oxygen_hydrogen_distance,
                     self.plan.oxygen_hydrogen_distance,
                     self.plan.hydrogen_hydrogen_distance,
-                ),
-                dtype=q.dtype,
-            )
+                )
+            ).astype(q.dtype)
             position_residual = jnp.max(jnp.abs(distances - targets))
             relative_velocity = (
                 projected_momenta[pair_left] * inverse_mass[pair_left, None]

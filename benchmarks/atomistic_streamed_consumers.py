@@ -45,7 +45,7 @@ def _evaluate(
     positions: Array,
 ) -> tuple[Array, Array]:
     def total(coordinates: Array) -> tuple[Array, Array]:
-        energy, _, _ = potential._energy_unchecked(batch, coordinates, execution)
+        energy = potential.energy(batch, execution, positions=coordinates)
         return jnp.sum(energy), energy
 
     (_, energy), gradient = jax.value_and_grad(total, has_aux=True)(positions)

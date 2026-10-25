@@ -21,7 +21,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from phydrax._fingerprint import array_tree_fingerprint
+from phydrax._identity import IdentityWords
 from phydrax._strict import StrictModule
 from phydrax._trainable import fixed_field
 from phydrax.atomistic._potential import (
@@ -95,16 +96,25 @@ class RotamerGeometryPlan(StrictModule):
     Frame IDs are (origin, positive-x atom, positive-xy atom), in construct residue
     order. All three must be distinct active atoms at preparation. Local site
     coordinates are in the declared atomistic length unit; they are not atom IDs.
+
+    PyTree layout: the per-residue rotamer ``cardinalities`` (site-table shapes)
+    and the declared unit system are static. Frame IDs, local sites and
+    ``minimum_frame_length`` are dynamic leaves. The construct, the admitted
+    source manifest and the complete geometry are exact canonical digests as
+    dynamic words (``construct_identity``, ``source_identity``,
+    ``geometry_identity``; ``construct_id``/``source_id``/``geometry_id`` decode
+    them on the host). Rights are admitted against the source manifest at
+    construction.
     """
 
-    construct: ProteinConstruct = eqx.field(static=True)
     frame_atom_ids: Array
     local_sites: tuple[Array, ...]
-    source: ReferenceArtifactManifest
     units: AtomisticUnitSystem
+    minimum_frame_length: Array
+    construct_identity: IdentityWords
+    source_identity: IdentityWords
+    geometry_identity: IdentityWords
     cardinalities: tuple[int, ...] = eqx.field(static=True)
-    minimum_frame_length: float = eqx.field(static=True)
-    geometry_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -147,17 +157,11 @@ class RotamerGeometryPlan(StrictModule):
         if not isfinite(threshold) or threshold <= 0:
             raise ValueError("minimum_frame_length must be positive and finite.")
         source_id = _admit(source, commercial_use, redistribution, training_use, export)
-        self.construct = construct
-        self.frame_atom_ids = jnp.asarray(ids, dtype=jnp.int64)
-        self.local_sites = sites
-        self.source = source
-        self.units = units
-        self.cardinalities = tuple(value.shape[0] for value in sites)
-        self.minimum_frame_length = threshold
-        self.geometry_id = canonical_fingerprint(
+        construct_id = construct.fingerprint()
+        geometry = IdentityWords.of(
             {
                 "kind": "protein-single-site-rotamer-geometry",
-                "construct": construct.fingerprint(),
+                "construct": construct_id,
                 "frame_ids": ids.tolist(),
                 "sites": array_tree_fingerprint(sites),
                 "minimum_frame_length": threshold,
@@ -165,6 +169,29 @@ class RotamerGeometryPlan(StrictModule):
                 "length_unit": units.scale.length_unit.unit_id,
             }
         )
+        self.frame_atom_ids = jnp.asarray(ids, dtype=jnp.int64)
+        self.local_sites = sites
+        self.units = units
+        self.minimum_frame_length = jnp.asarray(threshold, dtype=jnp.float64)
+        self.construct_identity = IdentityWords.from_fingerprint(construct_id)
+        self.source_identity = IdentityWords.from_fingerprint(source_id)
+        self.geometry_identity = geometry
+        self.cardinalities = tuple(value.shape[0] for value in sites)
+
+    @property
+    def construct_id(self) -> str:
+        """Host decoding of the bound protein construct fingerprint."""
+        return self.construct_identity.fingerprint()
+
+    @property
+    def source_id(self) -> str:
+        """Host decoding of the admitted source manifest digest."""
+        return self.source_identity.fingerprint()
+
+    @property
+    def geometry_id(self) -> str:
+        """Host decoding of the canonical rotamer geometry digest."""
+        return self.geometry_identity.fingerprint()
 
 
 class RotamerParameterPlan(StrictModule):
@@ -174,18 +201,26 @@ class RotamerParameterPlan(StrictModule):
     energies; widths and local geometry use units.scale.length_unit. Temperature
     is absolute, in units.temperature_unit. Unknown model uncertainty may remain
     None in the source manifest; this does not confer biological qualification.
+
+    PyTree layout: ``pair_indices`` (the declared fixed pair support, i.e. the
+    factor-graph scopes) and ``cardinalities`` (table shapes) are static, with
+    the declared unit system. Tables, ``temperature`` and ``thermal_energy``
+    are dynamic leaves; the admitted source manifest and the complete
+    parameter set are exact canonical digests as dynamic words
+    (``source_identity``, ``parameter_identity``; ``source_id``/
+    ``parameter_id`` decode them on the host).
     """
 
     units: AtomisticUnitSystem
     unary_energies: tuple[Array, ...]
     pair_amplitudes: tuple[Array, ...]
     pair_widths: tuple[Array, ...]
-    source: ReferenceArtifactManifest
+    temperature: Array
+    thermal_energy: Array
+    source_identity: IdentityWords
+    parameter_identity: IdentityWords
     pair_indices: tuple[tuple[int, int], ...] = eqx.field(static=True)
     cardinalities: tuple[int, ...] = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
-    thermal_energy: float = eqx.field(static=True)
-    parameter_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -243,16 +278,7 @@ class RotamerParameterPlan(StrictModule):
                     "Pair tables must match valid cardinalities; widths must be positive."
                 )
         source_id = _admit(source, commercial_use, redistribution, training_use, export)
-        self.units = units
-        self.temperature = temperature_
-        self.thermal_energy = units.boltzmann_constant * temperature_
-        self.unary_energies = unary
-        self.pair_indices = pairs
-        self.pair_amplitudes = amplitudes
-        self.pair_widths = widths
-        self.cardinalities = cards
-        self.source = source
-        self.parameter_id = canonical_fingerprint(
+        parameters = IdentityWords.of(
             {
                 "kind": "single-site-rotamer-gaussian-parameters",
                 "units": units.unit_system_id,
@@ -262,6 +288,28 @@ class RotamerParameterPlan(StrictModule):
                 "parameters": array_tree_fingerprint((unary, amplitudes, widths)),
             }
         )
+        self.units = units
+        self.temperature = jnp.asarray(temperature_, dtype=jnp.float64)
+        self.thermal_energy = jnp.asarray(
+            units.boltzmann_constant * temperature_, dtype=jnp.float64
+        )
+        self.unary_energies = unary
+        self.pair_indices = pairs
+        self.pair_amplitudes = amplitudes
+        self.pair_widths = widths
+        self.cardinalities = cards
+        self.source_identity = IdentityWords.from_fingerprint(source_id)
+        self.parameter_identity = parameters
+
+    @property
+    def source_id(self) -> str:
+        """Host decoding of the admitted source manifest digest."""
+        return self.source_identity.fingerprint()
+
+    @property
+    def parameter_id(self) -> str:
+        """Host decoding of the canonical rotamer parameter digest."""
+        return self.parameter_identity.fingerprint()
 
 
 class RotamerFreeEnergyStatus(IntEnum):
@@ -293,6 +341,11 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
     candidates outside this conservative certificate are refused, even if one
     numerical root converges. There are no warm starts or graph-switch cutoffs.
     Attribution is explicitly E * weights, not a unique physical atom observable.
+
+    PyTree layout: ``inference_method``, ``maximum_configurations`` (exact
+    enumeration capacity) and ``maximum_contraction`` (the declared loop
+    certification policy) are static method selectors. The exact canonical term
+    digest is the dynamic ``term_identity`` (``term_id`` decodes it on the host).
     """
 
     geometry: RotamerGeometryPlan
@@ -305,7 +358,7 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
     inference_method: str = eqx.field(static=True)
     maximum_configurations: int = eqx.field(static=True)
     maximum_contraction: float = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -335,7 +388,7 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
             raise ValueError(
                 "Geometry and energy tables disagree on valid cardinalities."
             )
-        if float(sampling_temperature) != parameters.temperature:
+        if float(sampling_temperature) != float(np.asarray(parameters.temperature)):
             raise ValueError(
                 "Sampling temperature differs from the fixed effective model; revalidate it."
             )
@@ -388,7 +441,7 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
             conservative_energy=True, finite_geometry=True, local_energy=True
         )
         self.requirements = AtomisticPotentialRequirements()
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "rotamer-free-energy-term",
                 "geometry": geometry.geometry_id,
@@ -414,18 +467,29 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
 
 
 class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
+    """Prepared rotamer free energy bound to one atomistic system.
+
+    PyTree layout: the native belief-propagation and exact factor-graph
+    preparations carry the static host topology built from the declared
+    ``pair_indices`` and ``cardinalities``; those factor scopes define message
+    routing, so they are declared layout. ``capacity`` is static. The loop
+    certificate's per-pair cavity degrees are a dynamic int32 array, and
+    ``term_identity``/``prepared_identity`` are exact canonical digests as
+    dynamic words (``term_id``/``prepared_id`` decode them on the host).
+    """
+
     plan: RotamerFreeEnergyTerm = fixed_field()
     frame_rows: Array = fixed_field()
     attribution: Array = fixed_field()
     bp: PreparedBeliefPropagation
     initial_state: BeliefPropagationState = fixed_field()
     exact: PreparedExactFactorGraph | None = fixed_field()
-    pair_cavity_degrees: tuple[int, ...] = eqx.field(static=True)
+    pair_cavity_degrees: Array = fixed_field()
     capacity: int = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -495,16 +559,20 @@ class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
             if plan.inference_method == "exact"
             else None
         )
-        self.pair_cavity_degrees = tuple(
-            max(degrees[i] - 1, degrees[j] - 1) for i, j in plan.parameters.pair_indices
+        self.pair_cavity_degrees = jnp.asarray(
+            [
+                max(degrees[i] - 1, degrees[j] - 1)
+                for i, j in plan.parameters.pair_indices
+            ],
+            dtype=jnp.int32,
         )
         self.capacity = system.capacity
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-rotamer-free-energy",
                 "term": plan.term_id,
@@ -564,12 +632,11 @@ class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
             qualified = jnp.asarray(True)
         else:
             if not self.bp.forest:
-                for table, degree in zip(
-                    tables[len(self.plan.geometry.cardinalities) :],
-                    self.pair_cavity_degrees,
-                ):
+                pair_tables = tables[len(self.plan.geometry.cardinalities) :]
+                for index, table in enumerate(pair_tables):
                     # Birkhoff projective contraction <= tanh(range(log psi)/2).
                     # Multiplication by cavity degree bounds each directed row sum.
+                    degree = self.pair_cavity_degrees[index].astype(table.dtype)
                     bound = jnp.maximum(
                         bound, degree * jnp.tanh((jnp.max(table) - jnp.min(table)) / 2.0)
                     )

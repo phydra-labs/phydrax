@@ -1353,3 +1353,314 @@ def test_linear_apply_source_adjoints_respect_accumulation(
         for _ in range(5):
             for actual, reference in zip(evaluate(*operands), expected, strict=True):
                 np.testing.assert_array_equal(actual, reference)
+
+
+def _segmented_relation(
+    rows: bool,
+) -> tuple[phx.sparse.SparseRelation, np.ndarray, np.ndarray, tuple[int, ...]]:
+    """Return a relation with padding and an empty target, flat route targets,
+    route validity and the target shape."""
+    if rows:
+        indices = np.asarray(
+            [[[0, 1, 2], [2, 0, 1]], [[1, 1, 0], [0, 2, 1]]], dtype=np.int32
+        )
+        valid = np.ones(indices.shape, dtype=np.bool_)
+        valid[0, 0, 2] = False
+        valid[1, 1, :] = False
+        indices[~valid] = 99
+        relation = phx.sparse.RowRelation(
+            indices, source_size=3, case_shape=(2,), valid=valid
+        )
+        targets = np.broadcast_to(np.arange(4).reshape((2, 2, 1)), indices.shape)
+        return relation, targets, valid, (2, 2)
+    targets = np.asarray([2, 0, 2, 0, 3, 2, 99], dtype=np.int32)
+    valid = targets != 99
+    relation = phx.sparse.EdgeRelation(
+        np.where(valid, np.arange(7), 99).astype(np.int32),
+        targets,
+        source_size=7,
+        target_size=4,
+        valid=valid,
+    )
+    return relation, targets, valid, (4,)
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("rows", [False, True], ids=["edges", "rows"])
+def test_segmented_route_operations_match_independent_route_loops(
+    accumulation: phx.sparse.RelationAccumulation, rows: bool
+) -> None:
+    relation, targets, valid, target_shape = _segmented_relation(rows)
+    route_shape = relation.route_shape
+    rng = np.random.default_rng(31)
+    left = rng.normal(size=route_shape + (3,))
+    right = rng.normal(size=route_shape + (3,))
+    columns = rng.normal(size=route_shape + (3, 4))
+    left[~valid], right[~valid], columns[~valid] = np.nan, np.inf, np.nan
+    scalars = rng.normal(size=target_shape)
+    vectors = rng.normal(size=target_shape + (3,))
+    matrices = rng.normal(size=target_shape + (2, 3))
+
+    target_count = int(np.prod(target_shape))
+    dot = np.zeros(target_count)
+    sums = np.zeros((target_count, 3))
+    squares = np.zeros(target_count)
+    counts = np.zeros(target_count, dtype=np.int32)
+    scaled = np.zeros(route_shape + (3,))
+    weighted = np.zeros(route_shape + (3,))
+    mapped = np.zeros(route_shape + (2, 4))
+    for route in np.ndindex(route_shape):
+        if not valid[route]:
+            continue
+        target = int(targets[route])
+        target_index = np.unravel_index(target, target_shape)
+        dot[target] += np.sum(left[route] * right[route])
+        sums[target] += left[route]
+        squares[target] += np.sum(left[route] ** 2)
+        counts[target] += 1
+        scaled[route] = left[route] * scalars[target_index]
+        weighted[route] = left[route] * vectors[target_index]
+        mapped[route] = matrices[target_index] @ columns[route]
+    available = counts > 0
+    divisor = np.maximum(counts, 1)
+
+    value, support = phx.sparse.route_dot(
+        relation, jnp.asarray(left), jnp.asarray(right), accumulation=accumulation
+    )
+    np.testing.assert_allclose(value, dot.reshape(target_shape), rtol=1e-12, atol=1e-12)
+    np.testing.assert_array_equal(support.counts, counts.reshape(target_shape))
+    np.testing.assert_array_equal(support.available, available.reshape(target_shape))
+    assert bool(support.successful)
+
+    # The existing route mean couples to the same support: its unavailable
+    # targets hold the inert zero fill rather than a statistic.
+    mean = phx.sparse.route_reduce(
+        relation, jnp.asarray(left), reduction="mean", accumulation=accumulation
+    )
+    expected_mean = np.where(available[:, None], sums / divisor[:, None], 0.0)
+    np.testing.assert_allclose(
+        mean, expected_mean.reshape(target_shape + (3,)), rtol=1e-12, atol=1e-12
+    )
+
+    root = phx.sparse.route_rms(relation, jnp.asarray(left), accumulation=accumulation)
+    mean_square = np.where(available, squares / divisor, 0.0)
+    np.testing.assert_allclose(
+        root.value, np.sqrt(mean_square).reshape(target_shape), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        root.mean_square, mean_square.reshape(target_shape), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_array_equal(root.regular, available.reshape(target_shape))
+    np.testing.assert_array_equal(root.support.counts, counts.reshape(target_shape))
+
+    for factors, expected in ((scalars, scaled), (vectors, weighted)):
+        product = phx.sparse.route_multiply(
+            relation, jnp.asarray(left), jnp.asarray(factors), accumulation=accumulation
+        )
+        np.testing.assert_allclose(product, expected, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(np.asarray(product)[~valid], 0.0)
+    # Non-square matrices pin the column-vector orientation ``M[target] @ v``.
+    action = phx.sparse.route_matvec(
+        relation, jnp.asarray(matrices), jnp.asarray(columns), accumulation=accumulation
+    )
+    assert action.shape == route_shape + (2, 4)
+    np.testing.assert_allclose(action, mapped, rtol=1e-12, atol=1e-12)
+    np.testing.assert_array_equal(np.asarray(action)[~valid], 0.0)
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+def test_ordered_segmented_dot_folds_components_and_replays_bitwise(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    relation = phx.sparse.EdgeRelation(
+        np.zeros((5,), dtype=np.int32),
+        np.asarray([0, 1, 1, 1, 0], dtype=np.int32),
+        source_size=1,
+        target_size=2,
+        valid=np.asarray([True, True, True, True, False]),
+    )
+    # Target 0 cancels across one route's payload components; target 1 cancels
+    # across its routes within component 0.
+    left = jnp.asarray(
+        [
+            [1e16, 1.0, -1e16],
+            [1e16, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [-1e16, 0.0, 0.0],
+            [np.nan, np.nan, np.nan],
+        ]
+    )
+    right = jnp.where(jnp.isnan(left), jnp.inf, 1.0)
+    evaluate = jax.jit(
+        lambda first, second: phx.sparse.route_dot(
+            relation, first, second, accumulation=accumulation
+        )[0]
+    )
+    residual = 1.0 if accumulation == "compensated" else 0.0
+    expected = evaluate(left, right)
+    np.testing.assert_array_equal(expected, [residual, residual])
+    for _ in range(3):
+        np.testing.assert_array_equal(evaluate(left, right), expected)
+
+
+def test_route_rms_declares_zero_norm_empty_and_extreme_scale_targets() -> None:
+    targets = np.asarray([0, 0, 1, 1, 3, 4, 4, 99], dtype=np.int32)
+    valid = targets != 99
+    relation = phx.sparse.EdgeRelation(
+        np.where(valid, 0, 99).astype(np.int32),
+        targets,
+        source_size=1,
+        target_size=5,
+        valid=valid,
+    )
+    values = jnp.asarray(
+        [
+            [1.0, 2.0],
+            [-2.0, 0.5],
+            [0.0, 0.0],
+            [0.0, -0.0],
+            [3e-200, 4e-200],
+            [3e200, 4e200],
+            [0.0, 0.0],
+            [np.nan, np.inf],
+        ]
+    )
+    result = jax.jit(lambda routes: phx.sparse.route_rms(relation, routes))(values)
+    np.testing.assert_allclose(
+        result.value,
+        [np.sqrt(4.625), 0.0, 0.0, 5e-200, 5e200 / np.sqrt(2.0)],
+        rtol=1e-15,
+    )
+    np.testing.assert_array_equal(result.support.counts, [2, 2, 0, 1, 2])
+    np.testing.assert_array_equal(
+        result.support.available, [True, True, False, True, True]
+    )
+    # Exactly-zero routes are available but irregular; the empty target is not
+    # available. Extreme scales stay regular and representable.
+    np.testing.assert_array_equal(result.regular, [True, False, False, True, True])
+    np.testing.assert_allclose(result.mean_square[:3], [4.625, 0.0, 0.0], rtol=1e-15)
+    # The mean square itself leaves the IEEE range; the root does not.
+    np.testing.assert_array_equal(result.mean_square[3:], [0.0, np.inf])
+
+    single = phx.sparse.EdgeRelation(
+        np.zeros((1,), dtype=np.int32),
+        np.zeros((1,), dtype=np.int32),
+        source_size=1,
+        target_size=1,
+    )
+    tiny = phx.sparse.route_rms(single, jnp.asarray([[3e-30, 4e-30]], dtype=jnp.float32))
+    assert tiny.value.dtype == jnp.float32
+    np.testing.assert_allclose(tiny.value, [5e-30], rtol=1e-6)
+    complex_root = phx.sparse.route_rms(single, jnp.asarray([[3.0 + 4.0j, 0.0j]]))
+    assert complex_root.value.dtype == jnp.float64
+    np.testing.assert_allclose(complex_root.value, [5.0], rtol=1e-15)
+    pair = jnp.asarray([[1.0 + 1.0j]])
+    bilinear, _ = phx.sparse.route_dot(single, pair, pair)
+    hermitian, _ = phx.sparse.route_dot(single, jnp.conj(pair), pair)
+    np.testing.assert_allclose(bilinear, [2.0j], rtol=1e-15)
+    np.testing.assert_allclose(hermitian, [2.0], rtol=1e-15)
+
+
+def test_prepared_execution_reuses_grouping_for_segmented_operations() -> None:
+    relation, _, valid, target_shape = _segmented_relation(False)
+    plan = phx.sparse.RelationExecutionPlan()
+    execution = plan.prepare(relation)
+    assert plan.prepare(relation).execution_id == execution.execution_id
+    rng = np.random.default_rng(5)
+    traces: list[None] = []
+
+    @jax.jit
+    def evaluate(
+        owner: phx.sparse.RelationExecutionState, left: Array, right: Array
+    ) -> tuple[Array, ...]:
+        traces.append(None)
+        dot, support = phx.sparse.route_dot(
+            owner, left, right, accumulation="deterministic"
+        )
+        root = phx.sparse.route_rms(owner, left, accumulation="deterministic")
+        return dot, support.counts, support.available, root.value, root.mean_square
+
+    for _ in range(2):
+        left = rng.normal(size=valid.shape + (3,))
+        right = rng.normal(size=valid.shape + (3,))
+        left[~valid] = right[~valid] = np.nan
+        prepared = evaluate(execution, jnp.asarray(left), jnp.asarray(right))
+        direct_dot, direct_support = phx.sparse.route_dot(
+            relation, left, right, accumulation="deterministic"
+        )
+        direct_root = phx.sparse.route_rms(relation, left, accumulation="deterministic")
+        # Stable grouped order equals storage order within each target.
+        for actual, reference in zip(
+            prepared,
+            (
+                direct_dot,
+                direct_support.counts,
+                direct_support.available,
+                direct_root.value,
+                direct_root.mean_square,
+            ),
+            strict=True,
+        ):
+            np.testing.assert_array_equal(actual, reference)
+    assert len(traces) == 1
+    factors = jnp.asarray(rng.normal(size=target_shape))
+    np.testing.assert_array_equal(
+        phx.sparse.route_multiply(execution, left, factors),
+        phx.sparse.route_multiply(relation, left, factors),
+    )
+
+    limited = phx.sparse.RelationExecutionPlan(maximum_active_targets=1).prepare(relation)
+    refused_dot, refused_support = phx.sparse.route_dot(limited, left, right)
+    refused_root = phx.sparse.route_rms(limited, left)
+    assert not bool(refused_support.successful)
+    np.testing.assert_array_equal(refused_support.counts, [2, 0, 3, 1])
+    np.testing.assert_array_equal(refused_support.available, [False] * 4)
+    np.testing.assert_array_equal(refused_dot, np.zeros(4))
+    np.testing.assert_array_equal(refused_root.value, np.zeros(4))
+    np.testing.assert_array_equal(refused_root.regular, [False] * 4)
+
+
+def test_segmented_operations_refuse_invalid_layouts_and_indices() -> None:
+    relation, _, _, _ = _segmented_relation(False)
+    routes = jnp.ones((7, 3), dtype=jnp.float64)
+    with pytest.raises(ValueError, match="Right route values"):
+        phx.sparse.route_dot(relation, routes, jnp.ones((7, 2)))
+    with pytest.raises(ValueError, match="must begin with shape"):
+        phx.sparse.route_dot(relation, jnp.ones((6, 3)), jnp.ones((6, 3)))
+    with pytest.raises(ValueError, match="leading route payload"):
+        phx.sparse.route_multiply(relation, routes, jnp.ones((4, 2)))
+    with pytest.raises(ValueError, match="Target matrices"):
+        phx.sparse.route_matvec(relation, jnp.ones((4, 3)), routes)
+    with pytest.raises(ValueError, match="must begin with shape"):
+        phx.sparse.route_matvec(relation, jnp.ones((4, 2, 2)), routes)
+    with pytest.raises(TypeError, match="floating or complex"):
+        phx.sparse.route_rms(relation, jnp.ones((7, 3), dtype=jnp.int32))
+    with pytest.raises(TypeError, match="RelationExecutionState"):
+        phx.sparse.route_support(object())  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="accumulation"):
+        phx.sparse.route_rms(relation, routes, accumulation="unordered")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="outside"):
+        phx.sparse.EdgeRelation(
+            np.asarray([0], dtype=np.int32),
+            np.asarray([4], dtype=np.int32),
+            source_size=1,
+            target_size=4,
+        )
+
+    def traced(target_indices: Array) -> Array:
+        traced_relation = phx.sparse.EdgeRelation(
+            jnp.zeros((2,), dtype=jnp.int32),
+            target_indices,
+            source_size=1,
+            target_size=2,
+        )
+        return phx.sparse.route_dot(traced_relation, jnp.ones((2, 3)), jnp.ones((2, 3)))[
+            0
+        ]
+
+    compiled = eqx.filter_jit(traced)
+    np.testing.assert_array_equal(
+        compiled(jnp.asarray([0, 1], dtype=jnp.int32)), [3.0, 3.0]
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        compiled(jnp.asarray([0, 2], dtype=jnp.int32)).block_until_ready()

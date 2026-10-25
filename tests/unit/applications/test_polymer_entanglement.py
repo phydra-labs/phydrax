@@ -6,6 +6,7 @@ import numpy as np
 
 import phydrax as phx
 from phydrax.applications.polymer_liquids import entanglement as ent
+from tests._support.atomistic_bundles import prepare_program
 
 
 def _snapshot_runtime(*, periodic: Any = False) -> Any:
@@ -32,17 +33,18 @@ def _snapshot_runtime(*, periodic: Any = False) -> Any:
         topology=topology,
         cell=cell,
     ).prepare()
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.HarmonicBondPotential([1.0], [1.0])]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(15, box=cell).prepare(
-        system.particles
+    # Bonded-only Hamiltonian: no neighborhood requirement, an empty bundle.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.HarmonicBondPotential([1.0], [1.0])]
+        ),
+        system,
     )
+    assert potential.neighborhood_bundle.plan.requirements == ()
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(

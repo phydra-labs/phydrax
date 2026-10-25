@@ -11,30 +11,49 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 
 from phydrax.ein import contract
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
+from ..._model._fixed_binding import require_identical
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic._graph import (
-    AtomisticGraph,
-    AtomisticGraphExecutionPlan,
-    AtomisticGraphTopology,
-    realize_atomistic_graph,
+from ..._validation import nonnegative_integer, positive_finite_float, positive_integer
+from ...atomistic._conditioning import (
+    AtomisticModelOutputs,
+    AtomisticObservable,
+    AtomisticObservableRequest,
 )
+from ...atomistic._graph import (
+    AtomisticGraphExecutionPlan,
+)
+from ...atomistic._hessian import (
+    atomistic_edge_distance_locus,
+    ATOMISTIC_NONCOINCIDENT_SUPPORT,
+)
+from ...atomistic._model_inputs import AtomisticGraphInputs
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
     AtomisticPotentialCapabilities,
-    AtomisticSpeciesKind,
 )
 from ...atomistic._types import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
+    AtomisticSpeciesKind,
 )
 from ...sparse._streamed import PreparedStreamedRelation, StreamedPayloadSpec
 from ...typing import checked, PRNGKey
@@ -42,6 +61,41 @@ from ..layers import Linear
 from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
 from ..operator.representations import O3Features, O3Representation
 from ..parameters import IdentityTransform
+from ._constructed_admission import require_atomistic_contracts, require_constructed
+
+
+_METHOD_ID = "negative-position-gradient-of-total-nequip-energy"
+# Cartesian O(3) features of degrees zero through two.
+_MAXIMUM_DEGREE = 2
+
+
+def _hidden_representation(feature_count: int, /) -> O3Representation:
+    return O3Representation(
+        scalars=feature_count,
+        pseudoscalars=feature_count,
+        vectors=feature_count,
+        pseudovectors=feature_count,
+        tensors=feature_count,
+        pseudotensors=feature_count,
+    )
+
+
+def _edge_representation() -> O3Representation:
+    return O3Representation(scalars=1, vectors=1, tensors=1)
+
+
+def _tensor_product_plan(
+    representation: O3Representation,
+    edge_representation: O3Representation,
+    maximum_tensor_product_parameters: int,
+    /,
+) -> O3TensorProductPlan:
+    return O3TensorProductPlan(
+        representation,
+        edge_representation,
+        representation,
+        maximum_parameters=maximum_tensor_product_parameters,
+    )
 
 
 class _NequIPConfiguration(StrictModule, NonTrainableState):
@@ -57,6 +111,123 @@ class _NequIPConfiguration(StrictModule, NonTrainableState):
     species_kind: AtomisticSpeciesKind = eqx.field(static=True)
     maximum_tensor_product_parameters: int = eqx.field(static=True)
     maximum_degree: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        cutoff: float,
+        feature_count: int,
+        interaction_count: int,
+        radial_basis_count: int,
+        maximum_species_id: int,
+        species_kind: AtomisticSpeciesKind,
+        maximum_tensor_product_parameters: int,
+        dtype: np.dtype[Any],
+    ) -> None:
+        cutoff_value = positive_finite_float(cutoff, "cutoff")
+        features = positive_integer(feature_count, "feature_count")
+        interactions = positive_integer(interaction_count, "interaction_count")
+        radial_count = positive_integer(radial_basis_count, "radial_basis_count")
+        maximum_z = positive_integer(maximum_species_id, "maximum_species_id")
+        if not isinstance(species_kind, AtomisticSpeciesKind):
+            raise TypeError("species_kind must be AtomisticSpeciesKind.")
+        tensor_product_limit = nonnegative_integer(
+            maximum_tensor_product_parameters, "maximum_tensor_product_parameters"
+        )
+        hidden_representation = _hidden_representation(features)
+        edge_representation = _edge_representation()
+        # Every interaction couples the same layouts under the same budget.
+        plan = _tensor_product_plan(
+            hidden_representation, edge_representation, tensor_product_limit
+        )
+        # Fixed sinc frequencies 1..R of the radial basis, in the compute dtype.
+        self.radial_frequencies = jnp.arange(1, radial_count + 1, dtype=dtype)
+        self.hidden_representation = hidden_representation
+        self.edge_representation = edge_representation
+        self.tensor_product_plan_ids = (plan.plan_id,) * interactions
+        self.cutoff = cutoff_value
+        self.feature_count = features
+        self.interaction_count = interactions
+        self.radial_basis_count = radial_count
+        self.maximum_species_id = maximum_z
+        self.species_kind = species_kind
+        self.maximum_tensor_product_parameters = tensor_product_limit
+        self.maximum_degree = _MAXIMUM_DEGREE
+
+
+def _architecture_id(
+    scale: AtomisticScaleContract,
+    precision: AtomisticPrecisionPolicy,
+    configuration: _NequIPConfiguration,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "nequip-architecture",
+            "scope": "cartesian-degree-at-most-two",
+            "scale": scale.scale_id,
+            "precision": precision.policy_id,
+            "cutoff": configuration.cutoff,
+            "feature_count": configuration.feature_count,
+            "interaction_count": configuration.interaction_count,
+            "radial_basis_count": configuration.radial_basis_count,
+            "maximum_species_id": configuration.maximum_species_id,
+            "species_kind": configuration.species_kind.value,
+            "maximum_tensor_product_parameters": (
+                configuration.maximum_tensor_product_parameters
+            ),
+            "tensor_product_plans": configuration.tensor_product_plan_ids,
+        }
+    )
+
+
+def _scalar_linear(
+    in_size: int, out_size: int, *, activated: bool, key: PRNGKey
+) -> Linear:
+    return Linear(
+        in_size=in_size,
+        out_size=out_size,
+        activation=jax.nn.silu if activated else None,
+        rwf=False,
+        weight_transform=IdentityTransform(),
+        key=key,
+    )
+
+
+def _readout_energy(feature_count: int, key: PRNGKey, /) -> Linear:
+    return Linear(
+        in_size=feature_count,
+        out_size="scalar",
+        rwf=False,
+        weight_transform=IdentityTransform(),
+        key=key,
+    )
+
+
+def _require_tensor_product(
+    product: O3TensorProduct,
+    plan: O3TensorProductPlan,
+    dtype: np.dtype[Any],
+    name: str,
+    /,
+) -> None:
+    """Refuse an interaction coupling its owner does not rebuild exactly."""
+    if not isinstance(product, O3TensorProduct):
+        raise TypeError(f"{name} tensor product must be an O3TensorProduct.")
+    # Every static plan field is compared, not only the recorded plan_id.
+    require_identical(product.plan, plan, f"{name} tensor-product plan", ValueError)
+    if (
+        product.internal_weights
+        or product.weight is not None
+        or product.coefficient_origin != "native"
+        or product.coefficient_tolerance is not None
+    ):
+        raise ValueError(
+            f"{name} tensor product must use native couplings and radial path weights."
+        )
+    product.validate()
+    if any(np.dtype(table.dtype) != dtype for table in product.prepared.coefficients):
+        raise ValueError(f"{name} coupling tables are not in the compute dtype.")
 
 
 class _SpeciesSelfConnection(StrictModule):
@@ -131,27 +302,18 @@ class _NequIPInteraction(StrictModule):
         dtype: jnp.dtype,
         key: PRNGKey,
     ) -> None:
-        plan = O3TensorProductPlan(
-            representation,
-            edge_representation,
-            representation,
-            maximum_parameters=maximum_tensor_product_parameters,
+        plan = _tensor_product_plan(
+            representation, edge_representation, maximum_tensor_product_parameters
         )
         radial_in_key, radial_out_key, self_key = jr.split(key, 3)
         self.tensor_product = O3TensorProduct(plan, internal_weights=False, dtype=dtype)
-        self.radial_in = Linear(
-            in_size=radial_basis_count,
-            out_size=representation.scalars,
-            activation=jax.nn.silu,
-            rwf=False,
-            weight_transform=IdentityTransform(),
-            key=radial_in_key,
+        self.radial_in = _scalar_linear(
+            radial_basis_count, representation.scalars, activated=True, key=radial_in_key
         )
-        self.radial_out = Linear(
-            in_size=representation.scalars,
-            out_size=plan.parameter_count,
-            rwf=False,
-            weight_transform=IdentityTransform(),
+        self.radial_out = _scalar_linear(
+            representation.scalars,
+            plan.parameter_count,
+            activated=False,
             key=radial_out_key,
         )
         self.self_connection = _SpeciesSelfConnection(
@@ -261,68 +423,42 @@ class NequIPPotential(AbstractAtomisticPotential):
     ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
-        cutoff_value = float(cutoff)
-        features = int(feature_count)
-        interactions = int(interaction_count)
-        radial_count = int(radial_basis_count)
-        maximum_z = int(maximum_species_id)
-        tensor_product_limit = int(maximum_tensor_product_parameters)
-        if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
-            raise ValueError("cutoff must be finite and positive.")
-        if features <= 0 or interactions <= 0 or radial_count <= 0:
-            raise ValueError(
-                "NequIP feature, interaction, and radial counts must be positive."
-            )
-        if maximum_z <= 0:
-            raise ValueError("maximum_species_id must be positive.")
-        if not isinstance(species_kind, AtomisticSpeciesKind):
-            raise TypeError("species_kind must be AtomisticSpeciesKind.")
-        if tensor_product_limit < 0:
-            raise ValueError("maximum_tensor_product_parameters must be non-negative.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, AtomisticPrecisionPolicy):
             raise TypeError("precision must be an AtomisticPrecisionPolicy or None.")
         compute_dtype = jnp.dtype(precision_.compute_dtype)
-        hidden_representation = O3Representation(
-            scalars=features,
-            pseudoscalars=features,
-            vectors=features,
-            pseudovectors=features,
-            tensors=features,
-            pseudotensors=features,
+        configuration = _NequIPConfiguration(
+            cutoff=cutoff,
+            feature_count=feature_count,
+            interaction_count=interaction_count,
+            radial_basis_count=radial_basis_count,
+            maximum_species_id=maximum_species_id,
+            species_kind=species_kind,
+            maximum_tensor_product_parameters=maximum_tensor_product_parameters,
+            dtype=compute_dtype,
         )
-        edge_representation = O3Representation(scalars=1, vectors=1, tensors=1)
+        features = configuration.feature_count
+        interactions = configuration.interaction_count
         keys = jr.split(key, interactions + 3)
         embedding = jr.normal(
-            keys[0], (maximum_z + 1, features), dtype=compute_dtype
+            keys[0],
+            (configuration.maximum_species_id + 1, features),
+            dtype=compute_dtype,
         ) / jnp.sqrt(jnp.asarray(features, dtype=compute_dtype))
         interaction_modules = tuple(
             _NequIPInteraction(
-                hidden_representation,
-                edge_representation,
-                radial_count,
-                maximum_z,
-                tensor_product_limit,
+                configuration.hidden_representation,
+                configuration.edge_representation,
+                configuration.radial_basis_count,
+                configuration.maximum_species_id,
+                configuration.maximum_tensor_product_parameters,
                 dtype=compute_dtype,
                 key=keys[index + 1],
             )
             for index in range(interactions)
         )
-        readout_hidden = Linear(
-            in_size=features,
-            out_size=features,
-            activation=jax.nn.silu,
-            rwf=False,
-            weight_transform=IdentityTransform(),
-            key=keys[-2],
-        )
-        readout_energy = Linear(
-            in_size=features,
-            out_size="scalar",
-            rwf=False,
-            weight_transform=IdentityTransform(),
-            key=keys[-1],
-        )
+        readout_hidden = _scalar_linear(features, features, activated=True, key=keys[-2])
+        readout_energy = _readout_energy(features, keys[-1])
 
         def cast_inexact(value: Any) -> Any:
             if eqx.is_inexact_array(value):
@@ -333,42 +469,125 @@ class NequIPPotential(AbstractAtomisticPotential):
         self.interactions = jax.tree_util.tree_map(cast_inexact, interaction_modules)
         self.readout_hidden = jax.tree_util.tree_map(cast_inexact, readout_hidden)
         self.readout_energy = jax.tree_util.tree_map(cast_inexact, readout_energy)
-        plan_ids = tuple(
-            interaction.tensor_product.plan.plan_id for interaction in interaction_modules
-        )
-        self.configuration = _NequIPConfiguration(
-            radial_frequencies=jnp.arange(1, radial_count + 1, dtype=compute_dtype),
-            hidden_representation=hidden_representation,
-            edge_representation=edge_representation,
-            tensor_product_plan_ids=plan_ids,
-            cutoff=cutoff_value,
-            feature_count=features,
-            interaction_count=interactions,
-            radial_basis_count=radial_count,
-            maximum_species_id=maximum_z,
-            species_kind=species_kind,
-            maximum_tensor_product_parameters=tensor_product_limit,
-            maximum_degree=2,
-        )
+        self.configuration = configuration
         self.scale = scale
         self.precision = precision_
-        self.architecture_id = canonical_fingerprint(
-            {
-                "kind": "nequip-architecture",
-                "scope": "cartesian-degree-at-most-two",
-                "scale": scale.scale_id,
-                "precision": precision_.policy_id,
-                "cutoff": cutoff_value,
-                "feature_count": features,
-                "interaction_count": interactions,
-                "radial_basis_count": radial_count,
-                "maximum_species_id": maximum_z,
-                "species_kind": species_kind.value,
-                "maximum_tensor_product_parameters": tensor_product_limit,
-                "tensor_product_plans": plan_ids,
-            }
+        self.architecture_id = _architecture_id(scale, precision_, configuration)
+        self.method_id = _METHOD_ID
+
+    def validate(self) -> None:
+        """Rerun every owning check on this (possibly restored) potential.
+
+        This is a host boundary over concrete arrays. Scale and precision must
+        equal their constructor rebuild. The configuration is rebuilt by its
+        own constructor from its declared fields (exact positive integer
+        counts, finite positive float cutoff, species kind, nonnegative
+        tensor-product budget) and must equal what is stored: fixed radial
+        frequencies ``1..R`` in the compute dtype, the hidden and edge O(3)
+        representations, the degree bound and every tensor-product plan
+        identity. Every interaction must hold the hidden representation, a
+        tensor product whose plan equals the owner's rebuild of the declared
+        layouts and budget, externally path-weighted with native couplings in
+        the compute dtype that `O3TensorProduct.validate` re-admits, and radial
+        maps, species self-connection, species embedding and readouts that are
+        exactly what the constructor builds for that declaration (structure,
+        sizes, SiLU/identity activations, identity weight transforms without
+        weight factorization, dense shapes) with finite compute-dtype values.
+        The recorded architecture and method identities are recomputed.
+        Nothing is reinitialized; any mismatch refuses with ``ValueError`` or
+        ``TypeError``.
+        """
+        require_atomistic_contracts(self.scale, self.precision, "NequIP")
+        configuration = self.configuration
+        if not isinstance(configuration, _NequIPConfiguration):
+            raise TypeError("configuration must be a NequIP configuration.")
+        if type(configuration.cutoff) is not float:
+            raise TypeError("The NequIP cutoff must be a float.")
+        dtype = np.dtype(self.precision.compute_dtype)
+        require_identical(
+            configuration,
+            _NequIPConfiguration(
+                cutoff=configuration.cutoff,
+                feature_count=configuration.feature_count,
+                interaction_count=configuration.interaction_count,
+                radial_basis_count=configuration.radial_basis_count,
+                maximum_species_id=configuration.maximum_species_id,
+                species_kind=configuration.species_kind,
+                maximum_tensor_product_parameters=(
+                    configuration.maximum_tensor_product_parameters
+                ),
+                dtype=dtype,
+            ),
+            "NequIP configuration",
+            ValueError,
         )
-        self.method_id = "negative-position-gradient-of-total-nequip-energy"
+        features = configuration.feature_count
+        maximum_z = configuration.maximum_species_id
+        representation = configuration.hidden_representation
+        plan = _tensor_product_plan(
+            representation,
+            configuration.edge_representation,
+            configuration.maximum_tensor_product_parameters,
+        )
+        require_constructed(
+            self.embedding,
+            jax.ShapeDtypeStruct((maximum_z + 1, features), dtype),
+            dtype,
+            "NequIP species embedding",
+        )
+        if len(self.interactions) != configuration.interaction_count:
+            raise ValueError("NequIP interaction count differs from its configuration.")
+        radial_in = eqx.filter_eval_shape(
+            _scalar_linear,
+            configuration.radial_basis_count,
+            features,
+            activated=True,
+            key=DOC_KEY0,
+        )
+        radial_out = eqx.filter_eval_shape(
+            _scalar_linear, features, plan.parameter_count, activated=False, key=DOC_KEY0
+        )
+        self_connection = eqx.filter_eval_shape(
+            _SpeciesSelfConnection, representation, maximum_z, dtype=dtype, key=DOC_KEY0
+        )
+        for index, layer in enumerate(self.interactions):
+            name = f"NequIP interaction {index}"
+            require_identical(
+                layer.representation, representation, f"{name} representation", ValueError
+            )
+            _require_tensor_product(layer.tensor_product, plan, dtype, name)
+            require_constructed(layer.radial_in, radial_in, dtype, f"{name} radial input")
+            require_constructed(
+                layer.radial_out, radial_out, dtype, f"{name} radial path weights"
+            )
+            require_constructed(
+                layer.self_connection,
+                self_connection,
+                dtype,
+                f"{name} species self-connection",
+            )
+        require_constructed(
+            self.readout_hidden,
+            eqx.filter_eval_shape(
+                _scalar_linear, features, features, activated=True, key=DOC_KEY0
+            ),
+            dtype,
+            "NequIP hidden readout",
+        )
+        require_constructed(
+            self.readout_energy,
+            eqx.filter_eval_shape(_readout_energy, features, DOC_KEY0),
+            dtype,
+            "NequIP energy readout",
+        )
+        if (
+            self.architecture_id
+            != _architecture_id(self.scale, self.precision, configuration)
+            or self.method_id != _METHOD_ID
+        ):
+            raise ValueError(
+                "The NequIP potential does not match its recorded identities."
+            )
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:
@@ -379,6 +598,33 @@ class NequIPPotential(AbstractAtomisticPotential):
             triclinic_periodic=True,
             cell_derivative=True,
             species_kind=self.configuration.species_kind,
+        )
+
+    @property
+    def derivative_contract(self) -> DerivativeContract:
+        """Truthful coordinate and parameter regularity of the NequIP energy.
+
+        Edge directions require non-coincident positions. Gates use GELU, tanh
+        and sigmoid of an epsilon-regularized norm, so pieces are smooth; the
+        cosine envelope is C1 at the cutoff. Forces are classical, while a
+        Hessian (order two) or a mixed third-order response is an
+        almost-everywhere derivative that needs an explicit
+        ``RegularityPolicy(allow_almost_everywhere=True)``; the cutoff join is
+        certified at each point from the bound graph.
+        """
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.piecewise_smooth(
+                continuity=1,
+                conditions=(atomistic_edge_distance_locus(self.configuration.cutoff),),
+                support=ATOMISTIC_NONCOINCIDENT_SUPPORT,
+            ),
         )
 
     @checked
@@ -432,30 +678,31 @@ class NequIPPotential(AbstractAtomisticPotential):
             )
         )
 
-    def graph_energy(
+    @checked
+    def evaluate_graph(
         self,
-        species_ids: Array,
-        atom_mask: Array,
-        atom_cases: Array,
-        case_count: int,
-        atom_capacity: int,
-        graph: AtomisticGraph,
+        inputs: AtomisticGraphInputs,
+        request: AtomisticObservableRequest | None = None,
         /,
-    ) -> tuple[Array, Array]:
+    ) -> AtomisticModelOutputs:
+        inputs.require_compatible(self.scale, self.capabilities.species_kind)
+        if request is not None:
+            request.require_supported(
+                (AtomisticObservable.ENERGY, AtomisticObservable.ATOM_ENERGY),
+                "NequIPPotential",
+            )
+        graph = inputs.graph
+        case_count, atom_capacity = inputs.case_count, inputs.atom_capacity
         ir = graph.graph
         if ir.edge_mask is None:
             raise ValueError("NequIP requires explicit edge masks.")
-        numbers = jnp.asarray(species_ids).reshape((-1,))
+        numbers = inputs.species_ids
         numbers = eqx.error_if(
             numbers,
             jnp.any(numbers > self.configuration.maximum_species_id),
             "Species ID exceeds NequIPPotential.maximum_species_id.",
         )
-        node_mask = (
-            jnp.asarray(atom_mask, dtype=jnp.bool_)
-            .reshape((-1,))
-            .astype(self.precision.compute_dtype)
-        )
+        node_mask = inputs.atom_mask.astype(self.precision.compute_dtype)
         node_count = numbers.shape[0]
         packed_size = self.configuration.hidden_representation.packed_size
         values = jnp.zeros((node_count, packed_size), dtype=self.precision.compute_dtype)
@@ -484,82 +731,16 @@ class NequIPPotential(AbstractAtomisticPotential):
         atom_energy = atom_energy * node_mask.astype(atom_energy.dtype)
         total_energy = (
             jnp.zeros((case_count,), dtype=self.precision.reduction_dtype)
-            .at[jnp.asarray(atom_cases).reshape((-1,))]
+            .at[inputs.atom_cases]
             .add(atom_energy.astype(self.precision.reduction_dtype))
         )
-        return (
+        return AtomisticModelOutputs(
             total_energy.astype(self.precision.output_dtype),
             atom_energy.reshape((case_count, atom_capacity)).astype(
                 self.precision.output_dtype
             ),
+            inputs.successful,
         )
-
-    def _energy_unchecked(
-        self,
-        batch: AtomisticBatch,
-        positions: Array,
-        execution: AtomisticGraphExecutionPlan,
-        /,
-        *,
-        topology: AtomisticGraphTopology | None = None,
-        cell_vectors: Array | None = None,
-    ) -> tuple[Array, Array, AtomisticGraph]:
-        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
-        if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
-            coordinate = eqx.error_if(
-                coordinate,
-                jnp.any(batch.atom_mask & ~batch.element_mask),
-                "Atomic-number NequIP cannot evaluate non-element particles.",
-            )
-        if coordinate.shape != batch.positions.shape:
-            raise ValueError("positions must have the batch position shape.")
-        coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
-        graph = realize_atomistic_graph(
-            batch,
-            execution,
-            cutoff=self.configuration.cutoff,
-            positions=coordinate,
-            topology=topology,
-            cell_vectors=cell_vectors,
-        )
-        species = (
-            batch.atomic_numbers
-            if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER
-            else batch.atom_type_ids
-        )
-        energy, atom_energy = self.graph_energy(
-            species,
-            batch.atom_mask,
-            batch.atom_cases,
-            batch.case_count,
-            batch.atom_capacity,
-            graph,
-        )
-        return energy, atom_energy, graph
-
-    def energy(
-        self,
-        batch: AtomisticBatch,
-        execution: AtomisticGraphExecutionPlan,
-        /,
-        *,
-        positions: Array | None = None,
-        topology: AtomisticGraphTopology | None = None,
-        cell_vectors: Array | None = None,
-    ) -> Array:
-        """Evaluate typed-scale total energies, failing closed on graph overflow.
-
-        Periodic batches require ``topology`` from
-        ``prepare_atomistic_graph_topology``, prepared on the host before any
-        transformed call; ``cell_vectors`` default to the batch cells.
-        """
-
-        self._validate_batch(batch)
-        coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(
-            batch, coordinate, execution, topology=topology, cell_vectors=cell_vectors
-        )
-        return graph.require_success(energy)
 
     def __call__(
         self,
@@ -573,6 +754,18 @@ class NequIPPotential(AbstractAtomisticPotential):
         if isinstance(structure, AtomisticBatch):
             return self.energy(structure, execution)
         raise TypeError("NequIPPotential expects AtomicStructure or AtomisticBatch.")
+
+
+register_artifact_value("phydrax.nn.atomistic:NequIPPotential", NequIPPotential)
+register_artifact_value(
+    "phydrax.nn.atomistic.internal:NequIPConfiguration", _NequIPConfiguration
+)
+register_artifact_value(
+    "phydrax.nn.atomistic.internal:NequIPInteraction", _NequIPInteraction
+)
+register_artifact_value(
+    "phydrax.nn.atomistic.internal:NequIPSpeciesSelfConnection", _SpeciesSelfConnection
+)
 
 
 __all__ = ["NequIPPotential"]

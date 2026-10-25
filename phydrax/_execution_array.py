@@ -95,10 +95,38 @@ def replicate_tree(tree: Any, execution_group: ExecutionGroup, /) -> Any:
 
     Placement is independent of array roles: FIXED data is replicated like
     parameters, and non-array leaves are returned unchanged.
+    Each process in a non-addressable group supplies the same complete value.
+    Process-local arrays are assembled from local device buffers, preserving
+    diagnostic NaNs and typed keys without transferring values back to the host.
     """
 
     arrays, rest = eqx.partition(tree, eqx.is_array)
-    return eqx.combine(jax.device_put(arrays, execution_group.named_sharding(())), rest)
+    sharding = execution_group.named_sharding(())
+    if sharding.is_fully_addressable:
+        return eqx.combine(jax.device_put(arrays, sharding), rest)
+    devices = tuple(
+        device
+        for device in execution_group.devices
+        if device.process_index == jax.process_index()
+    )
+
+    def replicate(value: Array | np.ndarray) -> Array:
+        if isinstance(value, Array) and jax.dtypes.issubdtype(
+            value.dtype, jax.dtypes.prng_key
+        ):
+            return jax.random.wrap_key_data(
+                replicate(jax.random.key_data(value)),
+                impl=jax.random.key_impl(value),
+            )
+        if isinstance(value, np.ndarray) or value.is_fully_addressable:
+            return jax.make_array_from_single_device_arrays(
+                value.shape,
+                sharding,
+                [jax.device_put(value, device) for device in devices],
+            )
+        return jax.device_put(value, sharding)
+
+    return eqx.combine(jax.tree.map(replicate, arrays), rest)
 
 
 def global_weighted_mean(

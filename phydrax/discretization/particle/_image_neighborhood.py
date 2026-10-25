@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 from math import prod
+from typing import Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -20,7 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, KeyGroupPlan
-from ...typing import checked
+from ...typing import checked, parse
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -28,11 +29,17 @@ from .._core import (
     PreparationReport,
     resolved_identifier,
 )
-from .._periodic_cell import lattice_right_inverse_with_status, PeriodicCell
+from .._periodic_cell import (
+    _complete_image_shifts,
+    _padded_reference_reach,
+    lattice_right_inverse_with_status,
+    PeriodicCell,
+)
 from ._core import ParticleDiscretization
 from ._image_relation import (
     checked_int32_add,
     checked_int32_shift,
+    compact_image_routes,
     ParticleImageRelation,
     ParticleImageRelationEvidence,
     representation_shifts,
@@ -50,12 +57,19 @@ class ParticleImageCapacity(StrictModule, NonTrainableState):
     Cell occupancy, stored directed routes, receiver degree and the complete
     integer image stencil are distinct budgets.  Candidate slots follow from
     these and the search stencil and are guarded by the owning plan.
+
+    ``maximum_case_edges`` selects the per-case segment layout: case ``c``
+    owns route slots ``[c * B, (c + 1) * B)`` with ``B = maximum_case_edges``,
+    overflow is charged per case, and one case's routes can be replaced
+    without moving another's.  ``case_count * B`` must not exceed
+    ``maximum_edges``.  Without it all cases share one compacted buffer.
     """
 
     maximum_particles_per_cell: int = eqx.field(static=True)
     maximum_edges: int = eqx.field(static=True)
     maximum_degree: int = eqx.field(static=True)
     maximum_images: int = eqx.field(static=True)
+    maximum_case_edges: int | None = eqx.field(static=True)
     capacity_id: str = eqx.field(static=True)
 
     def __init__(
@@ -65,8 +79,9 @@ class ParticleImageCapacity(StrictModule, NonTrainableState):
         maximum_edges: int,
         maximum_degree: int,
         maximum_images: int,
+        maximum_case_edges: int | None = None,
     ) -> None:
-        values = {
+        values: dict[str, int] = {
             "maximum_particles_per_cell": int(maximum_particles_per_cell),
             "maximum_edges": int(maximum_edges),
             "maximum_degree": int(maximum_degree),
@@ -75,28 +90,62 @@ class ParticleImageCapacity(StrictModule, NonTrainableState):
         for name, value in values.items():
             if value <= 0 or value > _INT32_LIMIT:
                 raise ValueError(f"{name} must be a positive int32 capacity.")
+        identity: dict[str, object] = {"kind": "particle-image-capacity", **values}
+        case_edges = None if maximum_case_edges is None else int(maximum_case_edges)
+        if case_edges is not None:
+            if case_edges <= 0 or case_edges > values["maximum_edges"]:
+                raise ValueError(
+                    "maximum_case_edges must be a positive segment width no larger "
+                    "than maximum_edges."
+                )
+            identity["maximum_case_edges"] = case_edges
         self.maximum_particles_per_cell = values["maximum_particles_per_cell"]
         self.maximum_edges = values["maximum_edges"]
         self.maximum_degree = values["maximum_degree"]
         self.maximum_images = values["maximum_images"]
-        self.capacity_id = canonical_fingerprint(
-            {"kind": "particle-image-capacity", **values}
-        )
+        self.maximum_case_edges = case_edges
+        self.capacity_id = canonical_fingerprint(identity)
+
+    def route_buffer(self, case_count: int, /) -> int:
+        """Return the stored route capacity for ``case_count`` cases."""
+        if self.maximum_case_edges is None:
+            return self.maximum_edges
+        size = int(case_count) * self.maximum_case_edges
+        if size > self.maximum_edges:
+            raise ValueError(
+                f"{int(case_count)} cases of maximum_case_edges="
+                f"{self.maximum_case_edges} exceed maximum_edges={self.maximum_edges}."
+            )
+        return size
 
     def dominates(self, other: ParticleImageCapacity, /) -> bool:
+        same_layout = (self.maximum_case_edges is None) == (
+            other.maximum_case_edges is None
+        )
         return (
-            self.maximum_particles_per_cell >= other.maximum_particles_per_cell
+            same_layout
+            and self.maximum_particles_per_cell >= other.maximum_particles_per_cell
             and self.maximum_edges >= other.maximum_edges
             and self.maximum_degree >= other.maximum_degree
             and self.maximum_images >= other.maximum_images
+            and (
+                self.maximum_case_edges is None
+                or other.maximum_case_edges is None
+                or self.maximum_case_edges >= other.maximum_case_edges
+            )
         )
 
     def covers(self, evidence: ParticleImageRelationEvidence, /) -> bool:
         """Host decision whether concrete evidence requirements fit this capacity."""
+        required_edges = np.asarray(evidence.required_edges)
         return (
             int(np.max(np.asarray(evidence.required_cell_occupancy)))
             <= self.maximum_particles_per_cell
-            and int(np.sum(np.asarray(evidence.required_edges))) <= self.maximum_edges
+            and int(np.sum(required_edges)) <= self.maximum_edges
+            and (
+                self.maximum_case_edges is None
+                or int(np.max(required_edges)) <= self.maximum_case_edges
+            )
             and int(np.max(np.asarray(evidence.required_degree))) <= self.maximum_degree
             and int(np.max(np.asarray(evidence.required_images))) <= self.maximum_images
         )
@@ -154,6 +203,12 @@ class ParticleImageCapacityLadder(StrictModule, NonTrainableState):
             )
         if not bool(np.any(np.asarray(evidence.capacity_failure))):
             raise ValueError("Image neighborhood evidence has no capacity failure.")
+        if bool(np.any(np.asarray(evidence.tile_overflow))):
+            raise ValueError(
+                "Cluster tile overflow is charged to the tile search capacity, not "
+                "to this ladder; re-prepare the cluster search with a larger tile "
+                "capacity."
+            )
         for entry in self.entries[identifiers.index(current.capacity_id) + 1 :]:
             if entry.covers(evidence):
                 return entry
@@ -172,6 +227,7 @@ class _LatticeFrame(StrictModule):
     unrepresentable: Array
     solved: Array
     reach: Array
+    origin: Array
 
 
 def _lattice_frame(
@@ -215,6 +271,7 @@ def _lattice_frame(
         unrepresentable=active & finite & ~representable,
         solved=solved,
         reach=jnp.sqrt(jnp.sum(inverse * inverse, axis=1)),
+        origin=origin,
     )
 
 
@@ -234,11 +291,19 @@ def _stencil_extents(reach: Array, radius: float, periodic: Array, /) -> Array:
 
 
 class _PackedRoutes(StrictModule):
+    """Packed routes and per-case counts.
+
+    ``count_overflow`` marks cases whose exact required route count exceeds
+    the int32 count range; their ``required_edges`` and degrees saturate at
+    ``2**31 - 1``.
+    """
+
     relation: ParticleImageRelation
     degree: Array
     required_edges: Array
     stored_edges: Array
     shift_overflow: Array
+    count_overflow: Array
 
 
 class ImageCertificate(StrictModule, NonTrainableState):
@@ -322,64 +387,268 @@ def image_certificate(
     return ImageCertificate(maximum_displacement, cell_deformation, coverage)
 
 
-def _pack_routes(
-    candidate: Array,
+class _ResolvedReceivers(StrictModule):
+    slots: Array
+    valid: Array
+    violation: Array
+
+
+def _full_receivers(stable_ids: Array, /) -> _ResolvedReceivers:
+    cases, particles = stable_ids.shape
+    return _ResolvedReceivers(
+        jnp.broadcast_to(
+            jnp.arange(particles, dtype=jnp.int32)[None, :], (cases, particles)
+        ),
+        jnp.ones((cases, particles), dtype=jnp.bool_),
+        jnp.zeros((cases,), dtype=jnp.bool_),
+    )
+
+
+class ImageReceiverSubset(StrictModule, NonTrainableState):
+    """Declared receiver rows of an image search by stable material ID.
+
+    Row ``r`` of case ``c`` requests every route received by the particle whose
+    stable ID is ``receiver_ids[c, r]`` where ``receiver_valid[c, r]``.  IDs are
+    dynamic numerical leaves; only the row capacity is static.  The mapping to
+    particle slots is resolved from the search's current stable IDs, so it is
+    independent of storage order.  A valid row whose ID is absent, inactive,
+    ambiguous or repeated is a ``receiver_violation`` of its case, never
+    silently dropped.
+    """
+
+    receiver_ids: Array
+    receiver_valid: Array
+    row_capacity: int = eqx.field(static=True)
+
+    def __init__(
+        self, receiver_ids: ArrayLike, receiver_valid: ArrayLike | None = None, /
+    ) -> None:
+        ids = jnp.asarray(receiver_ids)
+        if (
+            ids.ndim != 2
+            or ids.shape[1] <= 0
+            or not jnp.issubdtype(ids.dtype, jnp.integer)
+        ):
+            raise ValueError(
+                "receiver_ids must be integers with shape (case, rows) and rows > 0."
+            )
+        valid = (
+            jnp.ones(ids.shape, dtype=jnp.bool_)
+            if receiver_valid is None
+            else jnp.asarray(receiver_valid, dtype=jnp.bool_)
+        )
+        if valid.shape != ids.shape:
+            raise ValueError("receiver_valid must match receiver_ids.")
+        self.receiver_ids = ids
+        self.receiver_valid = valid
+        self.row_capacity = int(ids.shape[1])
+
+    def resolve(self, stable_ids: ArrayLike, active: ArrayLike, /) -> _ResolvedReceivers:
+        """Map requested IDs to particle slots of ``stable_ids[case, particle]``."""
+        ids = jnp.asarray(stable_ids)
+        mask = jnp.asarray(active, dtype=jnp.bool_)
+        if ids.ndim != 2 or mask.shape != ids.shape:
+            raise ValueError("stable_ids and active must have shape (case, particle).")
+        cases, particles = ids.shape
+        if self.receiver_ids.shape[0] != cases:
+            raise ValueError("Receiver subset case count differs from the search.")
+        requested = self.receiver_ids.astype(ids.dtype)
+        order = jnp.argsort(ids, axis=1, stable=True).astype(jnp.int32)
+        ordered = jnp.take_along_axis(ids, order, axis=1)
+        left = jax.vmap(lambda row, query: jnp.searchsorted(row, query, side="left"))(
+            ordered, requested
+        ).astype(jnp.int32)
+        right = jax.vmap(lambda row, query: jnp.searchsorted(row, query, side="right"))(
+            ordered, requested
+        ).astype(jnp.int32)
+        slots = jnp.take_along_axis(order, jnp.clip(left, 0, particles - 1), axis=1)
+        resolved = (
+            self.receiver_valid
+            & ((right - left) == 1)
+            & jnp.take_along_axis(mask, slots, axis=1)
+        )
+        request_order = jax.vmap(
+            lambda key, valid: jnp.lexsort((key, (~valid).astype(jnp.int32)))
+        )(requested, self.receiver_valid)
+        sorted_ids = jnp.take_along_axis(requested, request_order, axis=1)
+        sorted_valid = jnp.take_along_axis(self.receiver_valid, request_order, axis=1)
+        repeated = (
+            sorted_valid[:, 1:]
+            & sorted_valid[:, :-1]
+            & (sorted_ids[:, 1:] == sorted_ids[:, :-1])
+        )
+        violation = jnp.any(self.receiver_valid & ~resolved, axis=1) | jnp.any(
+            repeated, axis=1
+        )
+        return _ResolvedReceivers(
+            jnp.where(resolved, slots, 0).astype(jnp.int32),
+            resolved,
+            jax.lax.stop_gradient(violation),
+        )
+
+
+class ImageReceiverRows(StrictModule, NonTrainableState):
+    """Compact receiver-row mapping of a receiver-subset search result.
+
+    ``particle_indices[c * R + r]`` is the flat case-major particle of row ``r``
+    of case ``c`` (the case's first particle on invalid rows) and
+    ``route_rows[e]`` is the compact row receiving route ``e`` (the case's
+    first row on padding routes).  Per-row reductions therefore use
+    ``case_count * row_capacity`` segments instead of every particle.
+    """
+
+    particle_indices: Array
+    valid: Array
+    route_rows: Array
+    row_capacity: int = eqx.field(static=True)
+    case_count: int = eqx.field(static=True)
+
+
+def _receiver_rows(
+    resolved: _ResolvedReceivers, relation: ParticleImageRelation, /
+) -> ImageReceiverRows:
+    cases, rows = resolved.slots.shape
+    particles = relation.particle_capacity
+    case_index = jnp.arange(cases, dtype=jnp.int32)[:, None]
+    row_ids = case_index * rows + jnp.arange(rows, dtype=jnp.int32)[None, :]
+    row_of_slot = (
+        jnp.zeros((cases, particles), dtype=jnp.int32)
+        .at[case_index, jnp.where(resolved.valid, resolved.slots, particles)]
+        .set(row_ids, mode="drop")
+    )
+    route_rows = jnp.where(
+        relation.valid,
+        row_of_slot.reshape((-1,))[relation.receiver_indices],
+        relation.route_cases * rows,
+    )
+    particle_indices = jnp.where(
+        resolved.valid, case_index * particles + resolved.slots, case_index * particles
+    )
+    return ImageReceiverRows(
+        particle_indices.reshape((-1,)),
+        resolved.valid.reshape((-1,)),
+        route_rows,
+        rows,
+        cases,
+    )
+
+
+class _Candidates(StrictModule):
+    """Fixed-shape candidate routes ``(case, row, slot)`` of one search.
+
+    Row ``(c, i)`` belongs to receiver particle ``receivers[c, i]``; a receiver
+    may own several rows (cluster tiles).  Tile fields are zero for searches
+    without intermediate tiles.
+    """
+
+    candidate: Array
+    receivers: Array
+    sources: Array
+    wrapped_shifts: Array
+    occupancy: Array
+    cell_overflow: Array
+    required_offsets: Array
+    stencil_overflow: Array
+    required_tile_pairs: Array
+    tile_overflow: Array
+    cluster_extent_overflow: Array
+
+
+def _within_radius(
+    frame: _LatticeFrame,
+    vectors: Array,
+    receivers: Array,
     sources: Array,
     wrapped_shifts: Array,
-    images: Array,
+    source_valid: Array,
+    radius: float,
+    /,
+) -> Array:
+    """Mask row candidates inside ``radius`` excluding the zero self translation.
+
+    ``receivers[case, row]`` and ``sources[case, row, slot]`` are local slots
+    of the wrapped frame; ``wrapped_shifts`` are wrapped-frame translations.
+    """
+    case_count, rows, slots = sources.shape
+    flat_sources = sources.reshape((case_count, -1))
+    source_positions = jnp.take_along_axis(
+        frame.wrapped, flat_sources[..., None], axis=1
+    ).reshape((case_count, rows, slots, -1))
+    source_usable = jnp.take_along_axis(frame.usable, flat_sources, axis=1).reshape(
+        sources.shape
+    )
+    receiver_positions = jnp.take_along_axis(frame.wrapped, receivers[..., None], axis=1)
+    receiver_usable = jnp.take_along_axis(frame.usable, receivers, axis=1)
+    translation = contract(
+        "cnmr,crd->cnmd",
+        wrapped_shifts.astype(vectors.dtype),
+        vectors,
+        backend="jax",
+    )
+    displacement = receiver_positions[:, :, None, :] - source_positions + translation
+    squared = jnp.sum(displacement * displacement, axis=-1)
+    self_zero = (sources == receivers[:, :, None]) & jnp.all(wrapped_shifts == 0, axis=-1)
+    return (
+        source_valid
+        & source_usable
+        & receiver_usable[:, :, None]
+        & ~self_zero
+        & jax.lax.stop_gradient(squared < radius * radius)
+    )
+
+
+def _no_tiles(case_count: int, /) -> tuple[Array, Array, Array]:
+    return (
+        jnp.zeros((case_count,), dtype=jnp.int32),
+        jnp.zeros((case_count,), dtype=jnp.bool_),
+        jnp.zeros((case_count,), dtype=jnp.bool_),
+    )
+
+
+def _assemble_routes(
+    route_valid: Array,
+    route_case: Array,
+    receiver_local: Array,
+    source_local: Array,
+    shifts: Array,
     stable_ids: Array,
+    /,
     *,
-    edge_capacity: int,
+    segmented: bool,
     support_id: str,
     relation_schema_id: str,
-) -> _PackedRoutes:
-    """Compact candidate routes into canonical receiver-major stable order.
+) -> tuple[ParticleImageRelation, Array]:
+    """Canonical relation of selected route slots and its stored count per case.
 
-    Raw shifts re-express wrapped-frame translations for the caller's
-    coordinate representation: ``n = n_wrapped - w[receiver] + w[source]``.
-    A candidate whose ``n`` leaves the symmetric int32 range is reported per
-    case in ``shift_overflow`` instead of being stored wrapped around.
-    Valid routes are ordered by ``(case, receiver id, source id, n)``; padding
-    routes follow with zero indices and shifts.
+    Slot ``e`` holds a route of case ``route_case[e]`` from local particle
+    ``source_local[e]`` to ``receiver_local[e]`` with raw integer shift
+    ``shifts[e]`` where ``route_valid[e]``; other slots are padding whose
+    endpoint fields are ignored.  Valid routes are ordered by ``(case,
+    receiver id, source id, n)``.  Shared layout (``segmented=False``) puts
+    every padding slot after every valid route on the last case; the per-case
+    layout keeps each slot's ``route_case`` segment and orders its valid routes
+    before its padding.
     """
-    case_count, particle_capacity, slots = candidate.shape
-    rank = wrapped_shifts.shape[-1]
-    source_images = jnp.take_along_axis(
-        images, sources.reshape((case_count, particle_capacity * slots, 1)), axis=1
-    ).reshape((case_count, particle_capacity, slots, rank))
-    raw_shifts, overflow = checked_int32_shift(
-        wrapped_shifts.astype(jnp.int32),
-        source_images,
-        jnp.broadcast_to(images[:, :, None, :], source_images.shape),
-    )
-    shift_overflow = jnp.any(candidate & jnp.any(overflow, axis=-1), axis=(1, 2))
-    degree = jnp.sum(candidate, axis=-1, dtype=jnp.int32)
-    required_edges = jnp.sum(degree, axis=-1, dtype=jnp.int32)
-    flat_valid = candidate.reshape((-1,))
-    total = jnp.sum(flat_valid, dtype=jnp.int32)
-    selected = jax.lax.stop_gradient(
-        jnp.nonzero(flat_valid, size=edge_capacity, fill_value=0)[0]
-    )
-    stored = jnp.minimum(total, edge_capacity)
-    route_valid = jnp.arange(edge_capacity, dtype=jnp.int32) < stored
-    per_case = particle_capacity * slots
-    route_case = (selected // per_case).astype(jnp.int32)
-    receiver_local = ((selected // slots) % particle_capacity).astype(jnp.int32)
-    source_local = sources.reshape((-1,))[selected].astype(jnp.int32)
-    shifts = raw_shifts.reshape((-1, rank))[selected]
+    case_count, particle_capacity = stable_ids.shape
+    rank = shifts.shape[-1]
     receiver_ids = stable_ids[route_case, receiver_local]
     source_ids = stable_ids[route_case, source_local]
-    keys = tuple(shifts[:, axis] for axis in reversed(range(rank))) + (
-        source_ids,
-        receiver_ids,
-        route_case,
-        (~route_valid).astype(jnp.int32),
+    invalid = (~route_valid).astype(jnp.int32)
+    shift_keys = tuple(shifts[:, axis] for axis in reversed(range(rank)))
+    keys = (
+        shift_keys + (source_ids, receiver_ids, invalid, route_case)
+        if segmented
+        else shift_keys + (source_ids, receiver_ids, route_case, invalid)
     )
     order = jax.lax.stop_gradient(jnp.lexsort(keys))
     route_valid = route_valid[order]
-    route_case = jnp.where(route_valid, route_case[order], case_count - 1)
-    padding_endpoint = (case_count - 1) * particle_capacity
-    receivers = jnp.where(
+    route_case = (
+        route_case[order]
+        if segmented
+        else jnp.where(route_valid, route_case[order], case_count - 1)
+    )
+    padding_endpoint = route_case * particle_capacity
+    receivers_global = jnp.where(
         route_valid,
         route_case * particle_capacity + receiver_local[order],
         padding_endpoint,
@@ -401,7 +670,7 @@ def _pack_routes(
     relation = ParticleImageRelation(
         EdgeRelation(
             sources_global,
-            receivers,
+            receivers_global,
             source_size=size,
             target_size=size,
             valid=route_valid,
@@ -415,16 +684,144 @@ def _pack_routes(
         support_id=support_id,
         relation_schema_id=relation_schema_id,
     )
-    return _PackedRoutes(relation, degree, required_edges, stored_edges, shift_overflow)
+    return relation, stored_edges
+
+
+def _pack_routes(
+    candidates: _Candidates,
+    images: Array,
+    stable_ids: Array,
+    *,
+    edge_capacity: int,
+    case_capacity: int | None,
+    support_id: str,
+    relation_schema_id: str,
+) -> _PackedRoutes:
+    """Compact candidate routes into canonical receiver-major stable order.
+
+    Raw shifts re-express wrapped-frame translations for the caller's
+    coordinate representation: ``n = n_wrapped - w[receiver] + w[source]``.
+    A candidate whose ``n`` leaves the symmetric int32 range is reported per
+    case in ``shift_overflow`` instead of being stored wrapped around.  Valid
+    routes are ordered by ``(case, receiver id, source id, n)``.  In the
+    shared layout padding routes follow every valid route; in the per-case
+    segment layout (``case_capacity``) segment ``c`` holds case ``c``'s routes
+    followed by its own padding.
+    """
+    candidate = candidates.candidate
+    case_count, rows, slots = candidate.shape
+    particle_capacity = images.shape[1]
+    rank = images.shape[-1]
+    sources = candidates.sources
+    receivers = candidates.receivers
+    source_images = jnp.take_along_axis(
+        images, sources.reshape((case_count, rows * slots, 1)), axis=1
+    ).reshape((case_count, rows, slots, rank))
+    receiver_images = jnp.take_along_axis(images, receivers[..., None], axis=1)
+    raw_shifts, overflow = checked_int32_shift(
+        candidates.wrapped_shifts.astype(jnp.int32),
+        source_images,
+        jnp.broadcast_to(receiver_images[:, :, None, :], source_images.shape),
+    )
+    shift_overflow = jnp.any(candidate & jnp.any(overflow, axis=-1), axis=(1, 2))
+    row_degree = jnp.sum(candidate, axis=-1, dtype=jnp.int32)
+    case_index = jnp.arange(case_count, dtype=jnp.int32)
+    degree = (
+        jnp.zeros((case_count, particle_capacity), dtype=jnp.int32)
+        .at[case_index[:, None], receivers]
+        .add(row_degree)
+    )
+    required_edges = jnp.sum(row_degree, axis=-1, dtype=jnp.int32)
+    per_case = rows * slots
+    flat_valid = candidate.reshape((case_count, per_case))
+    if case_capacity is None:
+        selected = jnp.nonzero(
+            flat_valid.reshape((-1,)), size=edge_capacity, fill_value=0
+        )[0].astype(jnp.int32)
+        total = jnp.sum(flat_valid, dtype=jnp.int32)
+        route_valid = jnp.arange(edge_capacity, dtype=jnp.int32) < jnp.minimum(
+            total, edge_capacity
+        )
+        route_case = selected // per_case
+    else:
+        width = int(case_capacity)
+        rank_in_case = jnp.cumsum(flat_valid, axis=1, dtype=jnp.int32) - 1
+        target = jnp.where(flat_valid & (rank_in_case < width), rank_in_case, width)
+        local = (
+            jnp.zeros((case_count, width + 1), dtype=jnp.int32)
+            .at[case_index[:, None], target]
+            .set(
+                jnp.broadcast_to(
+                    jnp.arange(per_case, dtype=jnp.int32)[None, :],
+                    (case_count, per_case),
+                )
+            )[:, :width]
+        )
+        route_valid = (
+            jnp.arange(width, dtype=jnp.int32)[None, :]
+            < jnp.minimum(required_edges, width)[:, None]
+        ).reshape((-1,))
+        route_case = jnp.repeat(case_index, width)
+        selected = route_case * per_case + local.reshape((-1,))
+    selected = jax.lax.stop_gradient(selected)
+    route_case = route_case.astype(jnp.int32)
+    row = (selected % per_case) // slots
+    receiver_local = receivers.reshape((-1,))[route_case * rows + row]
+    source_local = sources.reshape((-1,))[selected].astype(jnp.int32)
+    shifts = raw_shifts.reshape((-1, rank))[selected]
+    relation, stored_edges = _assemble_routes(
+        route_valid,
+        route_case,
+        receiver_local,
+        source_local,
+        shifts,
+        stable_ids,
+        segmented=case_capacity is not None,
+        support_id=support_id,
+        relation_schema_id=relation_schema_id,
+    )
+    # The admitted candidate tensor has at most ``2**31 - 1`` slots, so every
+    # count above is exact.
+    return _PackedRoutes(
+        relation,
+        degree,
+        required_edges,
+        stored_edges,
+        shift_overflow,
+        jnp.zeros((case_count,), dtype=jnp.bool_),
+    )
 
 
 class ImageRouteSearchResult(StrictModule, NonTrainableState):
-    """Routes plus the build frame needed by lifecycle certificates."""
+    """Routes plus the build frame needed by lifecycle certificates.
+
+    ``receiver_rows`` is the compact row mapping of a receiver-subset search
+    and ``None`` for a complete search.
+    """
 
     relation: ParticleImageRelation
     evidence: ParticleImageRelationEvidence
     wrap_counts: Array
     stencil_extents: Array
+    receiver_rows: ImageReceiverRows | None = None
+
+
+class _RouteSearchOutcome(StrictModule):
+    """Canonically packed routes plus the evidence owned by one search route.
+
+    Fields mirror the search-specific members of
+    ``ParticleImageRelationEvidence``; searches without cells or tiles report
+    zero occupancy and tile pairs and no overflow.
+    """
+
+    packed: _PackedRoutes
+    occupancy: Array
+    cell_overflow: Array
+    required_offsets: Array
+    stencil_overflow: Array
+    required_tile_pairs: Array
+    tile_overflow: Array
+    cluster_extent_overflow: Array
 
 
 class AbstractImageRouteSearch(StrictModule, NonTrainableState):
@@ -432,6 +829,8 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
 
     Inputs are ``positions[case, particle, d]``, ``vectors[case, r, d]``,
     ``origin[case, d]`` and ``periodic[case, r]``.  Cases never exchange routes.
+    An optional ``ImageReceiverSubset`` restricts receivers to declared stable
+    IDs; sources always range over every active particle.
     """
 
     radius: eqx.AbstractVar[float]
@@ -443,12 +842,25 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
     search_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def _candidates(
-        self, frame: _LatticeFrame, vectors: Array, periodic: Array, stable_ids: Array, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-        """Return candidate mask, sources, wrapped shifts, occupancy, cell overflow,
-        required offset extents, and stencil overflow."""
+    def _search(
+        self,
+        frame: _LatticeFrame,
+        vectors: Array,
+        periodic: Array,
+        stable_ids: Array,
+        receivers: _ResolvedReceivers,
+        /,
+        *,
+        support_id: str,
+        relation_schema_id: str,
+    ) -> _RouteSearchOutcome:
+        """Return canonically packed routes and the search-owned evidence."""
         raise NotImplementedError
+
+    @property
+    def route_capacity(self) -> int:
+        """Stored route slots: ``maximum_edges`` or ``case_count * maximum_case_edges``."""
+        return self.capacity.route_buffer(self.case_count)
 
     def routes(
         self,
@@ -462,6 +874,7 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
         *,
         support_id: str,
         relation_schema_id: str,
+        receivers: ImageReceiverSubset | None = None,
     ) -> ImageRouteSearchResult:
         value = jnp.asarray(positions)
         expected = (self.case_count, self.particle_capacity)
@@ -481,42 +894,49 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
         ids = jnp.asarray(stable_ids)
         if active_mask.shape != expected or ids.shape != expected:
             raise ValueError("active and stable_ids must have shape (case, particle).")
+        if receivers is not None and not isinstance(receivers, ImageReceiverSubset):
+            raise TypeError("receivers must be an ImageReceiverSubset or None.")
         frame = _lattice_frame(value, active_mask, lattice, shift_origin, periodic_mask)
-        (
-            candidate,
-            sources,
-            wrapped_shifts,
-            occupancy,
-            cell_overflow,
-            required_offsets,
-            stencil_overflow,
-        ) = self._candidates(frame, lattice, periodic_mask, ids)
-        packed = _pack_routes(
-            candidate,
-            sources,
-            wrapped_shifts,
-            frame.images,
+        resolved = (
+            _full_receivers(ids)
+            if receivers is None
+            else receivers.resolve(ids, active_mask)
+        )
+        outcome = self._search(
+            frame,
+            lattice,
+            periodic_mask,
             ids,
-            edge_capacity=self.capacity.maximum_edges,
+            resolved,
             support_id=support_id,
             relation_schema_id=relation_schema_id,
         )
+        packed = outcome.packed
         required_degree = jnp.max(packed.degree, axis=-1)
         required_images = _required_images(frame.reach, self.radius, periodic_mask)
-        total_required = jnp.sum(packed.required_edges, dtype=jnp.int32)
+        # A count beyond int32 cannot be stored by any int32 capacity: it is
+        # edge overflow and an unrepresentable requirement, never a ladder retry.
+        edge_overflow = (packed.stored_edges < packed.required_edges) | (
+            packed.count_overflow
+        )
+        if self.capacity.maximum_case_edges is None:
+            # Per-case counts are exact or flagged, so a wrapped sum only arises
+            # when the exact total already exceeds every int32 capacity; the
+            # shared buffer then also stores fewer routes than some case needs.
+            total_required = jnp.sum(packed.required_edges, dtype=jnp.int32)
+            edge_overflow = edge_overflow | (total_required > self.capacity.maximum_edges)
         evidence = ParticleImageRelationEvidence(
             active_particles=jnp.sum(active_mask, axis=-1, dtype=jnp.int32),
-            required_cell_occupancy=occupancy,
+            required_cell_occupancy=outcome.occupancy,
             required_edges=packed.required_edges,
             stored_edges=packed.stored_edges,
             required_degree=required_degree,
             required_images=required_images,
-            required_offset_extents=required_offsets,
-            cell_overflow=cell_overflow,
-            stencil_overflow=stencil_overflow,
+            required_offset_extents=outcome.required_offsets,
+            cell_overflow=outcome.cell_overflow,
+            stencil_overflow=outcome.stencil_overflow,
             image_overflow=required_images > self.capacity.maximum_images,
-            edge_overflow=(packed.stored_edges < packed.required_edges)
-            | (total_required > self.capacity.maximum_edges),
+            edge_overflow=edge_overflow,
             degree_overflow=required_degree > self.capacity.maximum_degree,
             domain_violation=jnp.any(frame.domain_violation, axis=-1),
             # Lattice validity is case-level: an empty or all-inactive case
@@ -525,13 +945,69 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
             | ~jnp.all(jnp.isfinite(lattice), axis=(-2, -1))
             | ~frame.solved,
             representation_overflow=jnp.any(frame.unrepresentable, axis=-1)
-            | packed.shift_overflow,
+            | packed.shift_overflow
+            | packed.count_overflow,
+            required_tile_pairs=outcome.required_tile_pairs,
+            tile_overflow=outcome.tile_overflow,
+            cluster_extent_overflow=outcome.cluster_extent_overflow,
+            receiver_violation=resolved.violation,
         )
         return ImageRouteSearchResult(
             packed.relation,
             evidence,
             frame.images.reshape((-1, self.lattice_rank)),
             _stencil_extents(frame.reach, self.radius, periodic_mask),
+            None if receivers is None else _receiver_rows(resolved, packed.relation),
+        )
+
+
+class _AbstractCandidateImageRouteSearch(AbstractImageRouteSearch):
+    """Image search that materializes all candidate rows before packing them."""
+
+    @abc.abstractmethod
+    def _candidates(
+        self,
+        frame: _LatticeFrame,
+        vectors: Array,
+        periodic: Array,
+        stable_ids: Array,
+        receivers: _ResolvedReceivers,
+        /,
+    ) -> _Candidates:
+        """Return fixed-shape candidate rows for the resolved receivers."""
+        raise NotImplementedError
+
+    def _search(
+        self,
+        frame: _LatticeFrame,
+        vectors: Array,
+        periodic: Array,
+        stable_ids: Array,
+        receivers: _ResolvedReceivers,
+        /,
+        *,
+        support_id: str,
+        relation_schema_id: str,
+    ) -> _RouteSearchOutcome:
+        candidates = self._candidates(frame, vectors, periodic, stable_ids, receivers)
+        packed = _pack_routes(
+            candidates,
+            frame.images,
+            stable_ids,
+            edge_capacity=self.capacity.maximum_edges,
+            case_capacity=self.capacity.maximum_case_edges,
+            support_id=support_id,
+            relation_schema_id=relation_schema_id,
+        )
+        return _RouteSearchOutcome(
+            packed,
+            candidates.occupancy,
+            candidates.cell_overflow,
+            candidates.required_offsets,
+            candidates.stencil_overflow,
+            candidates.required_tile_pairs,
+            candidates.tile_overflow,
+            candidates.cluster_extent_overflow,
         )
 
 
@@ -553,14 +1029,15 @@ def _host_reach(vectors: np.ndarray, /) -> np.ndarray:
     return np.stack(reach)
 
 
-class CellListImageRouteSearch(AbstractImageRouteSearch):
+class CellListImageRouteSearch(_AbstractCandidateImageRouteSearch):
     """Fractional-lattice cell list with explicit image-shifted neighbor cells.
 
     Particles are wrapped on periodic axes and binned on a static fractional
     grid whose cell perpendicular height is at least ``radius`` when the cell
     admits it.  Neighbor cells span ``ceil(radius * grid * reach)`` cells per
-    axis, so short periodic axes enumerate several translated copies of the
-    same cell without duplicates: each unwrapped cell offset maps to one
+    axis, sized from the padded host reference reach (`_padded_reference_reach`), so
+    short periodic axes enumerate several translated copies of the same cell
+    without duplicates: each unwrapped cell offset maps to one
     ``(cell, image)`` pair.  Grouping reuses the native ``KeyGroupPlan``.
     """
 
@@ -605,24 +1082,23 @@ class CellListImageRouteSearch(AbstractImageRouteSearch):
         if cell_count > _INT32_LIMIT:
             raise ValueError("Image cell grid exceeds int32 cell keys.")
         envelope = value * (1.0 + margin)
+        bound = _padded_reference_reach(_host_reach(np.asarray(reference_vectors)))
         extents = tuple(
-            max(1, int(np.ceil(envelope * grid[axis] * np.max(reach[:, axis]))))
+            max(1, int(np.ceil(envelope * grid[axis] * np.max(bound[:, axis]))))
             for axis in range(rank)
         )
         # Admit the candidate workspace from the scalar stencil size before any
         # radius-sized offset enumeration is materialized.
         offset_count = prod(2 * extent + 1 for extent in extents)
         slots = cases * particles * offset_count * capacity.maximum_particles_per_cell
-        if slots > int(maximum_candidate_slots):
+        if slots > min(int(maximum_candidate_slots), _INT32_LIMIT):
             raise ValueError(
                 f"Image cell list requires {slots} candidate slots, exceeding "
-                f"maximum_candidate_slots={int(maximum_candidate_slots)}."
+                f"maximum_candidate_slots={int(maximum_candidate_slots)} or the "
+                "int32 candidate index space."
             )
-        axes = np.meshgrid(
-            *(np.arange(-extent, extent + 1, dtype=np.int32) for extent in extents),
-            indexing="ij",
-        )
-        offsets = np.stack([axis.reshape((-1,)) for axis in axes], axis=-1)
+        capacity.route_buffer(cases)
+        offsets = _complete_image_shifts(extents)
         strides = tuple(prod(grid[axis + 1 :]) for axis in range(rank))
         key_groups = KeyGroupPlan(
             particles,
@@ -656,8 +1132,14 @@ class CellListImageRouteSearch(AbstractImageRouteSearch):
         )
 
     def _candidates(
-        self, frame: _LatticeFrame, vectors: Array, periodic: Array, stable_ids: Array, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+        self,
+        frame: _LatticeFrame,
+        vectors: Array,
+        periodic: Array,
+        stable_ids: Array,
+        receivers: _ResolvedReceivers,
+        /,
+    ) -> _Candidates:
         axis_grid = jnp.asarray(self.grid_shape, dtype=jnp.int32)
         axis_strides = jnp.asarray(self.cell_strides, dtype=jnp.int32)
         grid = axis_grid[None, None, :]
@@ -676,12 +1158,19 @@ class CellListImageRouteSearch(AbstractImageRouteSearch):
             frame.usable, jnp.sum(coordinates * strides, axis=-1, dtype=jnp.int32), -1
         ).astype(jnp.int32)
         groups = self.key_groups.build(cell_keys, frame.usable, stable_ids=stable_ids)
-        unwrapped = coordinates[:, :, None, :] + self.offsets[None, None, :, :]
+        rows = receivers.slots.shape[1]
+        row_coordinates = jnp.take_along_axis(
+            coordinates, receivers.slots[..., None], axis=1
+        )
+        row_usable = (
+            jnp.take_along_axis(frame.usable, receivers.slots, axis=1) & receivers.valid
+        )
+        unwrapped = row_coordinates[:, :, None, :] + self.offsets[None, None, :, :]
         periodic_axis = periodic[:, None, None, :]
         offset_grid = axis_grid[None, None, None, :]
         image = jnp.floor_divide(unwrapped, offset_grid)
         in_range = (unwrapped >= 0) & (unwrapped < offset_grid)
-        cell_valid = jnp.all(periodic_axis | in_range, axis=-1) & frame.usable[:, :, None]
+        cell_valid = jnp.all(periodic_axis | in_range, axis=-1) & row_usable[:, :, None]
         neighbor = jnp.where(
             periodic_axis,
             jnp.mod(unwrapped, offset_grid),
@@ -708,24 +1197,23 @@ class CellListImageRouteSearch(AbstractImageRouteSearch):
             groups.storage_to_logical,
             sorted_positions.reshape((self.case_count, -1)),
             axis=1,
-        ).reshape((self.case_count, self.particle_capacity, offset_count * members))
+        ).reshape((self.case_count, rows, offset_count * members))
         source_valid = (
             lookup.supported[..., None] & (rank[None, None, :] < counts[..., None])
         ).reshape(sources.shape)
         wrapped_shifts = jnp.broadcast_to(
             -image[:, :, :, None, :],
-            (
-                self.case_count,
-                self.particle_capacity,
-                offset_count,
-                members,
-                self.lattice_rank,
-            ),
+            (self.case_count, rows, offset_count, members, self.lattice_rank),
         ).reshape(sources.shape + (self.lattice_rank,))
         candidate = _within_radius(
-            frame, vectors, sources, wrapped_shifts, source_valid, self.radius
+            frame,
+            vectors,
+            receivers.slots,
+            sources,
+            wrapped_shifts,
+            source_valid,
+            self.radius,
         )
-        occupancy = groups.evidence.maximum_group_size.astype(jnp.int32)
         cell_overflow = (
             groups.evidence.group_overflow
             | groups.evidence.member_overflow
@@ -738,55 +1226,93 @@ class CellListImageRouteSearch(AbstractImageRouteSearch):
             required_offsets > jnp.asarray(self.offset_extents, dtype=jnp.int32)[None, :],
             axis=-1,
         )
-        return (
+        return _Candidates(
             candidate,
+            receivers.slots,
             sources,
             wrapped_shifts,
-            occupancy,
+            groups.evidence.maximum_group_size.astype(jnp.int32),
             cell_overflow,
             required_offsets,
             stencil_overflow,
+            *_no_tiles(self.case_count),
         )
 
 
-def _within_radius(
-    frame: _LatticeFrame,
-    vectors: Array,
-    sources: Array,
-    wrapped_shifts: Array,
-    source_valid: Array,
+class _ReferenceStencil(NamedTuple):
+    """Bounded scalar metadata of a prepared reference stencil (no shifts)."""
+
+    radius: float
+    case_count: int
+    lattice_rank: int
+    particle_capacity: int
+    extents: tuple[int, ...]
+    image_count: int
+
+
+def _reference_stencil(
     radius: float,
+    reference_vectors: ArrayLike,
+    reference_periodic: ArrayLike,
+    capacity: ParticleImageCapacity,
     /,
-) -> Array:
-    """Mask candidates inside ``radius`` excluding the zero self translation."""
-    case_count, particle_capacity, slots = sources.shape
-    flat_sources = sources.reshape((case_count, -1))
-    source_positions = jnp.take_along_axis(
-        frame.wrapped, flat_sources[..., None], axis=1
-    ).reshape((case_count, particle_capacity, slots, -1))
-    source_usable = jnp.take_along_axis(frame.usable, flat_sources, axis=1).reshape(
-        sources.shape
+    *,
+    particle_capacity: int,
+    deformation_margin: float,
+    owner: str,
+) -> _ReferenceStencil:
+    """Prepared complete image stencil metadata of an all-pairs reference search.
+
+    Per periodic axis the stencil spans ``floor(1 + R (1 + margin) reach)``
+    images over every reference case, sized from the padded host reference
+    reach (`_padded_reference_reach`), and is charged to ``maximum_images``.
+    Only scalar metadata is produced: callers enforce their candidate or tile
+    budgets before `_complete_image_shifts` materializes the translations.
+    """
+    value = float(radius)
+    margin = float(deformation_margin)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("Image search radius must be finite and positive.")
+    if not np.isfinite(margin) or margin < 0.0:
+        raise ValueError("deformation_margin must be finite and nonnegative.")
+    reach = _padded_reference_reach(_host_reach(np.asarray(reference_vectors)))
+    periodic = np.asarray(reference_periodic, dtype=np.bool_)
+    if periodic.shape != reach.shape:
+        raise ValueError("reference_periodic must have shape (case, lattice rank).")
+    cases, rank = map(int, reach.shape)
+    particles = int(particle_capacity)
+    if particles <= 0:
+        raise ValueError("particle_capacity must be positive.")
+    envelope = value * (1.0 + margin)
+    extents = tuple(
+        int(
+            np.max(
+                np.where(
+                    periodic[:, axis], np.floor(1.0 + envelope * reach[:, axis]), 0.0
+                )
+            )
+        )
+        for axis in range(rank)
     )
-    translation = contract(
-        "cnmr,crd->cnmd",
-        wrapped_shifts.astype(vectors.dtype),
-        vectors,
-        backend="jax",
-    )
-    displacement = frame.wrapped[:, :, None, :] - source_positions + translation
-    squared = jnp.sum(displacement * displacement, axis=-1)
-    receivers = jnp.arange(particle_capacity, dtype=sources.dtype)[None, :, None]
-    self_zero = (sources == receivers) & jnp.all(wrapped_shifts == 0, axis=-1)
-    return (
-        source_valid
-        & source_usable
-        & frame.usable[:, :, None]
-        & ~self_zero
-        & jax.lax.stop_gradient(squared < radius * radius)
-    )
+    image_count = prod(2 * extent + 1 for extent in extents)
+    if image_count > capacity.maximum_images:
+        raise ValueError(
+            f"{owner} image stencil requires {image_count} images, exceeding "
+            f"maximum_images={capacity.maximum_images}."
+        )
+    return _ReferenceStencil(value, cases, rank, particles, extents, image_count)
 
 
-class DenseImageRouteSearch(AbstractImageRouteSearch):
+def _stencil_evidence(
+    reach: Array, radius: float, periodic: Array, bound: tuple[int, ...], /
+) -> tuple[Array, Array]:
+    """Required complete extents per case and whether they exceed ``bound``."""
+    required = _stencil_extents(reach, radius, periodic)
+    overflow = jnp.any(required > jnp.asarray(bound, dtype=jnp.int32)[None, :], axis=-1)
+    return required, overflow
+
+
+class DenseImageRouteSearch(_AbstractCandidateImageRouteSearch):
     """Bounded named dense image reference: every particle pair times a stencil.
 
     Candidate work is ``case * N * N * images`` and is admitted only under an
@@ -816,49 +1342,27 @@ class DenseImageRouteSearch(AbstractImageRouteSearch):
         maximum_dense_routes: int,
         deformation_margin: float = 0.0,
     ) -> None:
-        value = float(radius)
-        margin = float(deformation_margin)
-        if not np.isfinite(value) or value <= 0.0:
-            raise ValueError("Image search radius must be finite and positive.")
-        if not np.isfinite(margin) or margin < 0.0:
-            raise ValueError("deformation_margin must be finite and nonnegative.")
-        reach = _host_reach(np.asarray(reference_vectors))
-        periodic = np.asarray(reference_periodic, dtype=np.bool_)
-        if periodic.shape != reach.shape:
-            raise ValueError("reference_periodic must have shape (case, lattice rank).")
-        cases, rank = map(int, reach.shape)
-        particles = int(particle_capacity)
-        if particles <= 0:
-            raise ValueError("particle_capacity must be positive.")
-        envelope = value * (1.0 + margin)
-        extents = tuple(
-            int(
-                np.max(
-                    np.where(
-                        periodic[:, axis], np.floor(1.0 + envelope * reach[:, axis]), 0.0
-                    )
-                )
-            )
-            for axis in range(rank)
+        reference = _reference_stencil(
+            radius,
+            reference_vectors,
+            reference_periodic,
+            capacity,
+            particle_capacity=particle_capacity,
+            deformation_margin=deformation_margin,
+            owner="Dense",
         )
-        image_count = prod(2 * extent + 1 for extent in extents)
-        if image_count > capacity.maximum_images:
-            raise ValueError(
-                f"Dense image stencil requires {image_count} images, exceeding "
-                f"maximum_images={capacity.maximum_images}."
-            )
-        routes = cases * particles * particles * image_count
-        if routes > int(maximum_dense_routes):
+        value, cases = reference.radius, reference.case_count
+        rank, particles = reference.lattice_rank, reference.particle_capacity
+        extents = reference.extents
+        routes = cases * particles * particles * reference.image_count
+        if routes > min(int(maximum_dense_routes), _INT32_LIMIT):
             raise ValueError(
                 f"Dense image reference requires {routes} candidate routes, "
-                f"exceeding maximum_dense_routes={int(maximum_dense_routes)}."
+                f"exceeding maximum_dense_routes={int(maximum_dense_routes)} or the "
+                "int32 candidate index space."
             )
-        grids = np.meshgrid(
-            *(np.arange(-extent, extent + 1, dtype=np.int32) for extent in extents),
-            indexing="ij",
-        )
-        stencil = np.stack([grid.reshape((-1,)) for grid in grids], axis=-1)
-        self.stencil = jnp.asarray(stencil.reshape((-1, rank)))
+        capacity.route_buffer(cases)
+        self.stencil = jnp.asarray(_complete_image_shifts(extents))
         self.radius = value
         self.stencil_extents_bound = extents
         self.case_count = cases
@@ -879,39 +1383,44 @@ class DenseImageRouteSearch(AbstractImageRouteSearch):
         )
 
     def _candidates(
-        self, frame: _LatticeFrame, vectors: Array, periodic: Array, stable_ids: Array, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+        self,
+        frame: _LatticeFrame,
+        vectors: Array,
+        periodic: Array,
+        stable_ids: Array,
+        receivers: _ResolvedReceivers,
+        /,
+    ) -> _Candidates:
         images = self.stencil.shape[0]
+        rows = receivers.slots.shape[1]
         sources = jnp.broadcast_to(
             jnp.arange(self.particle_capacity, dtype=jnp.int32)[None, None, :, None],
-            (self.case_count, self.particle_capacity, self.particle_capacity, images),
-        ).reshape((self.case_count, self.particle_capacity, -1))
+            (self.case_count, rows, self.particle_capacity, images),
+        ).reshape((self.case_count, rows, -1))
         shifts = jnp.broadcast_to(
             self.stencil[None, None, None, :, :],
-            (
-                self.case_count,
-                self.particle_capacity,
-                self.particle_capacity,
-                images,
-                self.lattice_rank,
-            ),
+            (self.case_count, rows, self.particle_capacity, images, self.lattice_rank),
         ).reshape(sources.shape + (self.lattice_rank,))
-        lawful = jnp.all(periodic[:, None, None, :] | (shifts == 0), axis=-1)
-        candidate = _within_radius(frame, vectors, sources, shifts, lawful, self.radius)
-        required = _stencil_extents(frame.reach, self.radius, periodic)
-        stencil_overflow = jnp.any(
-            required > jnp.asarray(self.stencil_extents_bound, dtype=jnp.int32)[None, :],
-            axis=-1,
+        lawful = (
+            jnp.all(periodic[:, None, None, :] | (shifts == 0), axis=-1)
+            & receivers.valid[:, :, None]
         )
-        zeros = jnp.zeros((self.case_count,), dtype=jnp.int32)
-        return (
+        candidate = _within_radius(
+            frame, vectors, receivers.slots, sources, shifts, lawful, self.radius
+        )
+        required, stencil_overflow = _stencil_evidence(
+            frame.reach, self.radius, periodic, self.stencil_extents_bound
+        )
+        return _Candidates(
             candidate,
+            receivers.slots,
             sources,
             shifts,
-            zeros,
+            jnp.zeros((self.case_count,), dtype=jnp.int32),
             jnp.zeros((self.case_count,), dtype=jnp.bool_),
             required,
             stencil_overflow,
+            *_no_tiles(self.case_count),
         )
 
 
@@ -1300,6 +1809,16 @@ class DenseParticleImageNeighborhoodPlan(AbstractParticleImageNeighborhoodPlan):
 def _image_preparation(
     search: AbstractImageRouteSearch, particles: ParticleDiscretization, backend: str, /
 ) -> PreparationReport:
+    resource_counts = {
+        "particle_capacity": particles.capacity,
+        "candidate_slot_count": search.candidate_slot_count,
+        "maximum_particles_per_cell": search.capacity.maximum_particles_per_cell,
+        "edge_capacity": search.capacity.maximum_edges,
+        "degree_capacity": search.capacity.maximum_degree,
+        "image_capacity": search.capacity.maximum_images,
+    }
+    if search.capacity.maximum_case_edges is not None:
+        resource_counts["case_edge_capacity"] = search.capacity.maximum_case_edges
     return PreparationReport(
         capabilities=(
             DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
@@ -1313,14 +1832,7 @@ def _image_preparation(
             "cell, image, edge and degree capacities are charged separately",
             "overflow, stencil-envelope and domain failures fail closed",
         ),
-        resource_counts={
-            "particle_capacity": particles.capacity,
-            "candidate_slot_count": search.candidate_slot_count,
-            "maximum_particles_per_cell": search.capacity.maximum_particles_per_cell,
-            "edge_capacity": search.capacity.maximum_edges,
-            "degree_capacity": search.capacity.maximum_degree,
-            "image_capacity": search.capacity.maximum_images,
-        },
+        resource_counts=resource_counts,
     )
 
 
@@ -1454,6 +1966,378 @@ def _bind_prepared(
     )
 
 
+SelectionMeasure = Literal["squared-distance", "distance"]
+RadiusBoundary = Literal["open", "closed"]
+
+
+class ImageNeighborSelectionPolicy(StrictModule, NonTrainableState):
+    """Scientifically declared nearest-neighbor selection of a directed image graph.
+
+    The policy belongs to a model definition; it is not a buffer limit and is
+    identified separately from any capacity.  Per receiver, a route is
+    eligible when it passes the radius test (``d < radius`` for ``"open"``,
+    ``d <= radius`` for ``"closed"``) and, when ``coincidence_threshold`` is
+    set, ``d**2 > coincidence_threshold``.  Let ``m`` be the declared
+    ``measure`` (``d**2`` or ``d``) and ``m_(0) <= m_(1) <= ...`` the
+    receiver's eligible values in the canonical order ``(m, source stable ID,
+    lexicographic n)``.  A receiver with at most ``k = maximum_neighbors``
+    eligible routes keeps all of them.  Otherwise ``strict`` keeps the first
+    ``k`` canonical routes, and the degeneracy band keeps every eligible route
+    with ``m <= m_(k) + degeneracy_tolerance``, where ``m_(k)`` is the
+    0-based ``k``-th value (the ``k + 1``-th nearest).  The band therefore
+    keeps at least ``k + 1`` routes; this is the rule of FAIRChem's
+    ``get_max_neighbors_mask`` (which applies it to squared distances).  A
+    selected graph is directed and generally not reversal closed.
+    """
+
+    radius: float = eqx.field(static=True)
+    maximum_neighbors: int = eqx.field(static=True)
+    degeneracy_tolerance: float = eqx.field(static=True)
+    measure: SelectionMeasure = eqx.field(static=True)
+    strict: bool = eqx.field(static=True)
+    radius_boundary: RadiusBoundary = eqx.field(static=True)
+    coincidence_threshold: float | None = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius: float,
+        maximum_neighbors: int,
+        /,
+        *,
+        degeneracy_tolerance: float,
+        measure: SelectionMeasure,
+        strict: bool,
+        radius_boundary: RadiusBoundary,
+        coincidence_threshold: float | None = None,
+    ) -> None:
+        value = float(radius)
+        neighbors = int(maximum_neighbors)
+        tolerance = float(degeneracy_tolerance)
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError("Selection radius must be finite and positive.")
+        if neighbors <= 0 or neighbors > _INT32_LIMIT:
+            raise ValueError("maximum_neighbors must be a positive int32 count.")
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("degeneracy_tolerance must be finite and nonnegative.")
+        measure = parse(measure, SelectionMeasure, "measure")
+        radius_boundary = parse(radius_boundary, RadiusBoundary, "radius_boundary")
+        threshold = (
+            None if coincidence_threshold is None else float(coincidence_threshold)
+        )
+        if threshold is not None and (not np.isfinite(threshold) or threshold < 0.0):
+            raise ValueError("coincidence_threshold must be finite and nonnegative.")
+        self.radius = value
+        self.maximum_neighbors = neighbors
+        self.degeneracy_tolerance = tolerance
+        self.measure = measure
+        self.strict = bool(strict)
+        self.radius_boundary = radius_boundary
+        self.coincidence_threshold = threshold
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "image-neighbor-selection-policy",
+                "radius": value,
+                "maximum_neighbors": neighbors,
+                "degeneracy_tolerance": tolerance,
+                "measure": measure,
+                "strict": bool(strict),
+                "radius_boundary": radius_boundary,
+                "coincidence_threshold": threshold,
+            }
+        )
+
+
+class ImageSelectionCapacity(StrictModule, NonTrainableState):
+    """Storage for a selected graph, distinct from the scientific selection.
+
+    ``maximum_routes`` is one shared buffer, or the total bound of the
+    per-case segments of width ``maximum_case_routes``.  ``maximum_degree``
+    bounds selected routes per receiver for row-layout consumers.
+    """
+
+    maximum_routes: int = eqx.field(static=True)
+    maximum_degree: int = eqx.field(static=True)
+    maximum_case_routes: int | None = eqx.field(static=True)
+    capacity_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        maximum_routes: int,
+        maximum_degree: int,
+        maximum_case_routes: int | None = None,
+    ) -> None:
+        routes = int(maximum_routes)
+        degree = int(maximum_degree)
+        if routes < 0 or routes > _INT32_LIMIT or degree <= 0 or degree > _INT32_LIMIT:
+            raise ValueError(
+                "Selection routes must be nonnegative int32 and degree positive int32."
+            )
+        case_routes = None if maximum_case_routes is None else int(maximum_case_routes)
+        if case_routes is not None and (case_routes <= 0 or case_routes > routes):
+            raise ValueError(
+                "maximum_case_routes must be positive and no larger than maximum_routes."
+            )
+        self.maximum_routes = routes
+        self.maximum_degree = degree
+        self.maximum_case_routes = case_routes
+        self.capacity_id = canonical_fingerprint(
+            {
+                "kind": "image-selection-capacity",
+                "maximum_routes": routes,
+                "maximum_degree": degree,
+                "maximum_case_routes": case_routes,
+            }
+        )
+
+
+class ImageSelectionEvidence(StrictModule, NonTrainableState):
+    """Per-case evidence of one declared selection.
+
+    ``capped_receivers`` counts receivers whose eligible routes exceeded the
+    selection: that is the declared scientific rule, never a failure.
+    ``route_overflow`` and ``degree_overflow`` mean the selected graph did not
+    fit its storage.  Source failures are carried from the candidate search:
+    an incomplete or uncertified candidate set cannot support a selection.
+    """
+
+    eligible_routes: Array
+    selected_routes: Array
+    stored_routes: Array
+    candidate_degree: Array
+    selected_degree: Array
+    capped_receivers: Array
+    route_overflow: Array
+    degree_overflow: Array
+    source_capacity_failure: Array
+    source_scientific_failure: Array
+    source_uncertified: Array
+
+    @property
+    def capacity_failure(self) -> Array:
+        return self.route_overflow | self.degree_overflow | self.source_capacity_failure
+
+    @property
+    def scientific_failure(self) -> Array:
+        return self.source_scientific_failure | self.source_uncertified
+
+    @property
+    def successful(self) -> Array:
+        return ~(self.capacity_failure | self.scientific_failure)
+
+
+class ImageNeighborSelection(StrictModule, NonTrainableState):
+    """A declared selection of a candidate image relation.
+
+    ``relation`` keeps the selected routes in candidate (receiver-major) order;
+    ``parent_routes`` maps each stored route to its candidate route.
+    """
+
+    relation: ParticleImageRelation
+    parent_routes: Array
+    evidence: ImageSelectionEvidence
+    policy_id: str = eqx.field(static=True)
+    capacity_id: str = eqx.field(static=True)
+
+
+class PreparedImageNeighborSelection(StrictModule, NonTrainableState):
+    """Prepared declared selection over a candidate relation of ``source_radius``.
+
+    The candidate search must cover the selection radius: ``source_radius >=
+    radius`` for an open boundary and ``source_radius > radius`` for a closed
+    one (the image searches test ``d < source_radius``).  Selection is a pure
+    function of the candidate relation and current geometry; masks carry no
+    derivative.
+    """
+
+    policy: ImageNeighborSelectionPolicy
+    capacity: ImageSelectionCapacity
+    source_radius: float = eqx.field(static=True)
+    case_count: int = eqx.field(static=True)
+    selection_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        policy: ImageNeighborSelectionPolicy,
+        capacity: ImageSelectionCapacity,
+        /,
+        *,
+        source_radius: float,
+        case_count: int,
+    ) -> None:
+        if not isinstance(policy, ImageNeighborSelectionPolicy):
+            raise TypeError("policy must be an ImageNeighborSelectionPolicy.")
+        if not isinstance(capacity, ImageSelectionCapacity):
+            raise TypeError("capacity must be an ImageSelectionCapacity.")
+        radius = float(source_radius)
+        cases = int(case_count)
+        if np.isnan(radius) or radius <= 0.0 or cases <= 0:
+            raise ValueError("source_radius must be positive and case_count positive.")
+        covered = (
+            radius > policy.radius
+            if policy.radius_boundary == "closed"
+            else radius >= policy.radius
+        )
+        if not covered:
+            raise ValueError(
+                "The candidate search radius does not cover the selection radius "
+                "and boundary."
+            )
+        if (
+            capacity.maximum_case_routes is not None
+            and cases * capacity.maximum_case_routes > capacity.maximum_routes
+        ):
+            raise ValueError("Per-case selection segments exceed maximum_routes.")
+        self.policy = policy
+        self.capacity = capacity
+        self.source_radius = radius
+        self.case_count = cases
+        self.selection_id = canonical_fingerprint(
+            {
+                "kind": "prepared-image-neighbor-selection",
+                "policy": policy.policy_id,
+                "capacity": capacity.capacity_id,
+                "source_radius": None if np.isposinf(radius) else radius,
+                "case_count": cases,
+            }
+        )
+
+    def select(
+        self,
+        relation: ParticleImageRelation,
+        positions: ArrayLike,
+        cell_vectors: ArrayLike,
+        /,
+        *,
+        evidence: ParticleImageRelationEvidence | None = None,
+        certified: ArrayLike | None = None,
+    ) -> ImageNeighborSelection:
+        """Select routes of ``relation`` under current ``positions``/``cell_vectors``.
+
+        ``evidence`` (the candidate search evidence) and ``certified`` (a
+        per-case lifecycle certificate of the cached candidate set) are
+        carried into the selection status.
+        """
+        if not isinstance(relation, ParticleImageRelation):
+            raise TypeError("relation must be a ParticleImageRelation.")
+        if relation.case_count != self.case_count:
+            raise ValueError("Relation case count differs from the prepared selection.")
+        policy = self.policy
+        cases = relation.case_count
+        size = cases * relation.particle_capacity
+        displacement = relation.displacement(positions, cell_vectors)
+        squared = jax.lax.stop_gradient(jnp.sum(displacement * displacement, axis=-1))
+        bound = policy.radius * policy.radius
+        eligible = relation.valid & (
+            squared <= bound if policy.radius_boundary == "closed" else squared < bound
+        )
+        if policy.coincidence_threshold is not None:
+            eligible = eligible & (squared > policy.coincidence_threshold)
+        measure = jnp.where(
+            eligible,
+            squared if policy.measure == "squared-distance" else jnp.sqrt(squared),
+            0.0,
+        )
+        routes = relation.capacity
+        shifts = jnp.where(eligible[:, None], relation.image_shifts, 0)
+        keys = tuple(shifts[:, axis] for axis in reversed(range(relation.lattice_rank)))
+        keys = keys + (
+            jnp.where(eligible, relation.source_particle_ids, 0),
+            measure,
+            jnp.where(eligible, relation.receiver_indices, 0),
+            (~eligible).astype(jnp.int32),
+        )
+        order = jax.lax.stop_gradient(jnp.lexsort(keys)).astype(jnp.int32)
+        sorted_receivers = relation.receiver_indices[order]
+        sorted_eligible = eligible[order]
+        sorted_measure = measure[order]
+        index = jnp.arange(routes, dtype=jnp.int32)
+        head = sorted_eligible & jnp.concatenate(
+            (
+                jnp.ones((min(routes, 1),), dtype=jnp.bool_),
+                sorted_receivers[1:] != sorted_receivers[:-1],
+            )
+        )
+        start = jax.lax.cummax(jnp.where(head, index, 0))
+        eligible_count = (
+            jnp.zeros((size,), dtype=jnp.int32)
+            .at[jnp.where(eligible, relation.receiver_indices, 0)]
+            .add(eligible.astype(jnp.int32))
+        )
+        neighbors = policy.maximum_neighbors
+        capped = eligible_count[sorted_receivers] > neighbors
+        if policy.strict:
+            kept = (index - start) < neighbors
+        else:
+            anchor = sorted_measure[jnp.clip(start + neighbors, 0, routes - 1)]
+            kept = sorted_measure <= anchor + policy.degeneracy_tolerance
+        selected = (
+            jnp.zeros((routes,), dtype=jnp.bool_)
+            .at[order]
+            .set(sorted_eligible & (~capped | kept))
+        )
+        selected_count = (
+            jnp.zeros((size,), dtype=jnp.int32)
+            .at[jnp.where(selected, relation.receiver_indices, 0)]
+            .add(selected.astype(jnp.int32))
+        )
+        compaction = compact_image_routes(
+            selected,
+            relation.route_cases,
+            case_count=cases,
+            capacity=(
+                self.capacity.maximum_routes
+                if self.capacity.maximum_case_routes is None
+                else None
+            ),
+            case_capacity=self.capacity.maximum_case_routes,
+        )
+        chosen = relation.take_routes(
+            compaction,
+            relation_schema_id=canonical_fingerprint(
+                {
+                    "kind": "selected-image-relation",
+                    "parent": relation.relation_schema_id,
+                    "selection": self.selection_id,
+                }
+            ),
+        )
+        eligible_routes = (
+            jnp.zeros((cases,), dtype=jnp.int32)
+            .at[jnp.where(eligible, relation.route_cases, 0)]
+            .add(eligible.astype(jnp.int32))
+        )
+        eligible_rows = eligible_count.reshape((cases, -1))
+        selected_rows = selected_count.reshape((cases, -1))
+        selected_degree = jnp.max(selected_rows, axis=-1)
+        false = jnp.zeros((cases,), dtype=jnp.bool_)
+        uncertified = (
+            false
+            if certified is None
+            else ~jnp.broadcast_to(jnp.asarray(certified, dtype=jnp.bool_), (cases,))
+        )
+        return ImageNeighborSelection(
+            chosen,
+            jnp.where(chosen.valid, compaction.indices, 0),
+            ImageSelectionEvidence(
+                eligible_routes,
+                compaction.required,
+                compaction.stored,
+                jnp.max(eligible_rows, axis=-1),
+                selected_degree,
+                jnp.sum(eligible_rows > selected_rows, axis=-1, dtype=jnp.int32),
+                compaction.overflow,
+                selected_degree > self.capacity.maximum_degree,
+                false if evidence is None else evidence.capacity_failure,
+                false if evidence is None else evidence.scientific_failure,
+                uncertified,
+            ),
+            policy.policy_id,
+            self.capacity.capacity_id,
+        )
+
+
 __all__ = [
     "AbstractImageRouteSearch",
     "AbstractParticleImageNeighborhoodPlan",
@@ -1463,11 +2347,18 @@ __all__ = [
     "DenseImageRouteSearch",
     "DenseParticleImageNeighborhoodPlan",
     "ImageCertificate",
+    "ImageNeighborSelection",
+    "ImageNeighborSelectionPolicy",
+    "ImageReceiverRows",
+    "ImageReceiverSubset",
     "ImageRouteSearchResult",
+    "ImageSelectionCapacity",
+    "ImageSelectionEvidence",
     "image_certificate",
     "ParticleImageCapacity",
     "ParticleImageCapacityLadder",
     "ParticleImageNeighborhoodState",
     "PreparedCellListParticleImageNeighborhood",
     "PreparedDenseParticleImageNeighborhood",
+    "PreparedImageNeighborSelection",
 ]

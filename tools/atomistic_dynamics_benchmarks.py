@@ -56,19 +56,52 @@ def _runtime(arguments: Any) -> Any:
         cell=cell,
     ).prepare()
     pair_capacity = arguments.atoms * (arguments.atoms - 1) // 2
-    base = phx.discretization.DenseParticleNeighborhoodPlan(pair_capacity, box=cell)
-    neighborhood = phx.discretization.VerletParticleNeighborhoodPlan(
-        base, 2.5, 0.3
-    ).prepare(system.particles)
-    potential = phx.atomistic.AtomisticPotentialProgram(
+    program = phx.atomistic.AtomisticPotentialProgram(
         # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5, switch_distance=2.2)]
-    ).prepare(system)
+    )
+    (pairs,) = program.requirements.neighborhoods
+    # Bounded dense image search over every atom pair and the 27-image stencil,
+    # skin 0.3, with all-pairs route storage.
+    bundle = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+        (pairs,),
+        (
+            phx.atomistic.AtomisticNeighborhoodSource(
+                "lennard-jones-pairs",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                (pairs,),
+                phx.atomistic.AtomisticDenseImageSearch(
+                    maximum_dense_routes=27 * arguments.atoms * arguments.atoms
+                ),
+                phx.discretization.ParticleImageCapacityLadder(
+                    (
+                        phx.discretization.ParticleImageCapacity(
+                            maximum_particles_per_cell=arguments.atoms,
+                            maximum_edges=2 * pair_capacity,
+                            maximum_degree=arguments.atoms - 1,
+                            maximum_images=27,
+                            maximum_case_edges=2 * pair_capacity,
+                        ),
+                    )
+                ),
+                skin=0.3,
+            ),
+        ),
+        (
+            phx.atomistic.AtomisticRoleCapacityLadder(
+                pairs,
+                (
+                    phx.atomistic.AtomisticRoleCapacity(
+                        maximum_routes=pair_capacity,
+                        maximum_degree=arguments.atoms - 1,
+                    ),
+                ),
+            ),
+        ),
+    )
+    potential = program.prepare(system, neighborhood_bundle=bundle)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
-        system,
-        potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(arguments.step_size),
+        system, potential, phx.atomistic.VelocityVerletPlan(arguments.step_size)
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
         phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
@@ -122,7 +155,9 @@ def main() -> None:
         },
         "work": {
             "pair_capacity": arguments.atoms * (arguments.atoms - 1) // 2,
-            "candidate_pairs": int(result.final_state.neighborhood.candidate_pair_count),
+            "stored_routes": int(
+                phx.atomistic.neighborhood_route_work(result.final_state.neighborhoods)
+            ),
             "rebuild_count": int(diagnostics.neighborhood_rebuild_count),
         },
         "performance": {

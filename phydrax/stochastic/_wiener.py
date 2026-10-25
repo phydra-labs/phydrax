@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import DTypeLike
 
 from .._strict import StrictModule
@@ -95,13 +95,48 @@ def _coupling_fingerprint(
     return digest.hexdigest()
 
 
+def _law_fingerprint(
+    *,
+    support: tuple[float, float],
+    noise_shape: tuple[int, ...],
+    sample_shape: tuple[int, ...],
+    tolerance: float,
+    levy_area: LevyAreaKind,
+    algorithm: WienerAlgorithm,
+    noise_id: str | None,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"phydrax-wiener-law\0")
+    for value in (
+        support,
+        noise_shape,
+        sample_shape,
+        tolerance,
+        levy_area,
+        algorithm,
+        noise_id,
+    ):
+        digest.update(repr(value).encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 class WienerRealization(StrictModule):
     """A global, reproducible Wiener path or coupled batch of Wiener paths.
 
     The Brownian construction is defined on ``support``. Solves over subintervals query
     this same global path instead of constructing unrelated local Brownian trees.
-    ``path_indices`` and ``path_signs`` encode independent or antithetic coupling while
-    preserving prefix-stable path keys derived with :func:`jax.random.fold_in`.
+    ``path_indices`` and ``path_signs`` encode independent, mapped or antithetic
+    coupling while preserving prefix-stable path keys derived with
+    :func:`jax.random.fold_in`.
+
+    Identity is split between the static ``law_id`` (support, noise and sample shapes,
+    tolerance, Lévy area, algorithm and noise basis) and the dynamic path data
+    ``root_key``, ``path_indices`` and ``path_signs``. Construction performs no host
+    transfer, so a realization may be built from a traced key and passed into compiled
+    code without retracing. `realization_id` and `coupling_id` materialize the complete
+    identity on the host from concrete data and refuse traced leaves; traced code
+    carries the realization itself.
     """
 
     root_key: Array
@@ -115,8 +150,8 @@ class WienerRealization(StrictModule):
     algorithm: WienerAlgorithm = eqx.field(static=True)
     noise_id: str | None = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
-    realization_id: str = eqx.field(static=True)
-    coupling_id: str = eqx.field(static=True)
+    declared_coupling_id: str | None = eqx.field(static=True)
+    law_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -133,7 +168,6 @@ class WienerRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
-        _realization_id: str | None = None,
         _path_signs: Array | None = None,
     ) -> None:
         key = _validated_key(root_key)
@@ -168,10 +202,6 @@ class WienerRealization(StrictModule):
             not isinstance(coupling_id, str) or not coupling_id
         ):
             raise ValueError("WienerRealization coupling_id must be non-empty or None.")
-        if _realization_id is not None and (
-            not isinstance(_realization_id, str) or not _realization_id
-        ):
-            raise ValueError("_realization_id must be non-empty or None.")
 
         count = prod(samples) if samples else 1
         expected_shape = samples
@@ -191,36 +221,13 @@ class WienerRealization(StrictModule):
                 raise ValueError(
                     f"WienerRealization path signs must match sample_shape; got {signs.shape} and {expected_shape}."
                 )
-            if not bool(jnp.all(jnp.isin(signs, jnp.asarray([-1.0, 1.0])))):
-                raise ValueError("WienerRealization path signs must be +1 or -1.")
+            signs = eqx.error_if(
+                signs,
+                ~jnp.all((signs == 1.0) | (signs == -1.0)),
+                "WienerRealization path signs must be +1 or -1.",
+            )
 
         support_value = (start, end)
-        resolved_coupling_id = coupling_id or _coupling_fingerprint(
-            key,
-            support=support_value,
-            noise_shape=noise,
-            tolerance=tolerance_value,
-            levy_area=levy_area,
-            algorithm=algorithm,
-            noise_id=noise_id,
-        )
-        realization_id = (
-            _fingerprint(
-                key,
-                support=support_value,
-                noise_shape=noise,
-                sample_shape=samples,
-                path_indices=indices,
-                path_signs=signs,
-                tolerance=tolerance_value,
-                levy_area=levy_area,
-                algorithm=algorithm,
-                noise_id=noise_id,
-            )
-            if _realization_id is None
-            else _realization_id
-        )
-
         self.root_key = key
         self.path_indices = indices
         self.path_signs = signs
@@ -232,8 +239,58 @@ class WienerRealization(StrictModule):
         self.algorithm = algorithm
         self.noise_id = noise_id
         self.label = label
-        self.realization_id = realization_id
-        self.coupling_id = resolved_coupling_id
+        self.declared_coupling_id = coupling_id
+        self.law_id = _law_fingerprint(
+            support=support_value,
+            noise_shape=noise,
+            sample_shape=samples,
+            tolerance=tolerance_value,
+            levy_area=levy_area,
+            algorithm=algorithm,
+            noise_id=noise_id,
+        )
+
+    def _require_concrete(self, name: str, /) -> None:
+        leaves = (self.root_key, self.path_indices, self.path_signs)
+        if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
+            raise ValueError(
+                f"WienerRealization.{name} is materialized on the host from concrete "
+                "key and path data; traced code must carry the realization itself "
+                "(its static law_id with root_key, path_indices and path_signs)."
+            )
+
+    @property
+    def realization_id(self) -> str:
+        """Host fingerprint of every path-defining input, including key and layout."""
+        self._require_concrete("realization_id")
+        return _fingerprint(
+            self.root_key,
+            support=self.support,
+            noise_shape=self.noise_shape,
+            sample_shape=self.sample_shape,
+            path_indices=self.path_indices,
+            path_signs=self.path_signs,
+            tolerance=self.tolerance,
+            levy_area=self.levy_area,
+            algorithm=self.algorithm,
+            noise_id=self.noise_id,
+        )
+
+    @property
+    def coupling_id(self) -> str:
+        """Declared common-random-number label, else the host root-key/law fingerprint."""
+        if self.declared_coupling_id is not None:
+            return self.declared_coupling_id
+        self._require_concrete("coupling_id")
+        return _coupling_fingerprint(
+            self.root_key,
+            support=self.support,
+            noise_shape=self.noise_shape,
+            tolerance=self.tolerance,
+            levy_area=self.levy_area,
+            algorithm=self.algorithm,
+            noise_id=self.noise_id,
+        )
 
     @classmethod
     def independent(

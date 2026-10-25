@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...artifacts import ScientificArtifactEnvelope
 from ...atomistic import AtomisticPotentialEvaluation, PreparedAtomisticForceField
-from ...discretization import ParticleNeighborhoodState
+from ...atomistic._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from ...qualification import ReferenceArtifactManifest
 from ...units import conversion_factor, UnitDefinition
 from ._chemical_state import ResolvedProteinChemistry
@@ -80,17 +80,18 @@ class PreparedProteinBinding:
 
     def evaluate(
         self,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         positions: ArrayLike | None = None,
     ) -> AtomisticPotentialEvaluation:
         """Conservative energy and full active forces; fixed atoms retain reactions.
 
-        ``neighborhood`` is an already realized native ParticleNeighborhoodState.
-        The fixed-shape numeric call is differentiable/JIT-compatible. Host
-        preparation and lineage construction are intentionally outside JIT.
+        ``neighborhoods`` is the realized state of the Hamiltonian's prepared
+        neighborhood bundle at ``positions``. The fixed-shape numeric call is
+        differentiable/JIT-compatible. Host preparation and lineage construction
+        are intentionally outside JIT.
         """
         return self.force_field.potential.evaluate(
-            self.realized_positions if positions is None else positions, neighborhood
+            self.realized_positions if positions is None else positions, neighborhoods
         )
 
     def require_rights(self, **requested_use: Unpack[_RequestedUse]) -> tuple[str, ...]:

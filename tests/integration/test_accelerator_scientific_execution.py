@@ -31,11 +31,11 @@ def execution_device() -> Iterator[jax.Device]:
 
 
 def test_mlp_pde_derivatives_and_update(
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, object], None], execution_device: jax.Device
 ) -> None:
     from examples.accelerator_scientific_execution import poisson_steps, poisson_training
 
-    values, arrays = poisson_steps(steps=4)
+    values, arrays = poisson_steps(device=execution_device, steps=4)
     record_execution(record_property, *arrays)
     assert all(np.isfinite(value) for value in values.values())
     assert values["gradient_norm"] > 0 and values["update_norm"] > 0
@@ -49,7 +49,7 @@ def test_mlp_pde_derivatives_and_update(
     assert all(array.dtype == jnp.float32 for array in arrays)
 
     # The core workload: one compiled Adam update of the same prepared PINN.
-    training = poisson_training()
+    training = poisson_training(device=execution_device)
     updated, _, loss, gradient = record_compiled_region(
         record_property,
         "pinn-training-step",

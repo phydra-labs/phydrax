@@ -17,6 +17,26 @@ from ._adapters import (
     to_openff_interchange,
     to_openmm_system,
 )
+from ._aimnet2_checkpoint import (
+    AIMNET2_PROVIDER_RELEASES,
+    AIMNET2_SOURCE_PIN,
+    AIMNet2CheckpointConversion,
+    AIMNet2ExtractionLimits,
+    AIMNet2LegacyOverrides,
+    AIMNet2OracleConfiguration,
+    AIMNet2OracleEvaluation,
+    AIMNet2ProviderRuntime,
+    AIMNet2Source,
+    AIMNet2SourceFormat,
+    AIMNet2SourceProvenance,
+    AIMNet2SourceRecord,
+    AIMNet2SourceRefusedError,
+    convert_aimnet2_checkpoint,
+    evaluate_aimnet2_source,
+    extract_aimnet2_source,
+    read_safetensors_tensors,
+    read_torch_v2_source,
+)
 from ._ase import (
     ASE_PARTICLE_ID_ARRAY,
     ASE_SOURCE_ID_INFO,
@@ -24,6 +44,15 @@ from ._ase import (
     is_ase_available,
     require_ase,
     to_ase_atoms,
+)
+from ._cif import (
+    ChargedTypeSymbolPolicy,
+    cif_crystal_structure,
+    CIFAtomDim,
+    CIFBond,
+    CIFCrystalStructure,
+    CIFSiteDim,
+    parse_symmetry_operation,
 )
 from ._core import (
     AtomisticInterchangeBundle,
@@ -46,6 +75,7 @@ from ._mace_checkpoint import (
     convert_mace_checkpoint,
     create_mace_provider_fixture,
     evaluate_mace_source,
+    MACE_LES_RELEASES,
     MACE_PROVIDER_RELEASES,
     mace_source_gradients,
     MACECheckpointConversion,
@@ -61,7 +91,6 @@ from ._mace_checkpoint import (
     MACESourceKind,
     MACESourceProvenance,
     MACESourceRefusedError,
-    TrustedTorchPickleSource,
 )
 from ._mdanalysis import (
     atomistic_frame_from_mdanalysis,
@@ -75,12 +104,33 @@ from ._packmol import (
     PackmolComponentPlan,
     PackmolRegionConstraint,
 )
+from ._rdkit import (
+    conformers_from_rdkit,
+    is_rdkit_available,
+    molecular_component_from_rdkit,
+    molecular_component_from_smiles,
+    RDKitEZConversion,
+    RDKitStereoSource,
+    require_rdkit,
+)
+from ._source_admission import TrustedTorchPickleSource
 from ._structure_records import (
     PDBAtomRecord,
     read_pdb_atom_records,
     select_pdb_model,
 )
 from ._trajectory_io import ExtendedXYZTrajectoryPlan, H5MDTrajectoryPlan
+from ._uma_checkpoint import (
+    convert_uma_checkpoint,
+    extract_uma_checkpoint,
+    UMACheckpointConversion,
+    UMAConversionLimits,
+    UMAExtractionRuntime,
+    UMASource,
+    UMASourceExtraction,
+    UMASourceProvenance,
+    UMASourceRefusedError,
+)
 
 
 _ASE_CALCULATOR_EXPORTS = ("NativeASECalculator", "NativeASECalculatorPlan")
@@ -104,6 +154,48 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AIMNET2_PROVIDER_RELEASES",
+    "AIMNET2_SOURCE_PIN",
+    "AIMNet2CheckpointConversion",
+    "AIMNet2ExtractionLimits",
+    "AIMNet2LegacyOverrides",
+    "AIMNet2OracleConfiguration",
+    "AIMNet2OracleEvaluation",
+    "AIMNet2ProviderRuntime",
+    "AIMNet2Source",
+    "AIMNet2SourceFormat",
+    "AIMNet2SourceProvenance",
+    "AIMNet2SourceRecord",
+    "AIMNet2SourceRefusedError",
+    "ChargedTypeSymbolPolicy",
+    "CIFAtomDim",
+    "CIFBond",
+    "CIFCrystalStructure",
+    "CIFSiteDim",
+    "MACE_LES_RELEASES",
+    "RDKitEZConversion",
+    "RDKitStereoSource",
+    "UMACheckpointConversion",
+    "UMAConversionLimits",
+    "UMAExtractionRuntime",
+    "UMASource",
+    "UMASourceExtraction",
+    "UMASourceProvenance",
+    "UMASourceRefusedError",
+    "cif_crystal_structure",
+    "conformers_from_rdkit",
+    "convert_aimnet2_checkpoint",
+    "convert_uma_checkpoint",
+    "evaluate_aimnet2_source",
+    "extract_aimnet2_source",
+    "extract_uma_checkpoint",
+    "is_rdkit_available",
+    "molecular_component_from_rdkit",
+    "molecular_component_from_smiles",
+    "parse_symmetry_operation",
+    "read_safetensors_tensors",
+    "read_torch_v2_source",
+    "require_rdkit",
     "convert_mace_checkpoint",
     "create_mace_provider_fixture",
     "evaluate_mace_source",

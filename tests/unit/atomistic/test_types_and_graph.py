@@ -2,6 +2,7 @@ from copy import copy, deepcopy
 from itertools import product
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,16 +13,29 @@ from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphLayout,
+    AtomisticGraphPayload,
     AtomisticScaleContract,
     bind_atomistic_graph,
-    prepare_atomistic_graph_topology,
-    realize_atomistic_graph,
 )
 from phydrax.discretization import ParticleImageCapacity
+from phydrax.discretization.particle import ImageNeighborSelectionPolicy
 from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, METER
 
 
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
+
+
+def _payload(
+    batch: AtomisticBatch,
+    execution: AtomisticGraphExecutionPlan,
+    *,
+    cutoff: float,
+    skin: float = 0.0,
+) -> AtomisticGraphPayload:
+    return AtomisticGraphLayout.for_batch(
+        batch, execution, cutoff=cutoff, skin=skin
+    ).prepare(batch)
 
 
 def test_structure_preserves_particles_masks_ids_masses_and_scale() -> None:
@@ -180,9 +194,9 @@ def test_batch_padding_does_not_change_structure_identity_or_graph_isolation() -
         name="o2",
     )
     batch = AtomisticBatch.from_structures((hydrogen, oxygen), atom_capacity=3)
-    graph = realize_atomistic_graph(
+    graph = _payload(
         batch, AtomisticGraphExecutionPlan(2, maximum_dense_atoms=3), cutoff=2.0
-    )
+    ).graph(cutoff=2.0)
     assert graph.graph.num_graphs == 2
     assert graph.graph.nodes["atomic_numbers"].shape == (6,)
     assert not bool(jnp.any(graph.overflow))
@@ -205,11 +219,11 @@ def test_graph_displacement_distance_direction_and_coincident_atom_semantics() -
         [1.0, 1.0],
         SCALE,
     )
-    graph = realize_atomistic_graph(
+    graph = _payload(
         AtomisticBatch.from_structure(structure),
         AtomisticGraphExecutionPlan(1, maximum_dense_atoms=2),
         cutoff=1.0,
-    )
+    ).graph(cutoff=1.0)
     np.testing.assert_allclose(graph.graph.edges["distance"], 0.0)
     np.testing.assert_allclose(graph.graph.edges["direction"], 0.0)
     assert bool(jnp.all(jnp.isfinite(graph.graph.edges["direction"])))
@@ -227,11 +241,11 @@ def test_neighborhood_overflow_is_reported_without_truncation() -> None:
         [1.0, 1.0, 1.0],
         SCALE,
     )
-    graph = realize_atomistic_graph(
+    graph = _payload(
         AtomisticBatch.from_structure(structure),
         AtomisticGraphExecutionPlan(1, maximum_dense_atoms=3),
         cutoff=1.0,
-    )
+    ).graph(cutoff=1.0)
     assert bool(graph.overflow[0])
     assert int(graph.maximum_neighbor_count[0]) == 2
     # ty: ignore[invalid-argument-type]
@@ -255,7 +269,7 @@ def test_dense_graph_guards_before_candidate_allocation(monkeypatch: Any) -> Non
 
     monkeypatch.setattr(graph_module.np, "repeat", forbidden_allocation)
     with pytest.raises(ValueError, match="resource guard"):
-        realize_atomistic_graph(
+        AtomisticGraphLayout.for_batch(
             batch, AtomisticGraphExecutionPlan(1, maximum_dense_atoms=1), cutoff=2.0
         )
 
@@ -384,8 +398,9 @@ def test_periodic_batch_topology_matches_lattice_oracle_with_case_isolation(
         )
     )
     cutoff = 2.9
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=cutoff)
-    graph = realize_atomistic_graph(batch, execution, cutoff=cutoff, topology=topology)
+    payload = _payload(batch, execution, cutoff=cutoff)
+    topology = payload.topology
+    graph = payload.graph(cutoff=cutoff)
     assert not bool(jnp.any(graph.overflow))
     positions = np.asarray(batch.positions)
     assert _graph_routes(graph, 0, 3) == _lattice_routes(
@@ -416,7 +431,7 @@ def test_periodic_batch_topology_matches_lattice_oracle_with_case_isolation(
     )
 
 
-def test_periodic_batch_requires_explicit_topology_with_matching_atom_identity() -> None:
+def test_payload_admission_refuses_foreign_material_as_scientific_failure() -> None:
     cell = 3.0 * np.eye(3)
     fractional = np.asarray([[0.1, 0.1, 0.1], [0.5, 0.5, 0.5]])
     batch = AtomisticBatch.from_structure(
@@ -428,15 +443,20 @@ def test_periodic_batch_requires_explicit_topology_with_matching_atom_identity()
     execution = AtomisticGraphExecutionPlan(
         64, backend="particle", image_capacity=IMAGE_CAPACITY
     )
-    with pytest.raises(ValueError, match="require a topology"):
-        realize_atomistic_graph(
+    with pytest.raises(ValueError, match="image_capacity"):
+        AtomisticGraphLayout.for_batch(
             batch, AtomisticGraphExecutionPlan(64, maximum_dense_atoms=2), cutoff=2.0
         )
-    topology = prepare_atomistic_graph_topology(stale, execution, cutoff=2.0)
-    assert topology.atom_topology_id == stale.atom_topology_id
-    assert topology.atom_topology_id != batch.atom_topology_id
-    with pytest.raises(ValueError, match="another atom identity"):
-        realize_atomistic_graph(batch, execution, cutoff=2.0, topology=topology)
+    payload = _payload(stale, execution, cutoff=2.0)
+    assert (
+        payload.topology.content_id()
+        != _payload(batch, execution, cutoff=2.0).topology.content_id()
+    )
+    graph = payload.admit(batch).graph(cutoff=2.0)
+    np.testing.assert_array_equal(graph.overflow, [False])
+    np.testing.assert_array_equal(graph.topology.search_failure, [True])
+    np.testing.assert_array_equal(graph.valid, [False])
+    assert bool(payload.admit(stale).graph(cutoff=2.0).valid[0])
 
 
 def _edge_energy(graph: Any) -> jax.Array:
@@ -467,12 +487,8 @@ def test_primitive_and_supercell_agree_and_one_atom_cell_has_only_strain_respons
         512, backend="particle", image_capacity=IMAGE_CAPACITY
     )
     cutoff = 3.3
-    one_topology = prepare_atomistic_graph_topology(
-        one, execution, cutoff=cutoff, skin=0.1
-    )
-    two_topology = prepare_atomistic_graph_topology(
-        two, execution, cutoff=cutoff, skin=0.1
-    )
+    one_topology = _payload(one, execution, cutoff=cutoff, skin=0.1).topology
+    two_topology = _payload(two, execution, cutoff=cutoff, skin=0.1).topology
 
     def energy(topology: Any, positions: jax.Array, cells: jax.Array) -> jax.Array:
         graph = bind_atomistic_graph(
@@ -516,7 +532,7 @@ def test_bound_topology_certificate_fails_when_positions_leave_the_skin() -> Non
     execution = AtomisticGraphExecutionPlan(
         512, backend="particle", image_capacity=IMAGE_CAPACITY
     )
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.0, skin=0.4)
+    topology = _payload(batch, execution, cutoff=2.0, skin=0.4).topology
     near = batch.positions.at[0, 1, 0].add(0.1).reshape((-1, 3))
     assert not bool(
         jnp.any(bind_atomistic_graph(topology, execution, near, cutoff=2.0).overflow)
@@ -539,11 +555,11 @@ def test_edge_slots_rank_active_edges_per_receiver_by_sender() -> None:
         [1.0, 1.0, 1.0, 1.0],
         SCALE,
     )
-    graph = realize_atomistic_graph(
+    graph = _payload(
         AtomisticBatch.from_structure(structure),
         AtomisticGraphExecutionPlan(4, maximum_dense_atoms=4),
         cutoff=1.0,
-    )
+    ).graph(cutoff=1.0)
     senders = np.asarray(graph.graph.senders)
     receivers = np.asarray(graph.graph.receivers)
     active = np.asarray(graph.graph.edge_mask)
@@ -582,14 +598,15 @@ def test_nonfinite_active_geometry_invalidates_edgeless_case_but_masked_padding_
     )
     batch = AtomisticBatch.from_structures((first, second))
     execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=2)
-    finite = realize_atomistic_graph(batch, execution, cutoff=1.0)
+    payload = _payload(batch, execution, cutoff=1.0)
+    finite = payload.graph(cutoff=1.0)
     np.testing.assert_array_equal(finite.valid, [True, True])
     masked = batch.positions.at[0, 1].set(jnp.nan).at[1, 1].set(jnp.inf)
-    padded = realize_atomistic_graph(batch, execution, cutoff=1.0, positions=masked)
+    padded = payload.graph(cutoff=1.0, positions=masked)
     np.testing.assert_array_equal(padded.nonfinite, [False, False])
     np.testing.assert_array_equal(padded.valid, [True, True])
     active = batch.positions.at[1, 0, 2].set(jnp.nan)
-    graph = realize_atomistic_graph(batch, execution, cutoff=1.0, positions=active)
+    graph = payload.graph(cutoff=1.0, positions=active)
     edge_mask = graph.graph.edge_mask
     assert edge_mask is not None
     assert int(jnp.sum(edge_mask)) == 0
@@ -610,7 +627,7 @@ def test_nonfinite_runtime_cell_invalidates_periodic_case() -> None:
     execution = AtomisticGraphExecutionPlan(
         64, backend="particle", image_capacity=IMAGE_CAPACITY
     )
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.0)
+    topology = _payload(batch, execution, cutoff=2.0).topology
     assert batch.cells is not None
     cells = batch.cells.at[0, 2, 2].set(jnp.nan)
     graph = bind_atomistic_graph(
@@ -644,18 +661,18 @@ def _direct_batch(
     )
 
 
-def test_cached_topology_refuses_changed_periodicity_but_fresh_slab_is_exact() -> None:
+def test_cached_payload_refuses_changed_periodicity_but_fresh_slab_is_exact() -> None:
     cell = 2.0 * np.eye(3)
     position = np.asarray([[0.6, 0.6, 0.6]])
     full = _direct_batch([1], position, cell=cell, periodic=(True, True, True))
     slab = _direct_batch([1], position, cell=cell, periodic=(True, True, False))
-    assert full.atom_topology_id == slab.atom_topology_id
     execution = AtomisticGraphExecutionPlan(
         64, backend="particle", image_capacity=IMAGE_CAPACITY
     )
-    cached = prepare_atomistic_graph_topology(full, execution, cutoff=2.1)
+    cached_payload = _payload(full, execution, cutoff=2.1)
+    cached = cached_payload.topology
     with pytest.raises(ValueError, match="periodic axes differ"):
-        realize_atomistic_graph(slab, execution, cutoff=2.1, topology=cached)
+        cached_payload.admit(slab).graph(cutoff=2.1)
     traced = jax.jit(
         lambda axes: (
             bind_atomistic_graph(
@@ -670,8 +687,9 @@ def test_cached_topology_refuses_changed_periodicity_but_fresh_slab_is_exact() -
     )
     np.testing.assert_array_equal(traced(slab.periodic_axes), [True])
     np.testing.assert_array_equal(traced(full.periodic_axes), [False])
-    fresh = prepare_atomistic_graph_topology(slab, execution, cutoff=2.1)
-    graph = realize_atomistic_graph(slab, execution, cutoff=2.1, topology=fresh)
+    fresh_payload = _payload(slab, execution, cutoff=2.1)
+    fresh = fresh_payload.topology
+    graph = fresh_payload.graph(cutoff=2.1)
     assert bool(graph.valid[0])
     shifts = np.asarray(fresh.image_shifts)[np.asarray(graph.graph.edge_mask)]
     assert {tuple(int(value) for value in row) for row in shifts} == {
@@ -682,17 +700,292 @@ def test_cached_topology_refuses_changed_periodicity_but_fresh_slab_is_exact() -
     }
 
 
-def test_cached_topology_publishes_current_batch_species_and_masses() -> None:
+def test_cached_payload_refuses_other_species_and_fresh_payload_publishes_them() -> None:
     positions = np.asarray([[0.0, 0.0, 0.0], [0.9, 0.0, 0.0]])
     hydrogen = _direct_batch([1, 1], positions)
     oxygen = _direct_batch([8, 1], positions)
-    assert hydrogen.atom_topology_id == oxygen.atom_topology_id
     execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=2)
-    topology = prepare_atomistic_graph_topology(hydrogen, execution, cutoff=1.0)
-    np.testing.assert_array_equal(topology.atomic_numbers, [1, 1])
-    graph = realize_atomistic_graph(oxygen, execution, cutoff=1.0, topology=topology)
+    cached = _payload(hydrogen, execution, cutoff=1.0)
+    np.testing.assert_array_equal(cached.topology.atomic_numbers, [1, 1])
+    refused = cached.admit(oxygen).graph(cutoff=1.0)
+    np.testing.assert_array_equal(refused.overflow, [False])
+    np.testing.assert_array_equal(refused.valid, [False])
+    assert cached.layout_id == _payload(oxygen, execution, cutoff=1.0).layout_id
+    graph = _payload(oxygen, execution, cutoff=1.0).graph(cutoff=1.0)
     np.testing.assert_array_equal(graph.graph.nodes["atomic_numbers"], [8, 1])
     np.testing.assert_array_equal(
         graph.graph.nodes["atom_type_ids"], oxygen.atom_type_ids.reshape((-1,))
     )
     np.testing.assert_allclose(graph.graph.nodes["masses"], [1.0, 1.0])
+
+
+ENVELOPE = 3.0 * np.eye(3)
+
+
+def _envelope_execution(
+    maximum_particles_per_cell: int = 8,
+) -> AtomisticGraphExecutionPlan:
+    return AtomisticGraphExecutionPlan(
+        64,
+        backend="particle",
+        image_capacity=ParticleImageCapacity(
+            maximum_particles_per_cell=maximum_particles_per_cell,
+            maximum_edges=4096,
+            maximum_degree=512,
+            maximum_images=4096,
+        ),
+        search_cell=ENVELOPE,
+    )
+
+
+def _envelope_layout(execution: AtomisticGraphExecutionPlan) -> AtomisticGraphLayout:
+    return AtomisticGraphLayout(
+        SCALE,
+        execution,
+        case_capacity=1,
+        atom_capacity=4,
+        coordinate_dtype=jnp.float64,
+        cutoff=1.0,
+        periodic_axes=(True, True, True),
+    )
+
+
+def _envelope_batch(
+    numbers: list[int],
+    fractional: np.ndarray,
+    cell: np.ndarray,
+    *,
+    ids: list[int],
+    name: str,
+) -> AtomisticBatch:
+    count = len(numbers)
+    padded = np.zeros((4, 3), dtype=np.float64)
+    padded[:count] = fractional @ cell
+    return AtomisticBatch(
+        # ty: ignore[invalid-argument-type]
+        [numbers + [0] * (4 - count)],
+        padded[None],
+        # ty: ignore[invalid-argument-type]
+        [[1.0] * 4],
+        SCALE,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[ids + list(range(1000, 1000 + 4 - count))],
+        # ty: ignore[invalid-argument-type]
+        atom_mask=[[True] * count + [False] * (4 - count)],
+        cells=cell[None],
+        # ty: ignore[invalid-argument-type]
+        periodic_axes=[[True, True, True]],
+        structure_ids=(name,),
+        coordinate_dtype=jnp.float64,
+    )
+
+
+def test_layout_payloads_share_one_static_structure_and_compile_once() -> None:
+    """Compile-count experiment: payloads of one layout never recompile."""
+    execution = _envelope_execution()
+    layout = _envelope_layout(execution)
+    rng = np.random.default_rng(7)
+    batches = [
+        _envelope_batch(
+            [int(value) for value in rng.integers(1, 9, size=count)],
+            rng.uniform(0.0, 1.0, size=(count, 3)),
+            float(rng.uniform(3.0, 3.6)) * np.eye(3),
+            ids=[int(value) for value in rng.choice(10_000, size=count, replace=False)],
+            name=f"record-{index}",
+        )
+        for index, count in enumerate((2, 3, 4, 3, 2))
+    ]
+    assert len({batch.batch_id for batch in batches}) == len(batches)
+
+    @eqx.filter_jit
+    def objective(payload: AtomisticGraphPayload) -> tuple[jax.Array, jax.Array]:
+        def energy(positions: jax.Array) -> jax.Array:
+            graph = payload.graph(cutoff=1.0, positions=positions)
+            return _edge_energy(graph)
+
+        return jax.value_and_grad(energy)(payload.positions)
+
+    compiles: list[str] = []
+    recording = [False]
+
+    def listener(event: str, duration_secs: float, **kwargs: str | int) -> None:
+        del duration_secs, kwargs
+        if recording[0] and event == "/jax/core/compile/backend_compile_duration":
+            compiles.append(event)
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    try:
+        first = layout.prepare(batches[0])
+        jax.block_until_ready(objective(first))
+        recording[0] = True
+        payloads = []
+        for batch in batches[1:]:
+            payload = _envelope_layout(execution).prepare(batch)
+            jax.block_until_ready(objective(payload))
+            payloads.append(payload)
+    finally:
+        recording[0] = False
+    assert compiles == []
+    structure = jax.tree_util.tree_structure(first)
+    for payload in payloads:
+        assert payload.layout_id == first.layout_id
+        assert payload.topology.topology_id == first.topology.topology_id
+        assert jax.tree_util.tree_structure(payload) == structure
+        assert payload.topology.content_id() != first.topology.content_id()
+        assert not bool(jnp.any(payload.topology.overflow))
+        assert not bool(jnp.any(payload.topology.search_failure))
+    words = {tuple(np.asarray(p.topology.case_identity_words)[0]) for p in payloads}
+    assert len(words) == len(payloads)
+
+
+def test_layout_envelope_capacity_failure_is_distinct_from_scientific_failure() -> None:
+    execution = _envelope_execution(maximum_particles_per_cell=2)
+    layout = _envelope_layout(execution)
+    crowded = _envelope_batch(
+        [1, 1, 1, 1],
+        np.asarray(
+            [
+                [0.10, 0.10, 0.10],
+                [0.12, 0.10, 0.10],
+                [0.14, 0.10, 0.10],
+                [0.16, 0.10, 0.10],
+            ]
+        ),
+        ENVELOPE,
+        ids=[1, 2, 3, 4],
+        name="crowded",
+    )
+    narrow = _envelope_batch(
+        [1, 1],
+        np.asarray([[0.1, 0.1, 0.1], [0.6, 0.5, 0.4]]),
+        2.0 * np.eye(3),
+        ids=[5, 6],
+        name="narrow",
+    )
+    admitted = _envelope_batch(
+        [1, 1],
+        np.asarray([[0.1, 0.1, 0.1], [0.6, 0.5, 0.4]]),
+        3.3 * np.eye(3),
+        ids=[7, 8],
+        name="admitted",
+    )
+    capacity = layout.prepare(crowded)
+    scientific = layout.prepare(narrow)
+    valid = layout.prepare(admitted)
+    assert capacity.layout_id == scientific.layout_id == valid.layout_id
+    assert jax.tree_util.tree_structure(capacity) == jax.tree_util.tree_structure(
+        scientific
+    )
+    evidence = capacity.topology.evidence
+    assert evidence is not None
+    np.testing.assert_array_equal(evidence.cell_overflow, [True])
+    np.testing.assert_array_equal(capacity.topology.overflow, [True])
+    np.testing.assert_array_equal(capacity.topology.search_failure, [False])
+    narrow_evidence = scientific.topology.evidence
+    assert narrow_evidence is not None
+    np.testing.assert_array_equal(narrow_evidence.stencil_overflow, [True])
+    np.testing.assert_array_equal(scientific.topology.overflow, [False])
+    np.testing.assert_array_equal(scientific.topology.search_failure, [True])
+    capacity_graph = capacity.graph(cutoff=1.0)
+    scientific_graph = scientific.graph(cutoff=1.0)
+    np.testing.assert_array_equal(capacity_graph.overflow, [True])
+    np.testing.assert_array_equal(scientific_graph.overflow, [False])
+    np.testing.assert_array_equal(scientific_graph.valid, [False])
+    np.testing.assert_array_equal(valid.graph(cutoff=1.0).valid, [True])
+
+
+def test_layout_refuses_batches_outside_its_static_class() -> None:
+    execution = _envelope_execution()
+    finite = AtomisticGraphLayout(
+        SCALE,
+        AtomisticGraphExecutionPlan(4, maximum_dense_atoms=4),
+        case_capacity=1,
+        atom_capacity=4,
+        coordinate_dtype=jnp.float64,
+        cutoff=1.0,
+    )
+    assert finite.lattice_rank == 0
+    periodic = _envelope_batch(
+        [1, 1],
+        np.asarray([[0.1, 0.1, 0.1], [0.6, 0.5, 0.4]]),
+        ENVELOPE,
+        ids=[1, 2],
+        name="periodic",
+    )
+    with pytest.raises(ValueError, match="cell class"):
+        finite.prepare(periodic)
+    with pytest.raises(ValueError, match="search envelope"):
+        AtomisticGraphLayout(
+            SCALE,
+            AtomisticGraphExecutionPlan(
+                64, backend="particle", image_capacity=IMAGE_CAPACITY
+            ),
+            case_capacity=1,
+            atom_capacity=4,
+            coordinate_dtype=jnp.float64,
+            cutoff=1.0,
+        )
+    slab_layout = AtomisticGraphLayout(
+        SCALE,
+        execution,
+        case_capacity=1,
+        atom_capacity=4,
+        coordinate_dtype=jnp.float64,
+        cutoff=1.0,
+        periodic_axes=(True, True, False),
+    )
+    with pytest.raises(ValueError, match="periodicity class"):
+        slab_layout.prepare(periodic)
+    other = _envelope_batch(
+        [1], np.asarray([[0.1, 0.1, 0.1]]), ENVELOPE, ids=[1], name="other"
+    )
+    assert _envelope_layout(execution).prepare(other).layout_id == (
+        _envelope_layout(execution).layout_id
+    )
+
+
+@pytest.mark.parametrize("backend", ["dense", "particle"])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["float32", "float64"])
+def test_image_layout_covers_closed_selection_boundary(
+    backend: str, dtype: type[np.float32] | type[np.float64]
+) -> None:
+    cutoff = 2.5
+    structure = AtomicStructure(
+        np.asarray([1, 1], dtype=np.int32),
+        np.asarray([[0.0, 0.0, 0.0], [cutoff, 0.0, 0.0]], dtype=dtype),
+        np.ones(2, dtype=dtype),
+        SCALE,
+        cell=10.0 * np.eye(3, dtype=dtype),
+        periodic_axes=np.ones(3, dtype=np.bool_),
+        coordinate_dtype=dtype,
+    )
+    execution = (
+        AtomisticGraphExecutionPlan(
+            4, maximum_dense_atoms=2, image_capacity=IMAGE_CAPACITY
+        )
+        if backend == "dense"
+        else AtomisticGraphExecutionPlan(
+            4, backend="particle", image_capacity=IMAGE_CAPACITY
+        )
+    )
+    batch = AtomisticBatch.from_structure(structure)
+    payload = _payload(batch, execution, cutoff=cutoff)
+    selection = ImageNeighborSelectionPolicy(
+        cutoff,
+        1,
+        degeneracy_tolerance=0.0,
+        measure="squared-distance",
+        strict=True,
+        radius_boundary="closed",
+        coincidence_threshold=0.0,
+    )
+    closed = payload.graph(cutoff=cutoff, selection=selection)
+    np.testing.assert_array_equal(closed.valid, [True])
+    assert _graph_routes(closed, 0, 2) == {
+        (0, 1, (0, 0, 0)),
+        (1, 0, (0, 0, 0)),
+    }
+    # Padding belongs only to candidate storage, not the physical open cutoff.
+    opened = payload.graph(cutoff=cutoff)
+    np.testing.assert_array_equal(opened.valid, [True])
+    assert _graph_routes(opened, 0, 2) == set()

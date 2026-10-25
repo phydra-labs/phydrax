@@ -257,6 +257,15 @@ def _uniform_spacing(
 
 
 def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Array]:
+    """Centered cardinal B-spline ``N_p`` of degree zero to five and ``dN_p/dt``.
+
+    ``N_p`` is supported on ``|t| < (p + 1) / 2`` with knots at the integers
+    (odd ``p``) or half-integers (even ``p``) and is ``C^(p-1)`` across them; the
+    returned derivative is the classical one inside each polynomial piece.
+    Even pieces use ``t * t`` so repeated automatic differentiation stays exact
+    at ``t = 0``; every other piece is evaluated at ``|t|`` clamped to the
+    support so arbitrary far coordinates stay finite (and NaN-free under AD).
+    """
     absolute = jnp.abs(coordinate)
     sign = jnp.sign(coordinate)
     if degree == 0:
@@ -267,8 +276,9 @@ def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Arr
         value = jnp.maximum(1.0 - absolute, 0.0)
         derivative = jnp.where(absolute < 1.0, -sign, 0.0)
         return value, derivative
+    square = coordinate * coordinate
     if degree == 2:
-        central = 0.75 - absolute * absolute
+        central = 0.75 - square
         outer = 0.5 * jnp.maximum(1.5 - absolute, 0.0) ** 2
         value = jnp.where(absolute < 0.5, central, jnp.where(absolute < 1.5, outer, 0.0))
         central_derivative = -2.0 * coordinate
@@ -280,7 +290,7 @@ def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Arr
         )
         return value, derivative
     if degree == 3:
-        central = 2.0 / 3.0 - absolute**2 + 0.5 * absolute**3
+        central = 2.0 / 3.0 - square + 0.5 * absolute**3
         outer = jnp.maximum(2.0 - absolute, 0.0) ** 3 / 6.0
         value = jnp.where(absolute < 1.0, central, jnp.where(absolute < 2.0, outer, 0.0))
         central_derivative = (-2.0 * absolute + 1.5 * absolute**2) * sign
@@ -291,7 +301,79 @@ def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Arr
             jnp.where(absolute < 2.0, outer_derivative, 0.0),
         )
         return value, derivative
-    raise ValueError("Structured splat basis degree must be zero to three.")
+    if degree == 4:
+        bounded = jnp.minimum(absolute, 2.5)
+        central = 115.0 / 192.0 + square * (-0.625 + 0.25 * square)
+        central_derivative = coordinate * (-1.25 + square)
+        # ``s`` runs over (0, 1] from the outer knot of each piece inward.
+        middle_s = 1.5 - bounded
+        middle = (
+            1.0 + middle_s * (4.0 + middle_s * (6.0 + middle_s * (4.0 - 4.0 * middle_s)))
+        ) / 24.0
+        middle_derivative = (
+            -(1.0 + middle_s * (3.0 + middle_s * (3.0 - 4.0 * middle_s))) / 6.0 * sign
+        )
+        outer_s = 2.5 - bounded
+        outer = outer_s**4 / 24.0
+        outer_derivative = -(outer_s**3) / 6.0 * sign
+        value = jnp.where(
+            absolute < 0.5,
+            central,
+            jnp.where(absolute < 1.5, middle, jnp.where(absolute < 2.5, outer, 0.0)),
+        )
+        derivative = jnp.where(
+            absolute < 0.5,
+            central_derivative,
+            jnp.where(
+                absolute < 1.5,
+                middle_derivative,
+                jnp.where(absolute < 2.5, outer_derivative, 0.0),
+            ),
+        )
+        return value, derivative
+    if degree == 5:
+        bounded = jnp.minimum(absolute, 3.0)
+        central = (
+            0.55 + square * (-0.5 + 0.25 * square) - square * square * absolute / 12.0
+        )
+        central_derivative = coordinate * (-1.0 + square - 5.0 / 12.0 * square * absolute)
+        middle_s = 2.0 - bounded
+        middle = (
+            1.0
+            + middle_s
+            * (
+                5.0
+                + middle_s
+                * (10.0 + middle_s * (10.0 + middle_s * (5.0 - 5.0 * middle_s)))
+            )
+        ) / 120.0
+        middle_derivative = (
+            -(
+                1.0
+                + middle_s * (4.0 + middle_s * (6.0 + middle_s * (4.0 - 5.0 * middle_s)))
+            )
+            / 24.0
+            * sign
+        )
+        outer_s = 3.0 - bounded
+        outer = outer_s**5 / 120.0
+        outer_derivative = -(outer_s**4) / 24.0 * sign
+        value = jnp.where(
+            absolute < 1.0,
+            central,
+            jnp.where(absolute < 2.0, middle, jnp.where(absolute < 3.0, outer, 0.0)),
+        )
+        derivative = jnp.where(
+            absolute < 1.0,
+            central_derivative,
+            jnp.where(
+                absolute < 2.0,
+                middle_derivative,
+                jnp.where(absolute < 3.0, outer_derivative, 0.0),
+            ),
+        )
+        return value, derivative
+    raise ValueError("Structured splat basis degree must be zero to five.")
 
 
 def _uniform_axis_stencil(
@@ -309,6 +391,9 @@ def _uniform_axis_stencil(
     # dynamic (jit-traced) arguments.
     spacing = (coordinates[1] - coordinates[0]).astype(position.dtype)
     lower, upper = bounds
+    # Inactive lanes carry no routes; pinning them to the first entity keeps
+    # arbitrary (even non-finite) padding out of the weights and indices.
+    position = jnp.where(active, position, coordinates[0].astype(position.dtype))
     evaluated = jnp.mod(position - lower, upper - lower) + lower if periodic else position
     source_in_domain = active & (
         jnp.ones_like(active) if periodic else (position >= lower) & (position <= upper)
@@ -318,17 +403,15 @@ def _uniform_axis_stencil(
     # its base from one rounding and its weights from another, shifting the
     # whole stencil by one entity.
     normalized = jax.lax.optimization_barrier((evaluated - coordinates[0]) / spacing)
-    if degree == 0:
+    if not periodic:
+        # Beyond one support width of either end every route is invalid anyway;
+        # the clamp keeps far sources inside exact int32 support bases.
+        normalized = jnp.clip(normalized, -(degree + 2.0), count + degree + 1.0)
+    # The p + 1 entities whose support (|t| < (p + 1) / 2) contains the source.
+    base = jnp.floor(normalized - 0.5 * (degree - 1))
+    if degree == 0 and not periodic:
         # A point on the closing face of a bounded axis belongs to the last cell.
-        base = jnp.floor(normalized + 0.5)
-        if not periodic:
-            base = jnp.minimum(base, count - 1)
-    elif degree == 1:
-        base = jnp.floor(normalized)
-    elif degree == 2:
-        base = jnp.floor(normalized - 0.5)
-    else:
-        base = jnp.floor(normalized - 1.0)
+        base = jnp.minimum(base, count - 1)
     raw = (
         base.astype(jnp.int32)[:, None] + jnp.arange(degree + 1, dtype=jnp.int32)[None, :]
     )

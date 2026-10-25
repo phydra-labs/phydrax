@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.sharding import PartitionSpec as P
@@ -26,6 +27,52 @@ from phydrax.discretization.spatial import (
     DistributedRelationStatus,
     MortonAddressPlan,
 )
+from phydrax.discretization.spatial._distributed_relations import _pack
+
+
+@pytest.mark.parametrize(
+    "fits",
+    [
+        (False, False, False, False, False, False),
+        (True, False, False, True, False, True),
+        (True, True, True, True, True, True),
+    ],
+    ids=["all-excluded", "partial", "full"],
+)
+def test_packet_pack_preserves_values_and_transposes_excluded_rows(
+    fits: tuple[bool, ...],
+) -> None:
+    mask = np.asarray(fits, dtype=np.bool_)
+    destinations = np.repeat(np.arange(3, dtype=np.int32), 2)
+    ranks = np.tile(np.arange(2, dtype=np.int32), 3)
+    values = np.arange(12, dtype=np.float64).reshape((6, 2))
+    values[0, 0] = -0.0
+    values[~mask] = np.nan
+    expected = np.zeros((3, 2, 2), dtype=np.float64)
+    expected[destinations[mask], ranks[mask]] = values[mask]
+
+    def pack(data: jax.Array) -> jax.Array:
+        return _pack(
+            data,
+            jnp.asarray(destinations),
+            jnp.asarray(ranks),
+            jnp.asarray(mask),
+            3,
+            2,
+            0.0,
+        )
+
+    actual = jax.jit(pack)(jnp.asarray(values))
+    np.testing.assert_array_equal(
+        np.asarray(actual).view(np.uint64), expected.view(np.uint64)
+    )
+    cotangent = np.arange(1, 13, dtype=np.float64).reshape((3, 2, 2))
+    (transposed,) = jax.linear_transpose(pack, jnp.asarray(values))(
+        jnp.asarray(cotangent)
+    )
+    expected_transpose = np.zeros_like(values)
+    expected_transpose[mask] = cotangent[destinations[mask], ranks[mask]]
+    np.testing.assert_array_equal(transposed, expected_transpose)
 
 
 def _owner_group() -> ExecutionGroup:

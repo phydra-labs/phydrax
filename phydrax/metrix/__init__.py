@@ -157,6 +157,8 @@ _DEFERRED_EXPORTS = {
     "tangent_projector_from_normal": "._embedded",
     "FermionicGaussianState": "._fermionic_gaussian",
     "FlatTorusStateGeometry": "._flat_torus",
+    "FlatTorusLogEvidence": "._flat_torus",
+    "FlatTorusManifold": "._flat_torus",
     "codifferential": "._forms",
     "DifferentialForm": "._forms",
     "exterior_derivative": "._forms",
@@ -529,7 +531,11 @@ if TYPE_CHECKING:
     )
     from ._embedded import EmbeddedChart, tangent_projector_from_normal
     from ._fermionic_gaussian import FermionicGaussianState
-    from ._flat_torus import FlatTorusStateGeometry
+    from ._flat_torus import (
+        FlatTorusLogEvidence,
+        FlatTorusManifold,
+        FlatTorusStateGeometry,
+    )
     from ._forms import (
         codifferential,
         DifferentialForm,
@@ -797,6 +803,8 @@ if TYPE_CHECKING:
 __all__ = [
     *_gauge_representation_all,
     *_gaussian_entanglement_all,
+    "FlatTorusLogEvidence",
+    "FlatTorusManifold",
     "CharacteristicNumberEvidence",
     "ChernCharacterForm",
     "chern_character_form",

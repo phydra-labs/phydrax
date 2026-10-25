@@ -8,6 +8,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.atomistic._thermal import NoseHooverChainParameters, NoseHooverChainPlan
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 sampling = phx.atomistic.sampling
@@ -19,29 +25,31 @@ def _prepared_runtime(
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
     system = phx.atomistic.AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [10, 20],
-        # ty: ignore[invalid-argument-type]
-        [1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0],
+        np.asarray([10, 20], dtype=np.int64),
+        np.asarray([1, 1], dtype=np.int32),
+        np.asarray([1.0, 1.0], dtype=np.float64),
         units,
-        # ty: ignore[invalid-argument-type]
-        atom_type_ids=[0, 0],
+        atom_type_ids=np.asarray([0, 0], dtype=np.int32),
         topology=topology,
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Bonded-only Hamiltonian: no neighborhood requirement, an empty bundle.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                phx.atomistic.HarmonicBondPotential(
+                    np.asarray([100.0], dtype=np.float64),
+                    np.asarray([1.0], dtype=np.float64),
+                )
+            ]
+        ),
+        system,
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.HarmonicBondPotential([100.0], [1.0])]
-    ).prepare(system)
+    # Canonical temperature rows need a canonical NVT method; a deterministic
+    # chain at this step size leaves the kinematics unchanged to rounding.
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-7),
+        NoseHooverChainPlan(1.0e-7, NoseHooverChainParameters(0.5)),
     ).prepare()
     measure = sampling.AtomisticPhaseSpaceMeasurePlan(system)
     states = tuple(
@@ -122,8 +130,7 @@ def test_multistate_free_energy_scenario_1() -> None:
     with pytest.raises(ValueError, match="another dynamics/table target"):
         sampling.AtomisticMultistatePlan(
             table,
-            # ty: ignore[invalid-argument-type]
-            [100, 200],
+            np.asarray([100, 200], dtype=np.int64),
             qualification=wrong_qualification,
             exchange=sampling.AtomisticReplicaExchangePlan(1),
             run_id="wrong-qualified-target",
@@ -133,40 +140,43 @@ def test_multistate_free_energy_scenario_1() -> None:
     with pytest.raises(ValueError, match="dependence group"):
         sampling.AtomisticMultistatePlan(
             table,
-            # ty: ignore[invalid-argument-type]
-            [100, 200],
+            np.asarray([100, 200], dtype=np.int64),
             qualification=runtime.plan.qualification,
             exchange=sampling.AtomisticReplicaExchangePlan(1),
-            # ty: ignore[invalid-argument-type]
-            dependence_group_indices=[0, 1],
+            dependence_group_indices=np.asarray([0, 1], dtype=np.int32),
             run_id="split-exchange-ladder",
         )
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     lanes = _initial_states(dynamics, table, (position, position))
-    first = runtime.initialize(lanes, [0, 1], jax.random.key(15))
+    first = runtime.initialize(
+        lanes, np.asarray([0, 1], dtype=np.int32), jax.random.key(15)
+    )
     other = sampling.AtomisticMultistatePlan(
         table,
-        # ty: ignore[invalid-argument-type]
-        [100, 200],
+        np.asarray([100, 200], dtype=np.int64),
         qualification=runtime.plan.qualification,
         exchange=sampling.AtomisticReplicaExchangePlan(1),
         repeat_index=1,
         run_id="other-run-identity",
     ).prepare(dynamics)
-    # ty: ignore[invalid-argument-type]
-    second = other.initialize(lanes, [0, 1], jax.random.key(15))
+    second = other.initialize(
+        lanes, np.asarray([0, 1], dtype=np.int32), jax.random.key(15)
+    )
     assert not bool(jnp.array_equal(first.root_key, second.root_key))
     assert not bool(
         jnp.array_equal(first.dynamics.random_key, second.dynamics.random_key)
     )
     dynamics, _, _ = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     measure = sampling.AtomisticPhaseSpaceMeasurePlan(dynamics.system)
-    with pytest.raises(ValueError, match="bias cross-evaluation"):
+    # A bias row must name stateful bias terms of the bound Hamiltonian.
+    with pytest.raises(ValueError, match="stateful terms"):
         sampling.AtomisticThermodynamicStatePlan(
             measure,
             ensemble="nvt",
             temperature=1.0,
-            bias_id="unbound-bias",
+            bias=sampling.AtomisticBiasRowBinding(
+                {"unbound-bias": np.asarray([0.0], dtype=np.float64)}
+            ),
         ).prepare(dynamics)
 
     units = phx.atomistic.AtomisticUnitSystem.reduced()
@@ -174,28 +184,37 @@ def test_multistate_free_energy_scenario_1() -> None:
         constraints=[[10, 20]], constraint_distances=[1.0]
     )
     system = phx.atomistic.AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [10, 20],
-        # ty: ignore[invalid-argument-type]
-        [1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0],
+        np.asarray([10, 20], dtype=np.int64),
+        np.asarray([1, 1], dtype=np.int32),
+        np.asarray([1.0, 1.0], dtype=np.float64),
         units,
-        # ty: ignore[invalid-argument-type]
-        atom_type_ids=[0, 0],
+        atom_type_ids=np.asarray([0, 0], dtype=np.int32),
         topology=topology,
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Finite pair: explicit nonperiodic frame and the one-pair storage of the
+    # former dense neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                phx.atomistic.LennardJonesPotential(
+                    np.asarray([0.1], dtype=np.float64),
+                    np.asarray([0.8], dtype=np.float64),
+                    2.0,
+                )
+            ]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [0.8], 2.0)]
-    ).prepare(system)
     unconstrained = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
     with pytest.raises(ValueError, match="prepared executor"):
@@ -249,9 +268,10 @@ def test_multistate_free_energy_scenario_2() -> None:
     assert int(iteration.state.exchange_action_counter) == 1
     np.testing.assert_array_equal(iteration.state.state_at_replica, [0, 1])
     np.testing.assert_array_equal(
-        iteration.state.dynamics.force.position_epoch,
-        iteration.state.dynamics.step_index,
+        iteration.state.dynamics.force.configuration_revision,
+        iteration.state.dynamics.configuration_revision,
     )
+    assert bool(jnp.all(iteration.state.dynamics.force.successful))
     np.testing.assert_allclose(
         iteration.state.dynamics.force.potential_energy,
         iteration.state.dynamics.energy.potential_energy,
@@ -294,9 +314,10 @@ def test_multistate_free_energy_scenario_2() -> None:
         iteration.state.state_at_replica,
     )
     np.testing.assert_array_equal(
-        iteration.state.dynamics.force.position_epoch,
-        iteration.state.dynamics.step_index,
+        iteration.state.dynamics.force.configuration_revision,
+        iteration.state.dynamics.configuration_revision,
     )
+    assert bool(jnp.all(iteration.state.dynamics.force.successful))
     np.testing.assert_allclose(
         iteration.state.dynamics.force.potential_energy,
         iteration.state.dynamics.energy.potential_energy,
@@ -311,10 +332,11 @@ def test_multistate_free_energy_scenario_3() -> None:
         [0, 1],
         jax.random.key(29),
     )
+    # A force cache bound to another configuration revision is stale.
     invalid = eqx.tree_at(
-        lambda value: value.dynamics.force.position_epoch,
+        lambda value: value.dynamics.force.configuration_revision,
         initial,
-        -jnp.ones_like(initial.dynamics.force.position_epoch),
+        -jnp.ones_like(initial.dynamics.force.configuration_revision),
     )
     iteration = runtime.iterate(invalid)
 
@@ -324,7 +346,8 @@ def test_multistate_free_energy_scenario_3() -> None:
         invalid.exchange_action_counter
     )
     np.testing.assert_array_equal(
-        iteration.state.barostat_action_counter, invalid.barostat_action_counter
+        iteration.state.dynamics.controllers.move_counter,
+        invalid.dynamics.controllers.move_counter,
     )
     np.testing.assert_array_equal(
         iteration.state.sams_action_counter, invalid.sams_action_counter
@@ -377,9 +400,9 @@ def test_r_and_k_are_distinct_and_failed_segment_padding_is_canonical(
         jax.random.key(31),
     )
     invalid = eqx.tree_at(
-        lambda value: value.dynamics.force.position_epoch,
+        lambda value: value.dynamics.force.configuration_revision,
         initial,
-        -jnp.ones_like(initial.dynamics.force.position_epoch),
+        -jnp.ones_like(initial.dynamics.force.configuration_revision),
     )
     segment_plan = sampling.AtomisticMultistateSegmentPlan(
         runtime,

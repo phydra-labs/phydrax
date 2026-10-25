@@ -827,6 +827,26 @@ def test_nearly_incompressible_plane_strain_bending_compliance(
     assert minimum < relative_compliance < maximum, (kind, relative_compliance)
 
 
+@pytest.mark.parametrize(
+    "degree", [4, 5, (2, 4)], ids=["quartic", "quintic", "mixed-quartic"]
+)
+def test_b_bar_refuses_bspline_degrees_its_cell_rules_cannot_integrate(
+    degree: int | tuple[int, int],
+) -> None:
+    assignment = phx.discretization.TensorBSplineSplatAssignment(degree)
+    position = jnp.zeros((4, 2), dtype=jnp.float64)
+    # The identical setup is admitted with point routes, so the refusal belongs
+    # to the B-bar cell quadrature and not to support halo or grid checks.
+    _prepare(position, None, points=(13, 13), assignment=assignment)
+    with pytest.raises(ValueError, match="B-bar"):
+        _prepare(
+            position,
+            MPMVolumetricStabilizationPlan("b_bar"),
+            points=(13, 13),
+            assignment=assignment,
+        )
+
+
 @pytest.mark.parametrize("kind", ["b_bar", "f_bar"])
 def test_distributed_refuses_unimplemented_projection_halos(
     kind: MPMVolumetricStabilizationKind,

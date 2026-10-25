@@ -27,7 +27,7 @@ def evaluate(system: Any, positions: Any, cell: Any) -> Any:
         -2.0 * positions,
         None,
         jnp.asarray(True),
-        "harmonic-reference",
+        provider_label="harmonic-reference",
     )
 
 
@@ -69,6 +69,56 @@ labels = phx.atomistic.AtomisticLabelSet(
         seed_record(frame(1.1, "validation"), "validation"),
     )
 )
+models = tuple(
+    phx.nn.atomistic.PaiNNPotential(
+        units.scale,
+        cutoff=2.5,
+        feature_count=4,
+        interaction_count=1,
+        radial_basis_count=3,
+        maximum_species_id=1,
+        key=jax.random.key(seed),
+    )
+    for seed in (2, 3)
+)
+# Every trained member enters the committee as a learned graph program over
+# explicit resources of its own neighborhood requirements (finite search frame).
+requirements = phx.atomistic.LearnedGraphPotentialTerm(
+    models[0]
+).requirements.neighborhoods
+runtime_resources = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+    requirements,
+    (
+        phx.atomistic.AtomisticNeighborhoodSource(
+            "learned-graph",
+            phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+            requirements,
+            phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+            phx.discretization.ParticleImageCapacityLadder(
+                (
+                    phx.discretization.ParticleImageCapacity(
+                        maximum_particles_per_cell=2,
+                        maximum_edges=8,
+                        maximum_degree=2,
+                        maximum_images=27,
+                        maximum_case_edges=8,
+                    ),
+                )
+            ),
+            skin=0.5,
+        ),
+    ),
+    tuple(
+        phx.atomistic.AtomisticRoleCapacityLadder(
+            requirement,
+            (phx.atomistic.AtomisticRoleCapacity(maximum_routes=4, maximum_degree=4),),
+        )
+        for requirement in requirements
+    ),
+    frame=phx.discretization.PeriodicCell(
+        20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+    ),
+)
 dense_graph = phx.atomistic.AtomisticGraphExecutionPlan(
     1, backend="dense", maximum_dense_atoms=2
 )
@@ -84,6 +134,11 @@ plan = phx.atomistic.AtomisticLearningCampaignPlan(
     particle_graph,
     phx.atomistic.AtomisticTrainingPolicy(maximum_steps=0),
     reduction,
+    objectives=(
+        phx.atomistic.AtomisticEnergyObjective(),
+        phx.atomistic.AtomisticForceObjective(),
+    ),
+    runtime_resources=(runtime_resources,),
 )
 uncertainty = phx.atomistic.AtomisticUncertaintyEvidence(
     jnp.asarray(2.0),
@@ -94,18 +149,6 @@ uncertainty = phx.atomistic.AtomisticUncertaintyEvidence(
     jnp.asarray(True),
     jnp.asarray(True),
     "seed-committee",
-)
-models = tuple(
-    phx.nn.atomistic.PaiNNPotential(
-        units.scale,
-        cutoff=2.5,
-        feature_count=4,
-        interaction_count=1,
-        radial_basis_count=3,
-        maximum_species_id=1,
-        key=jax.random.key(seed),
-    )
-    for seed in (2, 3)
 )
 
 

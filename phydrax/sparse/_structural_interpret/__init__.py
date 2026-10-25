@@ -43,7 +43,7 @@ from ._elementwise import (
     _prop_clamp,
     _prop_convert_element_type,
     _prop_integer_pow,
-    _prop_minmax,
+    _prop_min_max,
     _prop_polynomial,
     _prop_sign,
     _prop_sub,
@@ -373,14 +373,16 @@ def _prop_dispatch(
             _prop_integer_pow(eqn, state_indices, state_consts, state_bounds)
         case "mul":
             _prop_mul(eqn, state_indices, state_consts, state_bounds)
+        case "max" | "min":
+            # ∂max/∂x = 1 if x>y else 0, ∂max/∂y = 1 if y>x else 0;
+            # ∂min/∂x = 1 if x<y else 0, ∂min/∂y = 1 if y<x else 0.
+            _prop_min_max(eqn, state_indices, state_consts, state_bounds)
         case "add" | "add_any":
             _prop_add(eqn, state_indices, state_consts, state_bounds)
         case "sub":
             _prop_sub(eqn, state_indices, state_consts, state_bounds)
         case "div":
             _prop_div(eqn, state_indices, state_consts, state_bounds)
-        case "min" | "max":
-            _prop_minmax(eqn, state_indices, state_consts, state_bounds)
         # Binary elementwise with nonzero partials wrt both operands
         case (
             "pow"  # ∂(x^y)/∂x = y·x^(y-1), ∂(x^y)/∂y = x^y·ln(x)

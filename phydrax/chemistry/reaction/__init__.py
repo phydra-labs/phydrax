@@ -16,22 +16,39 @@ from ._advanced import (
     TransitionStateRateResult,
 )
 from ._path import (
+    AtomisticNudgedElasticBandPlan,
+    AtomisticPathHamiltonianTransitionResult,
+    AtomisticReactionPathState,
     IntrinsicReactionCoordinatePlan,
     IntrinsicReactionCoordinateResult,
+    nudged_elastic_band_forces,
     NudgedElasticBandPlan,
+    NudgedElasticBandProjection,
+    PreparedAtomisticNudgedElasticBand,
+    ReactionPathBranch,
+    ReactionPathBranchCertificate,
     ReactionPathQualificationResult,
     ReactionPathResult,
+    resolve_reaction_path_branch,
 )
 
 
 __all__ = [
+    "AtomisticNudgedElasticBandPlan",
+    "AtomisticPathHamiltonianTransitionResult",
+    "AtomisticReactionPathState",
     "DimerSaddleRefinementPlan",
     "InternalCoordinateOptimizationPlan",
     "InternalOptimizationKind",
     "InternalOptimizationResult",
     "IntrinsicReactionCoordinatePlan",
     "IntrinsicReactionCoordinateResult",
+    "nudged_elastic_band_forces",
     "NudgedElasticBandPlan",
+    "NudgedElasticBandProjection",
+    "PreparedAtomisticNudgedElasticBand",
+    "ReactionPathBranch",
+    "ReactionPathBranchCertificate",
     "ReactionPathQualificationResult",
     "ReactionNetworkPlan",
     "ReactionNetworkResult",
@@ -39,4 +56,5 @@ __all__ = [
     "TransitionStateRatePlan",
     "TransitionStateRateResult",
     "ReactionPathResult",
+    "resolve_reaction_path_branch",
 ]

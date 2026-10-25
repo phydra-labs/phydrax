@@ -392,7 +392,6 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
                 noise_id=problem.noise_id,
                 label=f"{self.process_id}:transition",
                 coupling_id=f"{self.process_id}:normalized-transition",
-                _realization_id=f"{self.process_id}:normalized-transition",
             )
             if problem.stochastic
             else None
@@ -729,7 +728,6 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
                 noise_id=differential.noise_id,
                 label=f"{self.process_id}:wiener-transition",
                 coupling_id=f"{self.process_id}:normalized-wiener-transition",
-                _realization_id=f"{self.process_id}:normalized-wiener-transition",
             )
             if differential.stochastic
             else None

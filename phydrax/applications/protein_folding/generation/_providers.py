@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ...._strict import StrictModule
 from ....artifacts import ScientificArtifactEnvelope
 from ....atomistic import AtomisticBatch
+from ....atomistic._generation import AbstractAtomisticGenerationSink
 from ....qualification import ReferenceArtifactManifest
 from ....typing import PRNGKey
 from ....units import conversion_factor, UnitDefinition
@@ -316,7 +317,11 @@ class ProteinCoordinateProposalBatch:
     conditions: object
     solver_valid: object
     solver_status: object
+    proposal_status: object
+    ordinals: tuple[int, ...]
     sample_ids: tuple[str, ...]
+    campaign_id: str
+    sampler_id: str
     parent_fit_id: str
     plan_id: str
     qualification_id: str
@@ -331,16 +336,25 @@ class ProteinCoordinateProposalBatch:
 def sample_protein_coordinate_proposals(
     fit: CoordinateFitResult,
     key: PRNGKey,
-    conditions: ArrayLike,
+    conditions: Mapping[str, ArrayLike],
     qualification: PreparedProteinQualification,
     *,
+    campaign_id: str,
+    start_ordinal: int,
+    lanes_per_member: int,
+    sink: AbstractAtomisticGenerationSink,
     commercial_use: bool = False,
     export: bool = False,
     rtol: float = 1e-5,
     atol: float = 1e-7,
     max_steps: int = 1024,
 ) -> ProteinCoordinateProposalBatch:
-    """Sample once per request and retain raw, decoded, and every failure gate."""
+    """Publish one proposal per requested ordinal and retain every failure gate.
+
+    Runs `sample_coordinate_proposals` (ordinal-addressed keys, explicit sink),
+    then evaluates the full protein geometry of every published proposal;
+    rejected proposals stay in the batch with their reasons.
+    """
     if not isinstance(fit, CoordinateFitResult) or not isinstance(
         qualification, PreparedProteinQualification
     ):
@@ -358,6 +372,10 @@ def sample_protein_coordinate_proposals(
         fit,
         key,
         conditions,
+        campaign_id=campaign_id,
+        start_ordinal=start_ordinal,
+        lanes_per_member=lanes_per_member,
+        sink=sink,
         commercial_use=commercial_use,
         export=export,
         rtol=rtol,
@@ -405,7 +423,11 @@ def sample_protein_coordinate_proposals(
         generic.conditions,
         generic.solver_valid,
         generic.solver_status,
+        generic.proposal_status,
+        generic.ordinals,
         generic.sample_ids,
+        generic.campaign_id,
+        generic.sampler_id,
         generic.parent_fit_id,
         decoder.plan.plan_id,
         qualification.qualification_id,

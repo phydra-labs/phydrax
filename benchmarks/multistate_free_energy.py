@@ -4,12 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -51,17 +50,19 @@ def _runtime_fixture(iterations: int) -> Any:
         atom_type_ids=[0, 0],
         topology=phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]]),
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
-    )
+    # The bonded-only Hamiltonian declares no neighborhood requirement: its
+    # bundle is explicitly empty.
     potential = phx.atomistic.AtomisticPotentialProgram(
         [phx.atomistic.HarmonicBondPotential([100.0], [1.0])]
-    ).prepare(system)
+    ).prepare(
+        system,
+        neighborhood_bundle=phx.atomistic.AtomisticNeighborhoodBundlePlan((), (), ()),
+    )
+    # Canonical NVT replicas need a canonical thermostat; velocity Verlet is NVE.
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-7),
+        phx.atomistic.BAOABLangevinPlan(1.0e-7, 1.0),
     ).prepare()
     measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system)
     state_plans = tuple(
@@ -200,22 +201,68 @@ def _controlled_fixture() -> Any:
         charges=[1.0, -1.0, 0.0],
         region_ids=[1, 1, 0],
     )
+    program = phx.atomistic.AtomisticPotentialProgram(
+        [
+            phx.atomistic.LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
+            phx.atomistic.DirectCoulombPotential(),
+        ]
+    )
+    (sterics,) = tuple(
+        value for value in program.requirements.neighborhoods if not value.complete
+    )
+    (coulomb,) = tuple(
+        value for value in program.requirements.neighborhoods if value.complete
+    )
+    bundle = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+        (sterics, coulomb),
+        (
+            phx.atomistic.AtomisticNeighborhoodSource(
+                "steric-pairs",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                (sterics,),
+                phx.atomistic.AtomisticDenseImageSearch(maximum_dense_routes=9),
+                phx.discretization.ParticleImageCapacityLadder(
+                    (
+                        phx.discretization.ParticleImageCapacity(
+                            maximum_particles_per_cell=3,
+                            maximum_edges=6,
+                            maximum_degree=2,
+                            maximum_images=1,
+                            maximum_case_edges=6,
+                        ),
+                    )
+                ),
+                skin=0.3,
+            ),
+            phx.atomistic.AtomisticCompletePairSource(
+                "coulomb-pairs",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                (coulomb,),
+                maximum_pairs=3,
+            ),
+        ),
+        (
+            phx.atomistic.AtomisticRoleCapacityLadder(
+                sterics,
+                (
+                    phx.atomistic.AtomisticRoleCapacity(
+                        maximum_routes=3, maximum_degree=2
+                    ),
+                ),
+            ),
+        ),
+        frame=phx.discretization.PeriodicCell(
+            16.0 * np.eye(3), origin=np.full((3,), -8.0), periodic_axes=(False,) * 3
+        ),
+    )
     force_field = phx.atomistic.AtomisticForceFieldPlan(
         system,
-        phx.atomistic.AtomisticPotentialProgram(
-            [
-                phx.atomistic.LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
-                phx.atomistic.DirectCoulombPotential(),
-            ]
-        ),
+        program,
         phx.atomistic.AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
         phx.atomistic.AtomisticForceFieldProvenance(
             "native", ("benchmark-parameters",), "benchmark", "controlled"
         ),
-    ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
-        force_field.system.particles
-    )
+    ).prepare(neighborhood_bundle=bundle)
     schedule = phx.atomistic.AlchemicalControlSchedulePlan(
         ("coupled", "middle", "decoupled"),
         ("solute-sterics", "solute-electrostatics"),
@@ -234,14 +281,15 @@ def _controlled_fixture() -> Any:
         force_field, schedule, partition
     ).prepare()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
-    relation = neighborhood.build(positions)
-    return controlled, positions, relation
+    prepared_bundle = controlled.neighborhood_bundle
+    neighborhoods = prepared_bundle.initialize(prepared_bundle.geometry(positions[None]))
+    return controlled, positions, neighborhoods
 
 
 def _alchemy_benchmark(repeats: int) -> dict:
-    controlled, positions, relation = _controlled_fixture()
+    controlled, positions, neighborhoods = _controlled_fixture()
     function = eqx.filter_jit(
-        lambda value: controlled.evaluate(value, relation, state_index=1)
+        lambda value: controlled.evaluate(value, neighborhoods, state_index=1)
     )
     compiled, compilation = measure_lower_and_compile(
         lambda: function.lower(positions), lambda lowered: lowered.compile()

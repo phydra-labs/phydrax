@@ -15,7 +15,7 @@ from phydrax.atomistic import (
     AtomisticStatus,
     energy_and_forces,
 )
-from phydrax.atomistic._graph import prepare_atomistic_graph_topology
+from phydrax.atomistic._graph import AtomisticGraphLayout
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import NequIPPotential
 from phydrax.nn.operator.layers import o3_gated_activation
@@ -237,10 +237,10 @@ def test_periodic_resource_refusals_and_tensor_product_resource_overflow() -> No
         # ty: ignore[invalid-argument-type]
         periodic_axes=[True, False, False],
     )
-    # Image routes are a charged resource; a direct call needs a host topology.
+    # Image routes are a charged resource; a periodic layout needs image capacity.
     with pytest.raises(ValueError, match="image_capacity"):
         energy_and_forces(_model(), periodic, _execution())
-    with pytest.raises(ValueError, match="require a topology"):
+    with pytest.raises(ValueError, match="image_capacity"):
         _model()(periodic, _execution())
     with pytest.raises(ValueError, match="parameters"):
         NequIPPotential(
@@ -317,11 +317,13 @@ def test_streamed_nequip_matches_dense_energy_forces_and_force_loss_gradient() -
     tiny = StreamedRelationPlan(receiver_tile=1, edge_tile=2)
     for plan in (None, tiny):
         execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=5, streamed=plan)
-        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.5)
+        payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=2.5).prepare(
+            batch
+        )
 
         def streamed(model: Any, position: Any) -> Any:
             return model.energy(
-                batch, execution, positions=position[None], topology=topology
+                batch, execution, positions=position[None], payload=payload
             )[0]
 
         def dense(model: Any, position: Any) -> Any:

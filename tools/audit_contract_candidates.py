@@ -371,8 +371,13 @@ def audit(root: Path, /) -> list[Candidate]:
     )
 
 
-def _report_signature_guards() -> None:
+def _report_signature_guards(output: Path | None, /) -> None:
     guards = audit_signature_guards(PACKAGE)
+    if output is not None:
+        output.write_text(
+            json.dumps([asdict(guard) for guard in guards], indent=2) + "\n",
+            encoding="utf-8",
+        )
     counts: dict[str, int] = {}
     for guard in guards:
         counts[guard.disposition] = counts.get(guard.disposition, 0) + 1
@@ -398,7 +403,7 @@ def main() -> None:
     )
     arguments = parser.parse_args()
     if arguments.signatures:
-        _report_signature_guards()
+        _report_signature_guards(arguments.json)
         return
     candidates = audit(PACKAGE)
     if arguments.json is not None:

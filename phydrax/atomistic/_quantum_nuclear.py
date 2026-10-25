@@ -18,7 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import PRNGKey
-from ._ensemble_advanced import GeneralizedLangevinPlan, ThermostatResult
+from ._ensemble_advanced import EulerMaruyamaGeneralizedLangevinPlan, ThermostatResult
 from ._ring_polymer import RingPolymerState
 from ._units import AtomisticUnitSystem
 
@@ -372,20 +372,23 @@ class ConstantPressureRingPolymerPlan(StrictModule, NonTrainableState):
 
 
 class PIGLETPlan(StrictModule, NonTrainableState):
-    thermostats: tuple[GeneralizedLangevinPlan, ...]
+    thermostats: tuple[EulerMaruyamaGeneralizedLangevinPlan, ...]
     normal_modes: RingPolymerNormalModePlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        thermostats: tuple[GeneralizedLangevinPlan, ...],
+        thermostats: tuple[EulerMaruyamaGeneralizedLangevinPlan, ...],
         normal_modes: RingPolymerNormalModePlan,
         /,
     ) -> None:
         values = tuple(thermostats)
         if (
             len(values) != normal_modes.bead_count
-            or any(not isinstance(value, GeneralizedLangevinPlan) for value in values)
+            or any(
+                not isinstance(value, EulerMaruyamaGeneralizedLangevinPlan)
+                for value in values
+            )
             or len({value.drift_matrix.shape for value in values}) != 1
         ):
             raise ValueError(

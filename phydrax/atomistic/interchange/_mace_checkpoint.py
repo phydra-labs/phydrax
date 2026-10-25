@@ -8,9 +8,21 @@ The converter is a host boundary. Source bytes are admitted through the
 canonical external-artifact policy (exact SHA-256, size and license), executed
 only by a caller-pinned provider interpreter through ``run_pinned_command``,
 and returned as a bounded pickle-free array archive. The provider program
-(``_mace_worker.py``) verifies the installed mace-torch/e3nn releases, refuses
-non-standard module trees, and proves that the extracted architecture
-declaration rebuilds a provider model that reproduces the source exactly.
+(``_mace_worker.py``) verifies the installed mace-torch (0.3.15 or 0.3.16),
+e3nn and optional LES/cuEquivariance/OpenEquivariance releases, refuses
+module trees outside the admitted families, expresses optimized
+(cuEquivariance/OpenEquivariance) sources in the exact e3nn layout with the
+pinned release's own converter, and proves that the extracted
+release-specific architecture declaration rebuilds a provider model that
+reproduces the source exactly.
+
+Admitted families: ``MACE``, ``ScaleShiftMACE`` and ``MACELES`` with the
+standard, attention-residual and residual-nonlinear interactions; Bessel,
+Gaussian and Chebyshev radial bases; Agnesi and Soft distance transforms;
+O(3) and SO(3) parity; uniform edge irreps (optionally in the first layer);
+linear, nonlinear and nonlinear-bias readouts; kept last-layer irreps
+(0.3.16); and the charge/spin joint embedding with its embedding readout.
+Property models (dipoles, dielectric, polarizable field models) refuse.
 
 Full-object torch checkpoints are executable pickles. They are deserialized
 only when the caller constructs ``TrustedTorchPickleSource`` for the exact
@@ -44,7 +56,7 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, Literal, NamedTuple, TYPE_CHECKING, TypeAlias
 
 import numpy as np
 
@@ -66,21 +78,31 @@ from ..._fingerprint import canonical_fingerprint
 from ...artifacts import ArtifactManifest
 from ...typing import parse
 from .._types import AtomisticPrecisionPolicy, AtomisticScaleContract
+from . import _source_admission
 
 
 if TYPE_CHECKING:
-    from ...nn.atomistic._mace import MACEArchitecture, MACEPotential
+    from ...nn.atomistic._mace import (
+        MACEArchitecture,
+        MACEDistanceTransform,
+        MACEPotential,
+    )
     from ...nn.atomistic._mace_interaction import MACEInteractionKind
+    from ...nn.atomistic._mace_les import MACELESPotential
     from ...sparse import StreamedRelationPlan
+    from .._latent_electrostatics import LatentEwaldResources
 
 
 MACESourceKind: TypeAlias = Literal["torch-full-model", "torch-state-dict"]
 MACEEvaluationDtype: TypeAlias = Literal["float32", "float64"]
 
-# Provider releases whose source was read to define this conversion contract.
-MACE_PROVIDER_RELEASES: Mapping[str, str] = MappingProxyType(
-    {"e3nn": "0.4.4", "mace-torch": "0.3.16"}
+# Provider releases whose source was read to define this conversion contract:
+# every admitted release of each required distribution.
+MACE_PROVIDER_RELEASES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {"e3nn": ("0.4.4",), "mace-torch": ("0.3.15", "0.3.16")}
 )
+# Admitted releases of the optional LES distribution MACELES sources import.
+MACE_LES_RELEASES: tuple[str, ...] = ("0.2.0",)
 
 _WORKER_NAME = "_mace_worker.py"
 _REFUSED_EXIT = 3
@@ -104,10 +126,13 @@ _SHARED_DECLARATION_FIELDS = frozenset(
         "avg_num_neighbors",
         "correlation",
         "distance_transform",
+        "edge_irreps",
+        "embedding_specs",
         "gate",
         "heads",
         "hidden_irreps",
         "interaction_classes",
+        "mace_torch_release",
         "max_ell",
         "model_class",
         "num_bessel",
@@ -117,12 +142,76 @@ _SHARED_DECLARATION_FIELDS = frozenset(
         "r_max",
         "radial_MLP",
         "radial_type",
+        "readout_class",
         "use_agnostic_product",
+        "use_edge_irreps_first",
+        "use_embedding_readout",
         "use_last_readout_only",
         "use_reduced_cg",
+        "use_so3",
     }
 )
+# Release-specific constructor arguments: 0.3.16 adds keep_last_layer_irreps.
+_RELEASE_DECLARATION_FIELDS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {"0.3.15": frozenset(), "0.3.16": frozenset({"keep_last_layer_irreps"})}
+)
 _SCALE_SHIFT_FIELDS = frozenset({"atomic_inter_scale", "atomic_inter_shift"})
+_CLASS_DECLARATION_FIELDS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "MACE": frozenset(),
+        "ScaleShiftMACE": _SCALE_SHIFT_FIELDS,
+        "MACELES": _SCALE_SHIFT_FIELDS | {"les_arguments"},
+    }
+)
+_INTERACTION_KINDS: Mapping[str, MACEInteractionKind] = MappingProxyType(
+    {
+        "RealAgnosticInteractionBlock": "real-agnostic",
+        "RealAgnosticResidualInteractionBlock": "real-agnostic-residual",
+        "RealAgnosticDensityInteractionBlock": "real-agnostic-density",
+        "RealAgnosticDensityResidualInteractionBlock": "real-agnostic-density-residual",
+        "RealAgnosticAttResidualInteractionBlock": "real-agnostic-attention-residual",
+        "RealAgnosticResidualNonLinearInteractionBlock": (
+            "real-agnostic-residual-nonlinear"
+        ),
+    }
+)
+_READOUT_CLASSES = ("NonLinearReadoutBlock", "NonLinearBiasReadoutBlock")
+_RADIAL_TYPES = ("bessel", "gaussian", "chebyshev")
+_DISTANCE_TRANSFORMS: Mapping[str, MACEDistanceTransform] = MappingProxyType(
+    {"None": "none", "Agnesi": "agnesi", "Soft": "soft"}
+)
+_EMBEDDING_FEATURES = ("total_charge", "total_spin")
+_EMBEDDING_SPEC_FIELDS = frozenset({"type", "per", "num_classes", "emb_dim", "offset"})
+# ``Les._parse_arguments`` keys and the two MACELES BEC arguments, all recorded.
+_LES_ARGUMENTS = frozenset(
+    {
+        "n_layers",
+        "n_hidden",
+        "add_linear_nn",
+        "output_scaling_factor",
+        "sigma",
+        "dl",
+        "remove_self_interaction",
+        "is_periodic",
+        "N_max",
+        "remove_mean",
+        "epsilon_factor",
+        "use_atomwise",
+        "use_fixed_atomic_charges",
+        "fixed_atomic_charges_scaling_factor",
+        "use_atomic_alpha",
+        "use_epsilon_r_scaling",
+        "compute_bec",
+        "bec_output_index",
+    }
+)
+# Fixed widths of the source attention block's projections and edge network.
+_ATTENTION_DOWN = 64
+_ATTENTION_HIDDEN = [256, 256, 256]
+_OPTIMIZED_LAYOUTS = {
+    "cuequivariance": "mace.cli.convert_cueq_e3nn",
+    "openequivariance": "mace.cli.convert_oeq_e3nn",
+}
 _RESULT_FIELDS = {
     "extract": frozenset(
         {"arrays", "declaration", "format", "modules", "operation", "provider", "source"}
@@ -154,28 +243,35 @@ _RESULT_FIELDS = {
 
 
 class MACESourceRefusedError(ValueError):
-    """The provider refused a source outside the admitted standard MACE contract."""
+    """The provider refused a source outside the admitted MACE families."""
 
 
 @dataclass(frozen=True, slots=True)
 class MACEProviderRuntime:
     """Caller-pinned provider interpreter and its exact provider site-packages.
 
-    ``interpreter`` pins the interpreter bytes. mace-torch and e3nn must be the
-    admitted ``MACE_PROVIDER_RELEASES``; the provider verifies their installed
-    files against their RECORD digests on every run. ``torch_version`` is the
-    caller-declared torch release, verified by version and recorded with its
-    RECORD digest. ``cuequivariance_version`` declares the optional
-    cuequivariance and cuequivariance-torch release (one shared version) that
-    mace-torch uses to construct reduced generalized-CG U bases (RECORD
-    verified); it must be declared exactly when installed, and reduced-CG
-    sources can be identified and rebuilt only with it.
+    ``interpreter`` pins the interpreter bytes. ``mace_torch_version`` declares
+    the installed mace-torch release, one of the admitted
+    ``MACE_PROVIDER_RELEASES["mace-torch"]``; e3nn must be the admitted e3nn
+    release. The provider verifies their installed files against their RECORD
+    digests on every run. ``torch_version`` is the caller-declared torch
+    release, verified by version and recorded with its RECORD digest.
+    ``cuequivariance_version`` declares the optional cuequivariance and
+    cuequivariance-torch release (one shared version) that mace-torch uses to
+    construct reduced generalized-CG U bases and cuEquivariance source layouts;
+    ``openequivariance_version`` the optional OpenEquivariance release of
+    OpenEquivariance source layouts; ``les_version`` the LES release MACELES
+    sources import (one of ``MACE_LES_RELEASES``). Each optional release
+    (RECORD verified) must be declared exactly when installed.
     """
 
     interpreter: PinnedExecutable
     site_packages: str
     torch_version: str
     cuequivariance_version: str | None = None
+    openequivariance_version: str | None = None
+    les_version: str | None = None
+    mace_torch_version: str = dataclasses.field(kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.interpreter, PinnedExecutable):
@@ -183,46 +279,44 @@ class MACEProviderRuntime:
         location = Path(self.site_packages).expanduser().resolve(strict=True)
         if not location.is_dir():
             raise ValueError("site_packages must be an existing directory.")
-        for name in ("torch_version", "cuequivariance_version"):
+        for name in (
+            "torch_version",
+            "cuequivariance_version",
+            "openequivariance_version",
+            "les_version",
+        ):
             value = getattr(self, name)
             if (name == "torch_version" or value is not None) and (
                 not isinstance(value, str) or not value.strip()
             ):
                 raise ValueError(f"{name} must be an explicit release.")
+        if self.mace_torch_version not in MACE_PROVIDER_RELEASES["mace-torch"]:
+            raise ValueError(
+                f"mace_torch_version must be an admitted release "
+                f"{MACE_PROVIDER_RELEASES['mace-torch']}."
+            )
+        if self.les_version is not None and self.les_version not in MACE_LES_RELEASES:
+            raise ValueError(
+                f"les_version must be an admitted release {MACE_LES_RELEASES}."
+            )
         object.__setattr__(self, "site_packages", str(location))
 
     @property
     def distributions(self) -> dict[str, str]:
-        optional = (
-            {}
-            if self.cuequivariance_version is None
-            else {
-                "cuequivariance": self.cuequivariance_version,
-                "cuequivariance-torch": self.cuequivariance_version,
-            }
-        )
-        return {**MACE_PROVIDER_RELEASES, "torch": self.torch_version, **optional}
-
-
-@dataclass(frozen=True, slots=True)
-class TrustedTorchPickleSource:
-    """Explicit capability to execute the pickle of exactly one admitted digest.
-
-    Constructing this record is the caller's trust decision for code execution
-    by ``torch.load(weights_only=False)``. It names the exact SHA-256 it
-    authorizes and a nonempty statement of why the source is trusted.
-    """
-
-    sha256: str
-    statement: str
-
-    def __post_init__(self) -> None:
-        if len(self.sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in self.sha256
-        ):
-            raise ValueError("Trusted source sha256 must be lowercase hexadecimal.")
-        if not isinstance(self.statement, str) or not self.statement.strip():
-            raise ValueError("A trusted pickle source requires a trust statement.")
+        optional: dict[str, str] = {}
+        if self.cuequivariance_version is not None:
+            optional["cuequivariance"] = self.cuequivariance_version
+            optional["cuequivariance-torch"] = self.cuequivariance_version
+        if self.openequivariance_version is not None:
+            optional["openequivariance"] = self.openequivariance_version
+        if self.les_version is not None:
+            optional["les"] = self.les_version
+        return {
+            "e3nn": MACE_PROVIDER_RELEASES["e3nn"][0],
+            "mace-torch": self.mace_torch_version,
+            "torch": self.torch_version,
+            **optional,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +335,7 @@ class MACESource:
     manifest: ArtifactManifest
     policy: ExternalArtifactPolicy
     kind: MACESourceKind
-    trust: TrustedTorchPickleSource | None = None
+    trust: _source_admission.TrustedTorchPickleSource | None = None
     architecture: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -254,7 +348,7 @@ class MACESource:
         kind = parse(self.kind, MACESourceKind, "kind")
         match kind:
             case "torch-full-model":
-                if not isinstance(self.trust, TrustedTorchPickleSource):
+                if not isinstance(self.trust, _source_admission.TrustedTorchPickleSource):
                     raise PermissionError(
                         "Full-object torch checkpoints require an explicit "
                         "TrustedTorchPickleSource before deserialization."
@@ -377,16 +471,20 @@ class MACESourceProvenance:
 
     This record is serialized into native model artifacts; it is evidence of
     origin and conversion, not a native schema generation.
-    ``layout_normalization`` records how the provider expressed a source saved
-    by an earlier mace-torch release in the admitted release's exact layout
+    ``layout_normalization`` records how the provider expressed the source in
+    the exact e3nn layout of its admitted release: an earlier release's pickle
     (``legacy_head``, ``relabelled_reduced_cg`` when the stored U basis
     contradicts the source's construction attribute, ``dropped_inert_state``,
     ``integral_buffers``, ``derived_zero_flags``, and ``precision_buffers`` cast
-    exactly to the parameter precision); every entry is false or empty for a
-    source already in the admitted layout, including every safe state-dict
-    source. ``declaration["use_reduced_cg"]`` names the identified stored basis
-    and ``reparameterized_u_buffers`` the stored U buffers that span it in
-    another exact path parameterization (a source fact, executed as stored).
+    exactly to the parameter precision) and ``optimized_layout``, the pinned
+    converter that expressed a cuEquivariance/OpenEquivariance source in e3nn
+    layout with its proven reproduction deviation. Every entry is false, empty
+    or ``None`` for a source already in the admitted layout, including every
+    safe state-dict source. ``declaration["use_reduced_cg"]`` names the
+    identified stored basis and ``reparameterized_u_buffers`` the stored U
+    buffers that span it in another exact path parameterization (a source
+    fact, executed as stored). The declaration names its mace-torch release;
+    any declaration or layout change changes ``conversion_id``.
     """
 
     source_sha256: str
@@ -463,6 +561,7 @@ class MACESourceProvenance:
         )
         if provenance.conversion_id != _conversion_id(provenance):
             raise ValueError("MACE source provenance identity is not canonical.")
+        _release_binding(provenance.declaration, provenance.provider)
         return provenance
 
 
@@ -474,10 +573,13 @@ class MACECheckpointConversion:
     dtype) passed to the native factory together with the audited degree
     transforms and couplings. ``reconstruct`` rebuilds the native model from
     replaced source tensors through the same factory, which is how source
-    parameter directions map into native parameter space.
+    parameter directions map into native parameter space. A MACELES source
+    converts to a `MACELESPotential` whose latent Ewald action was prepared
+    for ``atom_capacity`` atoms per case under ``latent_resources``; both are
+    ``None`` for every other source.
     """
 
-    potential: MACEPotential
+    potential: MACEPotential | MACELESPotential
     provenance: MACESourceProvenance
     architecture: MACEArchitecture
     source_tensors: Mapping[str, np.ndarray]
@@ -486,16 +588,17 @@ class MACECheckpointConversion:
     precision: AtomisticPrecisionPolicy | None
     streaming: StreamedRelationPlan | None
     maximum_source_entries: int
+    latent_resources: LatentEwaldResources | None = None
+    atom_capacity: int | None = None
 
-    def reconstruct(self, replacements: Mapping[str, np.ndarray], /) -> MACEPotential:
+    def reconstruct(
+        self, replacements: Mapping[str, np.ndarray], /
+    ) -> MACEPotential | MACELESPotential:
         """Rebuild the native model with some source tensors replaced exactly.
 
         Replacements must name existing source tensors and keep their shapes;
         the factory's own validation applies unchanged.
         """
-
-        from ...nn.atomistic._mace_source import mace_potential_from_source
-        from ...units import ANGSTROM, ELECTRONVOLT
 
         tensors = dict(self.source_tensors)
         for name, value in replacements.items():
@@ -506,17 +609,72 @@ class MACECheckpointConversion:
                     f"Replacement {name!r} is not an existing source tensor."
                 )
             tensors[name] = replacement
-        return mace_potential_from_source(
-            AtomisticScaleContract(ANGSTROM, ELECTRONVOLT),
+        return _native_potential(
+            self.provenance.declaration,
             self.architecture,
             tensors,
-            degree_transforms=self.degree_transforms,
-            couplings=self.couplings,
-            source_id=self.provenance.conversion_id,
-            precision=self.precision,
-            streaming=self.streaming,
-            maximum_source_entries=self.maximum_source_entries,
+            self.degree_transforms,
+            self.couplings,
+            self.provenance.conversion_id,
+            self.precision,
+            self.streaming,
+            self.maximum_source_entries,
+            self.latent_resources,
+            self.atom_capacity,
         )
+
+
+def _native_potential(
+    declaration: Mapping[str, Any],
+    architecture: MACEArchitecture,
+    tensors: Mapping[str, np.ndarray],
+    transforms: tuple[np.ndarray, ...],
+    couplings: Mapping[tuple[int, int, int], np.ndarray],
+    source_id: str,
+    precision: AtomisticPrecisionPolicy | None,
+    streaming: StreamedRelationPlan | None,
+    maximum_source_entries: int,
+    resources: LatentEwaldResources | None,
+    atom_capacity: int | None,
+    /,
+) -> MACEPotential | MACELESPotential:
+    """The native potential of one admitted source through its source factory."""
+
+    from ...nn.atomistic._mace_source import (
+        mace_potential_from_source,
+        maceles_potential_from_source,
+    )
+    from ...units import ANGSTROM, ELECTRONVOLT
+
+    scale = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
+    if declaration["model_class"] != "MACELES":
+        return mace_potential_from_source(
+            scale,
+            architecture,
+            tensors,
+            degree_transforms=transforms,
+            couplings=couplings,
+            source_id=source_id,
+            precision=precision,
+            streaming=streaming,
+            maximum_source_entries=maximum_source_entries,
+        )
+    if resources is None or atom_capacity is None:
+        raise RuntimeError("A MACELES conversion lost its latent Ewald resources.")
+    return maceles_potential_from_source(
+        scale,
+        architecture,
+        tensors,
+        les_arguments=declaration["les_arguments"],
+        atom_capacity=atom_capacity,
+        resources=resources,
+        degree_transforms=transforms,
+        couplings=couplings,
+        source_id=source_id,
+        precision=precision,
+        streaming=streaming,
+        maximum_source_entries=maximum_source_entries,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,12 +682,17 @@ class MACEProviderConfiguration:
     """One finite or fully periodic configuration in Angstrom.
 
     ``cell`` rows are lattice vectors; it must be zero for finite systems.
+    ``total_charge`` (elementary charges) and ``total_spin`` (spin multiplicity
+    ``2S + 1``) are the integer case conditions a joint-embedding source reads;
+    ``None`` leaves the provider's own default (0 and 1).
     """
 
     numbers: tuple[int, ...]
     positions: np.ndarray
     cell: np.ndarray
     periodic: bool
+    total_charge: int | None = None
+    total_spin: int | None = None
 
     def __post_init__(self) -> None:
         numbers = tuple(int(value) for value in self.numbers)
@@ -545,6 +708,10 @@ class MACEProviderConfiguration:
             raise TypeError("periodic must be a bool.")
         if not self.periodic and np.any(cell != 0.0):
             raise ValueError("Finite configurations carry a zero cell.")
+        for name in ("total_charge", "total_spin"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not int:
+                raise TypeError(f"{name} must be an int or None.")
         positions.setflags(write=False)
         cell.setflags(write=False)
         object.__setattr__(self, "numbers", numbers)
@@ -552,11 +719,17 @@ class MACEProviderConfiguration:
         object.__setattr__(self, "cell", cell)
 
     def to_request(self) -> dict[str, Any]:
+        conditions = {
+            name: getattr(self, name)
+            for name in _EMBEDDING_FEATURES
+            if getattr(self, name) is not None
+        }
         return {
             "numbers": list(self.numbers),
             "positions": self.positions.tolist(),
             "cell": self.cell.tolist(),
             "pbc": [self.periodic] * 3,
+            "conditions": conditions,
         }
 
 
@@ -693,19 +866,68 @@ def _numbers(value: Any, name: str, /) -> list[float]:
     return flat.tolist()
 
 
+def _embedding_specs(value: Any, /) -> None:
+    """Validate canonical provider joint-embedding specifications."""
+
+    if value is None:
+        return
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError("embedding_specs must be None or a nonempty mapping.")
+    for name, spec in value.items():
+        if name not in _EMBEDDING_FEATURES:
+            raise ValueError(f"Joint-embedding feature {name!r} is not admitted.")
+        if (
+            not isinstance(spec, Mapping)
+            or set(spec) != _EMBEDDING_SPEC_FIELDS
+            or spec["type"] != "categorical"
+            or spec["per"] != "graph"
+        ):
+            raise ValueError(f"Joint-embedding feature {name!r} is not canonical.")
+        _positive(spec["num_classes"], "num_classes")
+        _positive(spec["emb_dim"], "emb_dim")
+        if type(spec["offset"]) is not int:
+            raise ValueError("Joint-embedding offsets must be integers.")
+
+
+def _les_arguments(value: Any, /) -> None:
+    """Validate the complete recorded MACELES ``les_arguments``."""
+
+    if not isinstance(value, Mapping) or set(value) != _LES_ARGUMENTS:
+        raise ValueError("les_arguments must record every LES argument exactly.")
+    for name, item in value.items():
+        if item is None or type(item) in (bool, int):
+            continue
+        if type(item) is float and math.isfinite(item):
+            continue
+        if isinstance(item, list) and all(type(entry) is int for entry in item):
+            continue
+        raise ValueError(f"LES argument {name!r} is not a plain finite value.")
+
+
+# The branch count reflects the exact release/class field grammar. Keep its
+# fail-first field order explicit rather than introducing a permissive generic decoder.
 def _validated_declaration(value: Any, /) -> dict[str, Any]:
-    """Validate one provider architecture declaration without interpreting it."""
+    """Validate one provider architecture declaration without interpreting it.
+
+    The field set is exact per source release (0.3.16 adds
+    ``keep_last_layer_irreps``) and model class (scale and shift for
+    ``ScaleShiftMACE`` and ``MACELES``, ``les_arguments`` for ``MACELES``).
+    """
 
     if not isinstance(value, Mapping):
         raise TypeError("A MACE architecture declaration must be a mapping.")
     declaration = dict(value)
-    match declaration.get("model_class"):
-        case "MACE":
-            expected = _SHARED_DECLARATION_FIELDS
-        case "ScaleShiftMACE":
-            expected = _SHARED_DECLARATION_FIELDS | _SCALE_SHIFT_FIELDS
-        case other:
-            raise ValueError(f"Unsupported source model class {other!r}.")
+    release = declaration.get("mace_torch_release")
+    if not isinstance(release, str) or release not in _RELEASE_DECLARATION_FIELDS:
+        raise ValueError(f"Unsupported source release {release!r}.")
+    model_class = declaration.get("model_class")
+    if not isinstance(model_class, str) or model_class not in _CLASS_DECLARATION_FIELDS:
+        raise ValueError(f"Unsupported source model class {model_class!r}.")
+    expected = (
+        _SHARED_DECLARATION_FIELDS
+        | _RELEASE_DECLARATION_FIELDS[release]
+        | _CLASS_DECLARATION_FIELDS[model_class]
+    )
     if set(declaration) != expected:
         raise ValueError("MACE architecture declaration fields are not exact.")
     count = _positive(declaration["num_interactions"], "num_interactions")
@@ -715,6 +937,22 @@ def _validated_declaration(value: Any, /) -> dict[str, Any]:
     for name in ("r_max", "avg_num_neighbors"):
         if _finite(declaration[name], name) <= 0.0:
             raise ValueError(f"{name} must be positive.")
+    for name in (
+        "apply_cutoff",
+        "pair_repulsion",
+        "use_agnostic_product",
+        "use_edge_irreps_first",
+        "use_embedding_readout",
+        "use_last_readout_only",
+        "use_reduced_cg",
+        "use_so3",
+        *_RELEASE_DECLARATION_FIELDS[release],
+    ):
+        _boolean(declaration[name], name)
+    if declaration["radial_type"] not in _RADIAL_TYPES:
+        raise ValueError("radial_type is not an admitted radial basis.")
+    if declaration["distance_transform"] not in _DISTANCE_TRANSFORMS:
+        raise ValueError("distance_transform is not an admitted transform.")
     classes = declaration["interaction_classes"]
     correlation = declaration["correlation"]
     if (
@@ -724,8 +962,15 @@ def _validated_declaration(value: Any, /) -> dict[str, Any]:
         or len(correlation) != count
     ):
         raise ValueError("Per-interaction declaration lists have the wrong length.")
+    if any(item not in _INTERACTION_KINDS for item in classes):
+        raise ValueError("interaction_classes names an unadmitted interaction.")
     for item in correlation:
         _positive(item, "correlation")
+    readout = declaration["readout_class"]
+    if (readout is None) != (count == 1) or (
+        readout is not None and readout not in _READOUT_CLASSES
+    ):
+        raise ValueError("readout_class names the final readout of multi-layer models.")
     numbers = declaration["atomic_numbers"]
     heads = declaration["heads"]
     if (
@@ -745,9 +990,16 @@ def _validated_declaration(value: Any, /) -> dict[str, Any]:
     _irreps(declaration["hidden_irreps"], "hidden_irreps")
     if declaration["MLP_irreps"] is not None:
         _irreps(declaration["MLP_irreps"], "MLP_irreps")
+    if declaration["edge_irreps"] is not None:
+        _irreps(declaration["edge_irreps"], "edge_irreps")
+    _embedding_specs(declaration["embedding_specs"])
+    if declaration["use_embedding_readout"] and declaration["embedding_specs"] is None:
+        raise ValueError("An embedding readout needs declared embedding_specs.")
     _numbers(declaration["atomic_energies"], "atomic_energies")
     for name in _SCALE_SHIFT_FIELDS & set(declaration):
         _numbers(declaration[name], name)
+    if model_class == "MACELES":
+        _les_arguments(declaration["les_arguments"])
     return declaration
 
 
@@ -771,13 +1023,32 @@ def _provider_record(value: Any, /) -> dict[str, Any]:
         _digest(record["record_sha256"], "record_sha256")
         _count(record["verified_files"], "verified_files")
         _text(record["version"], "version")
-    for name, version in MACE_PROVIDER_RELEASES.items():
+    pinned = {**MACE_PROVIDER_RELEASES, "les": MACE_LES_RELEASES}
+    for name, releases in pinned.items():
         record = distributions.get(name)
-        if record is None or record["version"] != version or record["verified_files"] < 1:
-            raise ValueError(f"Provider {name} is not the verified admitted release.")
+        if record is None and name not in MACE_PROVIDER_RELEASES:
+            continue
+        if (
+            record is None
+            or record["version"] not in releases
+            or record["verified_files"] < 1
+        ):
+            raise ValueError(f"Provider {name} is not a verified admitted release.")
     _text(value["python"], "python")
     _text(value["site_packages"], "site_packages")
     return _plain(value)
+
+
+def _release_binding(
+    declaration: Mapping[str, Any], provider: Mapping[str, Any], /
+) -> None:
+    """The declaration's source release is the provider release that extracted it."""
+
+    distributions = provider["distributions"]
+    if declaration["mace_torch_release"] != distributions["mace-torch"]["version"]:
+        raise ValueError("The declaration names a different mace-torch release.")
+    if declaration["model_class"] == "MACELES" and "les" not in distributions:
+        raise ValueError("A MACELES declaration needs the verified LES release.")
 
 
 _LAYOUT_FLAGS = ("legacy_head", "relabelled_reduced_cg")
@@ -788,10 +1059,15 @@ _LAYOUT_NORMALIZATIONS = (
     "precision_buffers",
 )
 _LAYOUT_LISTS = (*_LAYOUT_NORMALIZATIONS, "reparameterized_u_buffers")
+_OPTIMIZED_LAYOUT_FIELDS = frozenset({"kind", "converter", "reproduction_deviation"})
 
 
 def _layout_record(value: Any, /) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != {*_LAYOUT_FLAGS, *_LAYOUT_LISTS}:
+    if not isinstance(value, Mapping) or set(value) != {
+        *_LAYOUT_FLAGS,
+        *_LAYOUT_LISTS,
+        "optimized_layout",
+    }:
         raise ValueError("Source layout normalization record is not canonical.")
     for name in _LAYOUT_FLAGS:
         _boolean(value[name], name)
@@ -803,11 +1079,21 @@ def _layout_record(value: Any, /) -> dict[str, Any]:
             or any(not isinstance(item, str) or not item for item in names)
         ):
             raise ValueError(f"Source layout normalization {name} is not canonical.")
+    optimized = value["optimized_layout"]
+    if optimized is not None and (
+        not isinstance(optimized, Mapping)
+        or set(optimized) != _OPTIMIZED_LAYOUT_FIELDS
+        or _OPTIMIZED_LAYOUTS.get(optimized["kind"]) != optimized["converter"]
+        or _finite(optimized["reproduction_deviation"], "reproduction_deviation") < 0.0
+    ):
+        raise ValueError("Source optimized-layout conversion record is not canonical.")
     return _plain(value)
 
 
 def _normalized_layout(record: Mapping[str, Any], /) -> bool:
-    return any(record[name] for name in (*_LAYOUT_FLAGS, *_LAYOUT_NORMALIZATIONS))
+    return record["optimized_layout"] is not None or any(
+        record[name] for name in (*_LAYOUT_FLAGS, *_LAYOUT_NORMALIZATIONS)
+    )
 
 
 def _worker_bytes() -> bytes:
@@ -842,6 +1128,16 @@ def _run_provider(
         raise TypeError("provider must be a MACEProviderRuntime.")
     if not isinstance(limits, MACEConversionLimits):
         raise TypeError("limits must be MACEConversionLimits.")
+    declared = request.get("architecture")
+    if (
+        declared is not None
+        and declared["mace_torch_release"] != provider.mace_torch_version
+    ):
+        raise ValueError(
+            f"The declaration was extracted by mace-torch "
+            f"{declared['mace_torch_release']}; the provider is "
+            f"{provider.mace_torch_version}."
+        )
     complete = {
         **request,
         "provider": {"distributions": provider.distributions},
@@ -936,6 +1232,7 @@ def _checked_source_result(
     if source.kind == "torch-state-dict" and _normalized_layout(layout):
         raise ValueError("A safe state-dict source cannot require layout normalization.")
     declaration = _validated_declaration(manifest["declaration"])
+    _release_binding(declaration, manifest["provider"])
     if source.architecture is not None and dict(source.architecture) != declaration:
         raise ValueError("Provider declaration differs from the declared architecture.")
     return declaration
@@ -1055,64 +1352,237 @@ def _check_density(record: Mapping[str, Any] | None, kind: str, /) -> None:
             raise MACESourceRefusedError("Density networks must be one linear layer.")
 
 
-def _admitted_modules(
-    modules: Mapping[str, Any], declaration: Mapping[str, Any], /
-) -> tuple[float, float | None]:
-    """Refuse non-standard normalizations; return radial/readout SiLU scales."""
+def _bias_normalization(record: Mapping[str, Any], name: str, /) -> None:
+    """An e3nn ``biases=True`` linear: one unit-weight bias per scalar output."""
 
-    _linear_normalization(modules["node_embedding"], "node_embedding")
-    interactions = modules["interactions"]
-    for index, interaction in enumerate(interactions):
-        prefix = f"interactions.{index}"
-        _linear_normalization(interaction["linear_up"], f"{prefix}.linear_up")
-        _linear_normalization(interaction["linear"], f"{prefix}.linear")
-        _tensor_product_normalization(interaction["conv_tp"], "uvu", f"{prefix}.conv_tp")
-        _tensor_product_normalization(interaction["skip_tp"], "uvw", f"{prefix}.skip_tp")
-        _check_density(interaction["density_fn"], interaction["class"])
-    for index, product in enumerate(modules["products"]):
-        _linear_normalization(product["linear"], f"products.{index}.linear")
-    readout_scale = None
-    for index, readout in enumerate(modules["readouts"]):
+    irreps_out = _irreps(record["irreps_out"], f"{name}.irreps_out")
+    scalars = [
+        index
+        for index, (_, degree, parity) in enumerate(irreps_out)
+        if (degree, parity) == (0, 1)
+    ]
+    biases = record["biases"]
+    if (
+        sorted(item["i_out"] for item in biases) != scalars
+        or any(item["path_weight"] != 1.0 for item in biases)
+        or record["bias_numel"] != sum(irreps_out[index][0] for index in scalars)
+    ):
+        raise MACESourceRefusedError(f"{name} uses a non-standard e3nn bias.")
+
+
+def _layer_norm_network(
+    record: Mapping[str, Any], widths: Sequence[int], name: str, /
+) -> None:
+    """A source ``RadialMLP`` of the declared widths and the admitted epsilon."""
+
+    from ...nn.atomistic._mace_source import MACE_SOURCE_LAYER_NORM_EPSILON
+
+    if list(record["hs"]) != list(widths):
+        raise MACESourceRefusedError(f"{name} widths differ from the declaration.")
+    if any(
+        value != MACE_SOURCE_LAYER_NORM_EPSILON for value in record["layer_norm_epsilons"]
+    ):
+        raise MACESourceRefusedError(
+            f"{name} uses a LayerNorm epsilon other than the source default "
+            f"{MACE_SOURCE_LAYER_NORM_EPSILON}."
+        )
+
+
+def _readout_scales(readouts: Sequence[Mapping[str, Any]], prefix: str, /) -> set[float]:
+    scales = set()
+    for index, readout in enumerate(readouts):
+        name = f"{prefix}.{index}"
         match readout["class"]:
             case "LinearReadoutBlock":
-                _linear_normalization(readout["linear"], f"readouts.{index}.linear")
-            case "NonLinearReadoutBlock":
-                _linear_normalization(readout["linear_1"], f"readouts.{index}.linear_1")
-                _linear_normalization(readout["linear_2"], f"readouts.{index}.linear_2")
-                readout_scale = _silu_scale(readout["activation"], "readout activation")
+                _linear_normalization(readout["linear"], f"{name}.linear")
+            case "NonLinearReadoutBlock" | "NonLinearBiasReadoutBlock":
+                _linear_normalization(readout["linear_1"], f"{name}.linear_1")
+                _linear_normalization(readout["linear_2"], f"{name}.linear_2")
+                if readout["class"] == "NonLinearBiasReadoutBlock":
+                    _linear_normalization(readout["linear_mid"], f"{name}.linear_mid")
+                    _bias_normalization(readout["linear_mid"], f"{name}.linear_mid")
+                    _bias_normalization(readout["linear_2"], f"{name}.linear_2")
+                scales.add(_silu_scale(readout["activation"], f"{name} activation"))
             case other:
                 raise MACESourceRefusedError(f"Readout {other!r} is not admitted.")
-    radial_scale = _radial_scale(
-        [interaction["conv_tp_weights"] for interaction in interactions]
-    )
+    return scales
+
+
+def _radial_basis(
+    record: Mapping[str, Any], declaration: Mapping[str, Any], dtype: np.dtype, /
+) -> None:
+    """Python-side radial constants: the realized Gaussian coefficient and count."""
+
+    count = declaration["num_bessel"]
+    if record["type"] != declaration["radial_type"] or record["out_dim"] != count:
+        raise MACESourceRefusedError(
+            "The radial basis record contradicts the declaration."
+        )
+    match record["type"]:
+        case "gaussian":
+            if count < 2:
+                raise MACESourceRefusedError("A Gaussian basis needs two functions.")
+            expected = -0.5 / (float(declaration["r_max"]) / (count - 1)) ** 2
+            # The source coefficient comes from the unrounded constructor
+            # radius; the declared radius is its buffer at source precision.
+            tolerance = 64.0 * float(np.finfo(dtype).eps)
+            if not math.isclose(record["coefficient"], expected, rel_tol=tolerance):
+                raise MACESourceRefusedError(
+                    "The Gaussian basis coefficient is not the source construction."
+                )
+        case "chebyshev":
+            if record["num_basis"] != count:
+                raise MACESourceRefusedError("The Chebyshev basis count is inconsistent.")
+
+
+class _ModuleScales(NamedTuple):
+    radial: float | None
+    readout: float | None
+    gates: tuple[float, float] | None
+
+
+def _admitted_modules(
+    modules: Mapping[str, Any], declaration: Mapping[str, Any], dtype: np.dtype, /
+) -> _ModuleScales:
+    """Refuse non-standard normalizations; return the realized source constants."""
+
+    _linear_normalization(modules["node_embedding"], "node_embedding")
+    _radial_basis(modules["radial"], declaration, dtype)
+    basis = declaration["num_bessel"]
+    channels = _irreps(declaration["hidden_irreps"], "hidden_irreps")[0][0]
+    networks = []
+    gates = set()
+    interactions = modules["interactions"]
+    if len(interactions) != declaration["num_interactions"]:
+        raise MACESourceRefusedError("Interaction records contradict the declaration.")
+    for index, interaction in enumerate(interactions):
+        prefix = f"interactions.{index}"
+        kind = interaction["class"]
+        if kind != declaration["interaction_classes"][index]:
+            raise MACESourceRefusedError(f"{prefix} contradicts the declared class.")
+        _linear_normalization(interaction["linear_up"], f"{prefix}.linear_up")
+        _tensor_product_normalization(interaction["conv_tp"], "uvu", f"{prefix}.conv_tp")
+        match _INTERACTION_KINDS[kind]:
+            case "real-agnostic-attention-residual":
+                for name in ("linear_down", "linear", "skip_linear"):
+                    _linear_normalization(interaction[name], f"{prefix}.{name}")
+                widths = interaction["conv_tp_weights"]["hs"]
+                if (
+                    widths[0] != basis + 2 * _ATTENTION_DOWN
+                    or widths[1:-1] != _ATTENTION_HIDDEN
+                ):
+                    raise MACESourceRefusedError(
+                        f"{prefix} edge network is not the source attention network."
+                    )
+                networks.append(interaction["conv_tp_weights"])
+            case "real-agnostic-residual-nonlinear":
+                for name in (
+                    "source_embedding",
+                    "target_embedding",
+                    "linear_res",
+                    "linear_1",
+                    "linear_2",
+                    "skip_tp",
+                ):
+                    _linear_normalization(interaction[name], f"{prefix}.{name}")
+                inputs = basis + 2 * channels
+                record = interaction["conv_tp_weights"]
+                _layer_norm_network(
+                    record,
+                    [inputs, *declaration["radial_MLP"], record["hs"][-1]],
+                    f"{prefix}.conv_tp_weights",
+                )
+                _layer_norm_network(
+                    interaction["density_fn"], [inputs, 64, 1], f"{prefix}.density_fn"
+                )
+                gate = interaction["gate"]
+                gates.add(
+                    (
+                        _finite(gate["scalar_constant"], "gate scalar constant"),
+                        _finite(gate["gate_constant"], "gate constant"),
+                    )
+                )
+            case _:
+                _linear_normalization(interaction["linear"], f"{prefix}.linear")
+                _tensor_product_normalization(
+                    interaction["skip_tp"], "uvw", f"{prefix}.skip_tp"
+                )
+                _check_density(interaction["density_fn"], kind)
+                networks.append(interaction["conv_tp_weights"])
+    for index, product in enumerate(modules["products"]):
+        _linear_normalization(product["linear"], f"products.{index}.linear")
+    scales = _readout_scales(modules["readouts"], "readouts")
+    latent = modules["les_readouts"]
+    if (latent is not None) != (declaration["model_class"] == "MACELES"):
+        raise MACESourceRefusedError(
+            "MACELES latent readouts contradict the model class."
+        )
+    if latent is not None:
+        if [item["class"] for item in latent] != [
+            item["class"] for item in modules["readouts"]
+        ]:
+            raise MACESourceRefusedError(
+                "MACELES latent readouts must copy the readouts."
+            )
+        scales |= _readout_scales(latent, "les_readouts")
+    embedding_readout = modules["embedding_readout"]
+    if (embedding_readout is not None) != declaration["use_embedding_readout"]:
+        raise MACESourceRefusedError("The embedding readout contradicts the declaration.")
+    if embedding_readout is not None:
+        _linear_normalization(embedding_readout, "embedding_readout.linear")
+    joint = modules["joint_embedding"]
+    specs = declaration["embedding_specs"]
+    if (joint is None) != (specs is None) or (
+        joint is not None
+        and (
+            joint["features"]
+            != [
+                {"name": name, "classes": spec["num_classes"], "width": spec["emb_dim"]}
+                for name, spec in specs.items()
+            ]
+            or joint["projection"]
+            != [sum(spec["emb_dim"] for spec in specs.values()), channels]
+        )
+    ):
+        raise MACESourceRefusedError("The joint embedding contradicts its specification.")
+    if len(scales) > 1:
+        raise MACESourceRefusedError("Readouts disagree on their activation.")
+    if len(gates) > 1:
+        raise MACESourceRefusedError("Nonlinear-block gates disagree on their constants.")
     if declaration["gate"] not in (None, "silu"):
         raise MACESourceRefusedError("Only SiLU readout gates are admitted.")
-    return radial_scale, readout_scale
+    return _ModuleScales(
+        _radial_scale(networks) if networks else None,
+        scales.pop() if scales else None,
+        gates.pop() if gates else None,
+    )
 
 
-def _hidden_layout(declaration: Mapping[str, Any], /) -> tuple[int, int]:
-    hidden = _irreps(declaration["hidden_irreps"], "hidden_irreps")
-    channels = hidden[0][0]
-    expected = tuple((channels, degree, (-1) ** degree) for degree in range(len(hidden)))
-    if hidden != expected:
+def _parity_layout(
+    text: str, name: str, parity: Literal["o3", "so3"], /
+) -> tuple[int, int]:
+    """``(multiplicity, degree)`` of uniform ``C x (l, p_l)`` irreps, ``l <= L``."""
+
+    entries = _irreps(text, name)
+    multiplicity = entries[0][0]
+    expected = tuple(
+        (multiplicity, degree, 1 if parity == "so3" else (-1) ** degree)
+        for degree in range(len(entries))
+    )
+    if entries != expected:
         raise MACESourceRefusedError(
-            "Hidden irreps must be equal-channel C x (l, (-1)^l) blocks for l <= L."
+            f"{name} must be uniform C x (l, p_l) blocks for l <= L under the "
+            f"{parity} parity convention; non-uniform irreps and hidden 0o "
+            "(generate_irreps) sources are not admitted."
         )
-    return channels, len(hidden) - 1
+    return multiplicity, len(entries) - 1
 
 
 def _interaction_kind(name: str, /) -> MACEInteractionKind:
-    match name:
-        case "RealAgnosticInteractionBlock":
-            return "real-agnostic"
-        case "RealAgnosticResidualInteractionBlock":
-            return "real-agnostic-residual"
-        case "RealAgnosticDensityInteractionBlock":
-            return "real-agnostic-density"
-        case "RealAgnosticDensityResidualInteractionBlock":
-            return "real-agnostic-density-residual"
-        case _:
-            raise MACESourceRefusedError(f"Interaction {name!r} is not admitted.")
+    kind = _INTERACTION_KINDS.get(name)
+    if kind is None:
+        raise MACESourceRefusedError(f"Interaction {name!r} is not admitted.")
+    return kind
 
 
 def _scalar(arrays: Mapping[str, np.ndarray], name: str, /) -> float:
@@ -1127,24 +1597,49 @@ def _architecture(
     modules: Mapping[str, Any],
     arrays: Mapping[str, np.ndarray],
     head: str,
+    dtype: np.dtype,
     /,
 ) -> MACEArchitecture:
     from ...nn.atomistic._mace import MACEArchitecture
+    from ...nn.atomistic._mace_embedding import MACEEmbeddingFeature
+    from .._latent_electrostatics import LatentEwaldDefinition
 
-    radial_scale, readout_scale = _admitted_modules(modules, declaration)
-    channels, hidden_degree = _hidden_layout(declaration)
+    scales = _admitted_modules(modules, declaration, dtype)
+    parity: Literal["o3", "so3"] = "so3" if declaration["use_so3"] else "o3"
+    channels, hidden_degree = _parity_layout(
+        declaration["hidden_irreps"], "hidden_irreps", parity
+    )
+    edge_channels = edge_degree = None
+    if declaration["edge_irreps"] is not None:
+        edge_channels, edge_degree = _parity_layout(
+            declaration["edge_irreps"], "edge_irreps", parity
+        )
     count = declaration["num_interactions"]
     if declaration["use_agnostic_product"] and any(
         product["use_agnostic_product"] is not True for product in modules["products"]
     ):
         raise MACESourceRefusedError("Agnostic-product flags are inconsistent.")
+    if declaration["model_class"] == "MACELES":
+        try:
+            LatentEwaldDefinition.from_source_arguments(declaration["les_arguments"])
+        except (TypeError, ValueError) as error:
+            raise MACESourceRefusedError(
+                f"The MACELES les_arguments are not an executable latent Ewald "
+                f"definition: {error}"
+            ) from error
+    transform = declaration["distance_transform"]
     agnesi = (
         (
             _scalar(arrays, "radial_embedding.distance_transform.a"),
             _scalar(arrays, "radial_embedding.distance_transform.q"),
             _scalar(arrays, "radial_embedding.distance_transform.p"),
         )
-        if declaration["distance_transform"] == "Agnesi"
+        if transform == "Agnesi"
+        else None
+    )
+    soft = (
+        _scalar(arrays, "radial_embedding.distance_transform.alpha")
+        if transform == "Soft"
         else None
     )
     readout_width = None
@@ -1153,36 +1648,66 @@ def _architecture(
         if len(mlp) != 1 or mlp[0][1:] != (0, 1):
             raise MACESourceRefusedError("Readout MLP irreps must be scalars.")
         readout_width = mlp[0][0]
-    return MACEArchitecture(
-        species=tuple(declaration["atomic_numbers"]),
-        cutoff=float(declaration["r_max"]),
-        radial_basis_count=declaration["num_bessel"],
-        cutoff_power=declaration["num_polynomial_cutoff"],
-        distance_transform="agnesi" if agnesi is not None else "none",
-        agnesi_parameters=agnesi,
-        cutoff_placement="embedding" if declaration["apply_cutoff"] else "weights",
-        channel_count=channels,
-        hidden_degree=hidden_degree,
-        edge_degree=declaration["max_ell"],
-        interactions=tuple(
-            _interaction_kind(name) for name in declaration["interaction_classes"]
-        ),
-        correlations=tuple(declaration["correlation"]),
-        radial_widths=tuple(declaration["radial_MLP"]),
-        readout_width=readout_width,
-        radial_activation_scale=radial_scale,
-        readout_activation_scale=readout_scale,
-        average_neighbor_count=float(declaration["avg_num_neighbors"]),
-        heads=tuple(declaration["heads"]),
-        head=head,
-        energy_scaling="scale-shift"
-        if declaration["model_class"] == "ScaleShiftMACE"
-        else "unscaled",
-        pair_repulsion=declaration["pair_repulsion"],
-        readout_correlation=None,
-        last_readout_only=declaration["use_last_readout_only"] and count > 1,
-        agnostic_product=declaration["use_agnostic_product"],
+    features = tuple(
+        MACEEmbeddingFeature(
+            name,
+            "categorical",
+            level="case",
+            width=spec["emb_dim"],
+            classes=spec["num_classes"],
+            offset=spec["offset"],
+        )
+        for name, spec in (declaration["embedding_specs"] or {}).items()
     )
+    try:
+        return MACEArchitecture(
+            species=tuple(declaration["atomic_numbers"]),
+            cutoff=float(declaration["r_max"]),
+            radial_basis=declaration["radial_type"],
+            radial_basis_count=declaration["num_bessel"],
+            cutoff_power=declaration["num_polynomial_cutoff"],
+            distance_transform=_DISTANCE_TRANSFORMS[transform],
+            agnesi_parameters=agnesi,
+            soft_alpha=soft,
+            cutoff_placement="embedding" if declaration["apply_cutoff"] else "weights",
+            parity=parity,
+            channel_count=channels,
+            hidden_degree=hidden_degree,
+            edge_degree=declaration["max_ell"],
+            edge_channel_count=edge_channels,
+            edge_feature_degree=edge_degree,
+            edge_irreps_first=declaration["use_edge_irreps_first"]
+            and edge_channels is not None,
+            interactions=tuple(
+                _interaction_kind(name) for name in declaration["interaction_classes"]
+            ),
+            correlations=tuple(declaration["correlation"]),
+            radial_widths=tuple(declaration["radial_MLP"]),
+            readout_width=readout_width,
+            readout_variant="nonlinear-bias"
+            if declaration["readout_class"] == "NonLinearBiasReadoutBlock"
+            else "nonlinear",
+            radial_activation_scale=scales.radial,
+            readout_activation_scale=scales.readout,
+            gate_scales=scales.gates,
+            average_neighbor_count=float(declaration["avg_num_neighbors"]),
+            heads=tuple(declaration["heads"]),
+            head=head,
+            energy_scaling="unscaled"
+            if declaration["model_class"] == "MACE"
+            else "scale-shift",
+            pair_repulsion=declaration["pair_repulsion"],
+            readout_correlation=None,
+            last_readout_only=declaration["use_last_readout_only"] and count > 1,
+            keep_last_layer_irreps=bool(declaration.get("keep_last_layer_irreps", False)),
+            agnostic_product=declaration["use_agnostic_product"],
+            embedding_features=features,
+            embedding_readout=declaration["use_embedding_readout"],
+        )
+    except (TypeError, ValueError) as error:
+        raise MACESourceRefusedError(
+            f"The source architecture is outside the native MACE families: {error}"
+        ) from error
 
 
 def _degree_transforms(
@@ -1294,9 +1819,14 @@ def _native_tensors(
             raise ValueError(f"Source tensor {name} is not finite.")
         if leaf == "output_mask":
             continue
-        if leaf == "bias" or name.endswith("conv_tp.weight"):
+        if name.endswith("conv_tp.weight"):
             if value.size:
                 raise MACESourceRefusedError(f"Source tensor {name} must be empty.")
+            continue
+        if leaf == "bias" and not value.size:
+            # The empty bias buffer of a bias-free e3nn Linear. Nonempty biases
+            # (biased readouts, edge networks, LayerNorms, embedders) are
+            # source parameters the native factory consumes or refuses.
             continue
         if name == "num_interactions":
             if value.shape != () or int(value) != declaration["num_interactions"]:
@@ -1331,20 +1861,32 @@ def convert_mace_checkpoint(
     precision: AtomisticPrecisionPolicy | None = None,
     streaming: StreamedRelationPlan | None = None,
     limits: MACEConversionLimits = MACEConversionLimits(),
+    latent_resources: LatentEwaldResources | None = None,
+    atom_capacity: int | None = None,
 ) -> MACECheckpointConversion:
-    """Convert one admitted standard mace-torch source into a native model.
+    """Convert one admitted mace-torch source into a native model.
 
     Source energies are eV and lengths Angstrom. ``head`` selects the active
-    readout head and is required for multihead sources. Non-standard module
-    trees, normalizations, layouts or inconsistent buffers refuse with
+    readout head and is required for multihead sources. A ``MACELES`` source
+    converts to a `MACELESPotential` and requires ``latent_resources`` and the
+    per-case ``atom_capacity`` its latent Ewald action is prepared for; every
+    other source refuses them. Module trees, normalizations, layouts or
+    buffers outside the admitted families refuse with
     ``MACESourceRefusedError`` before any native model exists.
     """
 
-    from ...nn.atomistic._mace_source import mace_potential_from_source
-    from ...units import ANGSTROM, ELECTRONVOLT
+    from .._latent_electrostatics import LatentEwaldResources
 
     if not isinstance(source, MACESource):
         raise TypeError("source must be a MACESource.")
+    if latent_resources is not None and not isinstance(
+        latent_resources, LatentEwaldResources
+    ):
+        raise TypeError("latent_resources must be LatentEwaldResources or None.")
+    if atom_capacity is not None and (
+        type(atom_capacity) is not int or atom_capacity <= 0
+    ):
+        raise ValueError("atom_capacity must be a positive integer or None.")
     payload = _source_payload(source, limits)
     request = {"operation": "extract", "source": _source_request(source)}
     if source.architecture is not None:
@@ -1352,9 +1894,21 @@ def convert_mace_checkpoint(
     manifest, arrays, _, directory = _run_provider(provider, request, payload, limits)
     try:
         declaration = _checked_source_result(manifest, source)
+        latent = declaration["model_class"] == "MACELES"
+        if latent != (latent_resources is not None) or latent != (
+            atom_capacity is not None
+        ):
+            raise ValueError(
+                "latent_resources and atom_capacity are required exactly for MACELES "
+                "sources."
+            )
         active_head = _selected_head(declaration, head)
         architecture = _architecture(
-            declaration, manifest["modules"], arrays, active_head
+            declaration,
+            manifest["modules"],
+            arrays,
+            active_head,
+            np.dtype(manifest["source"]["dtype"]),
         )
         transforms, residual = _degree_transforms(arrays)
         couplings = _couplings(arrays)
@@ -1382,16 +1936,18 @@ def convert_mace_checkpoint(
     }
     unsigned = MACESourceProvenance(**provenance_values, conversion_id="pending")
     provenance = dataclasses.replace(unsigned, conversion_id=_conversion_id(unsigned))
-    potential = mace_potential_from_source(
-        AtomisticScaleContract(ANGSTROM, ELECTRONVOLT),
+    potential = _native_potential(
+        declaration,
         architecture,
         tensors,
-        degree_transforms=transforms,
-        couplings=couplings,
-        source_id=provenance.conversion_id,
-        precision=precision,
-        streaming=streaming,
-        maximum_source_entries=limits.max_tensor_elements,
+        transforms,
+        couplings,
+        provenance.conversion_id,
+        precision,
+        streaming,
+        limits.max_tensor_elements,
+        latent_resources,
+        atom_capacity,
     )
     return MACECheckpointConversion(
         potential=potential,
@@ -1403,6 +1959,8 @@ def convert_mace_checkpoint(
         precision=precision,
         streaming=streaming,
         maximum_source_entries=limits.max_tensor_elements,
+        latent_resources=latent_resources,
+        atom_capacity=atom_capacity,
     )
 
 
@@ -1667,6 +2225,7 @@ __all__ = [
     "convert_mace_checkpoint",
     "create_mace_provider_fixture",
     "evaluate_mace_source",
+    "MACE_LES_RELEASES",
     "MACE_PROVIDER_RELEASES",
     "mace_source_gradients",
     "MACECheckpointConversion",
@@ -1682,5 +2241,4 @@ __all__ = [
     "MACESourceKind",
     "MACESourceProvenance",
     "MACESourceRefusedError",
-    "TrustedTorchPickleSource",
 ]

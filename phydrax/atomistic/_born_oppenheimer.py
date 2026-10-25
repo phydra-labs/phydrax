@@ -2,10 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Born–Oppenheimer provider boundary and the native learned-model provider.
+
+``NativeAtomisticProvider`` serves one prepared potential program through the
+external provider boundary.  Its resources are the program's single
+``PreparedAtomisticNeighborhoodBundle``: a request binds the current geometry
+as bundle geometry and initializes, refreshes (``prepare_request``) or binds
+without any rebuild (``bind_request``) the accepted bundle state, and the
+program evaluates energy, forces and stress at exactly that certified point.
+Capacity recovery is an explicit host lifecycle over the declared bundle
+ladders; scientific failures are never retried as capacity.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,125 +25,111 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import ExplicitFreeze, NonTrainableState
 from .._tree_math import tree_where
-from ..discretization import (
-    AbstractParticleNeighborhoodPlan,
-    ParticleVerletState,
-    PeriodicCell,
-    PreparedVerletParticleNeighborhood,
-    VerletParticleNeighborhoodPlan,
-)
-from ..discretization.particle._image_neighborhood import (
-    CellListParticleImageNeighborhoodPlan,
-)
-from ..discretization.particle._verlet import (
-    ImageVerletParticleNeighborhoodPlan,
-    ParticleImageVerletState,
-    PreparedImageVerletParticleNeighborhood,
-)
-from ..typing import checked
+from ..typing import checked, PRNGKey
+from ._conditioning import AtomisticConditioning
 from ._graph import AtomisticGraphExecutionPlan
-from ._hybrid import AbstractExternalAtomisticProvider, ExternalAtomisticEvaluation
-from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
+from ._hybrid import (
+    _provider_id,
+    _same_provider,
+    AbstractExternalAtomisticProvider,
+    ExternalAtomisticEvaluation,
+)
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticNeighborhoodBundleState,
+    PreparedAtomisticNeighborhoodBundle,
+)
+from ._potential import AbstractAtomisticPotential, atomistic_model_revision
 from ._potential_program import (
+    AtomisticPotentialEvaluation,
     AtomisticPotentialProgram,
     LearnedGraphPotentialTerm,
     PreparedAtomisticPotentialProgram,
 )
+from ._relaxation import trial_geometry
 from ._system import PreparedAtomisticSystem
 
 
 ElectronicEvaluator = Callable[
     [PreparedAtomisticSystem, Array, Array | None], ExternalAtomisticEvaluation
 ]
-NativeProviderNeighborhood: TypeAlias = (
-    PreparedVerletParticleNeighborhood | PreparedImageVerletParticleNeighborhood
-)
-NativeProviderNeighborhoodState: TypeAlias = (
-    ParticleVerletState | ParticleImageVerletState
-)
 
 
 class NativeAtomisticRequest(StrictModule):
-    """One request prepared through the candidate lifecycle, before evaluation.
+    """One geometry bound to the provider's resources, before evaluation.
 
-    ``positions`` are wrapped into the prepared cell and ``image_counts`` are
-    the removed lattice images, so ``positions + image_counts @ cell_vectors``
-    recovers ``unwrapped_positions``; aperiodic requests carry zero images and
-    no cell. ``neighborhood`` is the accepted cache state whose current relation
-    the program consumes; it is the host-prepared graph boundary of frozen
-    exports.
+    ``positions`` are wrapped into the prepared cell under the current
+    ``cell_vectors`` and ``image_counts`` are the removed integer lattice
+    images, so ``positions + image_counts @ cell_vectors`` recovers
+    ``unwrapped_positions``; finite requests carry no cell and no images.
+    ``neighborhoods`` is the bundle state certified at exactly this geometry.
     """
 
     positions: Array
     unwrapped_positions: Array
     cell_vectors: Array | None
-    image_counts: Array
-    neighborhood: NativeProviderNeighborhoodState
+    image_counts: Array | None
+    neighborhoods: AtomisticNeighborhoodBundleState
 
 
 class NativeAtomisticEvaluation(StrictModule):
-    """Native provider result with its per-atom energy and accepted request."""
+    """Provider-boundary result with the complete program evaluation evidence.
+
+    ``program`` retains the per-term evidence, fields, stress convention and
+    homogeneous-strain derivative of the same scalar energy at the request's
+    current cell; ``evaluation`` is its provider-boundary projection, whose
+    success also requires a successful bundle state.
+    """
 
     evaluation: ExternalAtomisticEvaluation
-    atom_energy: Array
+    program: AtomisticPotentialEvaluation
     request: NativeAtomisticRequest
+
+    @property
+    def atom_energy(self) -> Array:
+        return self.program.atom_energy
 
 
 class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze):
     """Serve one prepared native potential program through the provider boundary.
 
     Energy, forces, and stress come from one ``program.evaluate`` pass of the
-    same scalar energy; the provider adds no energy or force loop. Requests
-    without a cache state rebuild candidates through the prepared Verlet
-    lifecycle; callers owning a state pass it to ``evaluate_state`` and keep the
-    returned state. Stress is available exactly when the system is a fully
-    periodic 3D cell and every program term owns cell derivatives.
+    same scalar energy at the request's current positions and cell; the
+    provider adds no energy or force loop.  ``evaluate`` initializes fresh
+    resources for every call; callers owning an accepted bundle state pass it
+    to ``evaluate_state`` and keep the returned state.  Stress is available
+    exactly when the system is a fully periodic 3D cell and every program term
+    owns cell derivatives.
 
     This conditioned deployment intentionally freezes its prepared program,
     including embedded learned potentials: every array below the provider is
     FIXED. Internal position and cell derivatives still produce forces and
     stress; the external provider exposes no trainable model coordinates.
+
+    ``provider_identity`` is the dynamic exact digest of the served program
+    (``provider_label`` is ``None``), so one compiled evaluation serves every
+    material/parameter revision of the same layout; the host ``provider_id``
+    decodes it.  The ``ExternalAtomisticEvaluation`` is assembled inside the
+    compiled kernel and carries the same words, so ``evaluate``,
+    ``evaluate_state`` and ``evaluate_request`` also run under an outer
+    transformation; ``evaluate`` folds the binding of the supplied system
+    into the evaluation's success instead of decoding identities.
     """
 
     program: PreparedAtomisticPotentialProgram
-    neighborhood: NativeProviderNeighborhood
+    provider_identity: IdentityWords
+    provider_label: str | None = eqx.field(static=True)
     stress_available: bool = eqx.field(static=True)
-    provider_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
     @checked
-    def __init__(
-        self,
-        program: PreparedAtomisticPotentialProgram,
-        neighborhood: NativeProviderNeighborhood,
-        /,
-    ) -> None:
-        system = program.system
-        if neighborhood.particle_discretization_id != system.particles.prepared_id:
-            raise ValueError("Neighborhood belongs to another particle support.")
-        cell = system.cell
-        box = neighborhood.box
-        if cell is None:
-            if isinstance(box, PeriodicCell) and any(box.periodic_axes):
-                raise ValueError(
-                    "A finite atomistic system cannot use a periodic neighborhood box."
-                )
-        elif not isinstance(box, PeriodicCell) or box.cell_id != cell.cell_id:
-            raise ValueError(
-                "Neighborhood periodic cell must exactly match the atomistic system cell."
-            )
-        if (
-            cell is not None
-            and program.plan.requirements.directed_graph
-            and not isinstance(neighborhood, PreparedImageVerletParticleNeighborhood)
-        ):
-            raise ValueError(
-                "Periodic learned graphs require an image-aware Verlet neighborhood."
-            )
+    def __init__(self, program: PreparedAtomisticPotentialProgram, /) -> None:
+        cell = program.system.cell
         stress = (
             cell is not None
             and cell.rank == 3
@@ -140,18 +137,28 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze)
             and program.plan.capabilities.cell_derivative
         )
         self.program = program
-        self.neighborhood = neighborhood
         self.stress_available = stress
         self.conservative = program.plan.capabilities.conservative_energy
         self.differentiable = False
-        self.provider_id = canonical_fingerprint(
+        self.provider_identity = IdentityWords.of(
             {
                 "kind": "native-atomistic-provider",
                 "program": program.prepared_id,
-                "neighborhood": neighborhood.prepared_id,
                 "stress": stress,
             }
         )
+        self.provider_label = None
+
+    @property
+    def bundle(self) -> PreparedAtomisticNeighborhoodBundle:
+        return self.program.neighborhood_bundle
+
+    def with_neighborhood_bundle(
+        self, bundle: PreparedAtomisticNeighborhoodBundle, /
+    ) -> NativeAtomisticProvider:
+        """Rebind grown resources; numerical term preparations are retained."""
+
+        return NativeAtomisticProvider(self.program.with_neighborhood_bundle(bundle))
 
     def _request(
         self, positions: ArrayLike, cell_vectors: ArrayLike | None, /
@@ -178,13 +185,29 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze)
         self,
         positions: ArrayLike,
         cell_vectors: ArrayLike | None,
-        previous: NativeProviderNeighborhoodState | None,
+        previous: AtomisticNeighborhoodBundleState | None,
         /,
     ) -> NativeAtomisticRequest:
-        """Wrap positions and advance ``previous`` without evaluating the model."""
+        """Wrap positions and initialize or refresh ``previous`` without evaluating."""
 
         position, vectors = self._request(positions, cell_vectors)
-        return _prepare_native_request(self.neighborhood, position, vectors, previous)
+        return _prepare_native_request(self, position, vectors, previous, False)
+
+    def bind_request(
+        self,
+        positions: ArrayLike,
+        cell_vectors: ArrayLike | None,
+        frozen: AtomisticNeighborhoodBundleState,
+        /,
+    ) -> NativeAtomisticRequest:
+        """Bind a geometry to the frozen epochs of ``frozen`` without any rebuild.
+
+        Uncertified geometry or a changed declared selection yields a stale,
+        unsuccessful request (``PreparedAtomisticNeighborhoodBundle.bind``).
+        """
+
+        position, vectors = self._request(positions, cell_vectors)
+        return _prepare_native_request(self, position, vectors, frozen, True)
 
     def evaluate_request(
         self, request: NativeAtomisticRequest, /
@@ -195,13 +218,42 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze)
         self,
         positions: ArrayLike,
         cell_vectors: ArrayLike | None,
-        previous: NativeProviderNeighborhoodState | None,
+        previous: AtomisticNeighborhoodBundleState | None,
         /,
     ) -> NativeAtomisticEvaluation:
-        """Evaluate E/F/S, updating ``previous`` through the canonical lifecycle."""
+        """Evaluate E/F/S, initializing or refreshing ``previous`` first."""
 
         position, vectors = self._request(positions, cell_vectors)
         return _evaluate_native(self, position, vectors, previous)
+
+    def evaluate_recovering(
+        self,
+        positions: ArrayLike,
+        cell_vectors: ArrayLike | None,
+        previous: AtomisticNeighborhoodBundleState | None,
+        /,
+    ) -> NativeAtomisticRecovery:
+        """Host lifecycle: evaluate, replaying capacity-only failures on grown ladders.
+
+        A capacity-only resource failure selects the next declared capacities
+        (``grow_capacities``), rebinds the program, rebases ``previous`` and
+        replays the same request.  Scientific, stale and domain failures are
+        returned unchanged; an exhausted ladder is reported, never retried.
+        """
+
+        provider = self
+        evaluation = provider.evaluate_state(positions, cell_vectors, previous)
+        growths = 0
+        while bool(np.asarray(evaluation.request.neighborhoods.capacity_only)[0]):
+            try:
+                grown = provider.bundle.grow_capacities(evaluation.request.neighborhoods)
+            except RuntimeError:
+                return NativeAtomisticRecovery(provider, evaluation, growths, True)
+            provider = provider.with_neighborhood_bundle(grown)
+            accepted = None if previous is None else grown.rebase(previous)
+            evaluation = provider.evaluate_state(positions, cell_vectors, accepted)
+            growths += 1
+        return NativeAtomisticRecovery(provider, evaluation, growths, False)
 
     def evaluate(
         self,
@@ -210,55 +262,74 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze)
         cell_vectors: ArrayLike | None,
         /,
     ) -> ExternalAtomisticEvaluation:
-        if system.prepared_id != self.program.system.prepared_id:
-            raise ValueError("Native provider belongs to another atomistic system.")
-        return self.evaluate_state(positions, cell_vectors, None).evaluation
+        """Evaluate E/F/S of ``system`` with freshly initialized resources.
+
+        ``system`` is compared with the served system by identity words; a
+        foreign system yields an unsuccessful evaluation (traceable).
+        """
+        value = self.evaluate_state(positions, cell_vectors, None).evaluation
+        bound = system.prepared_identity.equals(self.program.system.prepared_identity)
+        return ExternalAtomisticEvaluation(
+            value.energy,
+            value.forces,
+            value.stress,
+            value.successful & bound,
+            provider_identity=self.provider_identity,
+        )
+
+
+class NativeAtomisticRecovery(StrictModule):
+    """Result of one host capacity-recovery evaluation.
+
+    ``provider`` is bound to the final resource levels (the input provider when
+    no growth occurred); ``capacity_growths`` counts replays and ``exhausted``
+    reports a declared capacity ladder that could not hold the request.
+    """
+
+    provider: NativeAtomisticProvider
+    evaluation: NativeAtomisticEvaluation
+    capacity_growths: int = eqx.field(static=True)
+    exhausted: bool = eqx.field(static=True)
 
 
 def _native_request(
-    neighborhood: NativeProviderNeighborhood,
+    provider: NativeAtomisticProvider,
     positions: Array,
     cell_vectors: Array | None,
-    previous: NativeProviderNeighborhoodState | None,
+    previous: AtomisticNeighborhoodBundleState | None,
+    frozen: bool,
     /,
 ) -> NativeAtomisticRequest:
-    cell = neighborhood.box
-    if not isinstance(cell, PeriodicCell) or cell_vectors is None:
-        wrapped = positions
-        images = jnp.zeros(positions.shape, dtype=jnp.int32)
-        lifecycle: dict[str, Array] = {}
-    else:
-        wrapped, images = cell.wrap_with_vectors(positions, cell_vectors)
-        lifecycle = {"cell_vectors": cell_vectors}
-        if isinstance(neighborhood, PreparedImageVerletParticleNeighborhood):
-            lifecycle["image_counts"] = images
+    program = provider.program
+    bundle = program.neighborhood_bundle
+    geometry, wrapped, images = trial_geometry(program, bundle, positions, cell_vectors)
     if previous is None:
-        state = neighborhood.initialize(wrapped, **lifecycle)
-    elif isinstance(neighborhood, PreparedImageVerletParticleNeighborhood):
-        if not isinstance(previous, ParticleImageVerletState):
-            raise TypeError("Image-aware Verlet updates require an image Verlet state.")
-        state = neighborhood.update(wrapped, previous, **lifecycle)
+        if frozen:
+            raise ValueError("A frozen-epoch binding requires the accepted state.")
+        state = bundle.initialize(geometry)
+    elif frozen:
+        state = bundle.bind(previous, geometry)
     else:
-        if not isinstance(previous, ParticleVerletState):
-            raise TypeError("Verlet updates require a ParticleVerletState.")
-        state = neighborhood.update(wrapped, previous, **lifecycle)
+        state = bundle.refresh(previous, geometry)
     return NativeAtomisticRequest(wrapped, positions, cell_vectors, images, state)
 
 
 def _native_evaluation(
     provider: NativeAtomisticProvider, request: NativeAtomisticRequest, /
 ) -> NativeAtomisticEvaluation:
+    """Traced: one program evaluation and its provider-boundary projection."""
     context = (
         {}
         if request.cell_vectors is None
         else {
             "cell_vectors": request.cell_vectors,
+            "image_counts": request.image_counts,
             "unwrapped_positions": request.unwrapped_positions,
         }
     )
     value = provider.program.evaluate(
         request.positions,
-        request.neighborhood.neighborhood,
+        request.neighborhoods,
         compute_stress=provider.stress_available,
         **context,
     )
@@ -267,23 +338,24 @@ def _native_evaluation(
             value.energy,
             value.forces,
             value.stress,
-            value.successful & request.neighborhood.successful,
-            provider.provider_id,
+            value.successful & request.neighborhoods.successful[0],
+            provider_identity=provider.provider_identity,
         ),
-        value.atom_energy,
+        value,
         request,
     )
 
 
 @eqx.filter_jit
 def _prepare_native_request(
-    neighborhood: NativeProviderNeighborhood,
+    provider: NativeAtomisticProvider,
     positions: Array,
     cell_vectors: Array | None,
-    previous: NativeProviderNeighborhoodState | None,
+    previous: AtomisticNeighborhoodBundleState | None,
+    frozen: bool,
     /,
 ) -> NativeAtomisticRequest:
-    return _native_request(neighborhood, positions, cell_vectors, previous)
+    return _native_request(provider, positions, cell_vectors, previous, frozen)
 
 
 @eqx.filter_jit
@@ -298,21 +370,42 @@ def _evaluate_native(
     provider: NativeAtomisticProvider,
     positions: Array,
     cell_vectors: Array | None,
-    previous: NativeProviderNeighborhoodState | None,
+    previous: AtomisticNeighborhoodBundleState | None,
     /,
 ) -> NativeAtomisticEvaluation:
-    request = _native_request(provider.neighborhood, positions, cell_vectors, previous)
+    request = _native_request(provider, positions, cell_vectors, previous, False)
     return _native_evaluation(provider, request)
+
+
+def _resource_plan(
+    resources: AtomisticNeighborhoodBundlePlan | None,
+    required: frozenset[str],
+    label: str,
+    /,
+) -> AtomisticNeighborhoodBundlePlan | None:
+    if resources is None:
+        return None
+    if {value.requirement_id for value in resources.requirements} != required:
+        raise ValueError(
+            f"{label} must cover exactly the learned graph term's neighborhood "
+            "requirements."
+        )
+    if resources.case_count != 1:
+        raise ValueError(f"{label} must bind exactly one system case.")
+    return resources
 
 
 class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
     """Recipe preparing one learned model as a native provider for any system.
 
-    Periodic systems prepare an image-aware Verlet cache over a cell-list image
-    search of radius ``cutoff + skin`` charged by
-    ``graph_execution.image_capacity``; finite systems prepare a Verlet cache
-    over ``finite_neighborhood``. ``deformation_margin`` bounds cell motion
-    within one prepared image stencil before a fresh preparation is required.
+    The model is bound as one ``LearnedGraphPotentialTerm`` named ``name``.
+    Resources are explicit complete ``AtomisticNeighborhoodBundlePlan`` values
+    covering exactly that term's requirements: ``finite_resources`` (an
+    explicit nonperiodic search frame for image sources) serves finite
+    systems and ``periodic_resources`` (searched in each system's own cell)
+    serves periodic systems.  A system whose kind has no declared resources
+    is refused; no dense or implicit fallback exists.  Cell deformation,
+    skin, search and capacity ladders are owned by those plans.
     ``model_revision_id`` is the model's numeric revision at construction.
 
     This immutable deployment recipe intentionally freezes its embedded model:
@@ -323,9 +416,9 @@ class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
 
     model: AbstractAtomisticPotential
     graph_execution: AtomisticGraphExecutionPlan
-    finite_neighborhood: AbstractParticleNeighborhoodPlan
-    skin: float = eqx.field(static=True)
-    deformation_margin: float = eqx.field(static=True)
+    finite_resources: AtomisticNeighborhoodBundlePlan | None
+    periodic_resources: AtomisticNeighborhoodBundlePlan | None
+    name: str = eqx.field(static=True)
     model_revision_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -336,77 +429,103 @@ class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
         graph_execution: AtomisticGraphExecutionPlan,
         /,
         *,
-        finite_neighborhood: AbstractParticleNeighborhoodPlan,
-        skin: float,
-        deformation_margin: float = 0.0,
+        finite_resources: AtomisticNeighborhoodBundlePlan | None = None,
+        periodic_resources: AtomisticNeighborhoodBundlePlan | None = None,
+        name: str = "learned",
     ) -> None:
-        if not np.isfinite(skin) or skin <= 0.0:
-            raise ValueError("skin must be finite and positive.")
-        if not np.isfinite(deformation_margin) or deformation_margin < 0.0:
-            raise ValueError("deformation_margin must be finite and non-negative.")
-        revision = atomistic_potential_revision(model).revision_id
+        if finite_resources is None and periodic_resources is None:
+            raise ValueError(
+                "Declare finite_resources, periodic_resources or both explicitly."
+            )
+        term = LearnedGraphPotentialTerm(model, name=name)
+        required = frozenset(
+            value.requirement_id for value in term.requirements.neighborhoods
+        )
+        finite = _resource_plan(finite_resources, required, "finite_resources")
+        periodic = _resource_plan(periodic_resources, required, "periodic_resources")
+        if periodic is not None:
+            if periodic.frame is not None:
+                raise ValueError(
+                    "periodic_resources are searched in each system cell; a frame is "
+                    "a finite-system search domain."
+                )
+            declared = model.capabilities
+            if not (declared.orthorhombic_periodic or declared.triclinic_periodic):
+                raise ValueError(
+                    "periodic_resources require a model with periodic execution."
+                )
+        revision = atomistic_model_revision(model).revision_id
         self.model = model
         self.graph_execution = graph_execution
-        self.finite_neighborhood = finite_neighborhood
-        self.skin = float(skin)
-        self.deformation_margin = float(deformation_margin)
+        self.finite_resources = finite
+        self.periodic_resources = periodic
+        self.name = term.name
         self.model_revision_id = revision
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "native-atomistic-provider-plan",
                 "model_revision": revision,
-                "architecture": model.architecture_id,
+                "name": term.name,
                 "graph_execution": graph_execution.plan_id,
-                "finite_neighborhood": finite_neighborhood.plan_id,
-                "skin": self.skin,
-                "deformation_margin": self.deformation_margin,
+                "finite_resources": None if finite is None else finite.plan_id,
+                "periodic_resources": None if periodic is None else periodic.plan_id,
             }
         )
 
-    def prepare(self, system: PreparedAtomisticSystem, /) -> NativeAtomisticProvider:
-        cell = system.cell
-        term = LearnedGraphPotentialTerm(self.model, allow_periodic=cell is not None)
-        cutoff = term.requirements.cutoff
-        if cutoff is None:
-            raise ValueError("Learned graph potentials must declare a cutoff.")
-        program = AtomisticPotentialProgram([term]).prepare(
-            system, graph_execution=self.graph_execution
+    def prepare(
+        self,
+        system: PreparedAtomisticSystem,
+        /,
+        *,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+    ) -> NativeAtomisticProvider:
+        """Prepare the provider for ``system`` with its declared resource plan.
+
+        ``conditioning`` and ``key`` are bound on the learned term, so they
+        enter the term, program and provider identities.
+        """
+
+        periodic = system.cell is not None
+        resources = self.periodic_resources if periodic else self.finite_resources
+        if resources is None:
+            raise ValueError(
+                "This provider recipe declares no "
+                f"{'periodic' if periodic else 'finite'} resources."
+            )
+        term = LearnedGraphPotentialTerm(
+            self.model,
+            name=self.name,
+            allow_periodic=periodic,
+            conditioning=conditioning,
+            key=key,
         )
-        if cell is None:
-            neighborhood = VerletParticleNeighborhoodPlan(
-                self.finite_neighborhood, cutoff, self.skin
-            ).prepare(system.particles)
-            return NativeAtomisticProvider(program, neighborhood)
-        capacity = self.graph_execution.image_capacity
-        if capacity is None:
-            raise ValueError("Periodic systems require graph_execution.image_capacity.")
-        image = ImageVerletParticleNeighborhoodPlan(
-            CellListParticleImageNeighborhoodPlan(
-                cutoff + self.skin,
-                cell,
-                capacity,
-                maximum_candidate_slots=self.graph_execution.maximum_candidate_slots,
-                deformation_margin=self.deformation_margin,
-            ),
-            cutoff,
-            self.skin,
-            streamed=self.graph_execution.streamed,
-        ).prepare(system.particles)
-        return NativeAtomisticProvider(program, image)
+        program = AtomisticPotentialProgram([term]).prepare(
+            system,
+            neighborhood_bundle=resources,
+            graph_execution=self.graph_execution,
+        )
+        return NativeAtomisticProvider(program)
 
 
 class CallableBornOppenheimerProvider(AbstractExternalAtomisticProvider):
-    """Explicit host-provider boundary for one Born–Oppenheimer surface."""
+    """Explicit host-provider boundary for one Born–Oppenheimer surface.
+
+    A labelled provider: ``provider_label`` is the static declared label
+    (``provider_identity`` is ``None``) and every evaluator result must carry
+    exactly that label.
+    """
 
     evaluator: ElectronicEvaluator
-    provider_id: str = eqx.field(static=True)
+    provider_identity: IdentityWords | None
+    provider_label: str | None = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
     def __init__(
         self,
         evaluator: ElectronicEvaluator,
-        provider_id: str,
+        provider_label: str,
         /,
         *,
         conservative: bool = True,
@@ -414,11 +533,12 @@ class CallableBornOppenheimerProvider(AbstractExternalAtomisticProvider):
     ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
-        identifier = str(provider_id).strip()
+        identifier = str(provider_label).strip()
         if not identifier:
-            raise ValueError("provider_id must be non-empty.")
+            raise ValueError("provider_label must be non-empty.")
         self.evaluator = evaluator
-        self.provider_id = identifier
+        self.provider_identity = None
+        self.provider_label = identifier
         self.conservative = bool(conservative)
         self.differentiable = bool(differentiable)
 
@@ -439,14 +559,26 @@ class CallableBornOppenheimerProvider(AbstractExternalAtomisticProvider):
             raise TypeError(
                 "Born–Oppenheimer evaluator must return ExternalAtomisticEvaluation."
             )
-        if result.provider_id != self.provider_id:
-            raise ValueError("Born–Oppenheimer result provider identity changed.")
+        if (
+            result.provider_identity is not None
+            or result.provider_label != self.provider_label
+        ):
+            raise ValueError("Born–Oppenheimer result provider binding changed.")
         if result.forces.shape != expected or result.energy.shape != ():
             raise ValueError("Born–Oppenheimer energy or force shape is invalid.")
         return result
 
 
 class BornOppenheimerState(StrictModule):
+    """Born–Oppenheimer phase point with its cached provider evaluation.
+
+    PyTree: the provider binding is the provider's exclusive pair, dynamic
+    ``provider_identity`` words of a digest provider or the static declared
+    ``provider_label`` of a labelled provider (the other is ``None``), so
+    states of every material/parameter revision of one layout share one
+    treedef; the host ``provider_id`` returns the label or decoded digest.
+    """
+
     positions: Array
     momenta: Array
     forces: Array
@@ -454,7 +586,13 @@ class BornOppenheimerState(StrictModule):
     time: Array
     step_index: Array
     successful: Array
-    provider_id: str = eqx.field(static=True)
+    provider_identity: IdentityWords | None
+    provider_label: str | None = eqx.field(static=True)
+
+    @property
+    def provider_id(self) -> str:
+        """Host string of the bound provider: its label or decoded digest."""
+        return _provider_id(self.provider_identity, self.provider_label)
 
 
 class BornOppenheimerStep(StrictModule):
@@ -465,10 +603,19 @@ class BornOppenheimerStep(StrictModule):
 
 
 class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
+    """Velocity Verlet over one provider boundary.
+
+    PyTree: ``plan_identity`` is the dynamic exact plan digest (system,
+    provider and step size; host ``plan_id``), so the plans of every
+    material/parameter revision of one layout share one executable. Digest
+    bindings are checked numerically by ``step``. A mismatched static provider
+    label is refused before invoking its potentially external evaluator.
+    """
+
     system: PreparedAtomisticSystem
     provider: AbstractExternalAtomisticProvider
     step_size: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     @checked
     def __init__(
@@ -484,7 +631,7 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         self.system = system
         self.provider = provider
         self.step_size = step
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "born-oppenheimer-velocity-verlet",
                 "system": system.prepared_id,
@@ -492,6 +639,11 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
                 "step_size": step,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of ``plan_identity``."""
+        return self.plan_identity.fingerprint()
 
     def initialize(
         self,
@@ -513,7 +665,11 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         )
         cell = None if self.system.cell is None else self.system.cell.vectors
         evaluation = self.provider.evaluate(self.system, position, cell)
-        successful = evaluation.successful & jnp.all(jnp.isfinite(momenta))
+        successful = (
+            evaluation.successful
+            & evaluation.bound_to(self.provider)
+            & jnp.all(jnp.isfinite(momenta))
+        )
         return BornOppenheimerState(
             position,
             momenta,
@@ -522,18 +678,27 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
             jnp.asarray(time, dtype=position.dtype),
             jnp.zeros((), dtype=jnp.int32),
             successful,
-            self.provider.provider_id,
+            self.provider.provider_identity,
+            self.provider.provider_label,
         )
 
     def step(self, state: BornOppenheimerState, /) -> BornOppenheimerStep:
-        if state.provider_id != self.provider.provider_id:
+        """Advance a bound state; reject foreign labels before external evaluation."""
+        if state.provider_label != self.provider.provider_label:
             raise ValueError("Born–Oppenheimer state belongs to another provider.")
+        bound = _same_provider(
+            state.provider_identity,
+            state.provider_label,
+            self.provider.provider_identity,
+            self.provider.provider_label,
+        )
         initial = ExternalAtomisticEvaluation(
             state.energy,
             state.forces,
             None,
             state.successful,
-            self.provider.provider_id,
+            provider_identity=state.provider_identity,
+            provider_label=state.provider_label,
         )
         dt = jnp.asarray(self.step_size, dtype=state.positions.dtype)
         force_scale = self.system.plan.units.force_to_momentum_rate
@@ -542,7 +707,15 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         cell = None if self.system.cell is None else self.system.cell.vectors
         final = self.provider.evaluate(self.system, position, cell)
         momentum = half + 0.5 * dt * force_scale * final.forces
-        successful = state.successful & final.successful & jnp.all(jnp.isfinite(momentum))
+        successful = (
+            state.successful
+            & bound
+            & final.successful
+            & final.bound_to(self.provider)
+            & jnp.all(jnp.isfinite(momentum))
+        )
+        # The successor keeps the state's binding (equal to the provider's
+        # whenever it is accepted), so both branches share one treedef.
         successor = BornOppenheimerState(
             position,
             momentum,
@@ -551,7 +724,8 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
             state.time + dt,
             state.step_index + 1,
             successful,
-            self.provider.provider_id,
+            state.provider_identity,
+            state.provider_label,
         )
         return BornOppenheimerStep(
             tree_where(successful, successor, state), initial, final, successful
@@ -567,6 +741,5 @@ __all__ = [
     "NativeAtomisticRequest",
     "NativeAtomisticProvider",
     "NativeAtomisticProviderPlan",
-    "NativeProviderNeighborhood",
-    "NativeProviderNeighborhoodState",
+    "NativeAtomisticRecovery",
 ]

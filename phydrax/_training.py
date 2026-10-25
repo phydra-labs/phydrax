@@ -298,6 +298,15 @@ class TrainingIterationKind(IntEnum):
     SKIP = 5
     FAILURE = 6
     RUN_TERMINAL = 7
+    MICROSTEP = 8
+    """Accumulation progress: one payload entered the open update window.
+
+    It is not an accepted optimizer update: update counters, schedules, EMA
+    targets and best-model selection never advance on it. A stop delivered here
+    retains the open window's gradient numerators, value numerator and support
+    and the exact loader cursor, so a continuation resumes without duplicating
+    or dropping a payload.
+    """
 
 
 _TRAINING_LOG_EVENTS = {
@@ -309,6 +318,7 @@ _TRAINING_LOG_EVENTS = {
     TrainingIterationKind.SKIP: "training.support.empty",
     TrainingIterationKind.FAILURE: "training.failed",
     TrainingIterationKind.RUN_TERMINAL: "training.completed",
+    TrainingIterationKind.MICROSTEP: "training.window.accumulated",
 }
 _TRAINING_WARNING_EVENTS = frozenset(
     {TrainingIterationKind.SKIP, TrainingIterationKind.FAILURE}
@@ -425,6 +435,7 @@ def training_iteration_record(
         TrainingIterationKind.VALIDATION: IterationPhase.VALIDATE,
         TrainingIterationKind.CHECKPOINT: IterationPhase.COMMIT,
         TrainingIterationKind.SKIP: IterationPhase.ATTEMPT,
+        TrainingIterationKind.MICROSTEP: IterationPhase.ATTEMPT,
         TrainingIterationKind.FAILURE: IterationPhase.ATTEMPT,
         TrainingIterationKind.RUN_TERMINAL: IterationPhase.TERMINAL,
     }

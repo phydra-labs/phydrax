@@ -6,9 +6,15 @@ import numpy as np
 
 import phydrax as phx
 from phydrax.applications import cellular_mechanics as cm, polymer_liquids as pl
+from phydrax.atomistic._stochastic_runtime import GeneralizedLangevinPlan
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
-def _runtime() -> Any:
+def _runtime(integrator: Any = None, **ensemble: Any) -> Any:
     system = phx.atomistic.AtomisticSystemPlan(
         # ty: ignore[invalid-argument-type]
         [10, 20, 30, 40],
@@ -24,21 +30,30 @@ def _runtime() -> Any:
         # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0, 0],
     ).prepare()
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.01], [0.5], 1.0)]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6).prepare(
-        system.particles
+    # Finite four-bead chain: explicit nonperiodic frame and the six-pair
+    # storage of the former dense neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.01], [0.5], 1.0)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(16, particles_per_cell=4, images=27),),
+        role_capacities=(role_capacity(6, 3),),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
     )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-3),
+        phx.atomistic.VelocityVerletPlan(1.0e-3) if integrator is None else integrator,
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
-        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        **(ensemble or {"ensemble": "nve"}),
     ).prepare(dynamics)
     positions = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [2.4, 0.0, 0.0], [3.6, 0.0, 0.0]]
@@ -98,25 +113,32 @@ def test_polymer_dynamics_scenario_1() -> None:
         left.accepted_state.positions, right.accepted_state.positions
     )
     assert int(left.accepted_state.step_index) == 1
-    dynamics, thermodynamic, atomistic, _ = _runtime()
+    # Generalized Langevin is an in-schedule canonical NVT method over the
+    # discrete FDT-checked half-step transition; temperature comes from the row.
     decay = 0.9
     transition = np.eye(2) * decay
     noise = np.eye(2) * np.sqrt(1.0 - decay**2)
-    runtime = phx.atomistic.GeneralizedLangevinRuntimePlan(
-        transition, noise, 1.0, realization_id=5
-    ).prepare(dynamics)
-    state = runtime.initialize(atomistic)
+    gle = GeneralizedLangevinPlan(1.0e-3, transition, noise, realization_id=5)
+    np.testing.assert_allclose(gle.covariance_residual(), 0.0, atol=1.0e-12)
+    dynamics, thermodynamic, atomistic, _ = _runtime(gle, ensemble="nvt", temperature=1.0)
+    assert atomistic.controllers.gle is not None
+    assert atomistic.controllers.gle.memory.shape == (4, 3, 1)
 
-    left = runtime.step(state, thermodynamic)
-    right = runtime.step(state, thermodynamic)
+    left = dynamics.step_detailed(atomistic, thermodynamic)
+    right = dynamics.step_detailed(atomistic, thermodynamic)
 
     assert left.successful & right.successful
-    np.testing.assert_allclose(left.covariance_residual, 0.0, atol=1.0e-12)
     np.testing.assert_array_equal(
-        left.accepted_state.atomistic.kinematics.momenta,
-        right.accepted_state.atomistic.kinematics.momenta,
+        left.accepted_state.kinematics.momenta,
+        right.accepted_state.kinematics.momenta,
     )
-    assert left.accepted_state.auxiliary.shape == (4, 3, 1)
+    np.testing.assert_array_equal(
+        left.accepted_state.controllers.gle.memory,
+        right.accepted_state.controllers.gle.memory,
+    )
+    assert left.accepted_state.controllers.gle.memory.shape == (4, 3, 1)
+    assert bool(jnp.any(left.accepted_state.controllers.gle.memory != 0.0))
+    assert bool(jnp.isfinite(left.accepted_state.energy.reservoir_heat))
 
 
 def test_equilibrium_rheology_retains_correlation_uncertainty_evidence() -> None:

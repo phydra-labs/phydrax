@@ -90,7 +90,9 @@ def test_boundary_multipoles_and_mutual_polarization_close_variational_energy() 
         _surface(system, lambda positions: jnp.asarray(0.0), "zero-classical"),
         provider,
         multipoles,
-        phx.atomistic.PolarizationOperatorPlan(),
+        phx.atomistic.PolarizationOperatorPlan(
+            coulomb_constant=system.units.coulomb_constant
+        ),
         residual_tolerance=1.0e-10,
     )
     result = surface.evaluate_components(structure.positions)

@@ -995,7 +995,7 @@ def _qualify_device(
         f"import phydrax as phx{bootstrap}\n"
         "from tests._support.accelerator_qualification import accelerator_device,installed_provenance,runtime_evidence,diagnostic_evidence\n"
         "from tools._accelerator_process import write_json_evidence\n"
-        "import jax,jax.numpy as jnp\n"
+        "import jax.numpy as jnp\n"
         f"provenance=installed_provenance(Path({str(venv)!r}),json.loads(Path({str(expected)!r}).read_text()))\n"
         "with phx.execution.default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
         "diagnostics=diagnostic_evidence()\n"
