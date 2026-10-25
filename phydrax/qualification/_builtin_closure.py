@@ -213,6 +213,8 @@ def _requirement(
 def builtin_omniphysics_closure_matrices(
     catalog: CapabilityCatalog,
 ) -> tuple[CapabilityClosureMatrix, ...]:
+    # Member owners import this package, so they are resolved on first use.
+    from ..atomistic._capability_closure import atomistic_closure_matrices
     from ._nuclear_fuel_release_matrix import nuclear_fuel_closure_matrices
 
     matrices = []
@@ -292,7 +294,11 @@ def builtin_omniphysics_closure_matrices(
                 (resolution(semantic), resolution(implementation)),
             )
         )
-    return (*matrices, *nuclear_fuel_closure_matrices())
+    return (
+        *matrices,
+        *nuclear_fuel_closure_matrices(),
+        *atomistic_closure_matrices(),
+    )
 
 
 __all__ = ["builtin_omniphysics_closure_matrices"]

@@ -1,14 +1,15 @@
 """Convert an admitted mace-torch checkpoint into a native, pickle-free MACE model.
 
-The source provider (mace-torch, e3nn, torch) runs only in a separately
-installed, caller-pinned interpreter; Phydrax never imports it. Nothing is
-downloaded: either pass an explicit local checkpoint with its SHA-256 pin, or
-let the provider build a tiny deterministic safe state-dict fixture (MIT, the
-license of the provider code that generates it).
+The source provider (mace-torch 0.3.15 or 0.3.16, e3nn, torch; LES for MACELES)
+runs only in a separately installed, caller-pinned interpreter; Phydrax never
+imports it. Nothing is downloaded: either pass an explicit local checkpoint with
+its SHA-256 pin, or let the provider build a tiny deterministic safe state-dict
+fixture (MIT, the license of the provider code that generates it).
 
     PYTHONPATH=. python examples/mace_checkpoint_conversion.py \\
         --provider-venv .tmp/mace-provider/.venv \\
-        --provider-python-version 3.12.8 --torch-version 2.14.1
+        --provider-python-version 3.12.8 --torch-version 2.14.1 \\
+        --mace-torch-version 0.3.16
 
 A local checkpoint is a rights decision before anything else: ``--license-id``
 declares the license of its weights and ``--held-license`` the licenses the
@@ -18,9 +19,13 @@ license. Both are checked before the provider runs. A full-object pickle
 (``--checkpoint model.model --sha256 ...``) is then deserialized only with
 ``--trust-statement`` naming why that exact digest is trusted; there is no
 unsafe fallback. Pinning, rights and pickle trust are independent decisions.
+A MACELES checkpoint additionally needs ``--les-version`` and ``--maceles``,
+which prepares its latent Ewald energy for the example's periodic water cell;
+without ``--maceles`` the converter refuses it.
 """
 
 import argparse
+import dataclasses
 import hashlib
 import tempfile
 from collections.abc import Sequence
@@ -42,33 +47,49 @@ from tools.mace_checkpoint_campaign import CAMPAIGN_ROWS
 # Provider-generated fixture weights carry the license of the provider code.
 FIXTURE_LICENSE = "MIT"
 
-FIXTURE_DECLARATION = {
-    "model_class": "ScaleShiftMACE",
-    "r_max": 4.5,
-    "num_bessel": 6,
-    "num_polynomial_cutoff": 5,
-    "max_ell": 2,
-    "interaction_classes": ["RealAgnosticResidualInteractionBlock"],
-    "num_interactions": 1,
-    "atomic_numbers": [1, 8],
-    "hidden_irreps": "8x0e",
-    "MLP_irreps": None,
-    "avg_num_neighbors": 2.5,
-    "correlation": [3],
-    "gate": None,
-    "pair_repulsion": True,
-    "distance_transform": "Agnesi",
-    "radial_MLP": [16, 16],
-    "radial_type": "bessel",
-    "heads": ["Default"],
-    "apply_cutoff": True,
-    "use_reduced_cg": False,
-    "use_agnostic_product": False,
-    "use_last_readout_only": False,
-    "atomic_energies": [-13.6, -2041.8],
-    "atomic_inter_scale": 1.3,
-    "atomic_inter_shift": 0.05,
-}
+
+def fixture_declaration(release: str) -> dict[str, object]:
+    """The example fixture as extracted by the pinned mace-torch ``release``."""
+
+    declaration: dict[str, object] = {
+        "mace_torch_release": release,
+        "model_class": "ScaleShiftMACE",
+        "r_max": 4.5,
+        "num_bessel": 6,
+        "num_polynomial_cutoff": 5,
+        "max_ell": 2,
+        "interaction_classes": ["RealAgnosticResidualInteractionBlock"],
+        "num_interactions": 1,
+        "atomic_numbers": [1, 8],
+        "hidden_irreps": "8x0e",
+        "MLP_irreps": None,
+        "readout_class": None,
+        "avg_num_neighbors": 2.5,
+        "correlation": [3],
+        "gate": None,
+        "pair_repulsion": True,
+        "distance_transform": "Agnesi",
+        "radial_MLP": [16, 16],
+        "radial_type": "bessel",
+        "heads": ["Default"],
+        "apply_cutoff": True,
+        "use_reduced_cg": False,
+        "use_agnostic_product": False,
+        "use_last_readout_only": False,
+        "use_so3": False,
+        "edge_irreps": None,
+        "use_edge_irreps_first": False,
+        "embedding_specs": None,
+        "use_embedding_readout": False,
+        "atomic_energies": [-13.6, -2041.8],
+        "atomic_inter_scale": 1.3,
+        "atomic_inter_shift": 0.05,
+    }
+    if release == "0.3.16":
+        declaration["keep_last_layer_irreps"] = False
+    return declaration
+
+
 WATER = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
 CELL = np.array([[4.6, 0.0, 0.0], [0.9, 4.4, 0.0], [0.5, -0.6, 4.8]])
 
@@ -78,7 +99,15 @@ def _arguments(arguments: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--provider-venv", type=Path, required=True)
     parser.add_argument("--provider-python-version", required=True)
     parser.add_argument("--torch-version", required=True)
+    parser.add_argument(
+        "--mace-torch-version",
+        required=True,
+        choices=phx.atomistic.interchange.MACE_PROVIDER_RELEASES["mace-torch"],
+    )
     parser.add_argument("--cuequivariance-version")
+    parser.add_argument("--openequivariance-version")
+    parser.add_argument("--les-version")
+    parser.add_argument("--maceles", action="store_true")
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--sha256")
     parser.add_argument("--license-id")
@@ -122,7 +151,13 @@ def _source_rights(arguments: argparse.Namespace) -> tuple[str, tuple[str, ...]]
 
 
 def _provider(
-    venv: Path, python_version: str, torch_version: str, cuequivariance: str | None
+    venv: Path,
+    python_version: str,
+    torch_version: str,
+    mace_torch_version: str,
+    cuequivariance: str | None,
+    openequivariance: str | None,
+    les: str | None,
 ) -> phx.atomistic.interchange.MACEProviderRuntime:
     major, minor = python_version.split(".")[:2]
     return phx.atomistic.interchange.MACEProviderRuntime(
@@ -132,6 +167,9 @@ def _provider(
         str(venv / "lib" / f"python{major}.{minor}" / "site-packages"),
         torch_version,
         cuequivariance_version=cuequivariance,
+        openequivariance_version=openequivariance,
+        les_version=les,
+        mace_torch_version=mace_torch_version,
     )
 
 
@@ -144,6 +182,7 @@ def _admitted_source(
     *,
     trust: str | None,
     architecture: dict[str, object] | None,
+    architecture_release: str,
 ) -> phx.atomistic.interchange.MACESource:
     policy = ExternalArtifactPolicy(
         path.parent,
@@ -154,7 +193,7 @@ def _admitted_source(
     manifest = ArtifactManifest(
         artifact_id=path.stem,
         producer="mace-torch",
-        version="0.3.16",
+        version=architecture_release,
         sha256=sha256,
         byte_size=path.stat().st_size,
         source_uri=path.resolve().as_uri(),
@@ -184,14 +223,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         arguments.provider_venv,
         arguments.provider_python_version,
         arguments.torch_version,
+        arguments.mace_torch_version,
         arguments.cuequivariance_version,
+        arguments.openequivariance_version,
+        arguments.les_version,
     )
+    if arguments.maceles and arguments.les_version is None:
+        raise SystemExit("--maceles requires the pinned provider --les-version.")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         if arguments.checkpoint is None:
             (root / "fixture").mkdir()
             fixture = phx.atomistic.interchange.create_mace_provider_fixture(
-                FIXTURE_DECLARATION, root / "fixture", provider=provider, seed=20261003
+                fixture_declaration(arguments.mace_torch_version),
+                root / "fixture",
+                provider=provider,
+                seed=20261003,
             )
             source = _admitted_source(
                 fixture.path,
@@ -201,6 +248,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "torch-state-dict",
                 trust=None,
                 architecture=dict(fixture.declaration),
+                architecture_release=arguments.mace_torch_version,
             )
         else:
             observed = hashlib.sha256(arguments.checkpoint.read_bytes()).hexdigest()
@@ -214,10 +262,43 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "torch-full-model",
                 trust=arguments.trust_statement,
                 architecture=None,
+                architecture_release=arguments.mace_torch_version,
             )
-        conversion = phx.atomistic.interchange.convert_mace_checkpoint(
-            source, provider=provider, head=arguments.head
-        )
+        if not arguments.maceles:
+            conversion = phx.atomistic.interchange.convert_mace_checkpoint(
+                source, provider=provider, head=arguments.head
+            )
+        else:
+            # The example evaluates one periodic three-atom water cell. The
+            # latent Ewald mode set depends on the source's recorded LES
+            # arguments, so the conversion first binds a finite-only action for
+            # that capacity, then is rebuilt from the same source tensors with
+            # modes covering the cell under the recorded definition.
+            from phydrax.atomistic import (
+                LatentEwaldDefinition,
+                LatentEwaldResources,
+            )
+
+            finite = phx.atomistic.interchange.convert_mace_checkpoint(
+                source,
+                provider=provider,
+                head=arguments.head,
+                latent_resources=LatentEwaldResources(),
+                atom_capacity=len(WATER),
+            )
+            definition = LatentEwaldDefinition.from_source_arguments(
+                finite.provenance.declaration["les_arguments"]
+            )
+            length = float(np.max(np.linalg.norm(CELL, axis=1)))
+            conversion = dataclasses.replace(
+                finite,
+                latent_resources=LatentEwaldResources(
+                    mode_extents=definition.covering_extents(length)
+                ),
+            )
+            conversion = dataclasses.replace(
+                conversion, potential=conversion.reconstruct({})
+            )
         native = conversion.potential
         configuration = phx.atomistic.interchange.MACEProviderConfiguration(
             (8, 1, 1), WATER, CELL, True

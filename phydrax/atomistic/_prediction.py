@@ -15,21 +15,24 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._periodic_cell import lattice_measure
-from ..typing import Bool, checked, Dim, Float, Int32
+from ..typing import Bool, checked, Float, Int32, PRNGKey
+from ._conditioning import AtomisticConditioning
+from ._dimensions import AtomisticAtomDim, AtomisticCaseDim
 from ._graph import (
     AtomisticGraphExecutionPlan,
-    AtomisticGraphTopology,
-    bind_atomistic_graph,
-    prepare_atomistic_graph_topology,
+    AtomisticGraphLayout,
+    AtomisticGraphPayload,
 )
+from ._model_inputs import AtomisticGraphInputs
+from ._neighborhood_bundle import AtomisticNeighborhoodRole
 from ._potential import (
-    AbstractAtomisticPotential,
-    atomistic_potential_revision,
-    AtomisticSpeciesKind,
+    AbstractAtomisticModel,
+    AbstractPreparedAtomisticModel,
+    atomistic_model_revision,
     AtomisticStressConvention,
 )
 from ._types import (
@@ -40,15 +43,7 @@ from ._types import (
 )
 
 
-_AtomisticPotential = AbstractAtomisticPotential
-
-
-class AtomisticCaseDim(Dim):
-    pass
-
-
-class AtomisticAtomDim(Dim):
-    pass
+type _AtomisticModel = AbstractAtomisticModel | AbstractPreparedAtomisticModel
 
 
 @final
@@ -68,7 +63,12 @@ class AtomisticEnergyDerivatives(StrictModule, NonTrainableState):
 
 
 class AtomisticProvenance(StrictModule, NonTrainableState):
-    """Identity and mathematical guarantees of one energy/force evaluation."""
+    """Identity and mathematical guarantees of one energy/force evaluation.
+
+    Scientific source identity (``batch_id``, ``atom_topology_id``, the host
+    graph content ``graph_topology_id``) is kept separate from the executable
+    identity of the compiled evaluation (``graph_layout_id``).
+    """
 
     architecture_id: str = eqx.field(static=True)
     potential_revision_id: str = eqx.field(static=True)
@@ -83,6 +83,11 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     periodic: bool = eqx.field(static=True)
     stress_available: bool = eqx.field(static=True)
     graph_topology_id: str = eqx.field(static=True)
+    graph_layout_id: str = eqx.field(static=True)
+    conditioning_id: str | None = eqx.field(static=True)
+    realization_id: str | None = eqx.field(static=True)
+    random_realization_id: str | None = eqx.field(static=True)
+    image_counts_id: str | None = eqx.field(static=True)
     stress_conventions: tuple[AtomisticStressConvention | None, ...] = eqx.field(
         static=True
     )
@@ -90,31 +95,82 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        potential: _AtomisticPotential,
+        potential: _AtomisticModel,
         batch: AtomisticBatch,
         execution: AtomisticGraphExecutionPlan,
         /,
         *,
-        topology: AtomisticGraphTopology,
+        payload: AtomisticGraphPayload,
         compute_stress: bool = False,
         stress_case_mask: ArrayLike | None = None,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+        image_counts: ArrayLike | None = None,
     ) -> None:
-        revision = atomistic_potential_revision(potential)
-        self.architecture_id = potential.architecture_id
+        if payload.execution.plan_id != execution.plan_id:
+            raise ValueError(
+                "The graph payload was prepared under another execution plan."
+            )
+        revision = atomistic_model_revision(potential)
+        definition = (
+            potential.model
+            if isinstance(potential, AbstractPreparedAtomisticModel)
+            else potential
+        )
+        realization_id = (
+            potential.prepared_id
+            if isinstance(potential, AbstractPreparedAtomisticModel)
+            else None
+        )
+        random_id = (
+            None
+            if key is None
+            else canonical_fingerprint(
+                {
+                    "kind": "atomistic-random-realization",
+                    "implementation": str(jax.random.key_impl(key)),
+                    "key": array_tree_fingerprint(jax.random.key_data(key)),
+                }
+            )
+        )
+        image_counts_id = (
+            None
+            if image_counts is None
+            else canonical_fingerprint(array_tree_fingerprint(jnp.asarray(image_counts)))
+        )
+        condition_id = (
+            None
+            if conditioning is None
+            else canonical_fingerprint(
+                {
+                    "kind": "atomistic-bound-conditioning",
+                    "spec": conditioning.spec.spec_id,
+                    "case_count": conditioning.case_count,
+                    "atom_capacity": conditioning.atom_capacity,
+                    "values": array_tree_fingerprint(conditioning),
+                }
+            )
+        )
+        self.architecture_id = definition.architecture_id
         self.potential_revision_id = revision.revision_id
         self.batch_id = batch.batch_id
         self.atom_topology_id = batch.atom_topology_id
         self.graph_execution_id = execution.plan_id
         self.scale_id = batch.scale.scale_id
         self.precision_id = potential.precision.policy_id
-        self.method_id = potential.method_id
+        self.method_id = definition.method_id
         self.conservative_forces = True
         self.frozen_candidate_topology = True
         self.periodic = batch.periodic_axes is not None and bool(
             np.any(np.asarray(batch.periodic_axes))
         )
         self.stress_available = compute_stress
-        self.graph_topology_id = topology.topology_id
+        self.graph_topology_id = payload.topology.content_id()
+        self.graph_layout_id = payload.layout_id
+        self.conditioning_id = condition_id
+        self.realization_id = realization_id
+        self.random_realization_id = random_id
+        self.image_counts_id = image_counts_id
         requested = (
             np.full((batch.case_count,), compute_stress, dtype=np.bool_)
             if stress_case_mask is None
@@ -136,7 +192,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "atomistic-prediction-provenance",
-                "architecture": potential.architecture_id,
+                "architecture": definition.architecture_id,
                 "potential_revision": revision.revision_id,
                 "batch": batch.batch_id,
                 "atom_topology": batch.atom_topology_id,
@@ -145,6 +201,11 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
                 "precision": potential.precision.policy_id,
                 "method": self.method_id,
                 "graph_topology": self.graph_topology_id,
+                "graph_layout": self.graph_layout_id,
+                "conditioning": condition_id,
+                "realization": realization_id,
+                "random_realization": random_id,
+                "image_counts": image_counts_id,
                 "periodic": self.periodic,
                 "stress_requested": compute_stress,
                 "stress_conventions": self.stress_conventions,
@@ -178,51 +239,57 @@ class AtomisticPrediction(StrictModule, NonTrainableState):
         return self.valid
 
 
+def _require_payload_model(
+    potential: _AtomisticModel, payload: AtomisticGraphPayload, /
+) -> None:
+    """Static admission of a payload layout by a model's scale and precision."""
+    if not isinstance(payload, AtomisticGraphPayload):
+        raise TypeError("payload must be an AtomisticGraphPayload.")
+    if payload.scale.scale_id != potential.scale.scale_id:
+        raise ValueError("Model and graph payload must share one exact scale contract.")
+    if jnp.dtype(payload.layout.coordinate_dtype) != jnp.dtype(
+        potential.precision.coordinate_dtype
+    ):
+        raise ValueError(
+            "The graph payload coordinate dtype does not match the model precision "
+            "contract."
+        )
+
+
 def _graph_energy_components(
-    potential: _AtomisticPotential,
-    batch: AtomisticBatch,
-    execution: AtomisticGraphExecutionPlan,
-    topology: AtomisticGraphTopology,
+    potential: _AtomisticModel,
+    payload: AtomisticGraphPayload,
     positions: Array,
     cell_vectors: Array | None,
+    conditioning: AtomisticConditioning | None,
+    key: PRNGKey | None,
+    image_counts: Array | None,
     /,
 ) -> tuple[Array, tuple[Array, Array, Array, Array, Array]]:
-    graph = bind_atomistic_graph(
-        topology,
-        execution,
-        positions,
+    graph = payload.graph(
         cutoff=potential.configuration.cutoff,
+        positions=positions,
         cell_vectors=cell_vectors,
-        periodic_axes=(
-            jnp.zeros((batch.case_count, 3), dtype=jnp.bool_)
-            if batch.periodic_axes is None
-            else batch.periodic_axes
-        ),
-        atomic_numbers=batch.atomic_numbers.reshape((-1,)),
-        atom_type_ids=batch.atom_type_ids.reshape((-1,)),
-        masses=batch.masses.reshape((-1,)),
+        selection=potential.requirements.neighborhood(
+            AtomisticNeighborhoodRole.DIRECTED_IMAGE_GRAPH
+        ).selection,
+        image_counts=image_counts,
     )
-    match potential.capabilities.species_kind:
-        case AtomisticSpeciesKind.ATOMIC_NUMBER:
-            species = batch.atomic_numbers
-        case AtomisticSpeciesKind.ATOM_TYPE_ID:
-            species = batch.atom_type_ids
-        case _:
-            raise ValueError("The potential declares an invalid species identity.")
-    energy, atom_energy = potential.graph_energy(
-        species.reshape((-1,)),
-        batch.atom_mask.reshape((-1,)),
-        batch.atom_cases,
-        batch.case_count,
-        batch.atom_capacity,
-        graph,
+    outputs = potential.evaluate_graph(
+        AtomisticGraphInputs(
+            graph,
+            payload.scale,
+            species_kind=potential.capabilities.species_kind,
+            conditioning=conditioning,
+            key=key,
+        )
     )
-    return jnp.sum(energy.astype(potential.precision.reduction_dtype)), (
-        energy,
-        atom_energy,
+    return jnp.sum(outputs.energy.astype(potential.precision.reduction_dtype)), (
+        outputs.energy,
+        outputs.atom_energy,
         graph.overflow,
         graph.maximum_neighbor_count,
-        graph.valid,
+        outputs.successful,
     )
 
 
@@ -238,64 +305,67 @@ def _stress_geometry(
 
 @checked
 def atomistic_energy_derivatives(
-    potential: _AtomisticPotential,
-    batch: AtomisticBatch,
-    execution: AtomisticGraphExecutionPlan,
+    potential: _AtomisticModel,
+    payload: AtomisticGraphPayload,
     positions: Array,
     /,
     *,
-    topology: AtomisticGraphTopology,
     cell_vectors: ArrayLike | None = None,
     compute_forces: bool = True,
     compute_stress: bool = False,
     stress_case_mask: ArrayLike | None = None,
+    conditioning: AtomisticConditioning | None = None,
+    key: PRNGKey | None = None,
+    image_counts: ArrayLike | None = None,
 ) -> AtomisticEnergyDerivatives:
-    """Differentiate one scalar on a bound graph; never discover or hash topology.
+    """Differentiate one scalar on a layout-bound graph; the canonical path.
 
     This numerical boundary admits ``jit``, JVP/VJP and mixed force/stress-loss
-    derivatives. Stress is tensile-positive ``dE/dstrain / volume`` under
-    ``H' = H @ (I + strain).T``. Discrete candidates/images stay fixed. The
-    batch must satisfy the potential's scale and coordinate precision contract
-    (the same static check as ``energy_and_forces``); separately supplied
-    ``positions`` and ``cell_vectors`` are then canonicalized once into that
-    coordinate dtype.
+    derivatives; it never discovers routes or hashes content, and every payload
+    of one ``AtomisticGraphLayout`` shares its static structure. Stress is
+    tensile-positive ``dE/dstrain / volume`` under ``H' = H @ (I + strain).T``.
+    Discrete candidates/images stay fixed. The payload layout must satisfy the
+    model's scale and coordinate precision; separately supplied ``positions``
+    and ``cell_vectors`` (default: the payload cells) are canonicalized once
+    into that coordinate dtype.
     """
-    potential._validate_batch(batch)
-    if topology.atom_topology_id != batch.atom_topology_id:
-        raise ValueError("Graph topology belongs to another material atom batch.")
-    if (
-        topology.case_count != batch.case_count
-        or topology.atom_capacity != batch.atom_capacity
-    ):
-        raise ValueError("Graph topology and batch capacities differ.")
+    _require_payload_model(potential, payload)
+    if not potential.capabilities.conservative_energy:
+        raise ValueError(
+            "This atomistic model does not define a conservative scalar potential."
+        )
+    counts = None if image_counts is None else jnp.asarray(image_counts)
+    cases = payload.case_count
+    atom_mask = payload.atom_mask
     coordinate = jnp.asarray(positions, dtype=potential.precision.coordinate_dtype)
-    if coordinate.shape != batch.positions.shape:
-        raise ValueError("positions must have the batch shape (case, atom, 3).")
+    if coordinate.shape != (cases, payload.atom_capacity, 3):
+        raise ValueError("positions must have the payload shape (case, atom, 3).")
     coordinate = jnp.where(
-        batch.atom_mask[:, :, None], coordinate, jnp.zeros((), dtype=coordinate.dtype)
+        atom_mask[:, :, None], coordinate, jnp.zeros((), dtype=coordinate.dtype)
     )
-    supplied_vectors = batch.cells if cell_vectors is None else cell_vectors
+    supplied_vectors = payload.cells if cell_vectors is None else cell_vectors
     vectors = (
         None
         if supplied_vectors is None
         else jnp.asarray(supplied_vectors, dtype=coordinate.dtype)
     )
-    if vectors is not None and vectors.shape != (batch.case_count, 3, 3):
+    if vectors is not None and vectors.shape != (cases, 3, 3):
         raise ValueError("cell_vectors must have shape (case, 3, 3).")
     forces = None
     stress = None
     requested_stress = (
-        jnp.full((batch.case_count,), compute_stress, dtype=jnp.bool_)
+        jnp.full((cases,), compute_stress, dtype=jnp.bool_)
         if stress_case_mask is None
         else jnp.asarray(stress_case_mask, dtype=jnp.bool_)
     )
-    if requested_stress.shape != (batch.case_count,):
+    if requested_stress.shape != (cases,):
         raise ValueError("stress_case_mask must have shape (case,).")
     if stress_case_mask is not None and not compute_stress:
         raise ValueError("stress_case_mask requires compute_stress=True.")
-    volume_valid = jnp.ones((batch.case_count,), dtype=jnp.bool_)
+    volume_valid = jnp.ones((cases,), dtype=jnp.bool_)
     if compute_stress:
-        if vectors is None or batch.periodic_axes is None:
+        periodic_axes = payload.periodic_axes
+        if vectors is None or periodic_axes is None:
             raise ValueError(
                 "Requested bulk stress requires explicit periodic cell data."
             )
@@ -310,7 +380,7 @@ def atomistic_energy_derivatives(
         )
         volumes, measure_valid = lattice_measure(measure_vectors)
         volume_valid = ~requested_stress | (
-            measure_valid & jnp.any(batch.periodic_axes, axis=1)
+            measure_valid & jnp.any(periodic_axes, axis=1)
         )
         volume = jnp.where(volume_valid, volumes, jnp.ones((), dtype=volumes.dtype))
         reference_vectors = vectors
@@ -322,7 +392,13 @@ def atomistic_energy_derivatives(
                 value, reference_vectors, strain
             )
             return _graph_energy_components(
-                potential, batch, execution, topology, deformed_position, deformed_cell
+                potential,
+                payload,
+                deformed_position,
+                deformed_cell,
+                conditioning,
+                key,
+                counts,
             )
 
         zero_strain = jnp.zeros(reference_vectors.shape, dtype=coordinate.dtype)
@@ -345,7 +421,13 @@ def atomistic_energy_derivatives(
             value: Array,
         ) -> tuple[Array, tuple[Array, Array, Array, Array, Array]]:
             return _graph_energy_components(
-                potential, batch, execution, topology, value, vectors
+                potential,
+                payload,
+                value,
+                vectors,
+                conditioning,
+                key,
+                counts,
             )
 
         if compute_forces:
@@ -363,16 +445,14 @@ def atomistic_energy_derivatives(
     )
     if forces is not None:
         forces = jnp.where(
-            batch.atom_mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype)
+            atom_mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype)
         )
         finite = finite & jnp.all(jnp.isfinite(forces), axis=(1, 2))
     if stress is not None:
         finite = finite & (~requested_stress | jnp.all(jnp.isfinite(stress), axis=(1, 2)))
     finite = finite & jnp.all(
         jnp.isfinite(
-            jnp.where(
-                batch.atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)
-            )
+            jnp.where(atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)),
         ),
         axis=1,
     )
@@ -384,9 +464,7 @@ def atomistic_energy_derivatives(
     return AtomisticEnergyDerivatives(
         energy=energy * case_scale,
         atom_energy=(
-            jnp.where(
-                batch.atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)
-            )
+            jnp.where(atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype))
             * case_scale.astype(atom_energy.dtype)[:, None]
         ),
         forces=(
@@ -413,26 +491,39 @@ def atomistic_energy_derivatives(
 
 
 def energy_and_forces(
-    potential: _AtomisticPotential,
+    potential: _AtomisticModel,
     structure: AtomicStructure | AtomisticBatch,
     execution: AtomisticGraphExecutionPlan,
     /,
     *,
     compute_stress: bool = False,
-    topology: AtomisticGraphTopology | None = None,
+    payload: AtomisticGraphPayload | None = None,
     stress_case_mask: ArrayLike | None = None,
+    conditioning: AtomisticConditioning | None = None,
+    key: PRNGKey | None = None,
+    image_counts: ArrayLike | None = None,
 ) -> AtomisticPrediction:
     """Evaluate energy once and derive forces as its negative position gradient.
 
-    Provenance names the canonical numeric revision of the potential's current
-    parameters (``phydrax.atomistic.atomistic_potential_revision``), so any
-    parameter update is reflected without a separate checkpoint step. The
-    revision is a host boundary: call this function with concrete parameters,
-    not on a potential traced by ``jit``, ``vmap``, or ``grad``.
+    Host boundary over the canonical ``atomistic_energy_derivatives`` path.
+    Without ``payload`` the one-batch ``AtomisticGraphLayout`` of the batch is
+    prepared; a supplied payload is bound to the batch by
+    ``AtomisticGraphPayload.admit``. Provenance names the canonical numeric
+    revision of the potential's current parameters
+    (``phydrax.atomistic.atomistic_model_revision``), the host batch and graph
+    content identities and the executable layout. Call this function with
+    concrete parameters, not on a potential traced by ``jit``, ``vmap``, or
+    ``grad``.
     """
 
-    if not isinstance(potential, AbstractAtomisticPotential):
-        raise TypeError("potential must implement AbstractAtomisticPotential.")
+    if not isinstance(
+        potential, (AbstractAtomisticModel, AbstractPreparedAtomisticModel)
+    ):
+        raise TypeError("potential must implement a native atomistic model contract.")
+    if not potential.capabilities.conservative_energy:
+        raise ValueError(
+            "This atomistic model does not define a conservative scalar potential."
+        )
     if not isinstance(execution, AtomisticGraphExecutionPlan):
         raise TypeError("execution must be an AtomisticGraphExecutionPlan.")
     if isinstance(structure, AtomicStructure):
@@ -442,22 +533,24 @@ def energy_and_forces(
     else:
         raise TypeError("structure must be AtomicStructure or AtomisticBatch.")
     potential._validate_batch(batch)
-
-    topology = (
-        prepare_atomistic_graph_topology(
+    bound = (
+        AtomisticGraphLayout.for_batch(
             batch, execution, cutoff=potential.configuration.cutoff
-        )
-        if topology is None
-        else topology
+        ).prepare(batch)
+        if payload is None
+        else payload.admit(batch)
     )
+    if bound.execution.plan_id != execution.plan_id:
+        raise ValueError("The graph payload was prepared under another execution plan.")
     derivative = atomistic_energy_derivatives(
         potential,
-        batch,
-        execution,
+        bound,
         batch.positions,
-        topology=topology,
         compute_stress=compute_stress,
         stress_case_mask=stress_case_mask,
+        conditioning=conditioning,
+        key=key,
+        image_counts=image_counts,
     )
     energy = derivative.energy
     atom_energy = derivative.atom_energy
@@ -533,9 +626,12 @@ def energy_and_forces(
             potential,
             batch,
             execution,
-            topology=topology,
+            payload=bound,
             compute_stress=compute_stress,
             stress_case_mask=stress_case_mask,
+            conditioning=conditioning,
+            key=key,
+            image_counts=image_counts,
         ),
         energy_axes=("case",),
         force_axes=("case", "atom", "cartesian"),

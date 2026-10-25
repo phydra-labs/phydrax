@@ -13,7 +13,10 @@ import numpy as np
 import pytest
 from jax.sharding import PartitionSpec
 
-from benchmarks import distributed_mace_scaling as mace, distributed_spectral as spectral
+from benchmarks import (
+    distributed_atomistic_scaling as atomistic,
+    distributed_spectral as spectral,
+)
 from phydrax._execution_runtime import ExecutionRuntime
 from phydrax.linalg.krylov import KrylovBreakdownStatus
 
@@ -71,30 +74,79 @@ def test_spectral_mesh_must_include_every_process(
         spectral._campaign_contract("physical-slab", "slab", (2,))
 
 
-def test_mace_refuses_unimplemented_multi_process_ingress(
+def test_atomistic_multi_process_rows_refuse_lane_owners(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mace.jax, "process_count", lambda: 2)
-    with pytest.raises(ValueError, match="single-process"):
-        mace._row("fixed-total", 2, 16, 1, "devices", 1)
+    monkeypatch.setattr(atomistic.jax, "process_count", lambda: 2)
+    with pytest.raises(ValueError, match="every device of every process"):
+        atomistic.ownership_plan(2, 16, "lanes")
 
 
-def test_mace_rejects_empty_campaign() -> None:
+def test_atomistic_rejects_empty_campaign() -> None:
     with pytest.raises(ValueError, match="positive"):
-        mace._row("fixed-total", 1, 0, 1, "devices", 1)
+        atomistic.structure(0, (1, 8), 0)
+    with pytest.raises(ValueError, match="positive"):
+        atomistic.ownership_plan(0, 16, "devices")
+
+
+def test_atomistic_structure_has_declared_density_species_and_separation() -> None:
+    cell, positions, numbers = atomistic.structure(64, (1, 8), 3)
+    np.testing.assert_allclose(abs(np.linalg.det(cell)), 64 / atomistic.DENSITY)
+    fractional = np.linalg.solve(cell.T, positions.T).T
+    assert np.all((fractional >= 0.0) & (fractional < 1.0))
+    assert set(numbers.tolist()) <= {1, 8}
+    distances = np.linalg.norm(positions[:, None] - positions[None], axis=-1)
+    assert np.min(distances[~np.eye(64, dtype=bool)]) > 1.0
+    again = atomistic.structure(64, (1, 6, 8), 3)
+    np.testing.assert_array_equal(again[1], positions)
+
+
+def test_atomistic_failures_keep_capacity_refusals_distinct_from_oom() -> None:
+    capacity = atomistic.ReciprocalDistributionCapacityError("packet planes")
+    assert atomistic.failure(capacity)["status"] == "refused"
+    assert atomistic.failure(ValueError("admission"))["status"] == "refused"
+    assert atomistic.failure(MemoryError())["status"] == "oom"
+    exhausted = RuntimeError("RESOURCE_EXHAUSTED: allocation")
+    assert atomistic.failure(exhausted)["status"] == "oom"
+    failed = atomistic.failure(RuntimeError("boom"))
+    assert failed["status"] == "failed"
+    assert failed["error_type"] == "RuntimeError" and "boom" in failed["traceback_tail"]
+
+
+def test_atomistic_collective_program_lists_mapped_collectives() -> None:
+    mesh = jax.sharding.Mesh(np.asarray(jax.devices()[:1]), ("owner",))
+
+    def region(block: jax.Array) -> jax.Array:
+        gathered = jax.lax.all_gather(block, "owner", tiled=True)
+        return jax.lax.psum(jnp.sum(gathered), "owner")
+
+    program = atomistic.collective_program(
+        jax.make_jaxpr(
+            jax.shard_map(
+                region,
+                mesh=mesh,
+                in_specs=PartitionSpec("owner"),
+                out_specs=PartitionSpec(),
+                check_vma=False,
+            )
+        )(jnp.ones((1, 4), dtype=jnp.float32)).jaxpr
+    )
+    primitives = [entry["primitive"] for entry in program]
+    assert primitives[0] == "all_gather"
+    assert program[0]["operand_bytes"] == 16
+    assert any(name.startswith("psum") for name in primitives[1:])
+    assert all(entry["loop_depth"] == 0 for entry in program)
 
 
 @pytest.mark.parametrize("owners", [1, 2, 3, 4, 5, 8])
-def test_mace_device_subset_executes_owner_collective(owners: int) -> None:
+def test_atomistic_device_subset_executes_owner_collective(owners: int) -> None:
     if jax.process_count() != 1:
-        pytest.skip("The MACE benchmark requires single-process host ingress.")
+        pytest.skip("Device subsets are single-process owner placements.")
     runtime = ExecutionRuntime.current()
     available = runtime.root_group.spec.device_count
     if available < owners:
         pytest.skip(f"Requires at least {owners} visible devices.")
-    cell, _, _ = mace._structure(16, seed=16)
-    plan = mace._plan(mace._model(1), cell, owners, 16, "devices")
-    ownership = plan.ownership
+    ownership = atomistic.ownership_plan(owners, 16, "devices")
     group = ownership.execution_group
     assert group.devices == runtime.root_group.devices[:owners]
     assert ownership.owner_count == owners
@@ -114,12 +166,11 @@ def test_mace_device_subset_executes_owner_collective(owners: int) -> None:
     np.testing.assert_array_equal(np.asarray(result), np.sum(values))
 
 
-def test_mace_device_subset_refuses_insufficient_devices() -> None:
+def test_atomistic_device_subset_refuses_insufficient_devices() -> None:
     if jax.process_count() != 1:
-        pytest.skip("The MACE benchmark requires single-process host ingress.")
-    cell, _, _ = mace._structure(16, seed=16)
+        pytest.skip("Device subsets are single-process owner placements.")
     with pytest.raises(ValueError, match="require at least .* visible devices"):
-        mace._plan(mace._model(1), cell, jax.device_count() + 1, 16, "devices")
+        atomistic.ownership_plan(jax.device_count() + 1, 16, "devices")
 
 
 @pytest.mark.parametrize(

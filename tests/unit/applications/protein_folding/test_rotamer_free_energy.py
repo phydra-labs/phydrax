@@ -22,8 +22,8 @@ from phydrax.atomistic import (
     AtomisticSystemPlan,
     AtomisticUnitSystem,
 )
-from phydrax.discretization import DenseParticleNeighborhoodPlan
 from phydrax.qualification import ReferenceArtifactManifest
+from tests._support.atomistic_bundles import bundle_state, prepare_program
 
 
 def _source() -> Any:
@@ -162,20 +162,16 @@ def test_rotamer_free_energy_scenario_1() -> None:
         atol=2e-9,
     )
     term, system, positions = _fixture(loop=True, method="bethe")
-    program = AtomisticPotentialProgram((term,)).prepare(system)
-    relation = (
-        DenseParticleNeighborhoodPlan(system.capacity * (system.capacity - 1) // 2)
-        .prepare(system.particles)
-        .build(positions)
-    )
-    result = jax.jit(lambda q: program.evaluate(q, relation))(positions)
+    # The rotamer term declares no neighborhood requirement: its exact resource
+    # bundle is empty and each configuration binds its own certified state.
+    program = prepare_program(AtomisticPotentialProgram((term,)), system)
+    neighborhoods = bundle_state(program, positions)
+    result = jax.jit(lambda q: program.evaluate(q, neighborhoods))(positions)
     prepared = program.terms[0]
     direction = jnp.arange(27, dtype="float64").reshape((9, 3)) / 27 - 0.5
     h = 1e-5
     finite_difference = (
-        # ty: ignore[unresolved-attribute]
         prepared.evaluate(positions + h * direction).energy
-        # ty: ignore[unresolved-attribute]
         - prepared.evaluate(positions - h * direction).energy
     ) / (2 * h)
     assert bool(result.successful)
@@ -184,7 +180,7 @@ def test_rotamer_free_energy_scenario_1() -> None:
     )
     rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     transformed = positions @ rotation.T + jnp.asarray([2.0, -1.0, 0.7])
-    moved = program.evaluate(transformed, relation)
+    moved = program.evaluate(transformed, bundle_state(program, transformed))
     np.testing.assert_allclose(moved.energy, result.energy, atol=1e-9)
     np.testing.assert_allclose(moved.forces, result.forces @ rotation.T, atol=2e-8)
     np.testing.assert_allclose(result.forces.sum(axis=0), 0.0, atol=2e-8)
@@ -287,7 +283,7 @@ def test_rotamer_free_energy_scenario_3() -> None:
         term.prepare(missing)
     with pytest.raises(PermissionError):
         RotamerGeometryPlan(
-            term.geometry.construct,
+            ProteinConstruct(("A",), ("AAA",)),
             term.geometry.frame_atom_ids,
             term.geometry.local_sites,
             _source(),
@@ -295,20 +291,16 @@ def test_rotamer_free_energy_scenario_3() -> None:
             commercial_use=True,
         )
     with pytest.raises(ValueError):
-        term.parameters.source.require_uncertainty()
+        _source().require_uncertainty()
     for loop in [False, True]:
         exact_term, system, positions = _fixture(loop=loop, unary_gap=1000.0)
         bethe_term, _, _ = _fixture(loop=loop, method="bethe", unary_gap=1000.0)
-        exact = AtomisticPotentialProgram((exact_term,)).prepare(system)
-        bethe = AtomisticPotentialProgram((bethe_term,)).prepare(system)
-        relation = (
-            DenseParticleNeighborhoodPlan(system.capacity * (system.capacity - 1) // 2)
-            .prepare(system.particles)
-            .build(positions)
-        )
-        reference = jax.jit(lambda q: exact.evaluate(q, relation))(positions)
-        result = jax.jit(lambda q: bethe.evaluate(q, relation))(positions)
-        # ty: ignore[unresolved-attribute]
+        exact = prepare_program(AtomisticPotentialProgram((exact_term,)), system)
+        bethe = prepare_program(AtomisticPotentialProgram((bethe_term,)), system)
+        exact_neighborhoods = bundle_state(exact, positions)
+        bethe_neighborhoods = bundle_state(bethe, positions)
+        reference = jax.jit(lambda q: exact.evaluate(q, exact_neighborhoods))(positions)
+        result = jax.jit(lambda q: bethe.evaluate(q, bethe_neighborhoods))(positions)
         beliefs = bethe.terms[0].evaluate(positions)
         assert bool(
             reference.successful & result.successful & beliefs.derivative_qualified

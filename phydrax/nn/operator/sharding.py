@@ -13,7 +13,10 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
+from ..._data_plane import ExecutionGroupRank
+from ..._execution_resources import ExecutionGroupSpec
 from ..._execution_runtime import ExecutionGroup
+from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from .data import (
@@ -88,6 +91,34 @@ class OperatorShardingPolicy(StrictModule):
     @property
     def is_primary_process(self) -> bool:
         return jax.process_index() == self.coordinator_process
+
+    def data_rank(self) -> ExecutionGroupRank:
+        """Group-local case-shard rank of this process on the policy mesh.
+
+        The mesh devices (in mesh order) and named axes form the execution
+        group; a policy built from an `ExecutionGroup` keeps that group's
+        identity. Case shards are coordinates along ``mesh_axis``.
+        """
+
+        keys = tuple(
+            (int(device.process_index), int(device.id))
+            for device in self.mesh.devices.flat
+        )
+        axes = tuple((str(name), int(size)) for name, size in self.mesh.shape.items())
+        group_id = self.execution_group_id or canonical_fingerprint(
+            {
+                "kind": "operator-sharding-mesh",
+                "device_keys": [list(key) for key in keys],
+                "mesh_axes": [[name, size] for name, size in axes],
+            }
+        )
+        spec = ExecutionGroupSpec(
+            group_id,
+            tuple(sorted({process for process, _ in keys})),
+            keys,
+            mesh_axes=axes,
+        )
+        return ExecutionGroupRank(spec, jax.process_index(), axis=self.mesh_axis)
 
     def validate_case_shape(self, case_shape: tuple[int, ...], /) -> None:
         if not case_shape:

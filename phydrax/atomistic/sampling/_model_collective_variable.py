@@ -6,29 +6,42 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
-from jax.typing import ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._identity import IdentityWords
 from ..._model import AbstractArrayModel
-from ...discretization import PeriodicCell
 from ...typing import checked
+from .._neighborhood_bundle import AtomisticNeighborhoodRequirement
 from ._collective_variable import (
     AbstractCollectiveVariableProgram,
     CollectiveVariableMetric,
+    CollectiveVariableProgramEvaluation,
+)
+from ._cv_geometry import (
+    CollectiveVariableGeometry,
+    CollectiveVariableStatus,
+    status_flag,
 )
 
 
 class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
-    """Frozen array model composed after one differentiable CV feature program."""
+    """Array model composed after one differentiable CV feature program.
+
+    The source geometry, metric branches, support and neighborhood requests are
+    forwarded unchanged; the model's array parameters stay dynamic leaves.
+    The caller's ``model_id`` enters only the exact program digest, carried
+    with the source system binding as dynamic words (``program_identity``,
+    ``system_identity``); no model or content identifier is a static field.
+    """
 
     source: AbstractCollectiveVariableProgram
     model: AbstractArrayModel
     output_size: int = eqx.field(static=True)
     names: tuple[str, ...] = eqx.field(static=True)
     metrics: tuple[CollectiveVariableMetric, ...]
-    model_id: str = eqx.field(static=True)
-    program_id: str = eqx.field(static=True)
+    program_identity: IdentityWords
+    system_identity: IdentityWords
+    requirements: tuple[AtomisticNeighborhoodRequirement, ...]
+    cell_dependent: bool = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -70,8 +83,10 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
         self.output_size = model.out_size
         self.names = resolved_names
         self.metrics = resolved_metrics
-        self.model_id = identifier
-        self.program_id = canonical_fingerprint(
+        self.system_identity = source.system_identity
+        self.requirements = source.requirements
+        self.cell_dependent = source.cell_dependent
+        self.program_identity = IdentityWords.of(
             {
                 "kind": "model-collective-variable-program",
                 "source": source.program_id,
@@ -81,20 +96,29 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
             }
         )
 
+    @property
+    def support(self) -> tuple[int, ...]:
+        """Host: the source program's particle support."""
+        return self.source.support
+
     def evaluate(
-        self,
-        positions: ArrayLike,
-        /,
-        *,
-        cell: PeriodicCell | None = None,
-        cell_vectors: ArrayLike | None = None,
-    ) -> tuple[Array, Array]:
-        source, source_valid = self.source.evaluate(
-            positions, cell=cell, cell_vectors=cell_vectors
+        self, geometry: CollectiveVariableGeometry, /
+    ) -> CollectiveVariableProgramEvaluation:
+        source = self.source.evaluate(geometry)
+        value = jnp.asarray(self.model(source.values, key=None)).reshape(
+            (self.output_size,)
         )
-        value = jnp.asarray(self.model(source, key=None)).reshape((self.output_size,))
-        valid = source_valid & jnp.all(jnp.isfinite(value))
-        return jnp.where(valid, value, 0.0), valid
+        finite = jnp.all(jnp.isfinite(value))
+        successful = source.successful & finite
+        status = source.status | status_flag(~finite, CollectiveVariableStatus.NONFINITE)
+        return CollectiveVariableProgramEvaluation(
+            values=jnp.where(successful, value, 0.0),
+            successful=successful,
+            regular=successful & source.regular,
+            status=status,
+            branch_margins=source.branch_margins,
+            program_identity=self.program_identity,
+        )
 
 
 __all__ = ["ModelCollectiveVariableProgram"]

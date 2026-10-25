@@ -29,7 +29,7 @@ def evaluator(prepared: Any, coordinate: Any, cell_vectors: Any) -> Any:
         -2.0 * coordinate,
         None,
         jnp.asarray(True),
-        "loopback-local",
+        provider_label="loopback-local",
     )
 
 

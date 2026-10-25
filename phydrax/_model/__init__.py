@@ -64,6 +64,9 @@ from ._structure import (
 )
 
 
+register_artifact_value("phydrax:ValuePort", ValuePort)
+
+
 __all__ = [
     "AbstractArrayModel",
     "AbstractComponentSlot",

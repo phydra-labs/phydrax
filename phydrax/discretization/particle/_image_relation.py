@@ -14,8 +14,10 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import integer
 from ...sparse import EdgeRelation
 
 
@@ -311,19 +313,349 @@ class ParticleImageRelation(StrictModule, NonTrainableState):
         shifts = eqx.error_if(shifts, jnp.any(overflow), message)
         return eqx.tree_at(lambda relation: relation.image_shifts, self, shifts)
 
+    def take_routes(
+        self, compaction: ImageRouteCompaction, /, *, relation_schema_id: str
+    ) -> ParticleImageRelation:
+        """Return the routes selected by ``compaction`` as a new image relation.
+
+        Identity, image shift and case of every kept route are copied exactly;
+        padding routes are invalid and owned by their compaction case, with
+        endpoints at that case's first particle.
+        """
+        if not isinstance(compaction, ImageRouteCompaction):
+            raise TypeError("compaction must be an ImageRouteCompaction.")
+        if compaction.case_count != self.case_count:
+            raise ValueError("Compaction case count differs from the relation.")
+        indices = compaction.indices
+        valid = compaction.valid & self.valid[indices]
+        padding = compaction.cases * self.particle_capacity
+        size = self.case_count * self.particle_capacity
+        return ParticleImageRelation(
+            EdgeRelation(
+                jnp.where(valid, self.source_indices[indices], padding),
+                jnp.where(valid, self.receiver_indices[indices], padding),
+                source_size=size,
+                target_size=size,
+                valid=valid,
+            ),
+            jnp.where(valid, self.source_particle_ids[indices], 0),
+            jnp.where(valid, self.receiver_particle_ids[indices], 0),
+            jnp.where(valid[:, None], self.image_shifts[indices], 0),
+            compaction.cases,
+            case_count=self.case_count,
+            particle_capacity=self.particle_capacity,
+            support_id=self.support_id,
+            relation_schema_id=relation_schema_id,
+        )
+
+    def reversal_map(self) -> ImageReversalMap:
+        """Match every route ``(s, t, n, c)`` to its reversal ``(t, s, -n, c)``.
+
+        Matching uses material endpoint IDs, the integer image sign and the
+        case, never storage slots or distances, so it is independent of route
+        order.  A route is ``paired`` when its exact reversal is stored; a case
+        is ``closed`` when every valid route in it is paired.  A complete radius
+        search is closed because ``|x_t - x_s + n H| = |x_s - x_t - n H|``;
+        truncated storage is not.  Nonzero self images ``(s, s, n)`` pair with
+        the distinct route ``(s, s, -n)``.
+        """
+        invalid = (~self.valid).astype(jnp.int32)
+        cases = jnp.where(self.valid, self.route_cases, 0)
+        sources = jnp.where(self.valid, self.source_particle_ids, 0)
+        receivers = jnp.where(self.valid, self.receiver_particle_ids, 0)
+        shifts = jnp.where(self.valid[:, None], self.image_shifts, 0)
+        rank = self.lattice_rank
+        forward = tuple(shifts[:, axis] for axis in reversed(range(rank))) + (
+            sources,
+            receivers,
+            cases,
+            invalid,
+        )
+        backward = tuple(-shifts[:, axis] for axis in reversed(range(rank))) + (
+            receivers,
+            sources,
+            cases,
+            invalid,
+        )
+        forward_order = jax.lax.stop_gradient(jnp.lexsort(forward)).astype(jnp.int32)
+        backward_order = jax.lax.stop_gradient(jnp.lexsort(backward)).astype(jnp.int32)
+        partner = (
+            jnp.zeros((self.capacity,), dtype=jnp.int32)
+            .at[backward_order]
+            .set(forward_order)
+        )
+        matched = self.valid & self.valid[partner]
+        for key, reversed_key in zip(forward, backward, strict=True):
+            matched = matched & (key[partner] == reversed_key)
+        partner = jnp.where(matched, partner, jnp.arange(self.capacity, dtype=jnp.int32))
+        unpaired = (
+            jnp.zeros((self.case_count,), dtype=jnp.int32)
+            .at[cases]
+            .add((self.valid & ~matched).astype(jnp.int32))
+        )
+        conflict = self.valid & (
+            (self.source_particle_ids == self.receiver_particle_ids)
+            != (self.source_indices == self.receiver_indices)
+        )
+        conflicts = (
+            jnp.zeros((self.case_count,), dtype=jnp.int32)
+            .at[cases]
+            .add(conflict.astype(jnp.int32))
+        )
+        return ImageReversalMap(
+            partner,
+            matched,
+            unpaired == 0,
+            conflicts > 0,
+            self.relation_schema_id,
+        )
+
+    def canonical_half(
+        self, /, *, capacity: int | None = None, case_capacity: int | None = None
+    ) -> ParticleImageHalfView:
+        """Return the exact canonical half of this directed relation.
+
+        A route ``(s, t, n)`` is canonical when ``id_s < id_t``, or when
+        ``id_s == id_t`` and the first nonzero component of ``n`` is positive.
+        Exactly one of every reversal pair is canonical, including the two
+        distinct routes ``(s, s, n)`` and ``(s, s, -n)`` of a nonzero self image.
+        For a symmetric pair function ``phi(d) == phi(-d)`` the complete
+        directed sum is twice the half sum; this identity does not hold for
+        arbitrary directed message functions.  Exactly one of ``capacity``
+        (one route buffer) or ``case_capacity`` (a fixed segment per case) is
+        required; overflow, an unclosed parent and endpoint-ID conflicts are
+        reported per case.
+        """
+        reversal = self.reversal_map()
+        canonical = self.valid & (
+            (self.source_particle_ids < self.receiver_particle_ids)
+            | (
+                (self.source_particle_ids == self.receiver_particle_ids)
+                & (_first_nonzero_sign(self.image_shifts) > 0)
+            )
+        )
+        compaction = compact_image_routes(
+            canonical,
+            self.route_cases,
+            case_count=self.case_count,
+            capacity=capacity,
+            case_capacity=case_capacity,
+        )
+        schema = canonical_fingerprint(
+            {
+                "kind": "canonical-half-image-relation",
+                "parent": self.relation_schema_id,
+                "capacity": capacity,
+                "case_capacity": case_capacity,
+            }
+        )
+        half = self.take_routes(compaction, relation_schema_id=schema)
+        full_routes = jnp.where(half.valid, compaction.indices, 0)
+        return ParticleImageHalfView(
+            half,
+            full_routes,
+            jnp.where(half.valid, reversal.partner[full_routes], 0),
+            half.valid & (half.source_indices == half.receiver_indices),
+            compaction.required,
+            compaction.stored,
+            compaction.overflow,
+            ~reversal.closed,
+            reversal.identity_conflict,
+            self.relation_schema_id,
+        )
+
+
+def _first_nonzero_sign(shifts: Array, /) -> Array:
+    """Sign of the first nonzero component of each integer image shift."""
+    sign = jnp.zeros(shifts.shape[:1], dtype=jnp.int32)
+    for axis in reversed(range(shifts.shape[1])):
+        component = shifts[:, axis]
+        sign = jnp.where(component != 0, jnp.sign(component).astype(jnp.int32), sign)
+    return sign
+
+
+class ImageRouteCompaction(StrictModule, NonTrainableState):
+    """Fixed-capacity selection of routes from a parent image relation.
+
+    ``indices`` are parent route positions; ``valid`` marks kept routes and
+    ``cases`` owns every slot (padding included).  ``required`` counts the
+    selected parent routes per case independently of storage, ``stored``
+    those kept, and ``overflow`` marks cases whose selection did not fit.
+    ``case_capacity`` is the fixed segment width of a per-case layout, or
+    ``None`` for one shared buffer whose kept routes preserve parent order.
+    """
+
+    indices: Array
+    valid: Array
+    cases: Array
+    required: Array
+    stored: Array
+    overflow: Array
+    case_count: int = eqx.field(static=True)
+    case_capacity: int | None = eqx.field(static=True)
+
+
+def compact_image_routes(
+    mask: ArrayLike,
+    route_cases: ArrayLike,
+    /,
+    *,
+    case_count: int,
+    capacity: int | None = None,
+    case_capacity: int | None = None,
+) -> ImageRouteCompaction:
+    """Compact masked routes into one buffer or into fixed per-case segments.
+
+    Exactly one of ``capacity`` (shared buffer, parent order preserved) and
+    ``case_capacity`` (segment ``c`` holds case ``c``'s routes in parent
+    order) is required.  Selection beyond the capacity is never silent: it is
+    reported per case by ``overflow`` with the true ``required`` count.
+    """
+    selected = jnp.asarray(mask, dtype=jnp.bool_)
+    owners = jnp.asarray(route_cases)
+    cases = int(case_count)
+    if selected.ndim != 1 or owners.shape != selected.shape:
+        raise ValueError("mask and route_cases must be aligned rank-one arrays.")
+    if cases <= 0:
+        raise ValueError("case_count must be positive.")
+    if (capacity is None) == (case_capacity is None):
+        raise ValueError("Exactly one of capacity and case_capacity is required.")
+    routes = selected.shape[0]
+    safe_cases = jnp.where(selected, owners, 0).astype(jnp.int32)
+    required = (
+        jnp.zeros((cases,), dtype=jnp.int32)
+        .at[safe_cases]
+        .add(selected.astype(jnp.int32))
+    )
+    if capacity is not None:
+        size = int(capacity)
+        if size < 0 or size > IMAGE_INT32_LIMIT:
+            raise ValueError("capacity must be a nonnegative int32 count.")
+        indices = jax.lax.stop_gradient(
+            jnp.nonzero(selected, size=size, fill_value=0)[0]
+        ).astype(jnp.int32)
+        total = jnp.sum(selected, dtype=jnp.int32)
+        valid = jnp.arange(size, dtype=jnp.int32) < jnp.minimum(total, size)
+        out_cases = jnp.where(valid, safe_cases[indices], cases - 1)
+        stored = (
+            jnp.zeros((cases,), dtype=jnp.int32)
+            .at[out_cases]
+            .add(valid.astype(jnp.int32))
+        )
+        return ImageRouteCompaction(
+            jnp.where(valid, indices, 0),
+            valid,
+            out_cases,
+            required,
+            stored,
+            stored < required,
+            cases,
+            None,
+        )
+    width = integer(case_capacity, "case_capacity")
+    if width <= 0 or cases * width > IMAGE_INT32_LIMIT:
+        raise ValueError("case_capacity must be a positive int32 segment width.")
+    key = jnp.where(selected, safe_cases, cases)
+    order = jax.lax.stop_gradient(jnp.argsort(key, stable=True)).astype(jnp.int32)
+    sorted_cases = key[order]
+    offsets = jnp.cumsum(required) - required
+    rank = (
+        jnp.arange(routes, dtype=jnp.int32)
+        - offsets[jnp.minimum(sorted_cases, cases - 1)]
+    )
+    keep = (sorted_cases < cases) & (rank < width)
+    target = jnp.where(keep, sorted_cases * width + rank, cases * width)
+    indices = (
+        jnp.zeros((cases * width,), dtype=jnp.int32).at[target].set(order, mode="drop")
+    )
+    valid = jnp.zeros((cases * width,), dtype=jnp.bool_).at[target].set(True, mode="drop")
+    return ImageRouteCompaction(
+        indices,
+        valid,
+        jnp.repeat(jnp.arange(cases, dtype=jnp.int32), width),
+        required,
+        jnp.minimum(required, width),
+        required > width,
+        cases,
+        width,
+    )
+
+
+class ImageReversalMap(StrictModule, NonTrainableState):
+    """Exact route reversal ``(s, t, n, c) -> (t, s, -n, c)`` over stored routes.
+
+    ``partner[e]`` is the stored reversal of route ``e`` where ``paired[e]``,
+    else ``e`` itself.  ``closed[c]`` holds when every valid route of case
+    ``c`` is paired.  ``identity_conflict[c]`` marks equal endpoint IDs on
+    distinct particle slots (or the converse), which makes material identity
+    ambiguous and every half view of that case invalid.
+    """
+
+    partner: Array
+    paired: Array
+    closed: Array
+    identity_conflict: Array
+    relation_schema_id: str = eqx.field(static=True)
+
+
+class ParticleImageHalfView(StrictModule, NonTrainableState):
+    """Canonical half of a directed image relation with its counting convention.
+
+    ``relation`` holds one route of every reversal pair (see
+    ``ParticleImageRelation.canonical_half``) in parent order.
+    ``full_routes`` and ``partner_routes`` give, per half route, the parent
+    route and its stored reversal.  Each half route represents exactly
+    ``directed_multiplicity == 2`` directed routes, including nonzero self
+    images, whose ``self_image`` flag is set.  ``overflow`` is a capacity
+    failure; ``reversal_open`` (the parent is not reversal closed, e.g.
+    truncated) and ``identity_conflict`` are scientific failures under which
+    the half-sum identity does not hold.
+    """
+
+    relation: ParticleImageRelation
+    full_routes: Array
+    partner_routes: Array
+    self_image: Array
+    required_routes: Array
+    stored_routes: Array
+    overflow: Array
+    reversal_open: Array
+    identity_conflict: Array
+    parent_relation_schema_id: str = eqx.field(static=True)
+    counting_convention: str = eqx.field(static=True, default="canonical-half")
+    directed_multiplicity: int = eqx.field(static=True, default=2)
+
+    @property
+    def capacity_failure(self) -> Array:
+        return self.overflow
+
+    @property
+    def scientific_failure(self) -> Array:
+        return self.reversal_open | self.identity_conflict
+
+    @property
+    def successful(self) -> Array:
+        return ~(self.capacity_failure | self.scientific_failure)
+
 
 class ParticleImageRelationEvidence(StrictModule, NonTrainableState):
     """Per-case requirements and complete failure evidence for one image search.
 
     ``required_*`` are the counts the geometry demands, independent of the
     capacity that truncated storage.  Capacity failures (cell occupancy,
-    images, edges, degree) are repairable by a declared larger capacity.
-    ``stencil_overflow`` (the lattice left the prepared deformation envelope of
-    the candidate stencil), ``domain_violation``, ``nonfinite`` (non-finite
-    active positions, a non-finite lattice, or a failed lattice solve, the last
-    two independent of the active set) and ``representation_overflow`` (an
-    active wrap count or route image shift outside ``|n| <= 2**31 - 1``) are
-    geometric/scientific failures and never justify a capacity retry.
+    images, edges, degree, and the intermediate cluster ``tile_overflow``)
+    are repairable by a declared larger capacity.  ``stencil_overflow`` (the
+    lattice left the prepared deformation envelope of the candidate stencil),
+    ``domain_violation``, ``nonfinite`` (non-finite active positions, a
+    non-finite lattice, or a failed lattice solve, the last two independent
+    of the active set), ``representation_overflow`` (an active wrap count or
+    route image shift outside ``|n| <= 2**31 - 1``, or a required route/degree
+    count beyond the int32 count range),
+    ``cluster_extent_overflow`` (a cluster left the prepared bounding-radius
+    envelope of a tile search) and ``receiver_violation`` (a requested
+    receiver ID absent, inactive or repeated) are geometric/scientific
+    failures and never justify a capacity retry.  ``required_tile_pairs`` is
+    zero for searches without intermediate tiles.
     """
 
     active_particles: Array
@@ -341,6 +673,10 @@ class ParticleImageRelationEvidence(StrictModule, NonTrainableState):
     domain_violation: Array
     nonfinite: Array
     representation_overflow: Array
+    required_tile_pairs: Array
+    tile_overflow: Array
+    cluster_extent_overflow: Array
+    receiver_violation: Array
 
     @property
     def capacity_failure(self) -> Array:
@@ -349,6 +685,7 @@ class ParticleImageRelationEvidence(StrictModule, NonTrainableState):
             | self.image_overflow
             | self.edge_overflow
             | self.degree_overflow
+            | self.tile_overflow
         )
 
     @property
@@ -358,6 +695,8 @@ class ParticleImageRelationEvidence(StrictModule, NonTrainableState):
             | self.domain_violation
             | self.nonfinite
             | self.representation_overflow
+            | self.cluster_extent_overflow
+            | self.receiver_violation
         )
 
     @property
@@ -365,4 +704,11 @@ class ParticleImageRelationEvidence(StrictModule, NonTrainableState):
         return ~(self.capacity_failure | self.scientific_failure)
 
 
-__all__ = ["ParticleImageRelation", "ParticleImageRelationEvidence"]
+__all__ = [
+    "compact_image_routes",
+    "ImageReversalMap",
+    "ImageRouteCompaction",
+    "ParticleImageHalfView",
+    "ParticleImageRelation",
+    "ParticleImageRelationEvidence",
+]

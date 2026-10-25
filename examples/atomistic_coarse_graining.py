@@ -40,7 +40,11 @@ fine_batch = phx.atomistic.AtomisticBatch(
 execution = phx.atomistic.AtomisticGraphExecutionPlan(
     1, backend="dense", maximum_dense_atoms=2
 )
-problem = phx.atomistic.CoarseForceMatchingProblem(mapping, fine_batch, forces, execution)
+# Projected bead forces become the force labels of a canonical atom-type-ID
+# source; the problem is force-only (component-balanced squared residuals).
+problem = phx.atomistic.CoarseForceMatchingProblem(
+    mapping, fine_batch, forces, execution, cutoff=6.0
+)
 potential = phx.nn.atomistic.PaiNNPotential(
     units.scale,
     cutoff=6.0,
@@ -54,7 +58,7 @@ potential = phx.nn.atomistic.PaiNNPotential(
 result = phx.atomistic.fit_coarse_potential(
     potential,
     problem,
-    phx.atomistic.AtomisticTrainingPolicy(maximum_steps=0, energy_weight=0.0),
+    phx.atomistic.AtomisticTrainingPolicy(maximum_steps=0),
     jax.random.key(1),
 )
 if not bool(result.valid):

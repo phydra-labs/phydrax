@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import array_tree_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil, InterpolationResult
 from ..._strict import StrictModule
@@ -266,13 +267,43 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
 
 
 class PreparedParticleGridSplat(StrictModule, NonTrainableState):
-    """Prepared particle-grid transfer with auditable resources and assignment."""
+    """Prepared particle-grid transfer with auditable resources and assignment.
+
+    Two preparations share one canonical build/deposit/gather/scatter
+    algorithm:
+
+    * ``PreparedParticleGridSplat(plan, particles)`` binds one prepared
+      physical particle discretization, retained and returned by
+      ``physical_particles()``; ``prepared_id`` includes its material
+      identity and source IDs.
+    * ``PreparedParticleGridSplat(plan, particle_ids=..., active_mask=...,
+      support_id=..., coordinate_dtype=...)`` binds a declared indexed-support
+      schema: the source slots of one executable layout. ``particles`` is
+      ``None``; the statics are the plan, the schema, the source capacity and
+      the ambient dimension, and ``prepared_id`` digests only those (with the
+      coordinate dtype and target resources). The stable source order (the
+      stable argsort of the supplied IDs) and the active mask are dynamic
+      leaves. A schema is never a material identity: the owner of a
+      schema-bound transfer must validate its material identity numerically
+      before relying on it.
+
+    Both modes set ``source_capacity``, ``ambient_dimension`` (static),
+    ``source_active_mask`` and ``stable_source_order`` (dynamic), which drive
+    every runtime path. ``source_support_id`` is the indexed source support
+    the transfer addresses (the physical support's ``support_id``, or the
+    declared schema) and is reported as ``SplatBalanceEvidence.
+    source_support_id``.
+    """
 
     plan: ParticleGridSplatPlan
-    particles: ParticleDiscretization
+    particles: ParticleDiscretization | None
     layout: TensorEntityLayout | TensorIndexLayout
     target_measure: DiscreteMeasure | TensorIndexMeasure
     stable_source_order: Array
+    source_active_mask: Array
+    source_capacity: int = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+    source_support_id: str = eqx.field(static=True)
     axis_bounds: tuple[tuple[float, float], ...] = eqx.field(static=True)
     target_shape: tuple[int, ...] = eqx.field(static=True)
     target_size: int = eqx.field(static=True)
@@ -284,15 +315,76 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     artifact_kind: str = eqx.field(static=True)
     materialized_target: bool = eqx.field(static=True)
 
+    # Particle-bound and indexed-support preparation share one canonical artifact.
+    # Keep support admission, resource accounting and static/dynamic assignments
+    # ordered together; the field layout and identity must not depend on a wrapper.
     @checked
     def __init__(
         self,
         plan: ParticleGridSplatPlan,
-        particles: ParticleDiscretization,
+        particles: ParticleDiscretization | None = None,
         /,
+        *,
+        particle_ids: ArrayLike | None = None,
+        active_mask: ArrayLike | None = None,
+        support_id: str | None = None,
+        coordinate_dtype: DTypeLike | None = None,
     ) -> None:
-        if particles.ambient_dimension != len(plan.target.axis_names):
-            raise ValueError("Particle and target-grid dimensions must match.")
+        dimension = len(plan.target.axis_names)
+        schema_dtype: str | None = None
+        if particles is not None:
+            if (
+                particle_ids is not None
+                or active_mask is not None
+                or support_id is not None
+                or coordinate_dtype is not None
+            ):
+                raise ValueError(
+                    "Bind a splat to particles or to an indexed-support schema, not both."
+                )
+            if particles.ambient_dimension != dimension:
+                raise ValueError("Particle and target-grid dimensions must match.")
+            particle_ids_host = np.asarray(particles.particle_ids, dtype=np.int64)
+            active_host = np.asarray(particles.active_mask, dtype=np.bool_)
+            source_support = particles.support.support_id
+        else:
+            if (
+                particle_ids is None
+                or active_mask is None
+                or support_id is None
+                or coordinate_dtype is None
+            ):
+                raise ValueError(
+                    "An indexed-support splat requires particle_ids, active_mask, "
+                    "support_id and coordinate_dtype."
+                )
+            raw_ids = np.asarray(particle_ids)
+            if (
+                raw_ids.ndim != 1
+                or raw_ids.size == 0
+                or not np.issubdtype(raw_ids.dtype, np.integer)
+            ):
+                raise TypeError("particle_ids must be a non-empty rank-1 integer array.")
+            particle_ids_host = raw_ids.astype(np.int64, copy=False)
+            if (
+                np.any(particle_ids_host < 0)
+                or np.unique(particle_ids_host).size != particle_ids_host.size
+            ):
+                raise ValueError(
+                    "Indexed-support particle IDs must be unique and nonnegative."
+                )
+            active_host = np.asarray(active_mask)
+            if (
+                active_host.dtype != np.bool_
+                or active_host.shape != particle_ids_host.shape
+            ):
+                raise ValueError(
+                    "active_mask must be a boolean vector matching particle_ids."
+                )
+            if not isinstance(support_id, str) or not support_id.strip():
+                raise ValueError("support_id must be a non-empty schema identifier.")
+            source_support = support_id.strip()
+            schema_dtype = real_precision_dtype_name(coordinate_dtype)
         target = plan.target
         layout: TensorEntityLayout | TensorIndexLayout
         target_measure: DiscreteMeasure | TensorIndexMeasure
@@ -323,11 +415,10 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             )
         if not finite_positive_measure:
             raise ValueError("Splat target measure must be finite and strictly positive.")
-        source_count = particles.capacity
+        source_count = particle_ids_host.size
         target_size = prod(layout.shape)
         if target_size > np.iinfo(np.int32).max:
             raise ValueError("Splat target is too large for int32 route indices.")
-        dimension = particles.ambient_dimension
         width = plan.assignment.route_width(dimension)
         route_count = source_count * width
         index_itemsize = np.dtype(np.int32).itemsize
@@ -350,8 +441,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             relation_bytes=relation_bytes,
             scalar_workspace_bytes=scalar_workspace,
         )
-        particle_ids = np.asarray(particles.particle_ids, dtype=np.int64)
-        stable_order = np.argsort(particle_ids, kind="stable").astype(np.int32)
+        stable_order = np.argsort(particle_ids_host, kind="stable").astype(np.int32)
         bounds = tuple(
             (float(np.asarray(axis.bounds)[0]), float(np.asarray(axis.bounds)[1]))
             for axis in axes
@@ -406,25 +496,47 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
                 else ("constants",)
             ),
         )
-        prepared_id = resolved_identifier(
-            "prepared_id",
-            None,
-            {
-                "kind": "prepared-particle-grid-splat",
-                "plan": plan.plan_id,
-                "particles": particles.prepared_id,
-                "source_ids": array_tree_fingerprint(particle_ids),
-                "assignment": plan.assignment.assignment_id,
-                "target_layout": layout.layout_id,
-                "target_measure": target_measure.measure_id,
-                "preparation": preparation.report_id,
-            },
-        )
+        if particles is not None:
+            prepared_id = resolved_identifier(
+                "prepared_id",
+                None,
+                {
+                    "kind": "prepared-particle-grid-splat",
+                    "plan": plan.plan_id,
+                    "particles": particles.prepared_id,
+                    "source_ids": array_tree_fingerprint(particle_ids_host),
+                    "assignment": plan.assignment.assignment_id,
+                    "target_layout": layout.layout_id,
+                    "target_measure": target_measure.measure_id,
+                    "preparation": preparation.report_id,
+                },
+            )
+        else:
+            prepared_id = resolved_identifier(
+                "prepared_id",
+                None,
+                {
+                    "kind": "prepared-particle-grid-splat-indexed-support",
+                    "plan": plan.plan_id,
+                    "support_schema": source_support,
+                    "source_capacity": source_count,
+                    "ambient_dimension": dimension,
+                    "coordinate_dtype": schema_dtype,
+                    "assignment": plan.assignment.assignment_id,
+                    "target_layout": layout.layout_id,
+                    "target_measure": target_measure.measure_id,
+                    "preparation": preparation.report_id,
+                },
+            )
         self.plan = plan
         self.particles = particles
         self.layout = layout
         self.target_measure = target_measure
         self.stable_source_order = jnp.asarray(stable_order)
+        self.source_active_mask = jnp.asarray(active_host, dtype=jnp.bool_)
+        self.source_capacity = source_count
+        self.ambient_dimension = dimension
+        self.source_support_id = source_support
         self.axis_bounds = bounds
         self.target_shape = layout.shape
         self.target_size = target_size
@@ -435,6 +547,20 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         self.prepared_id = prepared_id
         self.materialized_target = materialized_target
         self.artifact_kind = "particle-grid-splat"
+
+    def physical_particles(self) -> ParticleDiscretization:
+        """Return the bound physical particle discretization.
+
+        Raises ``ValueError`` for an indexed-support schema binding, which has
+        no physical particles (masses, measure, material identity).
+        """
+        if self.particles is None:
+            raise ValueError(
+                "This splat binds an indexed-support schema "
+                f"({self.source_support_id!r}), not a physical particle "
+                "discretization."
+            )
+        return self.particles
 
     @property
     def precision_evidence(self) -> PrecisionEvidenceEnvelope:
@@ -461,7 +587,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> ParticleGridSplatState:
         """Build fixed assignment routes for one runtime particle configuration."""
         raw = jnp.asarray(position)
-        expected = (self.particles.capacity, self.particles.ambient_dimension)
+        expected = (self.source_capacity, self.ambient_dimension)
         if raw.shape != expected:
             raise ValueError(f"Particle positions must have shape {expected}.")
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
@@ -476,7 +602,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
                 assignment_input,
                 is_leaf=lambda value: value is None,
             )
-        active = self.particles.active_mask
+        active = self.source_active_mask
         if active_mask is not None:
             runtime_active = jnp.asarray(active_mask, dtype=jnp.bool_)
             if runtime_active.shape != active.shape:
@@ -523,7 +649,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         ):
             if axis.periodic:
                 margins.append(
-                    jnp.full((self.particles.capacity,), jnp.inf, dtype=geometry.dtype)
+                    jnp.full((self.source_capacity,), jnp.inf, dtype=geometry.dtype)
                 )
             else:
                 coordinate = safe[:, axis_index]
@@ -571,9 +697,9 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         array = jnp.asarray(value)
-        if array.ndim < 1 or array.shape[0] != self.particles.capacity:
+        if array.ndim < 1 or array.shape[0] != self.source_capacity:
             raise ValueError(
-                f"{name} must begin with particle capacity {self.particles.capacity}."
+                f"{name} must begin with particle capacity {self.source_capacity}."
             )
         evaluated = cast_stage(array, self.plan.precision.evaluation_dtype)
         active = state.source_active_mask
@@ -658,8 +784,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             raise ValueError("Mapped route payload and stencil route shapes must match.")
         evaluated = cast_stage(values, self.plan.precision.evaluation_dtype)
         payload_shape = evaluated.shape[2:]
-        active = self.particles.active_mask.reshape(
-            (self.particles.capacity, 1) + (1,) * len(payload_shape)
+        active = self.source_active_mask.reshape(
+            (self.source_capacity, 1) + (1,) * len(payload_shape)
         )
         evaluated = eqx.error_if(
             evaluated,
@@ -728,8 +854,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             )
         evaluated = cast_stage(values, self.plan.precision.evaluation_dtype)
         payload_shape = evaluated.shape[2:]
-        active = self.particles.active_mask.reshape(
-            (self.particles.capacity, 1) + (1,) * len(payload_shape)
+        active = self.source_active_mask.reshape(
+            (self.source_capacity, 1) + (1,) * len(payload_shape)
         )
         evaluated = eqx.error_if(
             evaluated,
@@ -835,7 +961,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         real_dtype = jnp.asarray(active_total).real.dtype
         epsilon = jnp.finfo(real_dtype).eps
         output_size = self.target_size if target_size is None else int(target_size)
-        operation_count = max(2, self.route_count + self.particles.capacity + output_size)
+        operation_count = max(2, self.route_count + self.source_capacity + output_size)
         accumulated_epsilon = operation_count * epsilon
         roundoff_model_valid = accumulated_epsilon < 0.5
         gamma = accumulated_epsilon / jnp.maximum(1.0 - accumulated_epsilon, epsilon)
@@ -861,7 +987,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             valid_route_count=state.valid_route_count,
             tolerance=tolerance,
             closed_domain_conservation_valid=closed_valid,
-            source_support_id=self.particles.support.support_id,
+            source_support_id=self.source_support_id,
             target_measure_id=self.target_measure.measure_id,
             execution_policy_id=self.plan.execution.policy_id,
             precision_policy_id=self.plan.precision.policy_id,
@@ -879,12 +1005,12 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         self._require_state(state)
         source_values = self._source_payload(state, values, "sample")
         weights = jnp.asarray(sample_weights)
-        if weights.shape != (self.particles.capacity,):
+        if weights.shape != (self.source_capacity,):
             raise ValueError("sample_weights must have the particle-capacity shape.")
         if jnp.issubdtype(weights.dtype, jnp.complexfloating):
             raise TypeError("sample_weights must be real.")
         weights = self.plan.precision.evaluation(weights)
-        active = self.particles.active_mask
+        active = self.source_active_mask
         weights = eqx.error_if(
             weights,
             jnp.any(active & (~jnp.isfinite(weights) | (weights < 0.0))),

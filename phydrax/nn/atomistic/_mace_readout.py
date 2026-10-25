@@ -213,6 +213,126 @@ class MACENonlinearReadout(StrictModule):
 
 
 @final
+class MACENonlinearBiasReadout(StrictModule):
+    """Three-layer gated invariant readout with biased middle and output layers.
+
+    The source ``NonLinearBiasReadoutBlock``: a bias-free first layer
+    ``C -> heads * width``, the normalized activation, the head mask, a biased
+    ``heads * width -> heads * width`` middle layer, the activation and mask
+    again, and a biased ``heads * width -> heads`` output. Weights keep the e3nn
+    fan-in normalization over the whole hidden width; biases are added
+    unnormalized. Under the head mask only the selected head's hidden block
+    reaches the selected output, which is exactly what is evaluated here.
+    """
+
+    __strict_contract__ = True
+
+    first: Float[MACEChannelDim, MACEReadoutHiddenDim]
+    middle: Float[MACEReadoutHiddenDim, MACEReadoutHiddenDim]
+    middle_bias: Float[MACEReadoutHiddenDim]
+    second: Float[MACEReadoutHiddenDim, MACEHeadDim]
+    bias: Float[MACEHeadDim]
+    activation_scale: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        first: ArrayLike,
+        middle: ArrayLike,
+        middle_bias: ArrayLike,
+        second: ArrayLike,
+        bias: ArrayLike,
+        /,
+        *,
+        activation_scale: float,
+    ) -> None:
+        arrays = tuple(
+            jnp.asarray(value) for value in (first, middle, middle_bias, second, bias)
+        )
+        first_, middle_, middle_bias_, second_, bias_ = arrays
+        dtype = first_.dtype
+        if dtype not in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)) or any(
+            value.dtype != dtype for value in arrays
+        ):
+            raise TypeError("Nonlinear bias readout arrays must share float32/float64.")
+        if first_.ndim != 2 or second_.ndim != 2:
+            raise ValueError("Nonlinear bias readout weights must be rank-two.")
+        hidden, heads = second_.shape
+        if (
+            first_.shape[1] != hidden
+            or middle_.shape != (hidden, hidden)
+            or middle_bias_.shape != (hidden,)
+            or bias_.shape != (heads,)
+            or heads <= 0
+            or hidden % heads != 0
+        ):
+            raise ValueError(
+                "Nonlinear bias readout widths must be heads * width per layer."
+            )
+        scale = float(activation_scale)
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError("activation_scale must be finite and positive.")
+        self.first = first_
+        self.middle = middle_
+        self.middle_bias = middle_bias_
+        self.second = second_
+        self.bias = bias_
+        self.activation_scale = scale
+
+    @classmethod
+    def initialize(
+        cls,
+        channel_count: int,
+        width: int,
+        head_count: int,
+        /,
+        *,
+        activation_scale: float,
+        key: PRNGKey,
+        dtype: DTypeLike,
+    ) -> MACENonlinearBiasReadout:
+        """Unit-normal e3nn weights and zero biases, the source initialization."""
+        first_key, middle_key, second_key = jr.split(key, 3)
+        hidden = width * head_count
+        return cls(
+            jr.normal(first_key, (channel_count, hidden), dtype=dtype),
+            jr.normal(middle_key, (hidden, hidden), dtype=dtype),
+            jnp.zeros((hidden,), dtype=dtype),
+            jr.normal(second_key, (hidden, head_count), dtype=dtype),
+            jnp.zeros((head_count,), dtype=dtype),
+            activation_scale=activation_scale,
+        )
+
+    @property
+    def head_count(self) -> int:
+        return self.second.shape[1]
+
+    @property
+    def width(self) -> int:
+        return self.second.shape[0] // self.second.shape[1]
+
+    def __call__(self, scalars: Array, head: int, /) -> Array:
+        """Energy of one head; ``scalars[..., C] -> [...]``."""
+        width = self.width
+        dtype = self.first.dtype
+        block = slice(head * width, (head + 1) * width)
+        hidden_fan_in = jnp.sqrt(jnp.asarray(self.second.shape[0], dtype=dtype))
+        first = self.first[:, block] / jnp.sqrt(
+            jnp.asarray(self.first.shape[0], dtype=dtype)
+        )
+        hidden = self.activation_scale * jax.nn.silu(scalars @ first)
+        middle = self.middle[block, block] / hidden_fan_in
+        hidden = self.activation_scale * jax.nn.silu(
+            hidden @ middle + self.middle_bias[block]
+        )
+        return hidden @ (self.second[block, head] / hidden_fan_in) + self.bias[head]
+
+
+MACEReadout: TypeAlias = (
+    MACELinearReadout | MACENonlinearReadout | MACENonlinearBiasReadout
+)
+
+
+@final
 class MACEInvariantReadoutProduct(StrictModule):
     """Separate one-interaction invariant product ahead of the nonlinear readout.
 
@@ -486,7 +606,9 @@ __all__ = [
     "MACEEnergyScaling",
     "MACEInvariantReadoutProduct",
     "MACELinearReadout",
+    "MACENonlinearBiasReadout",
     "MACENonlinearReadout",
+    "MACEReadout",
     "MACEPairRepulsion",
 ]
 
@@ -494,6 +616,7 @@ for _artifact in (
     MACEEnergyReference,
     MACEInvariantReadoutProduct,
     MACELinearReadout,
+    MACENonlinearBiasReadout,
     MACENonlinearReadout,
     MACEPairRepulsion,
 ):

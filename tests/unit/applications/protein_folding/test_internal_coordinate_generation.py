@@ -8,7 +8,7 @@ import jax.random as jr
 import numpy as np
 import pytest
 
-from phydrax import atomistic
+from phydrax import atomistic, ValuePort
 from phydrax.applications.protein_folding import (
     bind_protein,
     PreparedProteinQualification,
@@ -25,10 +25,18 @@ from phydrax.applications.protein_folding.generation import (
     sample_protein_coordinate_proposals,
 )
 from phydrax.artifacts import ScientificArtifactEnvelope
+from phydrax.atomistic._generation import (
+    AtomisticMemoryGenerationSink,
+    AtomisticProposalStatus,
+)
 from phydrax.qualification import ReferenceArtifactManifest
-from phydrax.units import ANGSTROM
+from phydrax.units import ANGSTROM, RADIAN
+from tests._support.atomistic_bundles import prepare_force_field
 
 
+# Keep atom identity, cyclic stereochemistry, coordinates and harmonic reference
+# data adjacent in this bounded fixture; generic fixture machinery would obscure
+# which physical constraint each proline/glycine/aromatic variant changes.
 def _cis_proline_fixture(
     *, unsupported_ring: Any = False, glycine: Any = False, aromatic: Any = False
 ) -> Any:
@@ -213,14 +221,17 @@ def _cis_proline_fixture(
     potential = atomistic.AtomisticPotentialProgram(
         [atomistic.HarmonicBondPotential(np.ones(len(routes)), lengths)]
     )
-    force_field = atomistic.AtomisticForceFieldPlan(
-        system,
-        potential,
-        atomistic.AtomisticNonbondedPolicy(8.0, electrostatics="direct"),
-        atomistic.AtomisticForceFieldProvenance(
-            "synthetic", (digest,), "analytic-harmonic", "explicit-unit-fixture"
-        ),
-    ).prepare()
+    # Harmonic-only Hamiltonian: no neighborhood requirement, an empty bundle.
+    force_field = prepare_force_field(
+        atomistic.AtomisticForceFieldPlan(
+            system,
+            potential,
+            atomistic.AtomisticNonbondedPolicy(8.0, electrostatics="direct"),
+            atomistic.AtomisticForceFieldProvenance(
+                "synthetic", (digest,), "analytic-harmonic", "explicit-unit-fixture"
+            ),
+        )
+    )
     binding = bind_protein(
         hypothesis,
         chemistry,
@@ -329,11 +340,27 @@ def test_internal_coordinate_generation_scenario_2() -> None:
     )
     coordinates = decoder.decode(periodic).positions
     groups = ("validation", "training", "training", "training", "training", "validation")
+    conditioning = atomistic.AtomisticConditioningSpec(
+        (
+            atomistic.AtomisticConditionField(
+                "declared_torsion_offset",
+                ValuePort(
+                    "test.protein-generation.declared-torsion-offset",
+                    event_shape=(),
+                    component_ids=("offset",),
+                    dimensions=(RADIAN.dimension,),
+                    representation="declared-torsion-offset",
+                    normalization_id="identity",
+                ),
+                unit=RADIAN,
+            ),
+        )
+    )
     data = prepare_coordinate_training_data(
         support,
         coordinates,
-        np.asarray(offsets)[:, None],
-        condition_names=("declared_torsion_offset_radian",),
+        {"declared_torsion_offset": np.asarray(offsets)},
+        conditioning=conditioning,
         record_ids=tuple(f"synthetic-{index}" for index in range(6)),
         source_manifest_ids=(rights.manifest_id,) * 6,
         split_group_ids=groups,
@@ -353,9 +380,23 @@ def test_internal_coordinate_generation_scenario_2() -> None:
         width=8,
         depth=1,
     )
+    sink = AtomisticMemoryGenerationSink("protein-internal-proposals")
     batch = sample_protein_coordinate_proposals(
-        fit, jr.key(42), jnp.asarray([[-0.2], [0.2]]), qualification
+        fit,
+        jr.key(42),
+        {"declared_torsion_offset": jnp.asarray([-0.2, 0.2])},
+        qualification,
+        campaign_id="protein-internal-campaign",
+        start_ordinal=0,
+        lanes_per_member=2,
+        sink=sink,
     )
+    assert batch.ordinals == (0, 1)
+    assert tuple(record.proposal_id for record in sink.records) == batch.sample_ids
+    decoder_rejected = (
+        np.asarray(batch.proposal_status) & int(AtomisticProposalStatus.DECODER_INVALID)
+    ) != 0
+    assert np.array_equal(decoder_rejected, ~np.asarray(batch.decoder_evidence.valid))
     # ty: ignore[unresolved-attribute]
     assert batch.internal_coordinates.shape == (2, decoder.coordinate_size)
     # ty: ignore[unresolved-attribute]

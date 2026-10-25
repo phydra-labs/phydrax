@@ -126,8 +126,9 @@ It is a declared geometry screen, not a folding basin assignment or an
 experimental structure-quality score. Its finite clash-pair capacity is enforced.
 
 `workflows.prepare_protein_dynamics` composes either `VelocityVerletPlan` (NVE)
-or `BAOABLangevinPlan` (NVT) with the existing force field, neighborhood, and
-constraints. `run_protein_dynamics` additionally requires a qualification bound
+or `BAOABLangevinPlan` (NVT) with the existing force field, prepared with its
+explicit `neighborhood_bundle=` resource declaration, and its constraints.
+`run_protein_dynamics` additionally requires a qualification bound
 to the same binding, finite initial velocity with an explicit velocity unit, a
 PRNG key, and trajectory sampling policy. Step size, friction, and temperature
 are in the native unit system. Failed initial geometry raises; failed native

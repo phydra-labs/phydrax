@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from jax import Array
-from jax.typing import ArrayLike, DTypeLike
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from phydrax.ein import contract
@@ -21,10 +21,12 @@ from phydrax.optim._adam import adam
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import IdentityWords
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import (
     combine_parameters,
+    ExplicitFreeze,
     fixed_field,
     NonTrainableState,
 )
@@ -43,29 +45,28 @@ from ..._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
-from ...typing import checked, PRNGKey
-from .._dynamics import PreparedAtomisticDynamics
-from ._bias import (
-    AbstractAtomisticBiasPlan,
-    AbstractAtomisticBiasState,
-    AbstractPreparedAtomisticBias,
-    AtomisticBiasEvaluation,
-)
-from ._collective_variable import (
-    AbstractCollectiveVariableProgram,
-    CollectiveVariableMetric,
-)
+from ...typing import PRNGKey
+from ._bias import AbstractBiasForm, BiasFormEvaluation
+from ._bias_history import AtomisticBiasHistoryPlan, AtomisticBiasHistoryState
+from ._collective_variable import CollectiveVariableMetric
 
 
 class MeanForceData(StrictModule, NonTrainableState):
+    """Mean-force samples ``dA/dxi`` at CV centers with errors and weights.
+
+    PyTree: arrays and metrics only; the caller's ``source_id`` enters the
+    exact dataset digest, carried as dynamic ``dataset_identity`` words
+    (``dataset_id`` decodes it on the host), so training and validation
+    executables are shared by every dataset of one layout.
+    """
+
     centers: Array
     free_energy_gradients: Array
     gradient_standard_error: Array
     weights: Array
     valid: Array
     metrics: tuple[CollectiveVariableMetric, ...]
-    source_id: str = eqx.field(static=True)
-    dataset_id: str = eqx.field(static=True)
+    dataset_identity: IdentityWords
 
     def __init__(
         self,
@@ -139,8 +140,7 @@ class MeanForceData(StrictModule, NonTrainableState):
         self.weights = jnp.asarray(mass)
         self.valid = jnp.asarray(support)
         self.metrics = resolved_metrics
-        self.source_id = identifier
-        self.dataset_id = canonical_fingerprint(
+        self.dataset_identity = IdentityWords.of(
             {
                 "kind": "mean-force-data",
                 "source": identifier,
@@ -157,12 +157,19 @@ class MeanForceData(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def dataset_id(self) -> str:
+        """Host decoding of the canonical mean-force dataset digest."""
+        return self.dataset_identity.fingerprint()
+
 
 class RestrainedMeanForcePlan(StrictModule, NonTrainableState):
+    """Finite-stiffness restrained windows; ``plan_identity`` is its exact digest."""
+
     centers: Array
     stiffness: Array
     metrics: tuple[CollectiveVariableMetric, ...]
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -196,7 +203,7 @@ class RestrainedMeanForcePlan(StrictModule, NonTrainableState):
         self.centers = jnp.asarray(center)
         self.stiffness = jnp.asarray(stiffness_)
         self.metrics = resolved_metrics
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "restrained-mean-force",
                 "metrics": [metric.metric_id for metric in resolved_metrics],
@@ -206,6 +213,11 @@ class RestrainedMeanForcePlan(StrictModule, NonTrainableState):
                 "approximation": "finite-stiffness-restrained-gradient",
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical restrained-window plan digest."""
+        return self.plan_identity.fingerprint()
 
 
 def estimate_restrained_free_energy_gradient(
@@ -318,14 +330,30 @@ class FreeEnergyTrainingPolicy(StrictModule, NonTrainableState):
 
 
 class FreeEnergyFitResult(StrictModule):
+    """Selected free-energy model and its training evidence.
+
+    ``model_id`` is the caller's declared label; the dataset and result
+    digests are dynamic words (``dataset_id``/``result_id`` on the host).
+    """
+
     model: AbstractArrayModel
     training_loss: Array = fixed_field()
     validation_loss: Array = fixed_field()
     progress: TrainingProgress = fixed_field()
     valid: Array = fixed_field()
     model_id: str = eqx.field(static=True)
-    dataset_id: str = eqx.field(static=True)
-    result_id: str = eqx.field(static=True)
+    dataset_identity: IdentityWords = fixed_field()
+    result_identity: IdentityWords = fixed_field()
+
+    @property
+    def dataset_id(self) -> str:
+        """Host decoding of the training dataset digest."""
+        return self.dataset_identity.fingerprint()
+
+    @property
+    def result_id(self) -> str:
+        """Host decoding of the canonical fit-result digest."""
+        return self.result_identity.fingerprint()
 
 
 def _free_energy_loss(
@@ -505,7 +533,7 @@ def fit_free_energy_model(
         & jnp.all(jnp.isfinite(training_values))
         & jnp.all(jnp.isfinite(validation_values))
     )
-    result_id = canonical_fingerprint(
+    result_identity = IdentityWords.of(
         {
             "kind": "free-energy-fit",
             "model": identifier,
@@ -521,31 +549,48 @@ def fit_free_energy_model(
         progress=controller.progress,
         valid=valid,
         model_id=identifier,
-        dataset_id=data.dataset_id,
-        result_id=result_id,
+        dataset_identity=data.dataset_identity,
+        result_identity=result_identity,
     )
 
 
-class LearnedFreeEnergyBiasState(AbstractAtomisticBiasState):
+class LearnedFreeEnergyCommittee(StrictModule):
+    """Gauge-fixed committee prediction, its spread and the derived trust."""
+
+    mean: Array
+    uncertainty: Array
+    trust: Array
     successful: Array
-    bias_id: str = eqx.field(static=True)
 
 
-class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
-    variables: AbstractCollectiveVariableProgram
+class LearnedFreeEnergyBiasForm(AbstractBiasForm, ExplicitFreeze):
+    """Conservative learned bias ``-f * trust(sigma) * mean_k(A_k(x) - A_k(x_ref))``.
+
+    Each committee member is gauge-fixed at ``reference``; ``trust`` decreases
+    smoothly (C1) from one at ``trusted_uncertainty`` to zero at
+    ``rejected_uncertainty`` of the committee standard deviation, and the whole
+    scalar (including the trust gate) is differentiated by the program.  Bind it
+    to a CV program with :class:`AtomisticBiasTerm`.  ``bias_fraction`` and
+    the uncertainty thresholds are fixed dynamic scalars; the declared
+    ``model_ids`` enter only the exact ``form_identity`` digest.
+    The bound committee is an intentionally frozen runtime bias. Fit its
+    models before binding or construct a new form; its numerical leaves remain
+    dynamic without becoming optimization parameters of the bias holder.
+    """
+
     models: tuple[AbstractArrayModel, ...]
-    model_ids: tuple[str, ...] = eqx.field(static=True)
     reference: Array = fixed_field()
     offsets: Array = fixed_field()
-    bias_fraction: float = eqx.field(static=True)
-    trusted_uncertainty: float = eqx.field(static=True)
-    rejected_uncertainty: float = eqx.field(static=True)
-    bias_id: str = eqx.field(static=True)
+    bias_fraction: Array = fixed_field()
+    trusted_uncertainty: Array = fixed_field()
+    rejected_uncertainty: Array = fixed_field()
+    dimension: int = eqx.field(static=True)
+    control_size: int = eqx.field(static=True)
+    history: AtomisticBiasHistoryPlan | None
+    form_identity: IdentityWords = fixed_field()
 
-    @checked
     def __init__(
         self,
-        variables: AbstractCollectiveVariableProgram,
         models: tuple[AbstractArrayModel, ...],
         /,
         *,
@@ -563,17 +608,16 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
             or any(not value for value in identifiers)
         ):
             raise ValueError("A learned bias requires aligned models and model IDs.")
+        reference_ = jnp.asarray(reference, dtype=jnp.float64).reshape((-1,))
+        dimension = int(reference_.shape[0])
         if any(
             not isinstance(model, AbstractArrayModel)
-            or model.in_size != variables.output_size
+            or model.in_size != dimension
             or model.out_size != 1
             for model in members
         ):
-            raise ValueError("Bias models must map the CV program to one scalar.")
-        reference_ = jnp.asarray(reference, dtype=jnp.float64).reshape((-1,))
-        if reference_.shape != (variables.output_size,) or not bool(
-            jnp.all(jnp.isfinite(reference_))
-        ):
+            raise ValueError("Bias models must map the CV vector to one scalar.")
+        if not bool(jnp.all(jnp.isfinite(reference_))):
             raise ValueError("Bias reference must be a finite CV vector.")
         fraction = float(bias_fraction)
         trusted = float(trusted_uncertainty)
@@ -591,19 +635,22 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
                 jnp.asarray(model(reference_, key=None)).reshape(()) for model in members
             )
         )
-        self.variables = variables
         self.models = members
-        self.model_ids = identifiers
         self.reference = reference_
         self.offsets = offsets
-        self.bias_fraction = fraction
-        self.trusted_uncertainty = trusted
-        self.rejected_uncertainty = rejected
-        self.bias_id = canonical_fingerprint(
+        self.bias_fraction = jnp.asarray(fraction, dtype=jnp.float64)
+        self.trusted_uncertainty = jnp.asarray(trusted, dtype=jnp.float64)
+        self.rejected_uncertainty = jnp.asarray(rejected, dtype=jnp.float64)
+        self.dimension = dimension
+        self.control_size = 0
+        self.history = None
+        self.form_identity = IdentityWords.of(
             {
                 "kind": "learned-free-energy-bias",
-                "variables": variables.program_id,
                 "models": list(identifiers),
+                "parameters": array_tree_fingerprint(
+                    jax.tree.map(np.asarray, eqx.filter(members, eqx.is_inexact_array))
+                ),
                 "reference": np.asarray(reference_).tolist(),
                 "bias_fraction": fraction.hex(),
                 "trusted_uncertainty": trusted.hex(),
@@ -611,133 +658,53 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
             }
         )
 
-    def initialize(self, dtype: DTypeLike = jnp.float64) -> LearnedFreeEnergyBiasState:
-        return LearnedFreeEnergyBiasState(
-            successful=jnp.asarray(True, dtype=jnp.bool_), bias_id=self.bias_id
-        )
-
-    def prepare(
-        self, dynamics: PreparedAtomisticDynamics, /
-    ) -> "PreparedLearnedFreeEnergyBias":
-        return PreparedLearnedFreeEnergyBias(self, dynamics)
-
-
-class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
-    plan: LearnedFreeEnergyBiasPlan
-    dynamics: PreparedAtomisticDynamics
-    prepared_id: str = eqx.field(static=True)
-
-    @checked
-    def __init__(
-        self,
-        plan: LearnedFreeEnergyBiasPlan,
-        dynamics: PreparedAtomisticDynamics,
-        /,
-    ) -> None:
-        self.plan = plan
-        self.dynamics = dynamics
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-learned-free-energy-bias",
-                "plan": plan.bias_id,
-                "dynamics": dynamics.prepared_id,
-            }
-        )
-
-    def energy(
-        self,
-        positions: Array,
-        state: AbstractAtomisticBiasState,
-        time: Array,
-        /,
-    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
-        if not isinstance(state, LearnedFreeEnergyBiasState):
-            raise TypeError("state must be a LearnedFreeEnergyBiasState.")
-        if state.bias_id != self.plan.bias_id:
-            raise ValueError("Learned bias state belongs to another bias plan.")
-        del time
-        values, valid = self.plan.variables.evaluate(
-            positions, cell=self.dynamics.system.cell
-        )
+    def committee(self, values: Array, /) -> LearnedFreeEnergyCommittee:
         predictions = jnp.stack(
             tuple(
                 jnp.asarray(model(values, key=None)).reshape(()) - offset
-                for model, offset in zip(self.plan.models, self.plan.offsets, strict=True)
+                for model, offset in zip(self.models, self.offsets, strict=True)
             )
         )
         mean = jnp.mean(predictions)
         variance = jnp.mean((predictions - mean) ** 2)
         uncertainty = jnp.sqrt(variance + jnp.asarray(jnp.finfo(predictions.dtype).tiny))
         coordinate = jnp.clip(
-            (uncertainty - self.plan.trusted_uncertainty)
-            / (self.plan.rejected_uncertainty - self.plan.trusted_uncertainty),
+            (uncertainty - self.trusted_uncertainty)
+            / (self.rejected_uncertainty - self.trusted_uncertainty),
             0.0,
             1.0,
         )
         trust = 1.0 - coordinate * coordinate * (3.0 - 2.0 * coordinate)
-        energy = -self.plan.bias_fraction * trust * mean
-        successful = (
-            valid
-            & state.successful
-            & jnp.all(jnp.isfinite(predictions))
-            & jnp.isfinite(energy)
+        return LearnedFreeEnergyCommittee(
+            mean=mean,
+            uncertainty=uncertainty,
+            trust=trust,
+            successful=jnp.all(jnp.isfinite(predictions)),
         )
-        return energy, (values, successful, uncertainty, trust)
 
     def evaluate(
         self,
-        positions: Array,
-        state: AbstractAtomisticBiasState,
-        time: Array,
+        values: Array,
+        metrics: tuple[CollectiveVariableMetric, ...],
+        controls: Array,
+        history: AtomisticBiasHistoryState | None,
+        owner_key: Array,
         /,
-    ) -> AtomisticBiasEvaluation:
-        (energy, auxiliary), gradient = jax.value_and_grad(
-            lambda value: self.energy(value, state, time), has_aux=True
-        )(positions)
-        values, successful, uncertainty, trust = auxiliary
-        successful = successful & jnp.all(jnp.isfinite(gradient))
-        return AtomisticBiasEvaluation(
-            energy,
-            -gradient,
-            values,
-            successful,
-            jnp.zeros((values.shape[0],) + positions.shape, dtype=positions.dtype),
-            uncertainty,
-            trust,
-            state,
-            self.prepared_id,
-        )
-
-    @checked
-    def update(
-        self,
-        state: AbstractAtomisticBiasState,
-        evaluation: AtomisticBiasEvaluation,
-        physical_forces: Array,
-        /,
-    ) -> LearnedFreeEnergyBiasState:
-        if not isinstance(state, LearnedFreeEnergyBiasState):
-            raise TypeError("state must be a LearnedFreeEnergyBiasState.")
-        if state.bias_id != self.plan.bias_id:
-            raise ValueError("Learned bias state belongs to another bias plan.")
-        if evaluation.bias_id != self.prepared_id:
-            raise ValueError(
-                "Learned bias evaluation belongs to another prepared runtime."
-            )
-        del physical_forces
-        return LearnedFreeEnergyBiasState(
-            successful=state.successful & evaluation.successful,
-            bias_id=state.bias_id,
+    ) -> BiasFormEvaluation:
+        del metrics, controls, history, owner_key
+        committee = self.committee(values)
+        energy = -self.bias_fraction * committee.trust * committee.mean
+        return BiasFormEvaluation.without_geometry(
+            energy, committee.successful & jnp.isfinite(energy)
         )
 
 
 __all__ = [
     "FreeEnergyFitResult",
     "FreeEnergyTrainingPolicy",
-    "LearnedFreeEnergyBiasPlan",
-    "LearnedFreeEnergyBiasState",
+    "LearnedFreeEnergyBiasForm",
+    "LearnedFreeEnergyCommittee",
     "MeanForceData",
-    "PreparedLearnedFreeEnergyBias",
     "RestrainedMeanForcePlan",
     "estimate_restrained_free_energy_gradient",
     "fit_free_energy_model",

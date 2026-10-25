@@ -12,12 +12,11 @@ Run: python -m benchmarks.protein_internal_coordinate_generation --steps 50
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -32,7 +31,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax import atomistic
+from phydrax import atomistic, ValuePort
 from phydrax.applications.protein_folding import (
     bind_protein,
     PreparedProteinQualification,
@@ -51,8 +50,33 @@ from phydrax.applications.protein_folding.generation import (
     sample_protein_coordinate_proposals,
 )
 from phydrax.artifacts import ScientificArtifactEnvelope
+from phydrax.atomistic._generation import (
+    AtomisticMemoryGenerationSink,
+    proposal_address,
+    proposal_keys,
+)
 from phydrax.qualification import ReferenceArtifactManifest
-from phydrax.units import ANGSTROM
+from phydrax.units import ANGSTROM, RADIAN
+
+
+_CAMPAIGN = "original-synthetic-cis-proline-generation-benchmark"
+_CONDITION = "declared_torsion_offset"
+_CONDITIONING = atomistic.AtomisticConditioningSpec(
+    (
+        atomistic.AtomisticConditionField(
+            _CONDITION,
+            ValuePort(
+                "benchmark.protein-generation.declared-torsion-offset",
+                event_shape=(),
+                component_ids=("offset",),
+                dimensions=(RADIAN.dimension,),
+                representation="declared-torsion-offset",
+                normalization_id="identity",
+            ),
+            unit=RADIAN,
+        ),
+    )
+)
 
 
 def _fixed_construct() -> Any:
@@ -231,7 +255,7 @@ def _prepare_corpora() -> Any:
     positions = decoder.decode(periodic).positions
     groups = tuple("validation" if row % 4 == 0 else "training" for row in range(16))
     arguments = dict(
-        condition_names=("declared_torsion_offset_radian",),
+        conditioning=_CONDITIONING,
         record_ids=tuple(f"synthetic-{row}" for row in range(16)),
         source_manifest_ids=(rights.manifest_id,) * 16,
         split_group_ids=groups,
@@ -241,7 +265,7 @@ def _prepare_corpora() -> Any:
     internal = prepare_coordinate_training_data(
         support,
         positions,
-        offsets[:, None],
+        {_CONDITION: offsets},
         corpus_description=(
             "Original fixed-construct kinematic perturbations; non-equilibrium, "
             "not independent proteins, and not sequence-general."
@@ -252,7 +276,7 @@ def _prepare_corpora() -> Any:
     cartesian = prepare_coordinate_training_data(
         support,
         positions,
-        offsets[:, None],
+        {_CONDITION: offsets},
         corpus_description=(
             "Cartesian baseline over the same original non-equilibrium fixed construct."
         ),
@@ -261,7 +285,7 @@ def _prepare_corpora() -> Any:
     return binding, qualification, support, decoder, internal, cartesian
 
 
-def _accepted_diverse_count(positions: Any, accepted: Any, threshold: Any=0.05) -> Any:
+def _accepted_diverse_count(positions: Any, accepted: Any, threshold: Any = 0.05) -> Any:
     rows = np.asarray(positions)[np.asarray(accepted, dtype="bool")]
     representatives = []
     for row in rows:
@@ -274,6 +298,34 @@ def _accepted_diverse_count(positions: Any, accepted: Any, threshold: Any=0.05) 
 
 def _full_evidence(qualification: Any, positions: Any) -> Any:
     return jax.vmap(qualification.evaluate)(positions)
+
+
+def _lane_inputs(sampler: Any, root: Any, values: Any) -> Any:
+    """The stream's ordinal-addressed lane keys and typed conditions."""
+    ordinals = jnp.arange(values.shape[0], dtype=jnp.int64)
+    keys = proposal_keys(
+        root,
+        proposal_address(
+            _CAMPAIGN, sampler.support.support_id, sampler.sampler_id, role="proposal"
+        ),
+        ordinals,
+    )
+    conditioning = atomistic.AtomisticConditioning(
+        sampler.support.conditioning,
+        {_CONDITION: values},
+        case_count=values.shape[0],
+        atom_capacity=sampler.support.atom_capacity,
+    )
+    return keys, ordinals, conditioning
+
+
+def _stream_options(name: Any, samples: Any) -> Any:
+    return {
+        "campaign_id": _CAMPAIGN,
+        "start_ordinal": 0,
+        "lanes_per_member": samples,
+        "sink": AtomisticMemoryGenerationSink(name),
+    }
 
 
 def _failure_counts(batch: Any) -> Any:
@@ -299,7 +351,7 @@ def _failure_counts(batch: Any) -> Any:
     return {name: int(jnp.sum(values)) for name, values in rows}
 
 
-def run(*, steps: Any=50, samples: Any=16, repeats: Any=3) -> Any:
+def run(*, steps: Any = 50, samples: Any = 16, repeats: Any = 3) -> Any:
     prepared, preparation_seconds = measure_synchronized(_prepare_corpora)
     binding, qualification, support, decoder, internal_data, cartesian_data = prepared
     cartesian_fit, cartesian_fit_seconds = measure_synchronized(
@@ -322,31 +374,43 @@ def run(*, steps: Any=50, samples: Any=16, repeats: Any=3) -> Any:
             depth=2,
         )
     )
-    conditions = jnp.linspace(-0.4, 0.4, samples)[:, None]
+    values = jnp.linspace(-0.4, 0.4, samples)
+    conditions = values[:, None]
     cartesian_sampler = prepare_coordinate_sampler(cartesian_fit)
     internal_sampler = prepare_coordinate_sampler(internal_fit)
+    cartesian_inputs = _lane_inputs(cartesian_sampler, jr.key(201), values)
+    internal_inputs = _lane_inputs(internal_sampler, jr.key(202), values)
     compiled_cartesian, cartesian_compilation = measure_lower_and_compile(
-        lambda: eqx.filter_jit(cartesian_sampler).lower(jr.key(201), conditions),
+        lambda: eqx.filter_jit(cartesian_sampler.propose).lower(*cartesian_inputs),
         lambda lowered: lowered.compile(),
     )
     compiled_internal, internal_compilation = measure_lower_and_compile(
-        lambda: eqx.filter_jit(internal_sampler).lower(jr.key(202), conditions),
+        lambda: eqx.filter_jit(internal_sampler.propose).lower(*internal_inputs),
         lambda lowered: lowered.compile(),
     )
     _, cartesian_solver_timing = measure_repeated(
-        lambda: compiled_cartesian(jr.key(201), conditions), warmup=1, repeats=repeats
+        lambda: compiled_cartesian(*cartesian_inputs), warmup=1, repeats=repeats
     )
     _, internal_solver_timing = measure_repeated(
-        lambda: compiled_internal(jr.key(202), conditions), warmup=1, repeats=repeats
+        lambda: compiled_internal(*internal_inputs), warmup=1, repeats=repeats
     )
     cartesian_batch, cartesian_end_to_end = measure_repeated(
-        lambda: sample_coordinate_proposals(cartesian_fit, jr.key(201), conditions),
+        lambda: sample_coordinate_proposals(
+            cartesian_fit,
+            jr.key(201),
+            {_CONDITION: values},
+            **_stream_options("cartesian-memory", samples),
+        ),
         warmup=1,
         repeats=repeats,
     )
     internal_batch, internal_end_to_end = measure_repeated(
         lambda: sample_protein_coordinate_proposals(
-            internal_fit, jr.key(202), conditions, qualification
+            internal_fit,
+            jr.key(202),
+            {_CONDITION: values},
+            qualification,
+            **_stream_options("internal-memory", samples),
         ),
         warmup=1,
         repeats=repeats,

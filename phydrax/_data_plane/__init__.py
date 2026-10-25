@@ -6,6 +6,8 @@
 
 from ._distributed import (
     DistributedIndexEpochPlan,
+    epoch_shard,
+    ExecutionGroupRank,
     make_global_array_from_process_local_data,
     ProcessLocalBatch,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "BoundedPrefetchIterator",
     "DistributedIndexEpochPlan",
     "EPOCH_ORDER_ALGORITHM",
+    "ExecutionGroupRank",
+    "epoch_shard",
     "IndexEpochPlan",
     "ProcessLocalBatch",
     "StatelessIndexPermutation",

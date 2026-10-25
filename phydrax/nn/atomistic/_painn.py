@@ -4,43 +4,69 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 
 from phydrax.ein import contract
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
+from ..._model._fixed_binding import require_identical
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic._graph import (
-    AtomisticGraph,
-    AtomisticGraphExecutionPlan,
-    AtomisticGraphTopology,
-    case_energy_totals,
-    realize_atomistic_graph,
+from ..._validation import positive_finite_float, positive_integer
+from ...atomistic._conditioning import (
+    AtomisticModelOutputs,
+    AtomisticObservable,
+    AtomisticObservableRequest,
 )
+from ...atomistic._graph import (
+    AtomisticGraphExecutionPlan,
+    case_energy_totals,
+)
+from ...atomistic._hessian import (
+    atomistic_edge_distance_locus,
+    ATOMISTIC_NONCOINCIDENT_SUPPORT,
+)
+from ...atomistic._model_inputs import AtomisticGraphInputs
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
     AtomisticPotentialCapabilities,
-    AtomisticSpeciesKind,
 )
 from ...atomistic._types import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
+    AtomisticSpeciesKind,
 )
 from ...sparse._streamed import PreparedStreamedRelation, StreamedPayloadSpec
 from ...typing import checked, PRNGKey
 from ..layers import Linear
 from ..parameters import IdentityTransform
+from ._constructed_admission import require_atomistic_contracts, require_constructed
+
+
+# The exact atomwise-update norm ``|V v|`` is a cone wherever a gated vector
+# channel vanishes (for example by inversion symmetry of an atom environment).
+# The locus is model-internal: no graph evidence certifies a point off it.
+_VECTOR_NORM_ZERO_LOCUS = "atomistic-nonsmooth-locus:painn-vector-norm-zero"
+_METHOD_ID = "negative-position-gradient-of-total-painn-energy"
 
 
 class _PaiNNConfiguration(StrictModule, NonTrainableState):
@@ -51,6 +77,75 @@ class _PaiNNConfiguration(StrictModule, NonTrainableState):
     radial_basis_count: int = eqx.field(static=True)
     maximum_species_id: int = eqx.field(static=True)
     species_kind: AtomisticSpeciesKind = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        cutoff: float,
+        feature_count: int,
+        interaction_count: int,
+        radial_basis_count: int,
+        maximum_species_id: int,
+        species_kind: AtomisticSpeciesKind,
+        dtype: np.dtype[Any],
+    ) -> None:
+        cutoff_value = positive_finite_float(cutoff, "cutoff")
+        features = positive_integer(feature_count, "feature_count")
+        interactions = positive_integer(interaction_count, "interaction_count")
+        radial_count = positive_integer(radial_basis_count, "radial_basis_count")
+        maximum_z = positive_integer(maximum_species_id, "maximum_species_id")
+        if not isinstance(species_kind, AtomisticSpeciesKind):
+            raise TypeError("species_kind must be AtomisticSpeciesKind.")
+        # Fixed sinc frequencies 1..R of the radial basis, in the compute dtype.
+        self.radial_frequencies = jnp.arange(1, radial_count + 1, dtype=dtype)
+        self.cutoff = cutoff_value
+        self.feature_count = features
+        self.interaction_count = interactions
+        self.radial_basis_count = radial_count
+        self.maximum_species_id = maximum_z
+        self.species_kind = species_kind
+
+
+def _architecture_id(
+    scale: AtomisticScaleContract,
+    precision: AtomisticPrecisionPolicy,
+    configuration: _PaiNNConfiguration,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "painn-architecture",
+            "scale": scale.scale_id,
+            "precision": precision.policy_id,
+            "cutoff": configuration.cutoff,
+            "feature_count": configuration.feature_count,
+            "interaction_count": configuration.interaction_count,
+            "radial_basis_count": configuration.radial_basis_count,
+            "maximum_species_id": configuration.maximum_species_id,
+            "species_kind": configuration.species_kind.value,
+        }
+    )
+
+
+def _readout_hidden(feature_count: int, key: PRNGKey, /) -> Linear:
+    return Linear(
+        in_size=feature_count,
+        out_size=feature_count,
+        activation=jax.nn.silu,
+        rwf=False,
+        weight_transform=IdentityTransform(),
+        key=key,
+    )
+
+
+def _readout_energy(feature_count: int, key: PRNGKey, /) -> Linear:
+    return Linear(
+        in_size=feature_count,
+        out_size="scalar",
+        rwf=False,
+        weight_transform=IdentityTransform(),
+        key=key,
+    )
 
 
 class _PaiNNInteraction(StrictModule):
@@ -264,48 +359,33 @@ class PaiNNPotential(AbstractAtomisticPotential):
     ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
-        cutoff_value = float(cutoff)
-        features = int(feature_count)
-        interactions = int(interaction_count)
-        radial_count = int(radial_basis_count)
-        maximum_z = int(maximum_species_id)
-        if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
-            raise ValueError("cutoff must be finite and positive.")
-        if features <= 0 or interactions <= 0 or radial_count <= 0:
-            raise ValueError(
-                "PaiNN feature, interaction, and radial counts must be positive."
-            )
-        if maximum_z <= 0:
-            raise ValueError("maximum_species_id must be positive.")
-        if not isinstance(species_kind, AtomisticSpeciesKind):
-            raise TypeError("species_kind must be AtomisticSpeciesKind.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, AtomisticPrecisionPolicy):
             raise TypeError("precision must be an AtomisticPrecisionPolicy or None.")
+        compute_dtype = jnp.dtype(precision_.compute_dtype)
+        configuration = _PaiNNConfiguration(
+            cutoff=cutoff,
+            feature_count=feature_count,
+            interaction_count=interaction_count,
+            radial_basis_count=radial_basis_count,
+            maximum_species_id=maximum_species_id,
+            species_kind=species_kind,
+            dtype=compute_dtype,
+        )
+        features = configuration.feature_count
+        interactions = configuration.interaction_count
         keys = jr.split(key, interactions + 3)
         embedding = jr.normal(
-            keys[0], (maximum_z + 1, features), dtype=jnp.dtype(precision_.compute_dtype)
+            keys[0],
+            (configuration.maximum_species_id + 1, features),
+            dtype=compute_dtype,
         ) / jnp.sqrt(jnp.asarray(features, dtype=precision_.compute_dtype))
         interaction_modules = tuple(
-            _PaiNNInteraction(features, radial_count, keys[index + 1])
+            _PaiNNInteraction(features, configuration.radial_basis_count, keys[index + 1])
             for index in range(interactions)
         )
-        readout_hidden = Linear(
-            in_size=features,
-            out_size=features,
-            activation=jax.nn.silu,
-            rwf=False,
-            weight_transform=IdentityTransform(),
-            key=keys[-2],
-        )
-        readout_energy = Linear(
-            in_size=features,
-            out_size="scalar",
-            rwf=False,
-            weight_transform=IdentityTransform(),
-            key=keys[-1],
-        )
-        compute_dtype = jnp.dtype(precision_.compute_dtype)
+        readout_hidden = _readout_hidden(features, keys[-2])
+        readout_energy = _readout_energy(features, keys[-1])
 
         def cast_inexact(value: Any) -> Any:
             if eqx.is_inexact_array(value):
@@ -316,31 +396,83 @@ class PaiNNPotential(AbstractAtomisticPotential):
         self.interactions = jax.tree_util.tree_map(cast_inexact, interaction_modules)
         self.readout_hidden = jax.tree_util.tree_map(cast_inexact, readout_hidden)
         self.readout_energy = jax.tree_util.tree_map(cast_inexact, readout_energy)
-        self.configuration = _PaiNNConfiguration(
-            radial_frequencies=jnp.arange(1, radial_count + 1, dtype=compute_dtype),
-            cutoff=cutoff_value,
-            feature_count=features,
-            interaction_count=interactions,
-            radial_basis_count=radial_count,
-            maximum_species_id=maximum_z,
-            species_kind=species_kind,
-        )
+        self.configuration = configuration
         self.scale = scale
         self.precision = precision_
-        self.architecture_id = canonical_fingerprint(
-            {
-                "kind": "painn-architecture",
-                "scale": scale.scale_id,
-                "precision": precision_.policy_id,
-                "cutoff": cutoff_value,
-                "feature_count": features,
-                "interaction_count": interactions,
-                "radial_basis_count": radial_count,
-                "maximum_species_id": maximum_z,
-                "species_kind": species_kind.value,
-            }
+        self.architecture_id = _architecture_id(scale, precision_, configuration)
+        self.method_id = _METHOD_ID
+
+    def validate(self) -> None:
+        """Rerun every owning check on this (possibly restored) potential.
+
+        This is a host boundary over concrete arrays. Scale and precision must
+        equal their constructor rebuild. The configuration is rebuilt by its
+        own constructor from its declared fields (exact positive integer
+        counts, finite positive float cutoff, species kind) and must equal what
+        is stored, fixed radial frequencies ``1..R`` in the compute dtype
+        included. The species embedding, every interaction and both readouts
+        must be exactly what the constructor builds for that declaration
+        (structure, sizes, SiLU/identity activations, identity weight
+        transforms without weight factorization, dense weight and bias shapes)
+        with finite values in the compute dtype. The recorded architecture and
+        method identities are recomputed. Nothing is reinitialized; any
+        mismatch refuses with ``ValueError`` or ``TypeError``.
+        """
+        require_atomistic_contracts(self.scale, self.precision, "PaiNN")
+        configuration = self.configuration
+        if not isinstance(configuration, _PaiNNConfiguration):
+            raise TypeError("configuration must be a PaiNN configuration.")
+        if type(configuration.cutoff) is not float:
+            raise TypeError("The PaiNN cutoff must be a float.")
+        dtype = np.dtype(self.precision.compute_dtype)
+        require_identical(
+            configuration,
+            _PaiNNConfiguration(
+                cutoff=configuration.cutoff,
+                feature_count=configuration.feature_count,
+                interaction_count=configuration.interaction_count,
+                radial_basis_count=configuration.radial_basis_count,
+                maximum_species_id=configuration.maximum_species_id,
+                species_kind=configuration.species_kind,
+                dtype=dtype,
+            ),
+            "PaiNN configuration",
+            ValueError,
         )
-        self.method_id = "negative-position-gradient-of-total-painn-energy"
+        features = configuration.feature_count
+        require_constructed(
+            self.embedding,
+            jax.ShapeDtypeStruct((configuration.maximum_species_id + 1, features), dtype),
+            dtype,
+            "PaiNN species embedding",
+        )
+        if len(self.interactions) != configuration.interaction_count:
+            raise ValueError("PaiNN interaction count differs from its configuration.")
+        interaction = eqx.filter_eval_shape(
+            _PaiNNInteraction, features, configuration.radial_basis_count, DOC_KEY0
+        )
+        for index, layer in enumerate(self.interactions):
+            require_constructed(layer, interaction, dtype, f"PaiNN interaction {index}")
+        require_constructed(
+            self.readout_hidden,
+            eqx.filter_eval_shape(_readout_hidden, features, DOC_KEY0),
+            dtype,
+            "PaiNN hidden readout",
+        )
+        require_constructed(
+            self.readout_energy,
+            eqx.filter_eval_shape(_readout_energy, features, DOC_KEY0),
+            dtype,
+            "PaiNN energy readout",
+        )
+        if (
+            self.architecture_id
+            != _architecture_id(self.scale, self.precision, configuration)
+            or self.method_id != _METHOD_ID
+        ):
+            raise ValueError(
+                "The PaiNN potential does not match its recorded identities."
+            )
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:
@@ -351,6 +483,39 @@ class PaiNNPotential(AbstractAtomisticPotential):
             triclinic_periodic=True,
             cell_derivative=True,
             species_kind=self.configuration.species_kind,
+        )
+
+    @property
+    def derivative_contract(self) -> DerivativeContract:
+        """Truthful coordinate and parameter regularity of the PaiNN energy.
+
+        Edge directions require non-coincident positions. The cosine envelope
+        is C1 at the cutoff, and the exact vector norm of the atomwise update is
+        only C0 where a vector channel vanishes, so the energy is a C0 map with
+        smooth pieces: forces are almost-everywhere derivatives and every
+        Hessian or higher response requires an explicit almost-everywhere
+        ``RegularityPolicy``. The cutoff join is certified from the bound graph;
+        the vector-norm locus remains an unresolved condition.
+        """
+        regularity = DerivativeRegularity.piecewise_smooth(
+            continuity=0,
+            conditions=(
+                atomistic_edge_distance_locus(self.configuration.cutoff),
+                _VECTOR_NORM_ZERO_LOCUS,
+            ),
+            support=ATOMISTIC_NONCOINCIDENT_SUPPORT,
+        )
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=regularity,
         )
 
     @checked
@@ -381,23 +546,28 @@ class PaiNNPotential(AbstractAtomisticPotential):
         )
         return basis, envelope[..., None]
 
-    def graph_energy(
+    @checked
+    def evaluate_graph(
         self,
-        species_ids: Array,
-        atom_mask: Array,
-        atom_cases: Array,
-        case_count: int,
-        atom_capacity: int,
-        graph: AtomisticGraph,
+        inputs: AtomisticGraphInputs,
+        request: AtomisticObservableRequest | None = None,
         /,
-    ) -> tuple[Array, Array]:
-        numbers = jnp.asarray(species_ids).reshape((-1,))
+    ) -> AtomisticModelOutputs:
+        inputs.require_compatible(self.scale, self.capabilities.species_kind)
+        if request is not None:
+            request.require_supported(
+                (AtomisticObservable.ENERGY, AtomisticObservable.ATOM_ENERGY),
+                "PaiNNPotential",
+            )
+        graph = inputs.graph
+        case_count, atom_capacity = inputs.case_count, inputs.atom_capacity
+        numbers = inputs.species_ids
         numbers = eqx.error_if(
             numbers,
             jnp.any(numbers > self.configuration.maximum_species_id),
             "Species ID exceeds PaiNNPotential.maximum_species_id.",
         )
-        mask = jnp.asarray(atom_mask, dtype=jnp.bool_).reshape((-1,))
+        mask = inputs.atom_mask
         # One prepared candidate schedule serves every interaction; the cutoff
         # mask is runtime route activity, never a schedule change.
         edges = graph.topology.streamed
@@ -432,80 +602,17 @@ class PaiNNPotential(AbstractAtomisticPotential):
         atom_energy = atom_energy * mask.astype(atom_energy.dtype)
         total_energy = case_energy_totals(
             atom_energy.astype(self.precision.reduction_dtype),
-            jnp.asarray(atom_cases),
+            inputs.atom_cases,
             case_count,
             accumulation,
         )
-        return (
+        return AtomisticModelOutputs(
             total_energy.astype(self.precision.output_dtype),
             atom_energy.reshape((case_count, atom_capacity)).astype(
                 self.precision.output_dtype
             ),
+            inputs.successful,
         )
-
-    def _energy_unchecked(
-        self,
-        batch: AtomisticBatch,
-        positions: Array,
-        execution: AtomisticGraphExecutionPlan,
-        /,
-        *,
-        topology: AtomisticGraphTopology | None = None,
-        cell_vectors: Array | None = None,
-    ) -> tuple[Array, Array, AtomisticGraph]:
-        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
-        if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
-            coordinate = eqx.error_if(
-                coordinate,
-                jnp.any(batch.atom_mask & ~batch.element_mask),
-                "Atomic-number PaiNN cannot evaluate non-element particles.",
-            )
-        graph = realize_atomistic_graph(
-            batch,
-            execution,
-            cutoff=self.configuration.cutoff,
-            positions=coordinate,
-            topology=topology,
-            cell_vectors=cell_vectors,
-        )
-        species = (
-            batch.atomic_numbers
-            if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER
-            else batch.atom_type_ids
-        )
-        energy, atom_energy = self.graph_energy(
-            species,
-            batch.atom_mask,
-            batch.atom_cases,
-            batch.case_count,
-            batch.atom_capacity,
-            graph,
-        )
-        return energy, atom_energy, graph
-
-    def energy(
-        self,
-        batch: AtomisticBatch,
-        execution: AtomisticGraphExecutionPlan,
-        /,
-        *,
-        positions: Array | None = None,
-        topology: AtomisticGraphTopology | None = None,
-        cell_vectors: Array | None = None,
-    ) -> Array:
-        """Evaluate typed-scale total energies, failing closed on graph overflow.
-
-        Periodic batches require ``topology`` from
-        ``prepare_atomistic_graph_topology``, prepared on the host before any
-        transformed call; ``cell_vectors`` default to the batch cells.
-        """
-
-        self._validate_batch(batch)
-        coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(
-            batch, coordinate, execution, topology=topology, cell_vectors=cell_vectors
-        )
-        return graph.require_success(energy)
 
     def __call__(
         self,
@@ -519,6 +626,15 @@ class PaiNNPotential(AbstractAtomisticPotential):
         if isinstance(structure, AtomisticBatch):
             return self.energy(structure, execution)
         raise TypeError("PaiNNPotential expects AtomicStructure or AtomisticBatch.")
+
+
+register_artifact_value("phydrax.nn.atomistic:PaiNNPotential", PaiNNPotential)
+register_artifact_value(
+    "phydrax.nn.atomistic.internal:PaiNNConfiguration", _PaiNNConfiguration
+)
+register_artifact_value(
+    "phydrax.nn.atomistic.internal:PaiNNInteraction", _PaiNNInteraction
+)
 
 
 __all__ = ["PaiNNPotential"]

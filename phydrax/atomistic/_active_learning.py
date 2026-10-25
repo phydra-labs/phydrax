@@ -2,9 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Acquire, label, retrain, qualify and promote transactions of a committee.
+
+`AtomisticLabelSet` is the append-only, revisioned set of authoritative
+provider labels. It exposes its records as an immutable canonical
+`AtomisticStructureSource` and lowers its train/validation records to the
+streaming `AtomisticTrainingProblem`; campaign members are fitted by
+`fit_atomistic_potential`. External provider labels are honest interop: they
+do not satisfy a native-teacher requirement.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,7 +34,7 @@ from ..lifecycle import (
     RevisionLineage,
     RunRecord,
 )
-from ..typing import checked, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._committee import (
     AcquisitionPlan,
     AcquisitionRecord,
@@ -34,18 +45,37 @@ from ._committee import (
 from ._frame import AtomisticFrame, AtomisticSiteDomain
 from ._graph import AtomisticGraphExecutionPlan
 from ._hybrid import AbstractExternalAtomisticProvider, ExternalAtomisticEvaluation
-from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
+from ._neighborhood_bundle import AtomisticNeighborhoodBundlePlan
+from ._potential import (
+    AbstractAtomisticModel,
+    AbstractAtomisticPotential,
+    atomistic_model_revision,
+    AtomisticStressConvention,
+)
 from ._potential_program import AtomisticPotentialProgram, LearnedGraphPotentialTerm
 from ._qualification import AtomisticDynamicsQualificationResult
+from ._structure_store import AtomisticStructureSource
 from ._system import PreparedAtomisticSystem
 from ._training import (
+    atomistic_training_loader,
+    atomistic_training_source,
+    AtomisticObjectiveWeighting,
+    AtomisticTrainingFields,
     AtomisticTrainingPolicy,
     AtomisticTrainingProblem,
     AtomisticTrainingResult,
     fit_atomistic_potential,
 )
-from ._types import AtomisticBatch
+from ._training_objectives import AbstractAtomisticObjective, AtomisticTrainingPrecision
+from ._types import AtomisticBatch, AtomisticSpeciesKind
 from ._units import AtomisticUnitSystem
+
+
+AtomisticLabelSplit = Literal["train", "validation"]
+"""Membership of one label record: training or lineage-disjoint validation."""
+
+_LABEL_SLOTS = ("energy", "forces")
+_PERIODIC_LABEL_SLOTS = ("energy", "forces", "stress")
 
 
 class AtomisticLabelRecord(StrictModule, NonTrainableState):
@@ -61,6 +91,7 @@ class AtomisticLabelRecord(StrictModule, NonTrainableState):
     label_id: str = eqx.field(static=True)
 
 
+@final
 class AtomisticLabelSet(StrictModule, NonTrainableState):
     """Append-only label records with a canonical revision and parent lineage."""
 
@@ -156,22 +187,9 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
             return self
         return AtomisticLabelSet(self.records + additions, parent=self)
 
-    def training_problem(
-        self,
-        system: PreparedAtomisticSystem,
-        graph_execution: AtomisticGraphExecutionPlan,
-        /,
-        *,
-        cutoff: float,
-        skin: float = 0.0,
-    ) -> AtomisticTrainingProblem:
-        """Lower train/validation records into energy/force/stress supervision.
-
-        Provider stress labels are retained in the system pressure unit
-        (energy per cubic length of the system scale); records without stress
-        stay unsupervised by mask. Each split freezes its candidate topology for
-        ``cutoff + skin``.
-        """
+    def _admit_system(self, system: PreparedAtomisticSystem, /) -> None:
+        if not isinstance(system, PreparedAtomisticSystem):
+            raise TypeError("system must be a PreparedAtomisticSystem.")
         if system.prepared_id != self.system_id:
             raise ValueError("Label set belongs to another prepared atomistic system.")
         if self.units.unit_system_id != system.plan.units.unit_system_id:
@@ -184,35 +202,104 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
             raise ValueError(
                 "Label frame stable-ID order must match the prepared atomistic system."
             )
-        training = tuple(value for value in self.records if value.split == "train")
-        validation = tuple(value for value in self.records if value.split == "validation")
-        if not training:
+        if system.plan.cell is None:
+            if any(value.frame.cell_vectors is not None for value in self.records):
+                raise ValueError("Label frames of a finite system cannot carry a cell.")
+            if any(value.stress is not None for value in self.records):
+                raise ValueError("Provider stress labels require a periodic system.")
+
+    def source(
+        self,
+        system: PreparedAtomisticSystem,
+        /,
+        *,
+        split: AtomisticLabelSplit | None = None,
+    ) -> AtomisticStructureSource:
+        """Immutable canonical structure source of the label records.
+
+        One record per label (in label-set order, optionally restricted to one
+        ``split``): its record ID is the label ID and its independent-unit
+        lineage the exact configuration identity, so a configuration labeled
+        by several providers is one unit. Geometry keeps the frame positions
+        and, for a periodic system, the frame cell vectors (the system cell
+        when a frame carries none); species, masses (in the system mass unit)
+        and stable IDs come from the prepared system. Energy and conservative
+        forces are always available. A ``stress`` field exists when any record
+        of the set carries provider stress: the native tensile Cauchy stress in
+        the system pressure unit (``CAUCHY_TENSION_POSITIVE``), unavailable on
+        records without it. Every split therefore shares one schema.
+        """
+        self._admit_system(system)
+        if split is None:
+            records = self.records
+        else:
+            split = parse(split, AtomisticLabelSplit, "split")
+            records = tuple(value for value in self.records if value.split == split)
+            if not records:
+                raise ValueError(f"The label set holds no {split!r} records.")
+        return _label_source(
+            system,
+            records,
+            stress=any(value.stress is not None for value in self.records),
+        )
+
+    def training_problem(
+        self,
+        system: PreparedAtomisticSystem,
+        graph_execution: AtomisticGraphExecutionPlan,
+        objectives: Sequence[AbstractAtomisticObjective],
+        /,
+        *,
+        cutoff: float,
+        skin: float = 0.0,
+        batch_size: int | None = None,
+        seed: int = 0,
+        weighting: AtomisticObjectiveWeighting = "literal",
+        precision: AtomisticTrainingPrecision | None = None,
+    ) -> AtomisticTrainingProblem:
+        """Lower the train/validation records into a streaming training problem.
+
+        The ``train`` source feeds an epoch loader of ``batch_size`` draws
+        (``None``: full batch) shuffled from ``seed``; the ``validation``
+        source, when present, a full-batch validation loader whose lineage,
+        record identities and contents must be disjoint from training.
+        ``objectives`` bind the canonical ``energy``, ``forces`` and, for a
+        periodic system with provider stress, ``stress`` slots; graph
+        topologies are prepared for ``cutoff + skin``.
+        """
+        if not any(value.split == "train" for value in self.records):
             raise ValueError("A label set requires at least one training record.")
-        training_stress, training_stress_mask = _label_stress(training)
-        validation_batch = None
-        validation_energy = None
-        validation_forces = None
-        validation_stress = None
-        validation_stress_mask = None
-        if validation:
-            validation_batch = _label_batch(system, validation)
-            validation_energy = jnp.stack(tuple(value.energy for value in validation))
-            validation_forces = jnp.stack(tuple(value.forces for value in validation))
-            validation_stress, validation_stress_mask = _label_stress(validation)
+        training = self.source(system, split="train")
+        validation = (
+            self.source(system, split="validation")
+            if any(value.split == "validation" for value in self.records)
+            else None
+        )
+        kind = AtomisticSpeciesKind(training.schema.field("species").convention)
+        fields = (
+            AtomisticTrainingFields(species_kind=kind)
+            if system.plan.cell is None
+            else AtomisticTrainingFields(
+                cell="cell", periodic="periodic", species_kind=kind
+            )
+        )
         return AtomisticTrainingProblem(
-            _label_batch(system, training),
+            atomistic_training_loader(
+                training, batch_size=batch_size, stream="training", seed=seed
+            ),
             graph_execution,
+            objectives,
+            scale=system.plan.units.scale,
             cutoff=cutoff,
             skin=skin,
-            training_energy=jnp.stack(tuple(value.energy for value in training)),
-            training_forces=jnp.stack(tuple(value.forces for value in training)),
-            training_stress=training_stress,
-            training_stress_mask=training_stress_mask,
-            validation_batch=validation_batch,
-            validation_energy=validation_energy,
-            validation_forces=validation_forces,
-            validation_stress=validation_stress,
-            validation_stress_mask=validation_stress_mask,
+            fields=fields,
+            validation=(
+                None
+                if validation is None
+                else atomistic_training_loader(validation, stream="validation")
+            ),
+            weighting=weighting,
+            precision=precision,
         )
 
 
@@ -221,6 +308,7 @@ def _label_batch(
 ) -> AtomisticBatch:
     count = len(records)
     plan = system.plan
+    capacity = plan.particle_ids.size
     cells = None
     periodic = None
     if plan.cell is not None:
@@ -234,46 +322,87 @@ def _label_batch(
         )
         periodic = jnp.broadcast_to(plan.cell.periodic_mask, (count, 3))
     return AtomisticBatch(
-        jnp.broadcast_to(plan.atomic_numbers, (count, plan.particle_ids.size)),
+        jnp.broadcast_to(plan.atomic_numbers, (count, capacity)),
         jnp.stack(tuple(record.frame.positions for record in records)),
-        jnp.broadcast_to(plan.masses, (count, plan.particle_ids.size)),
+        jnp.broadcast_to(plan.masses, (count, capacity)),
         plan.units.scale,
-        particle_ids=jnp.broadcast_to(plan.particle_ids, (count, plan.particle_ids.size)),
-        atom_mask=jnp.broadcast_to(plan.active_mask, (count, plan.particle_ids.size)),
+        particle_ids=jnp.broadcast_to(plan.particle_ids, (count, capacity)),
+        atom_type_ids=jnp.broadcast_to(plan.atom_type_ids, (count, capacity)),
+        element_mask=jnp.broadcast_to(plan.element_mask, (count, capacity)),
+        atom_mask=jnp.broadcast_to(plan.active_mask, (count, capacity)),
         cells=cells,
         periodic_axes=periodic,
         structure_ids=tuple(record.configuration_id for record in records),
     )
 
 
-def _label_stress(
-    records: tuple[AtomisticLabelRecord, ...], /
-) -> tuple[Array | None, Array | None]:
-    """Stack provider stress labels; unlabeled records are masked, not zero targets."""
-    labeled = tuple(record.stress is not None for record in records)
-    if not any(labeled):
-        return None, None
-    reference = next(record.stress for record in records if record.stress is not None)
-    stress = jnp.stack(
-        tuple(
-            jnp.zeros_like(reference) if record.stress is None else record.stress
-            for record in records
+def _label_source(
+    system: PreparedAtomisticSystem,
+    records: tuple[AtomisticLabelRecord, ...],
+    /,
+    *,
+    stress: bool,
+) -> AtomisticStructureSource:
+    """Ingest label records at float64; records without stress are unavailable."""
+    stress_values = None
+    stress_available = None
+    if stress:
+        stress_values = np.stack(
+            tuple(
+                np.zeros((3, 3), dtype=np.float64)
+                if record.stress is None
+                else np.asarray(record.stress, dtype=np.float64)
+                for record in records
+            )
         )
+        stress_available = np.asarray(
+            tuple(record.stress is not None for record in records), dtype=np.bool_
+        )
+    return atomistic_training_source(
+        _label_batch(system, records),
+        mass_unit=system.plan.units.mass_unit,
+        energy=np.stack(
+            tuple(np.asarray(record.energy, dtype=np.float64) for record in records)
+        ),
+        forces=np.stack(
+            tuple(np.asarray(record.forces, dtype=np.float64) for record in records)
+        ),
+        stress=stress_values,
+        stress_available=stress_available,
+        record_ids=tuple(record.label_id for record in records),
+        lineage_ids=tuple(record.configuration_id for record in records),
+        stress_convention=AtomisticStressConvention.CAUCHY_TENSION_POSITIVE,
     )
-    mask = jnp.broadcast_to(
-        jnp.asarray(labeled, dtype=jnp.bool_)[:, None, None], stress.shape
-    )
-    return stress, mask
 
 
+@final
 class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
+    """Provider, acquisition, member training and runtime resources of a campaign.
+
+    Members are fitted on ``graph_execution`` against ``objectives`` over the
+    label set's canonical sources (``skin``, ``batch_size``, ``seed``,
+    ``weighting`` and ``precision`` as in `AtomisticLabelSet.training_problem`;
+    the problem cutoff is the largest member cutoff). Objectives may bind only
+    the provider label slots ``energy``, ``forces`` and, for a periodic system,
+    ``stress``. A trained member enters the candidate committee as a learned
+    graph program on ``runtime_graph_execution`` with the one
+    ``runtime_resources`` bundle plan whose requirements equal the member's.
+    """
+
     system: PreparedAtomisticSystem
     provider: AbstractExternalAtomisticProvider
     acquisition: AcquisitionPlan
     graph_execution: AtomisticGraphExecutionPlan
     runtime_graph_execution: AtomisticGraphExecutionPlan
+    runtime_resources: tuple[AtomisticNeighborhoodBundlePlan, ...]
     training: AtomisticTrainingPolicy
+    objectives: tuple[AbstractAtomisticObjective, ...]
+    precision: AtomisticTrainingPrecision
     committee_reduction: CommitteeReductionPolicy
+    skin: float = eqx.field(static=True)
+    batch_size: int | None = eqx.field(static=True)
+    seed: int = eqx.field(static=True)
+    weighting: AtomisticObjectiveWeighting = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -287,19 +416,79 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
         training: AtomisticTrainingPolicy,
         committee_reduction: CommitteeReductionPolicy,
         /,
+        *,
+        objectives: Sequence[AbstractAtomisticObjective],
+        runtime_resources: Sequence[AtomisticNeighborhoodBundlePlan],
+        skin: float = 0.0,
+        batch_size: int | None = None,
+        seed: int = 0,
+        weighting: AtomisticObjectiveWeighting = "literal",
+        precision: AtomisticTrainingPrecision | None = None,
     ) -> None:
         if (
             not isinstance(runtime_graph_execution, AtomisticGraphExecutionPlan)
             or runtime_graph_execution.backend != "particle"
         ):
             raise TypeError("runtime_graph_execution must be a particle graph plan.")
+        objectives_ = tuple(objectives)
+        if not objectives_ or any(
+            not isinstance(value, AbstractAtomisticObjective) for value in objectives_
+        ):
+            raise TypeError(
+                "objectives must be nonempty AbstractAtomisticObjective values."
+            )
+        names = [value.name for value in objectives_]
+        if len(set(names)) != len(names):
+            raise ValueError("Objective names must be unique within a campaign.")
+        admitted = _LABEL_SLOTS if system.plan.cell is None else _PERIODIC_LABEL_SLOTS
+        unknown = sorted(
+            {slot for value in objectives_ for slot in value.label_slots}.difference(
+                admitted
+            )
+        )
+        if unknown:
+            raise ValueError(
+                f"Campaign objectives bind label slots {unknown!r}; provider labels "
+                f"supply only {list(admitted)!r}."
+            )
+        resources = tuple(runtime_resources)
+        if not resources or any(
+            not isinstance(value, AtomisticNeighborhoodBundlePlan) for value in resources
+        ):
+            raise TypeError(
+                "runtime_resources must be nonempty AtomisticNeighborhoodBundlePlan values."
+            )
+        coverage = [
+            frozenset(requirement.requirement_id for requirement in value.requirements)
+            for value in resources
+        ]
+        if len(set(coverage)) != len(coverage):
+            raise ValueError(
+                "runtime_resources must cover pairwise distinct requirement sets."
+            )
+        skin_ = float(skin)
+        if not np.isfinite(skin_) or skin_ < 0.0:
+            raise ValueError("skin must be finite and nonnegative.")
+        if batch_size is not None and (isinstance(batch_size, bool) or batch_size < 1):
+            raise ValueError("batch_size must be a positive integer or None.")
+        if isinstance(seed, bool) or seed < 0:
+            raise ValueError("seed must be a nonnegative integer.")
+        weighting_ = parse(weighting, AtomisticObjectiveWeighting, "weighting")
+        precision_ = AtomisticTrainingPrecision() if precision is None else precision
         self.system = system
         self.provider = provider
         self.acquisition = acquisition
         self.graph_execution = graph_execution
         self.runtime_graph_execution = runtime_graph_execution
+        self.runtime_resources = resources
         self.training = training
+        self.objectives = objectives_
+        self.precision = precision_
         self.committee_reduction = committee_reduction
+        self.skin = skin_
+        self.batch_size = None if batch_size is None else int(batch_size)
+        self.seed = int(seed)
+        self.weighting = weighting_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "atomistic-learning-campaign",
@@ -308,10 +497,41 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
                 "acquisition": acquisition.plan_id,
                 "graph_execution": graph_execution.plan_id,
                 "runtime_graph_execution": runtime_graph_execution.plan_id,
+                "runtime_resources": [value.plan_id for value in resources],
                 "training": training.policy_id,
+                "objectives": [value.objective_id for value in objectives_],
+                "precision": precision_.precision_id,
+                "skin": skin_,
+                "batch_size": self.batch_size,
+                "seed": self.seed,
+                "weighting": weighting_,
                 "committee": committee_reduction.policy_id,
             }
         )
+
+
+def _runtime_member(
+    plan: AtomisticLearningCampaignPlan, model: AbstractAtomisticModel, /
+) -> tuple[LearnedGraphPotentialTerm, AtomisticNeighborhoodBundlePlan]:
+    """Learned runtime term of one member and the resource plan covering it."""
+    # A periodic campaign system requests periodic execution; the learned term
+    # admits it only when the member declares that capability.
+    term = LearnedGraphPotentialTerm(model, allow_periodic=plan.system.cell is not None)
+    required = frozenset(
+        requirement.requirement_id for requirement in term.requirements.neighborhoods
+    )
+    for resources in plan.runtime_resources:
+        if (
+            frozenset(
+                requirement.requirement_id for requirement in resources.requirements
+            )
+            == required
+        ):
+            return term, resources
+    raise ValueError(
+        "No campaign runtime resource plan covers exactly the learned member's "
+        "neighborhood requirements."
+    )
 
 
 class AtomisticLearningCampaignState(StrictModule, NonTrainableState):
@@ -376,10 +596,9 @@ def label_atomistic_acquisitions(
     acquisitions: Sequence[AcquisitionRecord],
     /,
     *,
-    split: str = "train",
+    split: AtomisticLabelSplit = "train",
 ) -> tuple[AtomisticLabelRecord, ...]:
-    if split not in ("train", "validation"):
-        raise ValueError("split must be 'train' or 'validation'.")
+    split = parse(split, AtomisticLabelSplit, "split")
     records = []
     for acquisition in acquisitions:
         frame = acquisition.frame
@@ -474,7 +693,7 @@ def _campaign_lifecycle(
         reduction_policy_id=plan.committee_reduction.policy_id,
     )
     revisions = tuple(
-        atomistic_potential_revision(result.best_potential) for result in training_results
+        atomistic_model_revision(result.best_potential) for result in training_results
     )
     manifests = tuple(
         ModelManifest(
@@ -528,6 +747,9 @@ def _campaign_lifecycle(
     )
 
 
+# Keep one bounded promotion transaction visible: labeling and fitted candidates
+# cannot replace the promoted committee before the same round's qualification.
+# Native training owns numerical iteration; this boundary orders evidence and commit.
 def run_atomistic_campaign_round(
     plan: AtomisticLearningCampaignPlan,
     state: AtomisticLearningCampaignState,
@@ -542,7 +764,15 @@ def run_atomistic_campaign_round(
     *,
     descriptors: Array | None = None,
 ) -> AtomisticCampaignRoundResult:
-    """Execute one bounded label, retrain, qualify, and promotion transaction."""
+    """Execute one bounded label, retrain, qualify, and promotion transaction.
+
+    Every initial member must admit a learned runtime term covered by one
+    campaign resource plan; this is refused before any provider evaluation.
+    Acquired frames are labeled into the ``train`` split, the extended label
+    set is lowered to one shared training problem, and every member is fitted
+    with the campaign policy. A provider or training failure, or an
+    unsatisfied qualification, keeps the previously promoted committee.
+    """
 
     if not isinstance(plan, AtomisticLearningCampaignPlan) or not isinstance(
         state, AtomisticLearningCampaignState
@@ -556,6 +786,8 @@ def run_atomistic_campaign_round(
         raise ValueError(
             "Campaign retraining requires aligned potential and key committees."
         )
+    for potential in potentials:
+        _runtime_member(plan, potential)
     acquisitions = plan.acquisition.select(frames, uncertainty, descriptors=descriptors)
     if not acquisitions:
         result_id = canonical_fingerprint(
@@ -610,7 +842,13 @@ def run_atomistic_campaign_round(
     problem = updated_labels.training_problem(
         plan.system,
         plan.graph_execution,
+        plan.objectives,
         cutoff=max(float(potential.configuration.cutoff) for potential in potentials),
+        skin=plan.skin,
+        batch_size=plan.batch_size,
+        seed=plan.seed,
+        weighting=plan.weighting,
+        precision=plan.precision,
     )
     results = tuple(
         fit_atomistic_potential(potential, problem, plan.training, key=key)
@@ -649,14 +887,14 @@ def run_atomistic_campaign_round(
             plan_id=plan.plan_id,
             result_id=result_id,
         )
-    # A periodic campaign system requests periodic execution; the learned term
-    # admits it only when the trained member declares that capability.
-    periodic = plan.system.cell is not None
+    members = tuple(_runtime_member(plan, result.best_potential) for result in results)
     programs = tuple(
-        AtomisticPotentialProgram(
-            [LearnedGraphPotentialTerm(result.best_potential, allow_periodic=periodic)]
-        ).prepare(plan.system, graph_execution=plan.runtime_graph_execution)
-        for result in results
+        AtomisticPotentialProgram([term]).prepare(
+            plan.system,
+            neighborhood_bundle=resources,
+            graph_execution=plan.runtime_graph_execution,
+        )
+        for term, resources in members
     )
     candidate = CommitteeAtomisticPotential(programs, plan.committee_reduction)
     qualification = qualify(candidate)
@@ -720,6 +958,7 @@ __all__ = [
     "AtomisticCampaignRoundResult",
     "AtomisticLabelRecord",
     "AtomisticLabelSet",
+    "AtomisticLabelSplit",
     "AtomisticLearningCampaignPlan",
     "AtomisticLearningCampaignState",
     "label_atomistic_acquisitions",

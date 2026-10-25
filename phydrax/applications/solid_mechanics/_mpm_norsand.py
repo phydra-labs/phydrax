@@ -22,6 +22,10 @@ return (three stresses, work-conjugate plastic shear, log image pressure).
 The elastic metric is exp(2(h_trial-Delta ep)); native small solves pull it
 back. This corotated logarithmic-increment convention is objective and agrees
 with the published rate law under refinement, without inventing free energy.
+The incremental metric retains native Hermitian inverse-square-root admission:
+its absolute positive-spectrum floor and derivative evidence are part of this
+constitutive contract. The relative-conditioned `polar_rotation3` contract is
+not interchangeable without changing which material states are admitted.
 
 Spectral stress inputs and Newton stress variables are normalized by p_ref;
 the Newton shear coordinate is gamma/(p_ref/G_ref). Thus the native

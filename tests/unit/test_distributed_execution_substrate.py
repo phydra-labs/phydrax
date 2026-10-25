@@ -23,7 +23,7 @@ from jax.typing import DTypeLike
 
 import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
 from phydrax import config as pxconfig
-from phydrax._data_plane import IndexEpochPlan
+from phydrax._data_plane import ExecutionGroupRank, IndexEpochPlan
 from phydrax._execution_device import device_vendor
 from phydrax.backends import APPLE_METAL_PROFILE
 from phydrax.discretization._distributed_field import (
@@ -342,14 +342,29 @@ def test_grouped_workset_preserves_canonical_identity_and_group_assignment() -> 
     assert all(result[5] == runtime.root_group.spec.group_id for result in results)
 
 
+def _epoch_group(processes: int, devices_per_process: int) -> ExecutionGroupSpec:
+    return ExecutionGroupSpec(
+        f"epoch-{processes}x{devices_per_process}",
+        tuple(range(processes)),
+        tuple(
+            (process, process * devices_per_process + device)
+            for process in range(processes)
+            for device in range(devices_per_process)
+        ),
+        mesh_axes=(("data", processes * devices_per_process),),
+    )
+
+
 def test_process_local_epoch_preserves_global_ids_and_fixed_capacity() -> None:
     global_plan = IndexEpochPlan(10, 7, False, 0, 0, False)
+    two = _epoch_group(2, 2)
+    four = _epoch_group(4, 1)
     two_processes = tuple(
-        DistributedIndexEpochPlan(global_plan, 2, process, 2).batch(0)
+        DistributedIndexEpochPlan(global_plan, ExecutionGroupRank(two, process)).batch(0)
         for process in range(2)
     )
     four_processes = tuple(
-        DistributedIndexEpochPlan(global_plan, 4, process, 1).batch(0)
+        DistributedIndexEpochPlan(global_plan, ExecutionGroupRank(four, process)).batch(0)
         for process in range(4)
     )
 
@@ -365,6 +380,64 @@ def test_process_local_epoch_preserves_global_ids_and_fixed_capacity() -> None:
     assert active(four_processes) == tuple(range(7))
     assert all(len(batch.indices) == 4 for batch in two_processes)
     assert all(len(batch.indices) == 2 for batch in four_processes)
+
+
+def test_subgroup_epoch_uses_group_local_ranks_not_process_world() -> None:
+    global_plan = IndexEpochPlan(9, 5, True, 3, 2, False)
+    # A child group of processes 3 and 5 out of a larger world.
+    subgroup = ExecutionGroupSpec(
+        "child",
+        (5, 3),
+        ((3, 6), (5, 10)),
+        mesh_axes=(("data", 2),),
+        parent_group_id="root",
+    )
+    ranks = tuple(ExecutionGroupRank(subgroup, process) for process in (3, 5))
+    assert tuple(rank.rank for rank in ranks) == (0, 1)
+    assert tuple(rank.shards for rank in ranks) == ((0,), (1,))
+    assert ranks[0].layout_id == ranks[1].layout_id
+    batches = tuple(
+        DistributedIndexEpochPlan(global_plan, rank).batch(0) for rank in ranks
+    )
+    combined = tuple(
+        index
+        for batch in batches
+        for index, valid in zip(batch.indices, batch.valid, strict=True)
+        if valid
+    )
+    # Rank-independent semantic identities: the global plan's own batch.
+    assert combined == global_plan.batch(0)
+    shards = tuple(
+        DistributedIndexEpochPlan(global_plan, ranks[0]).shard(0, shard)
+        for shard in (0, 1)
+    )
+    assert shards == batches
+    with pytest.raises(ValueError, match="not a member"):
+        ExecutionGroupRank(subgroup, 0)
+
+
+def test_group_rank_on_data_owner_mesh_replicates_rows_across_owner_axis() -> None:
+    spec = ExecutionGroupSpec(
+        "dp-domain",
+        (0, 1, 2, 3),
+        tuple((process, process) for process in range(4)),
+        mesh_axes=(("data", 2), ("owner", 2)),
+    )
+    ranks = tuple(ExecutionGroupRank(spec, process, axis="data") for process in range(4))
+    assert tuple(rank.shards for rank in ranks) == ((0,), (0,), (1,), (1,))
+    assert all(rank.shard_count == 2 for rank in ranks)
+    with pytest.raises(ValueError, match="explicit data axis"):
+        ExecutionGroupRank(spec, 0)
+    with pytest.raises(ValueError, match="non-contiguous"):
+        ExecutionGroupRank(
+            ExecutionGroupSpec(
+                "strided",
+                (0, 1),
+                ((0, 0), (1, 1), (0, 2), (1, 3)),
+                mesh_axes=(("data", 4),),
+            ),
+            0,
+        )
 
 
 @pytest.mark.parametrize("partition_count", [1, 2, 3, 4, 5])
@@ -624,6 +697,63 @@ def test_checkpoint_ownership_change_requires_new_root(tmp_path: Path) -> None:
         )
 
 
+def test_checkpoint_writer_slots_map_group_ranks_and_keep_source_process(
+    tmp_path: Path,
+) -> None:
+    device = jax.devices()[0]
+    mesh = Mesh(np.asarray((device,), dtype=object), ("data",))
+    sharding = NamedSharding(mesh, PartitionSpec("data"))
+    values = {
+        "first": jax.device_put(jnp.arange(4, dtype=jnp.float64), sharding),
+        "second": jax.device_put(jnp.arange(6, dtype=jnp.int64) + 10, sharding),
+    }
+    repository = _repository(tmp_path)
+    for invalid in (-1, True):
+        with pytest.raises(ValueError, match="writer_index"):
+            publish_process_checkpoint(
+                repository,
+                "slotted",
+                "execution-slots",
+                {"first": values["first"]},
+                analysis_plan_id="analysis-slots",
+                numeric_revision_id="revision-slots",
+                writer_id="writer-invalid",
+                writer_index=invalid,
+            )
+    publications = [
+        publish_process_checkpoint(
+            repository,
+            "slotted",
+            "execution-slots",
+            {name: values[name]},
+            analysis_plan_id="analysis-slots",
+            numeric_revision_id="revision-slots",
+            writer_id=f"writer-{slot}",
+            writer_index=slot,
+        )
+        for slot, name in enumerate(("first", "second"))
+    ]
+    for slot, publication in enumerate(publications):
+        assert publication.process_index == slot
+        metadata = dict(publication.shards[0].metadata)
+        assert metadata["process_index"] == str(slot)
+        assert metadata["source_process_index"] == str(jax.process_index())
+        assert metadata["artifact_id"] == f"slotted.process-{slot}"
+    manifest = assemble_distributed_checkpoint_from_repository(
+        repository,
+        "slotted",
+        "analysis-slots",
+        "revision-slots",
+        "execution-slots",
+        expected_process_count=2,
+    )
+    for name, value in values.items():
+        restored = restore_global_array_from_checkpoint(
+            repository, manifest, f"['{name}']", sharding
+        )
+        np.testing.assert_array_equal(np.asarray(restored), np.asarray(value))
+
+
 def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -645,6 +775,7 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
             "dtype": "<f8",
             "index": "[[0,1,1]]",
             "process_index": "0",
+            "source_process_index": "0",
             "device_id": "0",
             "replica_id": "0",
             "topology_epoch": "0",

@@ -20,17 +20,19 @@ from tests._support.accelerator_qualification import accelerator_device, record_
 def execution_device() -> Iterator[jax.Device]:
     if "PHYDRAX_ACCELERATOR" not in os.environ:
         pytest.skip("Explicit accelerator qualification process required")
+    from phydrax._jax_config import default_device
+
     device = accelerator_device()
-    with jax.default_device(device):
+    with default_device(device):
         yield device
 
 
 def test_mlp_pde_derivatives_and_update(
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, object], None], execution_device: jax.Device
 ) -> None:
     from examples.accelerator_scientific_execution import poisson_steps
 
-    values, arrays = poisson_steps(steps=4)
+    values, arrays = poisson_steps(device=execution_device, steps=4)
     record_execution(record_property, *arrays)
     assert all(np.isfinite(value) for value in values.values())
     assert values["gradient_norm"] > 0 and values["update_norm"] > 0

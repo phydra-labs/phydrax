@@ -19,6 +19,8 @@ from ._bounds import (
     BoundedNewtonTrustRegion,
     ProjectedGradient,
     ProjectedLBFGS,
+    TrustScaledLBFGS,
+    TrustScaledLBFGSState,
 )
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
@@ -112,6 +114,7 @@ from ._finite import (
     FiniteTopK,
     search_finite,
 )
+from ._fire import FIRE, FIRE2, FIREState
 from ._gradient_composition import (
     conflict_free_gradient,
     ConflictFreeFailureMode,
@@ -125,6 +128,7 @@ from ._graph_least_squares import (
     ResidualGraphSolveEvidence,
     solve_residual_graph,
 )
+from ._group_layout import OptimizerGroupDim, OptimizerGroupLayout
 from ._implicit import (
     implicit_constrained_minimize,
     implicit_least_squares,
@@ -549,6 +553,13 @@ from ._variable_projection import (
 
 
 __all__ = [
+    "FIRE",
+    "FIRE2",
+    "FIREState",
+    "TrustScaledLBFGS",
+    "TrustScaledLBFGSState",
+    "OptimizerGroupDim",
+    "OptimizerGroupLayout",
     "adam",
     "polynomial",
     "AbstractConvexCone",

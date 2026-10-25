@@ -25,6 +25,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 """
+_CONFIGURATION = """
+from pathlib import Path
+
+configuration_spec = importlib.util.spec_from_file_location(
+    "_configuration_under_test", Path(sys.argv[1]).with_name("_jax_config.py")
+)
+configuration = importlib.util.module_from_spec(configuration_spec)
+configuration_spec.loader.exec_module(configuration)
+"""
 
 
 def _run_contract(source: str) -> None:
@@ -46,7 +55,8 @@ def _run_contract(source: str) -> None:
 
 
 def test_installation_is_host_only_locked_idempotent_and_honestly_identified() -> None:
-    _run_contract("""
+    _run_contract(
+        """
 assert "jax" not in sys.modules
 assert frontend.frontend_index_patch_identity() is None
 assert "jax" not in sys.modules
@@ -60,7 +70,9 @@ import jax.numpy
 import jax.random
 from jax._src import xla_bridge
 from jax._src.numpy import indexing
-
+"""
+        + _CONFIGURATION
+        + """
 owners = (jax, jax.lax, jax.numpy, jax.random)
 def surface():
     return {(owner.__name__, name): id(value)
@@ -68,7 +80,7 @@ def surface():
             if not name.startswith("_") and callable(value)}
 
 before = surface()
-options = dict(jax.config.values)
+options = configuration.configuration_values()
 original = indexing._index_to_gather
 original_dynamic = indexing.NDIndexer.to_dynamic_slice
 assert not xla_bridge.backends_are_initialized()
@@ -83,7 +95,7 @@ assert inspect.signature(indexing.NDIndexer.to_dynamic_slice).parameters.keys() 
     inspect.signature(original_dynamic).parameters.keys()
 )
 assert surface() == before
-assert jax.config.values == options
+assert configuration.configuration_values() == options
 assert not xla_bridge.backends_are_initialized()
 identity = frontend.frontend_index_patch_identity()
 assert identity["jax_version"] == jax.__version__
@@ -113,7 +125,8 @@ for owner, name, original_callable in (
         else:
             raise AssertionError("foreign post-install replacement was accepted")
     setattr(owner, name, installed_callable)
-""")
+"""
+    )
 
 
 def test_installation_guards_sources_and_callables_not_release_labels() -> None:
@@ -361,6 +374,7 @@ for kind in (np.int64, np.uint64):
 def test_device_indices_do_not_require_host_synchronization() -> None:
     _run_contract(
         _INSTALL
+        + _CONFIGURATION
         + """
 values = jax.device_put(np.arange(12, dtype=np.float64).reshape(4, 3))
 indices = jax.device_put(np.asarray([0, 2**32 + 1, -1], np.int64))
@@ -374,7 +388,14 @@ def indexed(a, i, s):
         a.at[s, :].get(mode="clip"),
     )
 
-with jax.transfer_guard_device_to_host("disallow"):
+with configuration.numerics(
+    enable_x64=None,
+    matmul_precision=None,
+    dtype_promotion=None,
+    rank_promotion=None,
+    transfer_guard_device_to_host="disallow",
+    disable_jit=None,
+):
     gathered, scattered, clipped = indexed(values, indices, scalar)
     jax.block_until_ready((gathered, scattered, clipped))
 np.testing.assert_array_equal(gathered, [[0, 1, 2], [-99, -99, -99], [9, 10, 11]])

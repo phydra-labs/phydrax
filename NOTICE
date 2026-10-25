@@ -80,6 +80,137 @@ MP/MPA weights are MIT, while OMAT/MH/OFF weights have separately admitted ASL
 rights. Technical source review and numerical evidence are not legal review or
 production release authorization.
 
+Native atomistic model families, interactions, and crystal symmetry data
+The following attributions cover source-derived content in the native
+atomistic and crystal modules. Source frameworks are never imported or
+executed by product code. Code licenses do not license pretrained weights,
+checkpoints, datasets, priors, or parameter tables; those require separate
+caller admission. Technical source review is not legal review.
+
+spglib
+Copyright (C) 2010 Atsushi Togo (src/spg_database.c).
+Copyright (c) 2024, Spglib team (COPYING).
+Licensed under the BSD 3-Clause License.
+The Hall symbols, setting-choice labels, Schoenflies and International
+symbols, and space-group operations of the 530 Hall entries in
+`phydrax/atomistic/crystal/_space_group_data.py` are derived from spglib v2.7.0
+(commit 12355c77fb7c505a55f52cae36341d73b781a065) src/spg_database.c (SHA-256
+bf1ab8a74e1d275e20ee4145bd409b62b5295e680599d3a112a41d396bde56bd).
+Modifications: tools/generate_space_group_tables.py regenerates the
+operations natively from the parsed Hall symbols, checks them
+operation-by-operation against the decoded source table, and stores them as
+exact integer rotations with translations over a common denominator, together
+with source-label metadata. Only that database file was admitted.
+See LICENSES/SPGLIB-BSD-3-CLAUSE.txt (COPYING, SHA-256
+9c4e602ce15bf48206dad105b666ddaeedba747eeda6465807106bc11f4f587f).
+
+NVIDIA ALCHEMI Toolkit (nvalchemi-toolkit)
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under the Apache License, Version 2.0.
+From commit f59e28dc6701583a13bb294e536076c2a7379e98:
+- the 230-entry standard-setting Hall-number map in
+  `phydrax/atomistic/crystal/_space_group_data.py` is derived from
+  nvalchemi/csp/_space_group_tables.py (SHA-256
+  e9f76edcfa028d8a177a4ff50fe134d91f8644b8a7befc6a734978a41caa59e2).
+  Modifications: the map is re-expressed as native Hall-entry indices, and its
+  float32 operation arrays are replaced by exact operations checked against
+  the native closure of each selected entry.
+- the donor/acceptor contact-reduction rules in
+  `phydrax/atomistic/crystal/_input.py` are ported from
+  nvalchemi/csp/_chem/_contacts.py (SHA-256
+  361090a9a3bff03a0ea58637ed09451f5d5c4e6362393abc67fc1d9d7db001b5).
+  Modifications: the rules are rewritten over Phydrax's explicit molecular
+  graph instead of RDKit molecules, keeping the source's handling of aromatic
+  bonds, and are used only under the declared "donor-acceptor-reduced"
+  contact rule.
+The connectivity atom-type contract and other Toolkit workflow behavior are
+independent native implementations of the inspected contracts.
+CSD-derived space-group priors, model weights, and datasets referenced by the
+Toolkit are not licensed by its code license and are not redistributed.
+See LICENSES/NVALCHEMI-TOOLKIT-APACHE-2.0.txt (LICENSE, SHA-256
+cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30).
+
+NVIDIA ALCHEMI Toolkit-Ops (nvalchemi-toolkit-ops)
+Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under the Apache License, Version 2.0.
+From commit 10e12340c39fd12a2375d6301768e72d2cd12868: the conventional D3
+relative interpolation threshold, the FourierD3 modified counting function and
+its regularizer, and the signed low-rank C6 decomposition
+(nvalchemiops/interactions/dispersion), plus the packed multipole layout and
+its degree-two basis matrix
+(nvalchemiops/torch/interactions/electrostatics/_multipole_moments.py).
+Modifications: all of these are reimplemented natively in JAX in
+`phydrax/atomistic/_d3_parameters.py`, `_dispersion_d3.py`,
+`_dispersion_fourier_d3.py`, and `_multipole_basis.py` as named definitions
+that callers select explicitly, with explicit units and identities; a
+coincident counted pair is treated as a geometry failure instead of being
+skipped. Warp kernels are neither executed nor redistributed. That revision's
+LICENSE file is the Apache notice header reproduced in
+LICENSES/NVALCHEMI-TOOLKIT-OPS-APACHE-2.0.txt (SHA-256
+1e9f1d1e84fa0fee6c208fd1d119ab52007204b34b7e2391852e68855a9d8c9e); the full
+Apache-2.0 text is in LICENSES/NVALCHEMI-TOOLKIT-APACHE-2.0.txt.
+
+AIMNetcentral
+Copyright (c) 2024, Roman Zubatyuk
+Licensed under the MIT License.
+The native AIMNet2 architecture, AEV/ConvSV features, charge equilibration,
+source-checkpoint reconstruction, and DispParam/D3TS dispersion
+(`phydrax/nn/atomistic/_aimnet2*.py`, `phydrax/atomistic/_dispersion_ts.py`,
+`phydrax/atomistic/interchange/_aimnet2_checkpoint.py`) reimplement
+AIMNetcentral 0.2.0 (commit b1b0fd8c8b8d8acb8811eb646f9ba7b15d72da55;
+aimnet/models/aimnet2.py, aimnet/modules/aev.py, aimnet/modules/core.py,
+aimnet/modules/lr.py) natively in JAX. Unit constants in `_dispersion_ts.py`
+follow aimnet/constants.py (SHA-256
+4fa79bfc21b9764c6e520db65dff16885d22181f892e82cdcc7abd47c491ceb4).
+The source's r4r2 table, attributed to dftd4, is not bundled. Native TS
+dispersion requires an explicit caller-supplied table; source conversion
+retains the admitted artifact's buffer without substituting another table.
+Pretrained AIMNet2 weights are not redistributed; they have separate terms
+and require caller admission.
+See LICENSES/AIMNETCENTRAL-MIT.txt (SHA-256
+ef7b24fb3836c9546b3994037956cf95507b49c65cd622b49320813303704200).
+
+fairchem
+Copyright (c) Meta, Inc. and its affiliates (LICENSE.md); source files state
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Licensed under the MIT License.
+The native UMA/eSCN-MD backbone, mixture-of-linear-experts routing,
+task/charge/spin conditioning, nearest-neighbor graph selection, output heads,
+and checkpoint reconstruction (`phydrax/nn/atomistic/_uma*.py`,
+`phydrax/atomistic/interchange/_uma_checkpoint.py`) reimplement fairchem commit
+bb0a062a9a08d8b3ad3995aca5b9765e07804990 (src/fairchem/core/models/uma/)
+natively in JAX. Modifications: Wigner matrices come from Phydrax's native O(3)
+recurrence, the per-edge random roll is replaced by a declared deterministic
+zero-roll gauge, and mixtures are resolved into per-case linear operators.
+The sphere grids follow e3nn 0.6.0 ToS2Grid/FromS2Grid, whose license text is
+identical to LICENSES/E3NN-MIT.txt. UMA checkpoints are gated under separate
+model terms; they are neither admitted nor redistributed.
+See LICENSES/FAIRCHEM-MIT.txt (LICENSE.md, SHA-256
+3e10827938aae9e591647722c830065a95b3af2721f0d7f02f373869b40fe81d).
+
+MACE (MACELES composition)
+The native MACELES model (`phydrax/nn/atomistic/_mace_les.py`) follows
+mace-torch 0.3.15/0.3.16 mace/modules/extensions.py under the same MIT license
+as LICENSES/MACE-MIT.txt (identical LICENSE.md, SHA-256
+42137790f854ae2b9d29a0a72a4da3f6fb9a21d820b3f276f23b0575af72e86e).
+MACELES checkpoints are not admitted or redistributed.
+
+Excluded, rights-gated sources
+LES (https://github.com/ChengUCB/les, revision
+35b971a650cf30adb84fef7138761e81aa47b3a2) declares CC BY-NC 4.0 in its
+README.md and pyproject.toml and has no LICENSE file at that revision. No LES
+source is vendored, imported, executed, or redistributed. The native latent
+Ewald implementation (`phydrax/atomistic/_latent_electrostatics.py`) follows the
+published equations (Cheng, npj Comput. Mater. 11, 80 (2025)) and records the
+source's default arguments and numerical constants as provenance. No
+commercial right in the LES source is admitted, and LES-trained checkpoint
+rights remain a separate gate for the caller.
+Grimme DFT-D3 reference data (dftd3.tgz, MD5 a76c752e587422c239c99109547516d2;
+dftd3.f: Copyright (C) 2009 - 2011 Stefan Grimme, GNU General Public License
+version 1 or later) is neither bundled nor downloaded. Callers supply
+digest-verified dftd3.f/pars.f under their own rights; `D3ReferenceTables`
+parses them on the host.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 

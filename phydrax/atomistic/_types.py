@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 import equinox as eqx
@@ -21,6 +21,11 @@ from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization, ParticleSetPlan
 from ..typing import checked
 from ..units import derived_unit, ENERGY, LENGTH, UnitDefinition
+
+
+class AtomisticSpeciesKind(StrEnum):
+    ATOMIC_NUMBER = "atomic-number"
+    ATOM_TYPE_ID = "atom-type-id"
 
 
 class AtomisticStatus(IntEnum):
@@ -669,6 +674,7 @@ __all__ = [
     "AtomisticBatch",
     "AtomisticPrecisionPolicy",
     "AtomisticScaleContract",
+    "AtomisticSpeciesKind",
     "AtomisticStatus",
     "AtomicStructure",
 ]

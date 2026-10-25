@@ -8,15 +8,23 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import optax
 import pytest
 
 from phydrax.atomistic import (
-    atomistic_potential_revision,
+    atomistic_model_revision,
+    atomistic_training_loader,
+    atomistic_training_source,
     AtomisticBatch,
+    AtomisticEnergyObjective,
+    AtomisticForceObjective,
     AtomisticGraphExecutionPlan,
+    AtomisticObjectiveSchedule,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
+    AtomisticStressObjective,
+    AtomisticTrainingFields,
     AtomisticTrainingPolicy,
     AtomisticTrainingProblem,
     energy_and_forces,
@@ -26,12 +34,13 @@ from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import MACEArchitecture, MACEPotential, PaiNNPotential
 from phydrax.precision import ScalarPrecisionDType
 from phydrax.sparse import StreamedRelationPlan
-from phydrax.units import ANGSTROM, ELECTRONVOLT
+from phydrax.units import ANGSTROM, DALTON, ELECTRONVOLT
 
 
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 CUTOFF = 3.0
 CELL = np.asarray([[2.8, 0.0, 0.0], [0.3, 2.9, 0.0], [0.2, 0.1, 3.0]])
+PERIODIC_FIELDS = AtomisticTrainingFields(cell="cell", periodic="periodic")
 
 
 def _mace(key: Any) -> Any:
@@ -51,13 +60,13 @@ def _mace(key: Any) -> Any:
             readout_width=4,
             average_neighbor_count=2.0,
         ),
-        # ty: ignore[invalid-argument-type]
-        atomic_energies=[[-1.0, -2.0]],
+        atomic_energies=np.asarray([[-1.0, -2.0]], dtype=np.float64),
         key=key,
     )
 
 
 def _execution(*, streamed: StreamedRelationPlan | None = None) -> Any:
+    # Every training layout shares one declared search envelope: the cell.
     return AtomisticGraphExecutionPlan(
         64,
         backend="particle",
@@ -68,10 +77,14 @@ def _execution(*, streamed: StreamedRelationPlan | None = None) -> Any:
             maximum_images=125,
         ),
         streamed=streamed,
+        search_cell=CELL,
+        search_margin=0.1,
     )
 
 
-def _periodic_batch(shift: float = 0.0, *, periodic: Any = (True, True, True)) -> Any:
+def _periodic_batch(
+    shift: float = 0.0, *, periodic: Any = (True, True, True), prefix: str = "train"
+) -> Any:
     positions = np.asarray(
         [
             [[0.0, 0.0, 0.0], [1.1, 0.3, 0.2]],
@@ -80,14 +93,13 @@ def _periodic_batch(shift: float = 0.0, *, periodic: Any = (True, True, True)) -
         ]
     )
     return AtomisticBatch(
-        # ty: ignore[invalid-argument-type]
-        [[1, 8], [1, 8], [1, 8]],
+        np.asarray([[1, 8], [1, 8], [1, 8]], dtype=np.int64),
         positions + shift,
-        # ty: ignore[invalid-argument-type]
-        [[1.0, 16.0], [1.0, 16.0], [1.0, 16.0]],
+        np.asarray([[1.0, 16.0], [1.0, 16.0], [1.0, 16.0]], dtype=np.float64),
         SCALE,
         cells=np.broadcast_to(CELL, (3, 3, 3)),
         periodic_axes=np.broadcast_to(np.asarray(periodic, dtype=np.bool_), (3, 3)),
+        structure_ids=tuple(f"{prefix}-{index}" for index in range(3)),
     )
 
 
@@ -97,6 +109,44 @@ def _teacher_labels(batch: Any) -> Any:
     )
     assert bool(jnp.all(prediction.valid))
     return prediction.energy, prediction.forces, prediction.stress
+
+
+def _loader(batch: Any, *, stream: str = "training", **labels: Any) -> Any:
+    return atomistic_training_loader(
+        atomistic_training_source(batch, mass_unit=DALTON, **labels), stream=stream
+    )
+
+
+def _problem(
+    batch: Any,
+    *,
+    objectives: tuple[Any, ...] | None = None,
+    execution: Any = None,
+    validation: Any = None,
+    weighting: Any = "literal",
+    **labels: Any,
+) -> Any:
+    """Problem over one full-batch source with the default E/F/S objectives."""
+    if objectives is None:
+        objectives = tuple(
+            objective
+            for name, objective in (
+                ("energy", AtomisticEnergyObjective()),
+                ("forces", AtomisticForceObjective()),
+                ("stress", AtomisticStressObjective()),
+            )
+            if labels.get(name) is not None
+        )
+    return AtomisticTrainingProblem(
+        _loader(batch, **labels),
+        _execution() if execution is None else execution,
+        objectives,
+        scale=SCALE,
+        cutoff=CUTOFF,
+        fields=PERIODIC_FIELDS,
+        validation=validation,
+        weighting=weighting,
+    )
 
 
 def _assert_trees_bitwise_equal(observed: Any, expected: Any) -> None:
@@ -117,13 +167,12 @@ def test_mace_energy_force_stress_fit_continues_like_an_uninterrupted_run() -> N
     energy, forces, stress = _teacher_labels(batch)
     # Bitwise continuation requires ordered accumulation: fast reductions keep
     # their nondeterministic rounding on accelerators.
-    problem = AtomisticTrainingProblem(
+    problem = _problem(
         batch,
-        _execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        training_forces=forces,
-        training_stress=stress,
+        execution=_execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
+        energy=energy,
+        forces=forces,
+        stress=stress,
     )
 
     def policy(steps: int) -> Any:
@@ -140,18 +189,12 @@ def test_mace_energy_force_stress_fit_continues_like_an_uninterrupted_run() -> N
     assert continued.result_id == uninterrupted.result_id
     assert int(continued.status) == int(AtomisticStatus.SUCCESS)
     assert continued.progress.update_step == 4
-    for history in (
-        continued.energy_loss_history,
-        continued.force_loss_history,
-        continued.stress_loss_history,
-    ):
-        assert history.shape == (4,)
-        assert bool(jnp.all(jnp.isfinite(history) & (history > 0.0)))
-    assert float(continued.training_loss_history[-1]) < float(
-        continued.validation_loss_history[0]
-    )
-    assert atomistic_potential_revision(continued.potential).revision_id != (
-        atomistic_potential_revision(initial).revision_id
+    objectives = continued.training_objectives
+    assert objectives.shape == (4, 3)
+    assert bool(jnp.all(jnp.isfinite(objectives) & (objectives > 0.0)))
+    assert float(continued.training_values[-1]) < float(continued.validation_values[0])
+    assert atomistic_model_revision(continued.potential).revision_id != (
+        atomistic_model_revision(initial).revision_id
     )
     fitted = energy_and_forces(
         continued.potential, batch, _execution(), compute_stress=True
@@ -159,41 +202,37 @@ def test_mace_energy_force_stress_fit_continues_like_an_uninterrupted_run() -> N
     assert bool(jnp.all(fitted.valid))
 
 
-def test_stress_only_supervision_skips_masked_cases_and_moves_the_model() -> None:
+def test_stress_only_supervision_skips_unavailable_cases_and_masked_components() -> None:
     batch = _periodic_batch()
     _, _, stress = _teacher_labels(batch)
-    stress_mask = np.ones((3, 3, 3), dtype=np.bool_)
-    stress_mask[1] = False
-    stress_mask[2, 0, 1] = False
+    # Case 1 is unavailable; component (0, 1) is excluded by the objective, so
+    # the nonfinite label stored there is never read.
+    components = ((True, False, True), (True, True, True), (True, True, True))
+    component_mask = np.asarray(components, dtype=np.bool_)
     labels = stress.at[1].set(jnp.nan).at[2, 0, 1].set(jnp.inf)
     initial = _mace(jr.key(7))
     result = fit_atomistic_potential(
         initial,
-        AtomisticTrainingProblem(
+        _problem(
             batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_stress=labels,
-            training_stress_mask=stress_mask,
+            objectives=(AtomisticStressObjective(components=components),),
+            stress=labels,
+            stress_available=np.asarray([True, False, True]),
         ),
         AtomisticTrainingPolicy(maximum_steps=3, learning_rate=1e-2),
         key=jr.key(8),
     )
 
     assert int(result.status) == int(AtomisticStatus.SUCCESS)
-    np.testing.assert_array_equal(result.energy_loss_history, np.zeros((3,)))
-    np.testing.assert_array_equal(result.force_loss_history, np.zeros((3,)))
-    assert bool(jnp.all(jnp.isfinite(result.stress_loss_history)))
-    assert float(result.stress_loss_history[-1]) < float(
-        result.validation_loss_history[0]
-    )
-    selected = np.asarray(stress)[stress_mask]
+    assert result.training_objectives.shape == (3, 1)
+    assert bool(jnp.all(jnp.isfinite(result.training_values)))
+    assert float(result.training_values[-1]) < float(result.validation_values[0])
+    selected = np.asarray(stress)[[0, 2]][:, component_mask]
     np.testing.assert_allclose(
-        result.normalization.stress_component_scale,
-        np.sqrt(np.mean(selected * selected)),
+        result.normalization.scale("stress"), np.sqrt(np.mean(selected * selected))
     )
-    assert atomistic_potential_revision(result.potential).revision_id != (
-        atomistic_potential_revision(initial).revision_id
+    assert atomistic_model_revision(result.potential).revision_id != (
+        atomistic_model_revision(initial).revision_id
     )
 
 
@@ -210,6 +249,7 @@ def test_mixed_finite_and_periodic_cases_train_stress_only_where_labeled() -> No
         periodic_axes=np.asarray(
             [[True, True, True], [False, False, False], [True, True, True]]
         ),
+        structure_ids=periodic.structure_ids,
     )
     stress_cases = np.asarray([True, False, True])
     teacher = energy_and_forces(
@@ -222,17 +262,12 @@ def test_mixed_finite_and_periodic_cases_train_stress_only_where_labeled() -> No
     assert bool(jnp.all(teacher.valid))
     assert teacher.stress is not None
     assert bool(jnp.all(jnp.isnan(teacher.stress[1])))
-    problem = AtomisticTrainingProblem(
+    problem = _problem(
         mixed,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=teacher.energy,
-        training_forces=teacher.forces,
-        training_stress=teacher.stress,
-    )
-    assert problem.training.stress_mask is not None
-    np.testing.assert_array_equal(
-        np.asarray(problem.training.stress_mask)[:, 0, 0], stress_cases
+        energy=teacher.energy,
+        forces=teacher.forces,
+        stress=teacher.stress,
+        stress_available=stress_cases,
     )
     initial = _mace(jr.key(15))
     result = fit_atomistic_potential(
@@ -243,33 +278,27 @@ def test_mixed_finite_and_periodic_cases_train_stress_only_where_labeled() -> No
     )
 
     assert int(result.status) == int(AtomisticStatus.SUCCESS)
-    for history in (
-        result.energy_loss_history,
-        result.force_loss_history,
-        result.stress_loss_history,
-    ):
-        assert bool(jnp.all(jnp.isfinite(history) & (history > 0.0)))
-    assert float(result.training_loss_history[-1]) < float(
-        result.validation_loss_history[0]
-    )
-    assert atomistic_potential_revision(result.potential).revision_id != (
-        atomistic_potential_revision(initial).revision_id
+    objectives = result.training_objectives
+    assert objectives.shape == (2, 3)
+    assert bool(jnp.all(jnp.isfinite(objectives) & (objectives > 0.0)))
+    assert float(result.training_values[-1]) < float(result.validation_values[0])
+    assert atomistic_model_revision(result.potential).revision_id != (
+        atomistic_model_revision(initial).revision_id
     )
 
 
 def test_stress_normalization_is_fitted_from_training_labels_only() -> None:
     batch = _periodic_batch()
-    validation_batch = _periodic_batch(0.05)
+    validation_batch = _periodic_batch(0.05, prefix="validation")
     _, _, stress = _teacher_labels(batch)
 
     def fit(validation_stress: Any) -> Any:
-        problem = AtomisticTrainingProblem(
+        problem = _problem(
             batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_stress=stress,
-            validation_batch=validation_batch,
-            validation_stress=validation_stress,
+            stress=stress,
+            validation=_loader(
+                validation_batch, stream="validation", stress=validation_stress
+            ),
         )
         return problem, fit_atomistic_potential(
             _mace(jr.key(2)), problem, AtomisticTrainingPolicy(maximum_steps=0)
@@ -278,29 +307,19 @@ def test_stress_normalization_is_fitted_from_training_labels_only() -> None:
     first_problem, first = fit(jnp.full((3, 3, 3), 1e3))
     second_problem, second = fit(jnp.full((3, 3, 3), -4e6))
 
-    np.testing.assert_array_equal(
-        first.normalization.stress_component_scale,
-        second.normalization.stress_component_scale,
-    )
+    assert first.normalization.scales == second.normalization.scales
     np.testing.assert_allclose(
-        first.normalization.stress_component_scale,
-        np.sqrt(np.mean(np.asarray(stress) ** 2)),
+        first.normalization.scale("stress"), np.sqrt(np.mean(np.asarray(stress) ** 2))
     )
-    assert first.normalization.fitted_from_problem_id == first_problem.problem_id
+    assert first.normalization.fitted_from == first_problem.training.semantics_id
     assert first_problem.problem_id != second_problem.problem_id
-    assert float(first.validation_loss_history[0]) != float(
-        second.validation_loss_history[0]
-    )
+    assert float(first.validation_values[0]) != float(second.validation_values[0])
 
 
 def test_partial_pbc_stress_trains_against_the_declared_embedding_cell() -> None:
     slab = _periodic_batch(periodic=(True, True, False))
     _, _, stress = _teacher_labels(slab)
-    problem = AtomisticTrainingProblem(
-        slab, _execution(), cutoff=CUTOFF, training_stress=stress
-    )
-    assert problem.training.stress_mask is not None
-    assert bool(jnp.all(problem.training.stress_mask))
+    problem = _problem(slab, stress=stress)
     initial = _mace(jr.key(13))
     result = fit_atomistic_potential(
         initial,
@@ -310,10 +329,8 @@ def test_partial_pbc_stress_trains_against_the_declared_embedding_cell() -> None
     )
 
     assert int(result.status) == int(AtomisticStatus.SUCCESS)
-    assert bool(jnp.all(jnp.isfinite(result.stress_loss_history)))
-    assert float(result.stress_loss_history[-1]) < float(
-        result.validation_loss_history[0]
-    )
+    assert bool(jnp.all(jnp.isfinite(result.training_values)))
+    assert float(result.training_values[-1]) < float(result.validation_values[0])
 
 
 def test_stress_supervision_refuses_cases_without_a_declared_cell_volume() -> None:
@@ -325,14 +342,14 @@ def test_stress_supervision_refuses_cases_without_a_declared_cell_volume() -> No
         batch.masses,
         SCALE,
     )
-    with pytest.raises(ValueError, match="finite nonsingular embedding cell"):
-        AtomisticTrainingProblem(
-            finite, _execution(), cutoff=CUTOFF, training_stress=stress
-        )
+    with pytest.raises(ValueError, match="require batch cells and periodic axes"):
+        atomistic_training_source(finite, mass_unit=DALTON, stress=stress)
     unperiodic = _periodic_batch(periodic=(False, False, False))
-    with pytest.raises(ValueError, match="finite nonsingular embedding cell"):
-        AtomisticTrainingProblem(
-            unperiodic, _execution(), cutoff=CUTOFF, training_stress=stress
+    with pytest.raises(ValueError, match="finite nonsingular cell"):
+        fit_atomistic_potential(
+            _mace(jr.key(4)),
+            _problem(unperiodic, stress=stress),
+            AtomisticTrainingPolicy(maximum_steps=1),
         )
     singular = np.broadcast_to(CELL, (3, 3, 3)).copy()
     singular[1, 2] = 0.0
@@ -343,50 +360,56 @@ def test_stress_supervision_refuses_cases_without_a_declared_cell_volume() -> No
         SCALE,
         cells=singular,
         periodic_axes=np.broadcast_to(np.asarray([True, True, False]), (3, 3)),
+        structure_ids=batch.structure_ids,
     )
-    with pytest.raises(ValueError, match="finite nonsingular embedding cell"):
-        AtomisticTrainingProblem(
-            mixed,
-            _execution(),
-            cutoff=CUTOFF,
-            training_forces=forces,
-            training_stress=stress,
-            training_stress_mask=np.ones((3, 3, 3), dtype=np.bool_),
+    with pytest.raises(ValueError, match="finite nonsingular cell"):
+        fit_atomistic_potential(
+            _mace(jr.key(4)),
+            _problem(mixed, forces=forces, stress=stress),
+            AtomisticTrainingPolicy(maximum_steps=1),
         )
-    defaulted = AtomisticTrainingProblem(
-        mixed, _execution(), cutoff=CUTOFF, training_stress=stress
+    # Declaring the singular case's stress unavailable is the explicit remedy.
+    declared = fit_atomistic_potential(
+        _mace(jr.key(4)),
+        _problem(
+            mixed,
+            forces=forces,
+            stress=stress,
+            stress_available=np.asarray([True, False, True]),
+        ),
+        AtomisticTrainingPolicy(maximum_steps=0),
     )
-    assert defaulted.training.stress_mask is not None
-    np.testing.assert_array_equal(
-        np.asarray(defaulted.training.stress_mask)[:, 0, 0], [True, False, True]
-    )
+    assert bool(declared.successful)
 
 
 def test_stress_supervision_refuses_mismatched_target_kinds() -> None:
     batch = _periodic_batch()
     _, forces, stress = _teacher_labels(batch)
-    with pytest.raises(ValueError, match="same energy/force/stress target kinds"):
-        AtomisticTrainingProblem(
+    with pytest.raises(ValueError, match="binds no label slot 'stress'"):
+        _problem(
             batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_stress=stress,
-            validation_batch=batch,
-            validation_forces=forces,
+            stress=stress,
+            validation=_loader(
+                _periodic_batch(0.05, prefix="validation"),
+                stream="validation",
+                forces=forces,
+            ),
         )
 
 
-def test_stress_supervision_refuses_zero_total_target_weight() -> None:
+def test_stress_supervision_refuses_zero_total_normalized_weight() -> None:
     batch = _periodic_batch()
     _, _, stress = _teacher_labels(batch)
-    stress_problem = AtomisticTrainingProblem(
-        batch, _execution(), cutoff=CUTOFF, training_stress=stress
-    )
-    with pytest.raises(ValueError, match="zero weight"):
-        fit_atomistic_potential(
-            _mace(jr.key(4)),
-            stress_problem,
-            AtomisticTrainingPolicy(maximum_steps=1, stress_weight=0.0),
+    with pytest.raises(ValueError, match="positive at every committed update"):
+        _problem(
+            batch,
+            objectives=(
+                AtomisticStressObjective(
+                    schedule=AtomisticObjectiveSchedule.constant(0.0)
+                ),
+            ),
+            weighting="normalized",
+            stress=stress,
         )
 
 
@@ -396,29 +419,22 @@ def test_nonfinite_update_rolls_back_to_the_last_accepted_potential() -> None:
     initial = _mace(jr.key(11))
     result = fit_atomistic_potential(
         initial,
-        AtomisticTrainingProblem(
-            batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_energy=energy,
-            training_forces=forces,
-            training_stress=stress,
+        _problem(batch, energy=energy, forces=forces, stress=stress),
+        AtomisticTrainingPolicy(
+            maximum_steps=3,
+            optimizer=optax.scale(float("nan")),
+            optimizer_id="optax.scale:nan",
         ),
-        AtomisticTrainingPolicy(maximum_steps=3, learning_rate=1e300),
         key=jr.key(12),
     )
 
     assert int(result.status) == int(AtomisticStatus.NONFINITE)
     assert not bool(result.successful)
-    assert result.termination in (
-        "nonfinite_training_loss_or_gradient",
-        "nonfinite_updated_loss",
-    )
+    assert result.termination == "nonfinite_update_window"
     assert result.progress.update_step == 0
-    assert bool(jnp.all(jnp.isnan(result.stress_loss_history)))
-    assert result.stress_loss_history.shape == (1,)
-    assert atomistic_potential_revision(result.potential).revision_id == (
-        atomistic_potential_revision(initial).revision_id
+    assert result.training_values.shape == (0,)
+    assert atomistic_model_revision(result.potential).revision_id == (
+        atomistic_model_revision(initial).revision_id
     )
     _assert_trees_bitwise_equal(result.best_potential, result.potential)
 
@@ -431,14 +447,11 @@ def test_painn_force_training_agrees_on_dense_and_sparse_finite_topologies() -> 
         ]
     )
     batch = AtomisticBatch(
-        # ty: ignore[invalid-argument-type]
-        [[1, 1, 1], [1, 1, 0]],
+        np.asarray([[1, 1, 1], [1, 1, 0]], dtype=np.int64),
         positions,
-        # ty: ignore[invalid-argument-type]
-        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+        np.asarray([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]], dtype=np.float64),
         SCALE,
-        # ty: ignore[invalid-argument-type]
-        atom_mask=[[True, True, True], [True, True, False]],
+        atom_mask=np.asarray([[True, True, True], [True, True, False]], dtype=np.bool_),
     )
 
     def painn(key: Any) -> Any:
@@ -461,36 +474,37 @@ def test_painn_force_training_agrees_on_dense_and_sparse_finite_topologies() -> 
             maximum_degree=4,
             maximum_images=1,
         ),
+        search_cell=8.0 * np.eye(3),
     )
     teacher = energy_and_forces(painn(jr.key(21)), batch, dense)
-    results = tuple(
-        fit_atomistic_potential(
-            painn(jr.key(22)),
-            AtomisticTrainingProblem(
-                batch,
-                execution,
-                cutoff=2.0,
-                training_energy=teacher.energy,
-                training_forces=teacher.forces,
-            ),
-            AtomisticTrainingPolicy(maximum_steps=3, learning_rate=2e-3),
-            key=jr.key(23),
+    problems = tuple(
+        AtomisticTrainingProblem(
+            _loader(batch, energy=teacher.energy, forces=teacher.forces),
+            execution,
+            (AtomisticEnergyObjective(), AtomisticForceObjective()),
+            scale=SCALE,
+            cutoff=2.0,
         )
         for execution in (dense, sparse)
     )
+    results = tuple(
+        fit_atomistic_potential(
+            painn(jr.key(22)),
+            problem,
+            AtomisticTrainingPolicy(maximum_steps=3, learning_rate=2e-3),
+            key=jr.key(23),
+        )
+        for problem in problems
+    )
 
     assert all(bool(result.successful) for result in results)
-    for name in (
-        "training_loss_history",
-        "energy_loss_history",
-        "force_loss_history",
-        "validation_loss_history",
-    ):
+    for name in ("training_values", "training_objectives", "validation_values"):
         np.testing.assert_allclose(
             getattr(results[1], name), getattr(results[0], name), rtol=1e-10
         )
-    np.testing.assert_array_equal(results[1].stress_loss_history, np.zeros((3,)))
-    assert results[0].problem_id != results[1].problem_id
+    # The graph route is execution, not scientific problem identity.
+    assert problems[0].problem_id == problems[1].problem_id
+    assert results[0].execution_id != results[1].execution_id
 
 
 @pytest.mark.strict_jax
@@ -538,40 +552,42 @@ def test_float32_supervised_update_honors_reduction_precision(
     execution = AtomisticGraphExecutionPlan(2, maximum_dense_atoms=2)
     teacher = energy_and_forces(potential(0), batch, execution)
     initial = potential(1)
+    # One structure has no fittable energy spread: the scales are declared.
     result = fit_atomistic_potential(
         initial,
         AtomisticTrainingProblem(
-            batch,
+            _loader(batch, energy=teacher.energy, forces=teacher.forces),
             execution,
+            (AtomisticEnergyObjective(scale=1.0), AtomisticForceObjective(scale=1.0)),
+            scale=SCALE,
             cutoff=2.0,
-            training_energy=teacher.energy,
-            training_forces=teacher.forces,
         ),
-        AtomisticTrainingPolicy(maximum_steps=1, energy_scale=1.0, force_scale=1.0),
+        AtomisticTrainingPolicy(maximum_steps=1),
         key=jr.key(5),
     )
     assert bool(result.successful)
     assert result.progress.update_step == 1
-    assert bool(jnp.all(jnp.isfinite(result.training_loss_history)))
-    assert atomistic_potential_revision(result.potential).revision_id != (
-        atomistic_potential_revision(initial).revision_id
+    assert bool(jnp.all(jnp.isfinite(result.training_values)))
+    assert atomistic_model_revision(result.potential).revision_id != (
+        atomistic_model_revision(initial).revision_id
     )
 
 
 @pytest.mark.parametrize(
     "mask_shape",
-    [(), (3,), (3, 3), (3, 2, 1)],
-    ids=["scalar", "cartesian-only", "atom-cartesian", "broadcast-cartesian"],
+    [(), (3,), (3, 3), (3, 2, 1), (3, 2, 3)],
+    ids=["scalar", "case-only", "wrong-atoms", "broadcast", "per-component"],
 )
-def test_force_supervision_refuses_implicit_mask_broadcast(
+def test_force_availability_refuses_implicit_broadcast_and_component_masks(
     mask_shape: tuple[int, ...],
 ) -> None:
     batch = _periodic_batch()
-    with pytest.raises(ValueError):
-        AtomisticTrainingProblem(
+    # Force availability is exactly per atom (case, atom); the removed
+    # per-component masks have no equivalent and are refused.
+    with pytest.raises(ValueError, match="force availability must have shape"):
+        atomistic_training_source(
             batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_forces=np.ones(batch.positions.shape, dtype=np.float64),
-            training_force_mask=np.ones(mask_shape, dtype=np.bool_),
+            mass_unit=DALTON,
+            forces=np.ones(batch.positions.shape, dtype=np.float64),
+            force_available=np.ones(mask_shape, dtype=np.bool_),
         )

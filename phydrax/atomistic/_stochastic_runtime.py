@@ -2,44 +2,63 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Canonical discrete generalized-Langevin owner and the overdamped entry point.
+
+``GeneralizedLangevinPlan`` is the single GLE execution owner of atomistic
+dynamics.  It is an in-schedule thermostat of ``PreparedAtomisticDynamics``
+(``O(dt/2) K(dt/2) D(dt) [constraints] K(dt/2) O(dt/2)``) whose half-step
+operator is a fixed discrete transition in thermal-reduced momentum
+coordinates ``s = p / sqrt(m kT / kinetic_to_energy)``::
+
+    [s, z]' = T [s, z] + S xi,      T T^T + S S^T = I  (discrete FDT).
+
+The discrete fluctuation-dissipation identity is checked at construction and
+reported at execution; the target temperature comes from the bound
+thermodynamic row and the auxiliary memory is a typed dynamics continuation.
+Noise is addressed per particle and per channel by stable particle identity,
+committed step, half-step phase and channel.
+"""
+
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
-from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
-from ._dynamics import (
-    AtomisticDynamicsState,
-    PreparedAtomisticDynamics,
-    VelocityVerletPlan,
-)
-from ._hydrodynamic_brownian import (
-    HydrodynamicBrownianPlan,
-    PreparedHydrodynamicBrownian,
-)
-from ._hydrodynamic_mobility import ConstantIsotropicMobilityPlan
 from ._thermal import stable_particle_normals
-from ._thermodynamic import PreparedThermodynamicStateTable
+
+
+if TYPE_CHECKING:
+    from ._dynamics import PreparedAtomisticDynamics
+    from ._hydrodynamic_brownian import PreparedHydrodynamicBrownian
+
+
+GLE_OPERATOR_BASE = 16
 
 
 class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
+    """Overdamped (Brownian) entry point over the hydrodynamic Brownian owner.
+
+    ``step_size`` and ``realization_id`` are static selectors; ``mobility``
+    and ``temperature`` are dynamic ``float64`` scalars whose exact host
+    values key ``plan_identity`` (host ``plan_id``, unchanged digest).
+    """
+
     step_size: float = eqx.field(static=True)
-    mobility: float = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
+    mobility: Array
+    temperature: Array
     realization_id: int = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -65,10 +84,10 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Overdamped atomistic controls are invalid.")
         self.step_size = step
-        self.mobility = mobility_
-        self.temperature = thermal
+        self.mobility = jnp.asarray(mobility_, dtype=jnp.float64)
+        self.temperature = jnp.asarray(thermal, dtype=jnp.float64)
         self.realization_id = realization
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "overdamped-atomistic-plan",
                 "step_size": step,
@@ -78,240 +97,243 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
+
     def prepare(
         self, dynamics: PreparedAtomisticDynamics, /
     ) -> PreparedHydrodynamicBrownian:
+        """Host preparation: the declared host scalars configure the owner."""
+        from ._hydrodynamic_brownian import HydrodynamicBrownianPlan
+        from ._hydrodynamic_mobility import ConstantIsotropicMobilityPlan
+
         return HydrodynamicBrownianPlan(
             self.step_size,
-            self.temperature,
+            float(self.temperature),
             realization_id=self.realization_id,
         ).prepare(
             dynamics,
             ConstantIsotropicMobilityPlan(
-                self.mobility,
+                float(self.mobility),
                 maximum_particles=dynamics.system.capacity,
             ),
         )
 
 
-class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
+class GeneralizedLangevinPlan(StrictModule, NonTrainableState):
+    """Canonical NVT generalized-Langevin integrator over a discrete transition.
+
+    ``transition_matrix`` and ``noise_factor`` are the exact half-step
+    propagator of the momentum channel plus ``K`` auxiliary channels in
+    thermal-reduced coordinates.  The method is canonical exactly because the
+    discrete FDT holds within ``covariance_tolerance``.  The plan digest binds
+    the dynamic matrices, so it is the dynamic ``plan_identity`` (host
+    ``plan_id``, unchanged digest); step size, tolerance and realization
+    label are static selectors.
+    """
+
+    step_size: float = eqx.field(static=True)
     transition_matrix: Array
     noise_factor: Array
-    temperature: float = eqx.field(static=True)
     covariance_tolerance: float = eqx.field(static=True)
     realization_id: int = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
+        step_size: float,
         transition_matrix: ArrayLike,
         noise_factor: ArrayLike,
-        temperature: float,
         /,
         *,
         covariance_tolerance: float = 1.0e-10,
         realization_id: int = 0,
     ) -> None:
+        step = float(step_size)
         transition = np.asarray(transition_matrix, dtype=np.float64)
         noise = np.asarray(noise_factor, dtype=np.float64)
-        thermal = float(temperature)
         tolerance = float(covariance_tolerance)
         realization = int(realization_id)
         if (
-            transition.ndim != 2
+            not math.isfinite(step)
+            or step <= 0.0
+            or transition.ndim != 2
             or transition.shape[0] != transition.shape[1]
             or noise.shape != transition.shape
             or transition.shape[0] == 0
             or np.any(~np.isfinite(transition))
             or np.any(~np.isfinite(noise))
-            or not math.isfinite(thermal)
-            or thermal <= 0.0
             or not math.isfinite(tolerance)
             or tolerance < 0.0
             or realization < 0
         ):
-            raise ValueError("Generalized Langevin runtime controls are invalid.")
-        covariance_residual = (
+            raise ValueError("Generalized Langevin controls are invalid.")
+        residual = (
             transition @ transition.T + noise @ noise.T - np.eye(transition.shape[0])
         )
-        if np.max(np.abs(covariance_residual)) > tolerance:
+        if np.max(np.abs(residual)) > tolerance:
             raise ValueError(
-                "Generalized Langevin transition and noise violate discrete FDT."
+                "Generalized Langevin transition and noise violate the discrete FDT."
             )
+        self.step_size = step
         self.transition_matrix = jnp.asarray(transition)
         self.noise_factor = jnp.asarray(noise)
-        self.temperature = thermal
         self.covariance_tolerance = tolerance
         self.realization_id = realization
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
-                "kind": "generalized-langevin-runtime-plan",
+                "kind": "atomistic-generalized-langevin",
+                "realization": "discrete-half-step-transition",
+                "step_size": step,
                 "transition_matrix": transition.tolist(),
                 "noise_factor": noise.tolist(),
-                "temperature": thermal,
                 "covariance_tolerance": tolerance,
                 "realization_id": realization,
             }
         )
 
     @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
+
+    @property
     def auxiliary_count(self) -> int:
         return self.transition_matrix.shape[0] - 1
 
-    def prepare(
-        self, dynamics: PreparedAtomisticDynamics, /
-    ) -> "PreparedGeneralizedLangevinRuntime":
-        return PreparedGeneralizedLangevinRuntime(self, dynamics)
+    @property
+    def canonical(self) -> bool:
+        return True
+
+    @property
+    def stochastic(self) -> bool:
+        return True
+
+    def covariance_residual(self) -> Array:
+        channels = self.transition_matrix.shape[0]
+        return jnp.max(
+            jnp.abs(
+                self.transition_matrix @ self.transition_matrix.T
+                + self.noise_factor @ self.noise_factor.T
+                - jnp.eye(channels, dtype=self.transition_matrix.dtype)
+            )
+        )
 
 
-class GeneralizedLangevinRuntimeState(StrictModule):
-    atomistic: AtomisticDynamicsState
-    auxiliary: Array
-    prepared_id: str = eqx.field(static=True)
+class GeneralizedLangevinMemoryState(StrictModule):
+    """Typed GLE continuation: auxiliary momenta ``(N, 3, K)`` in reduced units."""
+
+    memory: Array
 
 
-class GeneralizedLangevinStepResult(StrictModule):
-    candidate_state: GeneralizedLangevinRuntimeState
-    accepted_state: GeneralizedLangevinRuntimeState
+def initial_generalized_langevin_memory(
+    plan: GeneralizedLangevinPlan, particle_capacity: int, dtype: DTypeLike, /
+) -> GeneralizedLangevinMemoryState:
+    return GeneralizedLangevinMemoryState(
+        jnp.zeros((int(particle_capacity), 3, plan.auxiliary_count), dtype=dtype)
+    )
+
+
+class GeneralizedLangevinEvaluation(StrictModule):
+    momenta: Array
+    memory: GeneralizedLangevinMemoryState
+    heat: Array
     covariance_residual: Array
     successful: Array
-    prepared_id: str = eqx.field(static=True)
 
 
-class PreparedGeneralizedLangevinRuntime(StrictModule, NonTrainableState):
-    plan: GeneralizedLangevinRuntimePlan
-    dynamics: PreparedAtomisticDynamics
-    prepared_id: str = eqx.field(static=True)
-
-    @checked
-    def __init__(
-        self,
-        plan: GeneralizedLangevinRuntimePlan,
-        dynamics: PreparedAtomisticDynamics,
-        /,
-    ) -> None:
-        if not isinstance(dynamics.integrator, VelocityVerletPlan):
-            raise TypeError("Generalized Langevin composition requires Velocity Verlet.")
-        if dynamics.constraints is not None:
-            raise ValueError("Initial GLE runtime does not admit constraints.")
-        self.plan = plan
-        self.dynamics = dynamics
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-generalized-langevin-runtime",
-                "plan": plan.plan_id,
-                "dynamics": dynamics.prepared_id,
-            }
+def apply_generalized_langevin(
+    plan: GeneralizedLangevinPlan,
+    key_data: ArrayLike,
+    particle_ids: ArrayLike,
+    momenta: ArrayLike,
+    memory: GeneralizedLangevinMemoryState,
+    masses: ArrayLike,
+    mobile_mask: ArrayLike,
+    step_index: ArrayLike,
+    temperature: ArrayLike,
+    /,
+    *,
+    phase: int,
+    boltzmann_constant: float,
+    kinetic_to_energy: float,
+) -> GeneralizedLangevinEvaluation:
+    """Apply one addressed half-step GLE transition at the row temperature."""
+    if not isinstance(plan, GeneralizedLangevinPlan):
+        raise TypeError("plan must be a GeneralizedLangevinPlan.")
+    if phase not in (0, 1):
+        raise ValueError("phase must be 0 (first half) or 1 (second half).")
+    momentum = jnp.asarray(momenta)
+    mass = jnp.asarray(masses, dtype=momentum.dtype)
+    mobile = jnp.asarray(mobile_mask, dtype=jnp.bool_)
+    thermal = jnp.asarray(temperature, dtype=momentum.dtype)
+    channels = plan.transition_matrix.shape[0]
+    expected = momentum.shape + (plan.auxiliary_count,)
+    if memory.memory.shape != expected:
+        raise ValueError(f"GLE memory must have shape {expected}.")
+    scale = jnp.sqrt(mass[:, None] * boltzmann_constant * thermal / kinetic_to_energy)
+    safe = jnp.where(scale > 0.0, scale, 1.0)
+    combined = jnp.concatenate(
+        (jnp.where(mobile[:, None], momentum / safe, 0.0)[..., None], memory.memory),
+        axis=-1,
+    )
+    noise = jnp.stack(
+        [
+            stable_particle_normals(
+                key_data,
+                particle_ids,
+                step_index,
+                operator_id=GLE_OPERATOR_BASE + phase * channels + channel,
+                realization_id=plan.realization_id,
+                dtype=momentum.dtype,
+            )
+            for channel in range(channels)
+        ],
+        axis=-1,
+    )
+    transition = plan.transition_matrix.astype(momentum.dtype)
+    factor = plan.noise_factor.astype(momentum.dtype)
+    updated = contract("...i,ji->...j", combined, transition) + contract(
+        "...i,ji->...j", noise, factor
+    )
+    new_momentum = jnp.where(mobile[:, None], updated[..., 0] * scale, 0.0)
+    new_memory = jnp.where(mobile[:, None, None], updated[..., 1:], 0.0)
+    before = (
+        0.5
+        * kinetic_to_energy
+        * jnp.sum(jnp.where(mobile[:, None], momentum * momentum / mass[:, None], 0.0))
+    )
+    after = (
+        0.5
+        * kinetic_to_energy
+        * jnp.sum(
+            jnp.where(mobile[:, None], new_momentum * new_momentum / mass[:, None], 0.0)
         )
-
-    def initialize(
-        self, atomistic: AtomisticDynamicsState, /
-    ) -> GeneralizedLangevinRuntimeState:
-        if atomistic.prepared_dynamics_id != self.dynamics.prepared_id:
-            raise ValueError("Atomistic state belongs to another dynamics runtime.")
-        auxiliary = jnp.zeros(
-            atomistic.kinematics.momenta.shape + (self.plan.auxiliary_count,),
-            dtype=atomistic.kinematics.momenta.dtype,
-        )
-        return GeneralizedLangevinRuntimeState(atomistic, auxiliary, self.prepared_id)
-
-    def _thermostat(
-        self,
-        state: GeneralizedLangevinRuntimeState,
-        operator_id: int,
-        /,
-    ) -> tuple[GeneralizedLangevinRuntimeState, Array]:
-        atomistic = state.atomistic
-        momentum = atomistic.kinematics.momenta
-        masses = self.dynamics.system.plan.masses
-        scale = jnp.sqrt(
-            masses[:, None]
-            * self.dynamics.system.plan.units.boltzmann_constant
-            * self.plan.temperature
-            / self.dynamics.system.plan.units.kinetic_to_energy
-        )
-        normalized = momentum / scale
-        combined = jnp.concatenate((normalized[..., None], state.auxiliary), axis=-1)
-        channels = self.plan.transition_matrix.shape[0]
-        noise = jnp.stack(
-            [
-                stable_particle_normals(
-                    jr.key_data(atomistic.random_key),
-                    self.dynamics.system.plan.particle_ids,
-                    atomistic.step_index,
-                    operator_id=operator_id * channels + channel,
-                    realization_id=self.plan.realization_id,
-                    dtype=momentum.dtype,
-                )
-                for channel in range(channels)
-            ],
-            axis=-1,
-        )
-        updated = contract(
-            "...i,ji->...j", combined, self.plan.transition_matrix
-        ) + contract("...i,ji->...j", noise, self.plan.noise_factor)
-        mobile = self.dynamics.system.mobile_mask[:, None]
-        new_momentum = jnp.where(mobile, updated[..., 0] * scale, 0.0)
-        new_auxiliary = jnp.where(mobile[..., None], updated[..., 1:], 0.0)
-        kinematics = eqx.tree_at(
-            lambda value: value.momenta, atomistic.kinematics, new_momentum
-        )
-        new_atomistic = eqx.tree_at(lambda value: value.kinematics, atomistic, kinematics)
-        successful = (
-            jnp.all(jnp.isfinite(updated))
-            & jnp.all(jnp.isfinite(scale))
-            & jnp.all(scale > 0.0)
-        )
-        return (
-            GeneralizedLangevinRuntimeState(
-                new_atomistic, new_auxiliary, self.prepared_id
-            ),
-            successful,
-        )
-
-    @checked
-    def step(
-        self,
-        state: GeneralizedLangevinRuntimeState,
-        thermodynamic: PreparedThermodynamicStateTable,
-        /,
-    ) -> GeneralizedLangevinStepResult:
-        if state.prepared_id != self.prepared_id:
-            raise ValueError("GLE state belongs to another prepared runtime.")
-        first, first_successful = self._thermostat(state, 0)
-        mechanical = self.dynamics.step_detailed(first.atomistic, thermodynamic)
-        middle = GeneralizedLangevinRuntimeState(
-            mechanical.accepted_state, first.auxiliary, self.prepared_id
-        )
-        candidate, second_successful = self._thermostat(middle, 1)
-        covariance = (
-            self.plan.transition_matrix @ self.plan.transition_matrix.T
-            + self.plan.noise_factor @ self.plan.noise_factor.T
-            - jnp.eye(self.plan.transition_matrix.shape[0])
-        )
-        covariance_residual = jnp.max(jnp.abs(covariance))
-        successful = (
-            first_successful
-            & mechanical.successful
-            & second_successful
-            & (covariance_residual <= self.plan.covariance_tolerance)
-        )
-        accepted = jax.tree.map(
-            lambda new, old: jnp.where(successful, new, old), candidate, state
-        )
-        return GeneralizedLangevinStepResult(
-            candidate,
-            accepted,
-            covariance_residual,
-            successful,
-            self.prepared_id,
-        )
+    )
+    residual = plan.covariance_residual()
+    successful = (
+        (thermal > 0.0)
+        & jnp.isfinite(thermal)
+        & jnp.all(jnp.isfinite(updated))
+        & (residual <= plan.covariance_tolerance)
+    )
+    return GeneralizedLangevinEvaluation(
+        new_momentum,
+        GeneralizedLangevinMemoryState(new_memory),
+        after - before,
+        residual,
+        successful,
+    )
 
 
 __all__ = [
-    "GeneralizedLangevinRuntimePlan",
-    "GeneralizedLangevinRuntimeState",
-    "GeneralizedLangevinStepResult",
+    "GLE_OPERATOR_BASE",
+    "GeneralizedLangevinEvaluation",
+    "GeneralizedLangevinMemoryState",
+    "GeneralizedLangevinPlan",
     "OverdampedAtomisticPlan",
-    "PreparedGeneralizedLangevinRuntime",
+    "apply_generalized_langevin",
+    "initial_generalized_langevin_memory",
 ]

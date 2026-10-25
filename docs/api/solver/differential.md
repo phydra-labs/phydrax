@@ -57,11 +57,19 @@ support, combined noise shape, sample shape, Brownian-tree tolerance, Lévy-area
 and optional noise-basis identity. Path keys use `jax.random.fold_in`: increasing the
 ensemble size preserves every existing path prefix.
 
-`realization_id` is a computed fingerprint of all path-defining inputs. `label` is
-human-readable metadata. `coupling_id` identifies paths intended for common-random-
-number comparisons. `WienerRealization.antithetic` constructs explicit `(+W,-W)`
-pairs. Reuse one realization across models, parameters, or coarse/fine grids when
-common randomness is required.
+Realization identity is split. The static `law_id` fingerprints the path law and
+layout: support, noise and sample shapes, tolerance, Lévy-area level, algorithm, and
+noise basis. `root_key`, `path_indices`, and `path_signs` are dynamic path data, so a
+realization can be built from a traced key inside `jax.jit` or `jax.vmap` without a
+host transfer, and compiled code receiving realizations with new keys does not
+retrace. `realization_id` is the host-materialized fingerprint of all path-defining
+inputs, including the concrete key and path layout. `coupling_id` identifies paths
+intended for common-random-number comparisons: the caller-declared label, or else the
+fingerprint of the root key and path law. Reading either identity from traced leaves
+raises; traced code carries the realization itself. `label` is human-readable
+metadata. `WienerRealization.antithetic` constructs explicit `(+W,-W)` pairs. Reuse
+one realization across models, parameters, or coarse/fine grids when common
+randomness is required.
 
 ::: phydrax.solver.DifferentialProblem
     options:

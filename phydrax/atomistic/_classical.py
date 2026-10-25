@@ -17,13 +17,20 @@ from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint
+from .._identity import IdentityWords
 from .._trainable import NonTrainableState
 from ..typing import parse
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodRequirement,
+    AtomisticNeighborhoodRole,
+    AtomisticPairExclusions,
+)
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
     AbstractPreparedAtomisticEnergyTerm,
+    AtomisticInteractionScaleState,
     AtomisticPotentialContext,
     AtomisticTermEvaluation,
 )
@@ -63,8 +70,8 @@ def _parameters(name: str, value: ArrayLike, /, *, positive: bool = False) -> Ar
 
 def _term_identity(
     kind: str, name: str, group: int, arrays: PyTree[ArrayLike], /, **extra: object
-) -> str:
-    return canonical_fingerprint(
+) -> IdentityWords:
+    return IdentityWords.of(
         {
             "kind": kind,
             "name": name,
@@ -84,11 +91,17 @@ def _validate_name_group(name: str, force_group: int, /) -> tuple[str, int]:
 
 
 class HarmonicBondPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Harmonic bonds ``k/2 (r - r0)^2`` routed by topology bond types.
+
+    Parameter tables are dynamic leaves; the canonical term digest is the
+    dynamic ``term_identity`` (``term_id`` decodes it on the host).
+    """
+
     stiffness: Array
     equilibrium_distance: Array
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -119,7 +132,7 @@ class HarmonicBondPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(bonded_geometry=True)
-        self.term_id = _term_identity(
+        self.term_identity = _term_identity(
             "harmonic-bond-potential",
             identifier,
             group,
@@ -136,12 +149,14 @@ class HarmonicBondPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
 
 class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
+    """Harmonic bonds bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: HarmonicBondPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -152,10 +167,10 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-harmonic-bond",
                 "term": plan.term_id,
@@ -195,11 +210,17 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
 class FiniteExtensibleNonlinearElasticBondPotential(
     AbstractAtomisticEnergyTerm, NonTrainableState
 ):
+    """FENE bonds routed by topology bond types.
+
+    Parameter tables are dynamic leaves; the canonical term digest is the
+    dynamic ``term_identity`` (``term_id`` decodes it on the host).
+    """
+
     stiffness: Array
     maximum_extension: Array
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -228,7 +249,7 @@ class FiniteExtensibleNonlinearElasticBondPotential(
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(bonded_geometry=True)
-        self.term_id = _term_identity(
+        self.term_identity = _term_identity(
             "finite-extensible-nonlinear-elastic-bond-potential",
             identifier,
             group,
@@ -250,12 +271,14 @@ class FiniteExtensibleNonlinearElasticBondPotential(
 class PreparedFiniteExtensibleNonlinearElasticBondPotential(
     AbstractPreparedAtomisticEnergyTerm
 ):
+    """FENE bonds bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: FiniteExtensibleNonlinearElasticBondPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -269,10 +292,10 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-finite-extensible-nonlinear-elastic-bond",
                 "term": plan.term_id,
@@ -324,11 +347,17 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
 
 
 class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Harmonic angles routed by topology angle types.
+
+    Parameter tables are dynamic leaves; the canonical term digest is the
+    dynamic ``term_identity`` (``term_id`` decodes it on the host).
+    """
+
     stiffness: Array
     equilibrium_angle: Array
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -359,7 +388,7 @@ class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(bonded_geometry=True)
-        self.term_id = _term_identity(
+        self.term_identity = _term_identity(
             "harmonic-angle-potential",
             identifier,
             group,
@@ -376,12 +405,14 @@ class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
 
 class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
+    """Harmonic angles bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: HarmonicAnglePotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -392,10 +423,10 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-harmonic-angle",
                 "term": plan.term_id,
@@ -456,13 +487,20 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
 
 
 class PeriodicTorsionPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Periodic proper or improper torsions routed by topology types.
+
+    Parameter tables are dynamic leaves and ``improper`` is a static route
+    selector; the canonical term digest is the dynamic ``term_identity``
+    (``term_id`` decodes it on the host).
+    """
+
     amplitude: Array
     periodicity: Array
     phase: Array
     improper: bool = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -503,7 +541,7 @@ class PeriodicTorsionPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(bonded_geometry=True)
-        self.term_id = _term_identity(
+        self.term_identity = _term_identity(
             "periodic-torsion-potential",
             identifier,
             group,
@@ -529,12 +567,14 @@ class PeriodicTorsionPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
 
 class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
+    """Periodic torsions bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: PeriodicTorsionPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -545,10 +585,10 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-periodic-torsion",
                 "term": plan.term_id,
@@ -643,6 +683,16 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
 
 
 class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Lennard-Jones pairs over the classical minimum-image pair relation.
+
+    Parameter tables are dynamic leaves. ``cutoff`` is the resource-defining
+    neighborhood requirement cutoff and stays static together with the
+    truncation scheme it defines (``switch_distance``,
+    ``shift_energy_at_cutoff``) and the ``combining_rule`` selector. The
+    canonical term digest is the dynamic ``term_identity`` (``term_id``
+    decodes it on the host).
+    """
+
     epsilon: Array
     sigma: Array
     explicit_epsilon: Array | None
@@ -653,7 +703,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     combining_rule: LennardJonesCombiningRule = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -745,9 +795,16 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             dynamic_species=True,
         )
         self.requirements = AtomisticPotentialRequirements(
-            cutoff=cutoff_, pair_geometry=True
+            neighborhoods=(
+                AtomisticNeighborhoodRequirement(
+                    identifier,
+                    AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS,
+                    cutoff_,
+                    exclusions=AtomisticPairExclusions.TOPOLOGY_EXCEPTIONS,
+                ),
+            ),
         )
-        self.term_id = _term_identity(
+        self.term_identity = _term_identity(
             "lennard-jones-potential",
             identifier,
             group,
@@ -777,12 +834,14 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
 
 class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
+    """Lennard-Jones pairs bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: LennardJonesPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -793,10 +852,10 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-lennard-jones",
                 "term": plan.term_id,
@@ -804,91 +863,15 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
             }
         )
 
-    def _mixed(self, left_type: Array, right_type: Array, /) -> tuple[Array, Array]:
-        if self.plan.combining_rule == "explicit":
-            epsilon = self.plan.explicit_epsilon
-            sigma = self.plan.explicit_sigma
-            if epsilon is None or sigma is None:
-                raise RuntimeError(
-                    "Validated explicit Lennard-Jones matrices are absent."
-                )
-            return epsilon[left_type, right_type], sigma[left_type, right_type]
-        left_epsilon = self.plan.epsilon[left_type]
-        right_epsilon = self.plan.epsilon[right_type]
-        left_sigma = self.plan.sigma[left_type]
-        right_sigma = self.plan.sigma[right_type]
-        epsilon = jnp.sqrt(left_epsilon * right_epsilon)
-        sigma = (
-            jnp.sqrt(left_sigma * right_sigma)
-            if self.plan.combining_rule == "geometric"
-            else 0.5 * (left_sigma + right_sigma)
-        )
-        return epsilon, sigma
-
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
-        raw_left_type = context.species[context.pair_left]
-        raw_right_type = context.species[context.pair_right]
-        type_count = self.plan.epsilon.size
-        valid_types = (
-            (raw_left_type >= 0)
-            & (raw_left_type < type_count)
-            & (raw_right_type >= 0)
-            & (raw_right_type < type_count)
-        )
-        left_type = jnp.clip(raw_left_type, 0, type_count - 1)
-        right_type = jnp.clip(raw_right_type, 0, type_count - 1)
-        epsilon, sigma = self._mixed(left_type, right_type)
-        distance = context.pair_distance
-        coupling = context.interaction_scales.lennard_jones
-        active = context.pair_valid & valid_types & (distance < self.plan.cutoff)
-        softened = (
-            distance**6
-            + context.interaction_scales.lennard_jones_softcore_alpha
-            * jnp.clip(1.0 - coupling, 0.0, 1.0)
-            ** context.interaction_scales.softcore_power
-            * sigma**6
-        )
-        valid_geometry = jnp.all(
-            ~context.pair_valid
-            | (
-                valid_types
-                & (
-                    (distance > 0.0)
-                    | (
-                        (coupling < 1.0)
-                        & (context.interaction_scales.lennard_jones_softcore_alpha > 0.0)
-                    )
-                )
-            )
-        )
-        safe_sixth_power = jnp.where(active & (softened > 0.0), softened, 1.0)
-        ratio6 = sigma**6 / safe_sixth_power
-        raw = 4.0 * epsilon * (ratio6 * ratio6 - ratio6)
-        if self.plan.shift_energy_at_cutoff:
-            cutoff_sixth_power = (
-                self.plan.cutoff**6
-                + context.interaction_scales.lennard_jones_softcore_alpha
-                * jnp.clip(1.0 - coupling, 0.0, 1.0)
-                ** context.interaction_scales.softcore_power
-                * sigma**6
-            )
-            cutoff_ratio6 = sigma**6 / cutoff_sixth_power
-            raw = raw - 4.0 * epsilon * (cutoff_ratio6 * cutoff_ratio6 - cutoff_ratio6)
-        if self.plan.switch_distance is None:
-            switch = jnp.where(distance < self.plan.cutoff, 1.0, 0.0)
-        else:
-            width = self.plan.cutoff - self.plan.switch_distance
-            scaled = (distance - self.plan.switch_distance) / width
-            smooth = 1.0 - 10.0 * scaled**3 + 15.0 * scaled**4 - 6.0 * scaled**5
-            switch = jnp.where(
-                distance <= self.plan.switch_distance,
-                1.0,
-                jnp.where(distance < self.plan.cutoff, smooth, 0.0),
-            )
-        interaction = jnp.where(
-            active,
-            coupling * raw * switch * context.lennard_jones_scales,
-            0.0,
+        interaction, valid_geometry = lennard_jones_pair_interactions(
+            self.plan,
+            context.species[context.pair_left],
+            context.species[context.pair_right],
+            context.pair_distance,
+            context.pair_valid,
+            context.lennard_jones_scales,
+            context.interaction_scales,
         )
         atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)
         atom_energy = atom_energy.at[context.pair_left].add(0.5 * interaction)
@@ -901,10 +884,114 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
         )
 
 
+def _lennard_jones_mixed(
+    plan: LennardJonesPotential, left_type: Array, right_type: Array, /
+) -> tuple[Array, Array]:
+    if plan.combining_rule == "explicit":
+        epsilon = plan.explicit_epsilon
+        sigma = plan.explicit_sigma
+        if epsilon is None or sigma is None:
+            raise RuntimeError("Validated explicit Lennard-Jones matrices are absent.")
+        return epsilon[left_type, right_type], sigma[left_type, right_type]
+    left_epsilon = plan.epsilon[left_type]
+    right_epsilon = plan.epsilon[right_type]
+    left_sigma = plan.sigma[left_type]
+    right_sigma = plan.sigma[right_type]
+    epsilon = jnp.sqrt(left_epsilon * right_epsilon)
+    sigma = (
+        jnp.sqrt(left_sigma * right_sigma)
+        if plan.combining_rule == "geometric"
+        else 0.5 * (left_sigma + right_sigma)
+    )
+    return epsilon, sigma
+
+
+def lennard_jones_pair_interactions(
+    plan: LennardJonesPotential,
+    left_types: Array,
+    right_types: Array,
+    distance: Array,
+    pair_valid: Array,
+    pair_scales: Array,
+    interaction_scales: AtomisticInteractionScaleState,
+    /,
+) -> tuple[Array, Array]:
+    """Canonical Lennard-Jones energy of every stored pair and its geometry status.
+
+    ``left_types``/``right_types`` are the raw atom type IDs of each pair
+    (out-of-table types are inactive and fail ``valid_geometry``);
+    ``pair_scales`` are the topology exception scales. The interaction is
+    zero on inactive pairs; the term energy is its sum over pair-once routes.
+    """
+    raw_left_type = left_types
+    raw_right_type = right_types
+    type_count = plan.epsilon.size
+    valid_types = (
+        (raw_left_type >= 0)
+        & (raw_left_type < type_count)
+        & (raw_right_type >= 0)
+        & (raw_right_type < type_count)
+    )
+    left_type = jnp.clip(raw_left_type, 0, type_count - 1)
+    right_type = jnp.clip(raw_right_type, 0, type_count - 1)
+    epsilon, sigma = _lennard_jones_mixed(plan, left_type, right_type)
+    coupling = interaction_scales.lennard_jones
+    active = pair_valid & valid_types & (distance < plan.cutoff)
+    softened = (
+        distance**6
+        + interaction_scales.lennard_jones_softcore_alpha
+        * jnp.clip(1.0 - coupling, 0.0, 1.0) ** interaction_scales.softcore_power
+        * sigma**6
+    )
+    valid_geometry = jnp.all(
+        ~pair_valid
+        | (
+            valid_types
+            & (
+                (distance > 0.0)
+                | (
+                    (coupling < 1.0)
+                    & (interaction_scales.lennard_jones_softcore_alpha > 0.0)
+                )
+            )
+        )
+    )
+    safe_sixth_power = jnp.where(active & (softened > 0.0), softened, 1.0)
+    ratio6 = sigma**6 / safe_sixth_power
+    raw = 4.0 * epsilon * (ratio6 * ratio6 - ratio6)
+    if plan.shift_energy_at_cutoff:
+        cutoff_sixth_power = (
+            plan.cutoff**6
+            + interaction_scales.lennard_jones_softcore_alpha
+            * jnp.clip(1.0 - coupling, 0.0, 1.0) ** interaction_scales.softcore_power
+            * sigma**6
+        )
+        cutoff_ratio6 = sigma**6 / cutoff_sixth_power
+        raw = raw - 4.0 * epsilon * (cutoff_ratio6 * cutoff_ratio6 - cutoff_ratio6)
+    if plan.switch_distance is None:
+        switch = jnp.where(distance < plan.cutoff, 1.0, 0.0)
+    else:
+        width = plan.cutoff - plan.switch_distance
+        scaled = (distance - plan.switch_distance) / width
+        smooth = 1.0 - 10.0 * scaled**3 + 15.0 * scaled**4 - 6.0 * scaled**5
+        switch = jnp.where(
+            distance <= plan.switch_distance,
+            1.0,
+            jnp.where(distance < plan.cutoff, smooth, 0.0),
+        )
+    interaction = jnp.where(
+        active,
+        coupling * raw * switch * pair_scales,
+        0.0,
+    )
+    return interaction, valid_geometry
+
+
 __all__ = [
     "FiniteExtensibleNonlinearElasticBondPotential",
     "HarmonicAnglePotential",
     "HarmonicBondPotential",
     "LennardJonesPotential",
     "PeriodicTorsionPotential",
+    "lennard_jones_pair_interactions",
 ]

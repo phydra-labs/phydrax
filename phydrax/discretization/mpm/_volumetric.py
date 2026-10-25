@@ -177,6 +177,12 @@ def prepare_cell_average(splat: PreparedParticleGridSplat, /) -> PreparedMPMCell
     dimension = len(splat.target_shape)
     if isinstance(assignment, TensorBSplineSplatAssignment):
         degrees = assignment._axis_degrees(dimension)
+        if max(degrees) > 3:
+            # The cell tables span offsets -1..2 with Gauss rules exact through
+            # cubic pieces; quartic and quintic averages would be truncated.
+            raise ValueError(
+                "B-bar cell averaging supports tensor B-spline degrees up to three."
+            )
     elif isinstance(assignment, MultilinearSplatAssignment):
         degrees = (1,) * dimension
     else:

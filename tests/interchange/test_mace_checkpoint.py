@@ -15,7 +15,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -42,22 +42,34 @@ from phydrax.atomistic.interchange import (
     MACEConversionLimits,
     MACEProviderRuntime,
     MACESource,
+    MACESourceKind,
     MACESourceProvenance,
     MACESourceRefusedError,
     TrustedTorchPickleSource,
 )
+from phydrax.interchange import pin_executable
 from tests._support.mace_source import (
     admitted_source,
     assert_matches_oracle,
+    CHARGE_SPIN_SPECS,
+    committed_maceles_potential,
+    committed_manifest,
+    committed_source_potential,
     configurations,
     DECLARATIONS,
     execution,
+    FAMILY_DECLARATIONS,
     FLOAT32_GATES,
     FLOAT64_GATES,
+    for_release,
+    latent_resources,
+    LES_ARGUMENTS,
+    les_provider,
     native_case,
     ONE_LAYER_INVARIANT_READOUT,
     provider_runtime,
     reduced_cg_provider,
+    RELEASE_FIXTURES,
     structure,
     TWO_LAYER_DENSITY_MULTIHEAD,
     TWO_LAYER_REDUCED_CG,
@@ -478,15 +490,15 @@ def _assert_source_directions(
         structure(conversion.potential, periodic)
     )
     graph = execution(periodic)
-    topology = phx.atomistic.prepare_atomistic_graph_topology(
+    payload = phx.atomistic.AtomisticGraphLayout.for_batch(
         batch, graph, cutoff=conversion.potential.configuration.cutoff
-    )
+    ).prepare(batch)
     contraction = jnp.asarray(weights)
 
     def scalars(values: Any) -> tuple[jax.Array, jax.Array]:
         potential = phx.combine_parameters(values, state, fixed)
         result = phx.atomistic.atomistic_energy_derivatives(
-            potential, batch, graph, batch.positions, topology=topology
+            potential, payload, batch.positions
         )
         forces = result.forces
         assert forces is not None
@@ -989,6 +1001,8 @@ def _example_arguments(checkpoint: Path, *rights: str) -> list[str]:
         "3.12.8",
         "--torch-version",
         "2.14.1",
+        "--mace-torch-version",
+        "0.3.16",
         "--checkpoint",
         str(checkpoint),
         "--sha256",
@@ -1048,7 +1062,7 @@ def test_example_admits_explicit_held_rights_and_fixture_defaults(
     )
     with pytest.raises(_ProviderReached):
         conversion_example.main(explicit)
-    fixture = explicit[:6]
+    fixture = explicit[:8]
     assert conversion_example._source_rights(conversion_example._arguments(fixture)) == (
         "MIT",
         ("MIT",),
@@ -1227,3 +1241,819 @@ def test_earlier_release_layout_is_normalized_recorded_and_faithful(
     )
     oracle = evaluate_mace_source(source, [water], provider=provider, head="Default")
     assert_matches_oracle(conversion.potential, [water], oracle, FLOAT64_GATES)
+
+
+# --- MACE family expansion: release-specific declarations, refusals, families ---
+
+
+def _declaration_refusal(declaration: Mapping[str, Any], match: str) -> None:
+    with pytest.raises((TypeError, ValueError), match=match):
+        _mace_checkpoint._validated_declaration(declaration)
+
+
+@pytest.mark.parametrize("name", sorted(FAMILY_DECLARATIONS))
+@pytest.mark.parametrize("release", ("0.3.15", "0.3.16"))
+def test_family_declarations_have_release_specific_exact_fields(
+    name: str, release: str
+) -> None:
+    declaration = FAMILY_DECLARATIONS[name]
+    if release == "0.3.15" and declaration["keep_last_layer_irreps"]:
+        with pytest.raises(ValueError, match="0.3.15 cannot keep"):
+            for_release(declaration, release)
+        return
+    converted = for_release(declaration, release)
+    assert _mace_checkpoint._validated_declaration(converted) == converted
+    assert ("keep_last_layer_irreps" in converted) == (release == "0.3.16")
+    if release == "0.3.16":
+        _declaration_refusal(
+            {
+                key: value
+                for key, value in converted.items()
+                if key != "keep_last_layer_irreps"
+            },
+            "fields are not exact",
+        )
+    else:
+        _declaration_refusal(
+            {**converted, "keep_last_layer_irreps": False}, "fields are not exact"
+        )
+
+
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [
+        pytest.param({"mace_torch_release": "0.3.14"}, "source release", id="release"),
+        pytest.param({"model_class": "AtomicDipolesMACE"}, "model class", id="dipoles"),
+        pytest.param({"model_class": "PolarMACE"}, "model class", id="polar"),
+        pytest.param({"radial_type": "spline"}, "radial_type", id="radial"),
+        pytest.param({"distance_transform": "Cosine"}, "transform", id="transform"),
+        pytest.param({"use_so3": 1}, "boolean", id="so3-flag"),
+        pytest.param({"readout_class": None}, "readout_class", id="readout-missing"),
+        pytest.param(
+            {"readout_class": "GeneralNonLinearBiasReadoutBlock"},
+            "readout_class",
+            id="readout-general",
+        ),
+        pytest.param(
+            {"interaction_classes": ["RealAgnosticInteractionBlock", "Other"]},
+            "unadmitted interaction",
+            id="interaction",
+        ),
+        pytest.param({"edge_irreps": "3x1x"}, "invalid irreps", id="edge-irreps"),
+        pytest.param(
+            {"use_embedding_readout": True}, "needs declared embedding", id="readout"
+        ),
+        pytest.param(
+            {
+                "embedding_specs": {
+                    "temperature": {
+                        "type": "categorical",
+                        "per": "graph",
+                        "num_classes": 2,
+                        "emb_dim": 2,
+                        "offset": 0,
+                    }
+                }
+            },
+            "not admitted",
+            id="embedding-name",
+        ),
+        pytest.param(
+            {
+                "embedding_specs": {
+                    "total_charge": {
+                        "type": "continuous",
+                        "per": "graph",
+                        "num_classes": 2,
+                        "emb_dim": 2,
+                        "offset": 0,
+                    }
+                }
+            },
+            "not canonical",
+            id="embedding-continuous",
+        ),
+    ],
+)
+def test_declaration_validation_refuses_unadmitted_families(
+    changes: dict[str, Any], match: str
+) -> None:
+    _declaration_refusal({**FAMILY_DECLARATIONS["attention"], **changes}, match)
+
+
+def test_maceles_declaration_records_every_les_argument() -> None:
+    declaration = FAMILY_DECLARATIONS["maceles"]
+    assert _mace_checkpoint._validated_declaration(declaration) == declaration
+    partial = dict(LES_ARGUMENTS)
+    partial.pop("N_max")
+    _declaration_refusal({**declaration, "les_arguments": partial}, "every LES argument")
+    _declaration_refusal(
+        {**declaration, "les_arguments": {**LES_ARGUMENTS, "sigma": float("nan")}},
+        "plain finite",
+    )
+    missing = {key: value for key, value in declaration.items() if key != "les_arguments"}
+    _declaration_refusal(missing, "fields are not exact")
+    _declaration_refusal(
+        {**FAMILY_DECLARATIONS["attention"], "les_arguments": LES_ARGUMENTS},
+        "fields are not exact",
+    )
+
+
+def test_runtime_pins_admitted_source_releases(tmp_path: Path) -> None:
+    interpreter = pin_executable(sys.executable, version="3", license_id="PSF-2.0")
+    runtime = MACEProviderRuntime(
+        interpreter,
+        str(tmp_path),
+        "2.0.0",
+        les_version="0.2.0",
+        openequivariance_version="0.4.1",
+        mace_torch_version="0.3.15",
+    )
+    assert runtime.distributions == {
+        "e3nn": "0.4.4",
+        "mace-torch": "0.3.15",
+        "torch": "2.0.0",
+        "openequivariance": "0.4.1",
+        "les": "0.2.0",
+    }
+    assert _mace_checkpoint.MACE_PROVIDER_RELEASES["mace-torch"] == ("0.3.15", "0.3.16")
+    with pytest.raises(ValueError, match="mace_torch_version"):
+        MACEProviderRuntime(
+            interpreter, str(tmp_path), "2.0.0", mace_torch_version="0.3.14"
+        )
+    with pytest.raises(ValueError, match="les_version"):
+        MACEProviderRuntime(
+            interpreter,
+            str(tmp_path),
+            "2.0.0",
+            les_version="0.1.0",
+            mace_torch_version="0.3.16",
+        )
+
+
+def _layout(**changes: Any) -> dict[str, Any]:
+    return {
+        "legacy_head": False,
+        "relabelled_reduced_cg": False,
+        "derived_zero_flags": [],
+        "dropped_inert_state": [],
+        "integral_buffers": [],
+        "precision_buffers": [],
+        "reparameterized_u_buffers": [],
+        "optimized_layout": None,
+        **changes,
+    }
+
+
+def _provider_identity(release: str, *, les: bool = False) -> dict[str, Any]:
+    def record(version: str) -> dict[str, Any]:
+        return {"version": version, "record_sha256": "a" * 64, "verified_files": 3}
+
+    distributions = {
+        "e3nn": record("0.4.4"),
+        "mace-torch": record(release),
+        "torch": record("2.0.0"),
+    }
+    if les:
+        distributions["les"] = record("0.2.0")
+    return {
+        "distributions": distributions,
+        "python": "3.12.8",
+        "site_packages": "/provider/site-packages",
+    }
+
+
+def _provenance(
+    declaration: Mapping[str, Any],
+    layout: Mapping[str, Any],
+    provider: Mapping[str, Any],
+) -> MACESourceProvenance:
+    unsigned = MACESourceProvenance(
+        source_sha256="b" * 64,
+        source_byte_size=4096,
+        source_license_id="MIT",
+        source_manifest_id="manifest",
+        source_admission_id="admission",
+        source_kind="torch-full-model",
+        trusted_full_object=True,
+        source_dtype="float64",
+        provider=provider,
+        interpreter_sha256="c" * 64,
+        interpreter_version="3.12.8",
+        declaration=declaration,
+        head="Default",
+        basis_residual=0.0,
+        layout_normalization=layout,
+        conversion_id="pending",
+    )
+    return dataclasses.replace(
+        unsigned, conversion_id=_mace_checkpoint._conversion_id(unsigned)
+    )
+
+
+def test_layout_normalization_records_optimized_source_conversions() -> None:
+    optimized = {
+        "kind": "cuequivariance",
+        "converter": "mace.cli.convert_cueq_e3nn",
+        "reproduction_deviation": 3.0e-15,
+    }
+    record = _mace_checkpoint._layout_record(_layout(optimized_layout=optimized))
+    assert _mace_checkpoint._normalized_layout(record)
+    assert not _mace_checkpoint._normalized_layout(_layout())
+    for invalid in (
+        {**optimized, "converter": "mace.cli.convert_oeq_e3nn"},
+        {**optimized, "kind": "torchscript"},
+        {**optimized, "reproduction_deviation": -1.0},
+        {key: value for key, value in optimized.items() if key != "converter"},
+    ):
+        with pytest.raises(ValueError, match="optimized-layout"):
+            _mace_checkpoint._layout_record(_layout(optimized_layout=invalid))
+    legacy = {key: value for key, value in _layout().items() if key != "optimized_layout"}
+    with pytest.raises(ValueError, match="not canonical"):
+        _mace_checkpoint._layout_record(legacy)
+
+
+def test_conversion_identity_changes_with_declaration_and_layout() -> None:
+    provider = _provider_identity("0.3.16")
+    base = _provenance(FAMILY_DECLARATIONS["attention"], _layout(), provider)
+    record = base.to_record()
+    assert MACESourceProvenance.from_record(record).conversion_id == base.conversion_id
+    identities = {base.conversion_id}
+    for declaration in (
+        {**FAMILY_DECLARATIONS["attention"], "use_so3": True},
+        FAMILY_DECLARATIONS["nonlinear-bias-readout"],
+        FAMILY_DECLARATIONS["keep-last-layer-irreps"],
+    ):
+        identities.add(_provenance(declaration, _layout(), provider).conversion_id)
+    optimized = _layout(
+        optimized_layout={
+            "kind": "openequivariance",
+            "converter": "mace.cli.convert_oeq_e3nn",
+            "reproduction_deviation": 0.0,
+        }
+    )
+    identities.add(
+        _provenance(FAMILY_DECLARATIONS["attention"], optimized, provider).conversion_id
+    )
+    assert len(identities) == 5
+    # A stale binding: the recorded declaration names another provider release.
+    stale = _provenance(
+        for_release(FAMILY_DECLARATIONS["attention"], "0.3.15"), _layout(), provider
+    )
+    with pytest.raises(ValueError, match="different mace-torch release"):
+        MACESourceProvenance.from_record(stale.to_record())
+    maceles = _provenance(FAMILY_DECLARATIONS["maceles"], _layout(), provider)
+    with pytest.raises(ValueError, match="verified LES release"):
+        MACESourceProvenance.from_record(maceles.to_record())
+    with_les = _provenance(
+        FAMILY_DECLARATIONS["maceles"], _layout(), _provider_identity("0.3.16", les=True)
+    )
+    assert MACESourceProvenance.from_record(with_les.to_record()) == with_les
+    other_les = _provider_identity("0.3.16", les=True)
+    other_les["distributions"]["les"]["version"] = "0.1.0"
+    with pytest.raises(ValueError, match="les is not a verified admitted release"):
+        _mace_checkpoint._provider_record(other_les)
+
+
+@pytest.mark.parametrize(
+    ("text", "parity", "expected"),
+    [
+        ("4x0e+4x1o+4x2e", "o3", (4, 2)),
+        ("4x0e+4x1e", "so3", (4, 1)),
+        ("3x0e", "o3", (3, 0)),
+        ("4x0e+4x1e", "o3", None),
+        ("4x0e+4x1o", "so3", None),
+        ("4x0e+3x1o", "o3", None),
+        ("4x0e+4x0o+4x1o", "o3", None),
+    ],
+)
+def test_hidden_and_edge_irreps_must_be_uniform_under_the_parity(
+    text: str, parity: Literal["o3", "so3"], expected: tuple[int, int] | None
+) -> None:
+    if expected is None:
+        with pytest.raises(MACESourceRefusedError, match="uniform"):
+            _mace_checkpoint._parity_layout(text, "edge_irreps", parity)
+    else:
+        assert _mace_checkpoint._parity_layout(text, "edge_irreps", parity) == expected
+
+
+def test_provider_constants_are_verified_against_the_admitted_values() -> None:
+    from phydrax.nn.atomistic._mace_source import MACE_SOURCE_LAYER_NORM_EPSILON
+
+    network = {"hs": [16, 8, 9], "layer_norm_epsilons": [MACE_SOURCE_LAYER_NORM_EPSILON]}
+    _mace_checkpoint._layer_norm_network(network, [16, 8, 9], "edge network")
+    with pytest.raises(MACESourceRefusedError, match="LayerNorm epsilon"):
+        _mace_checkpoint._layer_norm_network(
+            {**network, "layer_norm_epsilons": [1.0e-6]}, [16, 8, 9], "edge network"
+        )
+    with pytest.raises(MACESourceRefusedError, match="widths"):
+        _mace_checkpoint._layer_norm_network(network, [16, 8, 8], "edge network")
+    biased = {
+        "irreps_in": "8x0e",
+        "irreps_out": "8x0e",
+        "instructions": [],
+        "biases": [{"i_out": 0, "path_weight": 1.0}],
+        "bias_numel": 8,
+    }
+    _mace_checkpoint._bias_normalization(biased, "linear_mid")
+    for invalid in (
+        {**biased, "biases": [{"i_out": 0, "path_weight": 0.5}]},
+        {**biased, "biases": []},
+        {**biased, "bias_numel": 7},
+    ):
+        with pytest.raises(MACESourceRefusedError, match="bias"):
+            _mace_checkpoint._bias_normalization(invalid, "linear_mid")
+    declaration = {**FAMILY_DECLARATIONS["gaussian-soft"], "r_max": 3.2, "num_bessel": 6}
+    coefficient = -0.5 / (3.2 / 5) ** 2
+    gaussian = {"type": "gaussian", "out_dim": 6, "coefficient": coefficient}
+    _mace_checkpoint._radial_basis(gaussian, declaration, np.dtype(np.float64))
+    with pytest.raises(MACESourceRefusedError, match="Gaussian basis coefficient"):
+        _mace_checkpoint._radial_basis(
+            {**gaussian, "coefficient": 1.01 * coefficient},
+            declaration,
+            np.dtype(np.float64),
+        )
+    with pytest.raises(MACESourceRefusedError, match="contradicts"):
+        _mace_checkpoint._radial_basis(
+            {"type": "bessel", "out_dim": 6}, declaration, np.dtype(np.float64)
+        )
+
+
+def test_source_inventory_consumes_every_tensor_exactly_once() -> None:
+    from phydrax.nn.atomistic._mace_source import _SourceInventory
+
+    inventory = _SourceInventory(
+        {"flat": np.arange(6.0), "matrix": np.ones((2, 3)), "extra": np.zeros(2)}
+    )
+    assert inventory.array("flat", (2, 3)).shape == (2, 3)
+    with pytest.raises(RuntimeError, match="consumed twice"):
+        inventory.array("flat")
+    with pytest.raises(ValueError, match="expected"):
+        inventory.exact("matrix", (3, 2))
+    with pytest.raises(ValueError, match="missing"):
+        inventory.scalar("absent")
+    with pytest.raises(ValueError, match=r"Unadmitted source tensors: \['extra'\]"):
+        inventory.finish()
+    with pytest.raises(ValueError, match="finite"):
+        _SourceInventory({"bad": np.array([np.inf])}).array("bad")
+
+
+def test_source_linear_split_matches_the_e3nn_instruction_order() -> None:
+    """Input-major ``[mul_in, mul_out]`` paths; unmatched outputs are absent."""
+
+    from phydrax.nn.atomistic._mace_interaction import (
+        mace_irrep_layout,
+        MACEPlainLinear,
+    )
+    from phydrax.nn.atomistic._mace_source import (
+        _linear_count,
+        _linear_weights,
+        _matched_outputs,
+    )
+
+    inputs = mace_irrep_layout(2, 0)
+    outputs = mace_irrep_layout(3, 2)
+    matched = _matched_outputs(inputs, outputs)
+    assert [block.degree for block in matched.blocks] == [0]
+    count = _linear_count(inputs, outputs)
+    assert count == 6
+    flat = np.arange(1.0, count + 1.0)
+    (block,) = _linear_weights(flat, inputs, matched)
+    np.testing.assert_array_equal(block, flat.reshape(2, 3).T)
+    plain = MACEPlainLinear(inputs, outputs, weights=(block,), dtype=jnp.float64)
+    values = np.array([[0.3, -1.2]])
+    result = np.asarray(plain(jnp.asarray(values)))
+    # e3nn: out[w] = sum_u x[u] W[u, w] / sqrt(fan_in); higher outputs are zero.
+    expected_scalars = values @ flat.reshape(2, 3) / np.sqrt(2.0)
+    split = outputs.split(jnp.asarray(result))
+    np.testing.assert_allclose(np.asarray(split[0])[..., 0], expected_scalars)
+    assert all(not np.any(np.asarray(part)) for part in split[1:])
+    # Mixed degrees: instructions run over input blocks first.
+    inputs = mace_irrep_layout(2, 1)
+    outputs = mace_irrep_layout(3, 1)
+    flat = np.arange(1.0, _linear_count(inputs, outputs) + 1.0)
+    scalars, vectors = _linear_weights(flat, inputs, outputs)
+    np.testing.assert_array_equal(scalars, flat[:6].reshape(2, 3).T)
+    np.testing.assert_array_equal(vectors, flat[6:].reshape(2, 3).T)
+    with pytest.raises(ValueError, match="do not match"):
+        _linear_weights(flat[:-1], inputs, outputs)
+
+
+_PROVIDER_REFUSALS = """
+import json
+import runpy
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import torch
+from mace.modules import extensions, models
+
+worker = runpy.run_path(sys.argv[2], run_name="_standalone_mace_worker")
+refusals = {}
+candidates = {
+    "AtomicDipolesMACE": models.AtomicDipolesMACE.__new__(models.AtomicDipolesMACE),
+    "AtomicDielectricMACE": models.AtomicDielectricMACE.__new__(
+        models.AtomicDielectricMACE
+    ),
+    "EnergyDipolesMACE": models.EnergyDipolesMACE.__new__(models.EnergyDipolesMACE),
+    "PolarMACE": extensions.PolarMACE.__new__(extensions.PolarMACE),
+    "TorchScript": torch.jit.script(torch.nn.Linear(2, 2)),
+    "Unknown": torch.nn.Linear(2, 2),
+}
+for name, model in candidates.items():
+    try:
+        worker["_admitted_root"](model)
+    except worker["ProviderRefusal"] as refusal:
+        refusals[name] = str(refusal)
+print(json.dumps(refusals))
+"""
+
+
+def test_property_models_and_compiled_executables_refuse_in_the_provider(
+    provider: MACEProviderRuntime,
+) -> None:
+    completed = subprocess.run(
+        [
+            provider.interpreter.path,
+            "-I",
+            "-c",
+            textwrap.dedent(_PROVIDER_REFUSALS),
+            provider.site_packages,
+            str(REPOSITORY / "phydrax/atomistic/interchange/_mace_worker.py"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    refusals = json.loads(completed.stdout.strip().splitlines()[-1])
+    for name in ("AtomicDipolesMACE", "AtomicDielectricMACE", "EnergyDipolesMACE"):
+        assert "not a MACE energy-wrapper route" in refusals[name]
+    assert "not a MACE energy-wrapper route" in refusals["PolarMACE"]
+    assert "TorchScript" in refusals["TorchScript"]
+    assert "not an admitted MACE energy model" in refusals["Unknown"]
+
+
+def _family_conditions(declaration: Mapping[str, Any]) -> dict[str, int]:
+    return (
+        {"total_charge": 1, "total_spin": 2}
+        if declaration["embedding_specs"] is not None
+        else {}
+    )
+
+
+def _assert_family_conversion(
+    provider: MACEProviderRuntime,
+    declaration: Mapping[str, Any],
+    tmp_path: Path,
+    kind: MACESourceKind = "torch-state-dict",
+) -> MACECheckpointConversion:
+    """Convert one provider-built family fixture and compare with the provider."""
+
+    from phydrax.atomistic._latent_electrostatics import LatentEwaldDefinition
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    fixture = create_mace_provider_fixture(
+        declaration, tmp_path, provider=provider, seed=SEED, kind=kind
+    )
+    assert dict(fixture.declaration) == dict(declaration)
+    source = (
+        _safe(fixture)
+        if kind == "torch-state-dict"
+        else admitted_source(
+            fixture.path, kind, trust="provider-built fixture of this test"
+        )
+    )
+    cases = configurations(
+        tuple(declaration["atomic_numbers"]), **_family_conditions(declaration)
+    )
+    oracle = evaluate_mace_source(source, cases, provider=provider, head="Default")
+    latent = declaration["model_class"] == "MACELES"
+    definition = (
+        LatentEwaldDefinition.from_source_arguments(declaration["les_arguments"])
+        if latent
+        else None
+    )
+    conversion = convert_mace_checkpoint(
+        source,
+        provider=provider,
+        latent_resources=None
+        if definition is None
+        else latent_resources(definition, cases[0].cell),
+        atom_capacity=len(cases[0].numbers) if latent else None,
+    )
+    assert dict(conversion.provenance.declaration) == dict(declaration)
+    assert (
+        conversion.provenance.provider["distributions"]["mace-torch"]["version"]
+        == declaration["mace_torch_release"]
+    )
+    for case, reference in zip(cases, oracle.cases, strict=True):
+        potential = conversion.potential
+        if latent:
+            potential = dataclasses.replace(
+                conversion,
+                atom_capacity=len(case.numbers),
+                latent_resources=latent_resources(definition, case.cell),
+            ).reconstruct({})
+        native = native_case(potential, case)
+        assert within(native["energy"], reference.energy, FLOAT64_GATES["energy"]), (
+            native["energy"],
+            reference.energy,
+        )
+        assert within(native["forces"], reference.forces, FLOAT64_GATES["forces"])
+        if case.periodic:
+            assert within(native["stress"], reference.stress, FLOAT64_GATES["stress"])
+    return conversion
+
+
+@pytest.mark.parametrize("name", sorted(FAMILY_DECLARATIONS))
+def test_family_source_matches_independent_provider_oracle(
+    provider: MACEProviderRuntime, tmp_path: Path, name: str
+) -> None:
+    declaration = FAMILY_DECLARATIONS[name]
+    if declaration["model_class"] == "MACELES":
+        les_provider(provider)
+    conversion = _assert_family_conversion(provider, declaration, tmp_path)
+    architecture = conversion.architecture
+    match name:
+        case "attention":
+            assert set(architecture.interactions) == {"real-agnostic-attention-residual"}
+        case "nonlinear-bias-readout":
+            assert architecture.readout_variant == "nonlinear-bias"
+            assert architecture.gate_scales is not None
+        case "gaussian-soft":
+            assert (architecture.radial_basis, architecture.distance_transform) == (
+                "gaussian",
+                "soft",
+            )
+        case "chebyshev-agnesi":
+            assert architecture.radial_basis == "chebyshev"
+        case "so3":
+            assert architecture.parity == "so3"
+        case "edge-irreps-first":
+            assert architecture.edge_irreps_first
+            assert (
+                architecture.edge_channel_count,
+                architecture.edge_feature_degree,
+            ) == (
+                3,
+                1,
+            )
+        case "keep-last-layer-irreps":
+            assert architecture.keep_last_layer_irreps
+        case "joint-embedding-readout":
+            assert architecture.embedding_readout
+            assert [item.name for item in architecture.embedding_features] == [
+                "total_charge",
+                "total_spin",
+            ]
+        case "maceles":
+            assert conversion.atom_capacity == 4
+    # Every source tensor is a native leaf or fixed table: rebuilding from the
+    # unchanged inventory reproduces the conversion exactly.
+    rebuilt = conversion.reconstruct({})
+    assert rebuilt.architecture_id == conversion.potential.architecture_id
+
+
+def test_trusted_full_object_family_converts_like_its_state_dict(
+    provider: MACEProviderRuntime, tmp_path: Path
+) -> None:
+    declaration = FAMILY_DECLARATIONS["nonlinear-bias-readout"]
+    safe = _assert_family_conversion(provider, declaration, tmp_path / "safe")
+    full = _assert_family_conversion(
+        provider, declaration, tmp_path / "full", kind="torch-full-model"
+    )
+    assert set(full.source_tensors) == set(safe.source_tensors)
+    for name, value in safe.source_tensors.items():
+        np.testing.assert_array_equal(full.source_tensors[name], value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["attention", "nonlinear-bias-readout", "gaussian-soft", "so3", "maceles"],
+)
+def test_release_0_3_15_family_matches_its_provider(tmp_path: Path, name: str) -> None:
+    provider = provider_runtime("0.3.15")
+    declaration = for_release(FAMILY_DECLARATIONS[name], "0.3.15")
+    if declaration["model_class"] == "MACELES":
+        les_provider(provider)
+    conversion = _assert_family_conversion(provider, declaration, tmp_path)
+    assert "keep_last_layer_irreps" not in conversion.provenance.declaration
+
+
+def test_release_declarations_refuse_on_another_provider_release(
+    provider: MACEProviderRuntime, tmp_path: Path
+) -> None:
+    declaration = for_release(FAMILY_DECLARATIONS["attention"], "0.3.15")
+    with pytest.raises(ValueError, match="extracted by mace-torch 0.3.15"):
+        create_mace_provider_fixture(declaration, tmp_path, provider=provider, seed=SEED)
+
+
+@pytest.mark.parametrize(
+    ("changes", "refusal"),
+    [
+        pytest.param(
+            {"edge_irreps": "3x0e+2x1o"}, "edge_irreps must be uniform", id="edge"
+        ),
+        pytest.param(
+            {
+                "model_class": "MACE",
+                "heads": ["pbe", "r2scan"],
+                "atomic_energies": [[-13.6, -2041.8], [-13.5, -2042.6]],
+                "embedding_specs": CHARGE_SPIN_SPECS,
+                "use_embedding_readout": True,
+            },
+            "broadcasts its embedding readout",
+            id="multihead-embedding-readout",
+        ),
+    ],
+)
+def test_family_sources_outside_the_native_families_refuse(
+    provider: MACEProviderRuntime,
+    tmp_path: Path,
+    changes: dict[str, Any],
+    refusal: str,
+) -> None:
+    declaration = {**FAMILY_DECLARATIONS["attention"], **changes}
+    if declaration["model_class"] == "MACE":
+        del declaration["atomic_inter_scale"], declaration["atomic_inter_shift"]
+    with pytest.raises(MACESourceRefusedError, match=refusal):
+        fixture = create_mace_provider_fixture(
+            declaration, tmp_path, provider=provider, seed=SEED
+        )
+        convert_mace_checkpoint(_safe(fixture), provider=provider)
+
+
+def test_maceles_conversion_requires_explicit_latent_resources(
+    provider: MACEProviderRuntime, tmp_path: Path
+) -> None:
+    les_provider(provider)
+    fixture = create_mace_provider_fixture(
+        FAMILY_DECLARATIONS["maceles"], tmp_path, provider=provider, seed=SEED
+    )
+    with pytest.raises(ValueError, match="required exactly for MACELES"):
+        convert_mace_checkpoint(_safe(fixture), provider=provider)
+
+
+_OPTIMIZED_SOURCE = """
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import torch
+from mace.cli import convert_e3nn_cueq
+
+torch.set_default_dtype(torch.float64)
+model = torch.load(sys.argv[2], map_location="cpu", weights_only=False)
+converted = convert_e3nn_cueq.run(model, return_model=True)
+torch.save(converted, sys.argv[3])
+"""
+
+
+def test_cuequivariance_source_is_expressed_in_e3nn_layout_and_recorded(
+    provider: MACEProviderRuntime, tmp_path: Path
+) -> None:
+    reduced_provider = reduced_cg_provider(provider)
+    fixture = create_mace_provider_fixture(
+        TWO_LAYER_RESIDUAL_AGNESI_ZBL,
+        tmp_path,
+        provider=reduced_provider,
+        seed=SEED,
+        kind="torch-full-model",
+    )
+    optimized_path = tmp_path / "cueq-source.pt"
+    completed = subprocess.run(
+        [
+            reduced_provider.interpreter.path,
+            "-I",
+            "-c",
+            textwrap.dedent(_OPTIMIZED_SOURCE),
+            reduced_provider.site_packages,
+            str(fixture.path),
+            str(optimized_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    trust = "provider-built fixture converted by the pinned provider in this test"
+    plain = convert_mace_checkpoint(
+        admitted_source(fixture.path, "torch-full-model", trust=trust),
+        provider=reduced_provider,
+    )
+    optimized = convert_mace_checkpoint(
+        admitted_source(optimized_path, "torch-full-model", trust=trust),
+        provider=reduced_provider,
+    )
+    record = optimized.provenance.layout_normalization["optimized_layout"]
+    assert record["kind"] == "cuequivariance"
+    assert record["converter"] == "mace.cli.convert_cueq_e3nn"
+    assert 0.0 <= record["reproduction_deviation"]
+    assert plain.provenance.layout_normalization["optimized_layout"] is None
+    # A different source layout is a different conversion of the same model.
+    assert optimized.provenance.conversion_id != plain.provenance.conversion_id
+    cases = configurations((1, 8))
+    oracle = evaluate_mace_source(
+        admitted_source(fixture.path, "torch-full-model", trust=trust),
+        cases,
+        provider=reduced_provider,
+        head="Default",
+    )
+    assert_matches_oracle(optimized.potential, cases, oracle, FLOAT64_GATES)
+
+
+# Committed provider-built family fixtures (generated by
+# tests/fixtures/mace_torch_<release>/generate.py with the pinned provider).
+_COMMITTED_FAMILY_CASES = {
+    "0.3.16": (
+        "two_attention",
+        "two_nonlinear_bias",
+        "two_gaussian_soft",
+        "two_chebyshev_agnesi",
+        "two_so3",
+        "two_edge_irreps_first",
+        "two_keep_last_layer",
+        "two_joint_embedding",
+        "two_maceles",
+    ),
+    "0.3.15": (
+        "two_attention",
+        "two_nonlinear_bias",
+        "two_gaussian_soft",
+        "two_so3",
+        "two_joint_embedding",
+        "two_maceles",
+    ),
+}
+
+
+def _committed_structure(manifest: Mapping[str, Any], name: str) -> Any:
+    record = manifest["structures"][name]
+    numbers = tuple({"O": 8, "H": 1}[symbol] for symbol in record["symbols"])
+    cell = None if record["cell"] is None else np.asarray(record["cell"])
+    return phx.atomistic.interchange.MACEProviderConfiguration(
+        numbers,
+        np.asarray(record["positions"]),
+        np.zeros((3, 3)) if cell is None else cell,
+        cell is not None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("release", "case"),
+    [
+        (release, case)
+        for release, cases in _COMMITTED_FAMILY_CASES.items()
+        for case in cases
+    ],
+)
+def test_committed_family_fixture_matches_its_provider_evaluation(
+    release: str, case: str
+) -> None:
+    from phydrax.atomistic._latent_electrostatics import LatentEwaldDefinition
+
+    manifest = committed_manifest(release)
+    assert case in manifest["cases"], (
+        f"Regenerate tests/fixtures/mace_torch_{release.replace('.', '_')} with "
+        "its generate.py and the pinned provider."
+    )
+    declaration = manifest["cases"][case]
+    fixture = np.load(RELEASE_FIXTURES[release] / f"{case}.npz")
+    conditions = declaration.get("conditions", {})
+    for structure_name in ("molecule", "crystal"):
+        configuration = dataclasses.replace(
+            _committed_structure(manifest, structure_name),
+            total_charge=conditions.get("total_charge"),
+            total_spin=conditions.get("total_spin"),
+        )
+        if declaration["class"] == "MACELES":
+            definition = LatentEwaldDefinition.from_source_arguments(
+                declaration["les_arguments"]
+            )
+            potential = committed_maceles_potential(
+                case,
+                len(configuration.numbers),
+                latent_resources(
+                    definition, configuration.cell if configuration.periodic else None
+                ),
+                release,
+            )
+        else:
+            potential = committed_source_potential(case, release)
+        native = native_case(potential, configuration)
+        prefix = f"{structure_name}/Default/"
+        assert within(
+            native["energy"], fixture[prefix + "energy"][0], FLOAT64_GATES["energy"]
+        )
+        assert within(
+            native["forces"], fixture[prefix + "forces"], FLOAT64_GATES["forces"]
+        )
+        if configuration.periodic:
+            volume = abs(np.linalg.det(configuration.cell))
+            assert within(
+                native["stress"] * volume,
+                -fixture[prefix + "virials"][0],
+                FLOAT64_GATES["stress"],
+            )

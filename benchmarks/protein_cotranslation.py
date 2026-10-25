@@ -32,9 +32,15 @@ from phydrax.applications.protein_folding.cotranslation import (
 )
 from phydrax.applications.protein_folding.cotranslation._protocol import _step
 from phydrax.atomistic import (
+    AtomisticDenseImageSearch,
     AtomisticDynamicsPlan,
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticNeighborhoodSource,
     AtomisticPhaseSpaceMeasurePlan,
     AtomisticPotentialProgram,
+    AtomisticRoleCapacity,
+    AtomisticRoleCapacityLadder,
+    AtomisticSiteDomain,
     AtomisticSystemPlan,
     AtomisticThermodynamicStatePlan,
     AtomisticUnitSystem,
@@ -44,7 +50,11 @@ from phydrax.atomistic import (
     VelocityVerletPlan,
 )
 from phydrax.atomistic._topology_epoch import prepare_dormant_system
-from phydrax.discretization import DenseParticleNeighborhoodPlan
+from phydrax.discretization import (
+    ParticleImageCapacity,
+    ParticleImageCapacityLadder,
+    PeriodicCell,
+)
 from phydrax.qualification import ReferenceArtifactManifest
 
 
@@ -67,10 +77,17 @@ def prepare_case(residues: int, steps: int) -> Any:
         molecule_ids=np.zeros(residues, dtype="int64"),
         topology=topology,
     ).prepare()
+    pairs = residues * (residues - 1) // 2
+    # Finite chain: one dense image source in an explicit nonperiodic frame
+    # serves every bounded pair view, each with all-pairs role storage.
+    extent = 16.0 + 1.1 * residues
+    frame = PeriodicCell(
+        extent * np.eye(3), origin=np.full((3,), -8.0), periodic_axes=(False,) * 3
+    )
     stages = []
     for count in range(1, residues + 1):
         system = prepare_dormant_system(material, ids[:count])
-        potential = AtomisticPotentialProgram(
+        program = AtomisticPotentialProgram(
             [
                 HarmonicBondPotential([4.0], [1.0]),
                 LennardJonesPotential([0.02], [0.5], 3.0, switch_distance=2.5),
@@ -83,14 +100,48 @@ def prepare_case(residues: int, steps: int) -> Any:
                     exclusion_stiffness=0.2,
                 ),
             ]
-        ).prepare(system)
-        runtime = AtomisticDynamicsPlan(
-            system,
-            potential,
-            DenseParticleNeighborhoodPlan(residues * (residues - 1) // 2).prepare(
-                system.particles
+        )
+        bounded = tuple(
+            value for value in program.requirements.neighborhoods if not value.complete
+        )
+        bundle = AtomisticNeighborhoodBundlePlan(
+            bounded,
+            (
+                AtomisticNeighborhoodSource(
+                    "chain-pairs",
+                    AtomisticSiteDomain.PHYSICAL_ATOMS,
+                    bounded,
+                    AtomisticDenseImageSearch(maximum_dense_routes=residues * residues),
+                    ParticleImageCapacityLadder(
+                        (
+                            ParticleImageCapacity(
+                                maximum_particles_per_cell=residues,
+                                maximum_edges=2 * pairs,
+                                maximum_degree=residues - 1,
+                                maximum_images=1,
+                                maximum_case_edges=2 * pairs,
+                            ),
+                        )
+                    ),
+                    skin=0.3,
+                ),
             ),
-            VelocityVerletPlan(1e-3),
+            tuple(
+                AtomisticRoleCapacityLadder(
+                    requirement,
+                    (
+                        AtomisticRoleCapacity(
+                            maximum_routes=2 * pairs, maximum_degree=residues - 1
+                        ),
+                    ),
+                )
+                for requirement in bounded
+            ),
+            frame=frame,
+        )
+        potential = program.prepare(system, neighborhood_bundle=bundle)
+        runtime = AtomisticDynamicsPlan(
+            system, potential, VelocityVerletPlan(1e-3)
         ).prepare()
         thermodynamic = AtomisticThermodynamicStatePlan(
             AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"

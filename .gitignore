@@ -24,6 +24,11 @@
 !LICENSES/AMGX-BSD-3-CLAUSE.txt
 !LICENSES/AMGX-NOTICES.txt
 !LICENSES/EIGEN-MPL-2.0.txt
+!LICENSES/SPGLIB-BSD-3-CLAUSE.txt
+!LICENSES/NVALCHEMI-TOOLKIT-APACHE-2.0.txt
+!LICENSES/NVALCHEMI-TOOLKIT-OPS-APACHE-2.0.txt
+!LICENSES/AIMNETCENTRAL-MIT.txt
+!LICENSES/FAIRCHEM-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -99,11 +104,24 @@ benchmarks/*
 !benchmarks/atomistic_streamed_consumers.py
 !benchmarks/atomistic_streamed_consumers.json
 !benchmarks/atomistic_streamed_consumers_baseline.json
+!benchmarks/atomistic_model_families.py
+!benchmarks/atomistic_enhanced_sampling.py
+!benchmarks/atomistic_periodic_generation.py
+!benchmarks/atomistic_training_streaming.py
+!benchmarks/atomistic_crystal_packing.py
+!benchmarks/atomistic_crystal_dedup.py
+!benchmarks/atomistic_dynamics_campaigns.py
+!benchmarks/tiled_image_route_search.py
+!benchmarks/atomistic_long_range.py
+!benchmarks/atomistic_dispersion.py
+!benchmarks/atomistic_neighbor_routes.py
 !benchmarks/streamed_relation_scaling.py
 !benchmarks/streamed_relation_scaling.json
 !benchmarks/mace_execution_scaling.py
 !benchmarks/mace_execution_scaling.json
-!benchmarks/distributed_mace_scaling.py
+!benchmarks/distributed_atomistic_scaling.py
+!benchmarks/distributed_atomistic_scaling.json
+# Historical record of the predecessor driver distributed_mace_scaling.py.
 !benchmarks/distributed_mace_scaling.json
 !benchmarks/mace_checkpoint_campaign.json
 # Meshfree campaign drivers and their retained measurement records.

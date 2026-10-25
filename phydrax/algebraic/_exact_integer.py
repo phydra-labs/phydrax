@@ -3,7 +3,9 @@
 #
 from __future__ import annotations
 
+from collections.abc import Sequence
 from fractions import Fraction
+from numbers import Integral
 from typing import Any
 
 import numpy as np
@@ -53,6 +55,49 @@ def exact_integer_rank(values: Any, /) -> int:
         if rank == rows:
             break
     return rank
+
+
+def exact_integer_determinant(values: Sequence[Sequence[int]] | np.ndarray, /) -> int:
+    """Return the exact determinant of a square integer matrix.
+
+    Fraction-free Bareiss elimination keeps every intermediate an exact
+    arbitrary-precision integer: each update ``(pivot * a - b * c) //
+    previous_pivot`` divides exactly.  Row swaps flip the sign and a column
+    without a pivot makes the matrix singular, returning zero.
+    """
+
+    array = np.asarray(values)
+    if array.dtype.kind not in "iuO" or any(
+        isinstance(value, bool) or not isinstance(value, Integral) for value in array.flat
+    ):
+        raise TypeError("Exact determinants require integer matrix entries.")
+    if array.ndim != 2 or array.shape[0] != array.shape[1]:
+        raise ValueError("Exact determinants require a square rank-two matrix.")
+    matrix = _integer_matrix(array)
+    size = matrix.shape[0]
+    sign = 1
+    previous_pivot = 1
+    for column in range(size):
+        pivot_row = next(
+            (row for row in range(column, size) if matrix[row, column] != 0),
+            None,
+        )
+        if pivot_row is None:
+            return 0
+        if pivot_row != column:
+            matrix[[column, pivot_row]] = matrix[[pivot_row, column]]
+            sign = -sign
+        pivot = matrix[column, column]
+        for row in range(column + 1, size):
+            for target_column in range(column + 1, size):
+                numerator = (
+                    pivot * matrix[row, target_column]
+                    - matrix[row, column] * matrix[column, target_column]
+                )
+                matrix[row, target_column] = numerator // previous_pivot
+            matrix[row, column] = 0
+        previous_pivot = pivot
+    return sign * int(matrix[size - 1, size - 1]) if size else 1
 
 
 def _swap_rows(matrix: np.ndarray, left: int, right: int) -> None:
@@ -210,6 +255,7 @@ def smith_rank(diagonal: Any, /) -> int:
 
 
 __all__ = [
+    "exact_integer_determinant",
     "exact_integer_rank",
     "invert_unimodular",
     "smith_normal_decomposition",

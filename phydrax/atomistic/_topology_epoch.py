@@ -274,9 +274,10 @@ def activate_topology_epoch(
         raise ValueError("Activation state belongs to another source epoch.")
     if state.thermodynamic_table_id != transition.before_thermodynamic_states.table_id:
         raise ValueError("Activation state belongs to another thermodynamic table.")
-    if not bool(state.force.successful) or int(state.force.position_epoch) != int(
-        state.step_index
-    ):
+    source_row = transition.before_thermodynamic_states.state_at_replica(
+        state.thermodynamic_state_index
+    )
+    if not bool(before.force_cache_valid(state, source_row.controls)):
         raise ValueError("Activation requires a current, successful source force state.")
     slots = np.flatnonzero(
         np.asarray(after.system.active_mask) & ~np.asarray(before.system.active_mask)
@@ -350,7 +351,9 @@ def activate_topology_epoch(
         lambda x: (
             x.initial_kinetic_energy,
             x.initial_potential_energy,
+            x.initial_extended_energy,
             x.thermostat_heat,
+            x.reservoir_heat,
             x.barostat_work,
             x.external_work,
             x.constraint_work,
@@ -361,7 +364,9 @@ def activate_topology_epoch(
         (
             state.energy.initial_kinetic_energy,
             state.energy.initial_potential_energy,
+            state.energy.initial_extended_energy,
             state.energy.thermostat_heat,
+            state.energy.reservoir_heat,
             state.energy.barostat_work,
             state.energy.external_work + work,
             state.energy.constraint_work,
@@ -369,10 +374,32 @@ def activate_topology_epoch(
             state.energy.accepted_steps,
         ),
     )
+    # The committed coordinate change is a new configuration revision; the
+    # candidate force cache was evaluated at exactly that configuration.  Move
+    # addressing counters continue so no stochastic draw is ever replayed.
+    revision = state.configuration_revision + 1
     candidate = eqx.tree_at(
-        lambda x: (x.step_index, x.force.position_epoch, x.energy),
+        lambda x: (
+            x.step_index,
+            x.configuration_revision,
+            x.force.configuration_revision,
+            x.controllers.move_counter,
+            x.controllers.accepted_moves,
+            x.controllers.cell_epoch,
+            x.controllers.rescale_events,
+            x.energy,
+        ),
         candidate,
-        (state.step_index, state.step_index, energy),
+        (
+            state.step_index,
+            revision,
+            revision,
+            state.controllers.move_counter,
+            state.controllers.accepted_moves,
+            state.controllers.cell_epoch,
+            state.controllers.rescale_events,
+            energy,
+        ),
     )
     return TopologyEpochResult(after, candidate, ledger, True, None)
 

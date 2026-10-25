@@ -12,11 +12,12 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax.ein import contract
-
 from ..._fingerprint import canonical_fingerprint
+from ..._identity import IdentityWords
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._tree_math import tree_where
+from ...ein import contract
 from ...typing import checked, parse
 from .._driven_stress import (
     _atomistic_driven_stress_from_components,
@@ -24,6 +25,7 @@ from .._driven_stress import (
     AtomisticDrivenStressResult,
 )
 from .._dynamics import PreparedAtomisticDynamics
+from .._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from .._potential_program import AtomisticHamiltonianEvaluation
 from ._cell import EvolvingFlowCellPlan, EvolvingFlowCellState, EvolvingFlowCellStepResult
 
@@ -82,16 +84,29 @@ class SLLODIntegratorPlan(StrictModule, NonTrainableState):
 
 
 class SLLODState(StrictModule):
+    """Accepted SLLOD configuration with its bundle and cached strain response.
+
+    ``strain_derivative`` is ``dE/d strain`` (row-cell convention) of the
+    accepted configuration; the driven stress is assembled from it, never from
+    the finite position moment.
+    """
+
     positions: Array
     image_counts: Array
     peculiar_momenta: Array
     forces: Array
-    virial: Array
+    strain_derivative: Array
     potential_energy: Array
+    neighborhoods: AtomisticNeighborhoodBundleState
     flow_cell: EvolvingFlowCellState
     step_index: Array
     successful: Array
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
 
 class SLLODStepResult(StrictModule):
@@ -105,7 +120,12 @@ class SLLODStepResult(StrictModule):
     displacement_norm: Array
     accepted: Array
     successful: Array
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
 
 class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
@@ -113,7 +133,7 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
     dynamics: PreparedAtomisticDynamics
     cell: EvolvingFlowCellPlan
     stress_plan: AtomisticDrivenStressPlan
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
 
     @checked
     def __init__(
@@ -132,11 +152,16 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             )
         if dynamics.constraints is not None:
             raise ValueError("This SLLOD route does not admit holonomic constraints.")
+        if not dynamics.strain_response:
+            raise ValueError(
+                "SLLOD driven stress requires dynamics that evaluate the strain "
+                "derivative (a fully periodic 3x3 cell and a cell-derivative program)."
+            )
         self.plan = plan
         self.dynamics = dynamics
         self.cell = cell
         self.stress_plan = AtomisticDrivenStressPlan()
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-sllod-integrator",
                 "plan": plan.plan_id,
@@ -145,27 +170,40 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
+
     def _evaluate(
-        self, positions: Array, image_counts: Array, cell_vectors: Array, /
-    ) -> tuple[AtomisticHamiltonianEvaluation, Array]:
-        neighborhood, _ = self.dynamics._build_neighborhood(
-            positions, None, cell_vectors, image_counts
-        )
+        self,
+        positions: Array,
+        image_counts: Array,
+        cell_vectors: Array,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        /,
+    ) -> tuple[AtomisticHamiltonianEvaluation, Array, Array]:
+        """Evaluate one configuration with its admitted strain derivative."""
         unwrapped = positions + contract(
             "ni,ij->nj", image_counts.astype(positions.dtype), cell_vectors
         )
-        cell = self.cell.cell
         # The program derives fractional coordinates of ``positions`` under the
         # runtime vectors and reports the lattice solve status.
-        evaluation = self.dynamics.potential.evaluate(
+        evaluation = self.dynamics.evaluate_configuration(
             positions,
-            neighborhood,
+            neighborhoods,
             unwrapped_positions=unwrapped,
+            image_counts=image_counts,
             species=self.dynamics.system.plan.atom_type_ids,
-            cell=cell,
             cell_vectors=cell_vectors,
+            controls=jnp.zeros((0,), dtype=positions.dtype),
         )
-        return evaluation, unwrapped
+        # Construction admits only strain-response dynamics, whose evaluation
+        # always carries ``dE/d strain``.
+        strain_derivative = evaluation.strain_derivative
+        if strain_derivative is None:
+            raise RuntimeError("SLLOD dynamics omitted its admitted strain derivative.")
+        return evaluation, strain_derivative, unwrapped
 
     def initialize(
         self,
@@ -184,12 +222,19 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             )
         flow_cell = self.cell.initialize()
         wrapped, images = self.cell.cell.wrap_with_vectors(coordinate, flow_cell.vectors)
-        evaluation, _ = self._evaluate(wrapped, images, flow_cell.vectors)
+        neighborhoods = self.dynamics.initialize_neighborhoods(
+            wrapped, cell_vectors=flow_cell.vectors, image_counts=images
+        )
+        evaluation, strain_derivative, _ = self._evaluate(
+            wrapped, images, flow_cell.vectors, neighborhoods
+        )
         active = self.dynamics.system.active_mask
         masses = self.dynamics.system.plan.masses.astype(coordinate.dtype)
         momenta = jnp.where(active[:, None], masses[:, None] * velocity, 0.0)
         successful = (
             evaluation.successful
+            & jnp.all(neighborhoods.successful)
+            & jnp.all(jnp.isfinite(strain_derivative))
             & jnp.all(jnp.isfinite(momenta))
             & jnp.all(jnp.isfinite(coordinate))
         )
@@ -198,12 +243,13 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             images,
             momenta,
             evaluation.forces,
-            evaluation.virial,
+            strain_derivative,
             evaluation.energy,
+            neighborhoods,
             flow_cell,
             jnp.asarray(0, dtype=jnp.int32),
             successful,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
     def _thermostat_multiplier(
@@ -229,8 +275,9 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
         velocity_gradient: ArrayLike,
         /,
     ) -> SLLODStepResult:
-        if not isinstance(state, SLLODState) or state.prepared_id != self.prepared_id:
+        if not isinstance(state, SLLODState):
             raise ValueError("SLLOD state does not belong to this prepared integrator.")
+        owned = state.prepared_identity.equals(self.prepared_identity)
         gradient = jnp.asarray(velocity_gradient, dtype=state.positions.dtype)
         if gradient.shape != (3, 3):
             raise ValueError("velocity_gradient must have shape (3, 3).")
@@ -267,7 +314,15 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
         wrapped, images = self.cell.cell.wrap_with_vectors(
             proposed_unwrapped, next_vectors
         )
-        evaluation, reconstructed = self._evaluate(wrapped, images, next_vectors)
+        neighborhoods = self.dynamics.refresh_neighborhoods(
+            state.neighborhoods,
+            wrapped,
+            cell_vectors=next_vectors,
+            image_counts=images,
+        )
+        evaluation, strain_derivative, reconstructed = self._evaluate(
+            wrapped, images, next_vectors, neighborhoods
+        )
         next_alpha = self._thermostat_multiplier(
             half_momenta, evaluation.forces, gradient
         )
@@ -299,14 +354,17 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
         finite = (
             jnp.all(jnp.isfinite(final_momenta))
             & jnp.all(jnp.isfinite(wrapped))
+            & jnp.all(jnp.isfinite(strain_derivative))
             & jnp.isfinite(final_kinetic)
             & jnp.isfinite(alpha)
             & jnp.isfinite(next_alpha)
         )
         accepted = (
             state.successful
+            & owned
             & cell_result.accepted
             & evaluation.successful
+            & jnp.all(neighborhoods.successful)
             & finite
             & displacement_valid
             & kinetic_valid
@@ -316,20 +374,22 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             images,
             final_momenta,
             evaluation.forces,
-            evaluation.virial,
+            strain_derivative,
             evaluation.energy,
+            neighborhoods,
             cell_result.accepted_state,
             state.step_index + 1,
             state.successful & accepted,
-            self.prepared_id,
+            self.prepared_identity,
         )
         accepted_state = SLLODState(
             jnp.where(accepted, candidate.positions, state.positions),
             jnp.where(accepted, candidate.image_counts, state.image_counts),
             jnp.where(accepted, candidate.peculiar_momenta, state.peculiar_momenta),
             jnp.where(accepted, candidate.forces, state.forces),
-            jnp.where(accepted, candidate.virial, state.virial),
+            jnp.where(accepted, candidate.strain_derivative, state.strain_derivative),
             jnp.where(accepted, candidate.potential_energy, state.potential_energy),
+            tree_where(accepted, candidate.neighborhoods, state.neighborhoods),
             EvolvingFlowCellState(
                 jnp.where(accepted, candidate.flow_cell.vectors, state.flow_cell.vectors),
                 jnp.where(
@@ -354,14 +414,14 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             ),
             jnp.where(accepted, candidate.step_index, state.step_index),
             state.successful,
-            self.prepared_id,
+            state.prepared_identity,
         )
         stress = _atomistic_driven_stress_from_components(
             self.stress_plan,
             accepted_state.peculiar_momenta,
             self.dynamics.system.inverse_masses,
             self.dynamics.system.mobile_mask,
-            accepted_state.virial,
+            accepted_state.strain_derivative,
             accepted_state.flow_cell.vectors,
             gradient,
             self.dynamics.system.plan.units.kinetic_to_energy,
@@ -379,7 +439,7 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             displacement_norm,
             accepted,
             successful,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
 

@@ -38,6 +38,62 @@ silently change the returned update dtype.
 ::: phydrax.optim.adam
 
 
+## Force-driven local relaxation
+
+`FIRE`, `FIRE2`, and `TrustScaledLBFGS` provide native `init`/`step` state and
+the ordinary `minimize` interface. The scientific workflow evaluates the current
+`state.parameters`, then passes its values and gradient to `step`. Reported
+accepted parameters, value, gradient, convergence and work belong to the same
+evaluated point; an unevaluated proposal is not a converged result.
+
+`OptimizerGroupLayout` declares independent groups and displacement sites over
+a parameter PyTree. A group-index leaf covers the leading site axes; trailing
+axes are one site vector. `-1` marks a fixed or padded site. Prepared sparse
+relations own repeated group reductions and exclude those sites. A collective
+axis explicitly completes shard-local group reductions; it is not an implicit
+multi-device scheduler.
+
+FIRE limits each site's displacement; FIRE2 applies its declared group-wide
+scaling and uphill retreat. Trust-scaled L-BFGS retains bounded secant history
+without a line search. These local methods do not certify a global minimum.
+Use the returned status and physical or projected residual requested by the
+workflow. Infinite absent bounds are admitted without forming invalid
+infinity-minus-infinity activity thresholds.
+
+`step(state, value, gradient, /, *, bounds=None, termination=None,
+converged=None, active=None)` consumes one evaluation per group at
+`state.parameters`. Groups outside `active` are left unchanged. A finite
+evaluation of an active group becomes the accepted iterate. A group selected by
+`converged`, or meeting `termination`, stays in place with
+`OptimizationStatus.SUCCESS`. A nonfinite evaluation returns the group to its
+accepted point with `NONFINITE_EVALUATION`, and `evaluation_accepted` reports
+the outcome per group. Only `FIRE(downhill_check=True)` compares objective
+values: a higher value than the accepted one is rolled back and the step restarts
+from the accepted point. Trust-scaled L-BFGS admits a secant pair only when
+`s·y > curvature_tolerance |s| |y|` (a precision-dependent floor when the
+tolerance is `None`), and a non-descent two-loop direction discards that
+group's history. Its step length `min(1, maximum_step / max_site
+|d|)` caps every site displacement. Native atomistic relaxation and device NEB
+consume these states through `active` and `converged`. NEB refuses a
+downhill-checked FIRE, because its force is not a gradient. See the
+[relaxation and reaction-path guide](../guides_atomistic_dynamics.md#native-relaxation).
+
+::: phydrax.optim.FIRE
+
+::: phydrax.optim.FIRE2
+
+::: phydrax.optim.FIREState
+
+::: phydrax.optim.TrustScaledLBFGS
+
+::: phydrax.optim.TrustScaledLBFGSState
+
+::: phydrax.optim.OptimizerGroupLayout
+
+::: phydrax.optim.OptimizerGroupDim
+
+::: phydrax.optim.OptimizationStatus
+
 ## Finite exhaustive search
 
 `FiniteAxis` and `FiniteProductSpace` represent an explicit, array-backed finite

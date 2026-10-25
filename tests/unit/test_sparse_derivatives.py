@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 from phydrax import config as pxconfig
@@ -980,6 +981,44 @@ def test_structural_trace_stock_operations_match_analytic_jacobians(case: str) -
         assert np.allclose(np.asarray(plan.operator(point).as_dense()), jacobian)
 
 
+_EXTREMUM_INDEX_JACOBIANS: dict[str, tuple[Any, Any]] = {
+    "minimum-tightens-upper": (
+        lambda v, _: v[jnp.minimum(jnp.argmax(v), 1)][None],
+        np.asarray([[1, 1, 0, 0]]),
+    ),
+    "maximum-tightens-lower": (
+        lambda v, _: v[jnp.maximum(jnp.argmax(v[:2]), 2)][None],
+        np.asarray([[0, 0, 1, 0]]),
+    ),
+    # ``floor`` makes the index input-independent (admitted as auxiliary)
+    # but leaves its value unbounded; ``minimum`` supplies only an upper bound.
+    "unbounded-operand-stays-conservative": (
+        lambda v, _: v[jnp.minimum(jnp.floor(v[0]).astype(jnp.int64), 1)][None],
+        np.asarray([[1, 1, 1, 1]]),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", tuple(_EXTREMUM_INDEX_JACOBIANS))
+def test_structural_trace_min_max_propagate_index_bounds(case: str) -> None:
+    # Integer min/max are monotone in both operands: bounded indices stay
+    # bounded (and may tighten), while one unbounded operand leaves the
+    # gathered dependency conservative.
+    function, expected = _EXTREMUM_INDEX_JACOBIANS[case]
+    expected = np.asarray(expected, dtype=np.bool_)
+    source = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((1,), dtype=jnp.float64)
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        function, _STOCK_POINTS[0], source=source, target=target, compiler="auto"
+    )
+    assert np.array_equal(_traced_pattern(plan, expected.shape), expected)
+    for point in _STOCK_POINTS:
+        jacobian = np.asarray(jax.jacfwd(function)(point, None))
+        assert not np.any((jacobian != 0) & ~expected), point
+        assert np.allclose(np.asarray(plan.operator(point).as_dense()), jacobian)
+
+
 _STOCK_HESSIANS: dict[str, tuple[Any, Any]] = {
     "ldexp": (
         lambda v, _: jnp.sum(jnp.ldexp(v, jnp.arange(4)) ** 2 * v[::-1]),
@@ -1030,3 +1069,324 @@ def test_structural_trace_rejects_unknown_high_level_operations() -> None:
         phx.sparse.compile_sparse_jacobian(
             function, _STOCK_POINTS[0], source=space, target=space, compiler="auto"
         )
+
+
+def _segment_routes(
+    rows: bool,
+) -> tuple[phx.sparse.SparseRelation, np.ndarray, np.ndarray, tuple[int, ...]]:
+    """Return a padded relation with an empty target, flat route targets,
+    route validity and the target shape."""
+    if rows:
+        indices = np.zeros((2, 2, 3), dtype=np.int32)
+        valid = np.ones(indices.shape, dtype=np.bool_)
+        valid[0, 1, 0] = False
+        valid[1, 0, :] = False
+        indices[~valid] = 99
+        relation = phx.sparse.RowRelation(
+            indices, source_size=1, case_shape=(2,), valid=valid
+        )
+        targets = np.broadcast_to(np.arange(4).reshape((2, 2, 1)), indices.shape)
+        return relation, targets, valid, (2, 2)
+    targets = np.asarray([1, 0, 1, 3, 0, 1, 99], dtype=np.int32)
+    valid = targets != 99
+    relation = phx.sparse.EdgeRelation(
+        np.where(valid, 0, 99).astype(np.int32),
+        targets,
+        source_size=1,
+        target_size=4,
+        valid=valid,
+    )
+    return relation, targets, valid, (4,)
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("rows", [False, True], ids=["edges", "rows"])
+def test_segmented_route_operation_derivatives_match_dense_adjoints(
+    accumulation: phx.sparse.RelationAccumulation, rows: bool
+) -> None:
+    relation, targets, valid, target_shape = _segment_routes(rows)
+    route_shape = relation.route_shape
+    target_count = int(np.prod(target_shape))
+    rng = np.random.default_rng(13)
+
+    def routed(*payload: int) -> np.ndarray:
+        return rng.normal(size=route_shape + payload)
+
+    def targeted(*payload: int) -> np.ndarray:
+        return rng.normal(size=target_shape + payload)
+
+    left, right, vectors = routed(3), routed(3), routed(3, 4)
+    valid_routes = [tuple(int(axis) for axis in route) for route in np.argwhere(valid)]
+    members = [
+        route for route in valid_routes if targets[route] == targets[valid_routes[0]]
+    ]
+    # Two canceling route contributions and one valid zero contribution.
+    left[members[1]], right[members[1]] = -left[members[0]], right[members[0]]
+    left[members[2]] = 0.0
+    for array in (left, right, vectors):
+        array[~valid] = np.nan
+    factors, matrices = targeted(), targeted(2, 3)
+    seed, route_seed, matrix_seed = targeted(), routed(3), routed(2, 4)
+    d_left, d_right, d_vectors = routed(3), routed(3), routed(3, 4)
+    d_factors, d_matrices = targeted(), targeted(2, 3)
+
+    dot = np.zeros(target_count)
+    dot_tangent = np.zeros(target_count)
+    left_dual = np.zeros(target_count)
+    factor_cotangent = np.zeros(target_count)
+    factor_mixed = np.zeros(target_count)
+    matrix_cotangent = np.zeros((target_count, 2, 3))
+    matrix_mixed = np.zeros((target_count, 2, 3))
+    for route in valid_routes:
+        target = int(targets[route])
+        dot[target] += np.sum(left[route] * right[route])
+        dot_tangent[target] += np.sum(
+            d_left[route] * right[route] + left[route] * d_right[route]
+        )
+        left_dual[target] += np.sum(left[route] * d_right[route])
+        factor_cotangent[target] += np.sum(route_seed[route] * left[route])
+        factor_mixed[target] += np.sum(route_seed[route] * d_left[route])
+        matrix_cotangent[target] += matrix_seed[route] @ vectors[route].T
+        matrix_mixed[target] += matrix_seed[route] @ d_vectors[route].T
+    flat_seed = seed.reshape(-1)
+    flat_factors = factors.reshape(-1)
+    flat_d_factors = d_factors.reshape(-1)
+    flat_matrices = matrices.reshape((target_count, 2, 3))
+    flat_d_matrices = d_matrices.reshape((target_count, 2, 3))
+    expected: dict[str, np.ndarray] = {
+        name: np.zeros(shape)
+        for name, shape in (
+            ("left_cotangent", left.shape),
+            ("right_cotangent", right.shape),
+            ("dot_mixed", left.shape),
+            ("route_cotangent", left.shape),
+            ("product_tangent", left.shape),
+            ("vector_cotangent", vectors.shape),
+            ("action_tangent", route_shape + (2, 4)),
+        )
+    }
+    for route in valid_routes:
+        target = int(targets[route])
+        weight, cosine = flat_seed[target], np.cos(dot[target])
+        expected["left_cotangent"][route] = weight * right[route]
+        expected["right_cotangent"][route] = weight * left[route]
+        expected["dot_mixed"][route] = weight * (
+            -np.sin(dot[target]) * left_dual[target] * right[route]
+            + cosine * d_right[route]
+        )
+        expected["route_cotangent"][route] = route_seed[route] * flat_factors[target]
+        expected["product_tangent"][route] = (
+            d_left[route] * flat_factors[target] + left[route] * flat_d_factors[target]
+        )
+        expected["vector_cotangent"][route] = flat_matrices[target].T @ matrix_seed[route]
+        expected["action_tangent"][route] = (
+            flat_d_matrices[target] @ vectors[route]
+            + flat_matrices[target] @ d_vectors[route]
+        )
+
+    def dot_action(first: Array, second: Array) -> Array:
+        return phx.sparse.route_dot(relation, first, second, accumulation=accumulation)[0]
+
+    def product(routes: Array, scale: Array) -> Array:
+        return phx.sparse.route_multiply(
+            relation, routes, scale, accumulation=accumulation
+        )
+
+    def action(matrix: Array, routes: Array) -> Array:
+        return phx.sparse.route_matvec(
+            relation, matrix, routes, accumulation=accumulation
+        )
+
+    @jax.jit
+    def evaluate(*operands: Array) -> tuple[Array, ...]:
+        (l, r, v, c, m, w, wr, wm, dl, dr, dv, dc, dm) = operands
+        value, pullback = jax.vjp(dot_action, l, r)
+        left_cotangent, right_cotangent = pullback(w)
+        tangent = jax.jvp(dot_action, (l, r), (dl, dr))[1]
+        dot_mixed = jax.jvp(
+            lambda b: jax.grad(lambda a: jnp.sum(w * jnp.sin(dot_action(a, b))))(l),
+            (r,),
+            (dr,),
+        )[1]
+        route_cotangent, scale_cotangent = jax.vjp(product, l, c)[1](wr)
+        product_tangent = jax.jvp(product, (l, c), (dl, dc))[1]
+        scale_mixed = jax.jvp(
+            lambda a: jax.grad(lambda s: jnp.sum(wr * product(a, s)))(c), (l,), (dl,)
+        )[1]
+        matrix_cotangent, vector_cotangent = jax.vjp(action, m, v)[1](wm)
+        action_tangent = jax.jvp(action, (m, v), (dm, dv))[1]
+        matrix_mixed = jax.jvp(
+            lambda b: jax.grad(lambda a: jnp.sum(wm * action(a, b)))(m), (v,), (dv,)
+        )[1]
+        return (
+            value,
+            left_cotangent,
+            right_cotangent,
+            tangent,
+            dot_mixed,
+            route_cotangent,
+            scale_cotangent,
+            product_tangent,
+            scale_mixed,
+            matrix_cotangent,
+            vector_cotangent,
+            action_tangent,
+            matrix_mixed,
+        )
+
+    operands = tuple(
+        jnp.asarray(array)
+        for array in (
+            left,
+            right,
+            vectors,
+            factors,
+            matrices,
+            seed,
+            route_seed,
+            matrix_seed,
+            d_left,
+            d_right,
+            d_vectors,
+            d_factors,
+            d_matrices,
+        )
+    )
+    results = evaluate(*operands)
+    oracle = (
+        dot.reshape(target_shape),
+        expected["left_cotangent"],
+        expected["right_cotangent"],
+        dot_tangent.reshape(target_shape),
+        expected["dot_mixed"],
+        expected["route_cotangent"],
+        factor_cotangent.reshape(target_shape),
+        expected["product_tangent"],
+        factor_mixed.reshape(target_shape),
+        matrix_cotangent.reshape(target_shape + (2, 3)),
+        expected["vector_cotangent"],
+        expected["action_tangent"],
+        matrix_mixed.reshape(target_shape + (2, 3)),
+    )
+    for actual, reference in zip(results, oracle, strict=True):
+        np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
+    # NaN payloads on invalid routes own no derivative.
+    for index in (1, 2, 4, 5, 7, 10, 11):
+        np.testing.assert_array_equal(np.asarray(results[index])[~valid], 0.0)
+    if accumulation != "fast":
+        for _ in range(3):
+            for actual, reference in zip(evaluate(*operands), results, strict=True):
+                np.testing.assert_array_equal(actual, reference)
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("prepared", [False, True], ids=["relation", "prepared"])
+def test_route_rms_derivatives_are_exact_when_regular_and_refused_at_zero_norm(
+    accumulation: phx.sparse.RelationAccumulation, prepared: bool
+) -> None:
+    targets = np.asarray([0, 0, 1, 1, 3, 0, 99], dtype=np.int32)
+    valid = targets != 99
+    relation = phx.sparse.EdgeRelation(
+        np.where(valid, 0, 99).astype(np.int32),
+        targets,
+        source_size=1,
+        target_size=4,
+        valid=valid,
+    )
+    owner = phx.sparse.RelationExecutionPlan().prepare(relation) if prepared else relation
+    # Target 0 is regular with zero components, target 1 is available with
+    # exactly zero routes, target 2 is empty and target 3 has a tiny scale.
+    values = np.asarray(
+        [
+            [1.0, -2.0],
+            [0.5, 0.0],
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [3e-200, 4e-200],
+            [0.0, 1.5],
+            [np.nan, np.nan],
+        ]
+    )
+    direction = np.random.default_rng(3).normal(size=values.shape)
+    direction[2:4] = 0.0
+    weights = jnp.asarray([0.7, 0.0, -1.3, 2.0])
+    square_weights = jnp.asarray([0.7, 1.1, -1.3, 2.0])
+
+    def objective(routes: Array) -> Array:
+        result = phx.sparse.route_rms(owner, routes, accumulation=accumulation)
+        return jnp.sum(weights * result.value)
+
+    def square_objective(routes: Array) -> Array:
+        result = phx.sparse.route_rms(owner, routes, accumulation=accumulation)
+        return jnp.sum(square_weights * result.mean_square)
+
+    @jax.jit
+    def evaluate(routes: Array, tangent: Array) -> tuple[Array, ...]:
+        value_tangent = jax.jvp(
+            lambda x: phx.sparse.route_rms(owner, x, accumulation=accumulation).value,
+            (routes,),
+            (tangent,),
+        )[1]
+        return (
+            value_tangent,
+            jax.grad(objective)(routes),
+            jax.jvp(jax.grad(objective), (routes,), (tangent,))[1],
+            jax.grad(square_objective)(routes),
+            jax.jvp(jax.grad(square_objective), (routes,), (tangent,))[1],
+        )
+
+    value_tangent, gradient, hessian, square_gradient, square_hessian = evaluate(
+        jnp.asarray(values), jnp.asarray(direction)
+    )
+    counts = np.asarray([3, 2, 0, 1])
+    np_weights, np_square_weights = np.asarray(weights), np.asarray(square_weights)
+    expected_gradient = np.zeros(values.shape)
+    expected_hessian = np.zeros(values.shape)
+    expected_square_gradient = np.zeros(values.shape)
+    expected_square_hessian = np.zeros(values.shape)
+    expected_tangent = np.zeros(4)
+    for target in (0, 3):
+        routes = np.flatnonzero(targets == target)
+        scale = np.max(np.abs(values[routes]))
+        root = scale * np.sqrt(np.sum((values[routes] / scale) ** 2) / counts[target])
+        unit = values[routes] / root
+        projection = np.sum(unit * direction[routes]) / counts[target]
+        expected_tangent[target] = projection
+        expected_gradient[routes] = np_weights[target] * unit / counts[target]
+        expected_hessian[routes] = (
+            np_weights[target]
+            / (counts[target] * root)
+            * (direction[routes] - unit * projection)
+        )
+    for target in (0, 1, 3):
+        routes = np.flatnonzero(targets == target)
+        factor = 2.0 * np_square_weights[target] / counts[target]
+        expected_square_gradient[routes] = factor * values[routes]
+        expected_square_hessian[routes] = factor * direction[routes]
+
+    regular_routes = np.isin(targets, (0, 3))
+    zero_norm_routes = targets == 1
+    np.testing.assert_allclose(
+        np.asarray(value_tangent)[[0, 3]], expected_tangent[[0, 3]], rtol=1e-12
+    )
+    # The zero-norm derivative is refused even under a zero seed and zero
+    # direction; the empty target's fill is inert.
+    assert np.isnan(np.asarray(value_tangent)[1])
+    assert np.asarray(value_tangent)[2] == 0.0
+    for actual, reference in (
+        (gradient, expected_gradient),
+        (hessian, expected_hessian),
+    ):
+        array = np.asarray(actual)
+        np.testing.assert_allclose(
+            array[regular_routes], reference[regular_routes], rtol=1e-12, atol=1e-12
+        )
+        assert np.isnan(array[zero_norm_routes]).all()
+        np.testing.assert_array_equal(array[~valid], 0.0)
+    # The mean square stays polynomial, including at the zero-norm target.
+    for actual, reference in (
+        (square_gradient, expected_square_gradient),
+        (square_hessian, expected_square_hessian),
+    ):
+        np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-300)
+        np.testing.assert_array_equal(np.asarray(actual)[~valid], 0.0)

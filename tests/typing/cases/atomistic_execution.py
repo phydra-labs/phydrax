@@ -8,17 +8,20 @@ from jax import Array
 from phydrax.atomistic import (
     AtomicStructure,
     atomistic_energy_derivatives,
+    atomistic_training_loader,
+    atomistic_training_source,
     AtomisticBatch,
     AtomisticEnergyDerivatives,
+    AtomisticEnergyObjective,
     AtomisticGraphExecutionPlan,
-    AtomisticGraphTopology,
+    AtomisticGraphLayout,
+    AtomisticGraphPayload,
     AtomisticModelArtifact,
     AtomisticModelArtifactManifest,
     AtomisticScaleContract,
     AtomisticTrainingProblem,
     AtomisticUnitSystem,
     NativeAtomisticProviderPlan,
-    prepare_atomistic_graph_topology,
     read_atomistic_model_artifact,
     write_atomistic_model_artifact,
 )
@@ -34,8 +37,9 @@ from phydrax.export import (
     LoadedAtomisticIREE,
     save_atomistic_iree,
 )
-from phydrax.nn.atomistic import MACEArchitecture, MACEPotential
+from phydrax.nn.atomistic import MACEArchitecture, MACELESPotential, MACEPotential
 from phydrax.typing import PRNGKey
+from phydrax.units import DALTON
 
 
 def native_execution(
@@ -63,14 +67,17 @@ def native_execution(
         scale, architecture, atomic_energies=atomic_energies, key=key
     )
     assert_type(potential, MACEPotential)
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
-    assert_type(topology, AtomisticGraphTopology)
-    derivative = atomistic_energy_derivatives(
-        potential, batch, execution, batch.positions, topology=topology
-    )
+    layout = AtomisticGraphLayout.for_batch(batch, execution, cutoff=3.0)
+    assert_type(layout, AtomisticGraphLayout)
+    payload = layout.prepare(batch)
+    assert_type(payload, AtomisticGraphPayload)
+    derivative = atomistic_energy_derivatives(potential, payload, batch.positions)
     assert_type(derivative, AtomisticEnergyDerivatives)
+    loader = atomistic_training_loader(
+        atomistic_training_source(batch, mass_unit=DALTON, energy=derivative.energy)
+    )
     problem = AtomisticTrainingProblem(
-        batch, execution, cutoff=3.0, training_energy=derivative.energy
+        loader, execution, (AtomisticEnergyObjective(),), scale=scale, cutoff=3.0
     )
     assert_type(problem, AtomisticTrainingProblem)
 
@@ -101,4 +108,4 @@ def artifact_and_frozen_execution(
 def source_conversion(source: MACESource, provider: MACEProviderRuntime) -> None:
     conversion = convert_mace_checkpoint(source, provider=provider)
     assert_type(conversion, MACECheckpointConversion)
-    assert_type(conversion.potential, MACEPotential)
+    assert_type(conversion.potential, MACEPotential | MACELESPotential)

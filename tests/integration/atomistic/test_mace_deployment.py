@@ -280,7 +280,7 @@ structure = phx.atomistic.AtomicStructure(
     periodic_axes=jnp.asarray([True, True, True]),
 )
 system = phx.atomistic.AtomisticSystemPlan.from_structure(structure, units).prepare()
-model = phx.atomistic.read_atomistic_restart_model(path).model
+model = phx.atomistic.read_atomistic_restart_models(path)["learned"].artifact.model
 dynamics, thermodynamic = periodic_dynamics(model, system)
 template = dynamics.initialize_state(
     structure.positions,
@@ -322,10 +322,7 @@ def test_periodic_md_restart_continues_identically_in_a_fresh_process(
         state = dynamics.step(state, thermodynamic)
     path = tmp_path / "md-restart"
     phx.atomistic.write_atomistic_restart(
-        path,
-        phx.atomistic.AtomisticCheckpointPlan(dynamics, thermodynamic),
-        state,
-        model=model,
+        path, phx.atomistic.AtomisticCheckpointPlan(dynamics, thermodynamic), state
     )
     reference = state
     for _ in range(4):
@@ -375,8 +372,9 @@ continued = phx.atomistic.fit_atomistic_potential(
     artifact.model, problem, total, key=jax.random.key(5), continuation=restored
 )
 print(json.dumps({
-    "loss": np.asarray(continued.training_loss_history).tolist(),
-    "revision": phx.atomistic.atomistic_potential_revision(continued.potential).revision_id,
+    "loss": np.asarray(continued.training_values).tolist(),
+    "objectives": np.asarray(continued.training_objectives).tolist(),
+    "revision": phx.atomistic.atomistic_model_revision(continued.potential).revision_id,
 }))
 """
 
@@ -396,17 +394,21 @@ def test_force_stress_training_continues_identically_in_a_fresh_process(
     )
     assert bool(partial.successful)
     directory = phx.atomistic.write_atomistic_training_restart(
-        tmp_path / "training-restart", partial, saved
+        tmp_path / "training-restart", partial, problem, saved
     )
     uninterrupted = phx.atomistic.fit_atomistic_potential(
         tiny_mace(seed=4), problem, total, key=jax.random.key(5)
     )
-    assert float(np.asarray(uninterrupted.stress_loss_history)[0]) > 0.0
+    # Objectives align with the problem: energy, forces, stress.
+    assert float(np.asarray(uninterrupted.training_objectives)[0, 2]) > 0.0
 
     fresh = _run_script(_TRAINING_CONTINUATION, [str(directory), "2", "4"])
     np.testing.assert_array_equal(
-        fresh["loss"], np.asarray(uninterrupted.training_loss_history)
+        fresh["loss"], np.asarray(uninterrupted.training_values)
+    )
+    np.testing.assert_array_equal(
+        fresh["objectives"], np.asarray(uninterrupted.training_objectives)
     )
     assert fresh["revision"] == (
-        phx.atomistic.atomistic_potential_revision(uninterrupted.potential).revision_id
+        phx.atomistic.atomistic_model_revision(uninterrupted.potential).revision_id
     )

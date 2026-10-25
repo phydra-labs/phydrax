@@ -38,6 +38,7 @@ JAX_NATIVE_DISTRIBUTION = BackendDistributionCapabilities(
         "permute",
         "all_gather",
         "all_to_all",
+        "reduce_scatter",
     ),
     transformations=("jit", "vmap", "jvp", "vjp", "rematerialization"),
     communicator_model="jax",
@@ -277,6 +278,22 @@ class JaxCollectiveProvider:
             self.axis_name,
             split_axis=split_axis,
             concat_axis=concat_axis,
+            tiled=True,
+        )
+
+    def reduce_scatter(self, value: Array, /, *, scatter_axis: int = 0) -> Array:
+        """Sum ``value`` over owners and keep this owner's tiled block.
+
+        ``value.shape[scatter_axis]`` must be ``owner_count * block``; owner
+        ``r`` receives rows ``[r * block, (r + 1) * block)`` of the owner sum.
+        This is ``jax.lax.psum_scatter(..., tiled=True)``, the exact linear
+        transpose of the tiled ``all_gather`` along the same axis: no owner
+        materializes the reduced full-length buffer.
+        """
+        return jax.lax.psum_scatter(
+            value,
+            self.axis_name,
+            scatter_dimension=scatter_axis,
             tiled=True,
         )
 

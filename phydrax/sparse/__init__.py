@@ -54,8 +54,15 @@ from ._ops import (
     linear_apply,
     linear_transpose_apply,
     mask_routes,
+    route_dot,
+    route_matvec,
+    route_multiply,
     route_reduce,
+    route_rms,
+    route_support,
     RouteReduction,
+    RouteRootMeanSquare,
+    RouteSupport,
 )
 from ._pattern import SparsePattern, SparsePatternOrigin
 from ._relation import EdgeRelation, RowRelation, SparseRelation
@@ -77,6 +84,13 @@ from ._streamed import (
 
 
 __all__ = [
+    "RouteRootMeanSquare",
+    "RouteSupport",
+    "route_dot",
+    "route_matvec",
+    "route_multiply",
+    "route_rms",
+    "route_support",
     "PreparedStreamedRelation",
     "StreamedDirection",
     "StreamedEdgeFunction",

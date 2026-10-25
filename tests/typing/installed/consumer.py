@@ -25,6 +25,7 @@ from phydrax.applications import contact as contact, solid_mechanics as solid
 from phydrax.applications.incompressible_flow import (
     VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE,
 )
+from phydrax.atomistic.crystal import CrystalPackingPlan, CrystalPackingRecipeReceipt
 from phydrax.discretization import (
     DistributedSpectralExecutionPlan,
     mpm as mpm,
@@ -159,6 +160,14 @@ def singular_subspaces(problem: SVDProblem, key: pt.PRNGKey, probe: jax.Array) -
     )
 
 
+def polar_rotation_consumer(frame: jax.Array) -> None:
+    result = linalg.polar_rotation3(frame, plan=linalg.SmallLinearSolvePlan(3))
+    assert_type(result, linalg.PolarRotation3Result)
+    assert_type(result.value, jax.Array)
+    assert_type(result.successful, jax.Array)
+    assert_type(result.status, jax.Array)
+
+
 def projector_consumer(
     prepared: PreparedProjectorMonteCarlo,
     key: pt.PRNGKey,
@@ -189,14 +198,24 @@ def atomistic_execution(
     execution: phx.atomistic.AtomisticGraphExecutionPlan,
 ) -> None:
     assert_type(potential.configuration, phx.nn.atomistic.MACEArchitecture)
-    topology = phx.atomistic.prepare_atomistic_graph_topology(
+    payload = phx.atomistic.AtomisticGraphLayout.for_batch(
         batch, execution, cutoff=potential.configuration.cutoff
-    )
-    assert_type(topology, phx.atomistic.AtomisticGraphTopology)
+    ).prepare(batch)
+    assert_type(payload, phx.atomistic.AtomisticGraphPayload)
+    assert_type(payload.topology, phx.atomistic.AtomisticGraphTopology)
     derivatives = phx.atomistic.atomistic_energy_derivatives(
-        potential, batch, execution, batch.positions, topology=topology
+        potential, payload, batch.positions
     )
     assert_type(derivatives, phx.atomistic.AtomisticEnergyDerivatives)
+
+
+def crystal_packing_identity_consumer(
+    plan: CrystalPackingPlan, receipt: CrystalPackingRecipeReceipt
+) -> None:
+    assert_type(plan.law_id, str)
+    assert_type(plan.plan_id, str)
+    assert_type(receipt.law_id, str)
+    assert_type(receipt.plan_id, str)
 
 
 def ordered_sparse_routes(

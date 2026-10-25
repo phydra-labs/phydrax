@@ -17,6 +17,7 @@ from ...._data_plane import (
     BoundedPrefetchIterator,
     DistributedIndexEpochPlan,
     EPOCH_ORDER_ALGORITHM,
+    ExecutionGroupRank,
     IndexEpochPlan,
 )
 from ...._fingerprint import canonical_fingerprint, canonical_mapping
@@ -168,8 +169,9 @@ class OperatorBatchEpoch(Iterator[OperatorTrainingBatch]):
         /,
     ) -> OperatorTrainingBatch:
         batch_index, indices = item
-        if self._loader.process_local:
-            distributed = DistributedIndexEpochPlan.current(self._plan)
+        rank = self._loader.data_rank
+        if rank is not None and self._loader.process_local:
+            distributed = DistributedIndexEpochPlan(self._plan, rank)
             local = distributed.batch(batch_index)
             return self._loader._prepare(
                 local.indices,
@@ -242,7 +244,12 @@ class OperatorBatchLoader:
         self.normalization = normalization
         self.dtype_policy = dtype_policy
         self.sharding_policy = sharding_policy
-        self.process_local = sharding_policy is not None and jax.process_count() > 1
+        # Case shards are group-local: the policy mesh (not the whole process
+        # world) decides how many processes share one global batch.
+        self.data_rank: ExecutionGroupRank | None = (
+            None if sharding_policy is None else sharding_policy.data_rank()
+        )
+        self.process_local = self.data_rank is not None and self.data_rank.rank_count > 1
         self.sampling = sampling
         self.split = str(split)
 
@@ -339,13 +346,14 @@ class OperatorBatchLoader:
             raise ValueError("indices must contain at least one case.")
         if any(index < 0 or index >= self.source.size for index in selected):
             raise ValueError("indices contain a case outside the source.")
-        if self.process_local:
+        rank = self.data_rank
+        if rank is not None and self.process_local:
             global_plan = self.epoch_plan(epoch)
             if selected != global_plan.batch(batch_index):
                 raise ValueError(
                     "process-local explicit indices must match the canonical global batch"
                 )
-            distributed = DistributedIndexEpochPlan.current(global_plan)
+            distributed = DistributedIndexEpochPlan(global_plan, rank)
             local = distributed.batch(batch_index)
             return self._prepare(
                 local.indices,

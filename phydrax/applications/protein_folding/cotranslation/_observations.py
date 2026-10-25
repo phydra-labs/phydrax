@@ -11,7 +11,8 @@ from jax import Array
 from ...._numerics._quadrature_rules import gauss_legendre_data
 from ...._strict import StrictModule
 from ....atomistic._system import PreparedAtomisticSystem
-from ....atomistic.sampling._collective_variable import (
+from ....atomistic.sampling import (
+    CollectiveVariableGeometry,
     CollectiveVariableKind,
     CollectiveVariablePlan,
     PreparedCollectiveVariable,
@@ -134,7 +135,15 @@ class NascentChainObservations(StrictModule):
 
     def evaluate(self, positions: Array, /) -> NascentObservation:
         zero = jnp.zeros((), dtype=positions.dtype)
-        contact = None if self.contact is None else self.contact.evaluate(positions)
+        contact = (
+            None
+            if self.contact is None
+            else self.contact.evaluate(
+                CollectiveVariableGeometry(
+                    jnp.asarray(positions), unwrapped_positions=jnp.asarray(positions)
+                )
+            )
+        )
         q = zero if contact is None else contact.value
         success = jnp.asarray(True) if contact is None else contact.successful
         if not self.curves_available:

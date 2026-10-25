@@ -93,8 +93,16 @@ def _prepare(
             volumetric_stabilization=stabilization,
             schedule=schedule,
         ),
+        # The grid keeps two axial cells below and above z in [0, 1]; wider
+        # quartic and quintic supports shrink the admitted axial material range.
         phx.discretization.MPMParticleDomainPlan(
-            jnp.asarray(((domain_lower, 0.0), (2.0 - margin, 1.0)), dtype=jnp.float64),
+            jnp.asarray(
+                (
+                    (domain_lower, max(0.0, margin - 0.25)),
+                    (2.0 - margin, min(1.0, 1.25 - margin)),
+                ),
+                dtype=jnp.float64,
+            ),
             periodic=(False, False),
             support_margin=(margin, margin),
         ),
@@ -127,11 +135,17 @@ def _cardinal_basis(
     coordinate: NDArray[np.float64],
     degree: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Independent centered cardinal polynomial, not a runtime basis helper."""
+    """Independent centered cardinal polynomial, not a runtime basis helper.
+
+    The even basis is summed on its left half, where every truncated power is
+    small, and the odd derivative is mirrored; quintic right-half sums would
+    otherwise cancel terms of size several hundred.
+    """
+    left = -np.abs(coordinate)
     value = np.zeros_like(coordinate)
     derivative = np.zeros_like(coordinate)
     for knot in range(degree + 2):
-        positive = np.maximum(coordinate + (degree + 1) / 2.0 - knot, 0.0)
+        positive = np.maximum(left + (degree + 1) / 2.0 - knot, 0.0)
         coefficient = (-1.0) ** knot * comb(degree + 1, knot)
         value += coefficient * positive**degree / factorial(degree)
         derivative += (
@@ -143,6 +157,7 @@ def _cardinal_basis(
             )
             / factorial(degree - 1)
         )
+    derivative = np.where(coordinate > 0.0, -derivative, derivative)
     inside = np.abs(coordinate) < (degree + 1) / 2.0
     return np.where(inside, value, 0.0), np.where(inside, derivative, 0.0)
 
@@ -254,10 +269,21 @@ def _independent_ring_operators(
     return gradient, force
 
 
+_DEGREE_IDS = ("linear", "quadratic", "cubic", "quartic", "quintic")
+_KIND_IDS = {"none": "local", "b_bar": "bbar", "f_bar": "fbar"}
+
+
+# Point ring routes are degree-generic through quintic; the B-bar ring
+# quadrature is qualified through cubic bases and refuses higher degrees.
 @pytest.mark.parametrize(
-    "stabilization_kind", ("none", "b_bar", "f_bar"), ids=("local", "bbar", "fbar")
+    "degree,stabilization_kind",
+    [
+        pytest.param(degree, kind, id=f"{_DEGREE_IDS[degree - 1]}-{_KIND_IDS[kind]}")
+        for degree in range(1, 6)
+        for kind in ("none", "b_bar", "f_bar")
+        if kind != "b_bar" or degree <= 3
+    ],
 )
-@pytest.mark.parametrize("degree", (1, 2, 3), ids=("linear", "quadratic", "cubic"))
 def test_prescribed_uniform_radial_expansion_includes_hoop_stretch(
     stabilization_kind: phx.discretization.MPMVolumetricStabilizationKind,
     degree: int,
@@ -330,8 +356,15 @@ def test_prescribed_uniform_radial_expansion_includes_hoop_stretch(
 
 
 @pytest.mark.parametrize("hoop_only", (False, True), ids=("full-stress", "hoop-only"))
-@pytest.mark.parametrize("kind", ("none", "b_bar"), ids=("local", "bbar"))
-@pytest.mark.parametrize("degree", (1, 2, 3), ids=("linear", "quadratic", "cubic"))
+@pytest.mark.parametrize(
+    "degree,kind",
+    [
+        pytest.param(degree, kind, id=f"{_DEGREE_IDS[degree - 1]}-{_KIND_IDS[kind]}")
+        for degree in range(1, 6)
+        for kind in ("none", "b_bar")
+        if kind != "b_bar" or degree <= 3
+    ],
+)
 def test_ring_internal_force_is_exact_virtual_work_adjoint(
     hoop_only: bool,
     kind: phx.discretization.MPMVolumetricStabilizationKind,
@@ -432,7 +465,7 @@ def test_negative_radial_grid_is_refused_during_preparation() -> None:
         _prepare(geometry=_axisymmetric(), radial_lower=-0.25, domain_lower=0.125)
 
 
-@pytest.mark.parametrize("degree", (2, 3), ids=("quadratic", "cubic"))
+@pytest.mark.parametrize("degree", (2, 3, 4, 5), ids=_DEGREE_IDS[1:])
 def test_cross_axis_ghost_routes_have_independent_exact_parity(degree: int) -> None:
     compiled, _ = _prepare(
         geometry=_axisymmetric(),
@@ -730,6 +763,22 @@ def test_axisymmetric_two_field_step_preserves_ring_ledger() -> None:
         jnp.all(detail.accepted_state.particles.deformation_gradient[:, 2, 2] > 1.0)
     )
     assert not bool(detail.diagnostics.transfer.angular_momentum_valid)
+
+
+@pytest.mark.parametrize("degree", (4, 5), ids=_DEGREE_IDS[3:])
+def test_axisymmetric_b_bar_refuses_bspline_degrees_beyond_ring_rules(
+    degree: int,
+) -> None:
+    assignment = phx.discretization.TensorBSplineSplatAssignment(degree)
+    # The identical setup is admitted with point routes, so the refusal belongs
+    # to the B-bar ring quadrature and not to support halo or geometry checks.
+    _prepare(geometry=_axisymmetric(), assignment=assignment)
+    with pytest.raises(ValueError, match="B-bar"):
+        _prepare(
+            geometry=_axisymmetric(),
+            assignment=assignment,
+            stabilization=phx.discretization.MPMVolumetricStabilizationPlan("b_bar"),
+        )
 
 
 def test_axisymmetric_sparse_and_dense_particle_steps_agree() -> None:

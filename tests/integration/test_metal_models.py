@@ -45,12 +45,12 @@ from phydrax.atomistic import (
     atomistic_energy_derivatives,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphInputs,
+    AtomisticGraphLayout,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     energy_and_forces,
-    prepare_atomistic_graph_topology,
 )
-from phydrax.atomistic._graph import realize_atomistic_graph
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic._mace import MACEArchitecture, MACEPotential
 from phydrax.nn.atomistic._mace_prepare import prepare_mace_potential
@@ -227,16 +227,16 @@ def _molecule_programs(
     """First- and second-order derivative programs of the molecule and their inputs."""
     batch = AtomisticBatch.from_structure(_structure("molecule", dtype))
     execution = _ordered_molecule_execution()
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=_CUTOFF)
+    payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=_CUTOFF).prepare(
+        batch
+    )
     parameters, state, fixed = partition_parameters(model)
 
     def derivatives(lane: Any, coordinates: jax.Array, forces: bool) -> Any:
         return atomistic_energy_derivatives(
             combine_parameters(lane, state, fixed),
-            batch,
-            execution,
+            payload,
             coordinates,
-            topology=topology,
             compute_forces=forces,
         )
 
@@ -284,15 +284,15 @@ def _crystal_program(
 ) -> tuple[Callable[[jax.Array, jax.Array], dict[str, Any]], AtomisticBatch]:
     batch = AtomisticBatch.from_structure(_structure("crystal", dtype))
     execution = _crystal_execution(accumulation)
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=_CUTOFF)
+    payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=_CUTOFF).prepare(
+        batch
+    )
 
     def evaluate(coordinates: jax.Array, cells: jax.Array) -> dict[str, Any]:
         result = atomistic_energy_derivatives(
             model,
-            batch,
-            execution,
+            payload,
             coordinates,
-            topology=topology,
             cell_vectors=cells,
             compute_stress=True,
         )
@@ -526,20 +526,18 @@ def test_float32_tabulated_mace_refuses_radii_outside_its_declared_support(
     tabulated.validate()
     batch = AtomisticBatch.from_structure(_structure("molecule", "float32"))
     execution = _molecule_execution()
+    payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=_CUTOFF).prepare(
+        batch
+    )
 
     def energy(potential: Any, positions: jax.Array) -> jax.Array:
-        graph = realize_atomistic_graph(
-            batch, execution, cutoff=_CUTOFF, positions=positions
+        graph = payload.graph(cutoff=_CUTOFF, positions=positions)
+        result = potential.evaluate_graph(
+            AtomisticGraphInputs(
+                graph, batch.scale, species_kind=potential.capabilities.species_kind
+            )
         )
-        value, _ = potential.graph_energy(
-            batch.atomic_numbers,
-            batch.atom_mask,
-            batch.atom_cases,
-            batch.case_count,
-            batch.atom_capacity,
-            graph,
-        )
-        return value[0]
+        return result.energy[0]
 
     compiled = eqx.filter_jit(energy)
     accepted = compiled(tabulated, batch.positions)

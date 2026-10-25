@@ -105,7 +105,7 @@ def _atomistic_driven_stress_from_components(
     momentum: Array,
     inverse_mass: Array,
     mobile: Array,
-    potential_virial: Array,
+    strain_derivative: Array,
     cell_vectors: Array,
     velocity_gradient: ArrayLike,
     kinetic_to_energy: float,
@@ -126,7 +126,10 @@ def _atomistic_driven_stress_from_components(
         "ni,nj->ij", momentum, weighted_momentum
     )
     kinetic_pressure = kinetic_virial / volume
-    configurational_pressure = potential_virial / volume
+    # Row-cell convention: the configurational (compression-positive) pressure
+    # is ``-sym(dE/d strain) / V``; the finite position moment is never used.
+    derivative = jnp.asarray(strain_derivative, dtype=momentum.dtype)
+    configurational_pressure = -0.5 * (derivative + derivative.T) / volume
     particle_pressure = kinetic_pressure + configurational_pressure
     particle_cauchy = -particle_pressure
     solvent, solvent_available = _optional_stress(
@@ -221,16 +224,25 @@ def atomistic_driven_stress(
         raise ValueError("State belongs to another atomistic dynamics runtime.")
     if dynamics.system.cell is None or state.cell_vectors.shape != (3, 3):
         raise ValueError("Driven atomistic stress requires one full 3-D periodic cell.")
+    if not dynamics.strain_response:
+        raise ValueError(
+            "Driven atomistic stress requires dynamics that cache the strain derivative."
+        )
+    # The stress belongs to the Hamiltonian controls the force cache is bound to.
+    force_valid = (
+        dynamics.force_cache_valid(state, state.force.controls)
+        & state.force.strain_available
+    )
     return _atomistic_driven_stress_from_components(
         plan,
         state.kinematics.momenta,
         dynamics.system.inverse_masses,
         dynamics.system.mobile_mask,
-        state.force.virial,
+        state.force.strain_derivative,
         state.cell_vectors,
         velocity_gradient,
         dynamics.system.plan.units.kinetic_to_energy,
-        state.force.successful,
+        force_valid,
         solvent_cauchy_stress=solvent_cauchy_stress,
         stresslet_cauchy_stress=stresslet_cauchy_stress,
         brownian_cauchy_stress=brownian_cauchy_stress,

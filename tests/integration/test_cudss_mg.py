@@ -16,6 +16,7 @@ from phydrax import config as pxconfig
 from phydrax._cuda_native import cuda_native_resources, cuda_partition_key
 from phydrax._execution_device import device_platform
 from phydrax._execution_resources import ExecutionGroupSpec
+from phydrax._jax_config import default_device
 from phydrax.linalg.backends import _cudss_ffi
 
 
@@ -72,7 +73,7 @@ def _exercise_mg_lifecycle(count: int, indefinite: bool, dtype: DTypeLike) -> No
     group, devices = _reservation(count)
     with (
         pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)),
-        jax.default_device(devices[0]),
+        default_device(devices[0]),
     ):
         size = 128
         diagonal = jnp.arange(size, dtype=dtype) * 0.05 + 8.0
@@ -193,7 +194,7 @@ def _exercise_mg_derivatives(count: int, dtype: DTypeLike, indefinite: bool) -> 
     group, devices = _reservation(count)
     with (
         pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)),
-        jax.default_device(devices[0]),
+        default_device(devices[0]),
     ):
         size = 128
         diagonal = jnp.arange(size, dtype=dtype) * 0.05 + 8
@@ -251,7 +252,7 @@ def test_failed_mg_phase_retires_partition_when_dispatch_reports_error() -> None
     _reservation(8)
     group, devices = _reservation(4)
     partition = cuda_partition_key("mg-failed-phase-recovery")
-    with jax.default_device(devices[0]):
+    with default_device(devices[0]):
         values = jnp.asarray([4, 1, 1, 4], dtype=jnp.float32)
         token = _cudss_ffi.analyze(
             values,
@@ -285,7 +286,7 @@ def test_mg_refuses_matrix_batch_and_peer_resident_rhs() -> None:
     group, devices = _reservation(2)
     with (
         pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)),
-        jax.default_device(devices[0]),
+        default_device(devices[0]),
     ):
         matrix = jnp.eye(8, dtype=jnp.float64) * 4
         policy = la.LinearSolvePolicy(

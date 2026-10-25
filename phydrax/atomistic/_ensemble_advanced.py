@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -40,6 +41,7 @@ class SplittingOperatorKind(StrEnum):
     MOMENTUM_CONSTRAINT = "momentum-constraint"
     BAROSTAT = "barostat"
     CELL_UPDATE = "cell-update"
+    CELL_THERMOSTAT = "cell-thermostat"
 
 
 class AtomisticSplittingPlan(StrictModule, NonTrainableState):
@@ -105,6 +107,54 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
             coefficients.append(1.0)
         return cls(operators, coefficients)
 
+    @classmethod
+    def symmetric_thermostat(cls, /, *, constrained: bool = False) -> Self:
+        """``T(dt/2) VV T(dt/2)``: NHC, CSVR and GLE half-step thermostats.
+
+        Both thermostat halves act on constraint-projected momenta.
+        """
+        inner = cls.velocity_verlet(constrained=constrained)
+        return cls(
+            (
+                SplittingOperatorKind.THERMOSTAT,
+                *inner.operators,
+                SplittingOperatorKind.THERMOSTAT,
+            ),
+            (0.5, *inner.coefficients, 0.5),
+        )
+
+    @classmethod
+    def terminal_thermostat(cls, /, *, constrained: bool = False) -> Self:
+        """``VV T``: a control applied after the completed mechanical step."""
+        inner = cls.velocity_verlet(constrained=constrained)
+        return cls(
+            (*inner.operators, SplittingOperatorKind.THERMOSTAT),
+            (*inner.coefficients, 1.0),
+        )
+
+    @classmethod
+    def mtk(cls, /, *, thermostatted: bool) -> Self:
+        """Tuckerman et al. (2006) MTK factorization with an exact affine drift.
+
+        NPT: ``Tc Tp B K C K B Tp Tc``; NPH: ``B K C K B`` (all halves except
+        the full cell/position update ``C``).
+        """
+        core = (
+            SplittingOperatorKind.BAROSTAT,
+            SplittingOperatorKind.FORCE_KICK,
+            SplittingOperatorKind.CELL_UPDATE,
+            SplittingOperatorKind.FORCE_KICK,
+            SplittingOperatorKind.BAROSTAT,
+        )
+        weights = (0.5, 0.5, 1.0, 0.5, 0.5)
+        if not thermostatted:
+            return cls(core, weights)
+        head = (SplittingOperatorKind.CELL_THERMOSTAT, SplittingOperatorKind.THERMOSTAT)
+        return cls(
+            (*head, *core, *reversed(head)),
+            (0.5, 0.5, *weights, 0.5, 0.5),
+        )
+
 
 class ThermostatResult(StrictModule):
     momenta: Array
@@ -133,160 +183,22 @@ class AbstractThermostatPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class BussiThermostatPlan(AbstractThermostatPlan):
-    temperature: float = eqx.field(static=True)
-    time_constant: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+class EulerMaruyamaGeneralizedLangevinPlan(AbstractThermostatPlan):
+    """Euler-Maruyama GLE kernel of continuous drift/diffusion matrices.
 
-    def __init__(self, temperature: float, time_constant: float, /) -> None:
-        if min(float(temperature), float(time_constant)) <= 0.0:
-            raise ValueError("Bussi temperature and time constant must be positive.")
-        self.temperature, self.time_constant = float(temperature), float(time_constant)
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "bussi-thermostat",
-                "temperature": self.temperature,
-                "time_constant": self.time_constant,
-            }
-        )
+    Retained only for the ring-polymer normal-mode consumers (PIGLET) whose
+    physical definition is this first-order discretization; atomistic dynamics
+    executes GLE exclusively through the discrete FDT-checked
+    ``GeneralizedLangevinPlan`` owner.  The discretization is not
+    FDT-exact and is never presented as a canonical sampler.  ``temperature``
+    is a dynamic ``float64`` scalar; the content digest (matrices and exact
+    host temperature) is the dynamic ``plan_identity`` (host ``plan_id``).
+    """
 
-    def apply(
-        self,
-        momenta: ArrayLike,
-        masses: Array,
-        mobile_mask: ArrayLike,
-        key: PRNGKey,
-        step: ArrayLike,
-        dt: float | Array,
-        units: AtomisticUnitSystem,
-        /,
-        *,
-        auxiliary: ArrayLike | None = None,
-    ) -> ThermostatResult:
-        del auxiliary
-        p = jnp.asarray(momenta)
-        mobile = jnp.asarray(mobile_mask)
-        dof = jnp.sum(mobile) * p.shape[-1]
-        kinetic = (
-            0.5
-            * units.kinetic_to_energy
-            * jnp.sum(jnp.where(mobile[:, None], p * p / masses[:, None], 0.0))
-        )
-        target = 0.5 * dof * units.boltzmann_constant * self.temperature
-        decay = jnp.exp(-dt / self.time_constant)
-        subkey = jr.fold_in(key, jnp.asarray(step, dtype=jnp.uint32))
-        normal = jr.normal(subkey)
-        chi = jr.chisquare(jr.fold_in(subkey, 1), jnp.maximum(dof - 1, 1))
-        ratio = target / jnp.maximum(kinetic, 1e-30)
-        scale_squared = (
-            decay
-            + (1.0 - decay) * ratio * (chi + normal**2) / dof
-            + 2.0 * normal * jnp.sqrt(decay * (1.0 - decay) * ratio / dof)
-        )
-        scale = jnp.sqrt(jnp.maximum(scale_squared, 0.0))
-        result = jnp.where(mobile[:, None], scale * p, 0.0)
-        after = 0.5 * units.kinetic_to_energy * jnp.sum(result * result / masses[:, None])
-        return ThermostatResult(
-            result,
-            jnp.asarray([scale]),
-            after - kinetic,
-            (kinetic > 0.0)
-            & (dof > 0)
-            & jnp.isfinite(scale)
-            & jnp.all(jnp.isfinite(result)),
-        )
-
-
-class NoseHooverChainPlan(AbstractThermostatPlan):
-    temperature: float = eqx.field(static=True)
-    chain_length: int = eqx.field(static=True)
-    time_constant: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, temperature: float, /, *, chain_length: int = 3, time_constant: float = 0.1
-    ) -> None:
-        if float(temperature) <= 0 or int(chain_length) <= 0 or float(time_constant) <= 0:
-            raise ValueError("Nose-Hoover chain parameters are invalid.")
-        self.temperature, self.chain_length, self.time_constant = (
-            float(temperature),
-            int(chain_length),
-            float(time_constant),
-        )
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "nose-hoover-chain",
-                "temperature": self.temperature,
-                "chain_length": self.chain_length,
-                "time_constant": self.time_constant,
-            }
-        )
-
-    def apply(
-        self,
-        momenta: ArrayLike,
-        masses: Array,
-        mobile_mask: ArrayLike,
-        key: PRNGKey,
-        step: ArrayLike,
-        dt: float | Array,
-        units: AtomisticUnitSystem,
-        /,
-        *,
-        auxiliary: ArrayLike | None = None,
-    ) -> ThermostatResult:
-        del key, step
-        p = jnp.asarray(momenta)
-        mobile = jnp.asarray(mobile_mask)
-        dof = jnp.sum(mobile) * p.shape[-1]
-        thermal = units.boltzmann_constant * self.temperature
-        kinetic = (
-            0.5
-            * units.kinetic_to_energy
-            * jnp.sum(jnp.where(mobile[:, None], p * p / masses[:, None], 0.0))
-        )
-        velocity = (
-            jnp.zeros((self.chain_length,), dtype=p.dtype)
-            if auxiliary is None
-            else jnp.asarray(auxiliary, dtype=p.dtype)
-        )
-        if velocity.shape != (self.chain_length,):
-            raise ValueError("Nose-Hoover auxiliary state has the wrong chain length.")
-        masses_chain = jnp.full(
-            (self.chain_length,), thermal * self.time_constant**2, dtype=p.dtype
-        )
-        masses_chain = masses_chain.at[0].set(dof * thermal * self.time_constant**2)
-        forces = jnp.zeros_like(velocity)
-        forces = forces.at[0].set((2.0 * kinetic - dof * thermal) / masses_chain[0])
-        if self.chain_length > 1:
-            forces = forces.at[1:].set(
-                (masses_chain[:-1] * velocity[:-1] ** 2 - thermal) / masses_chain[1:]
-            )
-        velocity = velocity + 0.25 * dt * forces
-        scale = jnp.exp(-0.5 * dt * velocity[0])
-        result = jnp.where(mobile[:, None], scale * p, 0.0)
-        after = (
-            0.5
-            * units.kinetic_to_energy
-            * jnp.sum(jnp.where(mobile[:, None], result * result / masses[:, None], 0.0))
-        )
-        updated_forces = forces.at[0].set((2.0 * after - dof * thermal) / masses_chain[0])
-        if self.chain_length > 1:
-            updated_forces = updated_forces.at[1:].set(
-                (masses_chain[:-1] * velocity[:-1] ** 2 - thermal) / masses_chain[1:]
-            )
-        velocity = velocity + 0.25 * dt * updated_forces
-        successful = (
-            (dof > 0) & jnp.all(jnp.isfinite(result)) & jnp.all(jnp.isfinite(velocity))
-        )
-        return ThermostatResult(result, velocity, after - kinetic, successful)
-
-
-class GeneralizedLangevinPlan(AbstractThermostatPlan):
     drift_matrix: Array
     diffusion_factor: Array
-    temperature: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    temperature: Array
+    plan_identity: IdentityWords
 
     def __init__(
         self, drift_matrix: ArrayLike, diffusion_factor: ArrayLike, temperature: float, /
@@ -303,19 +215,22 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
         ):
             raise ValueError("GLE matrices or temperature are invalid.")
         drift, diffusion = jnp.asarray(drift_host), jnp.asarray(diffusion_host)
-        self.drift_matrix, self.diffusion_factor, self.temperature = (
-            drift,
-            diffusion,
-            float(temperature),
-        )
-        self.plan_id = canonical_fingerprint(
+        thermal = float(temperature)
+        self.drift_matrix, self.diffusion_factor = drift, diffusion
+        self.temperature = jnp.asarray(thermal, dtype=jnp.float64)
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "generalized-langevin",
                 "drift": drift_host.tolist(),
                 "diffusion": diffusion_host.tolist(),
-                "temperature": self.temperature,
+                "temperature": thermal,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
 
     def apply(
         self,
@@ -346,7 +261,7 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
         momentum_scale = jnp.sqrt(
             mass[:, None]
             * units.boltzmann_constant
-            * self.temperature
+            * jnp.asarray(self.temperature, dtype=p.dtype)
             / units.kinetic_to_energy
         )
         normalized_momenta = p / momentum_scale
@@ -373,29 +288,41 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
 
 
 class NoisyForceLangevinPlan(AbstractThermostatPlan):
-    base: GeneralizedLangevinPlan
-    force_noise_variance: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    """Langevin thermostat with an additional force-noise variance.
+
+    ``force_noise_variance`` is a dynamic ``float64`` scalar; the digest is
+    the dynamic ``plan_identity`` (host ``plan_id``, unchanged payload).
+    """
+
+    base: EulerMaruyamaGeneralizedLangevinPlan
+    force_noise_variance: Array
+    plan_identity: IdentityWords
 
     def __init__(
         self, friction: float, force_noise_variance: float, temperature: float, /
     ) -> None:
         if min(friction, force_noise_variance, temperature) <= 0:
             raise ValueError("Noisy-force Langevin parameters must be positive.")
-        base = GeneralizedLangevinPlan(
+        base = EulerMaruyamaGeneralizedLangevinPlan(
             jnp.asarray([[friction]]),
             jnp.asarray([[jnp.sqrt(2.0 * friction + force_noise_variance)]]),
             temperature,
         )
+        variance = float(force_noise_variance)
         self.base = base
-        self.force_noise_variance = float(force_noise_variance)
-        self.plan_id = canonical_fingerprint(
+        self.force_noise_variance = jnp.asarray(variance, dtype=jnp.float64)
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "noisy-force-langevin",
                 "base": base.plan_id,
-                "force_noise_variance": self.force_noise_variance,
+                "force_noise_variance": variance,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
 
     def apply(
         self,
@@ -423,6 +350,13 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
 
 
 class AnisotropicPressurePlan(StrictModule, NonTrainableState):
+    """Deterministic pressure-feedback cell update: mechanical control only.
+
+    A first-order weak-coupling strain ``dt * compressibility * (P - P_target)``
+    used for mechanical relaxation/equilibration.  It has no barostat momentum,
+    measure or work contract and never establishes an NPT ensemble.
+    """
+
     target_pressure: Array
     compressibility: Array
     semi_isotropic: bool = eqx.field(static=True)
@@ -513,11 +447,17 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
 
 
 class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
+    """Rigid-body site realization; ``map_identity`` (host ``map_id``) is dynamic.
+
+    The digest binds the prepared bodies, so it is carried as dynamic words
+    and becomes the realized site state's ``coordinate_map_identity``.
+    """
+
     bodies: PreparedRigidBodySet
     body_indices: Array
     local_positions: Array
     site_ids: Array
-    map_id: str = eqx.field(static=True)
+    map_identity: IdentityWords
 
     def __init__(
         self,
@@ -540,13 +480,18 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
             local,
             ids,
         )
-        self.map_id = canonical_fingerprint(
+        self.map_identity = IdentityWords.of(
             {
                 "kind": "rigid-atomistic-map",
                 "bodies": bodies.prepared_id,
                 "count": index.size,
             }
         )
+
+    @property
+    def map_id(self) -> str:
+        """Host decoding of the canonical map digest."""
+        return self.map_identity.fingerprint()
 
     def realize(
         self, kinematics: RigidBodyKinematics, /
@@ -559,7 +504,7 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
         valid = jnp.all(jnp.isfinite(positions))
         mask = jnp.ones((positions.shape[0],), dtype=jnp.bool_)
         return AtomisticInteractionSiteState(
-            positions, mask, mask, mask, jnp.asarray(jnp.inf), valid, self.map_id
+            positions, mask, mask, mask, jnp.asarray(jnp.inf), valid, self.map_identity
         )
 
 
@@ -591,21 +536,34 @@ def rotational_velocity_verlet(
 
 
 class BrownianDynamicsPlan(StrictModule, NonTrainableState):
-    mobility: float = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    """Euler-Maruyama Brownian step with dynamic ``mobility``/``temperature``.
+
+    Both are ``float64`` scalars; the digest of their exact host values is the
+    dynamic ``plan_identity`` (host ``plan_id``, unchanged payload).
+    """
+
+    mobility: Array
+    temperature: Array
+    plan_identity: IdentityWords
 
     def __init__(self, mobility: float, temperature: float, /) -> None:
-        if min(float(mobility), float(temperature)) <= 0:
+        mobility_, thermal = float(mobility), float(temperature)
+        if min(mobility_, thermal) <= 0:
             raise ValueError("Brownian mobility and temperature must be positive.")
-        self.mobility, self.temperature = float(mobility), float(temperature)
-        self.plan_id = canonical_fingerprint(
+        self.mobility = jnp.asarray(mobility_, dtype=jnp.float64)
+        self.temperature = jnp.asarray(thermal, dtype=jnp.float64)
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "brownian-dynamics",
-                "mobility": self.mobility,
-                "temperature": self.temperature,
+                "mobility": mobility_,
+                "temperature": thermal,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical plan digest."""
+        return self.plan_identity.fingerprint()
 
     def step(
         self,
@@ -616,13 +574,13 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
         units: AtomisticUnitSystem,
         /,
     ) -> Array:
+        dtype = jnp.result_type(positions)
         noise = jr.normal(key, jnp.asarray(positions).shape)
-        diffusion = self.mobility * units.boltzmann_constant * self.temperature
-        return (
-            positions
-            + dt * self.mobility * forces
-            + jnp.sqrt(2.0 * diffusion * dt) * noise
+        diffusion = jnp.asarray(
+            self.mobility * units.boltzmann_constant * self.temperature, dtype=dtype
         )
+        mobility = jnp.asarray(self.mobility, dtype=dtype)
+        return positions + dt * mobility * forces + jnp.sqrt(2.0 * diffusion * dt) * noise
 
 
 __all__ = [
@@ -630,10 +588,8 @@ __all__ = [
     "AnisotropicPressurePlan",
     "AtomisticSplittingPlan",
     "BrownianDynamicsPlan",
-    "BussiThermostatPlan",
-    "GeneralizedLangevinPlan",
+    "EulerMaruyamaGeneralizedLangevinPlan",
     "NoisyForceLangevinPlan",
-    "NoseHooverChainPlan",
     "RigidAtomisticCoordinateMap",
     "RotationalAtomisticState",
     "SplittingOperatorKind",

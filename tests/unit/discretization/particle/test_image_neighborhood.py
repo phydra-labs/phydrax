@@ -3,6 +3,8 @@
 #
 
 import tracemalloc
+from collections import Counter, defaultdict
+from collections.abc import Callable
 from itertools import product
 
 import jax
@@ -23,8 +25,24 @@ from phydrax.discretization.particle import (
     ParticleSetPlan,
     PreparedImageVerletParticleNeighborhood,
 )
-from phydrax.discretization.particle._image_neighborhood import _host_reach
+from phydrax.discretization.particle._image_neighborhood import (
+    _host_reach,
+    CellListImageRouteSearch,
+    DenseImageRouteSearch,
+    ImageNeighborSelection,
+    ImageNeighborSelectionPolicy,
+    ImageReceiverSubset,
+    ImageRouteSearchResult,
+    ImageSelectionCapacity,
+    PreparedImageNeighborSelection,
+)
 from phydrax.sparse import EdgeRelation
+from tests._support.image_lattice import (
+    assert_resolved_cutoff,
+    assert_routes_match,
+    lattice_routes,
+    relation_routes,
+)
 
 
 Route = tuple[int, int, tuple[int, ...]]
@@ -748,6 +766,7 @@ def test_image_stencil_integer_reaches_match_inverse_at_cutoff_boundaries(
     cell = PeriodicCell(vectors)
     inverse = vectors.T @ np.linalg.inv(vectors @ vectors.T)
     reach = np.sqrt(np.sum(inverse * inverse, axis=0))
+    excursion = jnp.ones((vectors.shape[0],))
     for axis_reach in reach:
         boundary = 1.0 / axis_reach
         for radius in (
@@ -756,12 +775,614 @@ def test_image_stencil_integer_reaches_match_inverse_at_cutoff_boundaries(
             np.nextafter(boundary, np.inf),
         ):
             stencil = cell.image_stencil(float(radius), maximum_image_count=100_000)
-            expected_extents = tuple(int(item) for item in np.floor(1.0 + radius * reach))
+            exact = np.floor(1.0 + radius * reach).astype(int)
+            extents = np.asarray(stencil.extents)
+            # Sizing headroom never removes a required shell; at these O(1)
+            # reaches it adds at most one. The evidence keeps the raw reach.
+            assert np.all(extents >= exact) and np.all(extents <= exact + 1)
+            np.testing.assert_allclose(stencil.axis_reach, reach, rtol=1e-12)
+            assert bool(
+                jnp.all(
+                    cell.image_stencil_margin(stencil, vectors, float(radius), excursion)
+                    > 0.0
+                )
+            )
             expected_images = np.asarray(
                 tuple(
-                    product(*(range(-extent, extent + 1) for extent in expected_extents))
+                    product(*(range(-extent, extent + 1) for extent in stencil.extents))
                 ),
                 dtype=np.int32,
             )
-            assert stencil.extents == expected_extents
             np.testing.assert_array_equal(stencil.shifts, expected_images)
+
+
+def test_reference_image_stencil_keeps_a_positive_margin_on_its_own_lattice() -> None:
+    # A float64 reference whose native margin was exactly zero on the first axis.
+    vectors = np.asarray(
+        [
+            [3.2290427473489114, -0.09052985842208917, -0.04311943261795318],
+            [-0.4039972258294502, 3.900855550855561, -0.17304261525498835],
+            [0.6645999033289766, 0.04515732264558436, 6.134571701957268],
+        ]
+    )
+    radius = 3.19046819940291
+    cell = PeriodicCell(vectors)
+    stencil = cell.image_stencil(radius, maximum_image_count=4096)
+    inverse = vectors.T @ np.linalg.inv(vectors @ vectors.T)
+    reach = np.sqrt(np.sum(inverse * inverse, axis=0))
+    np.testing.assert_allclose(stencil.axis_reach, reach, rtol=1e-12)
+    assert stencil.radius == radius
+    assert np.all(np.asarray(stencil.extents) >= np.floor(1.0 + radius * reach))
+    excursion = jnp.ones((3,))
+    margin = cell.image_stencil_margin(stencil, vectors, radius, excursion)
+    assert bool(jnp.all(margin > 0.0))
+    # Independent complete-image oracle over wrapped endpoints.
+    shifts = {tuple(int(value) for value in row) for row in np.asarray(stencil.shifts)}
+    box = np.asarray(tuple(product(range(-6, 7), repeat=3)), dtype=np.float64)
+    endpoints = np.random.default_rng(29).uniform(0.0, 1.0, size=(400, 2, 3)) @ vectors
+    separation = endpoints[:, 1] - endpoints[:, 0]
+    displacement = separation[:, None, :] + (box @ vectors)[None]
+    reachable = np.any(np.linalg.norm(displacement, axis=-1) < radius, axis=0)
+    needed = {
+        tuple(int(value) for value in box[index]) for index in np.flatnonzero(reachable)
+    }
+    assert needed <= shifts
+    # Genuine over-deformation still leaves the prepared stencil.
+    shrunk = 0.5 * vectors
+    assert bool(
+        jnp.any(cell.image_stencil_margin(stencil, shrunk, radius, excursion) <= 0.0)
+    )
+
+
+def _route_search(
+    backend: str,
+    radius: float,
+    vectors: np.ndarray,
+    capacity: ParticleImageCapacity,
+    particles: int,
+) -> CellListImageRouteSearch | DenseImageRouteSearch:
+    if backend == "cell_list":
+        return CellListImageRouteSearch(
+            radius,
+            vectors,
+            capacity,
+            particle_capacity=particles,
+            maximum_candidate_slots=10**7,
+        )
+    return DenseImageRouteSearch(
+        radius,
+        vectors,
+        np.ones(vectors.shape[:2], dtype=np.bool_),
+        capacity,
+        particle_capacity=particles,
+        maximum_dense_routes=10**7,
+    )
+
+
+def _batched_routes(
+    search: CellListImageRouteSearch | DenseImageRouteSearch,
+    positions: np.ndarray,
+    vectors: np.ndarray,
+    ids: np.ndarray,
+    *,
+    active: np.ndarray | None = None,
+    receivers: ImageReceiverSubset | None = None,
+) -> ImageRouteSearchResult:
+    cases = positions.shape[0]
+    mask = np.ones(positions.shape[:2], dtype=np.bool_) if active is None else active
+    value = jnp.asarray(positions)
+    return search.routes(
+        value,
+        jnp.asarray(mask),
+        jnp.asarray(ids),
+        jnp.asarray(vectors, dtype=value.dtype),
+        jnp.zeros((cases, positions.shape[-1]), dtype=value.dtype),
+        jnp.ones(vectors.shape[:2], dtype=jnp.bool_),
+        support_id="support",
+        relation_schema_id="schema",
+        receivers=receivers,
+    )
+
+
+# The charged AIMNet2 family cell: its third height is exactly twice the PME
+# real-space search radius ``1.6 + 0.3``.
+BOUNDARY_CELL = np.asarray([[3.6, 0.0, 0.0], [0.3, 3.7, 0.0], [0.2, 0.1, 3.8]])
+BOUNDARY_RADIUS = 1.6 + 0.3
+
+
+def _boundary_lattice(name: str) -> np.ndarray:
+    if name == "boundary-cell":
+        return BOUNDARY_CELL
+    rotation, _ = np.linalg.qr(np.random.default_rng(97).normal(size=(3, 3)))
+    return TRICLINIC @ rotation
+
+
+def _boundary_radii(vectors: np.ndarray, /) -> tuple[float, ...]:
+    """Radii putting ``radius * reach`` or ``radius * 2 * reach`` on an integer."""
+    reach = _host_reach(vectors[None])[0]
+    radii = [BOUNDARY_RADIUS] if vectors is BOUNDARY_CELL else []
+    for axis_reach in reach:
+        radii.extend((1.0 / axis_reach, 0.5 / axis_reach))
+    widest = 1.0 / float(np.max(reach))
+    radii.extend((np.nextafter(widest, 0.0), np.nextafter(widest, np.inf)))
+    return tuple(float(radius) for radius in radii)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["float32", "float64"])
+@pytest.mark.parametrize("backend", ["cell_list", "dense"])
+@pytest.mark.parametrize("lattice", ["boundary-cell", "rotated-triclinic"])
+def test_reference_lattice_at_integer_stencil_boundaries_is_admitted_and_complete(
+    lattice: str, backend: str, dtype: type[np.floating]
+) -> None:
+    vectors = _boundary_lattice(lattice)
+    count = 6
+    positions = (
+        np.random.default_rng(71).uniform(0.0, 1.0, size=(count, 3)) @ vectors
+    ).astype(dtype)
+    stored = vectors.astype(dtype)
+    exact_positions = positions.astype(np.float64)
+    exact_vectors = stored.astype(np.float64)
+    ids = np.asarray([12, 5, 30, 7, 21, 2])
+    for radius in _boundary_radii(vectors):
+        search = _route_search(backend, radius, vectors[None], CAPACITY, count)
+        result = _batched_routes(search, positions[None], stored[None], ids[None])
+        evidence = result.evidence
+        assert not bool(evidence.stencil_overflow[0]), radius
+        assert bool(evidence.successful[0]), radius
+        expected = lattice_routes(
+            exact_positions, exact_vectors, (True,) * 3, radius, ids
+        )
+        assert_resolved_cutoff(
+            expected, exact_positions, exact_vectors, radius, ids, dtype
+        )
+        assert_routes_match(result.relation, exact_positions, exact_vectors, expected)
+
+
+@pytest.mark.parametrize("backend", ["cell_list", "dense"])
+def test_lattice_deformed_beyond_the_prepared_stencil_is_a_scientific_refusal(
+    backend: str,
+) -> None:
+    count = 6
+    search = _route_search(backend, BOUNDARY_RADIUS, BOUNDARY_CELL[None], CAPACITY, count)
+    shrunk = 0.4 * BOUNDARY_CELL
+    positions = np.random.default_rng(73).uniform(0.0, 1.0, size=(count, 3)) @ shrunk
+    result = _batched_routes(
+        search, positions[None], shrunk[None], np.arange(1, count + 1)[None]
+    )
+    evidence = result.evidence
+    bound = (
+        search.offset_extents
+        if isinstance(search, CellListImageRouteSearch)
+        else search.stencil_extents_bound
+    )
+    assert np.any(np.asarray(evidence.required_offset_extents[0]) > np.asarray(bound))
+    assert bool(evidence.stencil_overflow[0])
+    assert bool(evidence.scientific_failure[0])
+    assert not bool(evidence.successful[0])
+
+
+@pytest.mark.parametrize("backend", ["cell_list", "dense"])
+def test_strongly_skewed_float64_reference_lattice_stays_admitted_and_complete(
+    backend: str,
+) -> None:
+    # Condition number ~2**11 with ``radius * grid * reach`` on an integer:
+    # stencil headroom must not narrow native float64 admission.
+    vectors = np.asarray([[1.0, 0.0], [1.0, 2.0**-10]])
+    radius = 2.0**-12
+    first = np.asarray([0.31, 0.42]) @ vectors
+    second = np.asarray([0.6, 0.0])
+    positions = np.stack(
+        (
+            first,
+            first + np.asarray([1.0e-4, 0.5e-4]),
+            second,
+            second + np.asarray([-0.7e-4, 0.9e-4]),
+        )
+    )
+    ids = np.asarray([3, 8, 1, 6])
+    search = _route_search(backend, radius, vectors[None], CAPACITY, 4)
+    result = _batched_routes(search, positions[None], vectors[None], ids[None])
+    assert not bool(result.evidence.stencil_overflow[0])
+    assert bool(result.evidence.successful[0])
+    expected = lattice_routes(positions, vectors, (True, True), radius, ids)
+    assert len(expected) == 4
+    assert_resolved_cutoff(expected, positions, vectors, radius, ids, np.float64)
+    assert_routes_match(result.relation, positions, vectors, expected)
+
+
+def test_canonical_half_is_an_exact_reversal_half_with_paired_self_images() -> None:
+    vectors = 2.0 * np.eye(3)
+    positions = np.asarray([[0.3, 0.4, 0.5], [1.1, 0.2, 1.7]])
+    state = (
+        CellListParticleImageNeighborhoodPlan(2.5, PeriodicCell(vectors), CAPACITY)
+        .prepare(_particles(2))
+        .build(jnp.asarray(positions))
+    )
+    relation = state.relation
+    valid = np.asarray(relation.valid)
+    reversal = relation.reversal_map()
+    assert bool(np.all(reversal.closed))
+    assert not bool(np.any(reversal.identity_conflict))
+    np.testing.assert_array_equal(np.asarray(reversal.paired), valid)
+    partner = np.asarray(reversal.partner)[valid]
+    np.testing.assert_array_equal(
+        np.asarray(relation.source_particle_ids)[partner],
+        np.asarray(relation.receiver_particle_ids)[valid],
+    )
+    np.testing.assert_array_equal(
+        np.asarray(relation.image_shifts)[partner],
+        -np.asarray(relation.image_shifts)[valid],
+    )
+    half = relation.canonical_half(capacity=CAPACITY.maximum_edges)
+    assert bool(np.all(half.successful))
+    assert half.counting_convention == "canonical-half"
+    assert half.directed_multiplicity == 2
+    full_routes, _ = relation_routes(relation, positions, vectors)
+    half_routes, _ = relation_routes(half.relation, positions, vectors)
+    mirrored = Counter(
+        (case, receiver, source, tuple(-value for value in shift))
+        for (case, source, receiver, shift) in half_routes
+    )
+    assert half_routes + mirrored == full_routes
+    assert not set(half_routes) & set(mirrored)
+    self_routes = [key for key in full_routes if key[1] == key[2]]
+    half_self = np.asarray(half.self_image)[np.asarray(half.relation.valid)]
+    assert 2 * int(half_self.sum()) == len(self_routes) > 0
+    half_valid = np.asarray(half.relation.valid)
+    full_index = np.asarray(half.full_routes)[half_valid]
+    np.testing.assert_array_equal(
+        np.asarray(relation.image_shifts)[full_index],
+        np.asarray(half.relation.image_shifts)[half_valid],
+    )
+    np.testing.assert_array_equal(
+        np.asarray(relation.image_shifts)[np.asarray(half.partner_routes)[half_valid]],
+        -np.asarray(half.relation.image_shifts)[half_valid],
+    )
+
+
+def test_self_image_pair_energy_has_zero_force_but_nonzero_cell_response() -> None:
+    x = jnp.asarray([[0.2, 0.3, 0.4]])
+    vectors = jnp.asarray(TRICLINIC)
+    state = (
+        CellListParticleImageNeighborhoodPlan(3.0, PeriodicCell(TRICLINIC), CAPACITY)
+        .prepare(_particles(1))
+        .build(x)
+    )
+    relation = state.relation
+    half = relation.canonical_half(case_capacity=CAPACITY.maximum_edges)
+    assert int(np.sum(np.asarray(relation.valid))) > 0
+
+    def energy(
+        routes: ParticleImageRelation, weight: float
+    ) -> Callable[[jax.Array, jax.Array], jax.Array]:
+        def value(positions: jax.Array, cell: jax.Array) -> jax.Array:
+            displacement = routes.displacement(positions, cell)
+            squared = jnp.sum(displacement * displacement, axis=-1)
+            return weight * jnp.sum(jnp.where(routes.valid, jnp.exp(-squared), 0.0))
+
+        return value
+
+    full = energy(relation, 0.5)
+    halved = energy(half.relation, 1.0)
+    np.testing.assert_allclose(full(x, vectors), halved(x, vectors), rtol=1e-13)
+    force, strain = jax.grad(full, argnums=(0, 1))(x, vectors)
+    half_force, half_strain = jax.grad(halved, argnums=(0, 1))(x, vectors)
+    np.testing.assert_allclose(force, 0.0, atol=1e-12)
+    np.testing.assert_allclose(half_force, 0.0, atol=1e-12)
+    assert float(jnp.max(jnp.abs(strain))) > 1e-6
+    np.testing.assert_allclose(half_strain, strain, rtol=1e-12, atol=1e-15)
+
+
+def test_half_view_reports_truncation_overflow_and_identity_conflicts() -> None:
+    positions = np.random.default_rng(5).uniform(0.0, 1.0, size=(4, 3)) @ TRICLINIC
+    small = ParticleImageCapacity(
+        maximum_particles_per_cell=8,
+        maximum_edges=6,
+        maximum_degree=1024,
+        maximum_images=4096,
+    )
+    truncated = (
+        CellListParticleImageNeighborhoodPlan(3.0, PeriodicCell(TRICLINIC), small)
+        .prepare(_particles(4))
+        .build(jnp.asarray(positions))
+    )
+    assert bool(truncated.evidence.edge_overflow[0])
+    open_half = truncated.relation.canonical_half(capacity=64)
+    assert bool(open_half.reversal_open[0])
+    assert bool(open_half.scientific_failure[0])
+    complete = (
+        CellListParticleImageNeighborhoodPlan(3.0, PeriodicCell(TRICLINIC), CAPACITY)
+        .prepare(_particles(4))
+        .build(jnp.asarray(positions))
+    )
+    clipped = complete.relation.canonical_half(capacity=1)
+    assert bool(clipped.overflow[0])
+    assert bool(clipped.capacity_failure[0])
+    assert int(clipped.required_routes[0]) == int(complete.evidence.stored_edges[0]) // 2
+    ambiguous = ParticleImageRelation(
+        EdgeRelation(
+            jnp.asarray([0, 1], dtype=jnp.int32),
+            jnp.asarray([1, 0], dtype=jnp.int32),
+            source_size=2,
+            target_size=2,
+        ),
+        jnp.asarray([5, 5]),
+        jnp.asarray([5, 5]),
+        jnp.asarray([[1, 0, 0], [-1, 0, 0]], dtype=jnp.int32),
+        jnp.zeros((2,), dtype=jnp.int32),
+        case_count=1,
+        particle_capacity=2,
+        support_id="support",
+        relation_schema_id="schema",
+    )
+    assert bool(ambiguous.reversal_map().identity_conflict[0])
+    assert not bool(ambiguous.canonical_half(capacity=2).successful[0])
+
+
+def test_segmented_layout_owns_case_segments_and_charges_overflow_per_case() -> None:
+    rng = np.random.default_rng(31)
+    vectors = np.stack((TRICLINIC, 1.6 * TRICLINIC))
+    ids = np.stack((np.arange(5) * 3 + 1, np.arange(5) * 5 + 2))
+    positions = np.stack(
+        [rng.uniform(0.0, 1.0, size=(5, 3)) @ vectors[case] for case in range(2)]
+    )
+    radius = 2.2
+    oracle = [
+        lattice_routes(
+            positions[case], vectors[case], (True,) * 3, radius, ids[case], case=case
+        )
+        for case in range(2)
+    ]
+    counts = [len(routes) for routes in oracle]
+    fits = int(np.argmin(counts))
+    over = 1 - fits
+    assert counts[fits] < counts[over]
+    width = counts[fits]
+    capacity = ParticleImageCapacity(
+        maximum_particles_per_cell=8,
+        maximum_edges=2 * width,
+        maximum_degree=1024,
+        maximum_images=4096,
+        maximum_case_edges=width,
+    )
+    result = _batched_routes(
+        _route_search("cell_list", radius, vectors, capacity, 5), positions, vectors, ids
+    )
+    evidence = result.evidence
+    assert not bool(evidence.edge_overflow[fits])
+    assert bool(evidence.edge_overflow[over])
+    assert int(evidence.required_edges[over]) == counts[over]
+    assert int(evidence.stored_edges[over]) == width
+    assert bool(evidence.successful[fits])
+    assert bool(evidence.capacity_failure[over])
+    assert not bool(evidence.scientific_failure[over])
+    np.testing.assert_array_equal(
+        np.asarray(result.relation.route_cases).reshape((2, width)),
+        np.repeat(np.arange(2)[:, None], width, axis=1),
+    )
+    multiset, displacement = relation_routes(
+        result.relation, positions.reshape((-1, 3)), vectors
+    )
+    assert {key for key in multiset if key[0] == fits} == set(oracle[fits])
+    for key, row in oracle[fits].items():
+        np.testing.assert_allclose(displacement[key], row, atol=1e-12)
+    with pytest.raises(ValueError, match="maximum_edges"):
+        _route_search(
+            "cell_list",
+            radius,
+            vectors,
+            ParticleImageCapacity(
+                maximum_particles_per_cell=8,
+                maximum_edges=width,
+                maximum_degree=1024,
+                maximum_images=4096,
+                maximum_case_edges=width,
+            ),
+            5,
+        )
+
+
+@pytest.mark.parametrize("backend", ["cell_list", "dense"])
+def test_receiver_subset_returns_exact_rows_and_refuses_bad_requests(
+    backend: str,
+) -> None:
+    rng = np.random.default_rng(41)
+    positions = rng.uniform(0.0, 1.0, size=(1, 6, 3)) @ TRICLINIC
+    ids = np.asarray([[11, 4, 27, 8, 15, 30]])
+    radius = 2.6
+    search = _route_search(backend, radius, TRICLINIC[None], CAPACITY, 6)
+    wanted = [27, 4]
+    subset = ImageReceiverSubset(
+        np.asarray([wanted + [0]]), np.asarray([[True, True, False]])
+    )
+    result = _batched_routes(search, positions, TRICLINIC[None], ids, receivers=subset)
+    expected = lattice_routes(
+        positions[0], TRICLINIC, (True,) * 3, radius, ids[0], receivers=set(wanted)
+    )
+    assert_routes_match(result.relation, positions[0], TRICLINIC, expected)
+    assert bool(result.evidence.successful[0])
+    rows = result.receiver_rows
+    assert rows is not None
+    valid = np.asarray(result.relation.valid)
+    np.testing.assert_array_equal(
+        np.asarray(wanted)[np.asarray(rows.route_rows)[valid]],
+        np.asarray(result.relation.receiver_particle_ids)[valid],
+    )
+    np.testing.assert_array_equal(np.asarray(rows.valid), [True, True, False])
+    np.testing.assert_array_equal(np.asarray(rows.particle_indices)[:2], [2, 1])
+    for name, request in (
+        ("absent", [[99]]),
+        ("repeated", [[4, 4]]),
+        ("inactive", [[8]]),
+    ):
+        active = np.ones((1, 6), dtype=np.bool_)
+        if name == "inactive":
+            active[0, 3] = False
+        refused = _batched_routes(
+            search,
+            positions,
+            TRICLINIC[None],
+            ids,
+            active=active,
+            receivers=ImageReceiverSubset(np.asarray(request)),
+        )
+        assert bool(refused.evidence.receiver_violation[0]), name
+        assert bool(refused.evidence.scientific_failure[0]), name
+        assert not bool(refused.evidence.capacity_failure[0]), name
+
+
+def _selection_oracle(
+    routes: dict, radius: float, neighbors: int, tolerance: float, strict: bool
+) -> set:
+    """Independent per-receiver form of the declared closed-radius selection."""
+    groups = defaultdict(list)
+    for key, row in routes.items():
+        squared = float(row @ row)
+        if squared <= radius * radius:
+            groups[(key[0], key[2])].append((squared, key[1], key[3], key))
+    chosen = set()
+    for items in groups.values():
+        items.sort()
+        if len(items) <= neighbors:
+            chosen.update(item[-1] for item in items)
+        elif strict:
+            chosen.update(item[-1] for item in items[:neighbors])
+        else:
+            anchor = items[neighbors][0]
+            chosen.update(item[-1] for item in items if item[0] <= anchor + tolerance)
+    return chosen
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["band", "strict"])
+def test_declared_nearest_selection_matches_rule_and_storage_is_separate(
+    strict: bool,
+) -> None:
+    positions = np.random.default_rng(53).uniform(0.0, 1.0, size=(8, 3)) @ TRICLINIC
+    state = (
+        DenseParticleImageNeighborhoodPlan(
+            3.0, PeriodicCell(TRICLINIC), CAPACITY, maximum_dense_routes=10**7
+        )
+        .prepare(_particles(8))
+        .build(jnp.asarray(positions))
+    )
+    policy = ImageNeighborSelectionPolicy(
+        2.8,
+        5,
+        degeneracy_tolerance=0.3,
+        measure="squared-distance",
+        strict=strict,
+        radius_boundary="closed",
+    )
+
+    def select(capacity: ImageSelectionCapacity) -> ImageNeighborSelection:
+        return PreparedImageNeighborSelection(
+            policy, capacity, source_radius=3.0, case_count=1
+        ).select(
+            state.relation,
+            jnp.asarray(positions),
+            jnp.asarray(TRICLINIC),
+            evidence=state.evidence,
+        )
+
+    selection = select(ImageSelectionCapacity(maximum_routes=512, maximum_degree=64))
+    _, candidates = relation_routes(state.relation, positions, TRICLINIC)
+    expected = _selection_oracle(candidates, 2.8, 5, 0.3, strict)
+    multiset, _ = relation_routes(selection.relation, positions, TRICLINIC)
+    assert all(count == 1 for count in multiset.values())
+    assert set(multiset) == expected
+    evidence = selection.evidence
+    assert bool(evidence.successful[0])
+    assert int(evidence.capped_receivers[0]) > 0
+    if strict:
+        assert int(evidence.selected_degree[0]) == 5
+    else:
+        assert int(evidence.selected_degree[0]) >= 6
+    chosen = np.asarray(selection.relation.valid)
+    parent = np.asarray(selection.parent_routes)[chosen]
+    np.testing.assert_array_equal(
+        np.asarray(state.relation.image_shifts)[parent],
+        np.asarray(selection.relation.image_shifts)[chosen],
+    )
+    tight = select(ImageSelectionCapacity(maximum_routes=4, maximum_degree=64))
+    assert bool(tight.evidence.route_overflow[0])
+    assert bool(tight.evidence.capacity_failure[0])
+    assert not bool(tight.evidence.scientific_failure[0])
+    assert int(tight.evidence.selected_routes[0]) == len(expected)
+    narrow = select(ImageSelectionCapacity(maximum_routes=512, maximum_degree=2))
+    assert bool(narrow.evidence.degree_overflow[0])
+    assert not bool(narrow.evidence.route_overflow[0])
+
+
+def test_selection_ties_use_stable_identity_and_the_declared_band() -> None:
+    vectors = 2.0 * np.eye(3)
+    x = jnp.full((1, 3), 0.5)
+    state = (
+        CellListParticleImageNeighborhoodPlan(2.5, PeriodicCell(vectors), CAPACITY)
+        .prepare(_particles(1))
+        .build(x)
+    )
+
+    def select(
+        neighbors: int, strict: bool
+    ) -> tuple[set[tuple[int, ...]], ImageNeighborSelection]:
+        policy = ImageNeighborSelectionPolicy(
+            2.2,
+            neighbors,
+            degeneracy_tolerance=0.0,
+            measure="distance",
+            strict=strict,
+            radius_boundary="open",
+        )
+        result = PreparedImageNeighborSelection(
+            policy,
+            ImageSelectionCapacity(maximum_routes=64, maximum_degree=64),
+            source_radius=2.5,
+            case_count=1,
+        ).select(state.relation, x, jnp.asarray(vectors))
+        multiset, _ = relation_routes(result.relation, np.asarray(x), vectors)
+        return {key[3] for key in multiset}, result
+
+    strict_routes, _ = select(4, True)
+    assert strict_routes == {(-1, 0, 0), (0, -1, 0), (0, 0, -1), (0, 0, 1)}
+    banded, result = select(4, False)
+    assert len(banded) == 6
+    assert int(result.evidence.capped_receivers[0]) == 0
+
+
+def test_selection_refuses_uncovered_radius_and_carries_source_status() -> None:
+    capacity = ImageSelectionCapacity(maximum_routes=64, maximum_degree=64)
+    closed = ImageNeighborSelectionPolicy(
+        2.0,
+        4,
+        degeneracy_tolerance=0.01,
+        measure="squared-distance",
+        strict=False,
+        radius_boundary="closed",
+    )
+    with pytest.raises(ValueError, match="cover"):
+        PreparedImageNeighborSelection(closed, capacity, source_radius=2.0, case_count=1)
+    positions = np.random.default_rng(5).uniform(0.0, 1.0, size=(4, 3)) @ TRICLINIC
+    small = ParticleImageCapacity(
+        maximum_particles_per_cell=8,
+        maximum_edges=6,
+        maximum_degree=1024,
+        maximum_images=4096,
+    )
+    truncated = (
+        CellListParticleImageNeighborhoodPlan(3.0, PeriodicCell(TRICLINIC), small)
+        .prepare(_particles(4))
+        .build(jnp.asarray(positions))
+    )
+    prepared = PreparedImageNeighborSelection(
+        closed, capacity, source_radius=3.0, case_count=1
+    )
+    carried = prepared.select(
+        truncated.relation,
+        jnp.asarray(positions),
+        jnp.asarray(TRICLINIC),
+        evidence=truncated.evidence,
+        certified=jnp.asarray([False]),
+    )
+    assert bool(carried.evidence.source_capacity_failure[0])
+    assert bool(carried.evidence.source_uncertified[0])
+    assert not bool(carried.evidence.successful[0])

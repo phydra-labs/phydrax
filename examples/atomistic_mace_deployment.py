@@ -5,7 +5,8 @@ potential. Every route evaluates the same scalar energy: the pickle-free
 artifact restores the model, ``NativeAtomisticProvider`` serves it to i-PI in
 Hartree atomic units with the configurational virial ``W = -V * stress``, the
 ASE calculator reports eV/Angstrom properties, and the frozen IREE executable
-consumes a host-prepared candidate graph. Optional ASE and IREE routes run only
+binds changing positions and cells to one frozen neighborhood epoch. Resources
+are explicit neighborhood-bundle plans. Optional ASE and IREE routes run only
 when those packages are installed; nothing is downloaded.
 """
 
@@ -51,25 +52,69 @@ def build_model() -> phx.nn.atomistic.MACEPotential:
     )
 
 
+def resources(
+    model: phx.nn.atomistic.MACEPotential, *, frame: bool
+) -> phx.atomistic.AtomisticNeighborhoodBundlePlan:
+    """Explicit graph resources: one cell-list image source and its role ladder.
+
+    The search covers the model cutoff plus a 0.4 Angstrom skin and admits a
+    0.1 relative cell deformation per epoch; finite molecules are searched in
+    an explicit nonperiodic frame.
+    """
+    requirements = phx.atomistic.LearnedGraphPotentialTerm(
+        model
+    ).requirements.neighborhoods
+    return phx.atomistic.AtomisticNeighborhoodBundlePlan(
+        requirements,
+        (
+            phx.atomistic.AtomisticNeighborhoodSource(
+                "graph",
+                phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+                requirements,
+                phx.atomistic.AtomisticCellListImageSearch(
+                    maximum_candidate_slots=10**6, deformation_margin=0.1
+                ),
+                phx.discretization.ParticleImageCapacityLadder(
+                    (
+                        phx.discretization.ParticleImageCapacity(
+                            maximum_particles_per_cell=16,
+                            maximum_edges=1024,
+                            maximum_degree=64,
+                            maximum_images=343,
+                            maximum_case_edges=1024,
+                        ),
+                    )
+                ),
+                skin=0.4,
+            ),
+        ),
+        tuple(
+            phx.atomistic.AtomisticRoleCapacityLadder(
+                requirement,
+                (
+                    phx.atomistic.AtomisticRoleCapacity(
+                        maximum_routes=1024, maximum_degree=64
+                    ),
+                ),
+            )
+            for requirement in requirements
+        ),
+        frame=phx.discretization.PeriodicCell(
+            40.0 * np.eye(3), origin=np.full((3,), -20.0), periodic_axes=(False,) * 3
+        )
+        if frame
+        else None,
+    )
+
+
 def provider_plan(
     model: phx.nn.atomistic.MACEPotential,
 ) -> phx.atomistic.NativeAtomisticProviderPlan:
-    execution = phx.atomistic.AtomisticGraphExecutionPlan(
-        32,
-        backend="particle",
-        image_capacity=phx.discretization.ParticleImageCapacity(
-            maximum_particles_per_cell=16,
-            maximum_edges=1024,
-            maximum_degree=64,
-            maximum_images=343,
-        ),
-    )
     return phx.atomistic.NativeAtomisticProviderPlan(
         model,
-        execution,
-        finite_neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(256),
-        skin=0.4,
-        deformation_margin=0.1,
+        phx.atomistic.AtomisticGraphExecutionPlan(32, backend="particle"),
+        finite_resources=resources(model, frame=True),
+        periodic_resources=resources(model, frame=False),
     )
 
 
@@ -171,6 +216,25 @@ def main() -> None:
                 frozen.status.name,
                 "energy [eV]:",
                 float(frozen.energy),
+            )
+            # The same frozen epoch at a moved geometry and strained cell.
+            strain = np.eye(3) + 0.005 * np.diag([1.0, -1.0, 0.5])
+            current = provider.prepare_request(
+                jnp.asarray(POSITIONS @ strain.T),
+                jnp.asarray(CELL @ strain.T),
+                native.request.neighborhoods,
+            )
+            moved = phx.export.load_atomistic_iree(
+                bundle.path,
+                trusted_module_sha256=bundle.module_sha256,
+                trusted_contract_id=bundle.contract.contract_id,
+            )(current)
+            expected = provider.evaluate_request(current).evaluation
+            print(
+                "strained frozen status:",
+                moved.status.name,
+                "energy difference [eV]:",
+                float(moved.energy - expected.energy),
             )
 
 

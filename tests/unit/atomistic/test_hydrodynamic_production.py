@@ -5,6 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 def _system(*, periodic: Any = False) -> Any:
@@ -27,17 +32,25 @@ def _system(*, periodic: Any = False) -> Any:
 
 def _dynamics() -> Any:
     system = _system()
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
+    # Finite pair: explicit nonperiodic frame and the one-pair storage of the
+    # former dense neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
+        frame=phx.discretization.PeriodicCell(
+            20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+        ),
     )
     return phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
 

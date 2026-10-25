@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -25,7 +24,7 @@ class _QuadraticModel(AbstractArrayModel):
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, value: Any, /, *, key: Any=None) -> Any:
+    def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([0.5 * self.stiffness * value[0] ** 2])
 
@@ -43,45 +42,43 @@ def main() -> None:
     system = phx.atomistic.AtomisticSystemPlan(
         [10, 20], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0]
     ).prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-        system.particles
-    )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-    ).prepare(system)
-    dynamics = phx.atomistic.AtomisticDynamicsPlan(
-        system,
-        potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-3),
-    ).prepare()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
     ).prepare(system)
     variables = phx.atomistic.sampling.CollectiveVariableProgram((distance,))
     models = tuple(_QuadraticModel(1.0 + 0.01 * index) for index in range(args.committee))
-    plan = phx.atomistic.sampling.LearnedFreeEnergyBiasPlan(
-        variables,
+    form = phx.atomistic.sampling.LearnedFreeEnergyBiasForm(
         models,
         model_ids=tuple(f"member-{index}" for index in range(args.committee)),
         reference=[1.0],
         trusted_uncertainty=0.01,
         rejected_uncertainty=0.2,
     )
-    bias = plan.prepare(dynamics)
-    state = plan.initialize()
+    bias = phx.atomistic.sampling.AtomisticBiasTerm(
+        variables, form, name="learned-bias", force_group=1
+    ).prepare(system)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
-    compiled = jax.jit(lambda value: bias.evaluate(value, state, jnp.asarray(0.0)))
-    result, elapsed = measure_repeated(
+
+    def evaluate(value: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+        energy, cvs, successful = bias.bias(
+            phx.atomistic.sampling.CollectiveVariableGeometry(value), None
+        )
+        committee = form.committee(cvs.values)
+        return energy, successful, committee.uncertainty, committee.trust
+
+    compiled = jax.jit(jax.value_and_grad(lambda value: evaluate(value)[0]))
+    diagnostics = jax.jit(evaluate)
+    _, elapsed = measure_repeated(
         lambda: compiled(positions), warmup=args.warmup, repeats=args.repeats
     )
+    _, successful, uncertainty, trust = diagnostics(positions)
     payload = {
         "environment": capture_environment().to_dict(),
         "committee": args.committee,
         "execution_seconds": elapsed.to_seconds_dict(),
-        "successful": bool(result.successful),
-        "uncertainty": float(result.uncertainty),
-        "trust": float(result.trust),
+        "successful": bool(successful),
+        "uncertainty": float(uncertainty),
+        "trust": float(trust),
     }
     encoded = json.dumps(payload, indent=2)
     if args.output is None:

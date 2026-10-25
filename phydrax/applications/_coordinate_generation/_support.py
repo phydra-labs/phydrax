@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +17,21 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticBatch, AtomisticCoordinateDiffusion
+from ...atomistic._conditioning import (
+    AtomisticConditioningSpec,
+    AtomisticConditionKind,
+    AtomisticConditionLevel,
+)
+from ...atomistic._generation import (
+    AbstractProposalFilter,
+    AtomisticCellAdmission,
+    AtomisticChemistryAdmission,
+    AtomisticFilterEvidence,
+    AtomisticGenerationSupport,
+    AtomisticProposalBlock,
+    AtomisticProposalStatus,
+    AtomisticTopologyAdmission,
+)
 from ...stochastic import VariancePreservingDiffusion
 
 
@@ -160,6 +176,73 @@ class PreparedCoordinateSupport(StrictModule, NonTrainableState):
         tolerance = 100 * jnp.finfo(values.dtype).eps * scale
         valid = (norm1[..., 0] > tolerance) & (norm3[..., 0] > tolerance)
         return canonical, valid
+
+    def generation_support(
+        self, conditioning: AtomisticConditioningSpec, /
+    ) -> AtomisticGenerationSupport:
+        """Fixed-chemistry, nonperiodic generation ABI of this coordinate support.
+
+        Species, padding and masses come from the template (one declared mass per
+        element, recorded with this support's identity as provenance); topology is
+        FIXED over the declared geometry bonds; the typed condition ports are the
+        model's case-level inputs. No charge state is inferred.
+        """
+        spec = require_coordinate_conditioning(conditioning, self.resources)
+        mask = np.asarray(self.template.atom_mask[0], dtype=bool)
+        numbers = np.where(mask, np.asarray(self.template.atomic_numbers[0]), 0)
+        masses = np.asarray(self.template.masses[0], dtype=np.float64)
+        vocabulary = tuple(int(value) for value in np.unique(numbers[mask]))
+        table = []
+        for number in vocabulary:
+            declared = np.unique(masses[mask & (numbers == number)])
+            if declared.size != 1:
+                raise ValueError(
+                    "Generation support declares one template mass per element; "
+                    f"atomic number {number} carries {declared.size} distinct masses."
+                )
+            table.append(float(declared[0]))
+        return AtomisticGenerationSupport(
+            atom_capacity=self.template.atom_capacity,
+            species_vocabulary=vocabulary,
+            vocabulary_masses=table,
+            mass_provenance="fixed-coordinate-template-masses:" + self.support_id,
+            chemistry=AtomisticChemistryAdmission.FIXED,
+            length_unit=self.template.scale.length_unit,
+            conditioning=spec,
+            fixed_species=tuple(int(value) for value in numbers),
+            fixed_mask=tuple(bool(value) for value in mask),
+            topology=AtomisticTopologyAdmission.FIXED,
+            fixed_bonds=self.bond_indices,
+            cell_admission=AtomisticCellAdmission.NONPERIODIC,
+        )
+
+
+def require_coordinate_conditioning(
+    conditioning: AtomisticConditioningSpec, resources: CoordinateResourcePolicy, /
+) -> AtomisticConditioningSpec:
+    """Admit the typed condition ABI of a coordinate model.
+
+    Every field is a required continuous scalar case-level port; the spec's
+    canonical field order is the model's condition-input order.
+    """
+    if not isinstance(conditioning, AtomisticConditioningSpec):
+        raise TypeError("Coordinate conditions require an AtomisticConditioningSpec.")
+    if not 1 <= len(conditioning.fields) <= resources.max_condition_features:
+        raise ValueError(
+            "Coordinate conditioning declares a bounded, nonempty set of fields."
+        )
+    for field in conditioning.fields:
+        if (
+            field.level is not AtomisticConditionLevel.CASE
+            or field.kind is not AtomisticConditionKind.CONTINUOUS
+            or field.port.event_shape != ()
+            or not field.required
+        ):
+            raise ValueError(
+                f"Coordinate condition {field.name!r} must be a required continuous "
+                "scalar case-level field."
+            )
+    return conditioning
 
 
 def prepare_coordinate_support(
@@ -315,8 +398,6 @@ class CoordinateProposalQualification(StrictModule):
 def qualify_coordinate_proposals(
     support: PreparedCoordinateSupport,
     positions: ArrayLike,
-    *,
-    solver_valid: ArrayLike | None = None,
 ) -> CoordinateProposalQualification:
     """Retain one result per sample; no rejection sampling or hidden repairs."""
     values = jnp.asarray(positions)
@@ -348,11 +429,6 @@ def qualify_coordinate_proposals(
     else:
         chirality_valid = jnp.ones(values.shape[0], dtype=jnp.bool_)
     accepted = finite & gauge_valid & bond_valid & chirality_valid
-    if solver_valid is not None:
-        solver_valid = jnp.asarray(solver_valid, dtype=jnp.bool_)
-        if solver_valid.shape != accepted.shape:
-            raise ValueError("Solver validity must retain one entry per proposal.")
-        accepted = accepted & solver_valid
     return CoordinateProposalQualification(
         finite,
         gauge_valid,
@@ -361,3 +437,74 @@ def qualify_coordinate_proposals(
         accepted,
         support.geometry.policy_id,
     )
+
+
+_FINITE_FAILED = 1
+_GAUGE_FAILED = 2
+_BOND_FAILED = 4
+_CHIRALITY_FAILED = 8
+
+
+@final
+class CoordinateGeometryFilter(AbstractProposalFilter):
+    """Declared sparse bond/chirality screen of fixed-support coordinate proposals.
+
+    Evaluates `qualify_coordinate_proposals` on the support's proper anchor-gauge
+    view of every emitted row. Rejected rows keep their proposal and receive
+    ``GEOMETRY_INVALID``; the diagnostic value is the failed-check code
+    (finite 1, gauge 2, bond 4, chirality 8). Screening is not force-field,
+    physical or predictive qualification and never repairs or resamples.
+    """
+
+    support: PreparedCoordinateSupport
+    filter_id: str = eqx.field(static=True)
+    status_bit: int = eqx.field(static=True)
+
+    def __init__(self, support: PreparedCoordinateSupport, /) -> None:
+        if not isinstance(support, PreparedCoordinateSupport):
+            raise TypeError("Geometry screening binds a PreparedCoordinateSupport.")
+        self.support = support
+        self.status_bit = int(AtomisticProposalStatus.GEOMETRY_INVALID)
+        self.filter_id = canonical_fingerprint(
+            {
+                "kind": "fixed-coordinate-sparse-geometry-filter",
+                "support": support.support_id,
+                "policy": support.geometry.policy_id,
+            }
+        )
+
+    def evaluate(self, block: AtomisticProposalBlock, /) -> AtomisticFilterEvidence:
+        if block.positions.shape[1:] != (self.support.template.atom_capacity, 3):
+            raise ValueError("Proposal block does not follow this coordinate support.")
+        canonical, _ = self.support.canonicalize(block.positions)
+        report = qualify_coordinate_proposals(self.support, canonical)
+        code = (
+            jnp.where(report.finite, 0, _FINITE_FAILED)
+            | jnp.where(report.gauge_valid, 0, _GAUGE_FAILED)
+            | jnp.where(report.bond_valid, 0, _BOND_FAILED)
+            | jnp.where(report.chirality_valid, 0, _CHIRALITY_FAILED)
+        )
+        return AtomisticFilterEvidence(
+            report.accepted, code.astype(block.positions.dtype)
+        )
+
+    def qualification(
+        self, values: ArrayLike, status: ArrayLike, /
+    ) -> CoordinateProposalQualification:
+        """Per-check evidence of published rows from their diagnostic codes.
+
+        ``accepted`` is the complete proposal status (zero), so solver, decoder,
+        gauge, support and condition rejections are included.
+        """
+        code = jnp.asarray(values).astype(jnp.int32)
+        bits = jnp.asarray(status)
+        if code.ndim != 1 or bits.shape != code.shape:
+            raise ValueError("Retain one diagnostic code and status per proposal.")
+        return CoordinateProposalQualification(
+            (code & _FINITE_FAILED) == 0,
+            (code & _GAUGE_FAILED) == 0,
+            (code & _BOND_FAILED) == 0,
+            (code & _CHIRALITY_FAILED) == 0,
+            bits == 0,
+            self.support.geometry.policy_id,
+        )

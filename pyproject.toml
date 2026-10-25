@@ -71,6 +71,9 @@ atomistic-interop = [
   "openmm>=8.6.1,<9",
   "ParmEd>=4.3.1,<5",
 ]
+atomistic-data = [
+  "zarr>=3.4.0,<4",
+]
 chemistry-qcschema = [
   "qcelemental>=0.51.2,<0.52",
 ]
@@ -423,6 +426,8 @@ respect-type-ignore-comments = false
 # at their import boundary, so the diagnostic set does not depend on which
 # optional extras are installed.
 replace-imports-with-any = [
+  # AIMNet2 runs only in an explicitly pinned isolated source-oracle environment.
+  "aimnet.**",
   "arviz.**",
   "cryptography.**",
   "cvxpy.**",

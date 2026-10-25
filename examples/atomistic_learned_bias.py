@@ -37,15 +37,46 @@ system = phx.atomistic.AtomisticSystemPlan(
     # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0],
 ).prepare()
-neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
-    system.particles
-)
-potential = phx.atomistic.AtomisticPotentialProgram(
+program = phx.atomistic.AtomisticPotentialProgram(
     # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
-).prepare(system)
+)
+(pairs,) = program.requirements.neighborhoods
+bundle = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+    (pairs,),
+    (
+        phx.atomistic.AtomisticNeighborhoodSource(
+            "lennard-jones-pairs",
+            phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+            (pairs,),
+            phx.atomistic.AtomisticDenseImageSearch(maximum_dense_routes=4),
+            phx.discretization.ParticleImageCapacityLadder(
+                (
+                    phx.discretization.ParticleImageCapacity(
+                        maximum_particles_per_cell=2,
+                        maximum_edges=2,
+                        maximum_degree=1,
+                        maximum_images=1,
+                        maximum_case_edges=2,
+                    ),
+                )
+            ),
+            skin=0.3,
+        ),
+    ),
+    (
+        phx.atomistic.AtomisticRoleCapacityLadder(
+            pairs,
+            (phx.atomistic.AtomisticRoleCapacity(maximum_routes=1, maximum_degree=1),),
+        ),
+    ),
+    frame=phx.discretization.PeriodicCell(
+        16.0 * jnp.eye(3), origin=jnp.full((3,), -8.0), periodic_axes=(False,) * 3
+    ),
+)
+potential = program.prepare(system, neighborhood_bundle=bundle)
 dynamics = phx.atomistic.AtomisticDynamicsPlan(
-    system, potential, neighborhood, phx.atomistic.VelocityVerletPlan(1.0e-3)
+    system, potential, phx.atomistic.VelocityVerletPlan(1.0e-3)
 ).prepare()
 thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
     phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
@@ -63,8 +94,7 @@ distance = phx.atomistic.sampling.CollectiveVariablePlan(
 variables = phx.atomistic.sampling.CollectiveVariableProgram(
     (distance,), names=("distance",)
 )
-plan = phx.atomistic.sampling.LearnedFreeEnergyBiasPlan(
-    variables,
+form = phx.atomistic.sampling.LearnedFreeEnergyBiasForm(
     (QuadraticFreeEnergy(1.0, 2.0), QuadraticFreeEnergy(1.0, -3.0)),
     model_ids=("quadratic-a", "quadratic-b"),
     # ty: ignore[invalid-argument-type]
@@ -72,8 +102,13 @@ plan = phx.atomistic.sampling.LearnedFreeEnergyBiasPlan(
     trusted_uncertainty=1.0e-8,
     rejected_uncertainty=0.5,
 )
-bias = plan.prepare(dynamics)
-evaluation = bias.evaluate(state.kinematics.positions, plan.initialize(), state.time)
-if not bool(evaluation.successful):
+bias = phx.atomistic.sampling.AtomisticBiasTerm(
+    variables, form, name="learned-bias", force_group=1
+).prepare(system)
+energy, cvs, successful = bias.bias(
+    phx.atomistic.sampling.CollectiveVariableGeometry(state.kinematics.positions), None
+)
+committee = form.committee(cvs.values)
+if not bool(successful):
     raise RuntimeError("Learned free-energy bias example did not qualify.")
-print(float(evaluation.energy), float(evaluation.uncertainty), float(evaluation.trust))
+print(float(energy), float(committee.uncertainty), float(committee.trust))

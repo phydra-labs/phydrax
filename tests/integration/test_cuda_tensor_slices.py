@@ -42,6 +42,7 @@ def _cuda_case(provider: TensorProvider) -> Iterator[SimpleNamespace]:
     from phydrax import config, tensor_network as tn
     from phydrax._cuda_native import CudaNativeUnavailableError, load_cuda_component
     from phydrax._execution_device import device_platform
+    from phydrax._jax_config import default_device
 
     devices = tuple(
         device for device in jax.local_devices() if device_platform(device) == "cuda"
@@ -56,7 +57,7 @@ def _cuda_case(provider: TensorProvider) -> Iterator[SimpleNamespace]:
         raise
     with (
         config.context(config.NumericsConfig(enable_x64=True)),
-        jax.default_device(devices[0]),
+        default_device(devices[0]),
     ):
         yield SimpleNamespace(jax=jax, jnp=jnp, eqx=eqx, tn=tn, devices=devices)
 

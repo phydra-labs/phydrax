@@ -34,6 +34,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._identity import IdentityWords
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import parse
@@ -545,7 +546,7 @@ class IPISession:
         self,
         system: PreparedAtomisticSystem,
         cell_vectors: np.ndarray | None,
-        provider_id: str,
+        provider_label: str,
         /,
     ) -> ExternalAtomisticEvaluation:
         """Collect the driver's reply and convert it into native units."""
@@ -576,7 +577,7 @@ class IPISession:
             jnp.asarray(forces / scale.force, dtype=dtype),
             None if stress is None else jnp.asarray(stress, dtype=dtype),
             jnp.asarray(successful),
-            provider_id,
+            provider_label=provider_label,
         )
 
     def close(self) -> None:
@@ -641,23 +642,30 @@ def _host_cell(
 
 
 class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
-    """Evaluate an external i-PI driver as a host, nondifferentiable provider."""
+    """Evaluate an external i-PI driver as a host, nondifferentiable provider.
+
+    A labelled provider: ``provider_label`` is the declared transport label
+    (``provider_identity`` is ``None``); every received evaluation carries
+    exactly that label.
+    """
 
     session: IPISession
-    provider_id: str = eqx.field(static=True)
+    provider_identity: IdentityWords | None
+    provider_label: str | None = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
     def __init__(
-        self, session: IPISession, provider_id: str, /, *, conservative: bool = True
+        self, session: IPISession, provider_label: str, /, *, conservative: bool = True
     ) -> None:
         if not isinstance(session, IPISession):
             raise TypeError("Transported provider requires a live IPISession.")
-        identifier = provider_id.strip()
+        identifier = provider_label.strip()
         if not identifier:
-            raise ValueError("provider_id must be non-empty.")
+            raise ValueError("provider_label must be non-empty.")
         self.session = session
-        self.provider_id = identifier
+        self.provider_identity = None
+        self.provider_label = identifier
         self.conservative = conservative
         self.differentiable = False
 
@@ -709,7 +717,7 @@ def serve_ipi_once(
                     "i-PI sent the aperiodic zero cell to a periodic system.",
                 )
             evaluation = provider.evaluate(system, request.positions, cell)
-            if evaluation.provider_id != provider.provider_id:
+            if not bool(evaluation.bound_to(provider)):
                 raise session._fail(
                     IPITransportStatus.PROVIDER_ERROR,
                     "i-PI provider changed its bound identity.",

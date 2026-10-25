@@ -119,7 +119,13 @@ class ParticleGridSplatBudget(StrictModule, NonTrainableState):
 
 
 class SplatBalanceEvidence(StrictModule):
-    """Per-call extensive-balance and partition evidence."""
+    """Per-call extensive-balance and partition evidence.
+
+    ``source_support_id`` identifies the indexed source support the splat
+    addresses: the physical particle support's ``support_id`` for a physical
+    binding, or the declared indexed-support schema for a schema binding (a
+    schema is not a material identity).
+    """
 
     active_source_total: Array
     supported_source_total: Array

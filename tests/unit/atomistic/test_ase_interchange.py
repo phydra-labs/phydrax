@@ -411,14 +411,27 @@ def test_native_calculator_drives_ase_optimization(ase: Any) -> None:
 def test_failed_periodic_calculator_preparation_cannot_reuse_finite_provider(
     ase: Any,
 ) -> None:
-    from tests._support.mace_deployment import electronvolt_units, tiny_mace
+    from tests._support.atomistic_bundles import neighborhood_bundle_plan
+    from tests._support.mace_deployment import (
+        bundle_resources,
+        electronvolt_units,
+        finite_frame,
+        graph_execution,
+        tiny_mace,
+    )
 
     units = electronvolt_units()
+    model = tiny_mace()
+    requirements = phx.atomistic.LearnedGraphPotentialTerm(
+        model
+    ).requirements.neighborhoods
+    # Only finite resources are declared: a periodic structure is refused.
     plan = phx.atomistic.NativeAtomisticProviderPlan(
-        tiny_mace(),
-        phx.atomistic.AtomisticGraphExecutionPlan(8, backend="particle"),
-        finite_neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(64),
-        skin=0.4,
+        model,
+        graph_execution(),
+        finite_resources=neighborhood_bundle_plan(
+            requirements, frame=finite_frame(), **bundle_resources()
+        ),
     )
     atoms = ase.Atoms("OHH", positions=_WATER)
     atoms.calc = phx.atomistic.interchange.NativeASECalculator(
@@ -427,9 +440,32 @@ def test_failed_periodic_calculator_preparation_cannot_reuse_finite_provider(
     finite = atoms.get_potential_energy()
     atoms.set_cell(np.asarray(_SKEW_CELL, dtype=np.float64))
     atoms.set_pbc(True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no periodic resources"):
         atoms.get_potential_energy()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no periodic resources"):
         atoms.get_potential_energy()
     atoms.set_pbc(False)
     np.testing.assert_allclose(atoms.get_potential_energy(), finite, rtol=0.0, atol=0.0)
+
+
+def test_native_calculator_follows_cells_beyond_its_reference_preparation(
+    ase: Any,
+) -> None:
+    atoms = ase.Atoms("OHH", positions=_WATER, cell=_SKEW_CELL, pbc=True)
+    calculator = _calculator()
+    atoms.calc = calculator
+    atoms.get_potential_energy()
+    assert calculator.provenance["resource_bundle"]
+    assert calculator.provenance["capacity_growths"] == 0
+    # A large expansion leaves the reference resources; the result equals an
+    # independent preparation whose reference cell is the current one.
+    atoms.set_cell(np.asarray(_SKEW_CELL) * 1.3, scale_atoms=True)
+    expanded = atoms.get_potential_energy()
+    reference = atoms.copy()
+    reference.calc = _calculator()
+    np.testing.assert_allclose(
+        expanded, reference.get_potential_energy(), rtol=1e-9, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        atoms.get_stress(), reference.get_stress(), rtol=1e-7, atol=1e-10
+    )

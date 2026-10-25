@@ -12,22 +12,28 @@ import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
-from ..discretization import AbstractPreparedParticleNeighborhood
 from ..typing import checked, PRNGKey
+from ._cell_dynamics import bind_atomistic_bundle_geometry
 from ._potential_program import PreparedAtomisticPotentialProgram
 from ._thermal import stable_particle_normals
 
 
 class RingPolymerPlan(StrictModule, NonTrainableState):
+    """Ring-polymer plan: ``bead_count`` is layout; the scalars are dynamic.
+
+    ``plan_identity`` is the exact digest of the host scalar values; ``plan_id``
+    decodes it on the host.
+    """
+
     bead_count: int = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
-    step_size: float = eqx.field(static=True)
-    centroid_friction: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    temperature: Array
+    step_size: Array
+    centroid_friction: Array
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -55,10 +61,10 @@ class RingPolymerPlan(StrictModule, NonTrainableState):
                 "Ring-polymer beads, temperature, step, and friction are invalid."
             )
         self.bead_count = beads
-        self.temperature = thermal
-        self.step_size = step
-        self.centroid_friction = friction
-        self.plan_id = canonical_fingerprint(
+        self.temperature = jnp.asarray(thermal, dtype=jnp.float64)
+        self.step_size = jnp.asarray(step, dtype=jnp.float64)
+        self.centroid_friction = jnp.asarray(friction, dtype=jnp.float64)
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "ring-polymer-plan",
                 "bead_count": beads,
@@ -67,6 +73,11 @@ class RingPolymerPlan(StrictModule, NonTrainableState):
                 "centroid_friction": friction,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decode of ``plan_identity``."""
+        return self.plan_identity.fingerprint()
 
 
 class RingPolymerState(StrictModule):
@@ -77,7 +88,12 @@ class RingPolymerState(StrictModule):
     physical_potential: Array
     spring_energy: Array
     successful: Array
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
 
 
 class RingPolymerEstimators(StrictModule):
@@ -95,58 +111,85 @@ class RingPolymerStepEvaluation(StrictModule):
 
 
 class PreparedRingPolymerDynamics(StrictModule):
+    """Ring-polymer dynamics whose bead forces use the Hamiltonian's bundle.
+
+    Each bead configuration is an independent geometry: its neighborhood state
+    is formed from the prepared bundle of ``potential`` at that bead (no state
+    is shared across beads or steps), exactly as the bead relations were
+    formed per evaluation before.
+    """
+
     plan: RingPolymerPlan
     potential: PreparedAtomisticPotentialProgram
-    neighborhood: AbstractPreparedParticleNeighborhood
-    spring_frequency: float = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    spring_frequency: Array
+    prepared_identity: IdentityWords
 
     @checked
     def __init__(
         self,
         plan: RingPolymerPlan,
         potential: PreparedAtomisticPotentialProgram,
-        neighborhood: AbstractPreparedParticleNeighborhood,
         /,
     ) -> None:
-        if (
-            neighborhood.particle_discretization_id
-            != potential.system.particles.prepared_id
-        ):
-            raise ValueError("Ring-polymer neighborhood belongs to another system.")
+        if potential.neighborhood_bundle.plan.case_count != 1:
+            raise ValueError("Ring-polymer beads bind a single-case neighborhood bundle.")
         units = potential.system.plan.units
         frequency = (
             plan.bead_count
             * units.boltzmann_constant
-            * plan.temperature
+            * float(plan.temperature)
             / units.reduced_planck_constant
         )
         self.plan = plan
         self.potential = potential
-        self.neighborhood = neighborhood
-        self.spring_frequency = frequency
-        self.prepared_id = canonical_fingerprint(
+        self.spring_frequency = jnp.asarray(frequency, dtype=jnp.float64)
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-ring-polymer-dynamics",
                 "plan": plan.plan_id,
                 "potential": potential.prepared_id,
-                "neighborhood": neighborhood.prepared_id,
                 "spring_frequency": frequency,
             }
         )
 
+    @property
+    def prepared_id(self) -> str:
+        """Host decode of ``prepared_identity``."""
+        return self.prepared_identity.fingerprint()
+
     def _physical(self, positions: Array, /) -> tuple[Array, Array, Array]:
+        system = self.potential.system
+        bundle = self.potential.neighborhood_bundle
+        cell = system.cell
+
         def evaluate_bead(bead_positions: Array) -> tuple[Array, Array, Array]:
-            neighborhood = self.neighborhood.build(bead_positions)
-            evaluation = self.potential.evaluate(
-                bead_positions,
-                neighborhood,
-                species=self.potential.system.plan.atom_type_ids,
-            )
+            species = system.plan.atom_type_ids
+            if cell is None:
+                geometry = bind_atomistic_bundle_geometry(bundle, system, bead_positions)
+                neighborhoods = bundle.initialize(geometry)
+                evaluation = self.potential.evaluate(
+                    bead_positions, neighborhoods, species=species
+                )
+            else:
+                wrapped, images = cell.wrap(bead_positions)
+                vectors = cell.vectors.astype(bead_positions.dtype)
+                geometry = bind_atomistic_bundle_geometry(
+                    bundle, system, wrapped, cell_vectors=vectors, image_counts=images
+                )
+                neighborhoods = bundle.initialize(geometry)
+                evaluation = self.potential.evaluate(
+                    wrapped,
+                    neighborhoods,
+                    species=species,
+                    unwrapped_positions=bead_positions,
+                    cell=cell,
+                    cell_vectors=vectors,
+                    image_counts=images,
+                )
             return (
                 evaluation.energy,
                 evaluation.forces,
-                evaluation.successful & neighborhood.successful,
+                evaluation.successful & jnp.all(neighborhoods.successful),
             )
 
         energies, forces, successes = eqx.filter_vmap(evaluate_bead)(positions)
@@ -159,7 +202,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         following = jnp.roll(safe_positions, -1, axis=0)
         mass = self.potential.system.plan.masses[None, :, None]
         factor = self.potential.system.plan.units.kinetic_to_energy
-        omega2 = self.spring_frequency**2
+        omega2 = self.spring_frequency.astype(positions.dtype) ** 2
         displacement = safe_positions - previous
         energy = 0.5 * factor * omega2 * jnp.sum(mass * displacement * displacement)
         force = -factor * omega2 * mass * (2.0 * safe_positions - previous - following)
@@ -217,31 +260,33 @@ class PreparedRingPolymerDynamics(StrictModule):
             physical,
             spring,
             successful,
-            self.prepared_id,
+            self.prepared_identity,
         )
 
     def apply_pile(self, state: RingPolymerState, /) -> tuple[Array, Array]:
-        if state.prepared_id != self.prepared_id:
-            raise ValueError("Ring-polymer state belongs to another runtime.")
-        incoming_success = state.successful
+        incoming_success = state.successful & state.prepared_identity.equals(
+            self.prepared_identity
+        )
         bead_count = self.plan.bead_count
         dtype = state.momenta.dtype
         modes = jnp.fft.fft(state.momenta, axis=0) / jnp.sqrt(bead_count)
         mode_indices = jnp.arange(bead_count, dtype=dtype)
         mode_frequency = (
-            2.0 * self.spring_frequency * jnp.sin(jnp.pi * mode_indices / bead_count)
+            2.0
+            * self.spring_frequency.astype(dtype)
+            * jnp.sin(jnp.pi * mode_indices / bead_count)
         )
         friction = jnp.where(
             mode_indices == 0,
-            self.plan.centroid_friction,
+            self.plan.centroid_friction.astype(dtype),
             2.0 * jnp.abs(mode_frequency),
         )
-        decay = jnp.exp(-friction * self.plan.step_size)
+        decay = jnp.exp(-friction * self.plan.step_size.astype(dtype))
         mass = self.potential.system.plan.masses
         thermal_variance = (
             mass
             * self.potential.system.plan.units.boltzmann_constant
-            * self.plan.temperature
+            * self.plan.temperature.astype(dtype)
             * bead_count
             / self.potential.system.plan.units.kinetic_to_energy
         )
@@ -299,10 +344,10 @@ class PreparedRingPolymerDynamics(StrictModule):
         mean_potential = jnp.mean(state.physical_potential)
         primitive = (
             1.5
-            * self.potential.system.particles.active_count
+            * jnp.sum(self.potential.system.active_mask, dtype=jnp.int32)
             * self.plan.bead_count
             * self.potential.system.plan.units.boltzmann_constant
-            * self.plan.temperature
+            * self.plan.temperature.astype(state.physical_potential.dtype)
             - state.spring_energy
             + mean_potential
         )
@@ -311,9 +356,8 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
 
     def step(self, state: RingPolymerState, /) -> RingPolymerStepEvaluation:
-        if state.prepared_id != self.prepared_id:
-            raise ValueError("Ring-polymer state belongs to another runtime.")
-        dt = jnp.asarray(self.plan.step_size, dtype=state.positions.dtype)
+        owned = state.prepared_identity.equals(self.prepared_identity)
+        dt = self.plan.step_size.astype(state.positions.dtype)
         factor = self.potential.system.plan.units.force_to_momentum_rate
         _, physical_force, success_0 = self._physical(state.positions)
         _, spring_force = self._spring(state.positions)
@@ -332,8 +376,8 @@ class PreparedRingPolymerDynamics(StrictModule):
             state.random_key,
             physical_next,
             spring_next,
-            state.successful & success_0 & success_1,
-            self.prepared_id,
+            state.successful & owned & success_0 & success_1,
+            self.prepared_identity,
         )
         thermostatted, _ = self.apply_pile(staged)
         successor = eqx.tree_at(lambda value: value.momenta, staged, thermostatted)

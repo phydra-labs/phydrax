@@ -22,6 +22,7 @@ from ..._coordinate_generation._native import (
 )
 from ..._coordinate_generation._providers import CoordinateProviderProvenance
 from ..._coordinate_generation._support import (
+    CoordinateGeometryFilter,
     CoordinateGeometryPolicy,
     CoordinateProposalQualification,
     CoordinateResourcePolicy,
@@ -54,6 +55,7 @@ __all__ = [
     "CartesianCoordinateDecoder",
     "ConditionalCoordinateVelocity",
     "CoordinateFitResult",
+    "CoordinateGeometryFilter",
     "CoordinateGeometryPolicy",
     "CoordinateProposalBatch",
     "CoordinateProposalQualification",

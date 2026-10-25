@@ -24,7 +24,7 @@ force_field = phx.atomistic.AtomisticForceFieldPlan(
     ),
 ).prepare()
 positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 1.2, 0.0]])
-neighbors = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(system.particles)
+neighbors = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(system.particle_discretization())
 result = force_field.potential.evaluate(positions, neighbors.build(positions))
 assert bool(result.successful)
 ```
@@ -32,3 +32,8 @@ assert bool(result.successful)
 For physical calculations, replace reduced units and demonstration parameters with one
 qualified parameter source. Persist `force_field.preparation` and
 `force_field.plan.provenance` with outputs.
+
+For coordination-dependent dispersion, see [Atomistic dispersion](../guides_atomistic_dispersion.md).
+That page covers `D3BJPotential` and `FourierD3Potential` with caller-supplied,
+rights-admitted `D3ReferenceTables`. It also explains why FourierD3's signed factors are not
+LJ-PME's positive semidefinite `C6` matrix.

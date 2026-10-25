@@ -12,8 +12,8 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ._alchemical import PreparedControlledHamiltonian
+from ._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from ._potential import AtomisticStressConvention
 from ._potential_program import (
     AtomisticInteractionScaleState,
@@ -41,7 +41,7 @@ class AtomisticCellEvaluation(StrictModule):
 def atomistic_cell_energy_and_stress(
     potential: PreparedAtomisticPotentialProgram | PreparedControlledHamiltonian,
     fractional_positions: ArrayLike,
-    neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+    neighborhoods: AtomisticNeighborhoodBundleState,
     /,
     *,
     image_counts: ArrayLike | None = None,
@@ -97,6 +97,7 @@ def atomistic_cell_energy_and_stress(
         "cell": cell,
         "fractional_positions": fractional,
         "cell_vectors": vectors,
+        "image_counts": images,
     }
     extra = {} if context_kwargs is None else dict(context_kwargs)
     if set(extra) & (set(kwargs) | {"compute_stress", "interaction_scales"}):
@@ -109,7 +110,7 @@ def atomistic_cell_energy_and_stress(
             )
         controlled = potential.evaluate(
             positions,
-            neighborhood,
+            neighborhoods,
             compute_stress=True,
             state_index=state_index,
             control_values=control_values,
@@ -128,7 +129,7 @@ def atomistic_cell_energy_and_stress(
             )
         evaluation = potential.evaluate(
             positions,
-            neighborhood,
+            neighborhoods,
             compute_stress=True,
             interaction_scales=interaction_scales,
             **kwargs,

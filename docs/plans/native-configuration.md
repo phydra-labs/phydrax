@@ -669,7 +669,7 @@ Python launch/capture owners:
 Retain and update dedicated-topology invocation documentation/skip contracts:
 
 - `tests/unit/atomistic/test_distributed_mace.py`; `tests/unit/discretization/meshfree/test_distributed.py`; `tests/unit/discretization/spatial/test_distributed_relations.py`; `tests/unit/solver/test_distributed_pic.py`; `tests/unit/coupling/test_execution_contracts.py`.
-- `benchmarks/distributed_mace_scaling.py`.
+- `benchmarks/distributed_atomistic_scaling.py`.
 - `docs/guides_atomistic_distributed_execution.md`; `docs/guides_geophysics.md`; `docs/guides_numerical_interoperability.md`; `docs/guides_phase_field.md`; `docs/guides_phase_field_multiphysics.md`; `docs/guides_two_phase_hydrodynamics.md`.
 
 The native boundary distinguishes CPU selection, forced-host topology, physical topology and CPU threading controls. Existing observation fields remain evidence, not new ambient defaults. Preserve old measured environment spellings at the historical/external boundary; new native projection uses the supported upstream contract without silently rewriting historical IDs.

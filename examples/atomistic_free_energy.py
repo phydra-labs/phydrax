@@ -20,15 +20,62 @@ system_plan = phx.atomistic.AtomisticSystemPlan(
     # ty: ignore[invalid-argument-type]
     region_ids=[1, 1, 0],
 )
+program = phx.atomistic.AtomisticPotentialProgram(
+    [
+        # ty: ignore[invalid-argument-type]
+        phx.atomistic.LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
+        phx.atomistic.DirectCoulombPotential(),
+    ]
+)
+# Bounded steric pairs come from a dense image search in an explicit finite
+# frame; direct Coulomb is the complete all-pairs relation (3 atoms, 3 pairs).
+(sterics,) = tuple(
+    value for value in program.requirements.neighborhoods if not value.complete
+)
+(coulomb,) = tuple(
+    value for value in program.requirements.neighborhoods if value.complete
+)
+bundle = phx.atomistic.AtomisticNeighborhoodBundlePlan(
+    (sterics, coulomb),
+    (
+        phx.atomistic.AtomisticNeighborhoodSource(
+            "steric-pairs",
+            phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+            (sterics,),
+            phx.atomistic.AtomisticDenseImageSearch(maximum_dense_routes=9),
+            phx.discretization.ParticleImageCapacityLadder(
+                (
+                    phx.discretization.ParticleImageCapacity(
+                        maximum_particles_per_cell=3,
+                        maximum_edges=6,
+                        maximum_degree=2,
+                        maximum_images=1,
+                        maximum_case_edges=6,
+                    ),
+                )
+            ),
+            skin=0.3,
+        ),
+        phx.atomistic.AtomisticCompletePairSource(
+            "coulomb-pairs",
+            phx.atomistic.AtomisticSiteDomain.PHYSICAL_ATOMS,
+            (coulomb,),
+            maximum_pairs=3,
+        ),
+    ),
+    (
+        phx.atomistic.AtomisticRoleCapacityLadder(
+            sterics,
+            (phx.atomistic.AtomisticRoleCapacity(maximum_routes=3, maximum_degree=2),),
+        ),
+    ),
+    frame=phx.discretization.PeriodicCell(
+        16.0 * jnp.eye(3), origin=jnp.full((3,), -8.0), periodic_axes=(False,) * 3
+    ),
+)
 force_field = phx.atomistic.AtomisticForceFieldPlan(
     system_plan,
-    phx.atomistic.AtomisticPotentialProgram(
-        [
-            # ty: ignore[invalid-argument-type]
-            phx.atomistic.LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
-            phx.atomistic.DirectCoulombPotential(),
-        ]
-    ),
+    program,
     phx.atomistic.AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
     phx.atomistic.AtomisticForceFieldProvenance(
         "native",
@@ -36,10 +83,7 @@ force_field = phx.atomistic.AtomisticForceFieldPlan(
         "example",
         "controlled-free-energy",
     ),
-).prepare()
-neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
-    force_field.system.particles
-)
+).prepare(neighborhood_bundle=bundle)
 schedule = phx.atomistic.AlchemicalControlSchedulePlan(
     ("coupled", "intermediate", "decoupled"),
     ("solute-sterics", "solute-electrostatics"),
@@ -61,11 +105,11 @@ hamiltonian = phx.atomistic.ControlledHamiltonianPlan(
     schedule,
     partition,
 ).prepare()
+# Canonical NVT lanes need a canonical thermostat; velocity Verlet is NVE only.
 dynamics = phx.atomistic.AtomisticDynamicsPlan(
     force_field.system,
     hamiltonian,
-    neighborhood,
-    phx.atomistic.VelocityVerletPlan(1.0e-5),
+    phx.atomistic.BAOABLangevinPlan(1.0e-5, 1.0),
 ).prepare()
 measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(force_field.system)
 state_plans = tuple(

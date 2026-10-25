@@ -16,6 +16,29 @@ from phydrax.units import (
     PRESSURE,
     VELOCITY,
 )
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
+
+
+# Explicit resources of the two-atom fixtures: the finite system is searched in
+# a nonperiodic frame enclosing every trajectory, and one pair (one directed
+# route per receiver) is the complete pair storage of two atoms.
+_FRAME = phx.discretization.PeriodicCell(
+    20.0 * jnp.eye(3), origin=jnp.full((3,), -10.0), periodic_axes=(False,) * 3
+)
+_RESOURCES: dict[str, Any] = {
+    "search": phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+    "skin": 0.5,
+    "search_capacities": (search_capacity(8, particles_per_cell=2, images=27),),
+    "role_capacities": (role_capacity(1, 1),),
+}
+
+
+def _resources(cell: Any) -> dict[str, Any]:
+    return {**_RESOURCES, "frame": _FRAME if cell is None else None}
 
 
 def _runtime(*, step_size: Any = 1.0e-3, cell: Any = None, topology: Any = None) -> Any:
@@ -34,17 +57,17 @@ def _runtime(*, step_size: Any = 1.0e-3, cell: Any = None, topology: Any = None)
         cell=cell,
     )
     system = plan.prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5, switch_distance=2.0)]
+        ),
+        system,
+        **_resources(cell),
     )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5, switch_distance=2.0)]
-    ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.VelocityVerletPlan(step_size),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -103,44 +126,105 @@ def test_dynamics_foundations_scenario_1() -> None:
     assert structure_a.structure_id != structure_b.structure_id
 
 
-def test_dynamics_foundations_scenario_2() -> None:
+def _bound_energy(dynamics: Any, state: Any, positions: Any) -> Any:
+    """Energy at a trial point bound to the accepted epochs, outside the scalar.
+
+    The accepted bundle is certified at the accepted geometry; a trial point
+    first binds that frozen topology at its own coordinates (same cell and
+    image representation) and must be certified there.
+    """
+    geometry = phx.atomistic.bind_atomistic_bundle_geometry(
+        dynamics.bundle,
+        dynamics.system,
+        positions,
+        cell_vectors=state.cell_vectors if dynamics.periodic else None,
+        image_counts=state.kinematics.image_counts if dynamics.periodic else None,
+    )
+    neighborhoods = dynamics.bundle.bind(state.neighborhoods, geometry)
+    assert bool(jnp.all(neighborhoods.successful))
+    energy, auxiliary = dynamics.potential.energy(positions, neighborhoods)
+    assert bool(auxiliary.successful)
+    return energy
+
+
+def test_topology_exception_scales_follow_admitted_classical_pair_keys() -> None:
     topology = phx.atomistic.MolecularTopologyPlan(
         bonds=[[20, 10]],
         pair_exceptions=[[10, 20]],
         lennard_jones_scales=[0.5],
         electrostatic_scales=[0.0],
     )
-    _, system, _, _ = _runtime(topology=topology)
-    neighborhood = (
-        phx.discretization.DenseParticleNeighborhoodPlan(1)
-        .prepare(system.particles)
-        .build(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]))
-    )
-    keys = system.pair_key_space.keys(neighborhood.pair_relation)
-    lj, electrostatic = system.topology.pair_scales(keys.keys)
-    np.testing.assert_allclose(lj, [0.5])
-    np.testing.assert_allclose(electrostatic, [0.0])
+    _, system, dynamics, thermodynamic = _runtime(topology=topology)
     np.testing.assert_array_equal(system.topology.bond_indices, [[0, 1]])
-    for periodic in [False, True]:
-        cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
-        _, _, dynamics, thermodynamic = _runtime(cell=cell)
-        positions = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
-        state = dynamics.initialize_state(
-            positions,
-            thermodynamic,
-            velocity=jnp.zeros_like(positions),
-            key=jax.random.key(0),
-        )
-        direction = jnp.zeros_like(positions).at[1, 0].set(1.0)
-        step = 1.0e-5
-        neighborhood = state.neighborhood
-        plus = dynamics.potential.energy(positions + step * direction, neighborhood)[0]
-        minus = dynamics.potential.energy(positions - step * direction, neighborhood)[0]
-        finite_difference = -(plus - minus) / (2.0 * step)
-        np.testing.assert_allclose(
-            finite_difference, state.force.forces[1, 0], rtol=2e-5, atol=2e-6
-        )
-        np.testing.assert_allclose(jnp.sum(state.force.forces, axis=0), 0.0, atol=1e-12)
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.15, 0.0, 0.0]])
+    state = dynamics.initialize_state(
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
+    )
+    # The physical pair keys come from the bundle's admitted classical
+    # pair-once relation, the relation the Lennard-Jones term consumes.
+    requirement = dynamics.potential.plan.requirements.neighborhood(
+        phx.atomistic.AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS
+    )
+    view = dynamics.bundle.view(state.neighborhoods, requirement)
+    pairs = view.pair_relation
+    assert pairs is not None
+    keys = system.pair_key_space.keys(pairs)
+    assert bool(keys.successful)
+    valid = np.asarray(pairs.valid & keys.valid)
+    assert int(np.count_nonzero(valid)) == 1
+    lj, electrostatic = system.topology.pair_scales(keys.keys)
+    np.testing.assert_allclose(np.asarray(lj)[valid], [0.5])
+    np.testing.assert_allclose(np.asarray(electrostatic)[valid], [0.0])
+    assert view.lennard_jones_scales is not None
+    assert view.electrostatic_scales is not None
+    np.testing.assert_allclose(np.asarray(view.lennard_jones_scales)[valid], [0.5])
+    np.testing.assert_allclose(np.asarray(view.electrostatic_scales)[valid], [0.0])
+
+    # The exception weight scales the excepted pair's interaction exactly.
+    _, _, plain_dynamics, plain_thermodynamic = _runtime()
+    plain = plain_dynamics.initialize_state(
+        positions,
+        plain_thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
+    )
+    assert float(plain.force.potential_energy) != 0.0
+    np.testing.assert_allclose(
+        state.force.potential_energy, 0.5 * plain.force.potential_energy, rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        state.force.forces, 0.5 * plain.force.forces, rtol=1e-12, atol=1e-14
+    )
+
+
+@pytest.mark.parametrize("periodic", [False, True], ids=["finite", "periodic"])
+def test_pair_force_matches_bound_central_difference(periodic: bool) -> None:
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
+    _, _, dynamics, thermodynamic = _runtime(cell=cell)
+    positions = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
+    state = dynamics.initialize_state(
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
+    )
+    direction = jnp.zeros_like(positions).at[1, 0].set(1.0)
+    step = 1.0e-5
+    # The accepted bundle routes are bound to the wrapped representation.
+    wrapped = state.kinematics.positions
+    plus = _bound_energy(dynamics, state, wrapped + step * direction)
+    minus = _bound_energy(dynamics, state, wrapped - step * direction)
+    finite_difference = -(plus - minus) / (2.0 * step)
+    np.testing.assert_allclose(
+        finite_difference, state.force.forces[1, 0], rtol=2e-5, atol=2e-6
+    )
+    np.testing.assert_allclose(jnp.sum(state.force.forces, axis=0), 0.0, atol=1e-12)
+
+
+def test_velocity_verlet_step_conserves_linear_momentum() -> None:
     _, _, dynamics, thermodynamic = _runtime(step_size=1.0e-4)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.15, 0.0, 0.0]])
     state = dynamics.initialize_state(
@@ -161,15 +245,16 @@ def test_coordinate_representations_preserve_bond_force_and_curvature() -> None:
         cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
         topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
         _, system, _, _ = _runtime(cell=cell, topology=topology)
-        neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
-            1, box=cell
-        ).prepare(system.particles)
-        potential = phx.atomistic.AtomisticPotentialProgram(
-            # ty: ignore[invalid-argument-type]
-            [phx.atomistic.HarmonicBondPotential([4.0], [1.0])]
-        ).prepare(system)
+        potential = prepare_program(
+            phx.atomistic.AtomisticPotentialProgram(
+                # ty: ignore[invalid-argument-type]
+                [phx.atomistic.HarmonicBondPotential([4.0], [1.0])]
+            ),
+            system,
+            **_resources(cell),
+        )
         dynamics = phx.atomistic.AtomisticDynamicsPlan(
-            system, potential, neighborhood, phx.atomistic.VelocityVerletPlan(1.0e-3)
+            system, potential, phx.atomistic.VelocityVerletPlan(1.0e-3)
         ).prepare()
         thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
             phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
@@ -188,12 +273,13 @@ def test_coordinate_representations_preserve_bond_force_and_curvature() -> None:
         kwargs: dict[str, Any] = {"unwrapped_positions": unwrapped}
         if cell is not None:
             kwargs["cell_vectors"] = cell.vectors
+            kwargs["image_counts"] = state.kinematics.image_counts
 
         def energy(coordinates: Any) -> Any:
-            return potential.evaluate(coordinates, state.neighborhood, **kwargs).energy
+            return potential.evaluate(coordinates, state.neighborhoods, **kwargs).energy
 
         def force(coordinates: Any) -> Any:
-            return potential.evaluate(coordinates, state.neighborhood, **kwargs).forces[
+            return potential.evaluate(coordinates, state.neighborhoods, **kwargs).forces[
                 1, 0
             ]
 
@@ -218,9 +304,10 @@ def test_coordinate_representations_preserve_bond_force_and_curvature() -> None:
                 whole = cell.cartesian_with_vectors(fractional + images, vectors)
                 return potential.evaluate(
                     coordinates,
-                    state.neighborhood,
+                    state.neighborhoods,
                     unwrapped_positions=whole,
                     cell_vectors=vectors,
+                    image_counts=images,
                 ).energy
 
             expected = jnp.zeros((3, 3)).at[0, 0].set(0.16)

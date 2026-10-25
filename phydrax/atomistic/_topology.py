@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -14,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization
@@ -67,7 +67,12 @@ def _canonical_pairs(name: str, pairs: np.ndarray, /) -> np.ndarray:
 
 
 class MolecularTopologyPlan(StrictModule, NonTrainableState):
-    """Stable-ID molecular connectivity and explicit nonbonded exceptions."""
+    """Stable-ID molecular connectivity and explicit nonbonded exceptions.
+
+    The canonical plan digest is carried as dynamic `IdentityWords`
+    (``plan_identity``); ``plan_id`` decodes the same digest on the host.  Only
+    the interaction counts (array shapes) specialize compilation.
+    """
 
     bonds: Array
     angles: Array
@@ -82,7 +87,7 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
     angle_type_ids: Array
     torsion_type_ids: Array
     improper_type_ids: Array
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     def __init__(
         self,
@@ -100,7 +105,6 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
         angle_type_ids: npt.ArrayLike | None = None,
         torsion_type_ids: npt.ArrayLike | None = None,
         improper_type_ids: npt.ArrayLike | None = None,
-        plan_id: str | None = None,
     ) -> None:
         bonds_ = _canonical_pairs("bonds", _interaction_table("bonds", bonds, 2))
         angles_ = _interaction_table("angles", angles, 3)
@@ -172,12 +176,14 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
         generated = canonical_fingerprint(
             {"kind": "molecular-topology-plan", "arrays": array_tree_fingerprint(arrays)}
         )
-        identifier = generated if plan_id is None else str(plan_id)
-        if not identifier:
-            raise ValueError("plan_id must be non-empty.")
         for name, value in arrays.items():
             setattr(self, name, jnp.asarray(value))
-        self.plan_id = identifier
+        self.plan_identity = IdentityWords.from_fingerprint(generated)
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical topology-plan digest."""
+        return self.plan_identity.fingerprint()
 
     @classmethod
     def empty(cls) -> "MolecularTopologyPlan":
@@ -190,7 +196,12 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
 
 
 class PreparedMolecularTopology(StrictModule, NonTrainableState):
-    """Slot-resolved molecular topology bound to one particle support."""
+    """Slot-resolved molecular topology bound to one particle support.
+
+    Its canonical digest (plan, prepared particles and exception keys) is the
+    dynamic ``topology_identity``; ``topology_id`` decodes it on the host.  No
+    particle discretization is retained, so the PyTree is layout-only.
+    """
 
     plan: MolecularTopologyPlan
     bond_indices: Array
@@ -207,8 +218,7 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
     angle_type_ids: Array
     torsion_type_ids: Array
     improper_type_ids: Array
-    particle_discretization_id: str = eqx.field(static=True)
-    topology_id: str = eqx.field(static=True)
+    topology_identity: IdentityWords
 
     @checked
     def __init__(
@@ -275,8 +285,7 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
         self.angle_type_ids = plan.angle_type_ids
         self.torsion_type_ids = plan.torsion_type_ids
         self.improper_type_ids = plan.improper_type_ids
-        self.particle_discretization_id = particles.prepared_id
-        self.topology_id = canonical_fingerprint(
+        self.topology_identity = IdentityWords.of(
             {
                 "kind": "prepared-molecular-topology",
                 "plan": plan.plan_id,
@@ -284,6 +293,11 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
                 "exception_keys": exception_keys.tolist(),
             }
         )
+
+    @property
+    def topology_id(self) -> str:
+        """Host decoding of the canonical prepared-topology digest."""
+        return self.topology_identity.fingerprint()
 
     @property
     def constraint_count(self) -> int:

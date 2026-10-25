@@ -1,9 +1,12 @@
 """Construct and train a native MACE potential on energy, force, and stress labels.
 
 A fixed "teacher" MACE labels a few strained periodic water-like cells through
-the native batch E/F/S prediction route; a differently initialized student is
-fitted with the shared force/stress training kernel. Both models are random
-native initializations, so this demonstrates the workflow, not accuracy.
+the native batch E/F/S prediction route. The labels become one immutable
+training source; a loader streams it and a differently initialized student is
+fitted with one declared objective per label kind (structure-balanced per-atom
+energy, component force and cell-volume stress MSE) through the shared training
+kernel. Both models are random native initializations, so this demonstrates the
+workflow, not accuracy.
 """
 
 import jax
@@ -16,6 +19,7 @@ import phydrax as phx
 UNITS = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 BASE_CELL = np.array([[4.2, 0.0, 0.0], [0.9, 4.0, 0.0], [0.5, -0.6, 4.4]])
 POSITIONS = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
+MAGNITUDES = (-0.02, 0.0, 0.015, 0.03)
 
 
 def build_model(seed: int) -> phx.nn.atomistic.MACEPotential:
@@ -43,7 +47,7 @@ def build_model(seed: int) -> phx.nn.atomistic.MACEPotential:
 
 def strained_batch() -> phx.atomistic.AtomisticBatch:
     structures = []
-    for index, magnitude in enumerate((-0.02, 0.0, 0.015, 0.03)):
+    for index, magnitude in enumerate(MAGNITUDES):
         deformation = np.eye(3) + magnitude * np.array(
             [[1.0, 0.2, 0.0], [0.2, -0.5, 0.1], [0.0, 0.1, 0.7]]
         )
@@ -62,6 +66,8 @@ def strained_batch() -> phx.atomistic.AtomisticBatch:
 
 
 def main() -> None:
+    # One reusable training layout: the declared search envelope (the base
+    # cell plus a deformation margin) covers every strained cell.
     execution = phx.atomistic.AtomisticGraphExecutionPlan(
         32,
         backend="particle",
@@ -72,6 +78,8 @@ def main() -> None:
             maximum_degree=64,
             maximum_images=343,
         ),
+        search_cell=BASE_CELL,
+        search_margin=0.1,
     )
     batch = strained_batch()
     labels = phx.atomistic.energy_and_forces(
@@ -79,13 +87,26 @@ def main() -> None:
     )
     if not bool(jnp.all(labels.valid)):
         raise RuntimeError("Teacher labels failed.")
-    problem = phx.atomistic.AtomisticTrainingProblem(
+    source = phx.atomistic.atomistic_training_source(
         batch,
+        mass_unit=UNITS.mass_unit,
+        energy=labels.energy,
+        forces=labels.forces,
+        stress=labels.stress,
+        record_ids=tuple(f"strained-water-{magnitude}" for magnitude in MAGNITUDES),
+    )
+    # batch_size=None is the full-batch policy: one global batch per update.
+    problem = phx.atomistic.AtomisticTrainingProblem(
+        phx.atomistic.atomistic_training_loader(source),
         execution,
+        (
+            phx.atomistic.AtomisticEnergyObjective(),
+            phx.atomistic.AtomisticForceObjective(),
+            phx.atomistic.AtomisticStressObjective(),
+        ),
+        scale=UNITS.scale,
         cutoff=3.0,
-        training_energy=labels.energy,
-        training_forces=labels.forces,
-        training_stress=labels.stress,
+        fields=phx.atomistic.AtomisticTrainingFields(cell="cell", periodic="periodic"),
     )
     policy = phx.atomistic.AtomisticTrainingPolicy(maximum_steps=25, learning_rate=1.0e-2)
     student = build_model(1)
@@ -94,8 +115,12 @@ def main() -> None:
     )
     if not bool(result.successful):
         raise RuntimeError(f"Training failed: {result.termination}")
-    print("loss history:", np.asarray(result.training_loss_history))
-    print("stress loss history:", np.asarray(result.stress_loss_history))
+    print(
+        "fitted scales:",
+        dict(zip(result.normalization.names, result.normalization.scales)),
+    )
+    print("loss history:", np.asarray(result.training_values))
+    print("stress loss history:", np.asarray(result.training_objectives)[:, 2])
     trained = phx.atomistic.energy_and_forces(
         result.potential, batch, execution, compute_stress=True
     )

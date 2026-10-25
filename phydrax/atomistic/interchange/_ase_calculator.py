@@ -25,7 +25,6 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
-from ...discretization.particle._verlet import ParticleImageVerletState
 from ...typing import checked
 from ...units import (
     ANGSTROM,
@@ -36,11 +35,11 @@ from ...units import (
     SI_REFERENCE_SYSTEM_ID,
 )
 from .._born_oppenheimer import (
-    NativeAtomisticEvaluation,
     NativeAtomisticProvider,
     NativeAtomisticProviderPlan,
-    NativeProviderNeighborhoodState,
+    NativeAtomisticRecovery,
 )
+from .._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from .._system import AtomisticSystemPlan
 from .._types import AtomisticScaleContract
 from .._units import AtomisticUnitSystem
@@ -138,10 +137,13 @@ class NativeASECalculator(BaseCalculator):
 
     Results are invalidated by ASE on position, number, cell, PBC, charge, or
     moment changes, and by ``update_plan`` on model revision or preparation
-    changes. Number or PBC changes re-prepare the system; positions and cells
-    advance the cached Verlet state through its certificate, and a failed
-    evaluation is retried once from a fresh preparation at the current
-    geometry before ``CalculationFailed`` is raised.
+    changes. Number or PBC changes re-prepare the system. Positions and cells
+    refresh the accepted neighborhood-bundle state through its certificate at
+    the current cell; a capacity-only failure replays on the declared grown
+    capacities (``NativeAtomisticProvider.evaluate_recovering``). Any other
+    failure, such as a cell outside the prepared search stencil, is retried
+    once from a fresh preparation whose reference cell is the current one
+    before ``CalculationFailed`` reports its capacity and scientific causes.
     """
 
     implemented_properties = ["energy", "free_energy", "energies", "forces", "stress"]
@@ -155,7 +157,7 @@ class NativeASECalculator(BaseCalculator):
         self.plan = plan
         self.artifact_id = artifact_id
         self.provider: NativeAtomisticProvider | None = None
-        self.neighborhood_state: NativeProviderNeighborhoodState | None = None
+        self.neighborhood_state: AtomisticNeighborhoodBundleState | None = None
         self._structure_key: tuple[bytes, tuple[bool, ...]] | None = None
         self.preparation_count = 0
         self.provenance: dict[str, str | int | None] = {}
@@ -193,7 +195,7 @@ class NativeASECalculator(BaseCalculator):
 
     def _evaluate(
         self, provider: NativeAtomisticProvider, atoms: Atoms, /
-    ) -> NativeAtomisticEvaluation:
+    ) -> NativeAtomisticRecovery:
         length = self.plan.length_factor
         positions = np.asarray(atoms.positions, dtype=np.float64) * length
         cell = (
@@ -201,7 +203,9 @@ class NativeASECalculator(BaseCalculator):
             if provider.program.system.cell is None
             else np.asarray(atoms.cell.array, dtype=np.float64) * length
         )
-        return provider.evaluate_state(positions, cell, self.neighborhood_state)
+        recovery = provider.evaluate_recovering(positions, cell, self.neighborhood_state)
+        self.provider = recovery.provider
+        return recovery
 
     def calculate(
         self,
@@ -214,28 +218,29 @@ class NativeASECalculator(BaseCalculator):
         if not isinstance(target, Atoms):
             raise TypeError("NativeASECalculator requires an ase.Atoms structure.")
         provider = self._provider(target)
-        value = self._evaluate(provider, target)
-        if not bool(value.evaluation.successful):
+        recovery = self._evaluate(provider, target)
+        if not bool(recovery.evaluation.evaluation.successful):
             provider = self._prepare(target)
-            value = self._evaluate(provider, target)
+            recovery = self._evaluate(provider, target)
+        value = recovery.evaluation
+        provider = recovery.provider
         if not bool(value.evaluation.successful):
             self.neighborhood_state = None
-            state = value.request.neighborhood
-            capacity = (
-                bool(state.capacity_failure)
-                if isinstance(state, ParticleImageVerletState)
-                else None
-            )
+            state = value.request.neighborhoods
             raise CalculationFailed(
                 "Native evaluation failed after a fresh preparation "
-                f"(neighborhood capacity failure: {capacity})."
+                f"(capacity failure: {bool(np.asarray(state.capacity_failure)[0])}, "
+                f"capacity ladder exhausted: {recovery.exhausted}, "
+                "scientific neighborhood failure: "
+                f"{bool(np.asarray(state.scientific_failure)[0])}, "
+                f"stale: {bool(np.asarray(state.stale)[0])})."
             )
         evaluation = value.evaluation
         if "stress" in properties and evaluation.stress is None:
             raise PropertyNotImplementedError(
                 "Stress requires a fully periodic cell and a cell-differentiable model."
             )
-        self.neighborhood_state = value.request.neighborhood
+        self.neighborhood_state = value.request.neighborhoods
         scale = self.plan.units.scale
         energy_factor = float(conversion_factor(scale.energy_unit, ELECTRONVOLT))
         force_factor = float(conversion_factor(scale.force_unit, _ASE_SCALE.force_unit))
@@ -259,7 +264,11 @@ class NativeASECalculator(BaseCalculator):
             "model_revision": self.plan.provider.model_revision_id,
             "artifact": self.artifact_id,
             "provider": provider.provider_id,
-            "neighborhood_epoch": int(np.asarray(value.request.neighborhood.epoch)),
+            "resource_bundle": provider.bundle.prepared_id,
+            "neighborhood_epoch": int(
+                np.max(np.asarray(value.request.neighborhoods.epochs), initial=0)
+            ),
+            "capacity_growths": recovery.capacity_growths,
             "preparation_count": self.preparation_count,
         }
 

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import NamedTuple, TypeVar
 
 import equinox as eqx
 import jax
@@ -27,10 +27,14 @@ from .._periodic_cell import lattice_right_inverse_with_status, PeriodicCell
 from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleDiscretization
 from ._image_neighborhood import (
+    AbstractImageRouteSearch,
     AbstractParticleImageNeighborhoodPlan,
     AbstractPreparedParticleImageNeighborhood,
     image_certificate,
     ImageCertificate,
+    ImageReceiverRows,
+    ImageReceiverSubset,
+    ImageRouteSearchResult,
     ParticleImageCapacity,
     ParticleImageNeighborhoodState,
 )
@@ -45,12 +49,14 @@ from ._pairwise import ParticleBox
 from ._precision import ParticleRealization
 
 
-def _same_active_mask(active: Array, reference: Array, /) -> Array:
+def _same_active_mask(
+    active: Array, reference: Array, /, *, axis: int | None = None
+) -> Array:
     if isinstance(active, Tracer) or isinstance(reference, Tracer):
-        return jnp.all(active == reference)
+        return jnp.all(active == reference, axis=axis)
     # Frozen inference masks are immutable preparation, not runtime work.
     with jax.ensure_compile_time_eval():
-        return jnp.all(active == reference)
+        return jnp.all(active == reference, axis=axis)
 
 
 class _PairReuseTerms(NamedTuple):
@@ -81,6 +87,106 @@ class _ImageReuseTerms(NamedTuple):
     finite: Array
     representable: Array
     certified: Array
+
+
+class _CaseReuseTerms(NamedTuple):
+    delta: Array
+    current_counts: Array
+    particle_maximum: Array
+    cell_deformation: Array
+    spent: Array
+    margin: Array
+    finite: Array
+    representable: Array
+    reusable: Array
+
+
+def _case_reuse_terms(
+    reference: ParticleImageNeighborhoodState,
+    reference_counts: Array,
+    value: Array,
+    active: Array,
+    vectors: Array,
+    origin: Array,
+    periodic: Array,
+    resolved: tuple[Array, Array] | None,
+    interaction_radius: float,
+    /,
+) -> _CaseReuseTerms:
+    """Case-batched stored-and-absent image reuse terms of one cached epoch.
+
+    Shapes: ``value[case, N, d]``, ``active[case, N]``, ``vectors[case, r, d]``,
+    ``origin[case, d]``, ``periodic[case, r]`` and image counts
+    ``[case, N, r]``.  ``resolved`` holds exact current image counts and their
+    per-particle representability; without it whole-cell rewrapping since
+    the epoch is inferred by rounding fractional motion (half-cell continuity).
+    """
+    cases, particles, rank = reference_counts.shape
+    reference_positions = reference.reference_positions.reshape(value.shape)
+    reference_vectors = reference.cell_vectors.astype(value.dtype)
+    periodic_rows = periodic[:, None, :]
+    if resolved is None:
+        raw_inverse, solved = lattice_right_inverse_with_status(vectors)
+        inverse = jnp.where(solved[:, None, None], raw_inverse, 0.0)
+        moved = contract(
+            "cnd,cdr->cnr", value - reference_positions, inverse, backend="jax"
+        )
+        safe = jnp.where(jnp.isfinite(moved), moved, 0.0)
+        steps = jax.lax.stop_gradient(jnp.round(safe))
+        rows = jnp.all(~periodic_rows | (jnp.abs(steps) < 2.0**31), axis=-1)
+        delta = jnp.where(
+            periodic_rows & rows[..., None] & active[..., None], -steps, 0.0
+        ).astype(jnp.int32)
+        current_counts, count_overflow = checked_int32_add(reference_counts, delta)
+        current_counts = jnp.where(count_overflow, reference_counts, current_counts)
+        rows = rows & ~jnp.any(count_overflow, axis=-1)
+        delta = jnp.where(count_overflow, 0, delta)
+        delta_rows = rows
+    else:
+        current_counts, rows = resolved
+        delta, delta_overflow = checked_int32_add(current_counts, -reference_counts)
+        delta = jnp.where(delta_overflow | ~active[..., None], 0, delta)
+        delta_rows = rows & ~jnp.any(delta_overflow, axis=-1)
+    # Current counts must be representable for a rebuild; reuse further needs
+    # every count difference and re-expressed route shift in range.
+    representable = jnp.all(rows | ~active, axis=-1)
+    reexpressed = reference.with_representation_offsets(delta.reshape((-1, rank)))
+    reusable = (
+        jnp.all(delta_rows | ~active, axis=-1)
+        & ~reexpressed.evidence.representation_overflow
+    )
+    continuous = value + contract(
+        "cnr,crd->cnd", delta.astype(value.dtype), vectors, backend="jax"
+    )
+    certificate = image_certificate(
+        reference_positions,
+        continuous,
+        reference_vectors,
+        vectors,
+        origin,
+        reference.wrap_counts.reshape((cases, particles, rank)),
+        reference.stencil_extents,
+        active,
+        periodic,
+        interaction_radius,
+    )
+    spent = 2.0 * certificate.maximum_displacement + certificate.cell_deformation
+    finite = (
+        jnp.all(jnp.isfinite(value), axis=(1, 2))
+        & jnp.all(jnp.isfinite(vectors), axis=(1, 2))
+        & jnp.isfinite(spent)
+    )
+    return _CaseReuseTerms(
+        delta,
+        current_counts,
+        certificate.maximum_displacement,
+        certificate.cell_deformation,
+        spent,
+        certificate.coverage_margin,
+        finite,
+        representable,
+        reusable,
+    )
 
 
 def _pose_admissible(pose: Array | None, /) -> Array:
@@ -887,67 +993,32 @@ class PreparedImageVerletParticleNeighborhood(StrictModule, NonTrainableState):
         active = self.base.resolved_active_mask(active_mask)
         vectors = self.base.resolved_cell_vectors(value.dtype, cell_vectors)
         resolved = self._image_counts(image_counts)
-        periodic = self.cell.periodic_mask
-        reference_counts = previous.reference_image_counts
-        if resolved is None:
-            raw_inverse, solved = lattice_right_inverse_with_status(vectors)
-            inverse = jnp.where(solved, raw_inverse, 0.0)
-            moved = contract(
-                "nd,dr->nr",
-                value - previous.reference_position,
-                inverse,
-                backend="jax",
-            )
-            safe = jnp.where(jnp.isfinite(moved), moved, 0.0)
-            steps = jax.lax.stop_gradient(jnp.round(safe))
-            rows = jnp.all(~periodic | (jnp.abs(steps) < 2.0**31), axis=-1)
-            delta = jnp.where(
-                periodic & rows[:, None] & active[:, None], -steps, 0.0
-            ).astype(jnp.int32)
-            current_counts, count_overflow = checked_int32_add(reference_counts, delta)
-            current_counts = jnp.where(count_overflow, reference_counts, current_counts)
-            rows = rows & ~jnp.any(count_overflow, axis=-1)
-            delta = jnp.where(count_overflow, 0, delta)
-            delta_rows = rows
-        else:
-            current_counts, rows = resolved
-            delta, delta_overflow = checked_int32_add(current_counts, -reference_counts)
-            delta = jnp.where(delta_overflow | ~active[:, None], 0, delta)
-            delta_rows = rows & ~jnp.any(delta_overflow, axis=-1)
-        # Current counts must be representable for a rebuild; reuse further
-        # needs every count difference and re-expressed route shift in range.
-        representable = jnp.all(rows | ~active)
-        reexpressed = previous.reference.with_representation_offsets(delta)
-        reusable = jnp.all(delta_rows | ~active) & ~jnp.any(
-            reexpressed.evidence.representation_overflow
-        )
-        continuous = value + contract(
-            "nr,rd->nd", delta.astype(value.dtype), vectors, backend="jax"
-        )
-        certificate = self._certificate(
+        terms = _case_reuse_terms(
             previous.reference,
-            previous.reference_position,
-            previous.reference_cell_vectors,
-            continuous,
-            vectors,
-            active,
+            previous.reference_image_counts[None],
+            value[None],
+            active[None],
+            vectors[None],
+            self.cell.origin.astype(vectors.dtype)[None],
+            self.cell.periodic_mask[None],
+            None if resolved is None else (resolved[0][None], resolved[1][None]),
+            self.plan.interaction_radius,
         )
-        particle_maximum = certificate.maximum_displacement[0]
-        cell_deformation = certificate.cell_deformation[0]
-        spent = 2.0 * particle_maximum + cell_deformation
-        margin = certificate.coverage_margin[0]
-        finite = (
-            jnp.all(jnp.isfinite(value))
-            & jnp.all(jnp.isfinite(vectors))
-            & jnp.isfinite(spent)
-        )
+        delta = terms.delta[0]
+        current_counts = terms.current_counts[0]
+        particle_maximum = terms.particle_maximum[0]
+        cell_deformation = terms.cell_deformation[0]
+        spent = terms.spent[0]
+        margin = terms.margin[0]
+        finite = terms.finite[0]
+        representable = terms.representable[0]
         skin = jnp.asarray(self.plan.skin, dtype=value.dtype)
         same_active = _same_active_mask(active, previous.reference_active_mask)
         certified = (
             previous.successful
             & finite
             & representable
-            & reusable
+            & terms.reusable[0]
             & (spent <= skin)
             & (margin > 0.0)
             & same_active
@@ -1065,11 +1136,779 @@ class PreparedImageVerletParticleNeighborhood(StrictModule, NonTrainableState):
         return jax.lax.cond(rebuild, rebuild_routes, reuse_routes, operand=None)
 
 
+_Tree = TypeVar("_Tree")
+
+
+def _where_leading(mask: Array, new: _Tree, old: _Tree, /) -> _Tree:
+    """Select PyTree leaves along their leading axis by ``mask``."""
+
+    def pick(first: Array, second: Array) -> Array:
+        shape = mask.shape + (1,) * (first.ndim - mask.ndim)
+        return jnp.where(mask.reshape(shape), first, second)
+
+    return jax.tree.map(pick, new, old)
+
+
+class SegmentedImageVerletCertificate(StrictModule, NonTrainableState):
+    """Per-case reuse verdict of a segmented image epoch and its reasons.
+
+    ``certified[c]`` holds only for an initialized, previously successful case
+    whose stable IDs, origin, periodicity, receiver rows and active set are
+    unchanged, whose rewrapping is representable, and whose stored-and-absent
+    image certificate holds (``2 max|dx| + sum_i K_i |dH_i| <= skin`` and
+    positive stencil coverage) under current positions and cell.
+    """
+
+    certified: Array
+    uninitialized: Array
+    previous_failed: Array
+    frame_changed: Array
+    active_changed: Array
+    motion_exceeded: Array
+    coverage_lost: Array
+    nonfinite: Array
+    unrepresentable: Array
+    maximum_displacement: Array
+    cell_deformation: Array
+    coverage_margin: Array
+    spent: Array
+
+
+class SegmentedImageVerletState(StrictModule, NonTrainableState):
+    """Per-case segmented image epochs with independent lifecycle evidence.
+
+    ``reference`` holds every case's routes in its own fixed route segment,
+    expressed for that case's build positions; ``representation_offsets``
+    re-express retained cases for rewrapped current positions.  Every array
+    except the reference relation/positions is case-leading.  A case is usable
+    only while ``successful``: initialized, not ``stale`` (retained without a
+    valid certificate because its rebuild was not allowed), admissible inputs
+    at build, positive stencil coverage and a successful search.
+    """
+
+    reference: ParticleImageNeighborhoodState
+    receiver_rows: ImageReceiverRows | None
+    reference_active_mask: Array
+    reference_particle_ids: Array
+    reference_origin: Array
+    reference_periodic: Array
+    reference_receiver_ids: Array
+    reference_receiver_valid: Array
+    reference_image_counts: Array
+    representation_offsets: Array
+    initialized: Array
+    case_epochs: Array
+    rebuilt: Array
+    rebuild_counts: Array
+    stale: Array
+    maximum_reference_displacement: Array
+    maximum_cell_deformation: Array
+    stencil_margin: Array
+    certificate_margin: Array
+    admissible: Array
+    prepared_verlet_id: str = eqx.field(static=True)
+
+    @property
+    def neighborhood(self) -> ParticleImageNeighborhoodState:
+        rank = self.representation_offsets.shape[-1]
+        return self.reference.with_representation_offsets(
+            self.representation_offsets.reshape((-1, rank))
+        )
+
+    @property
+    def successful(self) -> Array:
+        return (
+            self.initialized
+            & ~self.stale
+            & self.admissible
+            & (self.stencil_margin > 0.0)
+            & self.reference.evidence.successful
+        )
+
+    @property
+    def capacity_failure(self) -> Array:
+        return self.initialized & self.reference.evidence.capacity_failure
+
+    @property
+    def scientific_failure(self) -> Array:
+        return self.initialized & (
+            self.reference.evidence.scientific_failure
+            | ~self.admissible
+            | ~(self.stencil_margin > 0.0)
+        )
+
+
+class _SegmentedInputs(NamedTuple):
+    value: Array
+    active: Array
+    ids: Array
+    vectors: Array
+    origin: Array
+    periodic: Array
+    counts: Array | None
+    rows: Array | None
+    receiver_ids: Array
+    receiver_valid: Array
+    receivers: ImageReceiverSubset | None
+
+
+class SegmentedImageVerletPlan(StrictModule, NonTrainableState):
+    """Per-case image topology reuse and selective rebuild over one batched search.
+
+    The search must use the per-case segment layout
+    (``ParticleImageCapacity.maximum_case_edges``) so that rebuilding one case
+    replaces only its own route segment.  ``update`` evaluates each case's
+    ``SegmentedImageVerletCertificate`` on device, rebuilds the cases that
+    fail it (or are forced) where ``allow_rebuild`` permits, and retains the
+    others bitwise with exact rewrap offsets.  A case that needs a rebuild
+    but is not allowed one is retained as ``stale`` and unsuccessful, never
+    silently reused.  When any case rebuilds, the batched search runs once
+    under ``lax.cond`` and only rebuilt segments are committed; no host
+    synchronization decides a case.  Updates are pure: the caller commits a
+    candidate, or per case through ``select_cases``.
+    """
+
+    search: AbstractImageRouteSearch
+    interaction_radius: float = eqx.field(static=True)
+    skin: float = eqx.field(static=True)
+    receiver_rows: int | None = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    relation_schema_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        search: AbstractImageRouteSearch,
+        interaction_radius: float,
+        skin: float,
+        /,
+        *,
+        support_id: str,
+        receiver_rows: int | None = None,
+        plan_id: str | None = None,
+    ) -> None:
+        if not isinstance(search, AbstractImageRouteSearch):
+            raise TypeError("search must be an AbstractImageRouteSearch.")
+        if search.capacity.maximum_case_edges is None:
+            raise ValueError(
+                "Per-case reuse requires the segmented route layout "
+                "(ParticleImageCapacity.maximum_case_edges)."
+            )
+        interaction = float(interaction_radius)
+        skin_ = float(skin)
+        if not np.isfinite(interaction) or interaction <= 0.0:
+            raise ValueError("interaction_radius must be finite and positive.")
+        if not np.isfinite(skin_) or skin_ <= 0.0:
+            raise ValueError("skin must be finite and positive.")
+        if search.radius < interaction + skin_:
+            raise ValueError(
+                "Image search radius must cover interaction_radius plus skin."
+            )
+        rows = None if receiver_rows is None else int(receiver_rows)
+        if rows is not None and rows <= 0:
+            raise ValueError("receiver_rows must be positive when declared.")
+        support = str(support_id)
+        if not support:
+            raise ValueError("support_id must be nonempty.")
+        self.search = search
+        self.interaction_radius = interaction
+        self.skin = skin_
+        self.receiver_rows = rows
+        self.support_id = support
+        self.relation_schema_id = canonical_fingerprint(
+            {
+                "kind": "segmented-image-verlet-relation-schema",
+                "search": search.search_id,
+                "support": support,
+                "receiver_rows": rows,
+            }
+        )
+        identifier = canonical_fingerprint(
+            {
+                "kind": "segmented-image-verlet-plan",
+                "search": search.search_id,
+                "interaction_radius": interaction,
+                "skin": skin_,
+                "receiver_rows": rows,
+                "support": support,
+            }
+        )
+        self.plan_id = identifier if plan_id is None else str(plan_id)
+        if not self.plan_id:
+            raise ValueError("plan_id must be nonempty.")
+
+    @property
+    def case_count(self) -> int:
+        return self.search.case_count
+
+    @property
+    def particle_capacity(self) -> int:
+        return self.search.particle_capacity
+
+    @property
+    def segment_width(self) -> int:
+        width = self.search.capacity.maximum_case_edges
+        if width is None:
+            raise ValueError("The search has no per-case segment layout.")
+        return width
+
+    def _inputs(
+        self,
+        positions: ArrayLike,
+        active: ArrayLike,
+        stable_ids: ArrayLike,
+        vectors: ArrayLike,
+        origin: ArrayLike,
+        periodic: ArrayLike,
+        image_counts: ArrayLike | None,
+        receivers: ImageReceiverSubset | None,
+        /,
+    ) -> _SegmentedInputs:
+        cases, particles = self.case_count, self.particle_capacity
+        rank = self.search.lattice_rank
+        value = jnp.asarray(positions)
+        if value.ndim != 3 or value.shape[:2] != (cases, particles):
+            raise ValueError(f"positions must have shape {(cases, particles)} + (d,).")
+        dimension = value.shape[-1]
+        mask = jnp.asarray(active, dtype=jnp.bool_)
+        ids = jnp.asarray(stable_ids)
+        if mask.shape != (cases, particles) or ids.shape != (cases, particles):
+            raise ValueError("active and stable_ids must have shape (case, particle).")
+        if not jnp.issubdtype(ids.dtype, jnp.integer):
+            raise TypeError("stable_ids must be integers.")
+        lattice = jnp.asarray(vectors, dtype=value.dtype)
+        if lattice.shape != (cases, rank, dimension):
+            raise ValueError("vectors must have shape (case, lattice rank, d).")
+        shift_origin = jnp.asarray(origin, dtype=value.dtype)
+        if shift_origin.shape != (cases, dimension):
+            raise ValueError("origin must have shape (case, d).")
+        periodic_mask = jnp.asarray(periodic, dtype=jnp.bool_)
+        if periodic_mask.shape != (cases, rank):
+            raise ValueError("periodic must have shape (case, lattice rank).")
+        counts = rows = None
+        if image_counts is not None:
+            raw = jnp.asarray(image_counts)
+            if raw.shape != (cases, particles, rank) or not jnp.issubdtype(
+                raw.dtype, jnp.integer
+            ):
+                raise ValueError("image_counts must be integers of shape (case, N, r).")
+            counts, representable = symmetric_int32(raw)
+            counts = jnp.where(periodic_mask[:, None, :], counts, 0)
+            rows = jnp.all(representable | ~periodic_mask[:, None, :], axis=-1)
+        if self.receiver_rows is None:
+            if receivers is not None:
+                raise ValueError("This plan declares no receiver rows.")
+            receiver_ids = jnp.zeros((cases, 0), dtype=ids.dtype)
+            receiver_valid = jnp.zeros((cases, 0), dtype=jnp.bool_)
+        else:
+            if (
+                not isinstance(receivers, ImageReceiverSubset)
+                or receivers.row_capacity != self.receiver_rows
+                or receivers.receiver_ids.shape[0] != cases
+            ):
+                raise ValueError(
+                    f"receivers must be an ImageReceiverSubset of {cases} cases and "
+                    f"{self.receiver_rows} rows."
+                )
+            receiver_ids = receivers.receiver_ids.astype(ids.dtype)
+            receiver_valid = receivers.receiver_valid
+        return _SegmentedInputs(
+            value,
+            mask,
+            ids,
+            lattice,
+            shift_origin,
+            periodic_mask,
+            counts,
+            rows,
+            receiver_ids,
+            receiver_valid,
+            receivers,
+        )
+
+    def _search(self, inputs: _SegmentedInputs, /) -> ImageRouteSearchResult:
+        return self.search.routes(
+            inputs.value,
+            inputs.active,
+            inputs.ids,
+            inputs.vectors,
+            inputs.origin,
+            inputs.periodic,
+            support_id=self.support_id,
+            relation_schema_id=self.relation_schema_id,
+            receivers=inputs.receivers,
+        )
+
+    def _fresh(
+        self,
+        inputs: _SegmentedInputs,
+        result: ImageRouteSearchResult,
+        counts: Array,
+        representable: Array,
+        epochs: Array,
+        rebuild_counts: Array,
+        initialized: Array,
+        maximum_displacement: Array,
+        cell_deformation: Array,
+        /,
+    ) -> SegmentedImageVerletState:
+        cases, particles = self.case_count, self.particle_capacity
+        rank = self.search.lattice_rank
+        value = inputs.value
+        margin = image_certificate(
+            value,
+            value,
+            inputs.vectors,
+            inputs.vectors,
+            inputs.origin,
+            result.wrap_counts.reshape((cases, particles, rank)),
+            result.stencil_extents,
+            inputs.active,
+            inputs.periodic,
+            self.interaction_radius,
+        ).coverage_margin
+        finite = jnp.all(jnp.isfinite(value), axis=(1, 2)) & jnp.all(
+            jnp.isfinite(inputs.vectors), axis=(1, 2)
+        )
+        # Uninitialized cases own no routes; their segments stay invalid.
+        relation = eqx.tree_at(
+            lambda routes: routes.relation.valid,
+            result.relation,
+            result.relation.valid & jnp.repeat(initialized, self.segment_width),
+        )
+        reference = ParticleImageNeighborhoodState(
+            relation,
+            result.evidence,
+            inputs.vectors,
+            value.reshape((cases * particles, -1)),
+            result.wrap_counts,
+            result.stencil_extents,
+            self.search.radius,
+            self.plan_id,
+            self.relation_schema_id,
+        )
+        return SegmentedImageVerletState(
+            reference,
+            result.receiver_rows,
+            inputs.active,
+            inputs.ids,
+            inputs.origin,
+            inputs.periodic,
+            inputs.receiver_ids,
+            inputs.receiver_valid,
+            counts,
+            jnp.zeros_like(counts),
+            initialized,
+            epochs,
+            initialized,
+            rebuild_counts,
+            jnp.zeros((cases,), dtype=jnp.bool_),
+            maximum_displacement,
+            cell_deformation,
+            margin,
+            jnp.full((cases,), self.skin, dtype=value.dtype),
+            finite & representable,
+            self.plan_id,
+        )
+
+    def initialize(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        active: ArrayLike,
+        stable_ids: ArrayLike,
+        vectors: ArrayLike,
+        origin: ArrayLike,
+        periodic: ArrayLike,
+        image_counts: ArrayLike | None = None,
+        receivers: ImageReceiverSubset | None = None,
+        cases: ArrayLike | None = None,
+    ) -> SegmentedImageVerletState:
+        """Build the first epoch of the ``cases`` mask (default every case).
+
+        Cases outside the mask are uninitialized: they own no routes, are never
+        successful, and can only be rebuilt, never reused.  ``image_counts``
+        (``positions + image_counts @ H`` is unwrapped) make later rewrapping
+        exact; without them it is inferred under half-cell continuity.
+        """
+        inputs = self._inputs(
+            positions,
+            active,
+            stable_ids,
+            vectors,
+            origin,
+            periodic,
+            image_counts,
+            receivers,
+        )
+        count = self.case_count
+        initialized = (
+            jnp.ones((count,), dtype=jnp.bool_)
+            if cases is None
+            else jnp.broadcast_to(jnp.asarray(cases, dtype=jnp.bool_), (count,))
+        )
+        if inputs.counts is None:
+            counts = jnp.zeros(
+                (count, self.particle_capacity, self.search.lattice_rank), dtype=jnp.int32
+            )
+            representable = jnp.ones((count,), dtype=jnp.bool_)
+        else:
+            counts = inputs.counts
+            rows = inputs.rows
+            if rows is None:
+                raise ValueError("Resolved image counts lack representability rows.")
+            representable = jnp.all(rows | ~inputs.active, axis=-1)
+        zero = jnp.zeros((count,), dtype=inputs.value.dtype)
+        return self._fresh(
+            inputs,
+            self._search(inputs),
+            counts,
+            representable,
+            jnp.zeros((count,), dtype=jnp.int32),
+            initialized.astype(jnp.int32),
+            initialized,
+            zero,
+            zero,
+        )
+
+    def _certify(
+        self, inputs: _SegmentedInputs, previous: SegmentedImageVerletState, /
+    ) -> tuple[SegmentedImageVerletCertificate, _CaseReuseTerms]:
+        if previous.prepared_verlet_id != self.plan_id:
+            raise ValueError("Segmented Verlet state belongs to another plan.")
+        resolved = (
+            None
+            if inputs.counts is None or inputs.rows is None
+            else (inputs.counts, inputs.rows)
+        )
+        terms = _case_reuse_terms(
+            previous.reference,
+            previous.reference_image_counts,
+            inputs.value,
+            inputs.active,
+            inputs.vectors,
+            inputs.origin,
+            inputs.periodic,
+            resolved,
+            self.interaction_radius,
+        )
+        skin = jnp.asarray(self.skin, dtype=inputs.value.dtype)
+        initialized = previous.initialized
+        previous_failed = initialized & ~previous.successful
+        frame_changed = (
+            jnp.any(inputs.ids != previous.reference_particle_ids, axis=-1)
+            | jnp.any(
+                inputs.origin != previous.reference_origin.astype(inputs.origin.dtype),
+                axis=-1,
+            )
+            | jnp.any(inputs.periodic != previous.reference_periodic, axis=-1)
+            | jnp.any(inputs.receiver_ids != previous.reference_receiver_ids, axis=-1)
+            | jnp.any(inputs.receiver_valid != previous.reference_receiver_valid, axis=-1)
+        )
+        active_changed = ~_same_active_mask(
+            inputs.active, previous.reference_active_mask, axis=-1
+        )
+        motion_exceeded = ~(terms.spent <= skin)
+        coverage_lost = ~(terms.margin > 0.0)
+        nonfinite = ~terms.finite
+        unrepresentable = ~(terms.representable & terms.reusable)
+        certified = (
+            initialized
+            & ~previous_failed
+            & ~frame_changed
+            & ~active_changed
+            & ~motion_exceeded
+            & ~coverage_lost
+            & ~nonfinite
+            & ~unrepresentable
+        )
+        return (
+            SegmentedImageVerletCertificate(
+                certified,
+                ~initialized,
+                previous_failed,
+                frame_changed,
+                active_changed,
+                motion_exceeded,
+                coverage_lost,
+                nonfinite,
+                unrepresentable,
+                terms.particle_maximum,
+                terms.cell_deformation,
+                terms.margin,
+                terms.spent,
+            ),
+            terms,
+        )
+
+    def certify(
+        self,
+        positions: ArrayLike,
+        previous: SegmentedImageVerletState,
+        /,
+        *,
+        active: ArrayLike,
+        stable_ids: ArrayLike,
+        vectors: ArrayLike,
+        origin: ArrayLike,
+        periodic: ArrayLike,
+        image_counts: ArrayLike | None = None,
+        receivers: ImageReceiverSubset | None = None,
+    ) -> SegmentedImageVerletCertificate:
+        """Return the per-case reuse predicate ``update`` applies, with reasons."""
+        inputs = self._inputs(
+            positions,
+            active,
+            stable_ids,
+            vectors,
+            origin,
+            periodic,
+            image_counts,
+            receivers,
+        )
+        return self._certify(inputs, previous)[0]
+
+    def update(
+        self,
+        positions: ArrayLike,
+        previous: SegmentedImageVerletState,
+        /,
+        *,
+        active: ArrayLike,
+        stable_ids: ArrayLike,
+        vectors: ArrayLike,
+        origin: ArrayLike,
+        periodic: ArrayLike,
+        image_counts: ArrayLike | None = None,
+        receivers: ImageReceiverSubset | None = None,
+        allow_rebuild: ArrayLike | None = None,
+        force_rebuild: ArrayLike | None = None,
+    ) -> SegmentedImageVerletState:
+        """Retain certified cases and rebuild the rest where allowed.
+
+        ``force_rebuild`` requests a rebuild of certified cases too;
+        ``allow_rebuild=False`` retains a case even when its certificate fails,
+        marking it ``stale`` and unsuccessful.
+        """
+        inputs = self._inputs(
+            positions,
+            active,
+            stable_ids,
+            vectors,
+            origin,
+            periodic,
+            image_counts,
+            receivers,
+        )
+        certificate, terms = self._certify(inputs, previous)
+        count = self.case_count
+        allow = (
+            jnp.ones((count,), dtype=jnp.bool_)
+            if allow_rebuild is None
+            else jnp.broadcast_to(jnp.asarray(allow_rebuild, dtype=jnp.bool_), (count,))
+        )
+        force = (
+            jnp.zeros((count,), dtype=jnp.bool_)
+            if force_rebuild is None
+            else jnp.broadcast_to(jnp.asarray(force_rebuild, dtype=jnp.bool_), (count,))
+        )
+        rebuild = allow & (force | ~certificate.certified)
+        stale = ~rebuild & ~certificate.certified
+
+        def fresh() -> ImageRouteSearchResult:
+            return self._search(inputs)
+
+        def retained() -> ImageRouteSearchResult:
+            reference = previous.reference
+            return ImageRouteSearchResult(
+                reference.relation,
+                reference.evidence,
+                reference.wrap_counts,
+                reference.stencil_extents,
+                previous.receiver_rows,
+            )
+
+        result = jax.lax.cond(jnp.any(rebuild), fresh, retained)
+        rebuilt = self._fresh(
+            inputs,
+            result,
+            terms.current_counts,
+            terms.representable,
+            previous.case_epochs + jnp.asarray(1, dtype=jnp.int32),
+            previous.rebuild_counts + jnp.asarray(1, dtype=jnp.int32),
+            jnp.ones((count,), dtype=jnp.bool_),
+            certificate.maximum_displacement,
+            certificate.cell_deformation,
+        )
+        kept = self._retained(previous, certificate, terms, stale)
+        return self._merge(rebuild, rebuilt, kept)
+
+    def _retained(
+        self,
+        previous: SegmentedImageVerletState,
+        certificate: SegmentedImageVerletCertificate,
+        terms: _CaseReuseTerms,
+        stale: Array,
+        /,
+    ) -> SegmentedImageVerletState:
+        """``previous`` epochs re-expressed at the certified geometry, never rebuilt."""
+        skin = jnp.asarray(self.skin, dtype=terms.spent.dtype)
+        return SegmentedImageVerletState(
+            previous.reference,
+            previous.receiver_rows,
+            previous.reference_active_mask,
+            previous.reference_particle_ids,
+            previous.reference_origin,
+            previous.reference_periodic,
+            previous.reference_receiver_ids,
+            previous.reference_receiver_valid,
+            previous.reference_image_counts,
+            terms.delta,
+            previous.initialized,
+            previous.case_epochs,
+            jnp.zeros((self.case_count,), dtype=jnp.bool_),
+            previous.rebuild_counts,
+            stale,
+            certificate.maximum_displacement,
+            certificate.cell_deformation,
+            certificate.coverage_margin,
+            skin - certificate.spent,
+            previous.admissible & terms.finite,
+            self.plan_id,
+        )
+
+    def retain(
+        self,
+        positions: ArrayLike,
+        previous: SegmentedImageVerletState,
+        /,
+        *,
+        active: ArrayLike,
+        stable_ids: ArrayLike,
+        vectors: ArrayLike,
+        origin: ArrayLike,
+        periodic: ArrayLike,
+        image_counts: ArrayLike | None = None,
+        receivers: ImageReceiverSubset | None = None,
+    ) -> SegmentedImageVerletState:
+        """Bind current geometry to the accepted epochs without any search.
+
+        Every case keeps its epoch, route segment and identities; certified
+        cases are re-expressed with exact rewrap offsets and an uncertified
+        case is retained as ``stale`` and unsuccessful.  No search is traced,
+        so this is the frozen-epoch counterpart of ``update`` with rebuilds
+        forbidden.
+        """
+        inputs = self._inputs(
+            positions,
+            active,
+            stable_ids,
+            vectors,
+            origin,
+            periodic,
+            image_counts,
+            receivers,
+        )
+        certificate, terms = self._certify(inputs, previous)
+        return self._retained(
+            previous, certificate, terms, previous.initialized & ~certificate.certified
+        )
+
+    def select_cases(
+        self,
+        accept: ArrayLike,
+        candidate: SegmentedImageVerletState,
+        previous: SegmentedImageVerletState,
+        /,
+    ) -> SegmentedImageVerletState:
+        """Commit ``candidate`` for accepted cases and keep ``previous`` elsewhere."""
+        if (
+            candidate.prepared_verlet_id != self.plan_id
+            or previous.prepared_verlet_id != self.plan_id
+        ):
+            raise ValueError("Segmented Verlet states belong to another plan.")
+        mask = jnp.broadcast_to(jnp.asarray(accept, dtype=jnp.bool_), (self.case_count,))
+        return self._merge(mask, candidate, previous)
+
+    def _merge(
+        self,
+        mask: Array,
+        new: SegmentedImageVerletState,
+        old: SegmentedImageVerletState,
+        /,
+    ) -> SegmentedImageVerletState:
+        routes = jnp.repeat(mask, self.segment_width)
+        particles = jnp.repeat(mask, self.particle_capacity)
+        first, second = new.reference, old.reference
+        reference = ParticleImageNeighborhoodState(
+            _where_leading(routes, first.relation, second.relation),
+            _where_leading(mask, first.evidence, second.evidence),
+            _where_leading(mask, first.cell_vectors, second.cell_vectors),
+            _where_leading(
+                particles, first.reference_positions, second.reference_positions
+            ),
+            _where_leading(particles, first.wrap_counts, second.wrap_counts),
+            _where_leading(mask, first.stencil_extents, second.stencil_extents),
+            second.search_radius,
+            second.prepared_neighborhood_id,
+            second.relation_schema_id,
+        )
+        rows = None
+        if new.receiver_rows is not None and old.receiver_rows is not None:
+            row_mask = jnp.repeat(mask, new.receiver_rows.row_capacity)
+            rows = ImageReceiverRows(
+                _where_leading(
+                    row_mask,
+                    new.receiver_rows.particle_indices,
+                    old.receiver_rows.particle_indices,
+                ),
+                _where_leading(
+                    row_mask, new.receiver_rows.valid, old.receiver_rows.valid
+                ),
+                _where_leading(
+                    routes, new.receiver_rows.route_rows, old.receiver_rows.route_rows
+                ),
+                old.receiver_rows.row_capacity,
+                old.receiver_rows.case_count,
+            )
+
+        def pick(name: str, /) -> Array:
+            return _where_leading(mask, getattr(new, name), getattr(old, name))
+
+        return SegmentedImageVerletState(
+            reference,
+            rows,
+            pick("reference_active_mask"),
+            pick("reference_particle_ids"),
+            pick("reference_origin"),
+            pick("reference_periodic"),
+            pick("reference_receiver_ids"),
+            pick("reference_receiver_valid"),
+            pick("reference_image_counts"),
+            pick("representation_offsets"),
+            pick("initialized"),
+            pick("case_epochs"),
+            pick("rebuilt"),
+            pick("rebuild_counts"),
+            pick("stale"),
+            pick("maximum_reference_displacement"),
+            pick("maximum_cell_deformation"),
+            pick("stencil_margin"),
+            pick("certificate_margin"),
+            pick("admissible"),
+            self.plan_id,
+        )
+
+
 __all__ = [
     "ImageVerletParticleNeighborhoodPlan",
     "ParticleImageVerletState",
     "ParticleVerletState",
     "PreparedImageVerletParticleNeighborhood",
     "PreparedVerletParticleNeighborhood",
+    "SegmentedImageVerletCertificate",
+    "SegmentedImageVerletPlan",
+    "SegmentedImageVerletState",
     "VerletParticleNeighborhoodPlan",
 ]

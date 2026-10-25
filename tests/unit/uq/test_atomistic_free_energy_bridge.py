@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Any
 
 import jax.numpy as jnp
@@ -5,7 +6,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.atomistic.sampling import AtomisticMultistateSegmentResult
+from phydrax import config as pxconfig
+from phydrax.atomistic._dynamics import AtomisticDynamicsState, VelocityVerletPlan
+from tests._support.atomistic_dynamics_fixtures import atomistic_system, prepare_dynamics
+from tests._support.atomistic_sampling_fixtures import nve_table, start, zero_field
 
 
 def test_atomistic_free_energy_bridge_scenario_1() -> None:
@@ -102,62 +106,37 @@ def test_atomistic_free_energy_bridge_scenario_1() -> None:
         [0.0, -1.25],
         atol=1.0e-12,
     )
-    units = phx.atomistic.AtomisticUnitSystem.reduced()
-    reduced = jnp.arange(8.0).reshape((2, 2, 2))
-    sample_shape = (2, 2)
-    result = AtomisticMultistateSegmentResult(
-        # ty: ignore[invalid-argument-type]
-        successor_state=None,
-        reduced_potentials=reduced,
-        coverage=jnp.ones_like(reduced, dtype="bool"),
-        sample_active=jnp.ones(sample_shape, dtype="bool"),
-        origin_state=jnp.asarray([[0, 1], [1, 0]]),
-        state_at_replica=jnp.asarray([[0, 1], [1, 0]]),
-        chain_index=jnp.asarray([[0, 1], [0, 1]]),
-        draw_index=jnp.asarray([[0, 0], [1, 1]]),
-        repeat_index=jnp.zeros(sample_shape, dtype=jnp.int32),
-        dependence_group_index=jnp.zeros(sample_shape, dtype=jnp.int32),
-        pair_indices=jnp.zeros((2, 1, 2), dtype=jnp.int32),
-        exchange_attempted=jnp.zeros((2, 1), dtype="bool"),
-        exchange_accepted=jnp.zeros((2, 1), dtype="bool"),
-        exchange_log_acceptance=jnp.zeros((2, 1)),
-        sams_attempted=jnp.zeros(sample_shape, dtype="bool"),
-        sams_adapting=jnp.zeros(sample_shape, dtype="bool"),
-        sams_changed=jnp.zeros(sample_shape, dtype="bool"),
-        dynamics_accepted=jnp.ones(sample_shape, dtype="bool"),
-        barostat_attempted=jnp.zeros(sample_shape, dtype="bool"),
-        barostat_accepted=jnp.zeros(sample_shape, dtype="bool"),
-        iteration_valid=jnp.ones((2,), dtype="bool"),
-        count=jnp.asarray(2),
-        start_watermark=jnp.asarray(0),
-        stop_watermark=jnp.asarray(2),
-        successful=jnp.asarray(True),
-        units=units,
-        run_id="multistate-run",
-        measure_id="phase-space-measure",
-        state_ids=("state-zero", "state-one"),
-        potential_ids=("potential-zero", "potential-one"),
-        bias_ids=(None, None),
-        inverse_temperatures=jnp.ones((2,)),
-        reduced_convention_id="beta-times-potential-energy",
-        qualification_id="exact-multistate-sampling",
-        sampling_exact=True,
-        sampling_bias_bound=0.0,
-        producer_id="prepared-multistate-runtime",
-        unit_id="1",
-        segment_id="segment",
-        predecessor_id="predecessor",
-        runtime_id="prepared-multistate-runtime",
-    )
-    dataset = phx.uq.reduced_potential_dataset_from_multistate(result)
-    np.testing.assert_array_equal(
-        dataset.values,
-        reduced.transpose((1, 0, 2)).reshape((2, 4)),
-    )
-    np.testing.assert_array_equal(dataset.origin_state, [0, 1, 1, 0])
-    assert dataset.producer_id == result.producer_id
-    assert dataset.bias_ids == result.bias_ids
-    assert dataset.unit_system_id == units.unit_system_id
+    # Equal caller labels cannot stand in for the record's own bias identity.
+    with pytest.raises(ValueError, match="bias_ids"):
+        phx.uq.reduced_work_dataset_from_alchemical_switching(
+            _switching_record(),
+            direction="forward",
+            source_origin_id=11,
+            destination_origin_id=22,
+            state_ids=("source-state", "destination-state"),
+            potential_ids=("source-potential", "destination-potential"),
+            measure_ids=("common-measure", "common-measure"),
+            unit_system_id="reduced-unit-system",
+            unit_id="1",
+            producer_id="switching-producer",
+            run_id="switching-run",
+            schedule_id="switching-schedule",
+            hamiltonian_id="controlled-hamiltonian",
+            thermodynamic_table_id="switching-thermodynamic-table",
+            bias_ids=("frozen-looking-label", "frozen-looking-label"),
+        )
+
+
+@cache
+def _endpoint_states(count: int, /) -> tuple[AtomisticDynamicsState, ...]:
+    """Real accepted endpoint states; the bridge checks their count only."""
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
+        system = atomistic_system([0, 1], [1.0, 1.0])
+        dynamics = prepare_dynamics(system, (zero_field(),), VelocityVerletPlan(1.0e-3))
+        state = start(
+            dynamics, nve_table(dynamics), jnp.asarray([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]])
+        )
+    return (state,) * count
 
 
 def _switching_record() -> Any:
@@ -182,10 +161,8 @@ def _switching_record() -> Any:
         reverse_coverage=jnp.ones((4,), dtype="bool"),
         forward_lineage=forward_lineage,
         reverse_lineage=reverse_lineage,
-        # ty: ignore[invalid-argument-type]
-        forward_final_states=(None,) * 4,
-        # ty: ignore[invalid-argument-type]
-        reverse_final_states=(None,) * 4,
+        forward_final_states=_endpoint_states(4),
+        reverse_final_states=_endpoint_states(4),
         source_state_id="source-state",
         destination_state_id="destination-state",
         source_potential_id="source-potential",
@@ -202,6 +179,8 @@ def _switching_record() -> Any:
         qualification_id="exact-nonequilibrium-endpoint-sampling",
         sampling_exact=True,
         sampling_bias_bound=0.0,
+        bias_ids=(None, None),
+        bias_history_digests=(),
         work_kind="nonequilibrium-switching",
         forward_orientation="source-to-destination",
         reverse_orientation="destination-to-source",

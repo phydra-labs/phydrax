@@ -380,7 +380,7 @@ def cudss_execution_case(
         raise ValueError("only MGMN requires an existing live collective lease")
     selected = _select_device(method, local_device)
     reference = _reference_data(size, rhs_columns, dtype, indefinite, selected)
-    with jax.default_device(selected):
+    with _jax_config.default_device(selected):
         case, preparation_seconds = measure_synchronized(
             lambda: _prepare_case(method, reference, selected, lease),
             synchronizer=lambda prepared: jax.block_until_ready(

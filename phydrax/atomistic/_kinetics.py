@@ -15,6 +15,7 @@ from ..dynamics.identification import AbstractFeatureLibrary, FeatureEvaluation
 from ..typing import checked
 from ._dynamics import PreparedAtomisticDynamics
 from .sampling._collective_variable import AbstractCollectiveVariableProgram
+from .sampling._cv_geometry import CollectiveVariableGeometry
 
 
 class CollectiveVariableFeatureLibrary(AbstractFeatureLibrary):
@@ -67,7 +68,17 @@ class CollectiveVariableFeatureLibrary(AbstractFeatureLibrary):
             raise ValueError(f"states must end in {self.state_layout.shape}.")
         leading = values.shape[:-3]
         positions = values[..., 0, :, :].reshape((-1, self.dynamics.system.capacity, 3))
-        evaluated, successful = jax.vmap(self.variables.evaluate)(positions)
+        cell = self.dynamics.system.cell
+
+        def evaluate(position: jax.Array) -> tuple[jax.Array, jax.Array]:
+            # Trajectory positions carry no image history: point CVs use the
+            # certified minimum image; group CVs refuse rather than guess.
+            result = self.variables.evaluate(
+                CollectiveVariableGeometry(position, cell=cell)
+            )
+            return result.values, result.successful
+
+        evaluated, successful = jax.vmap(evaluate)(positions)
         evaluated = evaluated.reshape(leading + (self.variables.output_size,))
         successful = successful.reshape(leading)
         finite = jnp.all(jnp.isfinite(evaluated), axis=-1)

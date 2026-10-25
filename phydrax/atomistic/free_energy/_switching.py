@@ -98,7 +98,14 @@ class AlchemicalSwitchingLineage(StrictModule, NonTrainableState):
 
 
 class AlchemicalSwitchingRecord(StrictModule, NonTrainableState):
-    """Executed dimensionless work in both physical protocol directions."""
+    """Executed dimensionless work in both physical protocol directions.
+
+    ``bias_ids`` are the endpoint rows' bias identities taken from the
+    thermodynamic table (never caller labels); ``bias_history_digests`` the
+    content digests of every frozen bias history the protocol ran under,
+    authenticated against the rows' declarations on every initial and final
+    state.
+    """
 
     forward_work: Array
     reverse_work: Array
@@ -124,6 +131,8 @@ class AlchemicalSwitchingRecord(StrictModule, NonTrainableState):
     qualification_id: str = eqx.field(static=True)
     sampling_exact: bool = eqx.field(static=True)
     sampling_bias_bound: float = eqx.field(static=True)
+    bias_ids: tuple[str | None, str | None] = eqx.field(static=True)
+    bias_history_digests: tuple[str, ...] = eqx.field(static=True)
     work_kind: str = eqx.field(static=True)
     forward_orientation: str = eqx.field(static=True)
     reverse_orientation: str = eqx.field(static=True)
@@ -174,6 +183,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
                 "Canonical-sampling qualification is bound to another dynamics/table."
             )
         thermodynamic.validate_dynamics(dynamics)
+        dynamics.require_conservative_force_definition("Controlled switching work")
         if not isinstance(dynamics.potential, PreparedControlledHamiltonian):
             raise TypeError("Switching dynamics require a PreparedControlledHamiltonian.")
         hamiltonian = dynamics.potential
@@ -216,9 +226,10 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             )
         if thermodynamic.bias_ids[source] != thermodynamic.bias_ids[destination]:
             raise ValueError("Switching endpoints must share one exact bias identity.")
-        if thermodynamic.bias_ids[source] is not None:
+        if thermodynamic.bias_adaptive[source]:
             raise ValueError(
-                "Biased switching requires an explicitly integrated bias Hamiltonian."
+                "Switching work under an adaptive bias history is not a fixed-"
+                "Hamiltonian protocol; freeze the history first."
             )
         self.dynamics = dynamics
         self.thermodynamic = thermodynamic
@@ -270,7 +281,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
                 temperature=temperature,
                 controls=row,
                 control_ids=self.hamiltonian.control_ids,
-                bias_id=self.thermodynamic.bias_ids[start],
+                bias=self.thermodynamic.bias_rows[start],
                 state_id=f"{self.plan_id}:{direction}:{index}",
             )
             for index, row in enumerate(controls)
@@ -284,27 +295,13 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         state_index: int,
         /,
     ) -> AtomisticDynamicsState:
-        return AtomisticDynamicsState(
-            time=state.time,
-            step_index=state.step_index,
-            kinematics=state.kinematics,
-            species=state.species,
-            cell_vectors=state.cell_vectors,
-            neighborhood=state.neighborhood,
-            neighborhood_cache=state.neighborhood_cache,
-            force=state.force,
-            constraint_lagrange=state.constraint_lagrange,
-            constraint_position_residual=state.constraint_position_residual,
-            constraint_velocity_residual=state.constraint_velocity_residual,
-            thermostat_state=state.thermostat_state,
-            barostat_state=state.barostat_state,
-            random_key=state.random_key,
-            energy=state.energy,
-            last_status=state.last_status,
-            last_rejection_reasons=state.last_rejection_reasons,
-            thermodynamic_state_index=jnp.asarray(state_index, dtype=jnp.int32),
-            thermodynamic_table_id=table.table_id,
-            prepared_dynamics_id=state.prepared_dynamics_id,
+        return eqx.tree_at(
+            lambda value: (
+                value.thermodynamic_state_index,
+                value.thermodynamic_table_identity,
+            ),
+            state,
+            (jnp.asarray(state_index, dtype=jnp.int32), table.table_identity),
         )
 
     def _execute_direction(
@@ -356,7 +353,9 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         for initial in initial_states:
             state = self._bind_state(initial, table, 0)
             work = jnp.zeros((), dtype=state.kinematics.positions.dtype)
-            successful = state.force.successful
+            successful = self.dynamics.force_cache_valid(
+                state, table.state_at_replica(state.thermodynamic_state_index).controls
+            )
             for next_index in range(1, self.integration_steps + 1):
                 previous_state = state
                 previous_external = state.energy.external_work
@@ -382,6 +381,20 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             tuple(final_states),
         )
 
+    def _authenticate_bias_histories(
+        self, states: Sequence[AtomisticDynamicsState], /
+    ) -> tuple[str, ...]:
+        """Digests of the endpoint row's frozen histories, checked on every state."""
+        from ..sampling._bias import authenticate_frozen_bias_histories
+
+        row = self.thermodynamic.bias_rows[self.source_state_index]
+        observed = {
+            authenticate_frozen_bias_histories(row, state.term_states) for state in states
+        }
+        if len(observed) > 1:
+            raise ValueError("Switching states bind different frozen history content.")
+        return next(iter(observed)) if observed else ()
+
     def execute(
         self,
         forward_initial_states: Sequence[AtomisticDynamicsState],
@@ -397,11 +410,24 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         run = str(run_id).strip()
         if not producer or not run:
             raise ValueError("producer_id and run_id must be non-empty.")
+        digests = self._authenticate_bias_histories(
+            (*forward_initial_states, *reverse_initial_states)
+        )
         forward, forward_coverage, forward_states = self._execute_direction(
             tuple(forward_initial_states), forward_lineage, False
         )
         reverse, reverse_coverage, reverse_states = self._execute_direction(
             tuple(reverse_initial_states), reverse_lineage, True
+        )
+        if (
+            self._authenticate_bias_histories((*forward_states, *reverse_states))
+            != digests
+        ):
+            raise RuntimeError("A frozen bias history changed during switching.")
+        sampling_bias_bound = float(np.asarray(self.qualification.sampling_bias_bound))
+        bias_ids = (
+            self.thermodynamic.bias_ids[self.source_state_index],
+            self.thermodynamic.bias_ids[self.destination_state_index],
         )
         payload = {
             "kind": "alchemical-switching-record",
@@ -417,7 +443,9 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             "qualification": self.qualification.qualification_id,
             "sampling_exact": self.qualification.sampling_exact,
             "inverse_temperature": float(self.inverse_temperature).hex(),
-            "sampling_bias_bound": self.qualification.sampling_bias_bound,
+            "sampling_bias_bound": sampling_bias_bound,
+            "bias_ids": list(bias_ids),
+            "bias_history_digests": list(digests),
         }
         successful = bool(
             np.all(np.asarray(forward_coverage)) and np.all(np.asarray(reverse_coverage))
@@ -451,7 +479,9 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             thermodynamic_table_id=self.thermodynamic.table_id,
             qualification_id=self.qualification.qualification_id,
             sampling_exact=self.qualification.sampling_exact,
-            sampling_bias_bound=self.qualification.sampling_bias_bound,
+            sampling_bias_bound=sampling_bias_bound,
+            bias_ids=bias_ids,
+            bias_history_digests=digests,
             work_kind="nonequilibrium-switching",
             forward_orientation="source-to-destination",
             reverse_orientation="destination-to-source",

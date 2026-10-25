@@ -161,12 +161,25 @@ class Bounds(StrictModule):
         tol = float(tolerance)
         if not isfinite(tol) or tol < 0.0:
             raise ValueError("Active-set tolerance must be finite and non-negative.")
+
+        def active(value: Array, grad: Array, lo: Array, hi: Array) -> Array:
+            finite_lower = jnp.isfinite(lo)
+            finite_upper = jnp.isfinite(hi)
+            # An absent bound contributes no activity and must not form inf-inf.
+            safe_lower = jnp.where(finite_lower, lo, jnp.zeros((), dtype=lo.dtype))
+            safe_upper = jnp.where(finite_upper, hi, jnp.zeros((), dtype=hi.dtype))
+            lower_active = finite_lower & (
+                value <= safe_lower + tol * (1.0 + jnp.abs(safe_lower))
+            )
+            upper_active = finite_upper & (
+                value >= safe_upper - tol * (1.0 + jnp.abs(safe_upper))
+            )
+            return (
+                (lower_active & (grad > 0.0)) | (upper_active & (grad < 0.0)) | (lo == hi)
+            )
+
         return jax.tree.map(
-            lambda value, grad, lo, hi: (
-                ((value <= lo + tol * (1.0 + jnp.abs(lo))) & (grad > 0.0))
-                | ((value >= hi - tol * (1.0 + jnp.abs(hi))) & (grad < 0.0))
-                | (lo == hi)
-            ),
+            active,
             parameters,
             gradient,
             lower,

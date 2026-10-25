@@ -14,8 +14,10 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .. import ein
-from ..typing import parse
-from ._execution import _sum_segments, RelationAccumulation
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..typing import AnyShape, Bool, Float, Int32, parse, Scalar
+from ._execution import _sum_segments, RelationAccumulation, RelationExecutionState
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
@@ -50,15 +52,50 @@ def mask_routes(relation: SparseRelation, values: Any, /) -> Any:
     return jtu.tree_map(mask_leaf, values)
 
 
-def _gather_edge_leaf(relation: EdgeRelation, value: Any, /, *, ordered: bool) -> Array:
+def _gather_indexed_leaf(
+    name: str,
+    indices: Array,
+    valid: Array,
+    input_shape: tuple[int, ...],
+    value: Any,
+    /,
+    *,
+    ordered: bool,
+) -> Array:
     array = jnp.asarray(value)
-    payload_shape = _require_prefix("Edge source values", array, relation.input_shape)
-    safe = jnp.where(relation.valid, relation.source_indices, 0)
+    payload_shape = _require_prefix(name, array, input_shape)
+    safe = jnp.where(valid, indices, 0)
     gathered = (
         jax.lax.map(lambda index: array[index], safe)
         if ordered and safe.size
         else array[safe]
     )
+    mask = _expanded_mask(valid, len(payload_shape))
+    return jnp.where(mask, gathered, jnp.zeros((), dtype=gathered.dtype))
+
+
+def _gather_row_events(
+    relation: RowRelation,
+    flattened: Array,
+    events: Array,
+    payload_shape: tuple[int, ...],
+    /,
+    *,
+    ordered: bool,
+) -> Array:
+    """Gather case-local events shaped ``(cases, targets_per_case * width)``."""
+    if ordered and relation.capacity:
+
+        def gather_case(source: Array, indices: Array) -> Array:
+            # Cases are independent; sequence individual target/slot events
+            # within each case, not whole rows with duplicate indices.
+            return jax.lax.map(lambda index: source[index], indices)
+
+        gathered = jax.vmap(gather_case)(flattened, events)
+    else:
+        case_indices = jnp.arange(relation.num_cases, dtype=jnp.int32)[:, None]
+        gathered = flattened[case_indices, events]
+    gathered = gathered.reshape(relation.route_shape + payload_shape)
     valid = _expanded_mask(relation.valid, len(payload_shape))
     return jnp.where(valid, gathered, jnp.zeros((), dtype=gathered.dtype))
 
@@ -66,30 +103,21 @@ def _gather_edge_leaf(relation: EdgeRelation, value: Any, /, *, ordered: bool) -
 def _gather_row_leaf(relation: RowRelation, value: Any, /, *, ordered: bool) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix("Row source values", array, relation.input_shape)
-    cases = relation.num_cases
-    targets = relation.targets_per_case
-    width = relation.width
-    flattened = array.reshape((cases, relation.source_size) + payload_shape)
-    safe = jnp.where(relation.valid, relation.source_indices, 0).reshape(
-        (cases, targets, width)
+    flattened = array.reshape((relation.num_cases, relation.source_size) + payload_shape)
+    events = jnp.where(relation.valid, relation.source_indices, 0).reshape(
+        (relation.num_cases, relation.targets_per_case * relation.width)
     )
-    if ordered and relation.capacity:
+    return _gather_row_events(relation, flattened, events, payload_shape, ordered=ordered)
 
-        def gather_case(source: Array, indices: Array) -> Array:
-            # Cases are independent; sequence individual target/slot events
-            # within each case, not whole rows with duplicate source indices.
-            return jax.lax.map(lambda index: source[index], indices.reshape((-1,)))
 
-        gathered = jax.vmap(gather_case)(flattened, safe).reshape(
-            relation.route_shape + payload_shape
-        )
-    else:
-        case_indices = jnp.arange(cases, dtype=jnp.int32).reshape((cases, 1, 1))
-        gathered = flattened[case_indices, safe].reshape(
-            relation.route_shape + payload_shape
-        )
-    valid = _expanded_mask(relation.valid, len(payload_shape))
-    return jnp.where(valid, gathered, jnp.zeros((), dtype=gathered.dtype))
+def _gather_row_targets(relation: RowRelation, value: Any, /, *, ordered: bool) -> Array:
+    array = jnp.asarray(value)
+    payload_shape = _require_prefix("Row target values", array, relation.output_shape)
+    targets = relation.targets_per_case
+    flattened = array.reshape((relation.num_cases, targets) + payload_shape)
+    rows = jnp.repeat(jnp.arange(targets, dtype=jnp.int32), relation.width)
+    events = jnp.broadcast_to(rows, (relation.num_cases, rows.shape[0]))
+    return _gather_row_events(relation, flattened, events, payload_shape, ordered=ordered)
 
 
 def gather_routes(
@@ -110,7 +138,15 @@ def gather_routes(
     ordered = accumulation != "fast"
     if isinstance(relation, EdgeRelation):
         return jtu.tree_map(
-            lambda value: _gather_edge_leaf(relation, value, ordered=ordered), values
+            lambda value: _gather_indexed_leaf(
+                "Edge source values",
+                relation.source_indices,
+                relation.valid,
+                relation.input_shape,
+                value,
+                ordered=ordered,
+            ),
+            values,
         )
     if isinstance(relation, RowRelation):
         return jtu.tree_map(
@@ -148,6 +184,15 @@ def _finalize_reduction(
     return reduced
 
 
+def _edge_counts(relation: EdgeRelation, /) -> Array:
+    """Exact number of valid routes of every edge-relation target."""
+    return jax.ops.segment_sum(
+        relation.valid.astype(jnp.int32),
+        jnp.where(relation.valid, relation.target_indices, 0),
+        relation.target_size,
+    )
+
+
 def _reduce_edge_leaf(
     relation: EdgeRelation,
     value: Any,
@@ -160,11 +205,7 @@ def _reduce_edge_leaf(
     payload_ndim = len(payload_shape)
     valid = _expanded_mask(relation.valid, payload_ndim)
     safe_target = jnp.where(relation.valid, relation.target_indices, 0)
-    counts = jax.ops.segment_sum(
-        relation.valid.astype(jnp.int32),
-        safe_target,
-        relation.target_size,
-    )
+    counts = _edge_counts(relation)
     if reduction in ("sum", "mean"):
         if accumulation == "fast":
             material = jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
@@ -242,6 +283,9 @@ def route_reduce(
     Ordered sum/mean accumulation follows the existing route storage order
     (within each row for a RowRelation), without sorting or preparing new state.
     The policy controls this forward reduction, not every downstream adjoint.
+    An empty target's sum is an exact zero; its mean, minimum and maximum hold
+    an inert zero fill that is not a statistic. ``route_support`` reports the
+    route counts and the targets whose normalized statistics are defined.
     """
     reduction = parse(reduction, RouteReduction, "reduction")
     accumulation = parse(accumulation, RelationAccumulation, "accumulation")
@@ -548,8 +592,414 @@ def block_linear_adjoint_apply(
     return _block_linear_reverse_apply(relation, coefficients, values, conjugate=True)
 
 
+_ROUTE_OWNER_MESSAGE = (
+    "relation must be an EdgeRelation, RowRelation or RelationExecutionState."
+)
+
+
+class RouteSupport(NonTrainableState, StrictModule):
+    """Valid-route support of every relation target.
+
+    ``counts`` holds the exact number of valid routes of each target.
+    ``successful`` reports whether the executing owner reduced every target: a
+    direct relation always does, while a prepared ``RelationExecutionState``
+    reports its grouping admission. ``available`` marks the targets whose
+    route-normalized statistics are defined, namely nonempty targets of a
+    successful execution. Route means and norms hold an inert zero fill
+    elsewhere; that fill owns no derivative and is not a statistic, so a
+    capacity failure is never mistaken for an empty or zero-valued target.
+    """
+
+    __strict_contract__ = True
+
+    counts: Int32[AnyShape]
+    available: Bool[AnyShape]
+    successful: Bool[Scalar]
+
+    def __init__(
+        self, counts: ArrayLike, available: ArrayLike, successful: ArrayLike
+    ) -> None:
+        counts_array = parse(jnp.asarray(counts), Int32[AnyShape], "counts")
+        available_array = parse(jnp.asarray(available), Bool[AnyShape], "available")
+        successful_array = parse(jnp.asarray(successful), Bool[Scalar], "successful")
+        if available_array.shape != counts_array.shape:
+            raise ValueError("available must have the shape of counts.")
+        self.counts = counts_array
+        self.available = available_array
+        self.successful = successful_array
+
+
+class RouteRootMeanSquare(NonTrainableState, StrictModule):
+    """Root mean square of route payload norms on every relation target.
+
+    ``mean_square`` averages each valid route's squared Euclidean payload norm
+    over the target's valid routes (normalized by route count, not payload
+    entries) and ``value`` is the root mean square. Both hold zero where
+    ``support.available`` is false. ``value`` is evaluated on scaled payloads
+    and stays representable where the unscaled ``mean_square`` underflows or
+    overflows.
+
+    ``mean_square`` is a polynomial of the route values, differentiable to every
+    order everywhere. ``value`` is analytic on ``regular`` targets: available,
+    with a positive finite payload scale. On an available target whose routes
+    are exactly zero, the norm has directional derivatives but no linear
+    derivative, so derivatives of ``value`` there are refused as NaN on that
+    target's own routes, also under a zero seed because a linear derivative
+    cannot depend on its seed. No epsilon is added; request ``mean_square``
+    where derivatives at zero are needed. Unavailable targets are inert.
+    """
+
+    __strict_contract__ = True
+
+    value: Float[AnyShape]
+    mean_square: Float[AnyShape]
+    regular: Bool[AnyShape]
+    support: RouteSupport
+
+    def __init__(
+        self,
+        value: ArrayLike,
+        mean_square: ArrayLike,
+        regular: ArrayLike,
+        support: RouteSupport,
+    ) -> None:
+        value_array = parse(jnp.asarray(value), Float[AnyShape], "value")
+        mean_square_array = parse(
+            jnp.asarray(mean_square), Float[AnyShape], "mean_square"
+        )
+        regular_array = parse(jnp.asarray(regular), Bool[AnyShape], "regular")
+        if not isinstance(support, RouteSupport):
+            raise TypeError("support must be a RouteSupport.")
+        shape = support.counts.shape
+        if (
+            value_array.shape != shape
+            or mean_square_array.shape != shape
+            or regular_array.shape != shape
+        ):
+            raise ValueError(f"Root-mean-square fields must have target shape {shape}.")
+        if value_array.dtype != mean_square_array.dtype:
+            raise TypeError("value and mean_square must have the same dtype.")
+        self.value = value_array
+        self.mean_square = mean_square_array
+        self.regular = regular_array
+        self.support = support
+
+
+def _route_shape(relation: SparseRelation | RelationExecutionState, /) -> tuple[int, ...]:
+    if isinstance(relation, RelationExecutionState):
+        return (relation.route_capacity,)
+    if isinstance(relation, (EdgeRelation, RowRelation)):
+        return relation.route_shape
+    raise TypeError(_ROUTE_OWNER_MESSAGE)
+
+
+def _route_valid(relation: SparseRelation | RelationExecutionState, /) -> Array:
+    if isinstance(relation, RelationExecutionState):
+        return relation.relation.valid
+    return relation.valid
+
+
+def _masked_routes(
+    relation: SparseRelation | RelationExecutionState,
+    name: str,
+    values: ArrayLike,
+    /,
+) -> Array:
+    array = jnp.asarray(values)
+    payload_shape = _require_prefix(name, array, _route_shape(relation))
+    valid = _expanded_mask(_route_valid(relation), len(payload_shape))
+    return jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
+
+
+def _gather_targets(
+    relation: SparseRelation | RelationExecutionState,
+    values: ArrayLike,
+    /,
+    *,
+    ordered: bool,
+) -> Array:
+    """Gather target payloads onto routes, the transpose of route reduction."""
+    if isinstance(relation, RelationExecutionState):
+        array = jnp.asarray(values)
+        payload_shape = _require_prefix("Target values", array, relation.output_shape)
+        edge = relation.relation
+        return _gather_indexed_leaf(
+            "Target values",
+            edge.target_indices,
+            edge.valid,
+            edge.output_shape,
+            array.reshape(edge.output_shape + payload_shape),
+            ordered=ordered,
+        )
+    if isinstance(relation, EdgeRelation):
+        return _gather_indexed_leaf(
+            "Edge target values",
+            relation.target_indices,
+            relation.valid,
+            relation.output_shape,
+            values,
+            ordered=ordered,
+        )
+    if isinstance(relation, RowRelation):
+        return _gather_row_targets(relation, values, ordered=ordered)
+    raise TypeError(_ROUTE_OWNER_MESSAGE)
+
+
+def _segment_reduce(
+    relation: SparseRelation | RelationExecutionState,
+    values: Array,
+    reduction: Literal["sum", "max"],
+    accumulation: RelationAccumulation,
+    /,
+) -> Array:
+    if isinstance(relation, RelationExecutionState):
+        # Reuse the prepared canonical grouping; its admission is reported
+        # through RouteSupport.successful rather than this zero-filled result.
+        reduced, _ = relation.reduce(
+            values, reduction=reduction, accumulation=accumulation, output="dense"
+        )
+        return jnp.asarray(reduced)
+    return route_reduce(relation, values, reduction=reduction, accumulation=accumulation)
+
+
+def route_support(relation: SparseRelation | RelationExecutionState, /) -> RouteSupport:
+    """Return exact valid-route counts and normalized-statistic availability.
+
+    Compute it once per topology and reuse it with ``route_reduce`` or
+    ``RelationExecutionState.reduce`` means, whose unavailable targets hold the
+    same inert zero fill. A prepared execution reports its grouping admission.
+    """
+    if isinstance(relation, RelationExecutionState):
+        counts = _edge_counts(relation.relation).reshape(relation.output_shape)
+        successful = relation.groups.evidence.successful
+    elif isinstance(relation, EdgeRelation):
+        counts = _edge_counts(relation)
+        successful = jnp.asarray(True)
+    elif isinstance(relation, RowRelation):
+        counts = jnp.sum(relation.valid, axis=-1, dtype=jnp.int32)
+        successful = jnp.asarray(True)
+    else:
+        raise TypeError(_ROUTE_OWNER_MESSAGE)
+    return RouteSupport(counts, (counts > 0) & successful, successful)
+
+
+def _route_dot(
+    relation: SparseRelation | RelationExecutionState,
+    left: ArrayLike,
+    right: ArrayLike,
+    accumulation: RelationAccumulation,
+    /,
+) -> Array:
+    route_shape = _route_shape(relation)
+    left_routes = _masked_routes(relation, "Left route values", left)
+    right_routes = _masked_routes(relation, "Right route values", right)
+    if right_routes.shape != left_routes.shape:
+        raise ValueError(
+            f"Right route values must have shape {left_routes.shape}; "
+            f"got {right_routes.shape}."
+        )
+    route_count = prod(route_shape)
+    width = prod(left_routes.shape[len(route_shape) :])
+    if accumulation == "fast":
+        products = ein.contract(
+            "rp,rp->r",
+            left_routes.reshape((route_count, width)),
+            right_routes.reshape((route_count, width)),
+        )
+        return _segment_reduce(
+            relation, products.reshape(route_shape), "sum", accumulation
+        )
+    # Ordered policies reduce each payload component over routes, then fold the
+    # components of every target in C order under the same policy.
+    products = (left_routes * right_routes).reshape(route_shape + (width,))
+    components = _segment_reduce(relation, products, "sum", accumulation)
+    high, correction = _sum_segments(
+        jnp.moveaxis(components, -1, 0),
+        jnp.zeros((width,), dtype=jnp.int32),
+        jnp.ones((width,), dtype=jnp.bool_),
+        1,
+        accumulation=accumulation,
+    )
+    total = high + correction if accumulation == "compensated" else high
+    return total[0]
+
+
+def route_dot(
+    relation: SparseRelation | RelationExecutionState,
+    left: ArrayLike,
+    right: ArrayLike,
+    /,
+    *,
+    accumulation: RelationAccumulation = "fast",
+) -> tuple[Array, RouteSupport]:
+    """Sum bilinear route inner products onto every target.
+
+    ``left`` and ``right`` are route-aligned with identical payload shapes;
+    target ``t`` receives ``sum_{r -> t} sum_payload left[r] * right[r]`` over its
+    valid routes. No complex conjugation is applied; pass ``jnp.conj(left)`` for
+    the Hermitian product. Invalid routes are inert even with nonfinite
+    payloads, and an empty target's sum is an exact zero. ``"fast"`` contracts
+    each route payload densely before reducing; ordered policies reduce each
+    payload component over routes in storage order (stable grouped order for a
+    prepared execution) and fold components in C order under the same policy.
+    A prepared execution takes route-major values shaped
+    ``(route_capacity, *payload)``; its admission is in the returned support.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    return _route_dot(relation, left, right, accumulation), route_support(relation)
+
+
+def route_rms(
+    relation: SparseRelation | RelationExecutionState,
+    values: ArrayLike,
+    /,
+    *,
+    accumulation: RelationAccumulation = "fast",
+) -> RouteRootMeanSquare:
+    """Root mean square of route payload norms with support and regularity.
+
+    Each target's routes are divided by the target's maximum absolute payload
+    component, a gradient-free constant on which the norm is exactly
+    homogeneous, so the root neither underflows nor overflows for tiny or huge
+    payloads and every derivative order equals that of the unscaled norm. The
+    scaled squares, and separately the unscaled squares of ``mean_square``, are
+    summed like ``route_dot`` under ``accumulation``. See
+    ``RouteRootMeanSquare`` for the zero-norm and empty-target contract;
+    nonfinite active payloads yield nonfinite values.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    route_shape = _route_shape(relation)
+    routes = _masked_routes(relation, "Route values", values)
+    if not jnp.issubdtype(routes.dtype, jnp.inexact):
+        raise TypeError("route_rms requires floating or complex route values.")
+    payload_ndim = routes.ndim - len(route_shape)
+    complex_values = jnp.issubdtype(routes.dtype, jnp.complexfloating)
+    observed = jax.lax.stop_gradient(routes)
+    magnitude = (
+        jnp.maximum(jnp.abs(observed.real), jnp.abs(observed.imag))
+        if complex_values
+        else jnp.abs(observed)
+    )
+    real_dtype = magnitude.dtype
+    one = jnp.ones((), dtype=real_dtype)
+    zero = jnp.zeros((), dtype=real_dtype)
+    route_scale = jnp.max(
+        magnitude, axis=tuple(range(len(route_shape), routes.ndim)), initial=zero
+    )
+    scale = _segment_reduce(relation, route_scale, "max", "fast")
+    safe_scale = jnp.where(scale > 0, scale, one)
+    divisor = jnp.where(
+        _route_valid(relation),
+        _gather_targets(relation, safe_scale, ordered=False),
+        one,
+    )
+    scaled = routes / divisor.reshape(route_shape + (1,) * payload_ndim)
+    support = route_support(relation)
+    available = support.available
+    divisors = jnp.maximum(support.counts, 1).astype(real_dtype)
+
+    def mean_of_squares(payload: Array, /) -> Array:
+        squares = _route_dot(
+            relation,
+            payload,
+            jnp.conj(payload) if complex_values else payload,
+            accumulation,
+        )
+        return jnp.real(squares) / divisors
+
+    # Unavailable targets take a unit square-root argument, so their zero fill
+    # owns no derivative; available all-zero targets keep sqrt(0), whose
+    # derivative is the declared refusal.
+    root = safe_scale * jnp.sqrt(jnp.where(available, mean_of_squares(scaled), one))
+    return RouteRootMeanSquare(
+        jnp.where(available, root, zero),
+        jnp.where(available, mean_of_squares(routes), zero),
+        available & (scale > 0) & jnp.isfinite(scale),
+        support,
+    )
+
+
+def route_multiply(
+    relation: SparseRelation | RelationExecutionState,
+    route_values: ArrayLike,
+    target_values: ArrayLike,
+    /,
+    *,
+    accumulation: RelationAccumulation = "fast",
+) -> Array:
+    """Multiply route payloads by their target's payload.
+
+    Returns ``route_values[r] * target_values[target(r)]`` on valid routes and
+    zero on invalid routes. The target payload shape must equal the leading
+    route payload axes and broadcasts over the remaining ones (for example a
+    per-target scalar over route vectors). Ordered policies gather one route
+    event at a time, ordering the target cotangent accumulation.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    route_shape = _route_shape(relation)
+    routes = _masked_routes(relation, "Route values", route_values)
+    factors = _gather_targets(relation, target_values, ordered=accumulation != "fast")
+    payload_shape = routes.shape[len(route_shape) :]
+    factor_shape = factors.shape[len(route_shape) :]
+    if payload_shape[: len(factor_shape)] != factor_shape:
+        raise ValueError(
+            f"Target payload {factor_shape} must equal the leading route payload "
+            f"axes of {payload_shape}."
+        )
+    expanded = factors.reshape(
+        factors.shape + (1,) * (len(payload_shape) - len(factor_shape))
+    )
+    return routes * expanded
+
+
+def route_matvec(
+    relation: SparseRelation | RelationExecutionState,
+    target_matrices: ArrayLike,
+    route_values: ArrayLike,
+    /,
+    *,
+    accumulation: RelationAccumulation = "fast",
+) -> Array:
+    """Apply every target's matrix to its routes' vectors.
+
+    ``target_matrices`` has shape ``(*target_shape, m, n)`` and ``route_values``
+    has shape ``(*route_shape, n, *payload)``. The result, shaped
+    ``(*route_shape, m, *payload)``, is ``matrix[target(r)] @ values[r]`` (column
+    vector convention; swap the matrix axes for row vectors) on valid routes and
+    zero on invalid routes. Ordered policies gather one route event at a time,
+    ordering the matrix cotangent accumulation; each route's product is an
+    ordinary dense contraction.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    route_shape = _route_shape(relation)
+    matrices = jnp.asarray(target_matrices)
+    target_shape = relation.output_shape
+    if (
+        matrices.ndim != len(target_shape) + 2
+        or matrices.shape[: len(target_shape)] != target_shape
+        or min(matrices.shape[-2:]) < 1
+    ):
+        raise ValueError(
+            f"Target matrices must have shape {target_shape} + (m, n) with positive "
+            f"m and n; got {matrices.shape}."
+        )
+    rows, columns = matrices.shape[-2:]
+    vectors = _masked_routes(relation, "Route values", route_values)
+    payload_shape = _require_prefix("Route values", vectors, route_shape + (columns,))
+    gathered = _gather_targets(relation, matrices, ordered=accumulation != "fast")
+    route_count = prod(route_shape)
+    product = ein.contract(
+        "rij,rjp->rip",
+        gathered.reshape((route_count, rows, columns)),
+        vectors.reshape((route_count, columns, prod(payload_shape))),
+    )
+    return product.reshape(route_shape + (rows,) + payload_shape)
+
+
 __all__ = [
     "RouteReduction",
+    "RouteRootMeanSquare",
+    "RouteSupport",
     "block_linear_adjoint_apply",
     "block_linear_apply",
     "block_linear_transpose_apply",
@@ -558,5 +1008,10 @@ __all__ = [
     "linear_apply",
     "linear_transpose_apply",
     "mask_routes",
+    "route_dot",
+    "route_matvec",
+    "route_multiply",
     "route_reduce",
+    "route_rms",
+    "route_support",
 ]

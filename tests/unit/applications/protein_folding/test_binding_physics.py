@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax import atomistic, discretization
+from phydrax import atomistic
 from phydrax.applications.protein_folding import (
     bind_protein,
     PreparedProteinQualification,
@@ -23,6 +23,7 @@ from phydrax.applications.protein_folding.workflows import run_protein_dynamics
 from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM, CUBIC_METER, JOULE, PASCAL, UnitDefinition
+from tests._support.atomistic_bundles import bundle_state, prepare_force_field
 
 
 NANOMETER = UnitDefinition("nm", ANGSTROM.dimension, ANGSTROM.reference_system_id, "1e-9")
@@ -141,14 +142,18 @@ def _fixture() -> Any:
     potential = atomistic.AtomisticPotentialProgram(
         [atomistic.HarmonicBondPotential(np.ones(len(routes)), 0.95 * lengths)]
     )
-    force_field = atomistic.AtomisticForceFieldPlan(
-        system,
-        potential,
-        atomistic.AtomisticNonbondedPolicy(8.0, electrostatics="direct"),
-        atomistic.AtomisticForceFieldProvenance(
-            "synthetic", (digest,), "analytic-harmonic", "explicit-unit-fixture"
-        ),
-    ).prepare()
+    # The harmonic-only Hamiltonian declares no neighborhood requirement: its
+    # explicit bundle is empty.
+    force_field = prepare_force_field(
+        atomistic.AtomisticForceFieldPlan(
+            system,
+            potential,
+            atomistic.AtomisticNonbondedPolicy(8.0, electrostatics="direct"),
+            atomistic.AtomisticForceFieldProvenance(
+                "synthetic", (digest,), "analytic-harmonic", "explicit-unit-fixture"
+            ),
+        )
+    )
     mapping = dict(zip(keys, map(int, ids), strict=True))
     binding = bind_protein(
         hypothesis,
@@ -158,13 +163,10 @@ def _fixture() -> Any:
         parameter_energy_unit=units.scale.energy_unit,
         parameter_rights=(rights,),
     )
-    neighborhood = discretization.DenseParticleNeighborhoodPlan(
-        len(names) * (len(names) - 1) // 2
-    ).prepare(force_field.system.particles)
     qualifier = PreparedProteinQualification(
         binding, bond_bounds=np.tile([0.7, 2.0], (len(routes), 1)), clash_distance=0.5
     )
-    return binding, neighborhood, qualifier, mapping
+    return binding, qualifier, mapping
 
 
 def test_binding_physics_scenario_1() -> None:
@@ -177,7 +179,7 @@ def test_binding_physics_scenario_1() -> None:
         ProteinConstruct(("A", "B"), ("AG", "V")).fingerprint()
         != ProteinConstruct(("B", "A"), ("V", "AG")).fingerprint()
     )
-    binding, neighborhood, _, mapping = _fixture()
+    binding, _, mapping = _fixture()
     h = binding.hypothesis
     order = np.arange(len(h.source_atoms))[::-1]
     reordered = ProteinStructureHypothesis(
@@ -196,13 +198,13 @@ def test_binding_physics_scenario_1() -> None:
         parameter_energy_unit=binding.force_field.system.plan.units.scale.energy_unit,
         parameter_rights=h.rights,
     )
-    neighbors = neighborhood.build(binding.realized_positions)
+    neighbors = bundle_state(binding.force_field.potential, binding.realized_positions)
     a, b = binding.evaluate(neighbors), rebound.evaluate(neighbors)
     np.testing.assert_allclose(a.energy, b.energy, rtol=1e-12)
     np.testing.assert_allclose(a.forces, b.forces, atol=1e-12)
     assert rebound.artifact.artifact_id != h.source.artifact_id
     assert rebound.hypothesis.hypothesis_id != h.hypothesis_id
-    binding, _, _, mapping = _fixture()
+    binding, _, mapping = _fixture()
     h = binding.hypothesis
     incomplete = ProteinStructureHypothesis(
         h.construct,
@@ -232,7 +234,7 @@ def test_binding_physics_scenario_1() -> None:
         )
     with pytest.raises(ValueError, match="Hydrogen inventory"):
         replace(binding.chemistry, hydrogen_counts=(6,))
-    binding, neighborhood, qualifier, _ = _fixture()
+    binding, qualifier, _ = _fixture()
     x = binding.realized_positions
     assert bool(qualifier.evaluate(x).successful)
     reflected = qualifier.evaluate(x * jnp.asarray([-1.0, 1.0, 1.0]))
@@ -241,7 +243,7 @@ def test_binding_physics_scenario_1() -> None:
     assert bool(
         jax.jit(lambda positions: qualifier.evaluate(positions))(rotated).successful
     )
-    neighbors = neighborhood.build(x)
+    neighbors = bundle_state(binding.force_field.potential, x)
     evaluated = jax.jit(lambda positions: binding.evaluate(neighbors, positions))(x)
     gradient = jax.grad(
         lambda positions: binding.force_field.potential.energy(positions, neighbors)[0]
@@ -252,7 +254,7 @@ def test_binding_physics_scenario_1() -> None:
 
 
 def test_short_native_nve_preserves_raw_hypothesis_and_energy() -> None:
-    binding, neighborhood, qualifier, _ = _fixture()
+    binding, qualifier, _ = _fixture()
     original = np.asarray(binding.hypothesis.positions).copy()
     thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
         atomistic.AtomisticPhaseSpaceMeasurePlan(binding.force_field.system),
@@ -260,7 +262,6 @@ def test_short_native_nve_preserves_raw_hypothesis_and_energy() -> None:
     )
     result = run_protein_dynamics(
         binding,
-        neighborhood,
         atomistic.VelocityVerletPlan(0.01),
         qualifier,
         thermodynamic,
@@ -291,7 +292,7 @@ def test_short_native_nve_preserves_raw_hypothesis_and_energy() -> None:
 
 
 def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays() -> None:
-    binding, neighborhood, qualifier, _ = _fixture()
+    binding, qualifier, _ = _fixture()
     integrator = atomistic.BAOABLangevinPlan(0.01, 0.1)
     thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
         atomistic.AtomisticPhaseSpaceMeasurePlan(binding.force_field.system),
@@ -302,7 +303,6 @@ def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays() -> None:
     def run() -> Any:
         return run_protein_dynamics(
             binding,
-            neighborhood,
             integrator,
             qualifier,
             thermodynamic,

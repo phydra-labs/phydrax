@@ -2,43 +2,51 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Frozen fixed-capacity atomistic E/F/S inference through IREE.
+"""Frozen fixed-candidate-epoch atomistic E/F/S inference through IREE.
 
 The exported module evaluates one native learned model whose weights, species,
-and reference candidate relation (route identities, image shifts, masks, and
-the host-prepared route topology of one lifecycle epoch) are immutable
-artifact data. Runtime inputs are only the wrapped positions and, for periodic
-systems, the cell vectors and lattice image counts. The module evaluates the
-frozen routes in their reference frame ``positions + (image_counts -
-reference_image_counts) @ cell``, which is exactly the native lifecycle's
-whole-lattice re-expression, so rewrapped atoms keep the same physical routes.
-Neighbor discovery and cache lifecycles stay on the host: a request from
-another lifecycle epoch, provider, or failed lifecycle is refused before
-execution and requires a new export.
+and accepted neighborhood-bundle epoch (source route identities, reference
+frames and image counts, role views, graph revisions and streamed schedules)
+are immutable artifact data. Runtime inputs are only the wrapped positions
+and, for periodic systems, the current cell vectors and lattice image counts.
+It is a fixed-topology program for varying coordinates and cells, not a
+program restricted to its reference point: every call binds the current
+geometry to the frozen epoch through
+``PreparedAtomisticNeighborhoodBundle.bind``, which certifies stored and
+absent candidates under the current displacement, cell deformation and image
+representation, re-expresses the frozen routes exactly, recomputes the
+physical cutoff masks and certifies that a declared nearest-neighbor
+selection is unchanged. No discovery, rebuild, reselection or route sort is
+traced. The bound state is the exact evaluation point of the native program.
+Geometry outside the frozen epoch (an uncertified motion or cell, or a changed
+selection) is reported by ``status`` and requires a new export; neighbor
+discovery and lifecycles stay on the host, and a request from another epoch,
+provider, or failed lifecycle is refused before execution.
 
 Runtime geometry failures (non-finite coordinates, singular or deformed cells,
-image-certificate or capacity overflow) are reported by the native program's
-traced status, never by host callbacks. Before export the parent traces the
-frozen program under its ordinary raising guards and refuses any host
-callback and any Equinox guard whose predicate depends on a runtime input: an
-input-dependent guard under Equinox's ``nan`` policy would poison floats with
-NaN and integers with their maximum value without a status, so its failure
-would not provably reach ``status``. Every remaining guard depends only on
-frozen artifact data and is proven inactive by the parent's raise-mode
-evaluation of the same program. Tracing then runs in a pinned isolated worker
-interpreter started with ``EQX_ON_ERROR=nan``
+certificate, selection or capacity failures) are reported by the native
+program's traced status, never by host callbacks. Before export the parent
+traces the frozen program under its ordinary raising guards and refuses any
+host callback and any Equinox guard whose predicate depends on a runtime
+input: an input-dependent guard under Equinox's ``nan`` policy would poison
+floats with NaN and integers with their maximum value without a status, so
+its failure would not provably reach ``status``. Every remaining guard
+depends only on frozen artifact data and is proven inactive by the parent's
+raise-mode evaluation of the same program. Tracing then runs in a pinned
+isolated worker interpreter started with ``EQX_ON_ERROR=nan``
 (``failure_policy="equinox-nan-status"``), so those constant guards lower
 without callbacks; the caller's runtime keeps its raising semantics.
 
 The worker imports the parent's own implementation tree, rebuilds the model,
-provider plan, structure, and contract from one pickle-free registered
-archive, and returns the compiled module as bounded file artifacts. The parent
-publishes nothing until the loaded module reproduces its raise-mode
-evaluation's statuses and values at the reference geometry and at declared
-failure probes, and that evaluation matches the native provider. Outputs are
-energy, forces, per-atom energy, optional tensile stress, the status, and the
-frozen route count; failed values cross the wire as zero carriers and the
-loader restores NaN. Loaded executables refuse JAX transformations.
+provider plan (with its constructor-replayed resource plans), structure, and
+contract from one pickle-free registered archive, and returns the compiled
+module as bounded file artifacts. The parent publishes nothing until the
+loaded module reproduces its raise-mode evaluation's statuses and values at
+the reference geometry and at declared failure probes, and that evaluation
+matches the native provider. Outputs are energy, forces, per-atom energy,
+optional tensile stress, the status, and the frozen stored route count;
+failed values cross the wire as zero carriers and the loader restores NaN.
+Loaded executables refuse JAX transformations.
 """
 
 from __future__ import annotations
@@ -85,38 +93,28 @@ from .._model._structure import model_from_array_recipe, pack_model_array_tree
 from .._publication import publish_resource_set
 from .._resource_set import ResourceSetLimits
 from ..atomistic._born_oppenheimer import (
+    _native_evaluation,
     NativeAtomisticProvider,
     NativeAtomisticProviderPlan,
     NativeAtomisticRequest,
 )
-from ..atomistic._graph import (
-    AtomisticGraphExecutionPlan,
-    particle_atomistic_graph_topology,
-)
+from ..atomistic._cell_dynamics import bind_atomistic_bundle_geometry
+from ..atomistic._graph import AtomisticGraphExecutionPlan
 from ..atomistic._model_artifact import (
     ATOMISTIC_MODEL_ARTIFACT_LIMITS,
     model_artifact_from_section,
     model_artifact_section,
 )
+from ..atomistic._neighborhood_bundle import (
+    AtomisticCompletePairState,
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticNeighborhoodBundleState,
+)
 from ..atomistic._system import AtomisticSystemPlan
 from ..atomistic._types import AtomicStructure, AtomisticStatus
 from ..atomistic._units import AtomisticUnitSystem
-from ..discretization._core import DiscretizationKey, DiscretizationRole
 from ..discretization._periodic_cell import lattice_right_inverse_with_status
-from ..discretization.particle._image_neighborhood import (
-    ParticleImageCapacity,
-    ParticleImageNeighborhoodState,
-)
-from ..discretization.particle._neighborhood import (
-    DenseParticleNeighborhoodPlan,
-    ParticleNeighborhoodState,
-)
-from ..discretization.particle._verlet import (
-    ParticleImageVerletState,
-    ParticleVerletState,
-    PreparedImageVerletParticleNeighborhood,
-    PreparedVerletParticleNeighborhood,
-)
+from ..discretization.particle._image_neighborhood import ParticleImageCapacity
 from ..sparse._streamed import StreamedRelationPlan
 from ..typing import parse
 from ._iree import (
@@ -151,7 +149,7 @@ _REQUEST_FIELDS = frozenset(
     }
 )
 _PROVIDER_FIELDS = frozenset(
-    {"deformation_margin", "finite_neighborhood", "graph_execution", "plan_id", "skin"}
+    {"finite_resources", "graph_execution", "name", "periodic_resources", "plan_id"}
 )
 _STRUCTURE_FIELDS = frozenset(
     {
@@ -215,17 +213,12 @@ _WORKER_BOOTSTRAP = (
     f"runpy.run_module({_WORKER_MODULE!r}, run_name='__main__', alter_sys=True)\n"
 )
 
-# Provider and neighborhood plan types persisted by export requests, registered
-# here by their first artifact consumer.
+# Graph execution plan types persisted by export requests, registered here by
+# their first artifact consumer.  Resource plans use their own canonical
+# constructor-replayed recipe (``AtomisticNeighborhoodBundlePlan.to_dict``).
 for _artifact_id, _artifact_type in (
     ("phydrax.atomistic:AtomisticGraphExecutionPlan", AtomisticGraphExecutionPlan),
     ("phydrax.discretization:ParticleImageCapacity", ParticleImageCapacity),
-    (
-        "phydrax.discretization:DenseParticleNeighborhoodPlan",
-        DenseParticleNeighborhoodPlan,
-    ),
-    ("phydrax.discretization:DiscretizationKey", DiscretizationKey),
-    ("phydrax.discretization:DiscretizationRole", DiscretizationRole),
 ):
     register_artifact_value(_artifact_id, _artifact_type)
 del _artifact_id, _artifact_type
@@ -237,13 +230,13 @@ class AtomisticExportRefusal(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class AtomisticIREEContract:
-    """Fixed E/F/S ABI of one frozen native program and candidate graph.
+    """Fixed E/F/S ABI of one frozen native program and candidate epoch.
 
     ``route`` names the executed realization: ``"native-jax"`` is the ordinary
     JAX program lowered by ``jax.export``; accelerated kernels are not
     exportable and are never silently substituted. ``failure_policy`` names
     the declared trace-time guard semantics. Species, units, periodicity,
-    capacities, the frozen graph epoch (``graph_id``), and the ordered input
+    capacities, the frozen bundle epoch (``graph_id``), and the ordered input
     and output shapes and dtypes are bound to the identity.
     """
 
@@ -333,24 +326,26 @@ class AtomisticIREEContract:
         return contract
 
     def pack_inputs(self, request: NativeAtomisticRequest, /) -> tuple[Array, ...]:
-        """Order one host request as inputs, refusing any other frozen graph.
+        """Order one host request as inputs, refusing any other frozen epoch.
 
-        The request's lifecycle must be the frozen epoch of this export and
-        must have succeeded; runtime geometry is checked only by the module.
+        The request's bundle state must hold the frozen epoch of this export
+        and must have succeeded on the host; the module itself binds and
+        certifies the runtime geometry.
         """
 
-        frozen = _frozen_graph(request)
-        if frozen.graph_id != self.graph_id:
+        if _frozen_epoch(request.neighborhoods) != self.graph_id:
             raise ValueError(
-                "Request candidate graph differs from the graph frozen in the export; "
-                "a rebuilt or other lifecycle epoch requires a new export."
+                "Request neighborhood epoch differs from the epoch frozen in the "
+                "export; a rebuilt, reselected or other epoch requires a new export."
             )
-        if not bool(np.asarray(request.neighborhood.successful)):
-            raise ValueError("Request candidate lifecycle failed on the host.")
+        if not bool(np.asarray(request.neighborhoods.successful)[0]):
+            raise ValueError("Request neighborhood lifecycle failed on the host.")
         values: tuple[Array, ...] = (request.positions,)
         if self.periodic:
-            if request.cell_vectors is None:
-                raise ValueError("Periodic atomistic export requires cell vectors.")
+            if request.cell_vectors is None or request.image_counts is None:
+                raise ValueError(
+                    "Periodic atomistic export requires cell vectors and image counts."
+                )
             values = (*values, request.cell_vectors, request.image_counts)
         elif request.cell_vectors is not None:
             raise ValueError("Aperiodic atomistic export accepts no cell vectors.")
@@ -435,15 +430,6 @@ def _contract(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _FrozenGraph:
-    """Reference relation of one lifecycle epoch and its content identity."""
-
-    graph: ParticleImageNeighborhoodState | ParticleNeighborhoodState
-    reference_image_counts: Array | None
-    graph_id: str
-
-
 def _array_identity(value: Any, /) -> dict[str, Any]:
     arrays, static = eqx.partition(value, eqx.is_array)
     return {
@@ -455,31 +441,56 @@ def _array_identity(value: Any, /) -> dict[str, Any]:
     }
 
 
-def _frozen_graph(request: NativeAtomisticRequest, /) -> _FrozenGraph:
-    """Return the epoch's reference relation that the module freezes."""
+def _frozen_epoch(state: AtomisticNeighborhoodBundleState, /) -> str:
+    """Content identity of the accepted epoch a module freezes.
 
-    state = request.neighborhood
-    if isinstance(state, ParticleImageVerletState):
-        graph: ParticleImageNeighborhoodState | ParticleNeighborhoodState = (
-            state.reference
+    Covers every source's reference frame, routes and epochs, every role
+    view's route endpoints and validity, and the role graph revisions; it is
+    independent of the current geometry and image representation, so a
+    retained epoch re-expressed at a later geometry keeps its identity.
+    """
+
+    if not isinstance(state, AtomisticNeighborhoodBundleState):
+        raise TypeError("Frozen export requires an atomistic neighborhood bundle state.")
+    sources: list[Any] = []
+    for source in state.sources:
+        if isinstance(source, AtomisticCompletePairState):
+            sources.append(
+                (source.reference_active, source.initialized, source.case_epochs)
+            )
+            continue
+        sources.append(
+            (
+                source.reference,
+                source.receiver_rows,
+                source.reference_active_mask,
+                source.reference_particle_ids,
+                source.reference_origin,
+                source.reference_periodic,
+                source.reference_receiver_ids,
+                source.reference_receiver_valid,
+                source.reference_image_counts,
+                source.initialized,
+                source.case_epochs,
+            )
         )
-        counts: Array | None = state.reference_image_counts
-    elif isinstance(state, ParticleVerletState):
-        graph, counts = state.neighborhood, None
-    else:
-        raise TypeError("Frozen export requires a native Verlet lifecycle state.")
-    identity = canonical_fingerprint(
+    topology = [
+        (
+            view.relation.source_indices,
+            view.relation.receiver_indices,
+            view.relation.valid,
+        )
+        for view in state.views
+    ]
+    return canonical_fingerprint(
         {
-            "kind": "atomistic-export-graph",
-            "lifecycle": state.prepared_verlet_id,
-            "epoch": int(np.asarray(state.epoch)),
-            "graph": _array_identity(graph),
-            "reference_image_counts": (
-                None if counts is None else array_tree_fingerprint(np.asarray(counts))
-            ),
+            "kind": "atomistic-export-epoch",
+            "bundle": state.bundle_id,
+            "sources": _array_identity(tuple(sources)),
+            "topology": _array_identity(topology),
+            "graph_epochs": np.asarray(state.graph_epochs).tolist(),
         }
     )
-    return _FrozenGraph(graph, counts, identity)
 
 
 def prepare_atomistic_iree_contract(
@@ -489,9 +500,10 @@ def prepare_atomistic_iree_contract(
     *,
     route: AtomisticExportRoute = "native-jax",
 ) -> AtomisticIREEContract:
-    """Prepare the fixed ABI for one provider and frozen candidate epoch.
+    """Prepare the fixed ABI for one provider and frozen bundle epoch.
 
-    The output shapes and dtypes are those of the frozen program over the
+    ``request.neighborhoods`` is the accepted epoch the module freezes. The
+    output shapes and dtypes are those of the frozen program over the
     request's own inputs.
     """
 
@@ -503,11 +515,13 @@ def prepare_atomistic_iree_contract(
     arrays: list[Array] = [request.positions]
     names = ["positions"]
     if periodic:
-        if request.cell_vectors is None:
-            raise ValueError("Periodic atomistic export requires cell vectors.")
+        if request.cell_vectors is None or request.image_counts is None:
+            raise ValueError(
+                "Periodic atomistic export requires cell vectors and image counts."
+            )
         arrays += [request.cell_vectors, request.image_counts]
         names += ["cell_vectors", "image_counts"]
-    graph_id = _frozen_graph(request).graph_id
+    graph_id = _frozen_epoch(request.neighborhoods)
     stress = provider.stress_available
     outputs = jax.eval_shape(
         _frozen_evaluation(provider, request, graph_id, periodic, stress), *arrays
@@ -536,7 +550,7 @@ def _exported_evaluation(
     contract: AtomisticIREEContract,
     /,
 ) -> Callable[..., tuple[Array, ...]]:
-    """Frozen-graph E/F/S program of ``contract`` over the runtime geometry inputs."""
+    """Frozen-epoch E/F/S program of ``contract`` over the runtime geometry inputs."""
 
     return _frozen_evaluation(
         provider, request, contract.graph_id, contract.periodic, contract.stress
@@ -551,92 +565,53 @@ def _frozen_evaluation(
     stress: bool,
     /,
 ) -> Callable[..., tuple[Array, ...]]:
-    """Frozen-graph E/F/S program over the runtime geometry inputs."""
+    """Frozen-epoch E/F/S program over the runtime geometry inputs.
 
-    frozen = _frozen_graph(request)
-    if frozen.graph_id != graph_id:
-        raise ValueError("Request candidate graph differs from the contract.")
-    graph = frozen.graph
-    reference_counts = frozen.reference_image_counts
+    Each call binds the runtime geometry to the frozen bundle epoch without
+    any discovery, rebuild, reselection or sort, and evaluates the native
+    program at exactly that bound point.
+    """
+
+    frozen = request.neighborhoods
+    if _frozen_epoch(frozen) != graph_id:
+        raise ValueError("Request neighborhood epoch differs from the contract.")
+    if not bool(np.asarray(frozen.successful)[0]):
+        raise ValueError("The frozen neighborhood epoch did not succeed on the host.")
     program = provider.program
-    execution = program.graph_execution
-    # The route topology and streamed schedule are prepared once on the host
-    # from the frozen relation, so the executable never re-sorts its routes.
-    topology = (
-        {}
-        if execution is None or not program.plan.requirements.directed_graph
-        else {
-            "topology": particle_atomistic_graph_topology(
-                program.system,
-                graph,
-                cell=program.system.cell,
-                streamed=execution.streamed,
-            )
-        }
+    bundle = program.neighborhood_bundle
+    system = program.system
+    stored_routes = int(
+        sum(int(np.sum(np.asarray(view.evidence.stored_routes))) for view in frozen.views)
     )
-    if isinstance(graph, ParticleImageNeighborhoodState):
-        stored_routes = int(np.sum(np.asarray(graph.evidence.stored_edges)))
-    else:
-        stored_routes = int(np.sum(np.asarray(graph.pair_count)))
 
-    lifecycle = provider.neighborhood
-    frozen_state = request.neighborhood
-    image_lifecycle = isinstance(
-        lifecycle, PreparedImageVerletParticleNeighborhood
-    ) and isinstance(frozen_state, ParticleImageVerletState)
-    if not image_lifecycle and not (
-        isinstance(lifecycle, PreparedVerletParticleNeighborhood)
-        and isinstance(frozen_state, ParticleVerletState)
-    ):
-        raise TypeError("Frozen export requires a native Verlet lifecycle and its state.")
-
-    def certifies(inputs: Sequence[Array]) -> Array:
-        """The lifecycle's own reuse certificate of the frozen epoch."""
-
-        lattice = (
-            {"cell_vectors": inputs[1], "image_counts": inputs[2]} if periodic else {}
-        )
-        if isinstance(lifecycle, PreparedImageVerletParticleNeighborhood) and isinstance(
-            frozen_state, ParticleImageVerletState
-        ):
-            return lifecycle.certifies(inputs[0], frozen_state, **lattice)
-        if isinstance(lifecycle, PreparedVerletParticleNeighborhood) and isinstance(
-            frozen_state, ParticleVerletState
-        ):
-            lattice.pop("image_counts", None)
-            return lifecycle.certifies(inputs[0], frozen_state, **lattice)
-        raise TypeError("Frozen export requires a native Verlet lifecycle and its state.")
-
-    def certified_and_valid(inputs: Sequence[Array]) -> tuple[Array, Array]:
-        """Lifecycle reuse certificate of the frozen epoch, and geometry validity."""
-
-        valid = jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(item)) for item in inputs)))
-        if periodic:
-            _, solved = lattice_right_inverse_with_status(inputs[1])
-            valid = valid & solved
-        return certifies(inputs), valid
-
-    def evaluate(inputs: Sequence[Array]) -> tuple[tuple[Array, ...], Array, Array]:
+    def bound(inputs: Sequence[Array]) -> NativeAtomisticRequest:
         positions = inputs[0]
-        context: dict[str, Array] = {}
-        if periodic:
-            if reference_counts is None:
-                raise RuntimeError("Internal invariant failed: periodic counts absent.")
-            cell_vectors, image_counts = inputs[1], inputs[2]
-            dtype = positions.dtype
-            context = {
-                "cell_vectors": cell_vectors,
-                "unwrapped_positions": positions
-                + image_counts.astype(dtype) @ cell_vectors,
-            }
-            # Whole-lattice re-expression of the current representation in the
-            # frozen routes' reference frame.
-            positions = (
-                positions + (image_counts - reference_counts).astype(dtype) @ cell_vectors
+        if not periodic:
+            geometry = bind_atomistic_bundle_geometry(bundle, system, positions)
+            return NativeAtomisticRequest(
+                positions, positions, None, None, bundle.bind(frozen, geometry)
             )
-        value = program.evaluate(
-            positions, graph, compute_stress=stress, **topology, **context
+        cell_vectors, image_counts = inputs[1], inputs[2]
+        geometry = bind_atomistic_bundle_geometry(
+            bundle,
+            system,
+            positions,
+            cell_vectors=cell_vectors,
+            image_counts=image_counts,
         )
+        unwrapped = positions + image_counts.astype(positions.dtype) @ cell_vectors
+        return NativeAtomisticRequest(
+            positions,
+            unwrapped,
+            cell_vectors,
+            image_counts,
+            bundle.bind(frozen, geometry),
+        )
+
+    def evaluate(
+        current: NativeAtomisticRequest,
+    ) -> tuple[tuple[Array, ...], Array, Array]:
+        value = _native_evaluation(provider, current).program
         carriers = [value.energy, value.forces, value.atom_energy]
         if stress:
             if value.stress is None:
@@ -647,16 +622,23 @@ def _frozen_evaluation(
     def forward(*inputs: Array, key: Array | None = None) -> tuple[Array, ...]:
         if key is not None:
             raise ValueError("Atomistic IREE export requires key=None.")
-        certified, valid = certified_and_valid(inputs)
-        shapes = jax.eval_shape(evaluate, inputs)
+        valid = jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(item)) for item in inputs)))
+        if periodic:
+            _, solved = lattice_right_inverse_with_status(inputs[1])
+            valid = valid & solved
+        current = bound(inputs)
+        certified = current.neighborhoods.successful[0]
+        shapes = jax.eval_shape(evaluate, current)
 
-        def refused(_: Sequence[Array]) -> tuple[tuple[Array, ...], Array, Array]:
-            # The frozen relation does not cover this geometry: no graph runs.
+        def refused(
+            _: NativeAtomisticRequest,
+        ) -> tuple[tuple[Array, ...], Array, Array]:
+            # The frozen epoch does not cover this geometry: no graph runs.
             zeros = tuple(jnp.zeros(item.shape, item.dtype) for item in shapes[0])
             return zeros, jnp.asarray(False), jnp.asarray(False)
 
         carriers, successful, overflow = jax.lax.cond(
-            certified & valid, evaluate, refused, inputs
+            certified & valid, evaluate, refused, current
         )
         accepted = (
             certified
@@ -890,9 +872,15 @@ def _native_provider(
     units: AtomisticUnitSystem,
     /,
 ) -> tuple[NativeAtomisticProvider, NativeAtomisticRequest]:
+    """Deterministic provider and accepted epoch of the reference geometry.
+
+    Capacity-only failures replay on the recipe's declared ladders, so the
+    parent and the worker reproduce the same resource levels and epoch.
+    """
+
     system = AtomisticSystemPlan.from_structure(structure, units).prepare()
-    provider = plan.prepare(system)
-    return provider, provider.prepare_request(structure.positions, None, None)
+    recovery = plan.prepare(system).evaluate_recovering(structure.positions, None, None)
+    return recovery.provider, recovery.evaluation.request
 
 
 def _plan_recipe(value: Any, prefix: str, /) -> dict[str, Any]:
@@ -909,6 +897,12 @@ def _replayed_execution(
 
     streamed = value.streamed
     capacity = value.image_capacity
+    # The static float64 envelope rows replay losslessly as one host array.
+    search_cell = (
+        None
+        if value.search_cell is None
+        else np.asarray(value.search_cell, dtype=np.float64)
+    )
     return AtomisticGraphExecutionPlan(
         value.maximum_neighbors,
         backend=value.backend,
@@ -921,6 +915,7 @@ def _replayed_execution(
                 maximum_edges=capacity.maximum_edges,
                 maximum_degree=capacity.maximum_degree,
                 maximum_images=capacity.maximum_images,
+                maximum_case_edges=capacity.maximum_case_edges,
             )
         ),
         streamed=StreamedRelationPlan(
@@ -933,20 +928,9 @@ def _replayed_execution(
             transpose=streamed.transpose,
         ),
         maximum_candidate_slots=value.maximum_candidate_slots,
+        search_cell=search_cell,
+        search_margin=value.search_margin,
         plan_id=value.plan_id,
-    )
-
-
-def _replayed_finite(value: Any, /) -> DenseParticleNeighborhoodPlan:
-    """Reconstruct the admitted finite neighborhood through its constructor."""
-
-    if type(value) is not DenseParticleNeighborhoodPlan or value.box is not None:
-        raise AtomisticExportRefusal(
-            "Frozen export persists a box-free DenseParticleNeighborhoodPlan finite "
-            "neighborhood; other finite neighborhood plans have no registered recipe."
-        )
-    return DenseParticleNeighborhoodPlan(
-        value.maximum_pairs, name=value.key.name, plan_id=value.plan_id
     )
 
 
@@ -972,20 +956,34 @@ def _restored_plan_part(
 
 
 def _provider_recipe(plan: NativeAtomisticProviderPlan, /) -> dict[str, Any]:
-    """Exact registered recipe of every provider member except the model."""
+    """Exact recipe of every provider member except the model."""
 
-    _replayed_finite(plan.finite_neighborhood)
     recipe = {
         "graph_execution": _plan_recipe(plan.graph_execution, "graph_execution"),
-        "finite_neighborhood": _plan_recipe(
-            plan.finite_neighborhood, "finite_neighborhood"
-        ),
-        "skin": plan.skin,
-        "deformation_margin": plan.deformation_margin,
+        "finite_resources": None
+        if plan.finite_resources is None
+        else plan.finite_resources.to_dict(),
+        "periodic_resources": None
+        if plan.periodic_resources is None
+        else plan.periodic_resources.to_dict(),
+        "name": plan.name,
         "plan_id": plan.plan_id,
     }
     _restored_provider_plan(recipe, plan.model)
     return recipe
+
+
+def _restored_resources(
+    recipe: Any, label: str, /
+) -> AtomisticNeighborhoodBundlePlan | None:
+    if recipe is None:
+        return None
+    if not isinstance(recipe, Mapping):
+        raise AtomisticExportRefusal(f"{label} recipe is not a mapping.")
+    try:
+        return AtomisticNeighborhoodBundlePlan.from_dict(recipe)
+    except (KeyError, TypeError, ValueError) as error:
+        raise AtomisticExportRefusal(f"{label} recipe is invalid: {error}") from error
 
 
 def _restored_provider_plan(
@@ -999,19 +997,20 @@ def _restored_provider_plan(
         AtomisticGraphExecutionPlan,
         _replayed_execution,
     )
-    finite = _restored_plan_part(
-        recipe["finite_neighborhood"],
-        "finite_neighborhood",
-        DenseParticleNeighborhoodPlan,
-        _replayed_finite,
-    )
-    plan = NativeAtomisticProviderPlan(
-        model,
-        execution,
-        finite_neighborhood=finite,
-        skin=float(recipe["skin"]),
-        deformation_margin=float(recipe["deformation_margin"]),
-    )
+    finite = _restored_resources(recipe["finite_resources"], "finite_resources")
+    periodic = _restored_resources(recipe["periodic_resources"], "periodic_resources")
+    try:
+        plan = NativeAtomisticProviderPlan(
+            model,
+            execution,
+            finite_resources=finite,
+            periodic_resources=periodic,
+            name=str(recipe["name"]),
+        )
+    except (TypeError, ValueError) as error:
+        raise AtomisticExportRefusal(
+            f"Native provider recipe is invalid: {error}"
+        ) from error
     if plan.plan_id != recipe["plan_id"]:
         raise AtomisticExportRefusal(
             "Native provider plan is not reproduced by its recipe."
@@ -1299,12 +1298,27 @@ def _publish_bundle(path: Path, staged: _StagedModule, mode: Any, /) -> None:
 
 
 def _failure_probes(
-    contract: AtomisticIREEContract, inputs: tuple[Array, ...], /
+    contract: AtomisticIREEContract,
+    inputs: tuple[Array, ...],
+    motion: float | None,
+    /,
 ) -> tuple[tuple[str, tuple[Array, ...]], ...]:
-    """Declared invalid runtime geometries each module must report by status."""
+    """Declared invalid or out-of-epoch runtime geometries reported by status.
+
+    ``motion`` (the largest frozen image-source search radius, ``None``
+    without image sources) displaces one atom far beyond every skin, so the
+    frozen epoch cannot certify it and the module must refuse it by status.
+    """
 
     positions = inputs[0]
     probes = [("nonfinite-coordinates", (positions.at[0, 0].set(jnp.nan), *inputs[1:]))]
+    if motion is not None:
+        probes.append(
+            (
+                "uncertified-displacement",
+                (positions.at[0, 0].add(motion), *inputs[1:]),
+            )
+        )
     if contract.periodic:
         probes.append(
             ("singular-cell", (positions, jnp.zeros_like(inputs[1]), inputs[2]))
@@ -1365,7 +1379,8 @@ def save_atomistic_iree(
 ) -> AtomisticIREEExportBundle:
     """Compile one frozen E/F/S ABI in an isolated worker and verify parity.
 
-    ``structure`` is the reference geometry whose lifecycle epoch is frozen.
+    ``structure`` is the reference geometry whose accepted bundle epoch is
+    frozen; the module serves every geometry and cell that epoch certifies.
     The parent prepares the provider and contract with ordinary raising
     guards, requires a successful native evaluation, proves every runtime
     failure is a traced status, refuses host-runtime custom calls (such as
@@ -1411,9 +1426,11 @@ def save_atomistic_iree(
         rtol,
         atol,
     )
+    radii = [radius for radius in provider.bundle.plan.search_radii if radius is not None]
+    motion = None if not radii else 2.0 * max(radii)
     probes = tuple(
         (label, values, _decoded(contract, program(*values)))
-        for label, values in _failure_probes(contract, inputs)
+        for label, values in _failure_probes(contract, inputs, motion)
     )
     if any(expected.successful for _, _, expected in probes):
         raise RuntimeError("A declared failure probe evaluated successfully.")
@@ -1450,7 +1467,7 @@ class AtomisticIREEEvaluation:
     """Host E/F/S result of a frozen executable in the contract's units.
 
     Values are NaN unless ``status`` is ``AtomisticStatus.SUCCESS``.
-    ``active_routes`` counts the stored candidate routes of the frozen graph.
+    ``active_routes`` counts the stored routes of the frozen epoch's role views.
     """
 
     energy: np.ndarray
@@ -1502,10 +1519,11 @@ class LoadedAtomisticIREE:
         return self.evaluate_inputs(self.contract.pack_inputs(request))
 
     def evaluate_inputs(self, inputs: Sequence[Any], /) -> AtomisticIREEEvaluation:
-        """Evaluate raw ABI inputs of the frozen lifecycle epoch.
+        """Evaluate raw ABI inputs at any geometry and cell.
 
-        The caller asserts the inputs belong to the frozen epoch; prefer
-        calling with a lifecycle request, which checks it.
+        The module binds the inputs to its frozen epoch and reports a geometry
+        the epoch cannot certify (or a changed declared selection) by status;
+        positions must be wrapped consistently with ``image_counts``.
         """
 
         _require_execution(self.capabilities, *inputs)

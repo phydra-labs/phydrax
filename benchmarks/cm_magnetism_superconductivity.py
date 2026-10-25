@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,9 +15,9 @@ from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphLayout,
     AtomisticSystemPlan,
     AtomisticUnitSystem,
-    realize_atomistic_graph,
 )
 from phydrax.atomistic._spin import (
     ClassicalSpinHamiltonianPlan,
@@ -92,10 +91,15 @@ def _classical_case(site_count: int) -> Any:
         units.scale,
         particle_ids=np.arange(site_count),
     )
-    graph = realize_atomistic_graph(
-        AtomisticBatch.from_structure(structure),
-        AtomisticGraphExecutionPlan(2, maximum_dense_atoms=site_count),
-        cutoff=1.01,
+    batch = AtomisticBatch.from_structure(structure)
+    graph = (
+        AtomisticGraphLayout.for_batch(
+            batch,
+            AtomisticGraphExecutionPlan(2, maximum_dense_atoms=site_count),
+            cutoff=1.01,
+        )
+        .prepare(batch)
+        .graph(cutoff=1.01)
     )
     plan = ClassicalSpinHamiltonianPlan(
         system,

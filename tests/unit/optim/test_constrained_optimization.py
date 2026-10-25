@@ -9,6 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -410,3 +411,115 @@ def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters() -> None:
         np.testing.assert_allclose(mapped, targets, atol=2e-6)
         np.testing.assert_allclose(value, 0.75, atol=2e-6)
         np.testing.assert_allclose(derivative, 0.2, atol=2e-6)
+
+
+def test_projected_lbfgs_admits_an_unbounded_domain_without_a_finite_box() -> None:
+    def quadratic(x: jax.Array, _: None) -> jax.Array:
+        return (1.0 - x[0]) ** 2 + 100.0 * (1.0 - x[1]) ** 2
+
+    result = phx.optim.minimize(
+        quadratic,
+        jnp.array([-1.2, 1.0], dtype=jnp.float64),
+        method=phx.optim.ProjectedLBFGS(),
+        bounds=phx.optim.Bounds(),
+        termination=_termination(steps=500, tolerance=1e-8),
+    )
+
+    assert result.status == phx.optim.OptimizationStatus.SUCCESS
+    np.testing.assert_allclose(result.parameters, jnp.array([1.0, 1.0]), atol=1e-6)
+    assert result.diagnostics.primal_feasibility == 0.0
+    assert result.diagnostics.complementarity == 0.0
+    assert int(result.diagnostics.active_constraints) == 0
+    assert result.certificate is not None
+    assert result.certificate.inequality_multipliers.size == 0
+    assert result.certificate.equality_multipliers.size == 0
+
+
+@pytest.mark.strict_jax
+def test_bound_activity_handles_absent_and_fixed_constraints_without_nan() -> None:
+    bounds = phx.optim.Bounds(
+        jnp.asarray([-jnp.inf, 0.0, 1.0, -jnp.inf], dtype=jnp.float64),
+        jnp.asarray([jnp.inf, jnp.inf, 1.0, 0.0], dtype=jnp.float64),
+    )
+    values = jnp.asarray([0.0, 0.0, 1.0, 0.0], dtype=jnp.float64)
+    gradient = jnp.asarray([1.0, 1.0, -1.0, -1.0], dtype=jnp.float64)
+    with jax.debug_nans(True):
+        active = bounds.active_mask(values, gradient)
+    np.testing.assert_array_equal(
+        active, np.asarray([False, True, True, True], dtype=np.bool_)
+    )
+
+
+@pytest.mark.strict_jax
+def test_lbfgs_history_ring_matches_dense_inverse_bfgs_in_every_group() -> None:
+    from phydrax.optim._lbfgs_kernel import (
+        admit_lbfgs_pair,
+        append_lbfgs_pair,
+        initial_lbfgs_history,
+        lbfgs_direction,
+        lbfgs_pair_curvature,
+    )
+
+    rng = np.random.default_rng(7)
+    capacity = 3
+    groups = (np.array([0, 1]), np.array([2, 3]))
+    layout = phx.optim.OptimizerGroupLayout(jnp.array([0, 0, 1, 1]), group_count=2)
+    hessians = []
+    for _ in groups:
+        factor = rng.normal(size=(4, 4))
+        hessians.append(factor @ factor.T + 4.0 * np.eye(4))
+    history = initial_lbfgs_history(jnp.zeros((4, 2)), capacity, layout, jnp.float64)
+    stored: list[list[tuple[np.ndarray, np.ndarray]]] = [[], []]
+    for step_index in range(5):
+        step = rng.normal(size=(4, 2))
+        change = np.zeros_like(step)
+        for group, rows in enumerate(groups):
+            change[rows] = (hessians[group] @ step[rows].reshape(-1)).reshape(2, 2)
+        curvature, step_squared, change_squared = lbfgs_pair_curvature(
+            jnp.asarray(step), jnp.asarray(change), layout
+        )
+        # Group 1 skips odd pairs, so the two rings hold different histories and
+        # only group 0 wraps around its capacity.
+        admitted = jnp.array([True, step_index % 2 == 0]) & admit_lbfgs_pair(
+            curvature, step_squared, change_squared, 1e-10
+        )
+        history = append_lbfgs_pair(
+            history,
+            jnp.asarray(step),
+            jnp.asarray(change),
+            curvature,
+            change_squared,
+            admitted,
+            layout,
+        )
+        for group, rows in enumerate(groups):
+            if bool(admitted[group]):
+                stored[group].append((step[rows].reshape(-1), change[rows].reshape(-1)))
+    np.testing.assert_array_equal(history.count, [capacity, capacity])
+
+    gradient = rng.normal(size=(4, 2))
+    direction = np.asarray(lbfgs_direction(jnp.asarray(gradient), history, layout))
+    newest_changes = np.zeros_like(gradient)
+    for group, rows in enumerate(groups):
+        pairs = stored[group][-capacity:]
+        newest_step, newest_change = pairs[-1]
+        inverse = float(
+            newest_step @ newest_change / (newest_change @ newest_change)
+        ) * np.eye(4)
+        for step, change in pairs:
+            rho = 1.0 / float(change @ step)
+            update = np.eye(4) - rho * np.outer(change, step)
+            inverse = update.T @ inverse @ update + rho * np.outer(step, step)
+        np.testing.assert_allclose(
+            direction[rows].reshape(-1),
+            -inverse @ gradient[rows].reshape(-1),
+            rtol=1e-10,
+        )
+        newest_changes[rows] = newest_change.reshape(2, 2)
+
+    # The newest secant equation H y = s holds independently in each group.
+    secant = np.asarray(lbfgs_direction(jnp.asarray(newest_changes), history, layout))
+    for group, rows in enumerate(groups):
+        np.testing.assert_allclose(
+            secant[rows].reshape(-1), -stored[group][-1][0], rtol=1e-10
+        )

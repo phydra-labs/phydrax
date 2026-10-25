@@ -19,6 +19,7 @@ from ._guidance import (
 )
 from ._probability_flow import probability_flow_system, ProbabilityFlowVectorField
 from ._reverse import (
+    PreparedReverseDiffusion,
     ReverseDiffusion,
     ReverseDiffusionRealization,
     ReverseDiffusionResult,
@@ -33,6 +34,7 @@ __all__ = [
     "GuidanceExactness",
     "GuidedScoreField",
     "PotentialGuidance",
+    "PreparedReverseDiffusion",
     "ScoreContext",
     "TimeConditionedLikelihoodGuidance",
     "general_probability_flow_system",

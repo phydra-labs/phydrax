@@ -290,7 +290,7 @@ class SharedPeriodicGravityPlan(StrictModule):
         gathered = self.particle_gravity.transfer.gather(
             assembly.particle_routes, cell_acceleration
         )
-        particles = self.particle_gravity.transfer.particles
+        particles = self.particle_gravity.transfer.physical_particles()
         active = particles.active_mask
         particle_acceleration = jnp.where(active[:, None], gathered.values, 0.0)
         volumes = self.cell_volumes.astype(assembly.total_density.dtype)
@@ -472,7 +472,10 @@ def _validate_owner_bindings(
         raise TypeError("particles must be CosmologicalKDKPlan.")
     if not isinstance(gravity, ParticleMeshGravityPlan):
         raise TypeError("gravity must be ParticleMeshGravityPlan.")
-    if particles.particles.prepared_id != gravity.transfer.particles.prepared_id:
+    if (
+        particles.particles.prepared_id
+        != gravity.transfer.physical_particles().prepared_id
+    ):
         raise ValueError("Mixed KDK and PM transfer must share one particle support.")
     if particles.scale.scale_id != wave.scale_id:
         raise ValueError("Wave and particle cosmology scale contracts must agree.")

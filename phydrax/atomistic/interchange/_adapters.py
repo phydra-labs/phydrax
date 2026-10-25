@@ -164,7 +164,7 @@ def _potential_term_to_mapping(term: AbstractAtomisticEnergyTerm, /) -> dict[str
         return {
             **common,
             "kind": "ewald-reference",
-            "alpha": term.alpha,
+            "alpha": float(term.alpha),
             "real_cutoff": term.real_cutoff,
             "reciprocal_extent": term.reciprocal_extent,
             "neutrality": term.neutrality,
@@ -174,7 +174,7 @@ def _potential_term_to_mapping(term: AbstractAtomisticEnergyTerm, /) -> dict[str
         return {
             **common,
             "kind": "particle-mesh-ewald",
-            "alpha": term.alpha,
+            "alpha": float(term.alpha),
             "real_cutoff": term.real_cutoff,
             "grid_shape": term.grid_shape,
             "spline_degree": term.spline_degree,

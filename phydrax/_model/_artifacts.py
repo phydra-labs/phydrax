@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 
 from .._frozendict import frozendict
+from .._identity import IdentityWords
 from ._binding import ModelBinding
 
 
@@ -100,6 +101,7 @@ register_artifact_value("jax.artifact:softplus", jax.nn.softplus)
 register_artifact_value("equinox.nn:Linear", eqx.nn.Linear)
 register_artifact_value("phydrax.core:frozendict", frozendict)
 register_artifact_value("phydrax.core:ModelBinding", ModelBinding)
+register_artifact_value("phydrax.core:IdentityWords", IdentityWords)
 
 
 @dataclass(frozen=True, slots=True)

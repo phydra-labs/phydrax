@@ -685,9 +685,10 @@ def _qualify_device(
         f"import phydrax as phx{bootstrap}\n"
         "from tests._support.accelerator_qualification import accelerator_device,installed_provenance,runtime_evidence,diagnostic_evidence\n"
         "from tools._accelerator_process import write_json_evidence\n"
-        "import jax,jax.numpy as jnp\n"
+        "from phydrax._jax_config import default_device\n"
+        "import jax.numpy as jnp\n"
         f"provenance=installed_provenance(Path({str(venv)!r}),json.loads(Path({str(expected)!r}).read_text()))\n"
-        "with jax.default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
+        "with default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
         "diagnostics=diagnostic_evidence()\n"
         f"write_json_evidence(Path({str(probe_path)!r}),dict(provenance=provenance,runtime=runtime,diagnostics=diagnostics))\n"
         "print(json.dumps(dict(status='observed')))"
@@ -749,19 +750,23 @@ def _qualify_device(
         or stages["scientific-cases"]["timed_out"]
     ):
         errors.append("Scientific cases failed or timed out")
-    command = [
-        python,
-        "-I",
-        str(harness / EXAMPLE),
-        "--accelerator",
-        accelerator.value,
-        "--device-id",
-        str(device_id),
-    ]
-    if args.tpu_autodetect:
-        command.append("--tpu-autodetect")
+    # The advertised example's own scenario runs in this fresh process; the
+    # installed frontend identity is observed in that same process afterwards.
+    example_source = (
+        "import sys,json\n"
+        f"sys.path.insert(0,{str(harness)!r})\n"
+        "from examples.accelerator_scientific_execution import selected_device_record\n"
+        f"record=selected_device_record({accelerator.value!r},device_id={device_id},tpu_autodetect={bool(args.tpu_autodetect)})\n"
+        "from phydrax._jax_indexing_frontend import frontend_index_patch_identity\n"
+        "record['frontend_index_patch']=frontend_index_patch_identity()\n"
+        "print(json.dumps(record,sort_keys=True))\n"
+        "raise SystemExit(0 if record['status']=='passed' else 1)"
+    )
     stages["example"] = run(
-        command, cwd=harness, environment=environment, timeout=args.timeout
+        [python, "-I", "-c", example_source],
+        cwd=harness,
+        environment=environment,
+        timeout=args.timeout,
     )
     example = last_json(stages["example"])
     report["example"] = example

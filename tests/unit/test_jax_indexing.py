@@ -29,6 +29,15 @@ frontend = importlib.util.module_from_spec(frontend_spec)
 frontend_spec.loader.exec_module(frontend)
 frontend.install_frontend_index_patch()
 """
+_CONFIGURATION = """
+from pathlib import Path
+
+configuration_spec = importlib.util.spec_from_file_location(
+    "_configuration_under_test", Path(sys.argv[1]).with_name("_jax_config.py")
+)
+configuration = importlib.util.module_from_spec(configuration_spec)
+configuration_spec.loader.exec_module(configuration)
+"""
 
 
 def _run_contract(source: str) -> None:
@@ -50,14 +59,17 @@ def _run_contract(source: str) -> None:
 
 
 def test_explicit_registration_is_device_inert_and_preserves_jax_surface() -> None:
-    _run_contract("""
+    _run_contract(
+        """
 assert "jax" not in sys.modules
 import jax
 import jax.lax
 import jax.numpy
 import jax.random
 from jax._src import xla_bridge
-
+"""
+        + _CONFIGURATION
+        + """
 owners = (jax, jax.lax, jax.numpy, jax.random)
 
 def surface() -> dict:
@@ -69,7 +81,7 @@ def surface() -> dict:
     }
 
 before = surface()
-options = dict(jax.config.values)
+options = configuration.configuration_values()
 assert not xla_bridge.backends_are_initialized()
 module.register_gather_lowering("cpu")
 module.register_gather_lowering("cpu")
@@ -80,15 +92,16 @@ providers = {name for name in sys.modules if name.startswith("jax_plugins.")}
 module.register_gather_lowering("tpu")
 assert not xla_bridge.backends_are_initialized()
 assert surface() == before
-assert jax.config.values == options
+assert configuration.configuration_values() == options
 assert "phydrax" not in sys.modules
 module.install_accelerator_lowerings()
 module.install_accelerator_lowerings()
 assert {name for name in sys.modules if name.startswith("jax_plugins.")} == providers
 assert not xla_bridge.backends_are_initialized()
 assert surface() == before
-assert jax.config.values == options
-""")
+assert configuration.configuration_values() == options
+"""
+    )
 
 
 @pytest.mark.parametrize("index_kind", ["int64", "uint64"])

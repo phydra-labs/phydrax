@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, assert_never, Literal
 
 import numpy as np
 
@@ -48,16 +48,59 @@ from .._model._structure import (
     model_recipe_template,
     pack_model_array_tree,
 )
+from ..typing import parse
 from ..units._dimension import DimensionSignature
 from ..units._unit import UnitDefinition
 from ._potential import (
-    atomistic_potential_revision,
+    atomistic_model_revision,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
+)
+from ._types import (
+    AtomisticPrecisionPolicy,
+    AtomisticScaleContract,
     AtomisticSpeciesKind,
 )
-from ._types import AtomisticPrecisionPolicy, AtomisticScaleContract
+from .interchange._aimnet2_checkpoint import AIMNet2SourceProvenance
 from .interchange._mace_checkpoint import MACESourceProvenance
+from .interchange._uma_checkpoint import UMASourceProvenance
+
+
+type AtomisticSourceProvenance = (
+    MACESourceProvenance | AIMNet2SourceProvenance | UMASourceProvenance
+)
+
+
+type _SourceFamily = Literal["mace", "aimnet2", "uma"]
+
+
+def _source_record(source: AtomisticSourceProvenance, /) -> dict[str, Any]:
+    family: _SourceFamily
+    match source:
+        case MACESourceProvenance():
+            family = "mace"
+        case AIMNet2SourceProvenance():
+            family = "aimnet2"
+        case UMASourceProvenance():
+            family = "uma"
+        case _:
+            raise TypeError("source must be an admitted native model provenance record.")
+    return {"family": family, "provenance": source.to_record()}
+
+
+def _source_from_record(record: Mapping[str, Any], /) -> AtomisticSourceProvenance:
+    if not isinstance(record, Mapping) or set(record) != {"family", "provenance"}:
+        raise ValueError("Model source fields are not canonical.")
+    family = parse(record["family"], _SourceFamily, "source.family")
+    match family:
+        case "mace":
+            return MACESourceProvenance.from_record(record["provenance"])
+        case "aimnet2":
+            return AIMNet2SourceProvenance.from_record(record["provenance"])
+        case "uma":
+            return UMASourceProvenance.from_record(record["provenance"])
+        case _:
+            assert_never(family)
 
 
 # Atomistic and unit contract types embedded in every native atomistic model.
@@ -159,22 +202,41 @@ def _prepared_potential(prepared: Any, /) -> Any:
 
 
 def _register_native_models() -> None:
-    # Native model owners import atomistic; resolve them lazily to avoid a cycle.
+    # Family owners register their exact recipe types; resolve validators lazily.
+    from ..nn.atomistic._aimnet2 import AIMNet2Potential
     from ..nn.atomistic._mace import MACEPotential
+    from ..nn.atomistic._mace_les import MACELESPotential
     from ..nn.atomistic._mace_prepare import PreparedMACEPotential
+    from ..nn.atomistic._nequip import NequIPPotential
+    from ..nn.atomistic._painn import PaiNNPotential
+    from ..nn.atomistic._uma import (
+        PreparedUMAMergedModel,
+        UMAPotential,
+        UMAPropertyModel,
+    )
 
-    register_atomistic_model_artifact(
+    for model_type in (
+        AIMNet2Potential,
         MACEPotential,
-        validate=MACEPotential.validate,
-        revision=atomistic_potential_revision,
-        exact=_exact_potential,
-    )
-    register_atomistic_model_artifact(
-        PreparedMACEPotential,
-        validate=PreparedMACEPotential.validate,
-        revision=PreparedMACEPotential.revision,
-        exact=_prepared_potential,
-    )
+        MACELESPotential,
+        NequIPPotential,
+        PaiNNPotential,
+        UMAPotential,
+        UMAPropertyModel,
+    ):
+        register_atomistic_model_artifact(
+            model_type,
+            validate=model_type.validate,
+            revision=atomistic_model_revision,
+            exact=_exact_potential,
+        )
+    for prepared_type in (PreparedMACEPotential, PreparedUMAMergedModel):
+        register_atomistic_model_artifact(
+            prepared_type,
+            validate=prepared_type.validate,
+            revision=prepared_type.revision,
+            exact=_prepared_potential,
+        )
 
 
 def _registered(model_type: type, /) -> _RegisteredModel:
@@ -206,7 +268,7 @@ class AtomisticModelArtifactManifest:
     semantic_id: str
     numeric_revision: NumericRevision
     content_id: str
-    source: MACESourceProvenance | None
+    source: AtomisticSourceProvenance | None
     licenses: tuple[str, ...]
     versions: Mapping[str, str]
     artifact_id: str
@@ -230,7 +292,7 @@ def _identity(
     model: Any,
     recipe: Mapping[str, Any],
     arrays: Mapping[str, np.ndarray],
-    source: MACESourceProvenance | None,
+    source: AtomisticSourceProvenance | None,
     licenses: Sequence[str],
     entry: _RegisteredModel,
     /,
@@ -273,17 +335,48 @@ def _licenses(licenses: Sequence[str], /) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
-def _source_binding(model: Any, source: MACESourceProvenance, /) -> None:
-    declaration = source.declaration
-    configuration = model.configuration
-    if (
-        tuple(configuration.species) != tuple(declaration["atomic_numbers"])
-        or configuration.head != source.head
-        or float(configuration.cutoff) != float(declaration["r_max"])
-    ):
-        raise AtomisticModelArtifactError(
-            "Model species, head or cutoff differ from its recorded source."
-        )
+def _source_binding(model: Any, source: AtomisticSourceProvenance, /) -> None:
+    model_type = artifact_value_id(type(model))
+    match source:
+        case MACESourceProvenance():
+            declaration = source.declaration
+            expected_type = (
+                "phydrax.nn.atomistic:MACELESPotential"
+                if declaration["model_class"] == "MACELES"
+                else "phydrax.nn.atomistic:MACEPotential"
+            )
+            if model_type != expected_type:
+                raise AtomisticModelArtifactError("Model and source families differ.")
+            configuration = model.configuration
+            if (
+                tuple(configuration.species) != tuple(declaration["atomic_numbers"])
+                or configuration.head != source.head
+                or float(configuration.cutoff) != float(declaration["r_max"])
+            ):
+                raise AtomisticModelArtifactError(
+                    "Model species, head or cutoff differ from its recorded source."
+                )
+        case AIMNet2SourceProvenance():
+            if model_type != "phydrax.nn.atomistic:AIMNet2Potential" or (
+                model.architecture_id
+                != source.reconstruction["potential_architecture_id"]
+            ):
+                raise AtomisticModelArtifactError(
+                    "AIMNet2 model differs from its recorded native reconstruction."
+                )
+        case UMASourceProvenance():
+            if model_type not in {
+                "phydrax.nn.atomistic:UMAPotential",
+                "phydrax.nn.atomistic:UMAPropertyModel",
+            } or (
+                model.architecture_id != source.native_architecture_id
+                or model.method_id != source.native_method_id
+            ):
+                raise AtomisticModelArtifactError(
+                    "UMA model differs from its recorded native realization."
+                )
+        case _:
+            assert_never(source)
 
 
 def write_atomistic_model_artifact(
@@ -291,7 +384,7 @@ def write_atomistic_model_artifact(
     model: Any,
     /,
     *,
-    source: MACESourceProvenance | None = None,
+    source: AtomisticSourceProvenance | None = None,
     licenses: Sequence[str] = (),
 ) -> AtomisticModelArtifactManifest:
     """Validate and atomically write one pickle-free native model artifact.
@@ -318,7 +411,7 @@ def model_artifact_section(
     model: Any,
     /,
     *,
-    source: MACESourceProvenance | None = None,
+    source: AtomisticSourceProvenance | None = None,
     licenses: Sequence[str] = (),
 ) -> tuple[dict[str, Any], dict[str, np.ndarray], AtomisticModelArtifactManifest]:
     """Validate a model and return its manifest section, leaves and manifest.
@@ -330,8 +423,7 @@ def model_artifact_section(
     entry = _registered(type(model))
     entry.validate(model)
     if source is not None:
-        if not isinstance(source, MACESourceProvenance):
-            raise TypeError("source must be MACESourceProvenance or None.")
+        source = _source_from_record(_source_record(source))
         _source_binding(entry.exact(model), source)
     license_ids = _licenses(licenses)
     recipe = model_structure_recipe(model)
@@ -346,7 +438,7 @@ def model_artifact_section(
         "model_type": recipe["type"],
         "model_recipe": recipe,
         "identity": identity,
-        "source": None if source is None else source.to_record(),
+        "source": None if source is None else _source_record(source),
         "licenses": list(license_ids),
         "versions": versions,
     }
@@ -361,7 +453,7 @@ def _manifest(
     recipe: Mapping[str, Any],
     identity: Mapping[str, str],
     revision: NumericRevision,
-    source: MACESourceProvenance | None,
+    source: AtomisticSourceProvenance | None,
     licenses: tuple[str, ...],
     versions: Mapping[str, str],
     /,
@@ -498,9 +590,7 @@ def model_artifact_from_section(
     model, entry = _restore_model(recipe, arrays, section["model_type"])
     try:
         source = (
-            None
-            if section["source"] is None
-            else MACESourceProvenance.from_record(section["source"])
+            None if section["source"] is None else _source_from_record(section["source"])
         )
         license_ids = _licenses(section["licenses"])
     except (TypeError, ValueError) as error:
@@ -557,5 +647,6 @@ __all__ = [
     "model_artifact_section",
     "read_atomistic_model_artifact",
     "register_atomistic_model_artifact",
+    "AtomisticSourceProvenance",
     "write_atomistic_model_artifact",
 ]

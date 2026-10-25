@@ -10,6 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 def _dynamics() -> Any:
@@ -27,18 +32,22 @@ def _dynamics() -> Any:
         atom_type_ids=[0, 0, 0],
         cell=cell,
     ).prepare()
-    base = phx.discretization.MetricCellListParticleNeighborhoodPlan(1.6, 3, 3, cell)
-    neighborhood = phx.discretization.VerletParticleNeighborhoodPlan(
-        base, 1.4, 0.2
-    ).prepare(system.particles)
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        # ty: ignore[invalid-argument-type]
-        [phx.atomistic.LennardJonesPotential([0.2], [0.8], 1.4, switch_distance=1.2)]
-    ).prepare(system)
+    # Explicit resources of the former metric cell list (radius 1.6 = cutoff
+    # 1.4 plus skin 0.2, three atoms per cell, three pairs).
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
+            [phx.atomistic.LennardJonesPotential([0.2], [0.8], 1.4, switch_distance=1.2)]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.2,
+        search_capacities=(search_capacity(6, particles_per_cell=3, images=27),),
+        role_capacities=(role_capacity(3, 2),),
+    )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.BAOABLangevinPlan(2.0e-4, 0.2),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(

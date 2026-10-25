@@ -77,7 +77,7 @@ class ParticleMeshGravityPlan(StrictModule):
             raise ValueError("Particle transfer and gravity must share one tensor grid.")
         if transfer.target_shape != gravity.cell_shape:
             raise ValueError("Particle transfer target shape must match gravity cells.")
-        if transfer.particles.ambient_dimension != len(gravity.cell_shape):
+        if transfer.ambient_dimension != len(gravity.cell_shape):
             raise ValueError("Particle and gravity dimensions must match.")
         self.gravity = gravity
         self.transfer = transfer
@@ -102,12 +102,12 @@ class ParticleMeshGravityPlan(StrictModule):
             raise ValueError("Supply exactly one of velocity or momentum.")
         position_ = jnp.asarray(position)
         expected = (
-            self.transfer.particles.capacity,
-            self.transfer.particles.ambient_dimension,
+            self.transfer.source_capacity,
+            self.transfer.ambient_dimension,
         )
         if position_.shape != expected:
             raise ValueError(f"Particle position must have shape {expected}.")
-        masses = self.transfer.particles.safe_masses.astype(position_.dtype)
+        masses = self.transfer.physical_particles().safe_masses.astype(position_.dtype)
         momentum_ = (
             jnp.asarray(momentum, dtype=position_.dtype)
             if momentum is not None
@@ -115,7 +115,7 @@ class ParticleMeshGravityPlan(StrictModule):
         )
         if momentum_.shape != expected:
             raise ValueError(f"Particle momentum must have shape {expected}.")
-        active = self.transfer.particles.active_mask[:, None]
+        active = self.transfer.source_active_mask[:, None]
         return ParticleMeshGravityState(
             position=jnp.where(active, position_, 0.0),
             momentum=jnp.where(active, momentum_, 0.0),
@@ -125,7 +125,9 @@ class ParticleMeshGravityPlan(StrictModule):
         self, position: ArrayLike, /
     ) -> tuple[SplatDepositResult, ParticleGridSplatState]:
         routes = self.transfer.build(position)
-        deposited = self.transfer.deposit_content(routes, self.transfer.particles.masses)
+        deposited = self.transfer.deposit_content(
+            routes, self.transfer.physical_particles().masses
+        )
         return deposited, routes
 
     def acceleration(
@@ -147,11 +149,13 @@ class ParticleMeshGravityPlan(StrictModule):
             density, args
         )
         gathered = self.transfer.gather(routes, cell_acceleration)
-        active_mask = self.transfer.particles.active_mask
+        active_mask = self.transfer.source_active_mask
         active = active_mask[:, None]
         acceleration = jnp.where(active, gathered.values, 0.0)
         support_complete = jnp.all(gathered.support | ~active_mask)
-        physical_masses = self.transfer.particles.masses.astype(acceleration.dtype)
+        physical_masses = self.transfer.physical_particles().masses.astype(
+            acceleration.dtype
+        )
         net_force = jnp.sum(physical_masses[:, None] * acceleration, axis=0)
         successful = (
             deposited.successful
@@ -188,8 +192,10 @@ class ParticleMeshGravityPlan(StrictModule):
             ~jnp.isfinite(step) | (step <= 0.0),
             "Particle-mesh step interval must be finite and increasing.",
         )
-        masses = self.transfer.particles.safe_masses.astype(state.position.dtype)
-        active = self.transfer.particles.active_mask[:, None]
+        masses = self.transfer.physical_particles().safe_masses.astype(
+            state.position.dtype
+        )
+        active = self.transfer.source_active_mask[:, None]
         force_0 = self.acceleration(
             state.position, args, background_density=background_density
         )

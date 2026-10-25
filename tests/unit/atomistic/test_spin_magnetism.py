@@ -10,9 +10,9 @@ from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphLayout,
     AtomisticSystemPlan,
     AtomisticUnitSystem,
-    realize_atomistic_graph,
 )
 from phydrax.atomistic._spin import (
     ClassicalSpinHamiltonianPlan,
@@ -48,10 +48,13 @@ def _dimer() -> Any:
         # ty: ignore[invalid-argument-type]
         particle_ids=[20, 10],
     )
-    graph = realize_atomistic_graph(
-        AtomisticBatch.from_structure(structure),
-        AtomisticGraphExecutionPlan(1, maximum_dense_atoms=2),
-        cutoff=2.0,
+    batch = AtomisticBatch.from_structure(structure)
+    graph = (
+        AtomisticGraphLayout.for_batch(
+            batch, AtomisticGraphExecutionPlan(1, maximum_dense_atoms=2), cutoff=2.0
+        )
+        .prepare(batch)
+        .graph(cutoff=2.0)
     )
     return units, ClassicalSpinHamiltonianPlan(
         system,

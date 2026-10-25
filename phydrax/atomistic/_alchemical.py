@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 from enum import StrEnum
 from typing import Any
 
@@ -19,9 +20,9 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..typing import checked
 from ._classical import (
     HarmonicAnglePotential,
@@ -29,6 +30,7 @@ from ._classical import (
     LennardJonesPotential,
     PeriodicTorsionPotential,
 )
+from ._conditioning import AtomisticFieldReference, AtomisticObservableValue
 from ._electrostatics import (
     DirectCoulombPotential,
     EwaldReferencePotential,
@@ -39,13 +41,22 @@ from ._force_field import (
     GeneralForceFieldTerm,
     PreparedAtomisticForceField,
 )
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodBundleState,
+    AtomisticNeighborhoodRole,
+    PreparedAtomisticNeighborhoodBundle,
+)
 from ._potential import AtomisticPotentialRequirements, AtomisticStressConvention
 from ._potential_program import (
+    _admitted_scalar,
+    _resolve_field,
+    AbstractAtomisticEnergyTerm,
     AbstractPreparedAtomisticEnergyTerm,
     AbstractPreparedAtomisticHamiltonian,
     AtomisticDerivativePoint,
     AtomisticInteractionScaleState,
     AtomisticPotentialContext,
+    AtomisticProgramAuxiliary,
     PreparedAtomisticPotentialProgram,
 )
 from ._system import PreparedAtomisticSystem
@@ -72,12 +83,17 @@ class AlchemicalRegionInteractionMode(StrEnum):
 
 
 class SoftCorePolicy(StrictModule, NonTrainableState):
-    """Endpoint-exact soft-core regularization for controlled pair routes."""
+    """Endpoint-exact soft-core regularization for controlled pair routes.
 
-    lennard_jones_alpha: float = eqx.field(static=True)
-    electrostatic_alpha: float = eqx.field(static=True)
+    The alphas are numerical parameters (dynamic scalars); ``coupling_power`` is
+    a method selector and stays static.  The canonical policy digest of the
+    exact host values is the dynamic ``policy_identity``.
+    """
+
+    lennard_jones_alpha: Array
+    electrostatic_alpha: Array
     coupling_power: int = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
+    policy_identity: IdentityWords
 
     def __init__(
         self,
@@ -100,10 +116,10 @@ class SoftCorePolicy(StrictModule, NonTrainableState):
             or power < 1
         ):
             raise ValueError("Soft-core alphas and coupling_power must be positive.")
-        self.lennard_jones_alpha = lj
-        self.electrostatic_alpha = electrostatic
+        self.lennard_jones_alpha = jnp.asarray(lj)
+        self.electrostatic_alpha = jnp.asarray(electrostatic)
         self.coupling_power = power
-        self.policy_id = canonical_fingerprint(
+        self.policy_identity = IdentityWords.of(
             {
                 "kind": "alchemical-soft-core-policy",
                 "lennard_jones_alpha": lj.hex(),
@@ -112,15 +128,24 @@ class SoftCorePolicy(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def policy_id(self) -> str:
+        """Host decoding of the canonical soft-core policy digest."""
+        return self.policy_identity.fingerprint()
+
 
 class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
-    """Ordered thermodynamic states with typed, endpoint-exact controls."""
+    """Ordered thermodynamic states with typed, endpoint-exact controls.
+
+    State/control labels and kinds are declared layout; the control matrix is
+    dynamic and the canonical schedule digest is ``schedule_identity``.
+    """
 
     state_ids: tuple[str, ...] = eqx.field(static=True)
     control_ids: tuple[str, ...] = eqx.field(static=True)
     control_kinds: tuple[AlchemicalControlKind, ...] = eqx.field(static=True)
     controls: Array
-    schedule_id: str = eqx.field(static=True)
+    schedule_identity: IdentityWords
 
     def __init__(
         self,
@@ -167,7 +192,7 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
         self.control_ids = names
         self.control_kinds = kinds
         self.controls = jnp.asarray(values)
-        self.schedule_id = canonical_fingerprint(
+        self.schedule_identity = IdentityWords.of(
             {
                 "kind": "alchemical-control-schedule",
                 "state_ids": list(states),
@@ -176,6 +201,11 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
                 "controls": array_tree_fingerprint(values),
             }
         )
+
+    @property
+    def schedule_id(self) -> str:
+        """Host decoding of the canonical control-schedule digest."""
+        return self.schedule_identity.fingerprint()
 
     @classmethod
     def linear(
@@ -222,7 +252,12 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
 
 
 class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
-    """Stable-ID regions and route-selection rules for every typed control."""
+    """Stable-ID regions and route-selection rules for every typed control.
+
+    Control labels, modes, change flags and region sizes are layout; region IDs
+    and mappings are dynamic, and the canonical digest is
+    ``partition_identity``.
+    """
 
     control_ids: tuple[str, ...] = eqx.field(static=True)
     region_particle_ids: tuple[Array, ...]
@@ -233,7 +268,7 @@ class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
     changes_masses: bool = eqx.field(static=True)
     changes_constraints: bool = eqx.field(static=True)
     changes_virtual_geometry: bool = eqx.field(static=True)
-    partition_id: str = eqx.field(static=True)
+    partition_identity: IdentityWords
 
     def __init__(
         self,
@@ -304,7 +339,7 @@ class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
         self.changes_masses = bool(changes_masses)
         self.changes_constraints = bool(changes_constraints)
         self.changes_virtual_geometry = bool(changes_virtual_geometry)
-        self.partition_id = canonical_fingerprint(
+        self.partition_identity = IdentityWords.of(
             {
                 "kind": "alchemical-interaction-partition",
                 "control_ids": list(names),
@@ -317,17 +352,371 @@ class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def partition_id(self) -> str:
+        """Host decoding of the canonical partition digest."""
+        return self.partition_identity.fingerprint()
+
 
 class AlchemicalPreparationEvidence(StrictModule, NonTrainableState):
-    """Authenticated host evidence for a complete controlled route partition."""
+    """Authenticated preparation evidence for a complete controlled route partition.
 
-    particle_count: int = eqx.field(static=True)
-    controlled_route_counts: tuple[int, ...] = eqx.field(static=True)
-    neutral_electrostatic_regions: tuple[bool, ...] = eqx.field(static=True)
+    Material-derived evidence is dynamic (active particle count, controlled
+    route counts per control, electrostatic-region neutrality per control) and
+    the canonical evidence digest is ``evidence_identity``; the host properties
+    return the same values as Python scalars/tuples.  The admission invariants
+    hold for every prepared partition and stay static.
+    """
+
+    active_particle_count: Array
+    route_counts: Array
+    neutral_regions: Array
+    evidence_identity: IdentityWords
     endpoint_exact: bool = eqx.field(static=True)
     unsupported_routes_absent: bool = eqx.field(static=True)
     successful: bool = eqx.field(static=True)
-    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        particle_count: int,
+        controlled_route_counts: Sequence[int],
+        neutral_electrostatic_regions: Sequence[bool],
+        evidence_id: str,
+        /,
+    ) -> None:
+        self.active_particle_count = jnp.asarray(int(particle_count), dtype=jnp.int32)
+        self.route_counts = jnp.asarray(
+            np.asarray(tuple(controlled_route_counts), dtype=np.int32)
+        )
+        self.neutral_regions = jnp.asarray(
+            np.asarray(tuple(neutral_electrostatic_regions), dtype=np.bool_)
+        )
+        self.evidence_identity = IdentityWords.from_fingerprint(evidence_id)
+        self.endpoint_exact = True
+        self.unsupported_routes_absent = True
+        self.successful = True
+
+    @property
+    def particle_count(self) -> int:
+        return int(self.active_particle_count)
+
+    @property
+    def controlled_route_counts(self) -> tuple[int, ...]:
+        return tuple(int(value) for value in np.asarray(self.route_counts))
+
+    @property
+    def neutral_electrostatic_regions(self) -> tuple[bool, ...]:
+        return tuple(bool(value) for value in np.asarray(self.neutral_regions))
+
+    @property
+    def evidence_id(self) -> str:
+        return self.evidence_identity.fingerprint()
+
+
+# Control kind of every changed general force-field term family.
+_GENERAL_TERM_CONTROL = {
+    ForceFieldTermKind.HARMONIC_IMPROPER: AlchemicalControlKind.IMPROPER_TORSION,
+    ForceFieldTermKind.UREY_BRADLEY: AlchemicalControlKind.ANGLE,
+    ForceFieldTermKind.TORSION_SERIES: AlchemicalControlKind.PROPER_TORSION,
+    ForceFieldTermKind.RYCKAERT_BELLEMANS: AlchemicalControlKind.PROPER_TORSION,
+    ForceFieldTermKind.CMAP: AlchemicalControlKind.PROPER_TORSION,
+    ForceFieldTermKind.PAIR_OVERRIDE: AlchemicalControlKind.STERICS,
+    ForceFieldTermKind.MORSE: AlchemicalControlKind.STERICS,
+    ForceFieldTermKind.BUCKINGHAM: AlchemicalControlKind.STERICS,
+    ForceFieldTermKind.TABULATED_PAIR: AlchemicalControlKind.STERICS,
+    ForceFieldTermKind.REACTION_FIELD: AlchemicalControlKind.ELECTROSTATICS,
+    ForceFieldTermKind.DISPERSION_CORRECTION: AlchemicalControlKind.STERICS,
+    ForceFieldTermKind.LENNARD_JONES_PME: AlchemicalControlKind.STERICS,
+}
+_CONTROLLABLE_TERMS = (
+    HarmonicBondPotential,
+    HarmonicAnglePotential,
+    PeriodicTorsionPotential,
+    LennardJonesPotential,
+    DirectCoulombPotential,
+)
+
+
+def _admit_partition_controls(
+    plan: AlchemicalInteractionPartitionPlan,
+    schedule: AlchemicalControlSchedulePlan,
+    /,
+) -> None:
+    """Refuse mismatched controls and state-dependent masses, constraints or sites."""
+    if plan.control_ids != schedule.control_ids:
+        raise ValueError("Schedule and partition control identities must match exactly.")
+    if plan.changes_masses:
+        raise ValueError(
+            "State-dependent masses are not supported by controlled Hamiltonians."
+        )
+    if plan.changes_constraints:
+        raise ValueError(
+            "State-dependent constraints are not supported by controlled Hamiltonians."
+        )
+    if plan.changes_virtual_geometry:
+        raise ValueError(
+            "State-dependent virtual-site geometry is not supported by controlled Hamiltonians."
+        )
+
+
+def _region_masks(
+    plan: AlchemicalInteractionPartitionPlan,
+    schedule: AlchemicalControlSchedulePlan,
+    system: PreparedAtomisticSystem,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Slot masks of every control region and the system's active slot mask.
+
+    Every region particle and every mapped particle must be an active
+    particle of the prepared system.
+    """
+    particle_ids = np.asarray(system.plan.particle_ids, dtype=np.int64)
+    active = np.asarray(system.active_mask, dtype=np.bool_)
+    slot_by_id = {int(value): index for index, value in enumerate(particle_ids)}
+    masks = np.zeros((schedule.control_count, system.capacity), dtype=np.bool_)
+    for control_index, region in enumerate(plan.region_particle_ids):
+        for identifier in np.asarray(region, dtype=np.int64):
+            stable_id = int(identifier)
+            if stable_id not in slot_by_id or not active[slot_by_id[stable_id]]:
+                raise ValueError(
+                    f"Alchemical region references unknown or inactive particle ID {stable_id}."
+                )
+            masks[control_index, slot_by_id[stable_id]] = True
+    mapping = np.asarray(plan.mapped_particle_ids, dtype=np.int64)
+    if mapping.size and not np.all(np.isin(mapping, particle_ids[active])):
+        raise ValueError(
+            "Stable-ID mapping references particles outside the prepared system."
+        )
+    return masks, active
+
+
+def _admit_reciprocal_controls(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...],
+    controlled_kinds: set[AlchemicalControlKind],
+    /,
+) -> None:
+    """Refuse controls that would split real-space from reciprocal or tail routes."""
+    reciprocal_electrostatics = any(
+        isinstance(term, (EwaldReferencePotential, ParticleMeshEwaldPotential))
+        or (
+            isinstance(term, GeneralForceFieldTerm)
+            and term.kind is ForceFieldTermKind.REACTION_FIELD
+        )
+        for term in terms
+    )
+    reciprocal_dispersion = any(
+        isinstance(term, GeneralForceFieldTerm)
+        and term.kind
+        in {
+            ForceFieldTermKind.LENNARD_JONES_PME,
+            ForceFieldTermKind.DISPERSION_CORRECTION,
+        }
+        for term in terms
+    )
+    if (
+        AlchemicalControlKind.ELECTROSTATICS in controlled_kinds
+        and reciprocal_electrostatics
+    ):
+        raise ValueError(
+            "Reciprocal, self, background, exception, and real-space electrostatic "
+            "controls cannot diverge; this changed route is unsupported."
+        )
+    if AlchemicalControlKind.STERICS in controlled_kinds and reciprocal_dispersion:
+        raise ValueError(
+            "Real-space and reciprocal or tail dispersion controls cannot diverge; "
+            "this changed route is unsupported."
+        )
+
+
+def _admit_supported_terms(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...],
+    controlled_kinds: set[AlchemicalControlKind],
+    /,
+) -> None:
+    """Refuse every changed term whose family is controlled but not controllable."""
+    unsupported = []
+    for term in terms:
+        if isinstance(term, _CONTROLLABLE_TERMS):
+            continue
+        if isinstance(term, (EwaldReferencePotential, ParticleMeshEwaldPotential)):
+            if AlchemicalControlKind.ELECTROSTATICS not in controlled_kinds:
+                continue
+        elif isinstance(term, GeneralForceFieldTerm):
+            if _GENERAL_TERM_CONTROL[term.kind] not in controlled_kinds:
+                continue
+        unsupported.append(term.name)
+    if unsupported:
+        raise ValueError(
+            "Controlled Hamiltonians refuse unsupported changed force-field routes: "
+            + ", ".join(unsupported)
+        )
+
+
+def _admit_control_terms(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...],
+    schedule: AlchemicalControlSchedulePlan,
+    /,
+) -> None:
+    """Require one canonical controllable term family for every control kind."""
+    kinds_present = set()
+    for term in terms:
+        if isinstance(term, HarmonicBondPotential):
+            kinds_present.add(AlchemicalControlKind.BOND)
+        elif isinstance(term, HarmonicAnglePotential):
+            kinds_present.add(AlchemicalControlKind.ANGLE)
+        elif isinstance(term, PeriodicTorsionPotential):
+            kinds_present.add(
+                AlchemicalControlKind.IMPROPER_TORSION
+                if term.improper
+                else AlchemicalControlKind.PROPER_TORSION
+            )
+        elif isinstance(term, LennardJonesPotential):
+            kinds_present.add(AlchemicalControlKind.STERICS)
+        elif isinstance(term, DirectCoulombPotential):
+            kinds_present.add(AlchemicalControlKind.ELECTROSTATICS)
+    for kind in schedule.control_kinds:
+        if kind not in kinds_present:
+            raise ValueError(
+                f"No canonical {kind.value} term is available for its control."
+            )
+
+
+def _region_selected(
+    membership: np.ndarray, mode: AlchemicalRegionInteractionMode, /
+) -> np.ndarray:
+    """Routes selected by one region from their endpoints' region membership."""
+    count = np.count_nonzero(membership, axis=1)
+    if mode is AlchemicalRegionInteractionMode.CROSS:
+        return (count > 0) & (count < membership.shape[1])
+    if mode is AlchemicalRegionInteractionMode.INVOLVING:
+        return count > 0
+    return count == membership.shape[1]
+
+
+def _route_controls(
+    routes: Array,
+    kind: AlchemicalControlKind,
+    masks: np.ndarray,
+    plan: AlchemicalInteractionPartitionPlan,
+    schedule: AlchemicalControlSchedulePlan,
+    /,
+) -> np.ndarray:
+    """Owning control index (``-1`` uncontrolled) of every bonded ``kind`` route."""
+    host_routes = np.asarray(routes, dtype=np.int32)
+    result = np.full((host_routes.shape[0],), -1, dtype=np.int32)
+    for control_index, control_kind in enumerate(schedule.control_kinds):
+        if control_kind is not kind:
+            continue
+        chosen = _region_selected(
+            masks[control_index, host_routes],
+            plan.interaction_modes[control_index],
+        )
+        if np.any(chosen & (result >= 0)):
+            raise ValueError(f"{kind.value} routes overlap between alchemical controls.")
+        result[chosen] = control_index
+    return result
+
+
+def _admit_unconstrained_bonds(
+    constraint_indices: Array, bond_indices: Array, bond: np.ndarray, /
+) -> None:
+    """Refuse a controlled bond that also carries a distance constraint."""
+    constraint_pairs = {
+        tuple(sorted(row))
+        for row in np.asarray(constraint_indices, dtype=np.int32).tolist()
+    }
+    controlled_bonds = {
+        tuple(sorted(row))
+        for row, index in zip(
+            np.asarray(bond_indices, dtype=np.int32).tolist(),
+            bond,
+            strict=True,
+        )
+        if index >= 0
+    }
+    if constraint_pairs & controlled_bonds:
+        raise ValueError(
+            "A controlled bond route cannot retain a state-independent distance constraint."
+        )
+
+
+def _pair_route_counts(
+    active: np.ndarray,
+    masks: np.ndarray,
+    plan: AlchemicalInteractionPartitionPlan,
+    schedule: AlchemicalControlSchedulePlan,
+    /,
+) -> np.ndarray:
+    """Per-control count of controlled active unordered nonbonded pairs.
+
+    Each steric or electrostatic pair is owned by at most one control of
+    its kind.
+    """
+    pair_counts = np.zeros((schedule.control_count,), dtype=np.int64)
+    slots = np.flatnonzero(active)
+    for left_offset, left in enumerate(slots):
+        for right in slots[left_offset + 1 :]:
+            owner_by_kind: dict[AlchemicalControlKind, int] = {}
+            for control_index, kind in enumerate(schedule.control_kinds):
+                if kind not in (
+                    AlchemicalControlKind.STERICS,
+                    AlchemicalControlKind.ELECTROSTATICS,
+                ):
+                    continue
+                membership = masks[control_index, [left, right]][None, :]
+                if bool(
+                    _region_selected(membership, plan.interaction_modes[control_index])[0]
+                ):
+                    if kind in owner_by_kind:
+                        raise ValueError(
+                            f"{kind.value} pair routes overlap between alchemical controls."
+                        )
+                    owner_by_kind[kind] = control_index
+                    pair_counts[control_index] += 1
+    return pair_counts
+
+
+def _route_evidence(
+    schedule: AlchemicalControlSchedulePlan,
+    system: PreparedAtomisticSystem,
+    masks: np.ndarray,
+    bonded: dict[AlchemicalControlKind, np.ndarray],
+    pair_counts: np.ndarray,
+    /,
+) -> tuple[list[int], list[bool]]:
+    """Nonzero controlled route count and region neutrality of every control.
+
+    Electrostatic regions must be neutral; charge-changing regions are refused.
+    """
+    route_counts = []
+    neutral = []
+    for control_index, kind in enumerate(schedule.control_kinds):
+        routes = bonded.get(kind)
+        count = (
+            int(pair_counts[control_index])
+            if routes is None
+            else int(np.count_nonzero(routes == control_index))
+        )
+        if count == 0:
+            raise ValueError(
+                f"Alchemical control {schedule.control_ids[control_index]!r} selects no routes."
+            )
+        route_counts.append(count)
+        region_charge = float(
+            np.sum(
+                np.asarray(system.plan.charges)[
+                    masks[control_index] & np.asarray(system.active_mask)
+                ]
+            )
+        )
+        has_charge_change = not math.isclose(region_charge, 0.0, abs_tol=1.0e-10)
+        if kind is AlchemicalControlKind.ELECTROSTATICS and has_charge_change:
+            raise ValueError(
+                "Charge-changing alchemical regions are unsupported; electrostatic regions "
+                "must have zero net charge."
+            )
+        neutral.append(not has_charge_change)
+    return route_counts, neutral
 
 
 class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
@@ -343,7 +732,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
     improper_control_indices: Array
     soft_core: SoftCorePolicy
     preparation: AlchemicalPreparationEvidence
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
 
     def __init__(
         self,
@@ -353,241 +742,51 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         soft_core: SoftCorePolicy,
         /,
     ) -> None:
-        if plan.control_ids != schedule.control_ids:
-            raise ValueError(
-                "Schedule and partition control identities must match exactly."
-            )
-        if plan.changes_masses:
-            raise ValueError(
-                "State-dependent masses are not supported by controlled Hamiltonians."
-            )
-        if plan.changes_constraints:
-            raise ValueError(
-                "State-dependent constraints are not supported by controlled Hamiltonians."
-            )
-        if plan.changes_virtual_geometry:
-            raise ValueError(
-                "State-dependent virtual-site geometry is not supported by controlled Hamiltonians."
-            )
+        _admit_partition_controls(plan, schedule)
         system = force_field.system
-        particle_ids = np.asarray(system.plan.particle_ids, dtype=np.int64)
-        active = np.asarray(system.active_mask, dtype=np.bool_)
-        slot_by_id = {int(value): index for index, value in enumerate(particle_ids)}
-        masks = np.zeros((schedule.control_count, system.capacity), dtype=np.bool_)
-        for control_index, region in enumerate(plan.region_particle_ids):
-            for identifier in np.asarray(region, dtype=np.int64):
-                stable_id = int(identifier)
-                if stable_id not in slot_by_id or not active[slot_by_id[stable_id]]:
-                    raise ValueError(
-                        f"Alchemical region references unknown or inactive particle ID {stable_id}."
-                    )
-                masks[control_index, slot_by_id[stable_id]] = True
-        mapping = np.asarray(plan.mapped_particle_ids, dtype=np.int64)
-        if mapping.size and not np.all(np.isin(mapping, particle_ids[active])):
-            raise ValueError(
-                "Stable-ID mapping references particles outside the prepared system."
-            )
-
+        masks, active = _region_masks(plan, schedule, system)
         changed_terms = tuple(force_field.potential.plan.terms)
         controlled_kinds = set(schedule.control_kinds)
-        reciprocal_electrostatics = any(
-            isinstance(term, (EwaldReferencePotential, ParticleMeshEwaldPotential))
-            or (
-                isinstance(term, GeneralForceFieldTerm)
-                and term.kind is ForceFieldTermKind.REACTION_FIELD
-            )
-            for term in changed_terms
-        )
-        reciprocal_dispersion = any(
-            isinstance(term, GeneralForceFieldTerm)
-            and term.kind
-            in {
-                ForceFieldTermKind.LENNARD_JONES_PME,
-                ForceFieldTermKind.DISPERSION_CORRECTION,
-            }
-            for term in changed_terms
-        )
-        if (
-            AlchemicalControlKind.ELECTROSTATICS in controlled_kinds
-            and reciprocal_electrostatics
-        ):
-            raise ValueError(
-                "Reciprocal, self, background, exception, and real-space electrostatic "
-                "controls cannot diverge; this changed route is unsupported."
-            )
-        if AlchemicalControlKind.STERICS in controlled_kinds and reciprocal_dispersion:
-            raise ValueError(
-                "Real-space and reciprocal or tail dispersion controls cannot diverge; "
-                "this changed route is unsupported."
-            )
-        general_kind = {
-            ForceFieldTermKind.HARMONIC_IMPROPER: AlchemicalControlKind.IMPROPER_TORSION,
-            ForceFieldTermKind.UREY_BRADLEY: AlchemicalControlKind.ANGLE,
-            ForceFieldTermKind.TORSION_SERIES: AlchemicalControlKind.PROPER_TORSION,
-            ForceFieldTermKind.RYCKAERT_BELLEMANS: AlchemicalControlKind.PROPER_TORSION,
-            ForceFieldTermKind.CMAP: AlchemicalControlKind.PROPER_TORSION,
-            ForceFieldTermKind.PAIR_OVERRIDE: AlchemicalControlKind.STERICS,
-            ForceFieldTermKind.MORSE: AlchemicalControlKind.STERICS,
-            ForceFieldTermKind.BUCKINGHAM: AlchemicalControlKind.STERICS,
-            ForceFieldTermKind.TABULATED_PAIR: AlchemicalControlKind.STERICS,
-            ForceFieldTermKind.REACTION_FIELD: AlchemicalControlKind.ELECTROSTATICS,
-            ForceFieldTermKind.DISPERSION_CORRECTION: AlchemicalControlKind.STERICS,
-            ForceFieldTermKind.LENNARD_JONES_PME: AlchemicalControlKind.STERICS,
-        }
-        supported_types = (
-            HarmonicBondPotential,
-            HarmonicAnglePotential,
-            PeriodicTorsionPotential,
-            LennardJonesPotential,
-            DirectCoulombPotential,
-        )
-        unsupported = []
-        for term in changed_terms:
-            if isinstance(term, supported_types):
-                continue
-            if isinstance(term, (EwaldReferencePotential, ParticleMeshEwaldPotential)):
-                if AlchemicalControlKind.ELECTROSTATICS not in controlled_kinds:
-                    continue
-            elif isinstance(term, GeneralForceFieldTerm):
-                if general_kind[term.kind] not in controlled_kinds:
-                    continue
-            unsupported.append(term.name)
-        if unsupported:
-            raise ValueError(
-                "Controlled Hamiltonians refuse unsupported changed force-field routes: "
-                + ", ".join(unsupported)
-            )
-        kinds_present = set()
-        for term in changed_terms:
-            if isinstance(term, HarmonicBondPotential):
-                kinds_present.add(AlchemicalControlKind.BOND)
-            elif isinstance(term, HarmonicAnglePotential):
-                kinds_present.add(AlchemicalControlKind.ANGLE)
-            elif isinstance(term, PeriodicTorsionPotential):
-                kinds_present.add(
-                    AlchemicalControlKind.IMPROPER_TORSION
-                    if term.improper
-                    else AlchemicalControlKind.PROPER_TORSION
-                )
-            elif isinstance(term, LennardJonesPotential):
-                kinds_present.add(AlchemicalControlKind.STERICS)
-            elif isinstance(term, DirectCoulombPotential):
-                kinds_present.add(AlchemicalControlKind.ELECTROSTATICS)
-        for kind in schedule.control_kinds:
-            if kind not in kinds_present:
-                raise ValueError(
-                    f"No canonical {kind.value} term is available for its control."
-                )
-
-        def selected(
-            membership: np.ndarray, mode: AlchemicalRegionInteractionMode
-        ) -> np.ndarray:
-            count = np.count_nonzero(membership, axis=1)
-            if mode is AlchemicalRegionInteractionMode.CROSS:
-                return (count > 0) & (count < membership.shape[1])
-            if mode is AlchemicalRegionInteractionMode.INVOLVING:
-                return count > 0
-            return count == membership.shape[1]
-
-        def route_controls(routes: Array, kind: AlchemicalControlKind) -> np.ndarray:
-            host_routes = np.asarray(routes, dtype=np.int32)
-            result = np.full((host_routes.shape[0],), -1, dtype=np.int32)
-            for control_index, control_kind in enumerate(schedule.control_kinds):
-                if control_kind is not kind:
-                    continue
-                chosen = selected(
-                    masks[control_index, host_routes],
-                    plan.interaction_modes[control_index],
-                )
-                if np.any(chosen & (result >= 0)):
-                    raise ValueError(
-                        f"{kind.value} routes overlap between alchemical controls."
-                    )
-                result[chosen] = control_index
-            return result
-
+        _admit_reciprocal_controls(changed_terms, controlled_kinds)
+        _admit_supported_terms(changed_terms, controlled_kinds)
+        _admit_control_terms(changed_terms, schedule)
         topology = system.topology
-        bond = route_controls(topology.bond_indices, AlchemicalControlKind.BOND)
-        angle = route_controls(topology.angle_indices, AlchemicalControlKind.ANGLE)
-        torsion = route_controls(
-            topology.torsion_indices, AlchemicalControlKind.PROPER_TORSION
+        bond = _route_controls(
+            topology.bond_indices, AlchemicalControlKind.BOND, masks, plan, schedule
         )
-        improper = route_controls(
-            topology.improper_indices, AlchemicalControlKind.IMPROPER_TORSION
+        angle = _route_controls(
+            topology.angle_indices, AlchemicalControlKind.ANGLE, masks, plan, schedule
         )
-        constraint_pairs = {
-            tuple(sorted(row))
-            for row in np.asarray(topology.constraint_indices, dtype=np.int32).tolist()
-        }
-        controlled_bonds = {
-            tuple(sorted(row))
-            for row, index in zip(
-                np.asarray(topology.bond_indices, dtype=np.int32).tolist(),
-                bond,
-                strict=True,
-            )
-            if index >= 0
-        }
-        if constraint_pairs & controlled_bonds:
-            raise ValueError(
-                "A controlled bond route cannot retain a state-independent distance constraint."
-            )
-
-        pair_counts = np.zeros((schedule.control_count,), dtype=np.int64)
-        slots = np.flatnonzero(active)
-        for left_offset, left in enumerate(slots):
-            for right in slots[left_offset + 1 :]:
-                owner_by_kind: dict[AlchemicalControlKind, int] = {}
-                for control_index, kind in enumerate(schedule.control_kinds):
-                    if kind not in (
-                        AlchemicalControlKind.STERICS,
-                        AlchemicalControlKind.ELECTROSTATICS,
-                    ):
-                        continue
-                    membership = masks[control_index, [left, right]][None, :]
-                    if bool(
-                        selected(membership, plan.interaction_modes[control_index])[0]
-                    ):
-                        if kind in owner_by_kind:
-                            raise ValueError(
-                                f"{kind.value} pair routes overlap between alchemical controls."
-                            )
-                        owner_by_kind[kind] = control_index
-                        pair_counts[control_index] += 1
-        route_counts = []
-        neutral = []
-        for control_index, kind in enumerate(schedule.control_kinds):
-            count = {
-                AlchemicalControlKind.BOND: int(np.count_nonzero(bond == control_index)),
-                AlchemicalControlKind.ANGLE: int(
-                    np.count_nonzero(angle == control_index)
-                ),
-                AlchemicalControlKind.PROPER_TORSION: int(
-                    np.count_nonzero(torsion == control_index)
-                ),
-                AlchemicalControlKind.IMPROPER_TORSION: int(
-                    np.count_nonzero(improper == control_index)
-                ),
-            }.get(kind, int(pair_counts[control_index]))
-            if count == 0:
-                raise ValueError(
-                    f"Alchemical control {schedule.control_ids[control_index]!r} selects no routes."
-                )
-            route_counts.append(count)
-            region_charge = float(
-                np.sum(
-                    np.asarray(system.plan.charges)[
-                        masks[control_index] & np.asarray(system.active_mask)
-                    ]
-                )
-            )
-            has_charge_change = not math.isclose(region_charge, 0.0, abs_tol=1.0e-10)
-            if kind is AlchemicalControlKind.ELECTROSTATICS and has_charge_change:
-                raise ValueError(
-                    "Charge-changing alchemical regions are unsupported; electrostatic regions "
-                    "must have zero net charge."
-                )
-            neutral.append(not has_charge_change)
+        torsion = _route_controls(
+            topology.torsion_indices,
+            AlchemicalControlKind.PROPER_TORSION,
+            masks,
+            plan,
+            schedule,
+        )
+        improper = _route_controls(
+            topology.improper_indices,
+            AlchemicalControlKind.IMPROPER_TORSION,
+            masks,
+            plan,
+            schedule,
+        )
+        _admit_unconstrained_bonds(
+            topology.constraint_indices, topology.bond_indices, bond
+        )
+        pair_counts = _pair_route_counts(active, masks, plan, schedule)
+        route_counts, neutral = _route_evidence(
+            schedule,
+            system,
+            masks,
+            {
+                AlchemicalControlKind.BOND: bond,
+                AlchemicalControlKind.ANGLE: angle,
+                AlchemicalControlKind.PROPER_TORSION: torsion,
+                AlchemicalControlKind.IMPROPER_TORSION: improper,
+            },
+            pair_counts,
+        )
         evidence_payload = {
             "kind": "controlled-hamiltonian-preparation-evidence",
             "system": system.prepared_id,
@@ -609,15 +808,12 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         self.improper_control_indices = jnp.asarray(improper)
         self.soft_core = soft_core
         self.preparation = AlchemicalPreparationEvidence(
-            particle_count=int(np.count_nonzero(active)),
-            controlled_route_counts=tuple(route_counts),
-            neutral_electrostatic_regions=tuple(neutral),
-            endpoint_exact=True,
-            unsupported_routes_absent=True,
-            successful=True,
-            evidence_id=evidence_id,
+            int(np.count_nonzero(active)),
+            tuple(route_counts),
+            tuple(neutral),
+            evidence_id,
         )
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-alchemical-interaction-partition",
                 "evidence": evidence_id,
@@ -633,6 +829,11 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
                 "soft_core": soft_core.policy_id,
             }
         )
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the canonical prepared-partition digest."""
+        return self.prepared_identity.fingerprint()
 
     @staticmethod
     def _route_scale(indices: Array, controls: Array, /) -> Array:
@@ -704,7 +905,12 @@ class ControlledHamiltonianStatus(StrictModule):
 
 
 class ControlledHamiltonianEvaluation(StrictModule):
-    """Controlled ``AtomisticHamiltonianEvaluation`` plus control derivatives."""
+    """Controlled ``AtomisticHamiltonianEvaluation`` plus control derivatives.
+
+    Producer identities are exact digests as dynamic words
+    (``program_identity``, ``schedule_identity``, ``partition_identity``); the
+    ``*_id`` properties decode them on the host.
+    """
 
     energy: Array
     term_energies: Array
@@ -716,14 +922,34 @@ class ControlledHamiltonianEvaluation(StrictModule):
     graph_overflow: Array
     strain_derivative: Array | None
     stress: Array | None
-    program_id: str = eqx.field(static=True)
+    program_identity: IdentityWords
     stress_convention: AtomisticStressConvention | None = eqx.field(static=True)
     dU_dcontrols: Array
     control_values: Array
     state_index: Array
     status: ControlledHamiltonianStatus
-    schedule_id: str = eqx.field(static=True)
-    partition_id: str = eqx.field(static=True)
+    schedule_identity: IdentityWords
+    partition_identity: IdentityWords
+    term_evidence: tuple[tuple[StrictModule, ...], ...]
+    fields: tuple[AtomisticObservableValue, ...]
+    field_producers: tuple[str, ...] = eqx.field(static=True)
+    atom_energy_complete: bool = eqx.field(static=True)
+
+    @property
+    def program_id(self) -> str:
+        return self.program_identity.fingerprint()
+
+    @property
+    def schedule_id(self) -> str:
+        return self.schedule_identity.fingerprint()
+
+    @property
+    def partition_id(self) -> str:
+        return self.partition_identity.fingerprint()
+
+    @checked
+    def field(self, reference: AtomisticFieldReference, /) -> AtomisticObservableValue:
+        return _resolve_field(reference, self.field_producers, self.fields)
 
 
 class AlchemicalReducedPotentialEvaluation(StrictModule):
@@ -748,14 +974,18 @@ class AlchemicalReducedPotentialEvaluation(StrictModule):
 
 
 class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
-    """Bind typed controls to one prepared canonical force-field Hamiltonian."""
+    """Bind typed controls to one prepared canonical force-field Hamiltonian.
+
+    Its canonical digest (force field, material system, program, schedule,
+    partition, soft core) is the bound scientific identity ``plan_identity``.
+    """
 
     force_field: PreparedAtomisticForceField
     schedule: AlchemicalControlSchedulePlan
     partition: AlchemicalInteractionPartitionPlan
     soft_core: SoftCorePolicy
     requirements: AtomisticPotentialRequirements
-    plan_id: str = eqx.field(static=True)
+    plan_identity: IdentityWords
 
     @checked
     def __init__(
@@ -775,15 +1005,22 @@ class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
         self.partition = partition
         self.soft_core = policy
         self.requirements = force_field.potential.plan.requirements
-        self.plan_id = canonical_fingerprint(
+        self.plan_identity = IdentityWords.of(
             {
                 "kind": "controlled-hamiltonian-plan",
-                "force_field": force_field.prepared_id,
+                "force_field": force_field.plan.plan_id,
+                "system": force_field.system.prepared_id,
+                "potential": force_field.potential.plan.program_id,
                 "schedule": schedule.schedule_id,
                 "partition": partition.partition_id,
                 "soft_core": policy.policy_id,
             }
         )
+
+    @property
+    def plan_id(self) -> str:
+        """Host decoding of the canonical controlled-plan digest."""
+        return self.plan_identity.fingerprint()
 
     def prepare(self, /) -> "PreparedControlledHamiltonian":
         prepared_partition = PreparedAlchemicalInteractionPartition(
@@ -802,7 +1039,8 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
     terms: tuple[AbstractPreparedAtomisticEnergyTerm, ...]
     coefficients: Array
     partition: PreparedAlchemicalInteractionPartition
-    prepared_id: str = eqx.field(static=True)
+    prepared_identity: IdentityWords
+    scientific_identity: IdentityWords
     control_ids: tuple[str, ...] = eqx.field(static=True)
     control_layout_id: str = eqx.field(static=True)
 
@@ -812,6 +1050,15 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         partition: PreparedAlchemicalInteractionPartition,
         /,
     ) -> None:
+        if (
+            partition.system.prepared_id != plan.force_field.system.prepared_id
+            or partition.plan.partition_id != plan.partition.partition_id
+            or partition.schedule.schedule_id != plan.schedule.schedule_id
+            or partition.soft_core.policy_id != plan.soft_core.policy_id
+        ):
+            raise ValueError(
+                "The control partition does not match the Hamiltonian binding."
+            )
         self.plan = plan
         self.force_field = plan.force_field
         self.system = plan.force_field.system
@@ -826,7 +1073,8 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 "control_ids": list(self.control_ids),
             }
         )
-        self.prepared_id = canonical_fingerprint(
+        self.scientific_identity = plan.plan_identity
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-controlled-hamiltonian",
                 "plan": plan.plan_id,
@@ -834,6 +1082,28 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 "potential": self.potential.prepared_id,
             }
         )
+
+    @property
+    def neighborhood_bundle(self) -> PreparedAtomisticNeighborhoodBundle:
+        return self.potential.neighborhood_bundle
+
+    def with_neighborhood_bundle(
+        self, bundle: PreparedAtomisticNeighborhoodBundle, /
+    ) -> PreparedControlledHamiltonian:
+        potential = self.potential.with_neighborhood_bundle(bundle)
+        force_field = PreparedAtomisticForceField(
+            self.force_field.plan,
+            self.system,
+            potential,
+            self.force_field.constraints,
+        )
+        plan = ControlledHamiltonianPlan(
+            force_field,
+            self.plan.schedule,
+            self.plan.partition,
+            soft_core=self.plan.soft_core,
+        )
+        return PreparedControlledHamiltonian(plan, self.partition)
 
     def _resolve_controls(
         self,
@@ -860,24 +1130,42 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
 
     def _interaction_scales(
         self,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         controls: Array,
         dtype: DTypeLike,
         /,
-    ) -> AtomisticInteractionScaleState:
-        if isinstance(neighborhood, ParticleImageNeighborhoodState):
-            # Directed image routes carry no pair-once interaction slots.
-            empty = jnp.zeros((0,), dtype=jnp.int32)
-            return self.partition.interaction_scales(empty, empty, controls, dtype)
-        pairs = neighborhood.pair_relation
-        return self.partition.interaction_scales(
-            pairs.left_indices, pairs.right_indices, controls, dtype
-        )
+    ) -> dict[str, AtomisticInteractionScaleState]:
+        bindings: dict[str, AtomisticInteractionScaleState] = {}
+        empty = jnp.zeros((0,), dtype=jnp.int32)
+        for term in self.terms:
+            requirements = tuple(
+                value
+                for value in term.requirements.neighborhoods
+                if value.role is AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS
+            )
+            if len(requirements) > 1:
+                raise ValueError(
+                    "A controlled classical term requires one physical-pair role."
+                )
+            if requirements:
+                view = self.neighborhood_bundle.view(neighborhoods, requirements[0])
+                pairs = view.pair_relation
+                if pairs is None:
+                    raise RuntimeError(
+                        "A controlled physical-pair role lacks pair identities."
+                    )
+                left, right = pairs.left_indices, pairs.right_indices
+            else:
+                left, right = empty, empty
+            bindings[term.name] = self.partition.interaction_scales(
+                left, right, controls, dtype
+            )
+        return bindings
 
     def context(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         state_index: ArrayLike | None = None,
@@ -888,45 +1176,41 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         controls, _, _ = self._resolve_controls(
             state_index, control_values, position.dtype
         )
-        scales = self._interaction_scales(neighborhood, controls, position.dtype)
+        scales = self._interaction_scales(neighborhoods, controls, position.dtype)
         return self.potential.context(
-            position, neighborhood, interaction_scales=scales, **context_kwargs
+            position, neighborhoods, interaction_scales=scales, **context_kwargs
         )
 
     def energy(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         state_index: ArrayLike | None = None,
         control_values: ArrayLike | None = None,
         **context_kwargs: Any,
-    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
         position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         controls, _, state_valid = self._resolve_controls(
             state_index, control_values, position.dtype
         )
-        scales = self._interaction_scales(neighborhood, controls, position.dtype)
+        scales = self._interaction_scales(neighborhoods, controls, position.dtype)
         energy, auxiliary = self.potential.energy(
-            position, neighborhood, interaction_scales=scales, **context_kwargs
+            position, neighborhoods, interaction_scales=scales, **context_kwargs
         )
-        term_energies, atom_energy, potential_successful, graph_overflow = auxiliary
         controls_valid = jnp.all(
             jnp.isfinite(controls) & (controls >= 0.0) & (controls <= 1.0)
         )
-        successful = potential_successful & state_valid & controls_valid
-        return jnp.where(successful, energy, jnp.nan), (
-            term_energies,
-            atom_energy,
-            successful,
-            graph_overflow,
+        successful = auxiliary.successful & state_valid & controls_valid
+        return _admitted_scalar(energy, successful, (position, controls)), replace(
+            auxiliary, successful=successful
         )
 
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         compute_stress: bool = False,
@@ -950,16 +1234,16 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             self.system,
             position,
             context_kwargs,
-            neighborhood=neighborhood,
+            neighborhoods=neighborhoods,
             strained=compute_stress,
             cell_derivative=self.potential.plan.capabilities.cell_derivative,
         )
 
         def closure(
             value: Array, control: Array, strain: Array | None
-        ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
+        ) -> tuple[Array, AtomisticProgramAuxiliary]:
             bound, kwargs = point.bind(value, strain)
-            return self.energy(bound, neighborhood, control_values=control, **kwargs)
+            return self.energy(bound, neighborhoods, control_values=control, **kwargs)
 
         strain_derivative = None
         if point.strained:
@@ -973,8 +1257,10 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                     position, controls, None
                 )
             )
-        term_energies, atom_energy, energy_successful, graph_overflow = auxiliary
-        program_successful = energy_successful & point.successful
+        term_energies = auxiliary.term_energies
+        atom_energy = auxiliary.atom_energy
+        graph_overflow = auxiliary.graph_overflow
+        program_successful = auxiliary.successful & point.successful
         forces = jnp.where(self.system.active_mask[:, None], -position_gradient, 0.0)
         virial = point.moment_virial(self.system, position, forces)
         stress = None if strain_derivative is None else point.stress(strain_derivative)
@@ -1000,7 +1286,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             finite=finite,
             controls_in_range=controls_in_range,
             state_index_valid=state_valid,
-            neighborhood_successful=program_successful,
+            neighborhood_successful=auxiliary.neighborhood_successful,
             successful=successful,
         )
         nan = jnp.asarray(jnp.nan, dtype=energy.dtype)
@@ -1011,7 +1297,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             forces=jnp.where(successful, forces, nan),
             virial=jnp.where(successful, virial, nan),
             successful=successful,
-            neighborhood_successful=program_successful,
+            neighborhood_successful=auxiliary.neighborhood_successful,
             graph_overflow=graph_overflow,
             strain_derivative=(
                 None
@@ -1019,58 +1305,52 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 else jnp.where(successful, strain_derivative, nan)
             ),
             stress=None if stress is None else jnp.where(successful, stress, nan),
-            program_id=self.prepared_id,
+            program_identity=self.prepared_identity,
             stress_convention=point.stress_convention,
             dU_dcontrols=jnp.where(successful, control_gradient, nan),
             control_values=controls,
             state_index=resolved_index,
             status=status,
-            schedule_id=self.plan.schedule.schedule_id,
-            partition_id=self.plan.partition.partition_id,
+            schedule_identity=self.plan.schedule.schedule_identity,
+            partition_identity=self.plan.partition.partition_identity,
+            term_evidence=auxiliary.term_evidence,
+            fields=auxiliary.fields,
+            field_producers=auxiliary.field_producers,
+            atom_energy_complete=auxiliary.atom_energy_complete,
         )
 
     def force_group_energy(
         self,
         group: int,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         state_index: ArrayLike | None = None,
         control_values: ArrayLike | None = None,
         **context_kwargs: Any,
-    ) -> tuple[Array, Array]:
-        value = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
+        position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         controls, _, state_valid = self._resolve_controls(
-            state_index, control_values, value.dtype
+            state_index, control_values, position.dtype
         )
-        selected = tuple(
-            index
-            for index, term in enumerate(self.terms)
-            if term.force_group == int(group)
+        scales = self._interaction_scales(neighborhoods, controls, position.dtype)
+        energy, auxiliary = self.potential.force_group_energy(
+            group, position, neighborhoods, interaction_scales=scales, **context_kwargs
         )
-        if not selected:
-            raise ValueError(f"Force group {int(group)} is absent from the Hamiltonian.")
-        context = self.context(
-            value, neighborhood, control_values=controls, **context_kwargs
+        controls_valid = jnp.all(
+            jnp.isfinite(controls) & (controls >= 0.0) & (controls <= 1.0)
         )
-        evaluations = tuple(self.terms[index].energy(context) for index in selected)
-        energies = jnp.stack(tuple(item.energy for item in evaluations))
-        coefficients = self.potential.plan.coefficients[jnp.asarray(selected)]
-        energy = jnp.sum(coefficients.astype(energies.dtype) * energies)
-        successful = (
-            state_valid
-            & context.neighborhood_successful
-            & jnp.all(jnp.stack(tuple(item.successful for item in evaluations)))
+        successful = auxiliary.successful & state_valid & controls_valid
+        return _admitted_scalar(energy, successful, (position, controls)), replace(
+            auxiliary, successful=successful
         )
-        successful = successful & jnp.isfinite(energy)
-        return jnp.where(successful, energy, jnp.nan), successful
 
     @checked
     def reduced_potentials(
         self,
         positions: ArrayLike,
-        neighborhoods: Sequence[ParticleNeighborhoodState],
+        neighborhoods: Sequence[AtomisticNeighborhoodBundleState],
         thermodynamic: PreparedThermodynamicStateTable,
         /,
         *,
@@ -1095,9 +1375,12 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             raise ValueError("positions must have shape (replicas, atom_capacity, 3).")
         neighborhoods_ = tuple(neighborhoods)
         if len(neighborhoods_) != coordinates.shape[0] or any(
-            not isinstance(value, ParticleNeighborhoodState) for value in neighborhoods_
+            not isinstance(value, AtomisticNeighborhoodBundleState)
+            for value in neighborhoods_
         ):
-            raise ValueError("One ParticleNeighborhoodState is required per replica.")
+            raise ValueError(
+                "One AtomisticNeighborhoodBundleState is required per replica."
+            )
         host_indices = (
             np.arange(thermodynamic.state_count, dtype=np.int32)
             if state_indices is None
@@ -1124,21 +1407,44 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         )
         if len(kwargs) != len(neighborhoods_):
             raise ValueError("context_kwargs must provide one mapping per replica.")
+        # A bias row is realized from each replica's bound term states (row
+        # controls, couplings, owners) with its frozen history content
+        # authenticated; the row's bias_id label alone is never trusted.
+        rows = tuple(thermodynamic.bias_rows[int(value)] for value in host_indices)
+        bias_terms: tuple[Any, ...] = ()
+        if any(row is not None for row in rows):
+            from .sampling._bias import bind_bias_row, PreparedAtomisticBiasTerm
+
+            bias_terms = tuple(
+                term
+                for term in self.potential.terms
+                if isinstance(term, PreparedAtomisticBiasTerm)
+            )
+            if any("term_states" not in value for value in kwargs):
+                raise ValueError(
+                    "Bias rows are evaluated from each replica's term_states; supply "
+                    "them in context_kwargs."
+                )
         energy_rows = []
         successful_rows = []
-        for control in controls:
+        for control, row in zip(controls, rows, strict=True):
             energies = []
             accepted = []
-            for replica, neighborhood in enumerate(neighborhoods_):
+            for replica, replica_neighborhoods in enumerate(neighborhoods_):
+                replica_kwargs = dict(kwargs[replica])
+                if row is not None:
+                    replica_kwargs["term_states"] = bind_bias_row(
+                        bias_terms, row, replica_kwargs["term_states"]
+                    )
                 energy, auxiliary = self.energy(
                     coordinates[replica],
-                    neighborhood,
+                    replica_neighborhoods,
                     control_values=control,
-                    **kwargs[replica],
+                    **replica_kwargs,
                 )
                 finite = jnp.isfinite(energy)
                 energies.append(energy)
-                accepted.append(auxiliary[2] & finite)
+                accepted.append(auxiliary.successful & finite)
             energy_rows.append(jnp.stack(tuple(energies)))
             successful_rows.append(jnp.stack(tuple(accepted)))
         energies = jnp.stack(tuple(energy_rows))

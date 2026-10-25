@@ -17,9 +17,13 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleImageNeighborhoodState
 from ..dynamics import StateLayout, TrajectoryData
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodRole,
+    AtomisticNeighborhoodView,
+    AtomisticPairCounting,
+)
 from ._rollout import AtomisticTrajectory
 from ._thermodynamic import PreparedThermodynamicStateTable
 
@@ -135,6 +139,45 @@ class RadialDistributionState(StrictModule):
             jnp.zeros((plan.bin_count,), dtype=dtype), jnp.zeros((), dtype=jnp.int32)
         )
 
+    @staticmethod
+    def _pair_view(
+        plan: RadialDistributionPlan, state: AtomisticDynamicsState, /
+    ) -> AtomisticNeighborhoodView:
+        """The pair-once classical view whose cutoff covers every RDF bin."""
+        candidates = tuple(
+            view
+            for view in state.neighborhoods.views
+            if view.role is AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS
+            and view.counting
+            in (
+                AtomisticPairCounting.MINIMUM_IMAGE_HALF,
+                AtomisticPairCounting.COMPLETE_PAIRS,
+            )
+        )
+        if not candidates:
+            raise ValueError(
+                "Radial distributions count pair-once neighborhoods; the bundle has no "
+                "classical minimum-image or complete pair view, and directed image "
+                "routes are not a pair relation."
+            )
+        covering = tuple(
+            view
+            for view in candidates
+            if view.cutoff is None or view.cutoff >= plan.maximum_radius
+        )
+        if not covering:
+            raise ValueError(
+                "No classical pair view covers the RDF maximum_radius; pairs beyond "
+                "the view cutoff would be silently omitted."
+            )
+        return min(
+            covering,
+            key=lambda view: (
+                math.inf if view.cutoff is None else view.cutoff,
+                view.requirement_id,
+            ),
+        )
+
     def update(
         self,
         plan: RadialDistributionPlan,
@@ -142,21 +185,15 @@ class RadialDistributionState(StrictModule):
         state: AtomisticDynamicsState,
         /,
     ) -> "RadialDistributionState":
-        if isinstance(state.neighborhood, ParticleImageNeighborhoodState):
-            raise ValueError(
-                "Radial distributions count pair-once neighborhoods; directed image "
-                "routes are not a pair relation."
-            )
-        context = dynamics.potential.context(
-            state.kinematics.positions,
-            state.neighborhood,
-            unwrapped_positions=dynamics._unwrapped(state.kinematics),
-            species=state.species,
-            cell=dynamics.system.cell,
-        )
+        if state.prepared_dynamics_id != dynamics.prepared_id:
+            raise ValueError("State belongs to another atomistic dynamics runtime.")
+        view = self._pair_view(plan, state)
+        geometry = state.neighborhoods.geometry
+        displacement = view.displacement(geometry.positions, geometry.cell_vectors[0])
+        distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
         width = plan.maximum_radius / plan.bin_count
-        indices = jnp.floor(context.pair_distance / width).astype(jnp.int32)
-        valid = context.pair_valid & (indices >= 0) & (indices < plan.bin_count)
+        indices = jnp.floor(distance / width).astype(jnp.int32)
+        valid = view.mask & ~view.self_image & (indices >= 0) & (indices < plan.bin_count)
         safe = jnp.clip(indices, 0, plan.bin_count - 1)
         increment = (
             jnp.zeros_like(self.counts).at[safe].add(valid.astype(self.counts.dtype))

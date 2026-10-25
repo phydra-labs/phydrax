@@ -15,18 +15,24 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
-from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..typing import checked
 from ._dynamics import (
+    _flag,
+    _neighborhood_reasons,
+    _strain_reasons,
+    advance_atomistic_energy_ledger,
     AtomisticDynamicsState,
-    AtomisticEnergyLedgerState,
     AtomisticKinematics,
+    AtomisticStepRejectionReason,
     neighborhood_route_work,
     PreparedAtomisticDynamics,
+    VelocityVerletPlan,
 )
+from ._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -43,65 +49,105 @@ from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class ForceGroupEvaluation(StrictModule):
+    """One force group's scalar, forces and its exact evaluated-term ledger.
+
+    ``term_energies`` rows are the actually evaluated terms (the selected
+    group plus transitive field producers), named by their declared program
+    slots ``term_slots`` (static) and their exact scientific digests
+    ``term_identities`` (dynamic stacked words; ``term_ids`` decodes them on
+    the host); ``contributing_terms`` marks the rows summed into ``energy``.
+    """
+
     energy: Array
     forces: Array
     term_energies: Array
+    contributing_terms: Array
     successful: Array
+    term_slots: tuple[str, ...] = eqx.field(static=True)
+    term_identities: IdentityWords
     group: int = eqx.field(static=True)
+
+    @property
+    def term_ids(self) -> tuple[str, ...]:
+        """Host decoding of the evaluated rows' scientific term digests."""
+        return tuple(
+            IdentityWords(self.term_identities.words[row]).fingerprint()
+            for row in range(len(self.term_slots))
+        )
 
 
 def evaluate_force_group(
     potential: AbstractPreparedAtomisticHamiltonian,
     group: int,
     positions: ArrayLike,
-    neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+    neighborhoods: AtomisticNeighborhoodBundleState,
     /,
     **context_kwargs: Any,
 ) -> ForceGroupEvaluation:
-    selected = tuple(
-        index
-        for index, term in enumerate(potential.terms)
-        if term.force_group == int(group)
-    )
-    if not selected:
-        raise ValueError(f"Potential program has no force group {group}.")
+    """Energy and conservative forces of one force group of the scalar program.
 
+    The group energy is the Hamiltonian's own ``force_group_energy`` (every
+    term's own resource view and transitive field-producer execution), so no
+    term is evaluated against a shared foreign context.
+    """
+    if not any(term.force_group == int(group) for term in potential.terms):
+        raise ValueError(f"Potential program has no force group {group}.")
     position = jnp.asarray(positions, dtype=potential.system.plan.coordinate_dtype)
     point = AtomisticDerivativePoint(
         potential.system,
         position,
         context_kwargs,
-        neighborhood=neighborhood,
+        neighborhoods=neighborhoods,
         strained=False,
         cell_derivative=False,
     )
 
-    def energy_closure(value: Array) -> tuple[Array, tuple[Array, Array]]:
+    term_slots: list[tuple[str, ...]] = []
+
+    def energy_closure(
+        value: Array,
+    ) -> tuple[Array, tuple[Array, Array, Array, IdentityWords]]:
         bound, kwargs = point.bind(value, None)
-        context = potential.context(bound, neighborhood, **kwargs)
-        evaluations = tuple(potential.terms[index].energy(context) for index in selected)
-        terms = jnp.stack(tuple(item.energy for item in evaluations))
-        coefficients = potential.coefficients[jnp.asarray(selected)]
-        energy = jnp.sum(coefficients.astype(terms.dtype) * terms)
-        successful = context.neighborhood_successful & jnp.all(
-            jnp.stack(tuple(item.successful for item in evaluations))
+        energy, auxiliary = potential.force_group_energy(
+            int(group), bound, neighborhoods, **kwargs
         )
-        return energy, (terms, successful)
+        term_slots.append(auxiliary.term_slots)
+        return energy, (
+            auxiliary.term_energies,
+            jnp.asarray(auxiliary.contributing_terms, dtype=jnp.bool_),
+            auxiliary.successful,
+            auxiliary.term_identities,
+        )
 
     (energy, auxiliary), gradient = jax.value_and_grad(energy_closure, has_aux=True)(
         position
     )
-    terms, successful = auxiliary
+    terms, contributing, successful, identities = auxiliary
     finite = jnp.isfinite(energy) & jnp.all(jnp.isfinite(gradient))
-    return ForceGroupEvaluation(energy, -gradient, terms, successful & finite, int(group))
+    return ForceGroupEvaluation(
+        energy,
+        -gradient,
+        terms,
+        contributing,
+        successful & point.successful & finite,
+        term_slots[-1],
+        identities,
+        int(group),
+    )
 
 
 class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
+    """A local term restricted to the atoms of one declared region.
+
+    ``region_id`` is the declared region selector (static); the canonical
+    term digest is the dynamic ``term_identity``.
+    """
+
     term: AbstractAtomisticEnergyTerm
     region_id: int = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -127,7 +173,7 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
         self.force_group = term.force_group
         self.capabilities = term.capabilities
         self.requirements = term.requirements
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "region-masked-potential",
                 "term": term.term_id,
@@ -146,13 +192,19 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
 
 
 class PreparedRegionMaskedPotential(AbstractPreparedAtomisticEnergyTerm):
+    """A region-masked term bound to one system.
+
+    The region ``mask`` is a dynamic leaf; ``term_identity`` and
+    ``prepared_identity`` are dynamic.
+    """
+
     plan: RegionMaskedPotential
     term: AbstractPreparedAtomisticEnergyTerm
     mask: Array
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -168,10 +220,10 @@ class PreparedRegionMaskedPotential(AbstractPreparedAtomisticEnergyTerm):
         self.mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-region-masked-potential",
                 "plan": plan.term_id,
@@ -234,6 +286,7 @@ class RESPAPlan(StrictModule, NonTrainableState):
 class RESPAStepEvaluation(StrictModule):
     state: AtomisticDynamicsState
     successful: Array
+    rejection_reasons: Array
     fast_work: Array
     slow_work: Array
     plan_id: str = eqx.field(static=True)
@@ -246,148 +299,185 @@ def respa_step(
     plan: RESPAPlan,
     /,
 ) -> RESPAStepEvaluation:
+    """One reversible RESPA step of a velocity Verlet (NVE) runtime.
+
+    Every inner position update refreshes a pure candidate of the accepted
+    neighborhood bundle before its fast-force evaluation; the accepted force
+    cache must be valid on entry and the final complete evaluation (with the
+    runtime's declared strain response) becomes the committed cache.  Thermostat
+    and cell methods have their own schedules and are refused here rather
+    than silently dropped.
+    """
     if not isinstance(dynamics, PreparedAtomisticDynamics):
         raise TypeError("dynamics must be PreparedAtomisticDynamics.")
     if not isinstance(state, AtomisticDynamicsState):
         raise TypeError("state must be AtomisticDynamicsState.")
     if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
         raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
-    thermodynamic.validate_dynamics(dynamics)
-    if state.thermodynamic_table_id != thermodynamic.table_id:
-        raise ValueError("State belongs to another thermodynamic table.")
     if not isinstance(plan, RESPAPlan):
         raise TypeError("plan must be RESPAPlan.")
+    dynamics._require_state(state, thermodynamic)
+    if not isinstance(dynamics.integrator, VelocityVerletPlan):
+        raise ValueError(
+            "RESPA is a velocity Verlet splitting; thermostat and cell methods "
+            "require their own qualified multiple-time-step schedule."
+        )
     if dynamics.constraints is not None:
         raise ValueError("RESPA constraints require a separately qualified splitting.")
+    dynamics.require_conservative_force_definition("RESPA force-group splitting")
     row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
+    force_valid = dynamics.force_cache_valid(state, row.controls)
     outer = jnp.asarray(plan.outer_step_size, dtype=state.kinematics.positions.dtype)
     inner = outer / plan.inner_steps
     force_scale = dynamics.system.plan.units.force_to_momentum_rate
     inverse_mass = dynamics.system.inverse_masses[:, None]
     mobile = dynamics.system.mobile_mask[:, None]
+    vectors = state.cell_vectors
     position = state.kinematics.positions
     momentum = state.kinematics.momenta
     images = state.kinematics.image_counts
-    neighborhood = state.neighborhood
-    unwrapped = dynamics._unwrapped(state.kinematics, state.cell_vectors)
+    neighborhoods = state.neighborhoods
+    unwrapped = dynamics._unwrapped(state.kinematics, vectors)
 
-    def kwargs(current_unwrapped: Array) -> dict[str, Any]:
-        values: dict[str, Any] = {
-            "unwrapped_positions": current_unwrapped,
-            "species": state.species,
-            "cell": dynamics.system.cell,
-        }
-        if row.controls.shape[0] > 0:
-            values["control_values"] = row.controls
-        if dynamics.system.cell is not None:
-            # The program derives fractional coordinates of the evaluated
-            # positions from these runtime vectors with a reported solve status.
-            values["cell_vectors"] = state.cell_vectors
-        return values
+    def kwargs(current_unwrapped: Array, current_images: Array) -> dict[str, Any]:
+        return dynamics._potential_kwargs(
+            current_unwrapped,
+            current_images,
+            state.species,
+            vectors,
+            row.controls,
+            state.term_states,
+        )
 
     slow = evaluate_force_group(
         dynamics.potential,
         plan.slow_group,
         position,
-        neighborhood,
-        **kwargs(unwrapped),
+        neighborhoods,
+        **kwargs(unwrapped, images),
     )
-    momentum = momentum + 0.5 * outer * force_scale * slow.forces
-    momentum = jnp.where(mobile, momentum, 0.0)
+    momentum = jnp.where(mobile, momentum + 0.5 * outer * force_scale * slow.forces, 0.0)
     fast_work = jnp.zeros((), dtype=jnp.int32)
-    successful = row.valid & slow.successful
-    cache = state.neighborhood_cache
+    successful = slow.successful
+    reasons = jnp.zeros((), dtype=jnp.int32)
     for _ in range(plan.inner_steps):
         fast = evaluate_force_group(
             dynamics.potential,
             plan.fast_group,
             position,
-            neighborhood,
-            **kwargs(unwrapped),
+            neighborhoods,
+            **kwargs(unwrapped, images),
         )
         successful = successful & fast.successful
         momentum = momentum + 0.5 * inner * force_scale * fast.forces
-        unwrapped = unwrapped + inner * momentum * inverse_mass
-        if dynamics.system.cell is None:
-            position = unwrapped
-        else:
-            position, images = dynamics.system.cell.wrap_with_vectors(
-                unwrapped, state.cell_vectors
-            )
-        neighborhood, cache = dynamics._build_neighborhood(
-            position, cache, state.cell_vectors, images
+        unwrapped = jnp.where(
+            mobile, unwrapped + inner * momentum * inverse_mass, unwrapped
         )
+        position, images = dynamics._wrap(unwrapped, vectors, images)
+        neighborhoods = dynamics.refresh_neighborhoods(
+            neighborhoods, position, cell_vectors=vectors, image_counts=images
+        )
+        reasons = reasons | _neighborhood_reasons(neighborhoods)
         fast = evaluate_force_group(
             dynamics.potential,
             plan.fast_group,
             position,
-            neighborhood,
-            **kwargs(unwrapped),
+            neighborhoods,
+            **kwargs(unwrapped, images),
         )
-        momentum = momentum + 0.5 * inner * force_scale * fast.forces
-        momentum = jnp.where(mobile, momentum, 0.0)
-        successful = successful & fast.successful & neighborhood.successful
-        fast_work = fast_work + neighborhood_route_work(neighborhood)
+        momentum = jnp.where(
+            mobile, momentum + 0.5 * inner * force_scale * fast.forces, 0.0
+        )
+        successful = successful & fast.successful
+        fast_work = fast_work + neighborhood_route_work(neighborhoods)
     slow = evaluate_force_group(
         dynamics.potential,
         plan.slow_group,
         position,
-        neighborhood,
-        **kwargs(unwrapped),
+        neighborhoods,
+        **kwargs(unwrapped, images),
     )
-    momentum = momentum + 0.5 * outer * force_scale * slow.forces
-    momentum = jnp.where(mobile, momentum, 0.0)
-    total = dynamics.potential.evaluate(
+    momentum = jnp.where(mobile, momentum + 0.5 * outer * force_scale * slow.forces, 0.0)
+    total = dynamics.evaluate_configuration(
         position,
-        neighborhood,
-        **kwargs(unwrapped),
+        neighborhoods,
+        unwrapped_positions=unwrapped,
+        image_counts=images,
+        species=state.species,
+        cell_vectors=vectors,
+        controls=row.controls,
+        term_states=state.term_states,
+    )
+    revision = state.configuration_revision + 1
+    force = dynamics.force_state(
+        total,
+        neighborhoods,
+        revision,
+        row.hamiltonian_index,
+        row.controls,
+        state.random_key,
+        term_states=state.term_states,
+        ports=None,
     )
     kinetic = dynamics.kinetic_energy(momentum)
-    total_energy = kinetic + total.energy
-    delta = total_energy - state.energy.total_energy
-    ledger = AtomisticEnergyLedgerState(
-        state.energy.initial_kinetic_energy,
-        state.energy.initial_potential_energy,
+    terms = dynamics.extended_terms(state.controllers, vectors, thermodynamic, row)
+    ledger = advance_atomistic_energy_ledger(
+        state.energy,
         kinetic,
         total.energy,
-        total_energy,
-        state.energy.thermostat_heat,
-        state.energy.barostat_work,
-        state.energy.external_work,
-        state.energy.constraint_work,
-        state.energy.cumulative_balance_residual + delta,
-        jnp.abs(delta) / jnp.maximum(jnp.abs(state.energy.total_energy), 1.0e-30),
-        state.energy.accepted_steps + 1,
+        terms,
+        thermostat_heat=jnp.zeros_like(kinetic),
+        reservoir_heat=jnp.zeros_like(kinetic),
+        constraint_work=jnp.zeros_like(kinetic),
+        barostat_work=jnp.zeros_like(kinetic),
+        external_work=jnp.zeros_like(kinetic),
+        balanced=True,
+        accepted_increment=1,
     )
-    force = dynamics._force_state(total, cache, state.step_index + 1)
-    candidate = AtomisticDynamicsState(
-        time=state.time + outer,
-        step_index=state.step_index + 1,
-        kinematics=AtomisticKinematics(position, momentum, images),
-        species=state.species,
-        cell_vectors=state.cell_vectors,
-        neighborhood=neighborhood,
-        neighborhood_cache=cache,
-        force=force,
-        constraint_lagrange=state.constraint_lagrange,
-        constraint_position_residual=state.constraint_position_residual,
-        constraint_velocity_residual=state.constraint_velocity_residual,
-        thermostat_state=state.thermostat_state,
-        barostat_state=state.barostat_state,
-        random_key=state.random_key,
-        energy=ledger,
-        last_status=state.last_status,
-        last_rejection_reasons=state.last_rejection_reasons,
-        thermodynamic_state_index=state.thermodynamic_state_index,
-        thermodynamic_table_id=state.thermodynamic_table_id,
-        prepared_dynamics_id=state.prepared_dynamics_id,
+    reasons = (
+        reasons
+        | _flag(
+            ~(successful & slow.successful & total.successful),
+            AtomisticStepRejectionReason.POTENTIAL,
+        )
+        | _flag(~row.valid, AtomisticStepRejectionReason.THERMODYNAMIC_STATE)
+        | _flag(~force_valid, AtomisticStepRejectionReason.STALE_FORCE)
+        | _flag(
+            ~dynamics.binding_valid(state, thermodynamic),
+            AtomisticStepRejectionReason.BINDING,
+        )
     )
-    successful = successful & slow.successful & total.successful
+    reasons = reasons | _strain_reasons(
+        dynamics.strain_response, force.strain_available, reasons
+    )
+    accepted = reasons == 0
+    candidate = eqx.tree_at(
+        lambda value: (
+            value.time,
+            value.step_index,
+            value.configuration_revision,
+            value.kinematics,
+            value.neighborhoods,
+            value.force,
+            value.energy,
+        ),
+        state,
+        (
+            state.time + outer,
+            state.step_index + 1,
+            revision,
+            AtomisticKinematics(position, momentum, images),
+            neighborhoods,
+            force,
+            ledger,
+        ),
+    )
     return RESPAStepEvaluation(
-        tree_where(successful, candidate, state),
-        successful,
+        tree_where(accepted, candidate, state),
+        accepted,
+        reasons,
         fast_work,
-        neighborhood_route_work(neighborhood),
+        neighborhood_route_work(neighborhoods),
         plan.plan_id,
     )
 
@@ -405,16 +495,19 @@ def evaluate_subtractive_potential(
     high_region: PreparedAtomisticPotentialProgram,
     full_positions: ArrayLike,
     region_positions: ArrayLike,
-    full_neighborhood: ParticleNeighborhoodState,
-    region_neighborhood: ParticleNeighborhoodState,
+    full_neighborhood: AtomisticNeighborhoodBundleState,
+    region_neighborhood: AtomisticNeighborhoodBundleState,
     region_indices: ArrayLike,
     /,
 ) -> SubtractivePotentialEvaluation:
     raw_indices = jnp.asarray(region_indices)
     if raw_indices.ndim != 1 or raw_indices.dtype.kind not in "iu":
         raise TypeError("region_indices must be an integer vector.")
-    if low_region.system.prepared_id != high_region.system.prepared_id:
-        raise ValueError("Low- and high-level region potentials must share one system.")
+    # Both region potentials must bind one prepared system; compared on the
+    # identity words so the check is traceable and fails the result status.
+    same_region_system = low_region.system.prepared_identity.equals(
+        high_region.system.prepared_identity
+    )
     full_position = jnp.asarray(full_positions)
     region_position = jnp.asarray(region_positions)
     if (
@@ -444,7 +537,8 @@ def evaluate_subtractive_potential(
         - low_region_evaluation.energy
     )
     successful = (
-        low_all_evaluation.successful
+        same_region_system
+        & low_all_evaluation.successful
         & low_region_evaluation.successful
         & high_region_evaluation.successful
         & jnp.all(jnp.isfinite(full_force))
@@ -455,7 +549,7 @@ def evaluate_subtractive_potential(
 def local_species_energy_delta(
     potential: PreparedAtomisticPotentialProgram,
     positions: ArrayLike,
-    neighborhood: ParticleNeighborhoodState,
+    neighborhood: AtomisticNeighborhoodBundleState,
     species: ArrayLike,
     particle_index: ArrayLike,
     proposed_species: ArrayLike,
@@ -485,6 +579,53 @@ def local_species_energy_delta(
     return proposed_energy - current_energy
 
 
+_IDENTITY_WORD_SHAPE = (8,)
+
+
+def _provider_binding(
+    identity: IdentityWords | None, label: str | None, /
+) -> tuple[IdentityWords | None, str | None]:
+    """Validate one exclusive provider binding: an owning digest or a declared label."""
+    if (identity is None) == (label is None):
+        raise ValueError("Supply exactly one of provider_identity or provider_label.")
+    if identity is not None:
+        if (
+            not isinstance(identity, IdentityWords)
+            or identity.words.shape != _IDENTITY_WORD_SHAPE
+        ):
+            raise TypeError("provider_identity must be one unbatched IdentityWords.")
+        return identity, None
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("provider_label must be a non-empty string.")
+    return None, label.strip()
+
+
+def _provider_id(identity: IdentityWords | None, label: str | None, /) -> str:
+    """Host string of one provider binding: the label or the decoded digest."""
+    if label is not None:
+        return label
+    if identity is None:
+        raise RuntimeError("Internal invariant failed: provider binding is empty.")
+    return identity.fingerprint()
+
+
+def _same_provider(
+    identity: IdentityWords | None,
+    label: str | None,
+    other_identity: IdentityWords | None,
+    other_label: str | None,
+    /,
+) -> Array:
+    """Traced equality of two provider bindings.
+
+    Digest bindings compare their identity words; labelled bindings compare
+    their static declared labels; a digest never matches a label.
+    """
+    if identity is None or other_identity is None:
+        return jnp.asarray(label is not None and label == other_label)
+    return identity.equals(other_identity)
+
+
 class ExternalAtomisticEvaluation(StrictModule):
     """One external or native host evaluation in the bound system's units.
 
@@ -496,13 +637,23 @@ class ExternalAtomisticEvaluation(StrictModule):
     ``atomistic_cell_energy_and_stress``; ``None`` declares it unavailable.
     Configurational virials ``W = -V * stress`` exist only at protocol
     boundaries that require them, never in this record.
+
+    PyTree: the producing provider is bound by exactly one of
+    ``provider_identity`` (dynamic `IdentityWords` of a provider identified by
+    an owning canonical digest, e.g. `NativeAtomisticProvider`) or
+    ``provider_label`` (static declared label of a labelled provider, e.g.
+    an i-PI transport); the other is ``None``.  Digest-bound evaluations are
+    therefore constructible inside compiled code and share one executable per
+    layout.  The host property ``provider_id`` returns the label or the
+    decoded digest; `bound_to` is the traced binding check.
     """
 
     energy: Array
     forces: Array
     stress: Array | None
     successful: Array
-    provider_id: str = eqx.field(static=True)
+    provider_identity: IdentityWords | None
+    provider_label: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -510,7 +661,9 @@ class ExternalAtomisticEvaluation(StrictModule):
         forces: ArrayLike,
         stress: ArrayLike | None,
         successful: ArrayLike,
-        provider_id: str,
+        *,
+        provider_identity: IdentityWords | None = None,
+        provider_label: str | None = None,
     ) -> None:
         energy_ = jnp.asarray(energy)
         forces_ = jnp.asarray(forces)
@@ -524,17 +677,50 @@ class ExternalAtomisticEvaluation(StrictModule):
             raise ValueError("External atomistic stress must be a (3, 3) tensor.")
         if successful_.shape != () or successful_.dtype != jnp.bool_:
             raise ValueError("External atomistic success must be a boolean scalar.")
+        identity, label = _provider_binding(provider_identity, provider_label)
         self.energy = energy_
         self.forces = forces_
         self.stress = stress_
         self.successful = successful_
-        self.provider_id = provider_id
+        self.provider_identity = identity
+        self.provider_label = label
+
+    @property
+    def provider_id(self) -> str:
+        """Host string of the producing provider: its label or decoded digest."""
+        return _provider_id(self.provider_identity, self.provider_label)
+
+    def bound_to(self, provider: AbstractExternalAtomisticProvider, /) -> Array:
+        """Traced: this evaluation carries exactly ``provider``'s binding."""
+        return _same_provider(
+            self.provider_identity,
+            self.provider_label,
+            provider.provider_identity,
+            provider.provider_label,
+        )
 
 
 class AbstractExternalAtomisticProvider(StrictModule, NonTrainableState):
-    provider_id: eqx.AbstractVar[str]
+    """Provider boundary returning `ExternalAtomisticEvaluation` records.
+
+    A provider declares exactly one binding: dynamic ``provider_identity``
+    words when it is identified by an owning canonical digest, or a static
+    declared ``provider_label``; the other is ``None``.  The base owns the
+    host ``provider_id`` (the label or the decoded digest).
+    """
+
+    provider_identity: eqx.AbstractVar[IdentityWords | None]
+    provider_label: eqx.AbstractVar[str | None]
     conservative: eqx.AbstractVar[bool]
     differentiable: eqx.AbstractVar[bool]
+
+    def __check_init__(self) -> None:
+        _provider_binding(self.provider_identity, self.provider_label)
+
+    @property
+    def provider_id(self) -> str:
+        """Host string of this provider: its label or decoded digest."""
+        return _provider_id(self.provider_identity, self.provider_label)
 
     @abc.abstractmethod
     def evaluate(

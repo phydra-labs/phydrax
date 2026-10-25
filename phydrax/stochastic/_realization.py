@@ -60,13 +60,16 @@ def _atomic_independence_labels(
 
 
 class CompositeStochasticRealization(StrictModule):
-    """Named atomic realizations sharing one sample layout and support."""
+    """Named atomic realizations sharing one sample layout and support.
+
+    The composite identity is materialized on demand from its components, so a
+    composite of realizations built from traced keys stays traceable; reading
+    `realization_id` or `coupling_id` requires concrete component identities.
+    """
 
     components: frozendict[str, AtomicStochasticRealization]
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     support: tuple[float, float] = eqx.field(static=True)
-    realization_id: str = eqx.field(static=True)
-    coupling_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -101,20 +104,27 @@ class CompositeStochasticRealization(StrictModule):
             raise ValueError("Composite realization sample shapes must match.")
         if any(value.support != support for value in values[1:]):
             raise ValueError("Composite realization supports must match.")
-        names = tuple(resolved)
-        realization_parts = tuple(
-            f"{name}:{resolved[name].realization_id}" for name in names
-        )
-        coupling_parts = tuple(f"{name}:{resolved[name].coupling_id}" for name in names)
         self.components = resolved
         self.sample_shape = sample_shape
         self.support = support
-        self.realization_id = _digest(
-            realization_parts,
+
+    @property
+    def realization_id(self) -> str:
+        return _digest(
+            tuple(
+                f"{name}:{component.realization_id}"
+                for name, component in self.components.items()
+            ),
             prefix=b"phydrax-composite-realization\0",
         )
-        self.coupling_id = _digest(
-            coupling_parts,
+
+    @property
+    def coupling_id(self) -> str:
+        return _digest(
+            tuple(
+                f"{name}:{component.coupling_id}"
+                for name, component in self.components.items()
+            ),
             prefix=b"phydrax-composite-coupling\0",
         )
 

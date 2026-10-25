@@ -219,7 +219,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 raise ValueError("Sparse nodal storage must match the splat target.")
             if storage.topology_plan.layout.layout_id != splat.layout.layout_id:
                 raise ValueError("Sparse nodal storage and splat layouts differ.")
-        if splat.particles.prepared_id != particles.prepared_id:
+        if splat.physical_particles().prepared_id != particles.prepared_id:
             raise ValueError("MPM splat was prepared for a different particle support.")
         dimension = particles.ambient_dimension
         if dimension not in (1, 2, 3) or particle_domain.dimension != dimension:

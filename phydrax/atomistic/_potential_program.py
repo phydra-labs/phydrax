@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Sequence
-from typing import Any, Protocol
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from typing import Any, assert_never, Protocol, Self
 
 import equinox as eqx
 import jax
@@ -17,33 +18,65 @@ from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
-from .._fingerprint import canonical_fingerprint
+from .._admissibility import guard_derivative_validity
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
-from ..discretization import (
-    ParticleImageNeighborhoodState,
-    ParticleNeighborhoodState,
-    PeriodicCell,
-)
+from ..discretization import PeriodicCell
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
-from ..typing import checked
+from ..typing import checked, PRNGKey
+from ..units import conversion_factor
+from ._conditioning import (
+    AtomisticConditioning,
+    AtomisticFieldReference,
+    AtomisticObservable,
+    AtomisticObservableRequest,
+    AtomisticObservableValue,
+)
+from ._execution_binding import (
+    atomistic_hamiltonian_layout_id,
+    atomistic_term_layout_id,
+)
 from ._graph import (
-    admit_supplied_topology,
+    _neighborhood_graph_topology,
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
-    AtomisticGraphTopology,
     bind_atomistic_graph,
-    particle_atomistic_graph_topology,
+)
+from ._model_inputs import AtomisticGraphInputs
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodBundlePlan,
+    AtomisticNeighborhoodBundleState,
+    AtomisticNeighborhoodRequirement,
+    AtomisticNeighborhoodRole,
+    AtomisticNeighborhoodView,
+    AtomisticPairCounting,
+    PreparedAtomisticNeighborhoodBundle,
 )
 from ._potential import (
-    AbstractAtomisticPotential,
-    atomistic_potential_revision,
+    AbstractAtomisticModel,
+    AbstractPreparedAtomisticModel,
+    atomistic_model_revision,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
-    AtomisticSpeciesKind,
     AtomisticStressConvention,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
+from ._term_state import AbstractAtomisticTermState, AtomisticTermStateBindings
+from ._types import AtomisticSpeciesKind
+
+
+def _admitted_scalar(
+    value: Array, successful: Array, dependencies: tuple[Array, ...], /
+) -> Array:
+    """Invalidate the scalar and its coordinate/control tangents together."""
+    scale = jnp.where(
+        successful,
+        jnp.ones((), dtype=value.dtype),
+        jnp.asarray(jnp.nan, dtype=value.dtype),
+    )
+    return guard_derivative_validity(value * scale, successful, dependencies=dependencies)
 
 
 class AtomisticInteractionScaleState(StrictModule):
@@ -81,8 +114,61 @@ class AtomisticInteractionScaleState(StrictModule):
         )
 
 
+def _resolve_field(
+    reference: AtomisticFieldReference,
+    producers: tuple[str, ...],
+    fields: tuple[AtomisticObservableValue, ...],
+    /,
+) -> AtomisticObservableValue:
+    selected: AtomisticObservableValue | None = None
+    for producer, field in zip(producers, fields, strict=True):
+        if (
+            producer == reference.producer
+            and field.observable is reference.observable
+            and field.port.port_id == reference.port.port_id
+        ):
+            if selected is not None:
+                raise ValueError(
+                    "A producer supplied the same scientific field more than once."
+                )
+            selected = field
+    if selected is None:
+        raise ValueError(
+            "The requested producer has not supplied its declared scientific field."
+        )
+    if selected.level is not reference.level:
+        raise ValueError(
+            "The producer field and consumer reference use different entity levels."
+        )
+    if reference.unit is None:
+        if selected.unit is not None:
+            raise ValueError(
+                "A field reference cannot discard the producer's physical unit."
+            )
+        return selected
+    if selected.unit is None:
+        raise ValueError(
+            "A physical field cannot be inferred from an uncalibrated producer output."
+        )
+    if selected.unit.unit_id == reference.unit.unit_id:
+        return selected
+    factor = conversion_factor(selected.unit, reference.unit)
+    return AtomisticObservableValue(
+        selected.observable,
+        selected.port,
+        selected.values * jnp.asarray(factor, dtype=selected.values.dtype),
+        selected.available,
+        level=selected.level,
+        case_count=selected.case_count,
+        atom_capacity=selected.atom_capacity,
+        unit=reference.unit,
+    )
+
+
 class AtomisticPotentialContext(StrictModule):
     """Requirements-resolved dynamic data shared by one potential program."""
+
+    __strict_contract__ = True
 
     system: PreparedAtomisticSystem
     positions: Array
@@ -111,23 +197,98 @@ class AtomisticPotentialContext(StrictModule):
     graph: AtomisticGraph | None
     cell: PeriodicCell | None
     cell_vectors: Array
+    cell_inverse: Array | None
     neighborhood_successful: Array
+    time: Array
+    term_states: AtomisticTermStateBindings
+    graph_execution: AtomisticGraphExecutionPlan | None = None
+    neighborhoods: tuple[AtomisticNeighborhoodView, ...] = ()
+    field_values: tuple[AtomisticObservableValue, ...] = ()
+    field_producers: tuple[str, ...] = eqx.field(static=True, default=())
+    conditioning: AtomisticConditioning | None = None
+    key: PRNGKey | None = None
+    image_counts: Array | None = None
+    scale_values: tuple[AtomisticInteractionScaleState, ...] = ()
+    scale_slots: tuple[str, ...] = eqx.field(static=True, default=())
+
+    @checked
+    def field(self, reference: AtomisticFieldReference, /) -> AtomisticObservableValue:
+        return _resolve_field(reference, self.field_producers, self.field_values)
+
+    @checked
+    def neighborhood(
+        self, requirement: AtomisticNeighborhoodRequirement, /
+    ) -> AtomisticNeighborhoodView:
+        for view in self.neighborhoods:
+            if view.requirement_id == requirement.requirement_id:
+                return view
+        raise ValueError(
+            "The context has no view for this exact neighborhood requirement."
+        )
 
 
 class AtomisticTermEvaluation(StrictModule):
     energy: Array
     atom_energy: Array
     successful: Array
+    atom_energy_complete: bool = eqx.field(static=True, default=True)
+    evidence: tuple[StrictModule, ...] = ()
+    fields: tuple[AtomisticObservableValue, ...] = ()
+
+
+class AtomisticProgramAuxiliary(StrictModule):
+    """The complete auxiliary state of one scalar program evaluation.
+
+    ``term_slots`` are the evaluated rows' declared term names (layout);
+    ``term_identities`` stacks their exact scientific term digests as dynamic
+    words, decoded on the host by ``term_ids``.
+    """
+
+    term_energies: Array
+    contributing_terms: Array
+    term_slots: tuple[str, ...] = eqx.field(static=True)
+    term_identities: IdentityWords
+    atom_energy: Array
+    successful: Array
+    graph_overflow: Array
+    neighborhood_successful: Array
+    term_evidence: tuple[tuple[StrictModule, ...], ...]
+    fields: tuple[AtomisticObservableValue, ...]
+    field_producers: tuple[str, ...] = eqx.field(static=True)
+    atom_energy_complete: bool = eqx.field(static=True)
+
+    @property
+    def term_ids(self) -> tuple[str, ...]:
+        """Host decoding of the evaluated rows' scientific term digests."""
+        return tuple(
+            IdentityWords(self.term_identities.words[row]).fingerprint()
+            for row in range(len(self.term_slots))
+        )
+
+
+def _stacked_identities(values: Sequence[IdentityWords], /) -> IdentityWords:
+    if not values:
+        return IdentityWords(jnp.zeros((0, 8), dtype=jnp.uint32))
+    return IdentityWords(jnp.stack(tuple(value.words for value in values)))
 
 
 class AbstractAtomisticEnergyTerm(StrictModule):
-    """One composable scalar-energy term in a prepared atomistic program."""
+    """One composable scalar-energy term in a prepared atomistic program.
+
+    ``name`` is the declared program slot; the exact scientific term digest is
+    the dynamic ``term_identity`` (``term_id`` decodes it on the host).
+    """
 
     name: eqx.AbstractVar[str]
     force_group: eqx.AbstractVar[int]
-    term_id: eqx.AbstractVar[str]
+    term_identity: eqx.AbstractVar[IdentityWords]
     capabilities: eqx.AbstractVar[AtomisticPotentialCapabilities]
     requirements: eqx.AbstractVar[AtomisticPotentialRequirements]
+
+    @property
+    def term_id(self) -> str:
+        """Host decoding of the canonical scientific term digest."""
+        return self.term_identity.fingerprint()
 
     @abc.abstractmethod
     def prepare(
@@ -137,16 +298,50 @@ class AbstractAtomisticEnergyTerm(StrictModule):
 
 
 class AbstractPreparedAtomisticEnergyTerm(StrictModule):
+    """One prepared term: layout statics plus dynamic numerics and identities.
+
+    ``term_identity`` (scientific term) and ``prepared_identity`` (numerical
+    preparation bound to its system) are exact canonical digests as dynamic
+    words; ``term_id``/``prepared_id`` decode them on the host.  ``layout_id``
+    is the content-free executable layout of the term.
+    """
+
     name: eqx.AbstractVar[str]
     force_group: eqx.AbstractVar[int]
-    term_id: eqx.AbstractVar[str]
-    prepared_id: eqx.AbstractVar[str]
+    term_identity: eqx.AbstractVar[IdentityWords]
+    prepared_identity: eqx.AbstractVar[IdentityWords]
     capabilities: eqx.AbstractVar[AtomisticPotentialCapabilities]
     requirements: eqx.AbstractVar[AtomisticPotentialRequirements]
+
+    @property
+    def term_id(self) -> str:
+        """Host decoding of the canonical scientific term digest."""
+        return self.term_identity.fingerprint()
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the canonical prepared-term digest."""
+        return self.prepared_identity.fingerprint()
+
+    @property
+    def layout_id(self) -> str:
+        """Content-free executable layout of this prepared term."""
+        return atomistic_term_layout_id(self)
 
     @abc.abstractmethod
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         raise NotImplementedError
+
+    def initial_term_state(
+        self, dtype: DTypeLike, /
+    ) -> AbstractAtomisticTermState | None:
+        """Stateless terms have no initial state; stateful owners provide it.
+
+        A provided state's ``owner_identity`` is this term's ``term_identity``.
+        """
+        if self.requirements.state_required:
+            raise TypeError("A stateful term must implement its state initializer.")
+        return None
 
 
 class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
@@ -158,23 +353,31 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
     capability, not evidence that the fitted model is stable for dynamics.
     """
 
-    potential: AbstractAtomisticPotential
+    __strict_contract__ = True
+
+    potential: AbstractAtomisticModel | AbstractPreparedAtomisticModel
+    conditioning: AtomisticConditioning | None
+    key: PRNGKey | None
+    request: AtomisticObservableRequest | None
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
     allow_periodic: bool = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
     @checked
     def __init__(
         self,
-        potential: AbstractAtomisticPotential,
+        potential: AbstractAtomisticModel | AbstractPreparedAtomisticModel,
         /,
         *,
         name: str = "learned",
         force_group: int = 0,
         allow_periodic: bool = False,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+        request: AtomisticObservableRequest | None = None,
     ) -> None:
         identifier = str(name).strip()
         group = int(force_group)
@@ -184,6 +387,8 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
             )
         periodic = bool(allow_periodic)
         declared = potential.capabilities
+        if not declared.conservative_energy:
+            raise ValueError("A property-only model cannot be used as an energy term.")
         if periodic and not (
             declared.orthorhombic_periodic or declared.triclinic_periodic
         ):
@@ -197,33 +402,71 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
             orthorhombic_periodic=periodic and declared.orthorhombic_periodic,
             triclinic_periodic=periodic and declared.triclinic_periodic,
             cell_derivative=periodic and declared.cell_derivative,
-            local_energy=True,
+            local_energy=declared.local_energy,
+            species_kind=declared.species_kind,
         )
-        requirements = potential.requirements
-        if not requirements.directed_graph or requirements.cutoff is None:
-            raise ValueError(
-                "Learned graph potentials must declare a directed graph and cutoff."
-            )
+        source_requirements = potential.requirements
+        source_requirements.neighborhood(
+            AtomisticNeighborhoodRole.DIRECTED_IMAGE_GRAPH
+        ).bounded_cutoff()
+        requirements = AtomisticPotentialRequirements(
+            bonded_geometry=source_requirements.bonded_geometry,
+            reciprocal_grid=source_requirements.reciprocal_grid,
+            state_required=source_requirements.state_required,
+            field_dependencies=source_requirements.field_dependencies,
+            neighborhoods=tuple(
+                AtomisticNeighborhoodRequirement(
+                    identifier,
+                    requirement.role,
+                    requirement.cutoff,
+                    selection=requirement.selection,
+                    receiver_group=requirement.receiver_group,
+                    exclusions=requirement.exclusions,
+                )
+                for requirement in source_requirements.neighborhoods
+            ),
+        )
         self.potential = potential
+        self.conditioning = conditioning
+        self.key = key
+        self.request = request
         self.name = identifier
         self.force_group = group
         self.allow_periodic = bool(allow_periodic)
         self.capabilities = capabilities
         self.requirements = requirements
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "learned-graph-potential-term",
-                "potential_revision": atomistic_potential_revision(potential).revision_id,
+                "potential_revision": atomistic_model_revision(potential).revision_id,
                 "name": identifier,
                 "force_group": group,
                 "allow_periodic": bool(allow_periodic),
                 "capabilities": capabilities.capabilities_id,
                 "requirements": requirements.requirements_id,
+                "conditioning": (
+                    None
+                    if conditioning is None
+                    else (conditioning.spec.spec_id, array_tree_fingerprint(conditioning))
+                ),
+                "random_realization": (
+                    None
+                    if key is None
+                    else (
+                        str(jax.random.key_impl(key)),
+                        array_tree_fingerprint(jax.random.key_data(key)),
+                    )
+                ),
+                "request": None if request is None else request.request_id,
             }
         )
 
     def prepare(
-        self, system: PreparedAtomisticSystem, /
+        self,
+        system: PreparedAtomisticSystem,
+        /,
+        *,
+        request: AtomisticObservableRequest | None = None,
     ) -> "PreparedLearnedGraphPotentialTerm":
         if system.plan.units.scale.scale_id != self.potential.scale.scale_id:
             raise ValueError("Learned potential and atomistic system scales differ.")
@@ -251,7 +494,7 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
                     "The learned potential does not declare execution for this cell "
                     "geometry."
                 )
-        return PreparedLearnedGraphPotentialTerm(self, system)
+        return PreparedLearnedGraphPotentialTerm(self, system, request=request)
 
 
 class PreparedLearnedGraphPotentialTerm(AbstractPreparedAtomisticEnergyTerm):
@@ -259,61 +502,139 @@ class PreparedLearnedGraphPotentialTerm(AbstractPreparedAtomisticEnergyTerm):
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
+    request: AtomisticObservableRequest | None
 
     def __init__(
-        self, plan: LearnedGraphPotentialTerm, system: PreparedAtomisticSystem, /
+        self,
+        plan: LearnedGraphPotentialTerm,
+        system: PreparedAtomisticSystem,
+        /,
+        *,
+        request: AtomisticObservableRequest | None = None,
     ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
         self.force_group = plan.force_group
-        self.term_id = plan.term_id
+        self.term_identity = plan.term_identity
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
+        self.request = plan.request if request is None else request
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-learned-graph-potential-term",
                 "term": plan.term_id,
                 "system": system.prepared_id,
+                "request": None if self.request is None else self.request.request_id,
+                "model_realization": (
+                    plan.potential.prepared_id
+                    if isinstance(plan.potential, AbstractPreparedAtomisticModel)
+                    else None
+                ),
             }
         )
 
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         if context.graph is None:
             raise ValueError("Learned graph potential requires a directed graph context.")
-        atom_cases = jnp.zeros((self.system.capacity,), dtype=jnp.int32)
-        species = (
-            self.system.plan.atomic_numbers
-            if self.plan.potential.capabilities.species_kind
-            is AtomisticSpeciesKind.ATOMIC_NUMBER
-            else context.species
+        if self.plan.conditioning is not None and context.conditioning is not None:
+            raise ValueError("Bind conditioning on the term or the evaluation, not both.")
+        if self.plan.key is not None and context.key is not None:
+            raise ValueError("Bind a random key on the term or the evaluation, not both.")
+        outputs = self.plan.potential.evaluate_graph(
+            AtomisticGraphInputs(
+                context.graph,
+                self.system.plan.units.scale,
+                species_kind=self.plan.potential.capabilities.species_kind,
+                conditioning=(
+                    self.plan.conditioning
+                    if self.plan.conditioning is not None
+                    else context.conditioning
+                ),
+                key=self.plan.key if self.plan.key is not None else context.key,
+            ),
+            self.request,
         )
-        energy, atom_energy = self.plan.potential.graph_energy(
-            species,
-            self.system.active_mask,
-            atom_cases,
-            1,
-            self.system.capacity,
-            context.graph,
+        return AtomisticTermEvaluation(
+            outputs.energy[0],
+            outputs.atom_energy[0],
+            outputs.successful[0],
+            atom_energy_complete=outputs.atom_energy_complete,
+            fields=outputs.additional,
+            evidence=outputs.evidence,
         )
-        successful = context.graph.valid[0] & jnp.all(jnp.isfinite(energy))
-        return AtomisticTermEvaluation(energy[0], atom_energy[0], successful)
+
+
+def _term_execution_order(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...], /
+) -> tuple[int, ...]:
+    indices = {term.name: index for index, term in enumerate(terms)}
+    dependencies = []
+    for term in terms:
+        missing = tuple(
+            ref.producer
+            for ref in term.requirements.field_dependencies
+            if ref.producer not in indices
+        )
+        if missing:
+            raise ValueError(
+                f"Potential term {term.name!r} has unknown field producers {missing!r}."
+            )
+        dependencies.append(
+            {indices[ref.producer] for ref in term.requirements.field_dependencies}
+        )
+    pending = set(range(len(terms)))
+    order = []
+    while pending:
+        ready = tuple(
+            index for index in sorted(pending) if not dependencies[index] & pending
+        )
+        if not ready:
+            raise ValueError("Atomistic potential field dependencies contain a cycle.")
+        order.extend(ready)
+        pending.difference_update(ready)
+    return tuple(order)
+
+
+def _producer_request(
+    terms: tuple[AbstractAtomisticEnergyTerm, ...],
+    producer: LearnedGraphPotentialTerm,
+    /,
+) -> AtomisticObservableRequest:
+    requested = {AtomisticObservable.ENERGY, AtomisticObservable.ATOM_ENERGY}
+    derivatives = ()
+    if producer.request is not None:
+        requested.update(producer.request.observables)
+        derivatives = producer.request.derivatives
+    for term in terms:
+        requested.update(
+            ref.observable
+            for ref in term.requirements.field_dependencies
+            if ref.producer == producer.name
+        )
+    return AtomisticObservableRequest(tuple(requested), derivatives=derivatives)
 
 
 class AtomisticPotentialProgram(StrictModule):
-    """Ordered additive scalar-energy program with merged spatial requirements."""
+    """Ordered additive scalar-energy program with merged spatial requirements.
+
+    Term slots, force groups and evaluation order are layout; the canonical
+    program digest (term digests, coefficients, requirements, capabilities,
+    order) is the dynamic ``program_identity``, decoded by ``program_id``.
+    """
 
     terms: tuple[AbstractAtomisticEnergyTerm, ...]
     coefficients: Array
     term_names: tuple[str, ...] = eqx.field(static=True)
     force_groups: tuple[int, ...] = eqx.field(static=True)
+    evaluation_order: tuple[int, ...] = eqx.field(static=True)
     requirements: AtomisticPotentialRequirements
     capabilities: AtomisticPotentialCapabilities
-    program_id: str = eqx.field(static=True)
+    program_identity: IdentityWords
 
     def __init__(
         self,
@@ -339,20 +660,23 @@ class AtomisticPotentialProgram(StrictModule):
         )
         if weights.shape != (len(values),) or np.any(~np.isfinite(weights)):
             raise ValueError("coefficients must be finite with one value per term.")
-        cutoffs = tuple(
-            value.requirements.cutoff
-            for value in values
-            if value.requirements.cutoff is not None
-        )
+        spatial = {
+            requirement.requirement_id: requirement
+            for term in values
+            for requirement in term.requirements.neighborhoods
+        }
+        dependencies = {
+            reference.reference_id: reference
+            for term in values
+            for reference in term.requirements.field_dependencies
+        }
+        evaluation_order = _term_execution_order(values)
         requirements = AtomisticPotentialRequirements(
-            cutoff=None if not cutoffs else max(cutoffs),
-            pair_geometry=any(value.requirements.pair_geometry for value in values),
-            interaction_site_geometry=any(
-                value.requirements.interaction_site_geometry for value in values
-            ),
-            directed_graph=any(value.requirements.directed_graph for value in values),
             bonded_geometry=any(value.requirements.bonded_geometry for value in values),
             reciprocal_grid=any(value.requirements.reciprocal_grid for value in values),
+            state_required=any(value.requirements.state_required for value in values),
+            neighborhoods=tuple(spatial[key] for key in sorted(spatial)),
+            field_dependencies=tuple(dependencies[key] for key in sorted(dependencies)),
         )
         capabilities = AtomisticPotentialCapabilities(
             conservative_energy=all(
@@ -384,27 +708,39 @@ class AtomisticPotentialProgram(StrictModule):
         self.coefficients = jnp.asarray(weights)
         self.term_names = names
         self.force_groups = tuple(value.force_group for value in values)
+        self.evaluation_order = evaluation_order
         self.requirements = requirements
         self.capabilities = capabilities
-        self.program_id = canonical_fingerprint(
+        self.program_identity = IdentityWords.of(
             {
                 "kind": "atomistic-potential-program",
                 "terms": [value.term_id for value in values],
                 "coefficients": weights.tolist(),
                 "requirements": requirements.requirements_id,
                 "capabilities": capabilities.capabilities_id,
+                "evaluation_order": evaluation_order,
             }
         )
+
+    @property
+    def program_id(self) -> str:
+        """Host decoding of the canonical unbound program digest."""
+        return self.program_identity.fingerprint()
 
     def prepare(
         self,
         system: PreparedAtomisticSystem,
         /,
         *,
+        neighborhood_bundle: AtomisticNeighborhoodBundlePlan
+        | PreparedAtomisticNeighborhoodBundle,
         graph_execution: AtomisticGraphExecutionPlan | None = None,
     ) -> "PreparedAtomisticPotentialProgram":
         return PreparedAtomisticPotentialProgram(
-            self, system, graph_execution=graph_execution
+            self,
+            system,
+            neighborhood_bundle=neighborhood_bundle,
+            graph_execution=graph_execution,
         )
 
 
@@ -417,6 +753,8 @@ class AtomisticPotentialEvaluation(StrictModule):
     derivative pass and ``stress`` follows ``stress_convention``; otherwise all
     three are ``None``. Any failed scientific, image, capacity, finite or
     derivative state sets ``successful`` false and every numeric output to NaN.
+    ``program_identity`` is the exact prepared-Hamiltonian digest of the
+    producing program as dynamic words; ``program_id`` decodes it on the host.
     """
 
     energy: Array
@@ -429,8 +767,21 @@ class AtomisticPotentialEvaluation(StrictModule):
     graph_overflow: Array
     strain_derivative: Array | None
     stress: Array | None
-    program_id: str = eqx.field(static=True)
+    program_identity: IdentityWords
     stress_convention: AtomisticStressConvention | None = eqx.field(static=True)
+    term_evidence: tuple[tuple[StrictModule, ...], ...]
+    fields: tuple[AtomisticObservableValue, ...]
+    field_producers: tuple[str, ...] = eqx.field(static=True)
+    atom_energy_complete: bool = eqx.field(static=True)
+
+    @property
+    def program_id(self) -> str:
+        """Host decoding of the producing prepared Hamiltonian's digest."""
+        return self.program_identity.fingerprint()
+
+    @checked
+    def field(self, reference: AtomisticFieldReference, /) -> AtomisticObservableValue:
+        return _resolve_field(reference, self.field_producers, self.fields)
 
 
 class AtomisticHamiltonianEvaluation(Protocol):
@@ -467,10 +818,25 @@ class AtomisticHamiltonianEvaluation(Protocol):
     def stress(self) -> Array | None: ...
 
     @property
+    def program_identity(self) -> IdentityWords: ...
+
+    @property
     def program_id(self) -> str: ...
 
     @property
     def stress_convention(self) -> AtomisticStressConvention | None: ...
+
+    @property
+    def term_evidence(self) -> tuple[tuple[StrictModule, ...], ...]: ...
+
+    @property
+    def fields(self) -> tuple[AtomisticObservableValue, ...]: ...
+
+    @property
+    def field_producers(self) -> tuple[str, ...]: ...
+
+    @property
+    def atom_energy_complete(self) -> bool: ...
 
 
 class AtomisticDerivativePoint(StrictModule):
@@ -506,7 +872,7 @@ class AtomisticDerivativePoint(StrictModule):
         context_kwargs: dict[str, Any],
         /,
         *,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         strained: bool,
         cell_derivative: bool,
     ) -> None:
@@ -527,11 +893,9 @@ class AtomisticDerivativePoint(StrictModule):
                     "lower-rank or finite system has no physical or embedding volume."
                 )
         default_vectors = (
-            neighborhood.cell_vectors[0].astype(position.dtype)
-            if isinstance(neighborhood, ParticleImageNeighborhoodState)
-            else None
+            None
             if cell is None
-            else cell.vectors.astype(position.dtype)
+            else neighborhoods.geometry.cell_vectors[0].astype(position.dtype)
         )
         supplied_vectors = kwargs.get("cell_vectors")
         vectors = (
@@ -676,29 +1040,65 @@ class AtomisticDerivativePoint(StrictModule):
 
 
 class AbstractPreparedAtomisticHamiltonian(StrictModule):
-    """Prepared scalar Hamiltonian boundary shared by fixed and controlled programs."""
+    """Prepared scalar Hamiltonian boundary shared by fixed and controlled programs.
+
+    The PyTree is layout-only: ``scientific_identity`` (the bound scalar
+    Hamiltonian, independent of its resource binding) and ``prepared_identity``
+    (the complete numerical binding) are exact canonical digests carried as
+    dynamic words and decoded on the host by ``scientific_id``/``prepared_id``.
+    Every material and parameter revision of one ``layout_id`` shares one
+    executable.
+    """
 
     system: eqx.AbstractVar[PreparedAtomisticSystem]
     plan: eqx.AbstractVar[Any]
     terms: eqx.AbstractVar[tuple[AbstractPreparedAtomisticEnergyTerm, ...]]
-    prepared_id: eqx.AbstractVar[str]
+    prepared_identity: eqx.AbstractVar[IdentityWords]
+    scientific_identity: eqx.AbstractVar[IdentityWords]
     control_ids: eqx.AbstractVar[tuple[str, ...]]
     control_layout_id: eqx.AbstractVar[str]
     coefficients: eqx.AbstractVar[Array]
+    neighborhood_bundle: eqx.AbstractVar[PreparedAtomisticNeighborhoodBundle]
+
+    @property
+    def scientific_id(self) -> str:
+        """Host decoding of the bound scalar Hamiltonian digest."""
+        return self.scientific_identity.fingerprint()
+
+    @property
+    def prepared_id(self) -> str:
+        """Host decoding of the complete prepared-binding digest."""
+        return self.prepared_identity.fingerprint()
+
+    @property
+    def layout_id(self) -> str:
+        """Content-free executable layout shared by all revisions of this program."""
+        return atomistic_hamiltonian_layout_id(self)
+
+    @abc.abstractmethod
+    def with_neighborhood_bundle(
+        self, bundle: PreparedAtomisticNeighborhoodBundle, /
+    ) -> Self:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def context(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
+        term: AbstractPreparedAtomisticEnergyTerm | None = None,
         unwrapped_positions: ArrayLike | None = None,
         species: ArrayLike | None = None,
         cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
-        topology: AtomisticGraphTopology | None = None,
+        image_counts: ArrayLike | None = None,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+        term_states: AtomisticTermStateBindings | None = None,
+        time: ArrayLike = 0.0,
     ) -> AtomisticPotentialContext:
         raise NotImplementedError
 
@@ -706,17 +1106,28 @@ class AbstractPreparedAtomisticHamiltonian(StrictModule):
     def energy(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         **kwargs: Any,
-    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def force_group_energy(
+        self,
+        group: int,
+        positions: ArrayLike,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        /,
+        **kwargs: Any,
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
         raise NotImplementedError
 
     @abc.abstractmethod
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         compute_stress: bool = False,
@@ -775,21 +1186,10 @@ class _RuntimeLattice(StrictModule):
     """Validated cell binding of one context call."""
 
     cell: PeriodicCell | None
-    vectors: Array | None
+    vectors: Array
     inverse: Array | None
     fractional: Array | None
     successful: Array
-
-
-class _SiteGeometry(StrictModule):
-    state: AtomisticInteractionSiteState
-    left: Array
-    right: Array
-    valid: Array
-    displacement: Array
-    distance: Array
-    lennard_jones_scales: Array
-    electrostatic_scales: Array
 
 
 class _PairGeometry(StrictModule):
@@ -815,7 +1215,10 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
     system: PreparedAtomisticSystem
     terms: tuple[AbstractPreparedAtomisticEnergyTerm, ...]
     graph_execution: AtomisticGraphExecutionPlan | None
-    prepared_id: str = eqx.field(static=True)
+    neighborhood_bundle: PreparedAtomisticNeighborhoodBundle
+    unique_image_cutoff: float | None = eqx.field(static=True)
+    prepared_identity: IdentityWords
+    scientific_identity: IdentityWords
     control_ids: tuple[str, ...] = eqx.field(static=True)
     control_layout_id: str = eqx.field(static=True)
     coefficients: Array
@@ -827,103 +1230,227 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         system: PreparedAtomisticSystem,
         /,
         *,
+        neighborhood_bundle: AtomisticNeighborhoodBundlePlan
+        | PreparedAtomisticNeighborhoodBundle,
         graph_execution: AtomisticGraphExecutionPlan | None,
+        _reuse: PreparedAtomisticPotentialProgram | None = None,
     ) -> None:
-        if plan.requirements.directed_graph:
-            if (
-                not isinstance(graph_execution, AtomisticGraphExecutionPlan)
-                or graph_execution.backend != "particle"
-            ):
+        requested = plan.requirements.neighborhoods
+        graph_roles = tuple(
+            value
+            for value in requested
+            if value.role is AtomisticNeighborhoodRole.DIRECTED_IMAGE_GRAPH
+        )
+        if graph_roles:
+            if graph_execution is None or graph_execution.backend != "particle":
                 raise ValueError(
-                    "A particle AtomisticGraphExecutionPlan is required by learned terms."
+                    "A particle AtomisticGraphExecutionPlan is required by graph terms."
                 )
-            if plan.requirements.cutoff is None:
-                raise ValueError("Directed atomistic graph terms require a cutoff.")
         elif graph_execution is not None:
             raise ValueError("graph_execution was supplied but no term requires a graph.")
-        # Pair-once classical geometry owns its unique-image guard here; a directed
-        # graph term is guarded where a pair-once neighborhood realizes its graph.
-        classical_cutoffs = tuple(
-            term.requirements.cutoff
-            for term in plan.terms
-            if term.requirements.cutoff is not None
-            and (
-                term.requirements.pair_geometry
-                or term.requirements.interaction_site_geometry
-            )
+        bundle_plan = (
+            neighborhood_bundle
+            if isinstance(neighborhood_bundle, AtomisticNeighborhoodBundlePlan)
+            else neighborhood_bundle.plan
         )
-        if classical_cutoffs and system.cell is not None:
-            system.cell.require_unique_image(max(classical_cutoffs))
-        active_virtual_sites = np.asarray(
-            system.coordinate_map.plan.sites.active_mask
-        ) & ~np.asarray(system.coordinate_map.plan.sites.physical_mask)
-        if (
-            plan.requirements.interaction_site_geometry
-            and np.any(active_virtual_sites)
-            and system.topology.exception_keys.shape[0] > 0
-        ):
+        if {value.requirement_id for value in bundle_plan.requirements} != {
+            value.requirement_id for value in requested
+        }:
             raise ValueError(
-                "Virtual interaction sites require an explicit site-space pair-exception contract."
+                "The resource bundle must cover exactly the program's scientific requirements."
             )
-        terms = tuple(value.prepare(system) for value in plan.terms)
+        if bundle_plan.case_count != 1:
+            raise ValueError(
+                "A prepared Hamiltonian binds one system; batch complete system states externally."
+            )
+        if isinstance(neighborhood_bundle, AtomisticNeighborhoodBundlePlan):
+            plans = (
+                {}
+                if graph_execution is None
+                else {
+                    value.requirement_id: graph_execution.streamed
+                    for value in graph_roles
+                }
+            )
+            bundle = neighborhood_bundle.prepare(system, graph_plans=plans)
+        else:
+            bundle = neighborhood_bundle
+            if bundle.system.prepared_id != system.prepared_id:
+                raise ValueError(
+                    "The resource bundle belongs to another prepared system."
+                )
+            for requirement in graph_roles:
+                prepared_plan = bundle.graph_plans[bundle.slot(requirement)]
+                if (
+                    graph_execution is None
+                    or prepared_plan is None
+                    or (prepared_plan.plan_id != graph_execution.streamed.plan_id)
+                ):
+                    raise ValueError(
+                        "The prepared bundle lacks the program's exact graph schedule plan."
+                    )
+        classical_cutoffs = tuple(
+            value.cutoff
+            for value in requested
+            if value.counting is AtomisticPairCounting.MINIMUM_IMAGE_HALF
+            and value.cutoff is not None
+        )
+        unique_cutoff = max(classical_cutoffs) if classical_cutoffs else None
+        if unique_cutoff is not None and system.cell is not None:
+            system.cell.require_unique_image(unique_cutoff)
+        if _reuse is None:
+            terms = tuple(
+                value.prepare(system, request=_producer_request(plan.terms, value))
+                if isinstance(value, LearnedGraphPotentialTerm)
+                else value.prepare(system)
+                for value in plan.terms
+            )
+        else:
+            if (
+                _reuse.plan.program_id != plan.program_id
+                or _reuse.system.prepared_id != system.prepared_id
+            ):
+                raise ValueError(
+                    "Prepared numerical terms may only be reused for the same program and system."
+                )
+            terms = _reuse.terms
+        if any(
+            term.requirements.state_required
+            and type(term).initial_term_state
+            is AbstractPreparedAtomisticEnergyTerm.initial_term_state
+            for term in terms
+        ):
+            raise TypeError("Every stateful term must own its state initialization.")
         self.plan = plan
         self.system = system
         self.terms = terms
         self.coefficients = plan.coefficients
         self.graph_execution = graph_execution
+        self.neighborhood_bundle = bundle
+        self.unique_image_cutoff = unique_cutoff
         self.control_ids = ()
         self.control_layout_id = canonical_fingerprint(
             {"kind": "atomistic-control-layout", "control_ids": []}
         )
-        self.prepared_id = canonical_fingerprint(
+        self.scientific_identity = IdentityWords.of(
+            {
+                "kind": "bound-atomistic-hamiltonian",
+                "program": plan.program_id,
+                "system": system.plan.system_id,
+            }
+        )
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-atomistic-potential-program",
                 "program": plan.program_id,
                 "system": system.prepared_id,
                 "terms": [value.prepared_id for value in terms],
-                "graph_execution": (
-                    None if graph_execution is None else graph_execution.plan_id
-                ),
+                "neighborhood_bundle": bundle.prepared_id,
+                "graph_execution": None
+                if graph_execution is None
+                else graph_execution.plan_id,
             }
+        )
+
+    def with_neighborhood_bundle(
+        self, bundle: PreparedAtomisticNeighborhoodBundle, /
+    ) -> PreparedAtomisticPotentialProgram:
+        """Rebind resources without rebuilding unchanged numerical term preparations."""
+        return PreparedAtomisticPotentialProgram(
+            self.plan,
+            self.system,
+            neighborhood_bundle=bundle,
+            graph_execution=self.graph_execution,
+            _reuse=self,
         )
 
     @checked
     def context(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        /,
+        *,
+        term: AbstractPreparedAtomisticEnergyTerm | None = None,
+        unwrapped_positions: ArrayLike | None = None,
+        species: ArrayLike | None = None,
+        interaction_scales: Mapping[str, AtomisticInteractionScaleState] | None = None,
+        cell: PeriodicCell | None = None,
+        fractional_positions: ArrayLike | None = None,
+        cell_vectors: ArrayLike | None = None,
+        image_counts: ArrayLike | None = None,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+        term_states: AtomisticTermStateBindings | None = None,
+        time: ArrayLike = 0.0,
+    ) -> AtomisticPotentialContext:
+        """Resolve one term's resources at the bundle's certified point.
+
+        Multiple-term programs require an explicit term; it selects its program
+        slot, and the resolved context always belongs to this program's own
+        prepared term in that slot.  Refresh the bundle outside this numerical
+        boundary; neither discovery nor selection runs inside AD.
+        """
+        if term is None:
+            if len(self.terms) != 1:
+                raise ValueError(
+                    "A multi-term context requires an explicit prepared term."
+                )
+            term = self.terms[0]
+        matches = tuple(
+            value
+            for value in self.terms
+            if value.name == term.name and type(value) is type(term)
+        )
+        if len(matches) != 1:
+            raise ValueError("The context term does not belong to this program.")
+        shared = self._base_context(
+            positions,
+            neighborhoods,
+            unwrapped_positions=unwrapped_positions,
+            species=species,
+            interaction_scales=interaction_scales,
+            cell=cell,
+            fractional_positions=fractional_positions,
+            cell_vectors=cell_vectors,
+            image_counts=image_counts,
+            conditioning=conditioning,
+            key=key,
+            term_states=term_states,
+            time=time,
+        )
+        return self._term_context(shared, neighborhoods, matches[0])
+
+    def _base_context(
+        self,
+        positions: ArrayLike,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         unwrapped_positions: ArrayLike | None = None,
         species: ArrayLike | None = None,
-        interaction_scales: AtomisticInteractionScaleState | None = None,
+        interaction_scales: Mapping[str, AtomisticInteractionScaleState] | None = None,
         cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
-        topology: AtomisticGraphTopology | None = None,
+        image_counts: ArrayLike | None = None,
+        conditioning: AtomisticConditioning | None = None,
+        key: PRNGKey | None = None,
+        term_states: AtomisticTermStateBindings | None = None,
+        time: ArrayLike = 0.0,
     ) -> AtomisticPotentialContext:
-        """Bind one fixed neighborhood topology to runtime coordinates and cell.
-
-        A ``ParticleImageNeighborhoodState`` carries directed image routes with
-        fixed integer translations; it is admitted only for programs without
-        pair-once classical geometry, whose pair arrays are then empty. Runtime
-        ``cell_vectors`` may be any full-rank lattice inside the cell condition
-        certificate; pair-once neighborhoods also require the runtime unique-image
-        radius to exceed the program cutoff. An image neighborhood defaults to its
-        own searched lattice, and its stored-and-absent image certificate must
-        cover the runtime positions and lattice. Failed certificates are reported
-        in ``neighborhood_successful``. ``fractional_positions`` default to the
-        runtime-lattice coordinates of ``positions``. ``topology`` is a graph
-        topology prepared from ``neighborhood`` outside differentiation (for
-        example a reused Verlet schedule) under this program's streamed plan; its
-        routes, images, node metadata and build frame must equal the
-        neighborhood's numerically, else the case fails. Without it the topology
-        is prepared here from ``neighborhood``.
-        """
         position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         expected = (self.system.capacity, 3)
         if position.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
+        states = AtomisticTermStateBindings({}) if term_states is None else term_states
+        if not isinstance(states, AtomisticTermStateBindings):
+            raise TypeError("term_states must use AtomisticTermStateBindings.")
+        known_states = {
+            term.name for term in self.terms if term.requirements.state_required
+        }
+        if set(states.slots) - known_states:
+            raise ValueError("Term-state bindings name a foreign or stateless slot.")
         unwrapped = (
             position
             if unwrapped_positions is None
@@ -939,349 +1466,364 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         if species_.shape != (self.system.capacity,):
             raise ValueError("species must match the particle capacity.")
         lattice = self._bind_lattice(
-            neighborhood, position, cell, fractional_positions, cell_vectors
+            neighborhoods, position, cell, fractional_positions, cell_vectors
         )
-        sites = self._site_geometry(position, lattice)
-        pairs = self._pair_geometry(neighborhood, position, lattice)
-        graph = self._graph(neighborhood, position, lattice, topology)
-        graph_valid = jnp.asarray(True) if graph is None else jnp.all(graph.valid)
-        scales = self._interaction_scales(
-            interaction_scales, pairs.left.shape[0], position.dtype
+        sites = self.system.coordinate_map.realize(
+            position,
+            cell=lattice.cell,
+            fractional_positions=lattice.fractional,
+            cell_vectors=None if lattice.cell is None else lattice.vectors,
         )
-        resolved_cell_vectors = (
-            jnp.zeros((0, 0), dtype=position.dtype)
-            if lattice.cell is None
-            else lattice.vectors
-            if lattice.vectors is not None
-            else neighborhood.cell_vectors[0].astype(position.dtype)
-            if isinstance(neighborhood, ParticleImageNeighborhoodState)
-            else lattice.cell.vectors.astype(position.dtype)
+        counts = neighborhoods.geometry.image_counts
+        counts = None if counts is None else counts[0]
+        if image_counts is not None:
+            supplied = jnp.asarray(image_counts)
+            if supplied.shape != (
+                self.system.capacity,
+                self.neighborhood_bundle.lattice_rank,
+            ) or not jnp.issubdtype(supplied.dtype, jnp.integer):
+                raise ValueError(
+                    "image_counts must match the physical atom and lattice axes."
+                )
+            same_images = jnp.all(
+                supplied == (jnp.zeros_like(supplied) if counts is None else counts)
+            )
+            counts = supplied
+        else:
+            same_images = jnp.asarray(True)
+        same_position = jnp.all(
+            jnp.where(
+                self.system.active_mask[:, None],
+                position == neighborhoods.geometry.positions[0],
+                True,
+            )
         )
+        same_cell = jnp.all(lattice.vectors == neighborhoods.geometry.cell_vectors[0])
+        same_support = jnp.all(
+            neighborhoods.geometry.active[0] == self.system.active_mask
+        )
+        same_sites = (
+            jnp.asarray(True)
+            if neighborhoods.geometry.site_positions is None
+            else jnp.all(
+                jnp.where(
+                    sites.active_mask[:, None],
+                    sites.positions == neighborhoods.geometry.site_positions[0],
+                    True,
+                )
+            )
+        )
+        if neighborhoods.geometry.site_active is not None:
+            same_support = same_support & jnp.all(
+                neighborhoods.geometry.site_active[0] == sites.active_mask
+            )
+        bindings = (
+            ()
+            if interaction_scales is None
+            else tuple(sorted(interaction_scales.items()))
+        )
+        known = {term.name for term in self.terms}
+        if bindings and {name for name, _ in bindings} != known:
+            raise ValueError(
+                "Interaction scale bindings must name every program term slot."
+            )
+        empty = self._pair_geometry(None, position, lattice.vectors)
+        timestamp = jnp.asarray(time, dtype=position.dtype)
+        if timestamp.shape != ():
+            raise ValueError("time must be scalar.")
         return AtomisticPotentialContext(
             system=self.system,
-            site_state=sites.state,
-            site_positions=sites.state.positions,
-            site_type_ids=self.system.coordinate_map.plan.sites.site_type_ids,
-            site_charges=self.system.coordinate_map.plan.sites.charges,
-            site_pair_left=sites.left,
-            site_pair_right=sites.right,
-            site_pair_valid=sites.valid,
-            site_pair_displacement=sites.displacement,
-            site_pair_distance=sites.distance,
-            site_lennard_jones_scales=sites.lennard_jones_scales,
-            site_electrostatic_scales=sites.electrostatic_scales,
             positions=position,
             unwrapped_positions=unwrapped,
+            site_state=sites,
+            site_positions=sites.positions,
+            site_type_ids=self.system.coordinate_map.plan.sites.site_type_ids,
+            site_charges=self.system.coordinate_map.plan.sites.charges,
+            site_pair_left=empty.left,
+            site_pair_right=empty.right,
+            site_pair_valid=empty.valid,
+            site_pair_displacement=empty.displacement,
+            site_pair_distance=empty.distance,
+            site_lennard_jones_scales=empty.lennard_jones_scales,
+            site_electrostatic_scales=empty.electrostatic_scales,
             species=species_,
-            pair_left=pairs.left,
-            pair_right=pairs.right,
-            pair_valid=pairs.valid,
-            pair_keys=pairs.keys,
-            pair_displacement=pairs.displacement,
-            pair_distance=pairs.distance,
-            lennard_jones_scales=pairs.lennard_jones_scales,
-            electrostatic_scales=pairs.electrostatic_scales,
-            interaction_scales=scales,
-            graph=graph,
-            cell=lattice.cell,
-            cell_vectors=resolved_cell_vectors,
-            neighborhood_successful=(
-                neighborhood.successful
-                & pairs.successful
-                & graph_valid
-                & sites.state.successful
-                & lattice.successful
+            pair_left=empty.left,
+            pair_right=empty.right,
+            pair_valid=empty.valid,
+            pair_keys=empty.keys,
+            pair_displacement=empty.displacement,
+            pair_distance=empty.distance,
+            lennard_jones_scales=empty.lennard_jones_scales,
+            electrostatic_scales=empty.electrostatic_scales,
+            interaction_scales=AtomisticInteractionScaleState.identity(
+                self.system, 0, position.dtype
             ),
+            graph=None,
+            cell=lattice.cell,
+            cell_vectors=lattice.vectors,
+            cell_inverse=lattice.inverse,
+            neighborhood_successful=(
+                lattice.successful
+                & sites.successful
+                & same_position
+                & same_cell
+                & same_sites
+                & same_images
+                & same_support
+                & jnp.isfinite(timestamp)
+            ),
+            graph_execution=self.graph_execution,
+            neighborhoods=neighborhoods.views,
+            conditioning=conditioning,
+            key=key,
+            image_counts=counts,
+            time=timestamp,
+            term_states=states,
+            scale_slots=tuple(name for name, _ in bindings),
+            scale_values=tuple(value for _, value in bindings),
         )
+
+    def _term_context(
+        self,
+        shared: AtomisticPotentialContext,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        term: AbstractPreparedAtomisticEnergyTerm,
+        /,
+    ) -> AtomisticPotentialContext:
+        physical = sites = None
+        graph = None
+        role_successful = shared.neighborhood_successful
+        for requirement in term.requirements.neighborhoods:
+            view = shared.neighborhood(requirement)
+            role_successful = role_successful & jnp.all(view.evidence.successful)
+            if (
+                requirement.counting is AtomisticPairCounting.MINIMUM_IMAGE_HALF
+                and requirement.cutoff is not None
+                and shared.cell is not None
+            ):
+                if shared.cell_inverse is None:
+                    raise RuntimeError("A periodic pair context lacks its lattice solve.")
+                role_successful = role_successful & _runtime_lattice_admissible(
+                    shared.cell,
+                    shared.cell_vectors,
+                    shared.cell_inverse,
+                    requirement.cutoff,
+                )
+            match requirement.role:
+                case AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS:
+                    if physical is not None:
+                        raise ValueError(
+                            "A classical kernel must name one physical pair role."
+                        )
+                    physical = self._pair_geometry(
+                        view, shared.positions, shared.cell_vectors
+                    )
+                case AtomisticNeighborhoodRole.INTERACTION_SITE_PAIRS:
+                    if sites is not None:
+                        raise ValueError(
+                            "A site kernel must name one interaction-site pair role."
+                        )
+                    sites = self._pair_geometry(
+                        view, shared.site_positions, shared.cell_vectors
+                    )
+                case AtomisticNeighborhoodRole.DIRECTED_IMAGE_GRAPH:
+                    if graph is not None:
+                        raise ValueError(
+                            "A graph kernel must name one directed graph role."
+                        )
+                    graph = self._graph(neighborhoods, requirement, shared)
+                case (
+                    AtomisticNeighborhoodRole.IMAGE_PAIR_SUM
+                    | AtomisticNeighborhoodRole.COORDINATION
+                ):
+                    pass
+                case _:
+                    assert_never(requirement.role)
+        supplied = None
+        if shared.scale_slots:
+            supplied = shared.scale_values[shared.scale_slots.index(term.name)]
+        pair_count = 0 if physical is None else physical.left.shape[0]
+        scales = self._interaction_scales(supplied, pair_count, shared.positions.dtype)
+        result = replace(
+            shared,
+            graph=graph,
+            interaction_scales=scales,
+            neighborhood_successful=role_successful,
+        )
+        if physical is not None:
+            result = replace(
+                result,
+                pair_left=physical.left,
+                pair_right=physical.right,
+                pair_valid=physical.valid,
+                pair_keys=physical.keys,
+                pair_displacement=physical.displacement,
+                pair_distance=physical.distance,
+                lennard_jones_scales=physical.lennard_jones_scales,
+                electrostatic_scales=physical.electrostatic_scales,
+                neighborhood_successful=result.neighborhood_successful
+                & physical.successful,
+            )
+        if sites is not None:
+            result = replace(
+                result,
+                site_pair_left=sites.left,
+                site_pair_right=sites.right,
+                site_pair_valid=sites.valid,
+                site_pair_displacement=sites.displacement,
+                site_pair_distance=sites.distance,
+                site_lennard_jones_scales=sites.lennard_jones_scales,
+                site_electrostatic_scales=sites.electrostatic_scales,
+                neighborhood_successful=result.neighborhood_successful & sites.successful,
+            )
+        if graph is not None:
+            result = replace(
+                result,
+                neighborhood_successful=result.neighborhood_successful
+                & jnp.all(graph.valid),
+            )
+        return result
 
     def _bind_lattice(
         self,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         position: Array,
         cell: PeriodicCell | None,
         fractional_positions: ArrayLike | None,
         cell_vectors: ArrayLike | None,
         /,
     ) -> _RuntimeLattice:
+        if neighborhoods.layout_id != self.neighborhood_bundle.layout_id:
+            raise ValueError("Neighborhood state belongs to another resource layout.")
+        # Same layout: the exact prepared binding (which includes the material
+        # system) is compared numerically, so a foreign or stale state is refused
+        # through the status without a separate executable.
+        bound = neighborhoods.bundle_identity.equals(
+            self.neighborhood_bundle.prepared_identity
+        )
+        if (
+            neighborhoods.geometry.positions.shape != (1, self.system.capacity, 3)
+            or neighborhoods.geometry.active.shape != (1, self.system.capacity)
+            or neighborhoods.geometry.cell_vectors.shape
+            != (1, self.neighborhood_bundle.lattice_rank, 3)
+        ):
+            raise ValueError("Resource geometry does not match this program's layout.")
         if cell is not None and (
             self.system.cell is None or cell.cell_id != self.system.cell.cell_id
         ):
             raise ValueError("Potential cell must exactly match the prepared system.")
-        selected_cell = self.system.cell
-        image_routes = isinstance(neighborhood, ParticleImageNeighborhoodState)
-        if image_routes:
-            self._admit_image_neighborhood(neighborhood, selected_cell)
-        elif selected_cell is not None:
-            box = neighborhood.box
-            if not isinstance(box, PeriodicCell) or box.cell_id != selected_cell.cell_id:
+        selected = self.system.cell
+        vectors = jnp.asarray(
+            neighborhoods.geometry.cell_vectors[0]
+            if cell_vectors is None
+            else cell_vectors,
+            dtype=position.dtype,
+        )
+        if vectors.shape != (self.neighborhood_bundle.lattice_rank, 3):
+            raise ValueError(
+                "Current cell vectors do not match the resource lattice axes."
+            )
+        if selected is None:
+            if fractional_positions is not None:
                 raise ValueError(
-                    "Neighborhood and potential must share the exact periodic cell."
+                    "Finite Cartesian systems have no fractional-coordinate chart."
                 )
-            cutoff = self.plan.requirements.cutoff
-            if cutoff is not None:
-                selected_cell.require_unique_image(cutoff)
-        elif neighborhood.box is not None and any(neighborhood.box.periodic_axes):
-            raise ValueError("A finite potential cannot consume a periodic neighborhood.")
-        if (
-            cell_vectors is None
-            and isinstance(neighborhood, ParticleImageNeighborhoodState)
-            and selected_cell is not None
-            and selected_cell.vectors.shape == (3, 3)
-        ):
-            # Image routes and their shifts were searched in the state's lattice.
-            cell_vectors = neighborhood.cell_vectors[0]
-        if cell_vectors is None:
-            return _RuntimeLattice(selected_cell, None, None, None, jnp.asarray(True))
-        if selected_cell is None:
-            raise ValueError("Dynamic cell vectors require a periodic cell.")
-        vectors = jnp.asarray(cell_vectors, dtype=position.dtype)
-        if vectors.shape != (3, 3) or selected_cell.vectors.shape != (3, 3):
-            raise ValueError("cell_vectors must have shape (3, 3) for a rank-3 cell.")
-        inverse, solve_successful = selected_cell.inverse_for_vectors_with_status(vectors)
-        inverse = inverse.astype(position.dtype)
+            return _RuntimeLattice(
+                None, vectors, None, None, bound & jnp.all(jnp.isfinite(vectors))
+            )
+        inverse, successful = selected.inverse_for_vectors_with_status(vectors)
         fractional = (
             contract(
-                "ni,ij->nj",
-                position - selected_cell.origin.astype(position.dtype),
-                inverse,
+                "ni,ij->nj", position - selected.origin.astype(position.dtype), inverse
             )
             if fractional_positions is None
             else jnp.asarray(fractional_positions, dtype=position.dtype)
         )
-        if fractional.shape != position.shape:
-            raise ValueError(f"fractional_positions must have shape {position.shape}.")
-        successful = jnp.all(solve_successful) & _runtime_lattice_admissible(
-            selected_cell,
-            vectors,
-            inverse,
-            None if image_routes else self.plan.requirements.cutoff,
-        )
-        return _RuntimeLattice(selected_cell, vectors, inverse, fractional, successful)
-
-    def _admit_image_neighborhood(
-        self,
-        neighborhood: ParticleImageNeighborhoodState,
-        cell: PeriodicCell | None,
-        /,
-    ) -> None:
-        requirements = self.plan.requirements
-        if cell is None:
-            raise ValueError("Image neighborhoods require a periodic prepared system.")
-        if requirements.pair_geometry or requirements.interaction_site_geometry:
+        if fractional.shape != (self.system.capacity, selected.rank):
             raise ValueError(
-                "Pair-once classical terms require a ParticleNeighborhoodState; "
-                "directed image routes are not a pair-once relation."
+                "fractional_positions must match the particle and lattice axes."
             )
-        if not requirements.directed_graph:
-            raise ValueError("Image neighborhoods are consumed only by graph terms.")
-        if (
-            neighborhood.relation.support_id != self.system.particles.support.support_id
-            or neighborhood.cell_vectors.shape[1:] != cell.vectors.shape
-        ):
-            raise ValueError(
-                "Image neighborhood belongs to another particle support or lattice."
-            )
-
-    def _site_geometry(
-        self, position: Array, lattice: _RuntimeLattice, /
-    ) -> _SiteGeometry:
-        coordinate_map = self.system.coordinate_map
-        site_plan = coordinate_map.plan
-        state = coordinate_map.realize(
-            position,
-            cell=lattice.cell,
-            fractional_positions=lattice.fractional,
-            cell_vectors=lattice.vectors,
-        )
-        left = coordinate_map.pair_left
-        right = coordinate_map.pair_right
-        valid = site_plan.sites.active_mask[left] & site_plan.sites.active_mask[right]
-        if self.plan.requirements.interaction_site_geometry:
-            physical_ids = site_plan.dof_particle_ids[
-                jnp.maximum(site_plan.physical_dof_indices, 0)
-            ]
-            left_ids = physical_ids[left]
-            right_ids = physical_ids[right]
-            exception_supported = (
-                site_plan.sites.physical_mask[left] & site_plan.sites.physical_mask[right]
-            )
-            zeros = jnp.zeros_like(left_ids)
-            keys = jnp.stack(
-                (
-                    zeros,
-                    jnp.minimum(left_ids, right_ids),
-                    jnp.maximum(left_ids, right_ids),
-                    zeros,
-                    zeros,
-                ),
-                axis=-1,
-            )
-            resolved_lj, resolved_electrostatic = self.system.topology.pair_scales(keys)
-            lj_scales = jnp.where(exception_supported, resolved_lj, 1.0)
-            electrostatic_scales = jnp.where(
-                exception_supported, resolved_electrostatic, 1.0
-            )
-        else:
-            lj_scales = jnp.ones(left.shape, dtype=position.dtype)
-            electrostatic_scales = jnp.ones_like(lj_scales)
-        displacement = state.positions[left] - state.positions[right]
-        if lattice.cell is not None and lattice.vectors is not None:
-            vectors = lattice.vectors
-            determinant = jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2]))
-            inverse = (
-                jnp.stack(
-                    (
-                        jnp.cross(vectors[1], vectors[2]),
-                        jnp.cross(vectors[2], vectors[0]),
-                        jnp.cross(vectors[0], vectors[1]),
-                    ),
-                    axis=1,
-                )
-                / determinant
-            )
-            site_fractional = contract("nd,di->ni", state.positions, inverse)
-            fractional_displacement = site_fractional[left] - site_fractional[right]
-            central = jax.lax.stop_gradient(
-                jnp.round(fractional_displacement).astype(jnp.int32)
-            )
-            central = jnp.where(lattice.cell.periodic_mask, central, 0)
-            displacement = contract(
-                "ni,ij->nj",
-                fractional_displacement - central.astype(position.dtype),
-                vectors,
-            )
-        elif lattice.cell is not None:
-            displacement = lattice.cell.minimum_image(displacement)
-        displacement = jnp.where(valid[:, None], displacement, 0.0)
-        return _SiteGeometry(
-            state=state,
-            left=left,
-            right=right,
-            valid=valid,
-            displacement=displacement,
-            distance=_distance(displacement),
-            lennard_jones_scales=lj_scales,
-            electrostatic_scales=electrostatic_scales,
-        )
+        return _RuntimeLattice(selected, vectors, inverse, fractional, bound & successful)
 
     def _pair_geometry(
-        self,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
-        position: Array,
-        lattice: _RuntimeLattice,
-        /,
+        self, view: AtomisticNeighborhoodView | None, position: Array, vectors: Array, /
     ) -> _PairGeometry:
-        key_dtype = self.system.pair_key_space.sorted_particle_ids.dtype
-        if isinstance(neighborhood, ParticleImageNeighborhoodState):
+        if view is None:
             index = jnp.zeros((0,), dtype=jnp.int32)
-            empty = jnp.zeros((0,), dtype=position.dtype)
+            scalar = jnp.zeros((0,), dtype=position.dtype)
             return _PairGeometry(
-                left=index,
-                right=index,
-                valid=jnp.zeros((0,), dtype=jnp.bool_),
-                keys=jnp.zeros((0, 5), dtype=key_dtype),
-                displacement=jnp.zeros((0, 3), dtype=position.dtype),
-                distance=empty,
-                lennard_jones_scales=empty,
-                electrostatic_scales=empty,
-                successful=jnp.asarray(True),
+                index,
+                index,
+                jnp.zeros((0,), dtype=jnp.bool_),
+                jnp.zeros(
+                    (0, 5), dtype=self.system.pair_key_space.sorted_particle_ids.dtype
+                ),
+                jnp.zeros((0, 3), dtype=position.dtype),
+                scalar,
+                scalar,
+                scalar,
+                jnp.asarray(True),
             )
-        pairs = neighborhood.pair_relation
-        left = pairs.left_indices
-        right = pairs.right_indices
-        displacement = position[left] - position[right]
-        stencil_successful = jnp.asarray(True)
-        if (
-            lattice.cell is not None
-            and lattice.vectors is not None
-            and lattice.inverse is not None
-            and lattice.fractional is not None
-        ):
-            fractional_displacement = lattice.fractional[left] - lattice.fractional[right]
-            central = jax.lax.stop_gradient(
-                jnp.round(fractional_displacement).astype(jnp.int32)
-            )
-            central = jnp.where(lattice.cell.periodic_mask, central, 0)
-            centered = fractional_displacement - central.astype(position.dtype)
-            candidates_fractional = (
-                centered[:, None, :]
-                - lattice.cell.image_shifts.astype(position.dtype)[None, :, :]
-            )
-            candidates = contract("nsi,ij->nsj", candidates_fractional, lattice.vectors)
-            selected = jax.lax.stop_gradient(
-                jnp.argmin(jnp.sum(candidates * candidates, axis=-1), axis=-1)
-            )
-            displacement = jnp.take_along_axis(
-                candidates, selected[:, None, None], axis=1
-            )[:, 0, :]
-            # The minimum image is no longer than the centered candidate and, when
-            # it matters to a cutoff term, shorter than the cutoff.
-            radius = jax.lax.stop_gradient(
-                _distance(contract("ni,ij->nj", centered, lattice.vectors))
-            )
-            cutoff = self.plan.requirements.cutoff
-            if cutoff is not None:
-                radius = jnp.minimum(radius, jnp.asarray(cutoff, dtype=radius.dtype))
-            reach = jnp.sqrt(jnp.sum(jax.lax.stop_gradient(lattice.inverse) ** 2, axis=0))
-            stencil_successful = jnp.all(
-                ~pairs.valid | _stencil_complete(lattice.cell, radius, reach)
-            )
-        elif lattice.cell is not None:
-            displacement = lattice.cell.minimum_image(displacement)
-        displacement = jnp.where(pairs.valid[:, None], displacement, 0.0)
-        if self.plan.requirements.pair_geometry:
-            keys = self.system.pair_key_space.keys(pairs)
-            key_values = keys.keys
-            lj_scales, electrostatic_scales = self.system.topology.pair_scales(key_values)
-            keys_successful = keys.successful
+        pairs = view.pair_relation
+        if pairs is None:
+            raise ValueError("A pair kernel requires a certified pair-once view.")
+        valid = view.mask & pairs.valid
+        displacement = jnp.where(
+            valid[:, None], -view.displacement(position, vectors[None]), 0.0
+        )
+        distance = _distance(displacement)
+        if view.role is AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS:
+            key_result = self.system.pair_key_space.keys(pairs)
+            keys, key_valid = key_result.keys, key_result.successful
         else:
-            # No term consumes topology pair identities or exception scales.
-            key_values = jnp.zeros((0, 5), dtype=key_dtype)
-            lj_scales = jnp.zeros((0,), dtype=position.dtype)
-            electrostatic_scales = lj_scales
-            keys_successful = jnp.asarray(True)
+            keys = jnp.zeros(
+                (0, 5), dtype=self.system.pair_key_space.sorted_particle_ids.dtype
+            )
+            key_valid = jnp.asarray(True)
+        unit = jnp.where(valid, jnp.ones((), dtype=position.dtype), 0.0)
+        lj = (
+            unit
+            if view.lennard_jones_scales is None
+            else view.lennard_jones_scales.astype(position.dtype)
+        )
+        electrostatic = (
+            unit
+            if view.electrostatic_scales is None
+            else view.electrostatic_scales.astype(position.dtype)
+        )
         return _PairGeometry(
-            left=left,
-            right=right,
-            valid=pairs.valid,
-            keys=key_values,
-            displacement=displacement,
-            distance=_distance(displacement),
-            lennard_jones_scales=lj_scales,
-            electrostatic_scales=electrostatic_scales,
-            successful=keys_successful & stencil_successful,
+            pairs.left_indices,
+            pairs.right_indices,
+            valid,
+            keys,
+            displacement,
+            distance,
+            lj,
+            electrostatic,
+            jnp.all(view.evidence.successful) & key_valid,
         )
 
     def _graph(
         self,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
-        position: Array,
-        lattice: _RuntimeLattice,
-        topology: AtomisticGraphTopology | None,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        requirement: AtomisticNeighborhoodRequirement,
+        context: AtomisticPotentialContext,
         /,
-    ) -> AtomisticGraph | None:
-        if not self.plan.requirements.directed_graph:
-            if topology is not None:
-                raise ValueError("topology was supplied but no term requires a graph.")
-            return None
+    ) -> AtomisticGraph:
         execution = self.graph_execution
-        cutoff = self.plan.requirements.cutoff
-        if execution is None or cutoff is None:
-            raise RuntimeError("Validated graph execution or cutoff unexpectedly absent.")
-        prepared = particle_atomistic_graph_topology(
-            self.system,
-            neighborhood,
-            epoch=0 if topology is None else topology.epoch,
-            cell=lattice.cell,
-            streamed=execution.streamed if topology is None else topology.streamed,
+        if execution is None:
+            raise RuntimeError("A graph role lacks its admitted execution plan.")
+        topology = _neighborhood_graph_topology(
+            self.system, self.neighborhood_bundle, neighborhoods, requirement, execution
         )
-        if topology is not None:
-            prepared = admit_supplied_topology(topology, prepared)
-        vectors = lattice.vectors
-        if vectors is None and isinstance(neighborhood, ParticleImageNeighborhoodState):
-            vectors = neighborhood.cell_vectors[0].astype(position.dtype)
         return bind_atomistic_graph(
-            prepared, execution, position, cutoff=cutoff, cell_vectors=vectors
+            topology,
+            execution,
+            context.positions,
+            cutoff=requirement.bounded_cutoff(),
+            cell_vectors=context.cell_vectors,
+            atom_type_ids=context.species,
+            image_counts=context.image_counts,
         )
 
     def _interaction_scales(
@@ -1350,37 +1892,187 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         )
         return eqx.tree_at(lambda value: value.lennard_jones, scales, checked_lj_scales)
 
-    def energy(
+    def _execute_terms(
         self,
-        positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        context: AtomisticPotentialContext,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        selected: tuple[int, ...],
         /,
-        **context_kwargs: Any,
-    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
-        context = self.context(positions, neighborhood, **context_kwargs)
-        evaluations = tuple(term.energy(context) for term in self.terms)
-        term_energies = jnp.stack(tuple(value.energy for value in evaluations))
-        coefficients = self.plan.coefficients.astype(term_energies.dtype)
-        energy = jnp.sum(coefficients * term_energies)
+    ) -> tuple[AtomisticPotentialContext, dict[int, AtomisticTermEvaluation], Array]:
+        """Execute the selected terms and their transitive scientific field producers."""
+        needed = set(selected)
+        for index in reversed(self.plan.evaluation_order):
+            if index in needed:
+                needed.update(
+                    self.plan.term_names.index(reference.producer)
+                    for reference in self.terms[index].requirements.field_dependencies
+                )
+        required_states = {
+            self.terms[index].name
+            for index in needed
+            if self.terms[index].requirements.state_required
+        }
+        if required_states - set(context.term_states.slots):
+            raise ValueError("An executed term has no bound numerical state.")
+        evaluated: dict[int, AtomisticTermEvaluation] = {}
+        published: list[AtomisticObservableValue] = []
+        producers: list[str] = []
+        graph_overflow = jnp.asarray(False)
+        resource_successful = context.neighborhood_successful
+        for index in self.plan.evaluation_order:
+            if index not in needed:
+                continue
+            term = self.terms[index]
+            scoped = self._term_context(context, neighborhoods, term)
+            value = term.energy(scoped)
+            resource_successful = resource_successful & scoped.neighborhood_successful
+            state_successful = jnp.asarray(True)
+            if term.requirements.state_required:
+                state_successful = context.term_states.bound_to(
+                    term.name, term.term_identity
+                )
+            value = replace(
+                value,
+                successful=(
+                    value.successful & scoped.neighborhood_successful & state_successful
+                ),
+                evidence=(
+                    *(
+                        scoped.neighborhood(requirement).evidence
+                        for requirement in term.requirements.neighborhoods
+                    ),
+                    *value.evidence,
+                ),
+            )
+            evaluated[index] = value
+            if scoped.graph is not None:
+                graph_overflow = graph_overflow | jnp.any(scoped.graph.overflow)
+            for field in value.fields:
+                if field.case_count != 1 or field.atom_capacity != self.system.capacity:
+                    raise ValueError(
+                        "A producer field does not belong to this system layout."
+                    )
+                published.append(
+                    AtomisticObservableValue(
+                        field.observable,
+                        field.port,
+                        field.values,
+                        field.available & value.successful,
+                        level=field.level,
+                        case_count=1,
+                        atom_capacity=self.system.capacity,
+                        unit=field.unit,
+                    )
+                )
+                producers.append(term.name)
+            if value.fields:
+                context = replace(
+                    context,
+                    field_values=tuple(published),
+                    field_producers=tuple(producers),
+                )
+        return (
+            replace(context, neighborhood_successful=resource_successful),
+            evaluated,
+            graph_overflow,
+        )
+
+    def _program_result(
+        self,
+        context: AtomisticPotentialContext,
+        evaluated: dict[int, AtomisticTermEvaluation],
+        graph_overflow: Array,
+        selected: tuple[int, ...],
+        /,
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
+        """Keep the evaluated ledger distinct from the terms contributing to its scalar."""
+        executed = tuple(index for index in range(len(self.terms)) if index in evaluated)
+        selected_set = set(selected)
+        term_energies = jnp.stack(tuple(evaluated[index].energy for index in executed))
+        values = jnp.stack(tuple(evaluated[index].energy for index in selected))
+        coefficients = self.coefficients[jnp.asarray(selected, dtype=jnp.int32)].astype(
+            values.dtype
+        )
+        energy = jnp.sum(coefficients * values)
         atom_energy = jnp.sum(
             coefficients[:, None]
-            * jnp.stack(tuple(value.atom_energy for value in evaluations)),
+            * jnp.stack(tuple(evaluated[index].atom_energy for index in selected)),
             axis=0,
         )
         successful = context.neighborhood_successful & jnp.all(
-            jnp.stack(tuple(value.successful for value in evaluations))
+            jnp.stack(tuple(evaluated[index].successful for index in executed))
         )
-        graph_overflow = (
-            jnp.asarray(False)
-            if context.graph is None
-            else jnp.any(context.graph.overflow)
+        successful = successful & jnp.isfinite(energy)
+        energy = _admitted_scalar(
+            energy, successful, (context.positions, context.cell_vectors)
         )
-        return energy, (term_energies, atom_energy, successful, graph_overflow)
+        ordered_fields = sorted(
+            zip(context.field_producers, context.field_values, strict=True),
+            key=lambda item: (item[0], item[1].port.port_id),
+        )
+        return energy, AtomisticProgramAuxiliary(
+            term_energies=term_energies,
+            term_slots=tuple(self.terms[index].name for index in executed),
+            term_identities=_stacked_identities(
+                tuple(self.terms[index].term_identity for index in executed)
+            ),
+            contributing_terms=jnp.asarray(
+                tuple(index in selected_set for index in executed), dtype=jnp.bool_
+            ),
+            atom_energy=atom_energy,
+            successful=successful,
+            graph_overflow=graph_overflow,
+            neighborhood_successful=context.neighborhood_successful,
+            term_evidence=tuple(evaluated[index].evidence for index in executed),
+            fields=tuple(value for _, value in ordered_fields),
+            field_producers=tuple(name for name, _ in ordered_fields),
+            atom_energy_complete=all(
+                evaluated[index].atom_energy_complete
+                and self.terms[index].capabilities.local_energy
+                for index in selected
+            ),
+        )
+
+    def energy(
+        self,
+        positions: ArrayLike,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        /,
+        **context_kwargs: Any,
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
+        selected = tuple(range(len(self.terms)))
+        context = self._base_context(positions, neighborhoods, **context_kwargs)
+        context, evaluated, graph_overflow = self._execute_terms(
+            context, neighborhoods, selected
+        )
+        return self._program_result(context, evaluated, graph_overflow, selected)
+
+    def force_group_energy(
+        self,
+        group: int,
+        positions: ArrayLike,
+        neighborhoods: AtomisticNeighborhoodBundleState,
+        /,
+        **context_kwargs: Any,
+    ) -> tuple[Array, AtomisticProgramAuxiliary]:
+        selected = tuple(
+            index for index, term in enumerate(self.terms) if term.force_group == group
+        )
+        if not selected:
+            raise ValueError(f"Force group {group} is absent from the Hamiltonian.")
+        context = self._base_context(positions, neighborhoods, **context_kwargs)
+        context, evaluated, graph_overflow = self._execute_terms(
+            context, neighborhoods, selected
+        )
+        energy, auxiliary = self._program_result(
+            context, evaluated, graph_overflow, selected
+        )
+        return energy, auxiliary
 
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        neighborhoods: AtomisticNeighborhoodBundleState,
         /,
         *,
         compute_stress: bool = False,
@@ -1401,16 +2093,16 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
             self.system,
             position,
             context_kwargs,
-            neighborhood=neighborhood,
+            neighborhoods=neighborhoods,
             strained=compute_stress,
             cell_derivative=self.plan.capabilities.cell_derivative,
         )
 
         def closure(
             value: Array, strain: Array | None
-        ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
+        ) -> tuple[Array, AtomisticProgramAuxiliary]:
             bound, kwargs = point.bind(value, strain)
-            return self.energy(bound, neighborhood, **kwargs)
+            return self.energy(bound, neighborhoods, **kwargs)
 
         strain_derivative = None
         if point.strained:
@@ -1421,7 +2113,10 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
             (energy, auxiliary), gradient = jax.value_and_grad(closure, has_aux=True)(
                 position, None
             )
-        term_energies, atom_energy, program_successful, graph_overflow = auxiliary
+        term_energies = auxiliary.term_energies
+        atom_energy = auxiliary.atom_energy
+        program_successful = auxiliary.successful
+        graph_overflow = auxiliary.graph_overflow
         successful = program_successful & point.successful
         forces = jnp.where(self.system.active_mask[:, None], -gradient, 0.0)
         virial = point.moment_virial(self.system, position, forces)
@@ -1446,7 +2141,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
             forces=jnp.where(accepted, forces, nan),
             virial=jnp.where(accepted, virial, nan),
             successful=accepted,
-            neighborhood_successful=successful,
+            neighborhood_successful=auxiliary.neighborhood_successful,
             graph_overflow=graph_overflow,
             strain_derivative=(
                 None
@@ -1454,12 +2149,17 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 else jnp.where(accepted, strain_derivative, nan)
             ),
             stress=None if stress is None else jnp.where(accepted, stress, nan),
-            program_id=self.prepared_id,
+            program_identity=self.prepared_identity,
             stress_convention=point.stress_convention,
+            term_evidence=auxiliary.term_evidence,
+            fields=auxiliary.fields,
+            field_producers=auxiliary.field_producers,
+            atom_energy_complete=auxiliary.atom_energy_complete,
         )
 
 
 __all__ = [
+    "AtomisticProgramAuxiliary",
     "AbstractPreparedAtomisticHamiltonian",
     "AtomisticHamiltonianEvaluation",
     "AtomisticInteractionScaleState",

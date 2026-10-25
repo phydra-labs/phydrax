@@ -11,7 +11,7 @@ from opt_einsum import contract
 from phydrax.atomistic import (
     AtomicStructure,
     atomistic_energy_derivatives,
-    atomistic_potential_revision,
+    atomistic_model_revision,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
     AtomisticPrecisionPolicy,
@@ -19,7 +19,7 @@ from phydrax.atomistic import (
     AtomisticStatus,
     energy_and_forces,
 )
-from phydrax.atomistic._graph import prepare_atomistic_graph_topology
+from phydrax.atomistic._graph import AtomisticGraphLayout
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import PaiNNPotential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
@@ -198,11 +198,11 @@ def test_painn_scenario_2() -> None:
     # The numerical helper admits the same batch precision contract as the
     # host path: a float32 batch never silently feeds a float64 model.
     batch = AtomisticBatch.from_structure(structure)
-    topology = prepare_atomistic_graph_topology(batch, _execution(), cutoff=2.5)
+    payload = AtomisticGraphLayout.for_batch(batch, _execution(), cutoff=2.5).prepare(
+        batch
+    )
     with pytest.raises(ValueError, match="precision contract"):
-        atomistic_energy_derivatives(
-            _model(), batch, _execution(), batch.positions, topology=topology
-        )
+        atomistic_energy_derivatives(_model(), payload, batch.positions)
 
 
 def test_jit_vjp_and_second_order_parameter_derivative() -> None:
@@ -245,10 +245,10 @@ def test_painn_scenario_3() -> None:
         periodic_axes=[True, False, False],
     )
     assert periodic.has_periodic_metadata
-    # Image routes are a charged resource; a direct call needs a host topology.
+    # Image routes are a charged resource; a periodic layout needs image capacity.
     with pytest.raises(ValueError, match="image_capacity"):
         energy_and_forces(_model(), periodic, _execution())
-    with pytest.raises(ValueError, match="require a topology"):
+    with pytest.raises(ValueError, match="image_capacity"):
         _model()(periodic, _execution())
     structure = AtomicStructure(
         # ty: ignore[invalid-argument-type]
@@ -309,12 +309,12 @@ def test_painn_scenario_4() -> None:
     np.testing.assert_allclose(prediction.forces[0, 2], 0.0)
     first = _model(seed=31)
     second = _model(seed=32)
-    first_revision = atomistic_potential_revision(first)
-    second_revision = atomistic_potential_revision(second)
+    first_revision = atomistic_model_revision(first)
+    second_revision = atomistic_model_revision(second)
     assert first.architecture_id == second.architecture_id
     assert first_revision.semantic_id == second_revision.semantic_id
     assert first_revision.revision_id != second_revision.revision_id
-    assert atomistic_potential_revision(_model(seed=31)).revision_id == (
+    assert atomistic_model_revision(_model(seed=31)).revision_id == (
         first_revision.revision_id
     )
     provenance = energy_and_forces(first, _structure(), _execution()).provenance
@@ -342,8 +342,8 @@ def test_painn_scenario_5() -> None:
         original,
         original.embedding + 0.125,
     )
-    original_revision = atomistic_potential_revision(original)
-    updated_revision = atomistic_potential_revision(updated)
+    original_revision = atomistic_model_revision(original)
+    updated_revision = atomistic_model_revision(updated)
     assert updated_revision.revision_id != original_revision.revision_id
     prediction = energy_and_forces(updated, _structure(), _execution())
     assert prediction.provenance.potential_revision_id == updated_revision.revision_id
@@ -352,7 +352,7 @@ def test_painn_scenario_5() -> None:
         original,
         original.configuration.radial_frequencies * 2.0,
     )
-    assert atomistic_potential_revision(fixed_update).revision_id == (
+    assert atomistic_model_revision(fixed_update).revision_id == (
         original_revision.revision_id
     )
     model = _model()
@@ -448,11 +448,13 @@ def test_streamed_painn_matches_dense_energy_forces_and_force_loss_gradient() ->
     tiny = StreamedRelationPlan(receiver_tile=1, edge_tile=2)
     for plan in (None, tiny):
         execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=5, streamed=plan)
-        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.5)
+        payload = AtomisticGraphLayout.for_batch(batch, execution, cutoff=2.5).prepare(
+            batch
+        )
 
         def streamed(model: Any, position: Any) -> Any:
             return model.energy(
-                batch, execution, positions=position[None], topology=topology
+                batch, execution, positions=position[None], payload=payload
             )[0]
 
         def dense(model: Any, position: Any) -> Any:

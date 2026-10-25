@@ -22,7 +22,7 @@ from phydrax._model._structure import model_recipe_array_inventory
 from phydrax.atomistic import (
     _model_artifact as model_artifact,
     AtomicStructure,
-    atomistic_potential_revision,
+    atomistic_model_revision,
     AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     energy_and_forces,
@@ -125,8 +125,8 @@ def test_round_trip_restores_identities_and_energy(written: Any) -> None:
     assert restored.manifest.structure_id == manifest.structure_id
     assert restored.manifest.licenses == ("MIT",)
     assert (
-        atomistic_potential_revision(restored.model).revision_id
-        == atomistic_potential_revision(model).revision_id
+        atomistic_model_revision(restored.model).revision_id
+        == atomistic_model_revision(model).revision_id
     )
     assert _energy(restored.model) == _energy(model)
 
@@ -377,8 +377,8 @@ def test_fixed_basis_change_retaining_identities_is_refused(
     # The fixed data is not a parameter: identities and revision are unchanged.
     assert changed.architecture_id == model.architecture_id
     assert (
-        atomistic_potential_revision(changed).revision_id
-        == atomistic_potential_revision(model).revision_id
+        atomistic_model_revision(changed).revision_id
+        == atomistic_model_revision(model).revision_id
     )
     _require_refused(tmp_path, model, changed)
 

@@ -39,6 +39,7 @@ from ._elementwise import (
     _prop_clamp,
     _prop_convert_element_type,
     _prop_integer_pow,
+    _prop_min_max,
     _prop_polynomial,
     _prop_sign,
     _prop_sub,
@@ -221,6 +222,10 @@ def _prop_dispatch(
             _prop_integer_pow(eqn, state_indices, state_consts, state_bounds)
         case "mul":
             _prop_mul(eqn, state_indices, state_consts, state_bounds)
+        case "max" | "min":
+            # ∂max/∂x = 1 if x>y else 0, ∂max/∂y = 1 if y>x else 0;
+            # ∂min/∂x = 1 if x<y else 0, ∂min/∂y = 1 if y<x else 0.
+            _prop_min_max(eqn, state_indices, state_consts, state_bounds)
         case "add" | "add_any":
             _prop_add(eqn, state_indices, state_consts, state_bounds)
         case "sub":
@@ -230,8 +235,6 @@ def _prop_dispatch(
         # Binary elementwise with nonzero partials wrt both operands
         case (
             "pow"  # ∂(x^y)/∂x = y·x^(y-1), ∂(x^y)/∂y = x^y·ln(x)
-            | "max"  # ∂max/∂x = 1 if x>y else 0, ∂max/∂y = 1 if y>x else 0
-            | "min"  # ∂min/∂x = 1 if x<y else 0, ∂min/∂y = 1 if y<x else 0
             | "atan2"  # ∂atan2(y,x)/∂y = x/(x²+y²), ∂/∂x = -y/(x²+y²)
             | "rem"  # ∂(x mod y)/∂x = 1, ∂(x mod y)/∂y = -⌊x/y⌋
             | "nextafter"

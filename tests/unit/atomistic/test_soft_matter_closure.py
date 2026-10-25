@@ -24,6 +24,11 @@ from phydrax.atomistic._soft_matter import (
     SoftMatterAtomisticProtocol,
     SoftMatterProtocolKind,
 )
+from tests._support.atomistic_bundles import (
+    prepare_program,
+    role_capacity,
+    search_capacity,
+)
 
 
 def test_soft_matter_closure_scenario_1() -> None:
@@ -114,25 +119,30 @@ def _colloid_dynamics(*, shift_energy_at_cutoff: Any = True) -> Any:
         cell=cell,
     ).prepare()
     cutoff = 2.0 ** (1.0 / 6.0)
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [
-            phx.atomistic.LennardJonesPotential(
-                # ty: ignore[invalid-argument-type]
-                [1.0],
-                # ty: ignore[invalid-argument-type]
-                [1.0],
-                cutoff,
-                shift_energy_at_cutoff=shift_energy_at_cutoff,
-            )
-        ]
-    ).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
+    # Explicit resources: one cell-list source and the single pair route of the
+    # former dense two-colloid neighborhood.
+    potential = prepare_program(
+        phx.atomistic.AtomisticPotentialProgram(
+            [
+                phx.atomistic.LennardJonesPotential(
+                    # ty: ignore[invalid-argument-type]
+                    [1.0],
+                    # ty: ignore[invalid-argument-type]
+                    [1.0],
+                    cutoff,
+                    shift_energy_at_cutoff=shift_energy_at_cutoff,
+                )
+            ]
+        ),
+        system,
+        search=phx.atomistic.AtomisticCellListImageSearch(maximum_candidate_slots=4096),
+        skin=0.5,
+        search_capacities=(search_capacity(8, particles_per_cell=2, images=27),),
+        role_capacities=(role_capacity(1, 1),),
     )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
-        neighborhood,
         phx.atomistic.BAOABLangevinPlan(0.005, 1.0, realization_id=7),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(

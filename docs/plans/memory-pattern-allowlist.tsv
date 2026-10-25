@@ -1,5 +1,8 @@
 path	symbol	rule	rationale
 phydrax/_array_archive.py	_save_array	payload-tobytes	bounded/static: At most max(64KiB, one dtype element) per streaming NPY chunk, independent of array length.
+phydrax/_cuda_native.py	_library_location	array-cache	external-provider: Key is one of nine closed CudaNativeComponentName values plus its configured library-path text; value is the resolved native library Path, no array payload.
+phydrax/_execution_collectives.py	_qualified_dispatch_code	array-cache	bounded/static: Closed four-module _QUALIFIED_DISPATCH_SOURCES domain (unlisted or digest-mismatched modules raise before caching); values are code-object metadata dicts, no numerical arrays.
+phydrax/_execution_runtime.py	_discover_process_hosts	payload-tobytes	bounded/static: Each record is one gathered 16-byte uint8 kernel boot UUID per JAX process, converted to its host label.
 phydrax/_execution_sampling.py	_darwin_system	array-cache	external-provider: Keyless singleton native libc handle retained for process lifetime; no array payload.
 phydrax/_meshcore.py	_resolve	array-cache	external-provider: Process-lifetime native meshcore library handle, not a numerical table.
 phydrax/_numerics/_quadrature_rules.py	gauss_kronrod_data	array-cache	bounded/static: Closed six-order published Gauss-Kronrod domain: 15, 21, 31, 41, 51, 61.
@@ -17,7 +20,20 @@ phydrax/applications/free_boundary/_stefan.py	implicit_level_set_stefan_loss.amb
 phydrax/applications/functional_rg/_fermi_surface.py	FermiSurfacePatchRGPlan.prepare	inverse-by-identity	bounded/static: Reciprocal vectors are admitted as exactly 2-by-2; inverse constructs physical reciprocal wraps.
 phydrax/applications/numerical_relativity/_checkpoint.py	restore_distributed_numerical_relativity_checkpoint	payload-tobytes	bounded/static: Reconstruction JSON template is capped at 65536 bytes and restored arrays must match its exact shape/dtype before parsing.
 phydrax/applications/radiation_biophysics/interchange/_dnadamage1.py	dnadamage1_column_payload	identity-tolist	output-size: Exported canonical bytes encode eight physical and five chemical columns plus original IDs; import verifies this exact rights payload.
-phydrax/atomistic/_graph.py	_case_binning_lattice	inverse-by-identity	bounded/static: Fully periodic cell binning uses exactly three physical coordinates and a fixed 3-by-3 lattice inverse.
+phydrax/atomistic/_domain_checkpoint.py	_committed_record	payload-tobytes	output-size: The whole replicated UTF-8 record region is decoded into AtomisticDomainCheckpointRecord; read_checkpoint_region refuses it above limits.max_member_bytes.
+phydrax/atomistic/_domain_checkpoint.py	_rng_lineage_id	payload-tobytes	bounded/static: Hashes the key data of the single scalar typed rng_key (shape () enforced), the implementation's fixed word vector (two uint32 for threefry).
+phydrax/atomistic/_structure_store.py	_zarr_runtime	array-cache	external-provider: Keyless singleton of the four optional zarr provider modules; no array payload.
+phydrax/atomistic/crystal/_setting.py	_admitted_group	array-cache	bounded/static: Closed 530-entry admitted Hall table (out-of-range numbers raise before caching); values are exact integer/Fraction affine groups, no arrays.
+phydrax/atomistic/crystal/_setting.py	_admitted_identity_index	array-cache	bounded/static: Keyless singleton mapping the 530 admitted exact Hall operation sets to Hall numbers; no arrays.
+phydrax/atomistic/crystal/_setting.py	_mirror_international_number	array-cache	bounded/static: Closed 530-entry admitted Hall domain; values are International numbers 1 through 230.
+phydrax/atomistic/crystal/_wyckoff.py	_group_context	array-cache	bounded/static: Count-bounded 64-entry exact setting-operation contexts (operation tuple, position index and rotation-inverse maps); integer/Fraction values, no arrays.
+phydrax/atomistic/crystal/_wyckoff.py	_site_frame	array-cache	bounded/static: Count-bounded 4096-entry Smith-form frames of sorted integer rotation sets; values are at most 3-by-3 integer tuples, no arrays.
+phydrax/atomistic/interchange/_aimnet2_checkpoint.py	_worker_bytes	payload-read-bytes	external-provider: Package-owned fixed AIMNet2 worker source is staged as worker.py input to run_pinned_command.
+phydrax/atomistic/interchange/_aimnet2_checkpoint.py	evaluate_aimnet2_source	payload-read-bytes	external-provider: run_pinned_command stages bytes inputs only; state.zip is written from the record's admitted tensors under limits.archive_limits() (container at most max_result_bytes, default 2GiB).
+phydrax/atomistic/interchange/_aimnet2_worker.py	_chunks	payload-tobytes	external-provider: Admitted NPY output streams one scalar or leading-axis slices targeting 16MiB; one larger slice is capped by max_tensor_bytes.
+phydrax/atomistic/interchange/_aimnet2_worker.py	_npy_header	whole-buffer	bounded/static: Buffer contains only an NPY metadata header; result rank, dtype and member size are admitted before output.
+phydrax/atomistic/interchange/_aimnet2_worker.py	_read_state_archive	payload-read-bytes	external-provider: Parent-staged state.zip (container at most max_result_bytes) is refused above max_source_bytes (default 1GiB) and read per member with SHA-256 verification.
+phydrax/atomistic/interchange/_aimnet2_worker.py	_staged_source	payload-read-bytes	external-provider: Parent admits the source by max_source_bytes (default 1GiB) and stages its exact byte_size/sha256; the worker verifies them and loads the in-memory TorchScript ZIP.
 phydrax/atomistic/interchange/_ase_calculator.py	NativeASECalculator._provider	payload-tobytes	host-topology: Exact ordered int64 atomic-number bytes and three PBC flags are retained as the provider-cache topology discriminator.
 phydrax/atomistic/interchange/_ipi.py	IPISession.send_force	payload-tobytes	output-size: Outgoing N-by-3 float64 force frame is admitted by maximum_atoms (default 1000000); JSON extras have a separate byte ceiling.
 phydrax/atomistic/interchange/_ipi.py	IPISession.send_positions	payload-tobytes	output-size: Outgoing N-by-3 float64 position frame is admitted by maximum_atoms; cell records and atom count add 148 bytes.
@@ -27,6 +43,8 @@ phydrax/atomistic/interchange/_mace_checkpoint.py	_worker_bytes	payload-read-byt
 phydrax/atomistic/interchange/_mace_worker.py	_load_source	payload-read-bytes	external-provider: Source is admitted by max_source_bytes (default 1GiB) and parsed as a seekable torch.save container, including trusted BytesIO loading.
 phydrax/atomistic/interchange/_mace_worker.py	_npy_chunks	payload-tobytes	external-provider: Admitted NPY output streams one scalar or leading-axis slices targeting 16MiB; one larger slice is capped by max_tensor_bytes.
 phydrax/atomistic/interchange/_mace_worker.py	_npy_header	whole-buffer	bounded/static: Buffer contains only an NPY metadata header; result rank, dtype and member size are admitted before output.
+phydrax/atomistic/interchange/_uma_checkpoint.py	_worker_bytes	payload-read-bytes	external-provider: Package-owned fixed UMA worker source is staged as worker.py input to run_pinned_command and hashed into provenance.
+phydrax/atomistic/interchange/_uma_worker.py	_execute	payload-read-bytes	external-provider: Parent admits the source by max_source_bytes (default 4GiB) and stages its exact byte_size/sha256; the worker verifies them and parses the seekable torch.save ZIP.
 phydrax/chemistry/electronic_structure/_response.py	MeanFieldResponsePlan.nuclear_hessian	dense-derivative	output-size: MeanFieldHessianResult explicitly returns raw and symmetrized dense position Hessians and response evidence.
 phydrax/control/games/_local_lq.py	suggest_local_affine_game_policy.derivatives_at_step	dense-derivative	output-size: Dense A/B/Q/R/N blocks are retained in LocalQuadraticGame and consumed by the finite-horizon Nash LQ solver.
 phydrax/discretization/_adaptive_simplex.py	maubach_bisection_tables	array-cache	bounded/static: Closed supported simplex dimensions 2 and 3.
@@ -53,12 +71,22 @@ phydrax/interchange/hfss_design.py	run_hfss_design	payload-read-bytes	external-p
 phydrax/lifecycle/_archive.py	encode_logical_arrays	payload-tobytes	output-size: CanonicalLogicalArrays.payloads explicitly returns canonical little-endian C-order bytes; production checkpoint staging pre-admits aggregate plaintext.
 phydrax/lifecycle/_distributed_checkpoint.py	_array_payload	whole-buffer	output-size: AddressableCheckpointShard.payload_bytes is an explicit NPY output; snapshot and chunk publication enforce member/aggregate admission.
 phydrax/linalg/_compound.py	_small_plan	array-cache	bounded/static: Internal owner requests only sizes 1 through 4; maxsize=4.
+phydrax/linalg/backends/_cudss_ffi.py	_make_analyze	array-cache	external-provider: custom_vmap cuDSS analyze FFI closure capturing only the static integer Config; one stable callable per prepared native partition configuration, no arrays.
+phydrax/linalg/backends/_cudss_ffi.py	_make_analyze_ad	array-cache	external-provider: custom_jvp cuDSS analyze wrapper capturing only the static integer Config; one stable callable per prepared native partition configuration, no arrays.
+phydrax/linalg/backends/_cudss_ffi.py	_make_diagonal	array-cache	external-provider: custom_vmap cuDSS diagonal FFI closure capturing only the static integer Config; one stable callable per prepared native partition configuration, no arrays.
+phydrax/linalg/backends/_cudss_ffi.py	_make_numeric	array-cache	external-provider: custom_vmap cuDSS factorize/refactorize FFI closure keyed by refactor and static integer Config; one stable callable per native partition configuration, no arrays.
+phydrax/linalg/backends/_cudss_ffi.py	_make_numeric_ad	array-cache	bounded/static: Two-entry refactor boolean domain; value is a custom_jvp cuDSS numeric wrapper closure with no array payload.
+phydrax/linalg/backends/_cudss_ffi.py	_make_solve	array-cache	external-provider: custom_vmap cuDSS solve FFI closure capturing only the static integer Config; one stable callable per prepared native partition configuration, no arrays.
 phydrax/meshing/_metis.py	_load	array-cache	external-provider: Keyless process-lifetime native METIS library handle, not a numerical table.
 phydrax/meshing/_quality.py	_dihedral_table	array-cache	bounded/static: Closed four-solid-kind table domain.
 phydrax/meshing/_quality.py	_measure_rule	array-cache	bounded/static: Closed three-quadrature-kind table domain.
 phydrax/metrix/_operators.py	_gradient_point	dense-derivative	output-size: Scalar pointwise differentiation produces the coordinate-gradient vector returned by public gradient, not a square Jacobian.
 phydrax/metrix/algebra/_nonassociative.py	_canonical_octonion_algebra_id	array-cache	bounded/static: Keyless singleton canonical octonion identifier; no array payload.
 phydrax/ml/interop/_sklearn.py	_sklearn_api	array-cache	external-provider: Keyless singleton provider API classes; no numerical payload.
+phydrax/nn/atomistic/_uma_so3.py	_coefficient_tables	array-cache	bounded/static: Count-bounded 64-entry integer index tuples of length at most (lmax+1)^2 per (lmax, mmax); no arrays.
+phydrax/nn/atomistic/_uma_so3.py	_grid_tables	array-cache	bounded/static: Count-bounded 16 read-only float64 S2 table pairs, each the immutable host preparation of the to_grid/from_grid arrays its UMASphericalGrid owner retains, keyed by static grid hyperparameters.
 phydrax/operators/differential/_stochastic_estimators.py	_bilaplacian_plan	array-cache	bounded/static: Count-bounded 64-entry immutable fourth-order contraction metadata; never caches callable or numerical point.
 phydrax/operators/integral/vortex/_fmm_complete.py	PreparedVortexFMM._multipole_velocity	dense-derivative	bounded/static: Admitted physical dimension 2 or 3 fixes kernel derivatives to 2-by-2 or 3-by-3 first-moment tensors.
 phydrax/operators/quantum/gaussian/_spherical.py	cartesian_to_real_spherical	array-cache	bounded/static: Validated angular momentum 0 through 12 gives thirteen finite Cartesian-to-spherical tables.
+phydrax/tensor_network/_contraction_ad.py	_ffi_callable	array-cache	external-provider: Count-bounded 512-entry jax.ffi.ffi_call dispatch callables keyed by integer TensorOperation recipes; no numerical arrays.
+phydrax/tensor_network/_contraction_ad.py	transpose_operation	array-cache	bounded/static: Count-bounded 512-entry integer TensorOperation transpose recipes and missing-mode tuples; no numerical arrays.

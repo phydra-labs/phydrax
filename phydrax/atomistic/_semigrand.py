@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
+from ._neighborhood_bundle import AtomisticNeighborhoodBundleState
 from ._potential_program import PreparedAtomisticPotentialProgram
 
 
@@ -91,7 +91,7 @@ class SemiGrandTransition(StrictModule):
 def variance_constrained_semigrand_step(
     potential: PreparedAtomisticPotentialProgram,
     positions: ArrayLike,
-    neighborhood: ParticleNeighborhoodState,
+    neighborhood: AtomisticNeighborhoodBundleState,
     species: ArrayLike,
     key_data: ArrayLike,
     step_index: ArrayLike,

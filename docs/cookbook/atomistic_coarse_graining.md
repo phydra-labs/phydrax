@@ -18,7 +18,10 @@ problem = phx.atomistic.CoarseForceMatchingProblem(
     fine_training_batch,
     fine_training_forces,
     dense_coarse_graph,
-    validation_batch=fine_validation_batch,
+    cutoff=cutoff,
+    objective=phx.atomistic.AtomisticForceObjective(reduction="structure"),
+    batch_size=32,
+    validation_batch=fine_validation_batch,  # structure IDs disjoint from training
     validation_fine_forces=fine_validation_forces,
 )
 model = phx.nn.atomistic.PaiNNPotential(
@@ -31,18 +34,15 @@ model = phx.nn.atomistic.PaiNNPotential(
 result = phx.atomistic.fit_coarse_potential(
     model,
     problem,
-    phx.atomistic.AtomisticTrainingPolicy(
-        maximum_steps=1000,
-        energy_weight=0.0,
-        force_weight=1.0,
-    ),
+    phx.atomistic.AtomisticTrainingPolicy(maximum_steps=1000),
     jax.random.key(1),
 )
 if not bool(result.valid):
     raise RuntimeError("Coarse force match did not qualify")
 ```
 
-When an analytic prior is used, pass its force contribution and stable ID to the
-problem and include the same prior in the runtime potential program. Force-matching
-validation supports an equilibrium PMF claim only; establish coarse kinetics
-separately.
+The problem is force-only: loss weights, reductions and scales live on the force
+objective, not on the training policy. When an analytic prior is used, pass its force
+contribution and stable ID to the problem and include the same prior in the runtime
+potential program. Force-matching validation supports an equilibrium PMF claim only;
+establish coarse kinetics separately.

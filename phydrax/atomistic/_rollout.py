@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -21,6 +22,7 @@ from ._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
 )
+from ._cell_dynamics import MTKNPHPlan, MTKNPTPlan
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._observer import AbstractAtomisticObserverPlan
 from ._thermodynamic import PreparedThermodynamicStateTable
@@ -192,10 +194,17 @@ class AtomisticRolloutPlan(StrictModule):
             raise ValueError(
                 "Barostat and positive barostat_interval must be supplied together."
             )
-        npt = bool(jnp.asarray(thermodynamic.pressure_mask[0]))
-        if npt != (barostat is not None):
+        cell_owner = isinstance(dynamics.integrator, (MTKNPTPlan, MTKNPHPlan))
+        npt = bool(np.any(np.asarray(thermodynamic.ensemble_code) == 2))
+        if barostat is not None and (cell_owner or not npt):
             raise ValueError(
-                "NPT rollout requires a scheduled barostat, and NVE/NVT forbids it."
+                "A scheduled Monte Carlo cell move requires NPT rows and a run whose "
+                "integrator does not already own the cell."
+            )
+        if npt and not cell_owner and barostat is None:
+            raise ValueError(
+                "NPT rollout requires exactly one cell owner: an MTK integrator or "
+                "a scheduled Monte Carlo barostat."
             )
         replay_ = AtomisticReplayPolicy() if replay is None else replay
         if not isinstance(replay_, AtomisticReplayPolicy):
@@ -235,6 +244,9 @@ class AtomisticRolloutPlan(StrictModule):
             }
         )
 
+    # The fixed-capacity scan carry binds trajectory, observers, accepted state and
+    # replay together. Retain this one recurrence and its output assembly so helper
+    # extraction cannot introduce another scan or change checkpoint boundaries.
     @checked
     def rollout(self, initial_state: AtomisticDynamicsState, /) -> AtomisticRolloutResult:
         if (
@@ -244,11 +256,12 @@ class AtomisticRolloutPlan(StrictModule):
             raise ValueError("Initial state belongs to another dynamics runtime.")
         if initial_state.force.program_id != self.dynamics.potential.prepared_id:
             raise ValueError("Initial force cache belongs to another potential program.")
-        initial_success = (
-            (initial_state.last_status == 0)
-            & initial_state.force.successful
-            & (initial_state.force.position_epoch == initial_state.step_index)
+        initial_row = self.thermodynamic.state_at_replica(
+            initial_state.thermodynamic_state_index
         )
+        initial_success = (
+            initial_state.last_status == 0
+        ) & self.dynamics.force_cache_valid(initial_state, initial_row.controls)
         state = initial_state
         observer_states = tuple(
             observer.initialize(self.dynamics, state) for observer in self.observers
@@ -336,7 +349,6 @@ class AtomisticRolloutPlan(StrictModule):
             barostat, interval = self.barostat, self.barostat_interval
             if barostat is not None and interval is not None:
                 scheduled = (index + 1) % interval == 0
-                move_counter = current.barostat_state[0]
 
                 def apply_move(_: None) -> tuple[AtomisticDynamicsState, Array]:
                     evaluation = apply_isotropic_monte_carlo_barostat(
@@ -344,7 +356,6 @@ class AtomisticRolloutPlan(StrictModule):
                         propagated,
                         self.thermodynamic,
                         barostat,
-                        move_counter,
                     )
                     return evaluation.accepted_state, evaluation.successful
 
@@ -352,16 +363,10 @@ class AtomisticRolloutPlan(StrictModule):
                     return propagated, jnp.asarray(True)
 
                 proposed, barostat_successful = jax.lax.cond(
-                    scheduled, apply_move, skip_move, operand=None
+                    result.successful & scheduled, apply_move, skip_move, operand=None
                 )
-                counter_valid = move_counter < jnp.iinfo(jnp.uint32).max
                 iteration_successful = iteration_successful & (
-                    (~scheduled) | (counter_valid & barostat_successful)
-                )
-                proposed = eqx.tree_at(
-                    lambda value: value.barostat_state,
-                    proposed,
-                    current.barostat_state.at[0].add(scheduled.astype(jnp.uint32)),
+                    (~scheduled) | barostat_successful
                 )
             else:
                 proposed = propagated
@@ -425,13 +430,17 @@ class AtomisticRolloutPlan(StrictModule):
                 lambda value: value,
                 valid_buffer,
             )
-            cache_epoch = (
-                jnp.zeros((), dtype=jnp.int32)
-                if next_state.neighborhood_cache is None
-                else next_state.neighborhood_cache.epoch
+            route_digest = route_digest * jnp.uint64(1099511628211) + jnp.asarray(
+                jnp.sum(next_state.neighborhoods.epochs, dtype=jnp.int32).astype(
+                    jnp.uint32
+                ),
+                dtype=jnp.uint64,
             )
             route_digest = route_digest * jnp.uint64(1099511628211) + jnp.asarray(
-                cache_epoch.astype(jnp.uint32), dtype=jnp.uint64
+                jnp.sum(next_state.neighborhoods.graph_epochs, dtype=jnp.int32).astype(
+                    jnp.uint32
+                ),
+                dtype=jnp.uint64,
             )
             route_digest = route_digest + jnp.asarray(
                 result.rejection_reasons.astype(jnp.uint32), dtype=jnp.uint64
@@ -462,7 +471,7 @@ class AtomisticRolloutPlan(StrictModule):
             )
             stochastic_digest = stochastic_digest * jnp.uint64(
                 1099511628211
-            ) + jnp.asarray(next_state.barostat_state[0], dtype=jnp.uint64)
+            ) + jnp.asarray(next_state.controllers.move_counter, dtype=jnp.uint64)
             return (
                 next_state,
                 cumulative,

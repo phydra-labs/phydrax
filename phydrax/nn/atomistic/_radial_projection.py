@@ -39,6 +39,7 @@ from ..._interpolation import (
     UniformNodeGrid,
 )
 from ..._model import register_artifact_value
+from ..._model._fixed_binding import require_identical, require_realized
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import (
@@ -47,7 +48,6 @@ from ..._validation import (
     positive_integer,
 )
 from ...typing import Dim, Float, Int32, parse
-from ._fixed_binding import require_identical, require_realized
 from ._radial import RadialEmbedding, RadialMLP
 
 

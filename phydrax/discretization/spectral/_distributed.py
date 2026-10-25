@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from math import prod
 from operator import index
 from typing import Any, cast, final, Literal, TypeAlias, TypedDict, Unpack
@@ -126,7 +127,25 @@ def _partition_entry(entry: Any, /) -> str | tuple[str, ...] | None:
 
 @final
 class SpectralMeshTopology(StrictModule, NonTrainableState):
-    """Caller-visible device mesh with a stable, hardware-exact identity."""
+    """Caller-visible device mesh with a stable, hardware-exact identity.
+
+    ``lanes`` declares a lane-reference topology: one device whose single mesh
+    axis is executed as ``lanes`` named vmap lanes by the caller's owner region
+    (``DistributedOwnershipPlan(owner_lanes=...)``). Its layouts, transposes and
+    resource reports describe the ``lanes``-way partition exactly, and
+    ``forward_local``/``inverse_local`` run unchanged inside the lane map with the
+    same all-to-all transposes. It is a numerical oracle, not distributed
+    through :meth:`require_available`.
+
+    ``owner_axis`` declares an owner-region topology (:meth:`owner_region`):
+    its mesh coordinates FACTOR one bound owner axis of size ``prod(mesh_shape)``
+    with the first mesh axis fastest (owner ``r`` is coordinate
+    ``(r % px, r // px)`` of a ``(px, py)`` grid). That is exactly the
+    flattened order of the canonical full-mesh pencil all-to-all over
+    ``(axis_1, axis_0)``, so a ``DistributedOwnershipPlan`` region whose single
+    owner axis carries this name executes the canonical pencil sequence with
+    the identical collective. It runs only inside that owner region.
+    """
 
     mesh: Mesh = eqx.field(static=True)
     mesh_shape: tuple[int, ...] = eqx.field(static=True)
@@ -135,8 +154,13 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
     platform: str = eqx.field(static=True)
     device_keys: tuple[tuple[int, int], ...] = eqx.field(static=True)
     execution_group_id: str | None = eqx.field(static=True)
+    lanes: int | None = eqx.field(static=True)
+    owner_axis: str | None = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    # Caller meshes, physical owner regions and lane references have distinct
+    # identity rules. Keep their exhaustive admission and device ordering together
+    # so an equal integer shape cannot silently substitute one topology for another.
     def __init__(
         self,
         mesh_or_shape: Mesh | Sequence[int] = (1,),
@@ -145,7 +169,41 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         axis_names: Sequence[str] | None = None,
         execution_group_id: str | None = None,
+        lanes: int | None = None,
+        owner_axis: str | None = None,
     ) -> None:
+        owner_axis_: str | None = None
+        if owner_axis is not None:
+            if not isinstance(owner_axis, str) or not owner_axis:
+                raise TypeError("owner_axis must be a non-empty string.")
+            if isinstance(mesh_or_shape, Mesh):
+                raise ValueError(
+                    "An owner-region topology factors an owner axis; it takes a grid "
+                    "shape and owner-ordered devices, not a caller-owned Mesh."
+                )
+            if devices is None:
+                raise ValueError("An owner-region topology needs its owner devices.")
+            owner_axis_ = owner_axis
+        lane_count: int | None = None
+        if lanes is not None:
+            lane_count = index(lanes)
+            if lane_count <= 0:
+                raise ValueError("lanes must be positive.")
+            if isinstance(mesh_or_shape, Mesh):
+                raise ValueError(
+                    "A lane-reference topology is the one-axis shape (lanes,)."
+                )
+            lane_shape = tuple(index(value) for value in mesh_or_shape)
+            if owner_axis_ is None and lane_shape != (lane_count,):
+                raise ValueError(
+                    "A lane-reference topology is the one-axis shape (lanes,)."
+                )
+            if owner_axis_ is not None and prod(lane_shape) != lane_count:
+                raise ValueError(
+                    "An owner-region lane topology factors exactly its lane count."
+                )
+            if devices is None or len(tuple(devices)) != 1:
+                raise ValueError("A lane-reference topology executes on one device.")
         if isinstance(mesh_or_shape, Mesh):
             if devices is not None or axis_names is not None:
                 raise ValueError(
@@ -168,8 +226,13 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 or len(set(names)) != len(names)
             ):
                 raise ValueError("axis_names must uniquely name every mesh dimension.")
+            if owner_axis_ is not None and owner_axis_ in names:
+                raise ValueError(
+                    "The owner axis is bound by the owner region; it cannot also name "
+                    "a factored spectral mesh axis."
+                )
             available = tuple(jax.devices())
-            requested = prod(mesh_shape)
+            requested = 1 if lane_count is not None else prod(mesh_shape)
             if devices is None:
                 if requested > len(available):
                     raise RuntimeError(
@@ -188,7 +251,20 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 selected
             ):
                 raise ValueError("A spectral topology cannot contain a device twice.")
-            mesh = Mesh(np.asarray(selected, dtype=object).reshape(mesh_shape), names)
+            if lane_count is not None:
+                arranged = np.asarray(selected, dtype=object).reshape(
+                    (1,) * len(mesh_shape)
+                )
+            elif owner_axis_ is not None:
+                # Owner r sits at the coordinate whose FIRST axis varies fastest.
+                arranged = (
+                    np.asarray(selected, dtype=object)
+                    .reshape(tuple(reversed(mesh_shape)))
+                    .transpose(tuple(reversed(range(len(mesh_shape)))))
+                )
+            else:
+                arranged = np.asarray(selected, dtype=object).reshape(mesh_shape)
+            mesh = Mesh(arranged, names)
         if not selected:
             raise ValueError("A spectral topology requires at least one device.")
         platforms = {device.platform for device in selected}
@@ -203,6 +279,8 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         self.device_ids = ids
         self.device_keys = keys
         self.execution_group_id = execution_group_id
+        self.lanes = lane_count
+        self.owner_axis = owner_axis_
         self.platform = platform
         self.topology_id = canonical_fingerprint(
             {
@@ -213,7 +291,73 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 "device_ids": list(ids),
                 "device_keys": [list(key) for key in keys],
                 "execution_group_id": execution_group_id,
+                **({} if lane_count is None else {"lane_reference": lane_count}),
+                **(
+                    {}
+                    if owner_axis_ is None
+                    else {
+                        "owner_axis": owner_axis_,
+                        "owner_order": "first-mesh-axis-fastest",
+                    }
+                ),
             }
+        )
+
+    @classmethod
+    def lane_reference(
+        cls,
+        lanes: int,
+        /,
+        *,
+        axis_name: str,
+        device: jax.Device | None = None,
+        execution_group_id: str | None = None,
+    ) -> "SpectralMeshTopology":
+        """One device whose axis ``axis_name`` runs as ``lanes`` named vmap lanes."""
+        selected = jax.devices()[0] if device is None else device
+        return cls(
+            (lanes,),
+            devices=(selected,),
+            axis_names=(axis_name,),
+            execution_group_id=execution_group_id,
+            lanes=lanes,
+        )
+
+    @classmethod
+    def owner_region(
+        cls,
+        grid: Sequence[int],
+        /,
+        *,
+        owner_axis: str,
+        devices: Sequence[jax.Device],
+        lanes: bool = False,
+        axis_names: Sequence[str] | None = None,
+        execution_group_id: str | None = None,
+    ) -> "SpectralMeshTopology":
+        """Spectral grid factoring one bound owner axis (first axis fastest).
+
+        ``devices`` are the owner devices in owner order (one per owner), or
+        the single device of a lane-reference owner region (``lanes=True``,
+        ``prod(grid)`` named vmap lanes). Owner ``r`` holds the layout block
+        of coordinate ``(r % grid[0], r // grid[0])`` for a two-axis grid.
+        """
+        shape = _positive_shape(grid, "grid")
+        selected = tuple(devices)
+        if not lanes and len(selected) != prod(shape):
+            raise ValueError("An owner-region topology needs one device per owner.")
+        names = (
+            tuple(f"{owner_axis}_spectral_{axis}" for axis in range(len(shape)))
+            if axis_names is None
+            else tuple(axis_names)
+        )
+        return cls(
+            shape,
+            devices=selected,
+            axis_names=names,
+            execution_group_id=execution_group_id,
+            lanes=prod(shape) if lanes else None,
+            owner_axis=owner_axis,
         )
 
     @classmethod
@@ -246,6 +390,17 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         return prod(self.mesh_shape)
 
     def require_available(self, /) -> None:
+        if self.lanes is not None:
+            raise ValueError(
+                "A lane-reference spectral topology has no device mesh: it executes "
+                "only inside a lane owner region through forward_local/inverse_local."
+            )
+        if self.owner_axis is not None:
+            raise ValueError(
+                "An owner-region spectral topology factors the owner axis "
+                f"{self.owner_axis!r}: it executes only inside that owner region "
+                "through forward_local/inverse_local."
+            )
         available = {
             (device.platform, int(device.process_index), int(device.id))
             for device in jax.devices(self.platform)
@@ -359,11 +514,17 @@ class SpectralLayout(StrictModule, NonTrainableState):
 
 @final
 class SpectralTranspose(StrictModule, NonTrainableState):
-    """One all-to-all redistribution derived from declared layouts and topology."""
+    """One all-to-all redistribution derived from declared layouts and topology.
+
+    ``collective_axis`` is the bound axis that executes it: the moved mesh
+    axis (or the full-mesh ``(axis_1, axis_0)`` pair), or the owner axis of an
+    owner-region topology, whose flattened order is the same.
+    """
 
     source: SpectralLayout
     target: SpectralLayout
     mesh_axis: str | tuple[str, ...] = eqx.field(static=True)
+    collective_axis: str | tuple[str, ...] = eqx.field(static=True)
     split_axis: int = eqx.field(static=True)
     concat_axis: int = eqx.field(static=True)
     packing: _SpectralTransposePacking = eqx.field(static=True)
@@ -460,6 +621,20 @@ class SpectralTranspose(StrictModule, NonTrainableState):
             raise ValueError(
                 "Layouts must describe a direct or full-mesh pencil transpose."
             )
+        collective_axis: str | tuple[str, ...] = mesh_axis
+        if topology.owner_axis is not None:
+            names = topology.mesh_axis_names
+            full_mesh = (
+                mesh_axis == names[0]
+                if len(names) == 1
+                else len(names) == 2 and mesh_axis == (names[1], names[0])
+            )
+            if not full_mesh:
+                raise ValueError(
+                    "An owner-region topology executes only full-mesh transposes whose "
+                    "flattened order is its owner order."
+                )
+            collective_axis = topology.owner_axis
 
         identity: dict[str, Any] = {
             "kind": "spectral-all-to-all-transpose",
@@ -472,9 +647,12 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         if packing != "direct":
             identity["packing"] = packing
             identity["mesh_shape"] = list(mesh_shape)
+        if topology.owner_axis is not None:
+            identity["collective_axis"] = topology.owner_axis
         self.source = source
         self.target = target
         self.mesh_axis = mesh_axis
+        self.collective_axis = collective_axis
         self.split_axis = split
         self.concat_axis = concat
         self.packing = packing
@@ -485,7 +663,7 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         if self.packing == "direct":
             return jax.lax.all_to_all(
                 local_value,
-                axis_name=self.mesh_axis,
+                axis_name=self.collective_axis,
                 split_axis=self.split_axis,
                 concat_axis=self.concat_axis,
                 tiled=True,
@@ -495,7 +673,7 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         if self.packing == "pencil-to-slab":
             packed = jax.lax.all_to_all(
                 local_value[None],
-                axis_name=self.mesh_axis,
+                axis_name=self.collective_axis,
                 split_axis=self.split_axis,
                 concat_axis=self.concat_axis,
                 tiled=True,
@@ -510,7 +688,7 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         packed = packed.reshape(px * py, nx // px, ny // py, nz, *payload)
         return jax.lax.all_to_all(
             packed,
-            axis_name=self.mesh_axis,
+            axis_name=self.collective_axis,
             split_axis=self.split_axis,
             concat_axis=self.concat_axis,
             tiled=True,
@@ -1744,7 +1922,21 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             value = value / scale_value
         return value.astype(coefficient_dtype)
 
-    def _forward_local(self, local: Array, /) -> Array:
+    def forward_local(self, local: Array, /, *, padded: bool = False) -> Array:
+        """Physical→modal transform of this device's slab/pencil block.
+
+        Must run inside a mapped region over ``topology.mesh`` whose axes carry
+        the physical (``padded``) layout partition; the transposes are native
+        all-to-all collectives whose JAX transpose is the exact adjoint.
+        """
+        if padded:
+            return self._execute_local_sequence(
+                local,
+                self._padded_forward_sequence,
+                self.padded_transform_scale,
+                inverse=False,
+                padded=True,
+            )
         return self._execute_local_sequence(
             local,
             self._forward_sequence,
@@ -1752,16 +1944,16 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             inverse=False,
         )
 
-    def _forward_padded_local(self, local: Array, /) -> Array:
-        return self._execute_local_sequence(
-            local,
-            self._padded_forward_sequence,
-            self.padded_transform_scale,
-            inverse=False,
-            padded=True,
-        )
-
-    def _inverse_local(self, local: Array, /) -> Array:
+    def inverse_local(self, local: Array, /, *, padded: bool = False) -> Array:
+        """Modal→physical transform of this device's block (inverse of ``forward_local``)."""
+        if padded:
+            return self._execute_local_sequence(
+                local,
+                self._padded_inverse_sequence,
+                self.padded_transform_scale,
+                padded=True,
+                inverse=True,
+            )
         return self._execute_local_sequence(
             local,
             self._inverse_sequence,
@@ -1769,20 +1961,11 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             inverse=True,
         )
 
-    def _inverse_padded_local(self, local: Array, /) -> Array:
-        return self._execute_local_sequence(
-            local,
-            self._padded_inverse_sequence,
-            self.padded_transform_scale,
-            padded=True,
-            inverse=True,
-        )
-
     def to_modal(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
         source = self._layout("physical", padded)
         target = self._layout("modal", padded)
         placed = self._validate(values, source, "Physical spectral state")
-        action = self._forward_padded_local if padded else self._forward_local
+        action = partial(self.forward_local, padded=padded)
         mapped = jax.shard_map(
             action,
             mesh=self.topology.mesh,
@@ -1796,7 +1979,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         source = self._layout("modal", padded)
         target = self._layout("physical", padded)
         placed = self._validate(coefficients, source, "Modal spectral state")
-        action = self._inverse_padded_local if padded else self._inverse_local
+        action = partial(self.inverse_local, padded=padded)
         mapped = jax.shard_map(
             action,
             mesh=self.topology.mesh,
@@ -1812,7 +1995,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             values, "physical", padded, "Batched physical spectral state"
         )
         target = self._batched_layout(placed.shape, "modal", padded)
-        action = self._forward_padded_local if padded else self._forward_local
+        action = partial(self.forward_local, padded=padded)
         mapped = jax.shard_map(
             action,
             mesh=self.topology.mesh,
@@ -1830,7 +2013,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             coefficients, "modal", padded, "Batched modal spectral state"
         )
         target = self._batched_layout(placed.shape, "physical", padded)
-        action = self._inverse_padded_local if padded else self._inverse_local
+        action = partial(self.inverse_local, padded=padded)
         mapped = jax.shard_map(
             action,
             mesh=self.topology.mesh,

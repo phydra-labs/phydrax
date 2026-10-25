@@ -93,7 +93,7 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
             {
                 "kind": "particle-field-realization",
                 "declared_id": plan_id,
-                "particles": transfer.particles.prepared_id,
+                "particles": transfer.physical_particles().prepared_id,
                 "transfer": transfer.prepared_id,
                 "observation": observation.observation_id,
                 "target_kind": target_kind,
@@ -105,8 +105,8 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
     def positions(self, raw_positions: ArrayLike, /) -> Array:
         raw = jnp.asarray(raw_positions)
         expected = (
-            self.transfer.particles.capacity,
-            self.transfer.particles.ambient_dimension,
+            self.transfer.source_capacity,
+            self.transfer.ambient_dimension,
         )
         if raw.shape != expected:
             raise ValueError(f"Particle position parameters must have shape {expected}.")
@@ -122,14 +122,16 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
     ) -> ParticleFieldRealizationEvaluation:
         positions = self.positions(raw_positions)
         routes = self.transfer.build(positions)
-        deposited = self.transfer.deposit_content(routes, self.transfer.particles.masses)
+        deposited = self.transfer.deposit_content(
+            routes, self.transfer.physical_particles().masses
+        )
         content = deposited.content
         density = deposited.density
         predicted = density if self.target_kind == "density" else content
         log_likelihood = self.observation.log_likelihood(predicted, args)
         lower = jnp.asarray(self.lower_bounds, dtype=positions.dtype)
         upper = lower + jnp.asarray(self.box_lengths, dtype=positions.dtype)
-        active = self.transfer.particles.active_mask[:, None]
+        active = self.transfer.source_active_mask[:, None]
         seam = jnp.minimum(positions - lower, upper - positions)
         seam_distance = jnp.min(jnp.where(active, seam, jnp.inf))
         predicted_observation = jnp.asarray(
@@ -166,7 +168,7 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
             seam_distance,
             finite,
             successful,
-            self.transfer.particles.prepared_id,
+            self.transfer.physical_particles().prepared_id,
             self.transfer.prepared_id,
             self.observation.observation_id,
             self.plan_id,

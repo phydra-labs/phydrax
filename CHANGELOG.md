@@ -3,6 +3,98 @@
 ## Unreleased
 
 ### Breaking
+- Preserve scalar array rank in callable identities: a scalar and a one-element
+  vector no longer share an identity. Typed PRNG keys bind their logical shape,
+  implementation and word data. Recreate affected prepared artifacts and
+  checkpoint templates; previous scalar-array identities are not retained.
+- Bind domain and stage checkpoints to topology-independent scientific and
+  Hamiltonian revision identities, not caller labels or model weights alone.
+  Records missing the scientific identities refuse; recreate their templates.
+- Make `evaluate` the sole bias-form and history-plan evaluation API, returning
+  `BiasFormEvaluation` or `AtomisticBiasHistoryEvaluation` with geometric
+  validity. Hamiltonian term energy entry points remain unchanged.
+- Build distribution-distillation generators from authenticated equilibrium
+  samples and bounded in-scan configuration capture. `AtomisticGeneratorState`,
+  `AtomisticGeneratorMixture` and `atomistic_generator_source` replace
+  caller-declared generator densities and record-to-sample correspondence.
+  Labeling and Boltzmann-source construction require a bounded structure-store
+  writer rather than retaining a complete labeled dataset in memory.
+- Bind generation revisions to condition-source values, transforms and species
+  predictors. Opaque callbacks require declared semantic and numeric identities;
+  hidden numerical captures refuse, including integer tables and typed keys.
+- Record per-atom enantiomer provenance in crystal stores and bind packing
+  recipes to volume-preserving metric relaxation and two-sided volume admission.
+  Recreate affected stores, recipes and continuation templates.
+- Carry atomistic material, program, runtime and prepared-binding digests as
+  lossless dynamic `IdentityWords`. Host IDs remain full digests; compiled
+  comparisons propagate binding failures without specializing on each revision.
+  Layout fingerprints retain algorithm selectors, exact rational metadata and
+  numerical leaf shapes. Recreate prepared runtimes and checkpoint templates
+  for this cutover.
+- Image graph layouts outward-round their candidate-search radius in the
+  coordinate dtype so closed neighbor selectors retain exact-cutoff routes.
+  Physical cutoffs are unchanged; reprepare image layouts for the corrected
+  search and certificate identities.
+- External atomistic evaluations declare either a canonical digest binding or an
+  external label, never infer one from the spelling of the other. Native
+  providers remain callable under an outer JIT; mismatched external labels refuse
+  before invoking their evaluator.
+- Replace single-model dynamics restarts with complete learned-term bindings.
+  `write_atomistic_restart` derives the executed models; `sources` and `licenses`
+  are keyed by term name. `read_atomistic_restart_models` restores artifacts and
+  terms with their conditions, default-use evidence, optional absence, keys and
+  observable requests. The singular reader and redundant `model=` argument are removed.
+- Native AIMNet2 and conservative UMA declare piecewise coordinate and mixed
+  parameter-HVP response through the existing Hessian substrate. Explicit
+  almost-everywhere policy is required; unresolved internal conditions remain
+  evidence, not a blanket smoothness claim. Frozen UMA merges expose coordinate
+  response only. Model artifacts cover native PaiNN, NequIP, AIMNet2 and UMA
+  families with owning restoration validation.
+- Require an explicit `r4r2` buffer for native TS dispersion. No elemental
+  dispersion table is bundled; AIMNet2 source conversion retains the source
+  artifact's buffer, and direct native stages supply their complete
+  `TSDispersionPotential` through `stage_values`.
+- Split Wiener and composite stochastic realization identity into static law and
+  dynamic key/path data. Host realization and coupling digests remain unchanged;
+  traced code cannot request host digests. Recreate serialized PyTree templates.
+  Reverse diffusion now prepares key-independent solver structure once, then
+  accepts dynamic realizations and score contexts.
+- Atomistic sampler initialization receives its lane-admission mask. Periodic
+  reverse-SDE and probability-flow samplers use one stable compiled admission
+  path with bounded chunks, explicit conditions and no vacant-lane score work.
+  Generation checkpoints bind declared support profiles and retain complete
+  pending-publication state; those profiles do not claim scientific release.
+- Replace atomistic `graph_energy` with typed
+  `evaluate_graph(AtomisticGraphInputs, request)` and `AtomisticModelOutputs`.
+  Bound graphs retain their current coordinates; case/atom conditions carry
+  explicit scientific ports, units, default-use and validity evidence.
+  Direct energy and force evaluation accept dynamic conditioning, and host
+  prediction provenance includes its values. Recreate bound graph and
+  prediction PyTree templates rather than reusing their previous field layouts.
+- Bind atomistic Hamiltonians to an explicit `AtomisticNeighborhoodBundlePlan`
+  or prepared bundle. Physical minimum-image pairs, directed image graphs,
+  interaction-site pairs and other declared roles have independent cutoffs,
+  capacities, selection and failure evidence. Evaluation consumes one bundle
+  state rather than a separate physical neighborhood and graph cache.
+  Control scales bind to exact term identities. Force-group ledgers distinguish
+  evaluated field producers from terms contributing to the requested scalar.
+  Reprepare programs and recreate state/checkpoint templates for the new layout.
+- Remove eagerly retained all-site pair arrays and `dense_neighborhood` from
+  `PreparedAtomisticCoordinateMap`. Site-pair resources now belong to the
+  neighborhood bundle; a complete finite pair source requires an explicit bound.
+- Particle-mesh Ewald and LJ-PME own their grid through one term-owned
+  `ReciprocalMeshPlan`/`PreparedReciprocalMesh` (grid, spline degree, modulus,
+  Nyquist convention, frame, channel chunk, budget). PME term identities bind
+  the mesh plan and its prepared identity binds the prepared mesh instead of a
+  separate splat; LJ-PME keeps its linear-CIC, continuous-sinc, anchor-relative
+  definition and binds its prepared mesh. Canonical reciprocal term IDs change;
+  reprepare programs and recreate checkpoints bound to them.
+- Separate the distributed checkpoint writer slot from the physical source.
+  `publish_process_checkpoint(..., writer_index=None)` names the group-local
+  `process-{slot}` artifact and the shard `process_index`, while required
+  shard metadata `source_process_index` records the process that held the
+  snapshot. Physical layout fingerprints are unchanged; shard records without
+  `source_process_index` are refused rather than inferred.
 - Move exact scalar GP execution to native prepared factors and solve evidence.
   `ExactGaussianProcessFactor.factorization` replaces its raw `cholesky` field;
   retained storage includes covariance, factor, and evidence. Likelihood states
@@ -90,6 +182,76 @@
   policy and plan identities.
 
 ### Added
+- Add `polar_rotation3` with explicit frame and derivative-operator admission
+  evidence. Its native Sylvester solve keeps rotation derivatives finite at
+  repeated positive singular values without materializing a derivative matrix.
+- Preserve complete accepted dynamics continuations across campaign observation
+  and label stages, including controllers, force caches, time, counters and RNG
+  state. `AtomisticContinuationPolicy.RESTART` explicitly admits an integrator
+  or ensemble change; the default continuation policy refuses such changes.
+- Add `AtomisticDrawConfigurationCapture(max_bytes=...)` to native multistate
+  segments and checkpoints. Captured positions, image counts, species and cells
+  bind the exact configurations used for admitted distribution objectives.
+- Add segmented sparse dot, multiply, matvec and scaled RMS actions with
+  explicit support, numerical regularity and prepared-execution reuse.
+- Add native FIRE/FIRE2 and trust-scaled L-BFGS local relaxation with
+  independent group/site controls, accepted-state evidence and shared native
+  secant history.
+- Add distributed atomistic reciprocal work through
+  `AtomisticReciprocalDistributionPlan` for PME, Ewald, multipole, LJ-PME,
+  FourierD3 and latent Ewald definitions. Bounded patches route to slab owners
+  or, with `schedule="pencil"`, to an owner-region pencil grid
+  (`SpectralMeshTopology.owner_region`) on the same ownership axis, using one
+  canonical full-mesh transpose. `ReciprocalDistributionReport` records owner
+  coordinates and devices, physical/modal layout IDs and the exact collective
+  order; slab and pencil plans have distinct identities. The replicated mesh
+  remains an explicitly named bounded comparison, not a distributed FFT.
+- Add domain terms `AtomisticDomainLennardJonesPMETerm` and
+  `AtomisticDomainFourierD3Term` on halo and graph-partition strategies with
+  either FFT schedule. LJ-PME requires interaction sites proven to be an
+  identity image of the particles; virtual sites are refused. Native
+  `FourierD3Potential` evaluates modified coordination, signed-factor
+  reciprocal dispersion including `k = 0`, and coefficient-dependent self energy
+  with no real-space fallback.
+- Add execution-group generation through `AtomisticGenerationPlacement`.
+  Targets and attempt budgets are global quotas over proposal ordinals,
+  extended cumulatively. Only the authority publishes to the sink, and every
+  participant commits the same `AtomisticGenerationReceipt` prefix into a
+  receipt digest; reconciliation commits an already published prefix without
+  republication. Placed checkpoints are one global commit of the replicated
+  bank, cursor and digest plus participant lane blocks under group-local writer
+  slots; restore requires the same stream profile and placement, and changed
+  placement is refused.
+- Add stage x domain campaigns (`AtomisticDomainCampaignPlan`) that run native
+  domain dynamics on explicit child execution groups with one resident per
+  stage, bounded packet transport, backpressure parking and semantic task keys.
+  Complete-state checkpoints restore bitwise on the publishing topology;
+  `migrate` continues on a changed topology within roundoff. Add data x domain
+  training (`AtomisticTrainingDistributionPlan(..., domain=...)`) on a
+  `(data, owner)` mesh: numerators and supports reduce before normalization,
+  empty support is inert, and parameter cotangents reduce once over each axis.
+- Add `ImageTilePolicy`, `TiledImageRouteSearch` and the bundle policy
+  `AtomisticTiledImageSearch`: an exact bounded reference that counts routes in
+  one tiled pass and recomputes and emits them in a second, with stored routes,
+  overflow subsets and evidence equal to the dense reference. Workspace is one
+  tile; work remains all-pairs, and graph-partition domains refuse it.
+- Add portable crystal packing recipes. `write_crystal_packing_recipe` and
+  `read_crystal_packing_recipe` persist one pickle-free archive of every
+  constructor input and replay it through the owning constructors, refusing any
+  byte difference; replay is exact only in the writing numerical profile.
+  Admitted inputs remain host restoration witnesses on their owners, while the
+  compiled `AsymmetricUnitLayout` carries only numerical layout leaves. Vacant
+  relief lanes carry reference-cell metric coefficients and stay out of
+  differentiated contacts.
+- Add adaptive biasing force (`AtomisticABFPlan`, `PreparedABF`,
+  `AtomisticABFForcePort`, `abf_profile`). Samples carry native
+  `ABFLinearSolveEvidence` for the Gram and Fixman solves. Bin edges are
+  precomputed in the coordinate dtype; an exact interior edge belongs to the
+  right bin, and `maximum` is out of range.
+- New distributed reciprocal, domain-term, generation, campaign and training
+  process checks run on one host with forced CPU devices. They are functional
+  evidence only, not accelerator, multi-host, released-profile or pretrained
+  parity qualification.
 - Add the `rocm10` extra for standard CPython 3.13 and matched
   JAX/JAXlib/AMD plugin 0.12.0, with packaged ROCm 10.1.0 userspace and
   `gfx942`, `gfx950`, and `gfx1250` payloads targeting the MI300/MI350 families
@@ -327,9 +489,139 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
-- Preserve Krylov breakdown enum semantics in distributed smoke gates:
-  certified happy breakdown is not a Boolean failure. Retain failed PIC physics
-  and reference checks and require successful scientific terminal records.
+- Separate crystal packing law identities from allocation and family-slot
+  placement. Checkpoints and recipes bind the actual executable preparation;
+  regenerate older resource-contaminated packing identities and continuations.
+- Apply one host-only outward sizing policy to periodic image stencils and image
+  searches at floating-point integer boundaries. Preserve exact cutoffs and
+  runtime completeness checks, and admit candidate/workspace budgets before
+  materializing reference shifts.
+- Preserve physical units on integer training conditions without casting their
+  values or permitting implicit unit conversion.
+- Register native latent Ewald artifact components and validate reconstructed
+  definitions, resource bindings, modes, units and identities for MACELES.
+  Explicit mode preparation admits counts before allocation. Restoration binds
+  decoded array shapes before bounded canonical row checks, so inflated resource
+  declarations cannot expand small artifacts into unbounded host allocations.
+- Keep periodic MACELES Hessian and mixed parameter/HVP training traceable by
+  naming its mode-sphere locus parametrically. Reciprocal spacing remains
+  dynamic; reprepare derivative-admission objects using the former numeric
+  condition identifiers.
+- Give single-case native model fit benchmarks explicit label-unit objective
+  scales, without weakening degenerate-scale refusal in the training API.
+  Record JAX tracing errors as failures with full tracebacks.
+- Extend native model benchmark controls to declared local cutoffs without
+  changing default model identities or seeded trainable values. Keep MACELES
+  reciprocal spacing and AIMNet2 correction radii separate from that axis.
+- Qualify long-range workflows through full native MD, explicit worksets with
+  current per-item cells, and connected learned charge fields. Preserve solver,
+  capacity, padding, dependency, refresh and rollback evidence.
+- Add independent bounded point/Gaussian multipole and stationary-polarization
+  references with joint energy, force and strain convergence, explicit self and
+  background conventions, and analytic controls. Do not substitute native
+  comparisons for independent scientific references.
+- Retain complete host/device memory evidence in native model and dispersion
+  benchmark records instead of discarding allocator observations. Model fit and
+  merge workflows also report their explicitly scoped sampled memory.
+- Fix numeric argument admission in the native dispersion benchmark CLI using
+  the canonical scalar validators; keep selector parsing with its typing owner.
+- Preserve infinite neighborhood certificate bounds in strict JSON benchmark
+  evidence without changing native certification or failure flags.
+- Measure interacting relaxation fixtures and retain per-task campaign stage
+  outcomes, reasons and work. Distinguish terminal throughput from successful
+  label throughput.
+- Retain timed generation admission outcomes separately from stream outcomes,
+  and preserve distillation qualification decisions before promotion.
+- Require accepted training updates and explicit FFT error gates in distributed
+  benchmark success. Preserve failed numerical evidence in strict JSON and expose
+  checkpoint member budgets for publication-only measurement and exact restore.
+- Store distributed checkpoint shard inventories in bounded, authenticated
+  repository chunks instead of oversized metadata values. Byte, count and
+  nesting admission precede decoding; generic metadata security ceilings remain
+  unchanged. Republish retired metadata-embedded checkpoints: process and global
+  manifest identities, and descendant lineage, change in this clean cutover.
+- Preserve exact packet transposes by dropping excluded rows outside the packet
+  buffer instead of overlapping writes in a disposable sentinel row.
+- Enumerate complete column-basis sublattices rather than transposed Hermite
+  forms. Regenerate previously cached non-diagonal sublattice lists.
+- Test 3D polar orientation on its scale-free orthogonal factor, so raw
+  determinant underflow does not reject a proper, well-conditioned frame.
+- Preserve uncommitted local arrays in in-memory domain checkpoint restore,
+  including auxiliary sections and typed keys. Restored cell data can participate
+  in distributed continuation without an unintended single-device commitment.
+- Evaluate and publish relaxation results at their saved accepted positions and
+  cell. Re-realizing a nonlinear chart outside its compiled step could change
+  rounding and invalidate the exact neighborhood binding of a converged result.
+- Differentiate rigid crystal cell-strain transport through the native polar
+  rotation and SO(3) logarithm, including the zero-strain anchor. Invalid trial
+  frames propagate failed realization evidence instead of host exceptions.
+- Preserve constraint binding's capacity/scientific reason bits through a global
+  domain rebuild. A halo, directory or row-migration overflow remains eligible
+  for capacity retry, with the accepted state rolled back exactly.
+- Use native nearest-image geometry for dynamic virtual sites instead of
+  componentwise fractional rounding. Preserve transverse coordinates in
+  lower-rank lattices, parent force pullbacks with cached fractions, and current
+  cell-vector derivatives. Re-prime virtual-site force caches produced by the
+  former dynamic realization before continuing a trajectory.
+- Publish the native NEB climbing image from reaction-path campaign stages,
+  not an independently selected higher-energy fixed endpoint. Refused dynamics
+  admissions retain their accepted continuation and RNG evidence without
+  reading a nonexistent live lane.
+- Retain below-threshold ABF statistics without unnecessary force reprimes.
+  Correct the constrained Fixman contribution for the declared canonical rigid
+  measure. Periodic profiles wrap their interpolation domain and integrate
+  through matrix-free native PCG with true-residual convergence evidence, avoiding
+  a componentwise stopping test that cannot admit a zero-valued gauge node.
+  History insertion ranks and persisted deposition counters accumulate in their
+  declared int32 dtype, preserving the initialized checkpoint leaf contracts.
+- Apply force-only ABF biases through native pullback actions instead of a dense
+  CV-by-coordinate Jacobian. Mixed CV/coordinate dtypes use bounded basis
+  actions, preserving coordinate precision and finite large cotangents.
+- Restore migrated domain controllers, ledgers, conditions and replicated data
+  as device leaves with the template's commitment and placement. Eager
+  diagnostics work immediately after migration, before another dynamics step.
+- Activate declared native field contracts for domain, crystal and keyed-model
+  containers without changing their field layouts or existing count widths.
+- Declare model output/evidence snapshots and bound learned-free-energy
+  committees as intentionally frozen for parameter discovery, while retaining
+  dynamic numerical leaves and coordinate differentiation.
+- Route configuration observations and placement scopes through their canonical
+  owner. The public accelerator example stages inputs on its explicitly chosen
+  device; qualification collects frontend identity in the same process without
+  private example imports or per-step transfers.
+- Honor `--json` when auditing checked signature guards.
+- Evaluate frozen walker-owned bias histories using each thermodynamic row's
+  declared owner, not the replica column. Canonical sampling qualification
+  refuses force ports even for a one-state table.
+- Stop an entirely unsupported training epoch at its boundary without advancing
+  optimizer, schedule or EMA state. Persist the consecutive unsupported-window
+  count so interrupted training makes the same termination decision.
+- Preserve campaign visit keys through admission-time capacity transfers.
+  Distillation promotion transfers full terminal walkers and authenticates the
+  exact committed label successor when resuming between transaction phases.
+  Replay restore distinguishes the archive owner's authenticated array inventory
+  from its application manifest, retaining scalar labels and rejecting foreign
+  application fields instead of refusing every otherwise canonical archive.
+- Convert crystal coordinates at deformation-chart unit boundaries, retain the
+  actual enantiomer in equivalence and ranking, and retract deviatoric relief
+  steps to the pre-step volume before applying declared compression.
+- Attribute dynamics failures to the boundary that failed: a resource-overflow
+  force evaluation does not manufacture independent thermostat or strain
+  failures that block its admitted capacity retry.
+- Restore local array commitment from the checkpoint template and publish local
+  replicated state through its owning execution group. Replication preserves
+  typed-key implementations and diagnostic NaNs without numerical equality
+  probes or a host transfer.
+- Propagate value bounds through `min`/`max` in structural sparse traces, so
+  indices clamped by the wide-index correction or by user code keep their
+  bounded gather/scatter patterns; unbounded operands remain conservative.
+- Preserve Krylov breakdown enum semantics in distributed smoke gates and owner
+  polarization: certified happy breakdown is not a Boolean failure. Retain
+  genuine breakdown and nonconvergence refusals. Directory registration overflow
+  remains capacity evidence; missing IDs are scientific evidence only after
+  complete registration, without masking a proven absence behind query overflow.
+  Retain failed PIC physics and reference checks and require successful
+  scientific terminal records.
 - Solve dependent or zero SCF DIIS histories through native constrained
   minimum-norm least squares, retaining rank, residual, and affine-constraint
   evidence instead of adding jitter or silently disabling acceleration.

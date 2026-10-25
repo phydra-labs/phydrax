@@ -16,9 +16,15 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import IdentityWords
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import PRNGKey
+from ._neighborhood_bundle import (
+    AtomisticNeighborhoodRequirement,
+    AtomisticNeighborhoodRole,
+    AtomisticPairExclusions,
+)
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -36,13 +42,20 @@ class WallKind(StrEnum):
 
 
 class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Harmonic one-sided plane, sphere or cylinder wall.
+
+    Wall geometry ``parameters`` and ``stiffness`` are dynamic leaves (the
+    term digest keeps the exact host values); ``kind`` and ``inside`` are
+    selectors. The canonical term digest is the dynamic ``term_identity``.
+    """
+
     kind: WallKind = eqx.field(static=True)
     parameters: Array
-    stiffness: float = eqx.field(static=True)
+    stiffness: Array
     inside: bool = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -96,7 +109,7 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         ) = (
             kind,
             jnp.asarray(parameter),
-            float(stiffness),
+            jnp.asarray(float(stiffness)),
             bool(inside),
             identifier,
             group,
@@ -109,12 +122,12 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements()
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "scalar-wall",
                 "wall_kind": kind.value,
                 "parameters": list(map(float, self.parameters)),
-                "stiffness": self.stiffness,
+                "stiffness": float(stiffness),
                 "inside": self.inside,
             }
         )
@@ -124,12 +137,14 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
 
 class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
+    """A wall bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: ScalarWallPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -141,7 +156,7 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
             self.system,
             self.name,
             self.force_group,
-            self.term_id,
+            self.term_identity,
             self.capabilities,
             self.requirements,
         ) = (
@@ -149,11 +164,11 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
             system,
             plan.name,
             plan.force_group,
-            plan.term_id,
+            plan.term_identity,
             plan.capabilities,
             plan.requirements,
         )
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {"kind": "prepared-wall", "plan": plan.term_id, "system": system.prepared_id}
         )
 
@@ -171,7 +186,12 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
             radial = relative - jnp.sum(relative * axis, axis=-1)[:, None] * axis
             signed = jnp.sqrt(jnp.sum(radial**2, axis=-1)) - p[6]
         violation = jnp.maximum(signed if self.plan.inside else -signed, 0.0)
-        atom = 0.5 * self.plan.stiffness * violation**2 * self.system.active_mask
+        atom = (
+            0.5
+            * self.plan.stiffness.astype(q.dtype)
+            * violation**2
+            * self.system.active_mask
+        )
         successful = jnp.all(jnp.isfinite(atom))
         return AtomisticTermEvaluation(jnp.sum(atom), atom, successful)
 
@@ -404,12 +424,20 @@ class ManyBodyKind(StrEnum):
 
 
 class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
+    """Analytic EAM, Stillinger-Weber or Tersoff many-body energy.
+
+    ``parameters`` are dynamic leaves. ``cutoff`` is the resource-defining
+    requirement cutoff of both neighborhood roles and stays static (it is
+    constrained by, but not derived as, the parameters). The canonical term
+    digest is the dynamic ``term_identity``.
+    """
+
     kind: ManyBodyKind = eqx.field(static=True)
     parameters: Array
     cutoff: float = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -480,11 +508,21 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(
-            cutoff=self.cutoff,
-            pair_geometry=True,
-            directed_graph=True,
+            neighborhoods=(
+                AtomisticNeighborhoodRequirement(
+                    self.name,
+                    AtomisticNeighborhoodRole.CLASSICAL_MINIMUM_IMAGE_PAIRS,
+                    self.cutoff,
+                    exclusions=AtomisticPairExclusions.TOPOLOGY_EXCEPTIONS,
+                ),
+                AtomisticNeighborhoodRequirement(
+                    self.name,
+                    AtomisticNeighborhoodRole.DIRECTED_IMAGE_GRAPH,
+                    self.cutoff,
+                ),
+            ),
         )
-        self.term_id = canonical_fingerprint(
+        self.term_identity = IdentityWords.of(
             {
                 "kind": "many-body-potential",
                 "many_body_kind": kind.value,
@@ -573,12 +611,14 @@ def _many_body_neighbor_slots(
 
 
 class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
+    """A many-body term bound to one system; ``prepared_identity`` is dynamic."""
+
     plan: ManyBodyPotential
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
+    term_identity: IdentityWords
+    prepared_identity: IdentityWords
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
@@ -590,7 +630,7 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
             self.system,
             self.name,
             self.force_group,
-            self.term_id,
+            self.term_identity,
             self.capabilities,
             self.requirements,
         ) = (
@@ -598,11 +638,11 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
             system,
             plan.name,
             plan.force_group,
-            plan.term_id,
+            plan.term_identity,
             plan.capabilities,
             plan.requirements,
         )
-        self.prepared_id = canonical_fingerprint(
+        self.prepared_identity = IdentityWords.of(
             {
                 "kind": "prepared-many-body",
                 "plan": plan.term_id,

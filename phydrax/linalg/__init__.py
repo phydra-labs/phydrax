@@ -417,6 +417,7 @@ from ._pfaffian import (
     SkewMode,
 )
 from ._plans import LinearBackend, LinearSolvePlan, plan
+from ._polar import polar_rotation3, PolarRotation3Result, PolarRotation3Status
 from ._policies import (
     AbstractLinearMethod,
     AutoLinearMethod,
@@ -1108,6 +1109,8 @@ __all__ = [
     "PfaffianResult",
     "PfaffianStatus",
     "PlannedPreconditionerSetup",
+    "PolarRotation3Result",
+    "PolarRotation3Status",
     "PrecisionDType",
     "PreconditionerCostEstimate",
     "PreconditionerPlan",
@@ -1391,6 +1394,7 @@ __all__ = [
     "plan_shifted_solve",
     "plan_sparse_assembly",
     "plan_taylor_exponential_action",
+    "polar_rotation3",
     "porous_cpr_preconditioner",
     "prepare",
     "prepare_algebra_derivations",

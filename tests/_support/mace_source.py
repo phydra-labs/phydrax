@@ -1,12 +1,15 @@
 """Admitted MACE sources, the pinned provider runtime, and native evaluation.
 
-The provider (mace-torch, e3nn, torch) is never a Phydrax dependency. Tests
-reach it only through an explicitly pinned interpreter declared by
-``PHYDRAX_MACE_PROVIDER_PYTHON``, ``PHYDRAX_MACE_PROVIDER_PYTHON_VERSION``,
-``PHYDRAX_MACE_PROVIDER_SITE_PACKAGES`` and ``PHYDRAX_MACE_PROVIDER_TORCH_VERSION``;
-an unset declaration is the single canonical skip boundary, and every failure
-of a declared provider fails. Provider-built fixtures are lawful deterministic
-test oracles, not qualified pretrained models.
+The provider (mace-torch, e3nn, torch, and LES for MACELES) is never a Phydrax
+dependency. Tests reach it only through an explicitly pinned interpreter
+declared by ``PHYDRAX_MACE_PROVIDER_PYTHON``,
+``PHYDRAX_MACE_PROVIDER_PYTHON_VERSION``, ``PHYDRAX_MACE_PROVIDER_SITE_PACKAGES``,
+``PHYDRAX_MACE_PROVIDER_TORCH_VERSION`` and
+``PHYDRAX_MACE_PROVIDER_MACE_TORCH_VERSION``; an unset declaration (or a
+provider of another mace-torch release than a test needs) is the single
+canonical skip boundary, and every failure of a declared provider fails.
+Provider-built fixtures are lawful deterministic test oracles, not qualified
+pretrained models.
 """
 
 import hashlib
@@ -28,6 +31,11 @@ from phydrax.artifacts import (
 )
 from phydrax.atomistic.interchange import MACESourceKind
 from phydrax.interchange import pin_executable
+from phydrax.nn.atomistic import (
+    MACEArchitecture,
+    MACEDistanceTransform,
+    MACEInteractionKind,
+)
 
 
 PROVIDER_ENVIRONMENT = (
@@ -35,17 +43,26 @@ PROVIDER_ENVIRONMENT = (
     "PHYDRAX_MACE_PROVIDER_PYTHON_VERSION",
     "PHYDRAX_MACE_PROVIDER_SITE_PACKAGES",
     "PHYDRAX_MACE_PROVIDER_TORCH_VERSION",
+    "PHYDRAX_MACE_PROVIDER_MACE_TORCH_VERSION",
 )
-# Optional: the pinned cuequivariance release of the same provider, required
-# exactly when installed there and for reduced generalized-CG sources.
+# Optional releases of the same provider, each required exactly when installed
+# there: cuequivariance (reduced generalized-CG U bases, cuEquivariance
+# layouts), OpenEquivariance (its layouts) and LES (MACELES sources).
 CUEQUIVARIANCE_ENVIRONMENT = "PHYDRAX_MACE_PROVIDER_CUEQUIVARIANCE_VERSION"
+OPENEQUIVARIANCE_ENVIRONMENT = "PHYDRAX_MACE_PROVIDER_OPENEQUIVARIANCE_VERSION"
+LES_ENVIRONMENT = "PHYDRAX_MACE_PROVIDER_LES_VERSION"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mace_torch_0_3_16"
+RELEASE_FIXTURES = {
+    "0.3.15": FIXTURES.parent / "mace_torch_0_3_15",
+    "0.3.16": FIXTURES,
+}
 
-# Standard layouts admitted by the converter. Each row exercises distinct
-# provider semantics; random provider initialization supplies the weights.
-# Provider architecture declarations are JSON records, typed like the
-# converter's own ``Mapping[str, Any]`` declaration boundary.
+# Layouts admitted by the converter. Each row exercises distinct provider
+# semantics; random provider initialization supplies the weights. Provider
+# architecture declarations are JSON records, typed like the converter's own
+# ``Mapping[str, Any]`` declaration boundary, extracted by mace-torch 0.3.16.
 _SHARED: dict[str, Any] = {
+    "mace_torch_release": "0.3.16",
     "r_max": 3.2,
     "num_bessel": 6,
     "num_polynomial_cutoff": 5,
@@ -56,6 +73,12 @@ _SHARED: dict[str, Any] = {
     "use_reduced_cg": False,
     "use_agnostic_product": False,
     "use_last_readout_only": False,
+    "use_so3": False,
+    "edge_irreps": None,
+    "use_edge_irreps_first": False,
+    "embedding_specs": None,
+    "use_embedding_readout": False,
+    "keep_last_layer_irreps": False,
 }
 ONE_LAYER_INVARIANT_READOUT: dict[str, Any] = {
     **_SHARED,
@@ -65,6 +88,7 @@ ONE_LAYER_INVARIANT_READOUT: dict[str, Any] = {
     "atomic_numbers": [1, 8],
     "hidden_irreps": "8x0e",
     "MLP_irreps": None,
+    "readout_class": None,
     "correlation": [3],
     "gate": None,
     "pair_repulsion": True,
@@ -86,6 +110,7 @@ TWO_LAYER_DENSITY_MULTIHEAD: dict[str, Any] = {
     "atomic_numbers": [1, 6, 8],
     "hidden_irreps": "4x0e+4x1o",
     "MLP_irreps": "4x0e",
+    "readout_class": "NonLinearReadoutBlock",
     "correlation": [2, 2],
     "gate": "silu",
     "pair_repulsion": False,
@@ -105,6 +130,7 @@ TWO_LAYER_RESIDUAL_AGNESI_ZBL: dict[str, Any] = {
     "atomic_numbers": [1, 8],
     "hidden_irreps": "4x0e+4x1o+4x2e",
     "MLP_irreps": "4x0e",
+    "readout_class": "NonLinearReadoutBlock",
     "correlation": [3, 2],
     "gate": "silu",
     "pair_repulsion": True,
@@ -127,11 +153,122 @@ DECLARATIONS: dict[str, dict[str, Any]] = {
     "two-layer-residual-agnesi-zbl": TWO_LAYER_RESIDUAL_AGNESI_ZBL,
 }
 
+# One tiny declaration per admitted family beyond the standard rows.
+_FAMILY: dict[str, Any] = {
+    **_SHARED,
+    "model_class": "ScaleShiftMACE",
+    "interaction_classes": [
+        "RealAgnosticInteractionBlock",
+        "RealAgnosticResidualInteractionBlock",
+    ],
+    "num_interactions": 2,
+    "atomic_numbers": [1, 8],
+    "hidden_irreps": "4x0e+4x1o",
+    "MLP_irreps": "4x0e",
+    "readout_class": "NonLinearReadoutBlock",
+    "correlation": [2, 2],
+    "gate": "silu",
+    "pair_repulsion": False,
+    "distance_transform": "None",
+    "heads": ["Default"],
+    "apply_cutoff": True,
+    "atomic_energies": [-13.6, -2041.8],
+    "atomic_inter_scale": 0.9,
+    "atomic_inter_shift": 0.03,
+}
+# The complete ``les_arguments`` MACELES records (``Les`` defaults).
+LES_ARGUMENTS: dict[str, Any] = {
+    "n_layers": 3,
+    "n_hidden": [32, 16],
+    "add_linear_nn": True,
+    "output_scaling_factor": 0.1,
+    "sigma": 1.0,
+    "dl": 2.0,
+    "remove_self_interaction": True,
+    "is_periodic": None,
+    "N_max": 10,
+    "remove_mean": True,
+    "epsilon_factor": 1.0,
+    "use_atomwise": False,
+    "use_fixed_atomic_charges": False,
+    "fixed_atomic_charges_scaling_factor": 0.5,
+    "use_atomic_alpha": False,
+    "use_epsilon_r_scaling": False,
+    "compute_bec": False,
+    "bec_output_index": None,
+}
+CHARGE_SPIN_SPECS: dict[str, Any] = {
+    "total_charge": {
+        "type": "categorical",
+        "per": "graph",
+        "num_classes": 5,
+        "emb_dim": 3,
+        "offset": 2,
+    },
+    "total_spin": {
+        "type": "categorical",
+        "per": "graph",
+        "num_classes": 4,
+        "emb_dim": 2,
+        "offset": 0,
+    },
+}
+FAMILY_DECLARATIONS: dict[str, dict[str, Any]] = {
+    "attention": {
+        **_FAMILY,
+        "interaction_classes": ["RealAgnosticAttResidualInteractionBlock"] * 2,
+    },
+    "nonlinear-bias-readout": {
+        **_FAMILY,
+        "interaction_classes": ["RealAgnosticResidualNonLinearInteractionBlock"] * 2,
+        "readout_class": "NonLinearBiasReadoutBlock",
+    },
+    "gaussian-soft": {
+        **_FAMILY,
+        "radial_type": "gaussian",
+        "distance_transform": "Soft",
+    },
+    "chebyshev-agnesi": {
+        **_FAMILY,
+        "num_bessel": 4,
+        "radial_type": "chebyshev",
+        "distance_transform": "Agnesi",
+    },
+    "so3": {**_FAMILY, "use_so3": True, "hidden_irreps": "4x0e+4x1e"},
+    "edge-irreps-first": {
+        **_FAMILY,
+        "edge_irreps": "3x0e+3x1o",
+        "use_edge_irreps_first": True,
+    },
+    "keep-last-layer-irreps": {**_FAMILY, "keep_last_layer_irreps": True},
+    "joint-embedding-readout": {
+        **_FAMILY,
+        "embedding_specs": CHARGE_SPIN_SPECS,
+        "use_embedding_readout": True,
+    },
+    "maceles": {**_FAMILY, "model_class": "MACELES", "les_arguments": LES_ARGUMENTS},
+}
 
-def provider_runtime() -> Any:
-    """The declared pinned provider, or the canonical skip when undeclared."""
 
-    python, version, site_packages, torch_version = (
+def for_release(declaration: Mapping[str, Any], release: str) -> dict[str, Any]:
+    """The same declaration as extracted by another admitted mace-torch release.
+
+    0.3.15 has no ``keep_last_layer_irreps``; only its default is expressible.
+    """
+
+    converted = {**declaration, "mace_torch_release": release}
+    if release == "0.3.15":
+        if converted.pop("keep_last_layer_irreps", False):
+            raise ValueError("mace-torch 0.3.15 cannot keep last-layer irreps.")
+    else:
+        converted.setdefault("keep_last_layer_irreps", False)
+    return converted
+
+
+def provider_runtime(release: str = "0.3.16") -> Any:
+    """The declared pinned provider of ``release``, or the canonical skip."""
+
+    python, version, site_packages, torch_version, mace_version = (
         os.environ.get(name) for name in PROVIDER_ENVIRONMENT
     )
     if (
@@ -139,16 +276,22 @@ def provider_runtime() -> Any:
         or version is None
         or site_packages is None
         or torch_version is None
+        or mace_version is None
     ):
         pytest.skip(
             "declare " + ", ".join(PROVIDER_ENVIRONMENT) + " for the pinned "
-            "mace-torch 0.3.16 / e3nn 0.4.4 provider interpreter"
+            f"mace-torch {release} / e3nn 0.4.4 provider interpreter"
         )
+    if mace_version != release:
+        pytest.skip(f"this test needs the mace-torch {release} provider")
     return phx.atomistic.interchange.MACEProviderRuntime(
         pin_executable(python, version=version, license_id="PSF-2.0"),
         site_packages,
         torch_version,
         cuequivariance_version=os.environ.get(CUEQUIVARIANCE_ENVIRONMENT),
+        openequivariance_version=os.environ.get(OPENEQUIVARIANCE_ENVIRONMENT),
+        les_version=os.environ.get(LES_ENVIRONMENT),
+        mace_torch_version=mace_version,
     )
 
 
@@ -157,6 +300,14 @@ def reduced_cg_provider(provider: Any) -> Any:
 
     if provider.cuequivariance_version is None:
         pytest.skip(f"declare {CUEQUIVARIANCE_ENVIRONMENT} for reduced-CG U bases")
+    return provider
+
+
+def les_provider(provider: Any) -> Any:
+    """The provider when it declares LES; otherwise the skip boundary."""
+
+    if provider.les_version is None:
+        pytest.skip(f"declare {LES_ENVIRONMENT} for MACELES sources")
     return provider
 
 
@@ -182,7 +333,7 @@ def admitted_source(
     manifest = ArtifactManifest(
         artifact_id=path.stem,
         producer="mace-torch",
-        version="0.3.16",
+        version="0.3.16" if architecture is None else architecture["mace_torch_release"],
         sha256=digest,
         byte_size=path.stat().st_size,
         source_uri=path.resolve().as_uri(),
@@ -203,7 +354,12 @@ def admitted_source(
     )
 
 
-def configurations(species: tuple[int, ...]) -> tuple[Any, Any]:
+def configurations(
+    species: tuple[int, ...],
+    *,
+    total_charge: int | None = None,
+    total_spin: int | None = None,
+) -> tuple[Any, Any]:
     """One finite and one triclinic periodic configuration of ``species``."""
 
     finite = np.array(
@@ -214,10 +370,20 @@ def configurations(species: tuple[int, ...]) -> tuple[Any, Any]:
     numbers = tuple(species[index % len(species)] for index in range(4))
     return (
         phx.atomistic.interchange.MACEProviderConfiguration(
-            numbers, finite, np.zeros((3, 3)), False
+            numbers,
+            finite,
+            np.zeros((3, 3)),
+            False,
+            total_charge=total_charge,
+            total_spin=total_spin,
         ),
         phx.atomistic.interchange.MACEProviderConfiguration(
-            numbers[:3], periodic, cell, True
+            numbers[:3],
+            periodic,
+            cell,
+            True,
+            total_charge=total_charge,
+            total_spin=total_spin,
         ),
     )
 
@@ -258,6 +424,32 @@ def structure(potential: Any, configuration: Any) -> Any:
     )
 
 
+# The provider data pipeline's values of absent charge/spin conditions.
+_PROVIDER_CONDITION_DEFAULTS = {"total_charge": 0, "total_spin": 1}
+
+
+def conditioning(potential: Any, configuration: Any) -> Any:
+    """The joint-embedding conditions of one configuration (``None`` without any).
+
+    Absent configuration values take the provider's own defaults, so native
+    and provider evaluations read the same codes.
+    """
+
+    spec = potential.configuration.conditioning
+    if not spec.names:
+        return None
+    values = {}
+    for name in spec.names:
+        value = getattr(configuration, name)
+        values[name] = np.asarray(
+            [_PROVIDER_CONDITION_DEFAULTS[name] if value is None else value],
+            dtype=np.int64,
+        )
+    return phx.atomistic.AtomisticConditioning(
+        spec, values, case_count=1, atom_capacity=len(configuration.numbers)
+    )
+
+
 def native_case(potential: Any, configuration: Any) -> dict[str, np.ndarray]:
     """Native total energy, forces and (periodic) stress of one configuration."""
 
@@ -266,6 +458,7 @@ def native_case(potential: Any, configuration: Any) -> dict[str, np.ndarray]:
         structure(potential, configuration),
         execution(configuration),
         compute_stress=configuration.periodic,
+        conditioning=conditioning(potential, configuration),
     )
     assert bool(np.asarray(prediction.successful).all())
     atoms = len(configuration.numbers)
@@ -313,52 +506,111 @@ def assert_matches_oracle(
             assert within(native["stress"], case.stress, gates["stress"])
 
 
-def committed_source_potential(case: str = "two_scale_shift") -> Any:
-    """A native model reconstructed from a committed provider-built fixture.
+def latent_resources(definition: Any, cell: Any) -> Any:
+    """Latent Ewald resources whose reciprocal modes cover ``cell`` (or none)."""
 
-    The npz holds the provider state dictionary, its Wigner 3j tables and
-    sampled source harmonics (``tests/fixtures/mace_torch_0_3_16``); no
-    provider is needed to rebuild the source parameterization.
+    from phydrax.atomistic._latent_electrostatics import LatentEwaldResources
+
+    if cell is None or not np.any(cell):
+        return LatentEwaldResources()
+    length = float(np.max(np.linalg.norm(np.asarray(cell), axis=1)))
+    return LatentEwaldResources(mode_extents=definition.covering_extents(length))
+
+
+_INTERACTION_KINDS: dict[str, MACEInteractionKind] = {
+    "RealAgnosticInteractionBlock": "real-agnostic",
+    "RealAgnosticResidualInteractionBlock": "real-agnostic-residual",
+    "RealAgnosticDensityInteractionBlock": "real-agnostic-density",
+    "RealAgnosticDensityResidualInteractionBlock": "real-agnostic-density-residual",
+    "RealAgnosticAttResidualInteractionBlock": "real-agnostic-attention-residual",
+    "RealAgnosticResidualNonLinearInteractionBlock": "real-agnostic-residual-nonlinear",
+}
+_DISTANCE_TRANSFORMS: dict[str, MACEDistanceTransform] = {
+    "None": "none",
+    "Agnesi": "agnesi",
+    "Soft": "soft",
+}
+
+
+def committed_manifest(release: str = "0.3.16") -> dict[str, Any]:
+    return json.loads((RELEASE_FIXTURES[release] / "manifest.json").read_text())
+
+
+def committed_architecture(declaration: Mapping[str, Any]) -> MACEArchitecture:
+    """The native architecture of one committed generator case.
+
+    Generator cases share r_max 3.0, four basis functions, cutoff power 5,
+    ``l <= 2`` harmonics, four channels, ``radial_MLP=[8]`` and ``5x0e``
+    readout MLPs; the manifest records each case's family fields and the
+    provider's realized normalization constants.
     """
 
-    manifest = json.loads((FIXTURES / "manifest.json").read_text())
-    declaration = manifest["cases"][case]
-    fixture = np.load(FIXTURES / f"{case}.npz")
-    kinds = {
-        "RealAgnosticInteractionBlock": "real-agnostic",
-        "RealAgnosticResidualInteractionBlock": "real-agnostic-residual",
-        "RealAgnosticDensityInteractionBlock": "real-agnostic-density",
-        "RealAgnosticDensityResidualInteractionBlock": "real-agnostic-density-residual",
-    }
     count = declaration["interactions"]
-    gate = declaration["normalize2mom_silu"]
-    agnesi = declaration["distance_transform"] == "Agnesi"
-    architecture = phx.nn.atomistic.MACEArchitecture(
+    radial_scale = declaration["normalize2mom_silu"]
+    readout_scale = declaration.get("readout_scale", radial_scale)
+    transform = declaration["distance_transform"]
+    hidden = declaration.get("hidden_irreps", "4x0e+4x1o")
+    edge = declaration.get("edge_irreps")
+    edge_channels = None if edge is None else int(edge.split("x", 1)[0])
+    edge_degree = None if edge is None else len(edge.split("+")) - 1
+    from phydrax.nn.atomistic._mace_embedding import MACEEmbeddingFeature
+
+    features = tuple(
+        MACEEmbeddingFeature(
+            name,
+            "categorical",
+            level="case",
+            width=spec["emb_dim"],
+            classes=spec["num_classes"],
+            offset=spec["offset"],
+        )
+        for name, spec in (declaration.get("embedding_specs") or {}).items()
+    )
+    gate_scales = declaration.get("gate_scales")
+    return MACEArchitecture(
         species=(1, 8),
         cutoff=3.0,
+        radial_basis=declaration.get("radial_type", "bessel"),
         radial_basis_count=4,
         cutoff_power=5,
         channel_count=4,
-        hidden_degree=1,
+        hidden_degree=len(hidden.split("+")) - 1,
         edge_degree=2,
-        interactions=(kinds[declaration["first"]],)
-        + (kinds[declaration["rest"]],) * (count - 1),
+        parity="so3" if declaration.get("use_so3", False) else "o3",
+        edge_channel_count=edge_channels,
+        edge_feature_degree=edge_degree,
+        edge_irreps_first=declaration.get("use_edge_irreps_first", False),
+        interactions=(_INTERACTION_KINDS[declaration["first"]],)
+        + (_INTERACTION_KINDS[declaration["rest"]],) * (count - 1),
         correlations=tuple(declaration["correlation"]),
         radial_widths=(8,),
         readout_width=5 if count > 1 else None,
-        radial_activation_scale=gate,
-        readout_activation_scale=gate if count > 1 else None,
+        readout_variant="nonlinear-bias"
+        if declaration.get("readout_class") == "NonLinearBiasReadoutBlock"
+        else "nonlinear",
+        radial_activation_scale=radial_scale,
+        readout_activation_scale=readout_scale if count > 1 else None,
+        gate_scales=None if gate_scales is None else tuple(gate_scales),
         average_neighbor_count=2.0,
         heads=tuple(declaration["heads"]),
         head=declaration["heads"][0],
-        energy_scaling="scale-shift"
-        if declaration["class"] == "ScaleShiftMACE"
-        else "unscaled",
+        energy_scaling="unscaled" if declaration["class"] == "MACE" else "scale-shift",
         pair_repulsion=declaration["pair_repulsion"],
-        distance_transform="agnesi" if agnesi else "none",
-        agnesi_parameters=(1.0805, 0.9183, 4.5791) if agnesi else None,
+        distance_transform=_DISTANCE_TRANSFORMS[transform],
+        agnesi_parameters=(1.0805, 0.9183, 4.5791) if transform == "Agnesi" else None,
+        soft_alpha=4.0 if transform == "Soft" else None,
         cutoff_placement="embedding" if declaration["apply_cutoff"] else "weights",
+        keep_last_layer_irreps=declaration.get("keep_last_layer_irreps", False),
+        embedding_features=features,
+        embedding_readout=declaration.get("use_embedding_readout", False),
     )
+
+
+def _committed_inputs(
+    case: str, release: str
+) -> tuple[dict[str, Any], dict[str, np.ndarray], list[np.ndarray], dict[Any, Any]]:
+    declaration = committed_manifest(release)["cases"][case]
+    fixture = np.load(RELEASE_FIXTURES[release] / f"{case}.npz")
     native = np.asarray(
         phx.special.RealCartesianHarmonics(2, normalization="fully_normalized")(
             fixture["harmonics/vectors"]
@@ -383,13 +635,48 @@ def committed_source_potential(case: str = "two_scale_shift") -> Any:
         and fixture[name].size
         and not any(marker in name for marker in dropped)
     }
+    return declaration, tensors, transforms, couplings
+
+
+def committed_source_potential(
+    case: str = "two_scale_shift", release: str = "0.3.16"
+) -> Any:
+    """A native model reconstructed from a committed provider-built fixture.
+
+    The npz holds the provider state dictionary, its Wigner 3j tables and
+    sampled source harmonics (``tests/fixtures/mace_torch_<release>``); no
+    provider is needed to rebuild the source parameterization.
+    """
+
+    declaration, tensors, transforms, couplings = _committed_inputs(case, release)
     return phx.nn.atomistic.mace_potential_from_source(
         phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond().scale,
-        architecture,
+        committed_architecture(declaration),
         tensors,
         degree_transforms=transforms,
         couplings=couplings,
-        source_id=f"mace-torch-0.3.16-fixture:{case}",
+        source_id=f"mace-torch-{release}-fixture:{case}",
+    )
+
+
+def committed_maceles_potential(
+    case: str, atom_capacity: int, resources: Any, release: str = "0.3.16"
+) -> Any:
+    """A native MACELES model of a committed fixture, prepared for one capacity."""
+
+    from phydrax.nn.atomistic._mace_source import maceles_potential_from_source
+
+    declaration, tensors, transforms, couplings = _committed_inputs(case, release)
+    return maceles_potential_from_source(
+        phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond().scale,
+        committed_architecture(declaration),
+        tensors,
+        les_arguments=declaration["les_arguments"],
+        atom_capacity=atom_capacity,
+        resources=resources,
+        degree_transforms=transforms,
+        couplings=couplings,
+        source_id=f"mace-torch-{release}-fixture:{case}",
     )
 
 
@@ -427,15 +714,11 @@ def nvt_dynamics(
     backend; fresh-process GPU restarts also need ``compiler_profile``.
     """
 
-    from tests._support.mace_deployment import provider_plan
+    from tests._support.mace_deployment import learned_program
 
-    provider = provider_plan(model, skin=skin, accumulation="deterministic").prepare(
-        system
-    )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
-        provider.program,
-        provider.neighborhood,
+        learned_program(model, system, skin=skin),
         phx.atomistic.BAOABLangevinPlan(0.25, 0.02),
     ).prepare()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
@@ -459,13 +742,19 @@ def water_template(dynamics: Any, thermodynamic: Any) -> Any:
     )
 
 
-def water_training_problem(*, label_shift: float = 0.0) -> Any:
+def water_training_problem(
+    *, label_shift: float = 0.0, payload_cases: int | None = None
+) -> Any:
     """Periodic E/F/S labels of a fixed teacher on strained cells.
 
-    Two strains train; a third validates. ``label_shift`` alters the energy
-    targets (a different problem with otherwise identical structure). Ordered
-    accumulation makes labels and continuation bitwise within one process;
-    fresh-process GPU restarts also need ``compiler_profile``.
+    Two strains train (one global batch per update); a third validates from a
+    lineage-disjoint loader. ``label_shift`` alters the training energy labels
+    (a different problem with otherwise identical structure).
+    ``payload_cases=None`` packs the whole batch into one payload;
+    ``payload_cases=1`` packs one case per payload, so every update window
+    accumulates two payloads (microsteps). Ordered accumulation makes labels
+    and continuation bitwise within one process; fresh-process GPU restarts
+    also need ``compiler_profile``.
     """
 
     from tests._support.mace_deployment import (
@@ -492,24 +781,64 @@ def water_training_problem(*, label_shift: float = 0.0) -> Any:
             )
         return phx.atomistic.AtomisticBatch.from_structures(structures)
 
+    def source(split: str, magnitudes: tuple[float, ...], shift: float) -> Any:
+        structures = batch(magnitudes)
+        labels = phx.atomistic.energy_and_forces(
+            teacher, structures, execution, compute_stress=True
+        )
+        return phx.atomistic.atomistic_training_source(
+            structures,
+            mass_unit=phx.units.DALTON,
+            energy=labels.energy + shift,
+            forces=labels.forces,
+            stress=labels.stress,
+            record_ids=tuple(f"water-{split}-{magnitude}" for magnitude in magnitudes),
+        )
+
     teacher = tiny_mace(seed=11)
-    execution = graph_execution(accumulation="deterministic")
-    training, validation = batch((-0.015, 0.02)), batch((0.005,))
-    labels = phx.atomistic.energy_and_forces(
-        teacher, training, execution, compute_stress=True
+    # The reusable layout's search envelope covers every strained cell.
+    execution = graph_execution(
+        accumulation="deterministic", search_cell=WATER_CELL, search_margin=0.1
     )
-    held_out = phx.atomistic.energy_and_forces(
-        teacher, validation, execution, compute_stress=True
+    full = phx.atomistic.atomistic_training_loader(
+        source("training", (-0.015, 0.02), label_shift)
     )
+    if payload_cases is None:
+        training = full
+    else:
+        atom_level = full.mixture.schema.atom_level
+        training = phx.atomistic.AtomisticStructureLoader(
+            full.mixture,
+            full.bindings,
+            phx.atomistic.AtomisticWorkloadBuckets(
+                (
+                    phx.atomistic.AtomisticWorkloadBucket(
+                        "water-microstep",
+                        cases=payload_cases,
+                        levels=(
+                            phx.atomistic.AtomisticLevelCapacity(
+                                atom_level, layout="per-case", rows=len(WATER_NUMBERS)
+                            ),
+                        ),
+                        max_bytes=1 << 30,
+                    ),
+                )
+            ),
+            batch_size=full.batch_size,
+            stream=full.stream,
+        )
     return phx.atomistic.AtomisticTrainingProblem(
         training,
         execution,
+        (
+            phx.atomistic.AtomisticEnergyObjective(),
+            phx.atomistic.AtomisticForceObjective(),
+            phx.atomistic.AtomisticStressObjective(),
+        ),
+        scale=electronvolt_units().scale,
         cutoff=3.0,
-        training_energy=labels.energy + label_shift,
-        training_forces=labels.forces,
-        training_stress=labels.stress,
-        validation_batch=validation,
-        validation_energy=held_out.energy,
-        validation_forces=held_out.forces,
-        validation_stress=held_out.stress,
+        fields=phx.atomistic.AtomisticTrainingFields(cell="cell", periodic="periodic"),
+        validation=phx.atomistic.atomistic_training_loader(
+            source("validation", (0.005,), 0.0), stream="validation"
+        ),
     )

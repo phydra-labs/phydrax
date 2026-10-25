@@ -8,8 +8,12 @@ import pytest
 
 from phydrax._training import TrainingIterationKind
 from phydrax.atomistic import (
-    atomistic_potential_revision,
+    atomistic_model_revision,
+    atomistic_training_loader,
+    atomistic_training_source,
     AtomisticBatch,
+    AtomisticEnergyObjective,
+    AtomisticForceObjective,
     AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     AtomisticStatus,
@@ -45,19 +49,22 @@ def _execution(
     )
 
 
-def _batch() -> Any:
+def _batch(shift: float = 0.0, *, prefix: str = "train") -> Any:
     return AtomisticBatch(
         # ty: ignore[invalid-argument-type]
         [[1, 1], [1, 1], [1, 1]],
-        # ty: ignore[invalid-argument-type]
-        [
-            [[0.0, 0.0, 0.0], [0.7, 0.0, 0.0]],
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
-            [[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]],
-        ],
+        np.asarray(
+            [
+                [[0.0, 0.0, 0.0], [0.7, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]],
+            ]
+        )
+        + shift,
         # ty: ignore[invalid-argument-type]
         [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]],
         SCALE,
+        structure_ids=tuple(f"{prefix}-{index}" for index in range(3)),
     )
 
 
@@ -78,6 +85,54 @@ def _targets(batch: Any) -> Any:
     return prediction.energy, prediction.forces
 
 
+def _loader(
+    batch: Any,
+    *,
+    energy: Any = None,
+    forces: Any = None,
+    stream: str = "training",
+    **availability: Any,
+) -> Any:
+    return atomistic_training_loader(
+        atomistic_training_source(
+            batch, mass_unit=DALTON, energy=energy, forces=forces, **availability
+        ),
+        stream=stream,
+    )
+
+
+def _problem(
+    batch: Any,
+    *,
+    energy: Any = None,
+    forces: Any = None,
+    execution: Any = None,
+    validation: Any = None,
+    energy_scale: float | None = None,
+    **availability: Any,
+) -> Any:
+    """Full-batch problem with one objective per supplied label kind."""
+    objectives = []
+    if energy is not None:
+        objectives.append(AtomisticEnergyObjective(scale=energy_scale))
+    if forces is not None:
+        objectives.append(AtomisticForceObjective())
+    return AtomisticTrainingProblem(
+        _loader(batch, energy=energy, forces=forces, **availability),
+        _execution() if execution is None else execution,
+        tuple(objectives),
+        scale=SCALE,
+        cutoff=CUTOFF,
+        validation=validation,
+    )
+
+
+def _held_out(**availability: Any) -> Any:
+    batch = _batch(0.2, prefix="validation")
+    energy, _ = _targets(batch)
+    return _loader(batch, energy=energy, stream="validation", **availability)
+
+
 def _assert_trees_bitwise_equal(observed: Any, expected: Any) -> None:
     observed_leaves, observed_structure = jax.tree_util.tree_flatten(observed)
     expected_leaves, expected_structure = jax.tree_util.tree_flatten(expected)
@@ -95,90 +150,72 @@ def test_training_and_rmd17_scenario_1() -> None:
     for target_kind in ["energy", "force", "joint"]:
         batch = _batch()
         energy, forces = _targets(batch)
-        problem = AtomisticTrainingProblem(
+        problem = _problem(
             batch,
-            _execution(),
-            cutoff=CUTOFF,
-            training_energy=energy if target_kind != "force" else None,
-            training_forces=forces if target_kind != "energy" else None,
+            energy=energy if target_kind != "force" else None,
+            forces=forces if target_kind != "energy" else None,
         )
-        policy = AtomisticTrainingPolicy(
-            maximum_steps=8,
-            learning_rate=2e-3,
-            energy_weight=1.0 if target_kind != "force" else 0.0,
-            force_weight=1.0 if target_kind != "energy" else 0.0,
-        )
+        policy = AtomisticTrainingPolicy(maximum_steps=8, learning_rate=2e-3)
         result = fit_atomistic_potential(
             _potential(jr.key(3)), problem, policy, key=jr.key(12)
         )
-        assert result.training_loss_history.shape == (8,)
-        assert result.energy_loss_history.shape == (8,)
-        assert result.force_loss_history.shape == (8,)
-        np.testing.assert_allclose(result.stress_loss_history, 0.0)
-        assert float(result.training_loss_history[-1]) < float(
-            result.training_loss_history[0]
+        objective_count = 2 if target_kind == "joint" else 1
+        assert result.training_values.shape == (8,)
+        assert result.training_objectives.shape == (8, objective_count)
+        np.testing.assert_allclose(
+            np.sum(result.training_objectives, axis=1), result.training_values, rtol=1e-12
         )
+        assert float(result.training_values[-1]) < float(result.training_values[0])
         assert bool(result.successful)
-        if target_kind == "energy":
-            np.testing.assert_allclose(result.force_loss_history, 0.0)
-        if target_kind == "force":
-            np.testing.assert_allclose(result.energy_loss_history, 0.0)
+    # Fitted normalization reads the training labels only.
     batch = _batch()
     energy, _ = _targets(batch)
-    validation = batch.with_positions(batch.positions + 0.2)
-    problem_a = AtomisticTrainingProblem(
+    problem_a = _problem(
         batch,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        validation_batch=validation,
-        validation_energy=jnp.asarray([1e3, -1e3, 2e3]),
+        energy=energy,
+        validation=_loader(
+            _batch(0.2, prefix="validation"),
+            energy=jnp.asarray([1e3, -1e3, 2e3]),
+            stream="validation",
+        ),
     )
-    problem_b = AtomisticTrainingProblem(
+    problem_b = _problem(
         batch,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        validation_batch=validation,
-        validation_energy=jnp.asarray([-4e8, 7e8, 9e8]),
+        energy=energy,
+        validation=_loader(
+            _batch(0.2, prefix="validation"),
+            energy=jnp.asarray([-4e8, 7e8, 9e8]),
+            stream="validation",
+        ),
     )
-    policy = AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0)
+    assert problem_a.problem_id != problem_b.problem_id
+    policy = AtomisticTrainingPolicy(maximum_steps=0)
     first = fit_atomistic_potential(_potential(jr.key(2)), problem_a, policy)
     second = fit_atomistic_potential(_potential(jr.key(2)), problem_b, policy)
-    np.testing.assert_allclose(
-        first.normalization.energy_per_atom_scale,
-        second.normalization.energy_per_atom_scale,
-    )
-    assert first.normalization.fitted_from_problem_id == problem_a.problem_id
-    batch = _batch()
-    energy, _ = _targets(batch)
+    assert first.normalization.scales == second.normalization.scales
+    assert first.normalization.fitted == (True,)
+    assert first.normalization.fitted_from == problem_a.training.semantics_id
+    assert float(first.validation_values[0]) != float(second.validation_values[0])
     # Bitwise continuation requires ordered accumulation: fast reductions keep
     # their nondeterministic rounding on accelerators.
-    problem = AtomisticTrainingProblem(
+    problem = _problem(
         batch,
-        _execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
-        cutoff=CUTOFF,
-        training_energy=energy,
+        energy=energy,
+        execution=_execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
     )
     initial = _potential(jr.key(4))
     first = fit_atomistic_potential(
-        initial,
-        problem,
-        AtomisticTrainingPolicy(maximum_steps=2, force_weight=0.0),
-        key=jr.key(5),
+        initial, problem, AtomisticTrainingPolicy(maximum_steps=2), key=jr.key(5)
     )
     continued = fit_atomistic_potential(
         initial,
         problem,
-        AtomisticTrainingPolicy(maximum_steps=5, force_weight=0.0),
+        AtomisticTrainingPolicy(maximum_steps=5),
         key=jr.key(999),
         continuation=first,
     )
     uninterrupted = fit_atomistic_potential(
-        initial,
-        problem,
-        AtomisticTrainingPolicy(maximum_steps=5, force_weight=0.0),
-        key=jr.key(5),
+        initial, problem, AtomisticTrainingPolicy(maximum_steps=5), key=jr.key(5)
     )
 
     _assert_trees_bitwise_equal(continued, uninterrupted)
@@ -186,8 +223,8 @@ def test_training_and_rmd17_scenario_1() -> None:
     assert continued.progress.update_step == 5
     assert continued.progress == uninterrupted.progress
     for name in ("potential", "best_potential"):
-        assert atomistic_potential_revision(getattr(continued, name)).revision_id == (
-            atomistic_potential_revision(getattr(uninterrupted, name)).revision_id
+        assert atomistic_model_revision(getattr(continued, name)).revision_id == (
+            atomistic_model_revision(getattr(uninterrupted, name)).revision_id
         )
     assert continued.problem_id == uninterrupted.problem_id
     assert continued.policy_id == uninterrupted.policy_id
@@ -198,21 +235,24 @@ def test_training_and_rmd17_scenario_1() -> None:
 def test_training_and_rmd17_scenario_2() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(
-        batch, _execution(), cutoff=CUTOFF, training_energy=energy.at[1].set(jnp.nan)
+    # An available nonfinite label is never treated as missing: the first
+    # window is rejected and the result stays at the initial boundary.
+    # The scale is declared: a fitted scale refuses nonfinite training labels.
+    problem = _problem(
+        batch,
+        energy=energy.at[1].set(jnp.nan),
+        validation=_held_out(),
+        energy_scale=1.0,
     )
     result = fit_atomistic_potential(
-        _potential(jr.key(6)),
-        problem,
-        AtomisticTrainingPolicy(maximum_steps=4, force_weight=0.0),
+        _potential(jr.key(6)), problem, AtomisticTrainingPolicy(maximum_steps=4)
     )
     assert int(result.status) == int(AtomisticStatus.NONFINITE)
     assert not bool(result.successful)
-    assert "nonfinite" in result.termination
-    assert result.training_loss_history.shape == (0,)
+    assert result.termination == "nonfinite_update_window"
+    assert result.training_values.shape == (0,)
+    assert result.cursor.cursor_id == problem.training.start(0).cursor_id
     np.testing.assert_array_equal(result.validation_steps, [0])
-    batch = _batch()
-    energy, _ = _targets(batch)
     events = []
     session = IterationSession(
         "atomistic-training-test",
@@ -228,52 +268,37 @@ def test_training_and_rmd17_scenario_2() -> None:
 
     fit_atomistic_potential(
         _potential(jr.key(8)),
-        AtomisticTrainingProblem(
-            batch, _execution(), cutoff=CUTOFF, training_energy=energy
-        ),
-        AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+        _problem(batch, energy=energy),
+        AtomisticTrainingPolicy(maximum_steps=1),
         session=session,
     )
     assert events == [
         TrainingIterationKind.RUN_START,
         TrainingIterationKind.VALIDATION,
+        TrainingIterationKind.EPOCH_START,
         TrainingIterationKind.UPDATE,
         TrainingIterationKind.VALIDATION,
         TrainingIterationKind.RUN_TERMINAL,
     ]
-    batch = _batch()
-    energy, _ = _targets(batch)
-    first_problem = AtomisticTrainingProblem(
+    first_problem = _problem(
         batch,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        validation_batch=batch,
-        validation_energy=energy,
-        # ty: ignore[invalid-argument-type]
-        validation_energy_mask=[True, True, False],
+        energy=energy,
+        validation=_held_out(energy_available=np.asarray([True, True, False])),
     )
-    changed_problem = AtomisticTrainingProblem(
+    changed_problem = _problem(
         batch,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        validation_batch=batch,
-        validation_energy=energy,
-        # ty: ignore[invalid-argument-type]
-        validation_energy_mask=[True, False, True],
+        energy=energy,
+        validation=_held_out(energy_available=np.asarray([True, False, True])),
     )
     assert first_problem.problem_id != changed_problem.problem_id
     first = fit_atomistic_potential(
-        _potential(jr.key(41)),
-        first_problem,
-        AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+        _potential(jr.key(41)), first_problem, AtomisticTrainingPolicy(maximum_steps=0)
     )
     with pytest.raises(ValueError, match="different training problem"):
         fit_atomistic_potential(
             _potential(jr.key(41)),
             changed_problem,
-            AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+            AtomisticTrainingPolicy(maximum_steps=1),
             continuation=first,
         )
 
@@ -282,46 +307,37 @@ def test_training_and_rmd17_scenario_3() -> None:
     batch = _batch()
     energy, forces = _targets(batch)
     energy = energy.at[1].set(jnp.nan)
-    force_mask = jnp.ones_like(forces, dtype="bool").at[2, 1, 2].set(False)
+    # Force availability is per atom; an unavailable atom's label is never read.
+    force_available = np.ones((3, 2), dtype=np.bool_)
+    force_available[2, 1] = False
     forces = forces.at[2, 1, 2].set(jnp.nan)
-    problem = AtomisticTrainingProblem(
+    problem = _problem(
         batch,
-        _execution(),
-        cutoff=CUTOFF,
-        training_energy=energy,
-        training_forces=forces,
-        # ty: ignore[invalid-argument-type]
-        training_energy_mask=[True, False, True],
-        training_force_mask=force_mask,
+        energy=energy,
+        forces=forces,
+        energy_available=np.asarray([True, False, True]),
+        force_available=force_available,
     )
     result = fit_atomistic_potential(
-        _potential(jr.key(42)),
-        problem,
-        AtomisticTrainingPolicy(maximum_steps=1),
+        _potential(jr.key(42)), problem, AtomisticTrainingPolicy(maximum_steps=1)
     )
     assert int(result.status) == int(AtomisticStatus.SUCCESS)
-    assert bool(jnp.all(jnp.isfinite(result.training_loss_history)))
+    assert bool(jnp.all(jnp.isfinite(result.training_values)))
     batch = _batch()
     energy, _ = _targets(batch)
     result = fit_atomistic_potential(
         _potential(jr.key(43)),
-        AtomisticTrainingProblem(
-            batch, _execution(0), cutoff=CUTOFF, training_energy=energy
-        ),
-        AtomisticTrainingPolicy(maximum_steps=2, force_weight=0.0),
+        _problem(batch, energy=energy, execution=_execution(0)),
+        AtomisticTrainingPolicy(maximum_steps=2),
     )
+    # Without a validation loader the initial training-epoch evaluation already
+    # meets the exhausted neighbor capacity.
     assert int(result.status) == int(AtomisticStatus.NEIGHBOR_OVERFLOW)
-    assert "neighbor_overflow" in result.termination
-    assert result.training_loss_history.shape == (0,)
-    batch = _batch()
-    energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(
-        batch, _execution(), cutoff=CUTOFF, training_energy=energy
-    )
+    assert result.termination == "failed_validation_evaluation"
+    assert result.training_values.shape == (0,)
+    problem = _problem(batch, energy=energy)
     continuation = fit_atomistic_potential(
-        _potential(jr.key(405)),
-        problem,
-        AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+        _potential(jr.key(405)), problem, AtomisticTrainingPolicy(maximum_steps=0)
     )
     changed = PaiNNPotential(
         SCALE,
@@ -335,24 +351,18 @@ def test_training_and_rmd17_scenario_3() -> None:
         fit_atomistic_potential(
             changed,
             problem,
-            AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+            AtomisticTrainingPolicy(maximum_steps=1),
             continuation=continuation,
         )
-    batch = _batch()
-    energy, _ = _targets(batch)
     initial = _potential(jr.key(44))
     result = fit_atomistic_potential(
-        initial,
-        AtomisticTrainingProblem(
-            batch, _execution(), cutoff=CUTOFF, training_energy=energy
-        ),
-        AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+        initial, _problem(batch, energy=energy), AtomisticTrainingPolicy(maximum_steps=1)
     )
     assert int(result.validation_steps[0]) == 0
     assert result.progress.best_step in (0, 1)
-    assert float(result.best_loss) <= float(result.validation_loss_history[0])
-    assert atomistic_potential_revision(result.potential).revision_id != (
-        atomistic_potential_revision(initial).revision_id
+    assert float(result.best_loss) <= float(result.validation_values[0])
+    assert atomistic_model_revision(result.potential).revision_id != (
+        atomistic_model_revision(initial).revision_id
     )
 
 
@@ -445,22 +455,25 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(
     result = fit_atomistic_potential(
         potential(jr.key(302)),
         AtomisticTrainingProblem(
-            batch,
+            atomistic_training_loader(
+                atomistic_training_source(
+                    batch,
+                    mass_unit=dataset.source_mass_unit,
+                    energy=teacher.energy,
+                    forces=teacher.forces,
+                ),
+                batch_size=2,
+            ),
             _execution(),
+            (AtomisticEnergyObjective(), AtomisticForceObjective()),
+            scale=dataset.scale,
             cutoff=CUTOFF,
-            training_energy=teacher.energy,
-            training_forces=teacher.forces,
         ),
-        AtomisticTrainingPolicy(
-            maximum_steps=2,
-            learning_rate=1e-3,
-            energy_weight=1.0,
-            force_weight=1.0,
-        ),
+        AtomisticTrainingPolicy(maximum_steps=2, learning_rate=1e-3),
         key=jr.key(303),
     )
-    assert isinstance(result.final_potential, NequIPPotential)
-    assert result.training_loss_history.shape == (2,)
+    assert isinstance(result.potential, NequIPPotential)
+    assert result.training_values.shape == (2,)
     prediction = energy_and_forces(result.best_potential, batch, _execution())
     assert bool(jnp.all(prediction.valid))
     assert prediction.energy.shape == (sample_count,)
@@ -470,9 +483,7 @@ def test_training_rejects_cross_family_continuation() -> None:
     for continuation_family in ["painn", "nequip"]:
         batch = _batch()
         energy, _ = _targets(batch)
-        problem = AtomisticTrainingProblem(
-            batch, _execution(), cutoff=CUTOFF, training_energy=energy
-        )
+        problem = _problem(batch, energy=energy)
 
         def nequip(key: Any) -> Any:
             return NequIPPotential(
@@ -491,14 +502,12 @@ def test_training_rejects_cross_family_continuation() -> None:
             resumed = nequip(jr.key(403))
             supplied = _potential(jr.key(404))
         continuation = fit_atomistic_potential(
-            resumed,
-            problem,
-            AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+            resumed, problem, AtomisticTrainingPolicy(maximum_steps=0)
         )
         with pytest.raises(ValueError, match="same concrete family"):
             fit_atomistic_potential(
                 supplied,
                 problem,
-                AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+                AtomisticTrainingPolicy(maximum_steps=1),
                 continuation=continuation,
             )

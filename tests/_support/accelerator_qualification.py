@@ -17,6 +17,7 @@ from packaging.utils import canonicalize_name
 
 from tools.check_accelerator_extras import Accelerator
 
+
 if TYPE_CHECKING:
     import jax
 
@@ -92,6 +93,7 @@ def accelerator_device() -> jax.Device:
 def runtime_evidence(*arrays: object) -> dict[str, object]:
     import jax
 
+    from phydrax._jax_config import matmul_precision, x64_enabled
     from phydrax._jax_indexing_frontend import frontend_index_patch_identity
 
     device = accelerator_device()
@@ -118,8 +120,8 @@ def runtime_evidence(*arrays: object) -> dict[str, object]:
         "local_device_count": jax.local_device_count(
             selected_accelerator().runtime_platform
         ),
-        "x64_enabled": bool(jax.config.x64_enabled),
-        "matmul_precision": str(jax.config.jax_default_matmul_precision),
+        "x64_enabled": x64_enabled(),
+        "matmul_precision": str(matmul_precision()),
         "frontend_index_patch": frontend_index_patch_identity(),
     }
 
