@@ -22,11 +22,19 @@ from ._stencils import (
 from ._surface import PreparedCollisionScene
 
 
-ContactKinematicsScene = PreparedCollisionScene | ContactParticipantScene
+type ContactKinematicsScene = PreparedCollisionScene | ContactParticipantScene
 
 
 class ContactKinematicsBatch(StrictModule):
-    """Fixed-capacity local interface kinematics independent of contact law."""
+    """Fixed-capacity local interface kinematics independent of contact law.
+
+    Rows mirror the canonical route batch. ``left_witness``/``right_witness``
+    are the world witness points, ``normal`` points from right to left and
+    ``tangent_basis`` completes it to a right-handed local frame. ``failed``
+    marks candidate witnesses whose narrow phase was nonfinite, degenerate or
+    contained; they are excluded from ``valid`` but never silently dropped:
+    any failure makes the kinematics epoch unsuccessful.
+    """
 
     vertex_indices: Array
     left_feature_ids: Array
@@ -34,6 +42,7 @@ class ContactKinematicsBatch(StrictModule):
     left_feature_indices: Array
     right_feature_indices: Array
     route_keys: Array
+    witness_slots: Array
     left_participant_ids: Array
     right_participant_ids: Array
     left_body_ids: Array
@@ -43,6 +52,8 @@ class ContactKinematicsBatch(StrictModule):
     left_patch_ids: Array
     right_patch_ids: Array
     coefficients: Array
+    left_witness: Array
+    right_witness: Array
     normal: Array
     tangent_basis: Array
     distance: Array
@@ -54,9 +65,11 @@ class ContactKinematicsBatch(StrictModule):
     minimum_separation: Array
     feature: Array
     feature_margin: Array
+    failed: Array
     valid: Array
     finite: Array
     kind: ContactStencilKind = eqx.field(static=True)
+    catalogue_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
     @property
@@ -66,6 +79,7 @@ class ContactKinematicsBatch(StrictModule):
 
 class ContactKinematicsEvidence(StrictModule):
     active_contacts: Array
+    failed_contacts: Array
     minimum_gap: Array
     minimum_feature_margin: Array
     finite: Array
@@ -78,12 +92,6 @@ class ContactKinematicsEpoch(StrictModule):
     batches: tuple[ContactKinematicsBatch, ...]
     evidence: ContactKinematicsEvidence
     epoch_id: str = eqx.field(static=True)
-
-
-def _right_endpoint(batch: ContactStencilBatch, /) -> Array:
-    if batch.kind == ContactStencilKind.EDGE_EDGE:
-        return batch.vertex_indices[:, 2]
-    return batch.vertex_indices[:, 1]
 
 
 def evaluate_contact_kinematics_batch(
@@ -104,6 +112,8 @@ def evaluate_contact_kinematics_batch(
         )
     if not isinstance(batch, ContactStencilBatch):
         raise TypeError("batch must be ContactStencilBatch.")
+    if batch.catalogue_id != scene.feature_catalogue.catalogue_id:
+        raise ValueError("Route batch belongs to another feature catalogue.")
     current = jnp.asarray(positions)
     velocity = jnp.asarray(velocities, dtype=current.dtype)
     rest = jnp.asarray(rest_positions, dtype=current.dtype)
@@ -119,10 +129,12 @@ def evaluate_contact_kinematics_batch(
         batch,
         current,
         rest,
+        scene=scene,
         tolerance=tolerance,
     )
     safe = jnp.clip(batch.vertex_indices, 0, scene.vertex_count - 1)
-    gathered_velocity = velocity[safe]
+    present = batch.vertex_indices >= 0
+    gathered_velocity = jnp.where(present[..., None], velocity[safe], 0.0)
     relative_velocity = jnp.sum(
         evaluation.distance.coefficients[..., None] * gathered_velocity,
         axis=1,
@@ -131,20 +143,20 @@ def evaluate_contact_kinematics_batch(
     tangent = contact_tangent_basis(normal)
     normal_velocity = jnp.sum(relative_velocity * normal, axis=-1)
     tangential_velocity = jnp.sum(tangent * relative_velocity[..., :, None], axis=-2)
-    distance = jnp.sqrt(
-        jnp.maximum(
-            evaluation.distance.squared_distance,
-            jnp.asarray(0.0, dtype=current.dtype),
+    if batch.kind in (ContactStencilKind.VERTEX_PLANE, ContactStencilKind.EDGE_PLANE):
+        # Plane rows keep the sign: cores at or behind the plane give gaps
+        # below minus the radius; admissibility is the path certificate's job.
+        distance = jnp.sum(
+            evaluation.distance.distance_vector * evaluation.distance.normal, axis=-1
         )
-    )
+    else:
+        distance = jnp.sqrt(
+            jnp.maximum(
+                evaluation.distance.squared_distance,
+                jnp.asarray(0.0, dtype=current.dtype),
+            )
+        )
     gap = distance - evaluation.minimum_separation
-    valid = evaluation.valid
-    if activation_distance is not None:
-        threshold = jnp.asarray(activation_distance, dtype=current.dtype)
-        valid = valid & (gap < threshold)
-    feature_count = scene.vertex_count + scene.edge_count + scene.face_count
-    left_feature = jnp.clip(batch.left_feature_indices, 0, feature_count - 1)
-    right_feature = jnp.clip(batch.right_feature_indices, 0, feature_count - 1)
     tangential_slip = dt * tangential_velocity
     step_valid = jnp.isfinite(dt) & (dt > 0.0)
     finite_per_route = (
@@ -154,7 +166,15 @@ def evaluate_contact_kinematics_batch(
         & jnp.all(jnp.isfinite(tangential_velocity), axis=-1)
         & jnp.all(jnp.isfinite(tangential_slip), axis=-1)
     )
-    valid = valid & step_valid & finite_per_route
+    considered = batch.valid & evaluation.active
+    failed = evaluation.failed | (considered & ~finite_per_route)
+    valid = evaluation.valid & finite_per_route & step_valid
+    if activation_distance is not None:
+        threshold = jnp.asarray(activation_distance, dtype=current.dtype)
+        valid = valid & (gap < threshold)
+    feature_limit = scene.feature_count - 1
+    left_feature = jnp.clip(batch.left_feature_indices, 0, feature_limit)
+    right_feature = jnp.clip(batch.right_feature_indices, 0, feature_limit)
     identifier = canonical_fingerprint(
         {
             "kind": "contact-kinematics-batch",
@@ -169,6 +189,7 @@ def evaluate_contact_kinematics_batch(
         batch.left_feature_indices,
         batch.right_feature_indices,
         batch.route_keys,
+        batch.witness_slots,
         scene.feature_participant_ids[left_feature],
         scene.feature_participant_ids[right_feature],
         scene.feature_body_ids[left_feature],
@@ -178,6 +199,8 @@ def evaluate_contact_kinematics_batch(
         scene.feature_patch_ids[left_feature],
         scene.feature_patch_ids[right_feature],
         evaluation.distance.coefficients,
+        evaluation.distance.left_witness,
+        evaluation.distance.right_witness,
         normal,
         tangent,
         distance,
@@ -192,9 +215,11 @@ def evaluate_contact_kinematics_batch(
             evaluation.distance.feature_margin,
             evaluation.mollifier_margin,
         ),
+        failed,
         valid,
-        step_valid & jnp.all((~batch.valid) | finite_per_route),
+        step_valid & ~jnp.any(failed),
         batch.kind,
+        batch.catalogue_id,
         identifier,
     )
 
@@ -211,8 +236,16 @@ def evaluate_contact_kinematics(
     activation_distance: float | None = None,
     tolerance: float = 1.0e-12,
 ) -> ContactKinematicsEpoch:
+    """Narrow phase and local frames of every candidate of a canonical epoch.
+
+    Success requires a successful search epoch of this scene's catalogue,
+    finite inputs, and no failed candidate witness in any batch.
+    """
     if not isinstance(epoch, ContactCandidateEpoch):
         raise TypeError("epoch must be ContactCandidateEpoch.")
+    # Foreign catalogue/topology/routing raises; changed radii or planes make
+    # the candidate set incomplete and the epoch unbound (unsuccessful).
+    bound = epoch.binds(scene)
     current = jnp.asarray(positions)
     if rest_positions is None:
         if not isinstance(scene, PreparedCollisionScene):
@@ -238,18 +271,14 @@ def evaluate_contact_kinematics(
         )
         for batch in epoch.active_batches
     )
+    zero = jnp.asarray(0, dtype=jnp.int32)
     if batches:
-        active = sum(
-            (jnp.sum(batch.valid, dtype=jnp.int32) for batch in batches),
-            start=jnp.asarray(0, dtype=jnp.int32),
-        )
+        active = sum((jnp.sum(batch.valid, dtype=jnp.int32) for batch in batches), zero)
+        failed = sum((jnp.sum(batch.failed, dtype=jnp.int32) for batch in batches), zero)
         minimum_gap = jnp.min(
             jnp.stack(
                 tuple(
-                    jnp.min(
-                        jnp.where(batch.valid, batch.gap, jnp.inf),
-                        initial=jnp.inf,
-                    )
+                    jnp.min(jnp.where(batch.valid, batch.gap, jnp.inf), initial=jnp.inf)
                     for batch in batches
                 )
             )
@@ -258,11 +287,7 @@ def evaluate_contact_kinematics(
             jnp.stack(
                 tuple(
                     jnp.min(
-                        jnp.where(
-                            batch.valid,
-                            batch.feature_margin,
-                            jnp.inf,
-                        ),
+                        jnp.where(batch.valid, batch.feature_margin, jnp.inf),
                         initial=jnp.inf,
                     )
                     for batch in batches
@@ -271,13 +296,15 @@ def evaluate_contact_kinematics(
         )
         finite = jnp.all(jnp.stack(tuple(batch.finite for batch in batches)))
     else:
-        active = jnp.asarray(0, dtype=jnp.int32)
+        active = zero
+        failed = zero
         minimum_gap = jnp.asarray(jnp.inf, dtype=current.dtype)
         minimum_feature = jnp.asarray(jnp.inf, dtype=current.dtype)
         finite = jnp.asarray(True)
-    successful = epoch.successful & finite
+    successful = epoch.successful & bound & finite & (failed == 0)
     evidence = ContactKinematicsEvidence(
         active,
+        failed,
         minimum_gap,
         minimum_feature,
         finite,

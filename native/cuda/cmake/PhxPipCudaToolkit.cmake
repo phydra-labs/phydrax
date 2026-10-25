@@ -6,6 +6,10 @@ set(PHX_CUDA_TOOLCHAIN_PINS "{}")
 if(NOT Python_EXECUTABLE)
   message(FATAL_ERROR "Python_EXECUTABLE must name the CUDA build environment")
 endif()
+if(CMAKE_HOST_WIN32)
+  include(PhxWindowsCudaToolkit)
+  return()
+endif()
 set(_phx_discover [=[
 import importlib.metadata as metadata
 import json

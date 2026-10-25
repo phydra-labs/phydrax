@@ -111,6 +111,26 @@ class ContactPotentialEvaluation(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
+def _minimum_gap(valid: Array, failed: Array, gap: Array, /) -> Array:
+    """Minimum valid gap; any failed candidate witness makes it ``-inf``."""
+    values = jnp.where(valid, gap, jnp.inf)
+    values = jnp.where(failed, -jnp.inf, values)
+    return jnp.min(values, initial=jnp.inf)
+
+
+def require_mesh_contact_routes(epoch: ContactCandidateEpoch, /) -> None:
+    """Refuse epochs carrying route kinds the barrier/friction laws do not model."""
+    if (
+        epoch.vertex_vertex.capacity
+        or epoch.vertex_plane.capacity
+        or epoch.edge_plane.capacity
+    ):
+        raise ValueError(
+            "The convergent barrier potential admits mesh edge-vertex, "
+            "face-vertex and edge-edge routes only."
+        )
+
+
 @final
 class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
     """Canonical barrier with a current-state algebraic effort transpose.
@@ -296,7 +316,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             jnp.sqrt(jnp.maximum(evaluation.distance.squared_distance, 0.0))
             - evaluation.minimum_separation
         )
-        minimum_gap = jnp.min(jnp.where(evaluation.valid, gap, jnp.inf), initial=jnp.inf)
+        minimum_gap = _minimum_gap(evaluation.valid, evaluation.failed, gap)
         return energy, minimum_gap, jnp.sum(evaluation.valid, dtype=jnp.int32)
 
     def _face_vertex_energy(
@@ -332,7 +352,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             (face_vertices[:, 1], face_vertices[:, 2]),
             (face_vertices[:, 2], face_vertices[:, 0]),
         )
-        face_index = batch.right_feature_ids - (
+        face_index = batch.right_feature_indices - (
             self.scene.vertex_count + self.scene.edge_count
         )
         safe_face = jnp.clip(face_index, 0, max(self.scene.face_count - 1, 0)).astype(
@@ -386,7 +406,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             jnp.sqrt(jnp.maximum(evaluation.distance.squared_distance, 0.0))
             - evaluation.minimum_separation
         )
-        minimum_gap = jnp.min(jnp.where(evaluation.valid, gap, jnp.inf), initial=jnp.inf)
+        minimum_gap = _minimum_gap(evaluation.valid, evaluation.failed, gap)
         minimum_feature = jnp.min(
             jnp.where(evaluation.valid, evaluation.distance.feature_margin, jnp.inf),
             initial=jnp.inf,
@@ -443,7 +463,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             jnp.sqrt(jnp.maximum(evaluation.distance.squared_distance, 0.0))
             - evaluation.minimum_separation
         )
-        minimum_gap = jnp.min(jnp.where(evaluation.valid, gap, jnp.inf), initial=jnp.inf)
+        minimum_gap = _minimum_gap(evaluation.valid, evaluation.failed, gap)
         minimum_feature = jnp.min(
             jnp.where(
                 evaluation.valid,
@@ -471,6 +491,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         rest_positions: ArrayLike | None = None,
         stiffness: ArrayLike | None = None,
     ) -> Array:
+        require_mesh_contact_routes(epoch)
         current = jnp.asarray(positions, dtype=self.reference_positions.dtype)
         expected = (self.scene.vertex_count, self.scene.ambient_dimension)
         if current.shape != expected:
@@ -490,12 +511,21 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         if scale.shape != ():
             raise ValueError("stiffness must be scalar.")
         vertex_measure, edge_measure = self._measures(rest)
-        edge_vertex = self._edge_vertex_energy(current, rest, epoch, vertex_measure)[0]
-        face_vertex = self._face_vertex_energy(current, rest, epoch, vertex_measure)[0]
-        edge_edge = self._edge_edge_energy(current, rest, epoch, edge_measure)[0]
-        value = scale.astype(current.dtype) * (edge_vertex + face_vertex + edge_edge)
+        edge_vertex = self._edge_vertex_energy(current, rest, epoch, vertex_measure)
+        face_vertex = self._face_vertex_energy(current, rest, epoch, vertex_measure)
+        edge_edge = self._edge_edge_energy(current, rest, epoch, edge_measure)
+        value = scale.astype(current.dtype) * (
+            edge_vertex[0] + face_vertex[0] + edge_edge[0]
+        )
+        # Failed candidate witnesses report a -inf gap; their energy is undefined.
+        defined = (
+            jnp.min(jnp.stack((edge_vertex[1], face_vertex[1], edge_edge[1])))
+            > -jnp.inf
+        )
         return jnp.where(
-            epoch.successful, value, jnp.asarray(jnp.inf, dtype=current.dtype)
+            epoch.successful & defined,
+            value,
+            jnp.asarray(jnp.inf, dtype=current.dtype),
         )
 
     @checked

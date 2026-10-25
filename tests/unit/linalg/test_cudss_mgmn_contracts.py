@@ -19,7 +19,7 @@ from phydrax import config as pxconfig
 from phydrax._execution_collective_ffi import collective_schedule
 from phydrax._execution_collectives import CollectiveBinding, CollectiveLeaseSpec
 from phydrax._execution_resources import ExecutionGroupSpec
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 from phydrax.linalg import _distributed_sparse as sparse
 from phydrax.linalg._distributed import DistributedCoordinateLayout
 from phydrax.linalg._policies import CudssExecutionPolicy, CudssMemoryPolicy, SparseLDLT

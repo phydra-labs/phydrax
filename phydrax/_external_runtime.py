@@ -889,6 +889,18 @@ def _require_optional(module: str, requirement: str) -> None:
 class _HostWorker:
     """Private trusted-local process transport for blocking native calls."""
 
+    timeout: float
+    max_bytes: int
+    closed: bool
+    calls: list[dict[str, Any]]
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    _process: subprocess.Popen[bytes] | None
+    _socket: socket.socket | None
+    _logs: BinaryIO | None
+    input_ids: dict[str, str]
+    info: dict[str, Any]
+
     def __init__(
         self,
         kind: str,
@@ -1349,6 +1361,20 @@ class NativeWorker:
     reentrant lock, so a concurrent close waits for the call in flight. This is
     not a security sandbox.
     """
+
+    policy: NativeWorkerPolicy
+    identity: NativeWorkerIdentity
+    _lock: threading.RLock
+    closed: bool
+    final_log: str
+    calls: list[dict[str, Any]]
+    _sequence: int
+    _buffer: bytearray
+    _root: str
+    _logs: BinaryIO
+    _context: dict[str, Any]
+    _process: subprocess.Popen[bytes]
+    _finalizer: weakref.finalize
 
     def __init__(
         self,

@@ -11,6 +11,9 @@ from phydrax.discretization import ParticleSetPlan, RigidBodySetPlan
 from phydrax.discretization.particle._rigid_constraint_dynamics import (
     RigidConstraintDynamicsPlan,
 )
+from phydrax.discretization.particle._rigid_constraint_rank import (
+    RigidConstraintRankStatus,
+)
 from phydrax.discretization.particle._rigid_joint_coordinates import (
     prepare_rigid_joint_coordinates,
 )
@@ -63,7 +66,9 @@ def test_planar_contracts() -> None:
     result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-3))
     assert result.successful
     assert result.evaluation.diagnostics.maximum_position_residual < 1.0e-10
-    assert result.evaluation.diagnostics.constraint_rank == 2
+    rank = result.evaluation.diagnostics.rank
+    assert int(rank.status) == RigidConstraintRankStatus.FULL_ROW_RANK_MEASURED
+    assert int(rank.rank_lower_bound) == int(rank.rank_upper_bound) == 2
     assert dynamics.joints.row_layout.row_count == 2
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(

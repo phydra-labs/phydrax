@@ -190,6 +190,7 @@ def _shard_axis(axis: OperatorAxis, policy: OperatorShardingPolicy, /) -> Operat
         quadrature_weights=weights,
         basis=axis.basis,
         periodic=axis.periodic,
+        dtype=axis.nodes.dtype,
     )
 
 
@@ -266,6 +267,7 @@ def _shard_samples(
         quadrature_weights=quadrature,
         mask=mask,
         topology=topology,
+        dtype=samples.geometry_dtype,
     )
 
 

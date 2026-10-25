@@ -45,10 +45,12 @@ def _evidence(runtime: dict[str, object] | None = None) -> list[str]:
     return [] if runtime is None else [json.dumps(runtime, sort_keys=True)]
 
 
-def _report(required: qualification.RequiredFile, venv: Path) -> dict[str, Any]:
+def _report(
+    required: qualification.RequiredFile, venv: Path, path: str = PATH
+) -> dict[str, Any]:
     nodes = []
-    for nodeid in required.nodeids(PATH):
-        name = required.runtime_property(nodeid.removeprefix(f"{PATH}::"))
+    for nodeid in required.nodeids(path):
+        name = required.runtime_property(nodeid.removeprefix(f"{path}::"))
         nodes.append(
             {
                 "nodeid": nodeid,
@@ -62,7 +64,7 @@ def _report(required: qualification.RequiredFile, venv: Path) -> dict[str, Any]:
     return {
         "run": "run-1",
         "exit_status": 0,
-        "collected": list(required.nodeids(PATH)),
+        "collected": list(required.nodeids(path)),
         "failed_collectors": [],
         "nodes": nodes,
         "modules": {
@@ -487,6 +489,20 @@ def test_stale_case_report_is_never_reused(tmp_path: Path) -> None:
     stale = _report(required, tmp_path)
     stale["run"] = "run-1"
     (suite / qualification.CASE_REPORT).write_text(json.dumps(stale))
+    if os.name != "posix":
+        with pytest.raises(RuntimeError, match="requires a POSIX host"):
+            qualification.run_file(
+                Path(sys.executable),
+                tmp_path,
+                suite,
+                PATH,
+                required,
+                run_id="run-1",
+                expected_runtime=RUNTIME,
+                timeout=60.0,
+            )
+        assert not (suite / qualification.CASE_REPORT).exists()
+        return
     false = shutil.which("false")
     assert false is not None
     record, coverage = qualification.run_file(
@@ -557,6 +573,10 @@ def test_imports_checkout(record_property):
 def test_case_plugin_reduces_real_pytest_sessions(
     tmp_path: Path, symlinked: bool
 ) -> None:
+    if os.name != "posix":
+        with pytest.raises(RuntimeError, match="requires a POSIX host"):
+            qualification.run([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=300.0)
+        return
     suite = tmp_path / "suite"
     checkout = tmp_path / "checkout"
     suite.mkdir()
@@ -673,3 +693,68 @@ def test_required_inventory_matches_collected_nodes() -> None:
     collected = [line for line in result.stdout.splitlines() if "::" in line]
     assert result.returncode == 0, result.stdout + result.stderr
     assert sorted(collected) == sorted(expected)
+
+
+# Representative runtime-completion gates: dropping their passing node or their
+# actual MPS evidence must refuse the campaign through the real inventory.
+_RUNTIME_COMPLETION_GATES = [
+    (
+        "tests/integration/test_metal_reduction_primitives.py",
+        "test_xor_reduction_exact_declared_width_and_initial[neutral-axes2-uint64]",
+    ),
+    (
+        "tests/integration/test_metal_reduction_primitives.py",
+        "test_array_tree_lineage_uint64_matches_independent_host_mix",
+    ),
+    (
+        "tests/integration/test_metal_native_admission.py",
+        "test_cpu_lapack_custom_call_refused_at_compile[while-nested-switch-branch-mps.eigh]",
+    ),
+    (
+        "tests/integration/test_metal_optimized_program.py",
+        "test_optimized_program_query_never_runs_host_callbacks",
+    ),
+    (
+        "tests/integration/test_metal_optimized_program.py",
+        "test_optimized_program_namespace_never_admits_unknown_targets[mps.mhlo.eigh]",
+    ),
+]
+
+
+@pytest.mark.parametrize("defect", ["missing", "no-runtime"])
+@pytest.mark.parametrize(("path", "test"), _RUNTIME_COMPLETION_GATES)
+def test_runtime_completion_gate_defects_refuse_qualification(
+    tmp_path: Path, path: str, test: str, defect: str
+) -> None:
+    required = qualification.REQUIRED_FILES[path]
+    nodeid = f"{path}::{test}"
+    report = _report(required, tmp_path, path)
+
+    def evaluate() -> tuple[list[str], dict[str, str]]:
+        return qualification.file_errors(
+            path,
+            required,
+            report,
+            returncode=0,
+            run_id="run-1",
+            expected_runtime=RUNTIME,
+            venv=tmp_path,
+        )
+
+    errors, coverage = evaluate()
+    assert errors == []
+    assert coverage[nodeid] == "passed"
+    if defect == "missing":
+        report["collected"].remove(nodeid)
+        report["nodes"] = [node for node in report["nodes"] if node["nodeid"] != nodeid]
+        message = f"Required node missing: {nodeid}"
+        outcome = "missing"
+    else:
+        for node in report["nodes"]:
+            if node["nodeid"] == nodeid:
+                node["properties"] = []
+        message = f"{nodeid} lacks matching metal_runtime evidence"
+        outcome = "unverified-runtime"
+    errors, coverage = evaluate()
+    assert coverage[nodeid] == outcome
+    assert any(error.startswith(message) for error in errors), errors

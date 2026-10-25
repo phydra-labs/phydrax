@@ -8,8 +8,12 @@ The main entry point is `_prop_jaxpr`, which walks the computation graph
 and applies the appropriate handler for each equation.
 """
 
+from collections.abc import Callable
+from functools import partial
+
+import jax
 import numpy as np
-from jax._src.core import Jaxpr, JaxprEqn
+from jax._src.core import Jaxpr, JaxprEqn, ShapedArray
 
 from ._argmax import _prop_argmax
 from ._broadcast import _prop_broadcast_in_dim
@@ -147,6 +151,153 @@ def _prop_nested_jaxpr(
         state_indices[outvar] = indices
     _export_scope(
         eqn.outvars, jaxpr.outvars, inner_consts, inner_bounds, state_consts, state_bounds
+    )
+
+
+def _prop_reference(
+    eqn: JaxprEqn,
+    reference: Callable[..., object],
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Trace a registered native primitive through its owning JAX reference."""
+    arguments = []
+    for atom in eqn.invars:
+        aval = atom.aval
+        if not isinstance(aval, ShapedArray):
+            raise TypeError("Native primitive operands must be shaped arrays.")
+        arguments.append(jax.ShapeDtypeStruct(aval.shape, aval.dtype))
+    program = jax.make_jaxpr(reference)(*arguments)
+    _prop_nested_jaxpr(
+        eqn.replace(params={"call_jaxpr": program}),
+        state_indices,
+        state_consts,
+        state_bounds,
+        "call_jaxpr",
+    )
+
+
+def _prop_compensated(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand only the registered ordered recurrence into its native reference."""
+    from ..._numerics._compensated_native import (
+        _forward,
+        _forward_p,
+        _transpose_p,
+        _transpose_reference,
+    )
+
+    if eqn.primitive is _forward_p:
+        reference = _forward
+    elif eqn.primitive is _transpose_p:
+        reference = partial(_transpose_reference, length=eqn.params["length"])
+    else:
+        raise NotImplementedError("Foreign compensated reduction primitive.")
+    _prop_reference(eqn, reference, state_indices, state_consts, state_bounds)
+
+
+def _prop_streaming_moments(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand only the registered APIC moment stream into its gather reference."""
+    from ...discretization.mpm._moments_native import _moments_p, _reference
+
+    if eqn.primitive is not _moments_p:
+        raise NotImplementedError("Foreign APIC streaming moment primitive.")
+    _prop_reference(
+        eqn,
+        partial(_reference, outputs=eqn.params["outputs"]),
+        state_indices,
+        state_consts,
+        state_bounds,
+    )
+
+
+def _prop_result_storage(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Keep workspace lifetime constraints out of numerical derivative support."""
+    from ...backends._result_storage import (
+        _publish_p,
+        _publish_reference,
+        _reserve_p,
+        _reserve_reference,
+    )
+
+    if eqn.primitive is _reserve_p:
+        reference = _reserve_reference
+    elif eqn.primitive is _publish_p:
+        reference = _publish_reference
+    else:
+        raise NotImplementedError("Foreign result-storage primitive.")
+    _prop_reference(
+        eqn,
+        partial(reference, **eqn.params),
+        state_indices,
+        state_consts,
+        state_bounds,
+    )
+
+
+def _prop_articulated_sweeps(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand registered articulated tree operations through their owning references."""
+    from ...discretization.particle._articulated_kinematics import (
+        _motion_p,
+        _motion_reference,
+        _poses_p,
+        _poses_reference,
+        _velocity_p,
+        _velocity_reference,
+        _velocity_transpose_p,
+        _velocity_transpose_reference,
+    )
+    from ...discretization.particle._articulated_sweeps import (
+        _factor_p,
+        _factor_reference,
+        _forces_p,
+        _forces_reference,
+        _solve_p,
+        _solve_reference,
+    )
+
+    if eqn.primitive is _factor_p:
+        reference = _factor_reference
+    elif eqn.primitive is _solve_p:
+        reference = _solve_reference
+    elif eqn.primitive is _forces_p:
+        reference = _forces_reference
+    elif eqn.primitive is _poses_p:
+        reference = _poses_reference
+    elif eqn.primitive is _velocity_p:
+        reference = _velocity_reference
+    elif eqn.primitive is _velocity_transpose_p:
+        reference = _velocity_transpose_reference
+    elif eqn.primitive is _motion_p:
+        reference = _motion_reference
+    else:
+        raise NotImplementedError("Foreign articulated sweep primitive.")
+    _prop_reference(
+        eqn,
+        partial(reference, **eqn.params),
+        state_indices,
+        state_consts,
+        state_bounds,
     )
 
 
@@ -291,6 +442,25 @@ def _prop_dispatch(
             _prop_polynomial(eqn, state_indices)
         case "call_hi_primitive":
             _prop_stock_high(eqn, state_indices, state_consts, state_bounds)
+        case (
+            "phydrax_compensated_accumulate_linear"
+            | "phydrax_compensated_accumulate_transpose"
+        ):
+            _prop_compensated(eqn, state_indices, state_consts, state_bounds)
+        case "phydrax_apic_streaming_moments":
+            _prop_streaming_moments(eqn, state_indices, state_consts, state_bounds)
+        case (
+            "phydrax_articulated_inertia_factor"
+            | "phydrax_articulated_factor_solve"
+            | "phydrax_articulated_force_reduction"
+            | "phydrax_articulated_poses"
+            | "phydrax_articulated_body_velocity"
+            | "phydrax_articulated_body_velocity_transpose"
+            | "phydrax_articulated_motion"
+        ):
+            _prop_articulated_sweeps(eqn, state_indices, state_consts, state_bounds)
+        case "phydrax_result_storage_reserve" | "phydrax_result_storage_publish":
+            _prop_result_storage(eqn, state_indices, state_consts, state_bounds)
         case "reduce_sum" | "reduce_max" | "reduce_min" | "reduce_prod":
             _prop_reduce(eqn, state_indices)
         case (

@@ -233,7 +233,9 @@ composition rules, and qualified profiles.
         - RodContactSearchResult
         - RodContactSearchEvidence
         - RodContactWitnessBatch
-        - RodContactManifoldState
+        - ContactManifoldState
+        - empty_rod_contact_manifold
+        - update_rod_contact_manifold
         - RodContactManifoldTransition
         - RodContactCCDPlan
         - RodContactCCDResult
@@ -243,6 +245,7 @@ composition rules, and qualified profiles.
         - build_capsule_contact_velocity_operator
         - CompositeContactResponse
         - CompositeContactResult
+        - CompositeContactResponseEvidence
       show_root_heading: false
       members_order: source
 

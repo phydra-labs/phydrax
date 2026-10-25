@@ -1,6 +1,26 @@
 include_guard(GLOBAL)
 include(FetchContent)
 
+if(WIN32)
+  if(NOT PHX_PATCH_EXECUTABLE OR NOT IS_ABSOLUTE "${PHX_PATCH_EXECUTABLE}"
+      OR NOT EXISTS "${PHX_PATCH_EXECUTABLE}")
+    message(FATAL_ERROR "Windows QUDA requires an explicit absolute PHX_PATCH_EXECUTABLE")
+  endif()
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+      OR NOT CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+    message(FATAL_ERROR "Windows QUDA requires clang-cl for C++ and NVIDIA nvcc for CUDA")
+  endif()
+  get_filename_component(_phx_quda_cuda_host "${CMAKE_CUDA_HOST_COMPILER}" NAME)
+  string(TOLOWER "${_phx_quda_cuda_host}" _phx_quda_cuda_host)
+  if(NOT IS_ABSOLUTE "${CMAKE_CUDA_HOST_COMPILER}" OR NOT _phx_quda_cuda_host STREQUAL "cl.exe"
+      OR NOT EXISTS "${CMAKE_CUDA_HOST_COMPILER}")
+    message(FATAL_ERROR "Windows QUDA requires an explicit absolute MSVC cl.exe CUDA host compiler")
+  endif()
+else()
+  find_program(PHX_PATCH_EXECUTABLE NAMES patch REQUIRED)
+endif()
+set(PHX_PATCH_EXECUTABLE "${PHX_PATCH_EXECUTABLE}" CACHE FILEPATH "Patch executable for pinned native sources")
+
 # Eigen remains an unconditional dependency: eigen_helper.h and the eigensolver
 # and generic BLAS sources instantiate it even with QUDA_USE_EIGEN=OFF. Keep the
 # source pin explicit and redistribute its MPL-2.0 notice with the companion.
@@ -48,9 +68,13 @@ FetchContent_Declare(phx_quda_source
   URL_HASH SHA256=3dabbec974f83a6daf8a2d55f38d45ff9561e636ddae4c1ad5c7c19424c70f0c
   DOWNLOAD_DIR "${PHX_CUDA_DOWNLOAD_DIR}"
   DOWNLOAD_NAME quda-ba501e4.tar.gz
-  PATCH_COMMAND patch -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-device-gauge-force.patch"
-    COMMAND patch -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-cmake-subproject.patch"
-    COMMAND patch -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-portable-warp-election.patch"
+  PATCH_COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-device-gauge-force.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-cmake-subproject.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-portable-warp-election.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-windows-portability.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-windows-compile.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-windows-complex.patch"
+    COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 --forward -i "${CMAKE_CURRENT_LIST_DIR}/../patches/quda-windows-constant-ownership.patch"
   SOURCE_SUBDIR phydrax-download-only)
 FetchContent_MakeAvailable(phx_quda_source)
 # An archive must not identify the enclosing Phydrax git tree.
@@ -58,6 +82,11 @@ set(CMAKE_DISABLE_FIND_PACKAGE_Git TRUE)
 set(GITVERSION ba501e4)
 add_subdirectory("${phx_quda_source_SOURCE_DIR}" "${phx_quda_source_BINARY_DIR}" EXCLUDE_FROM_ALL)
 set_target_properties(quda quda_cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+  set_target_properties(quda quda_cpp PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
+  target_compile_options(quda_cpp PRIVATE /EHsc /utf-8)
+  target_compile_options(quda PRIVATE $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-Xcompiler=/EHsc,/utf-8>)
+endif()
 # CUDA 13 vectorized gauge access uses the bundled NVIDIA trove headers.
 target_include_directories(quda SYSTEM PRIVATE "${phx_quda_source_SOURCE_DIR}/externals")
 set_target_properties(quda PROPERTIES CUDA_ARCHITECTURES "${_phx_quda_arches}"

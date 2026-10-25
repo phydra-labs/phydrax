@@ -26,6 +26,10 @@ from ...discretization.contact._ccd import (
     ContactSafetyEvidence,
     InclusionCCDPlan,
 )
+from ...discretization.contact._compiled_search import (
+    CompiledContactSearchPlan,
+    LBVHContactSearchPlan,
+)
 from ...discretization.contact._guarantee import ContactCapability, ContactGuaranteeLevel
 from ...discretization.contact._participant import ContactParticipantScene
 from ...discretization.contact._search import (
@@ -33,6 +37,7 @@ from ...discretization.contact._search import (
     DenseContactSearchPlan,
     SweepAndPruneContactSearchPlan,
 )
+from ...discretization.contact._stencils import ContactPrimitiveProfile
 from ...linalg import BlockSpace, DualSpace, GMRES
 from ...nonlinear._newton import NewtonKrylov
 from ...nonlinear._types import (
@@ -120,7 +125,12 @@ class MonolithicContactPlan(StrictModule, NonTrainableState):
     participants: tuple[AbstractImplicitContactParticipant, ...]
     contact_scene: ContactParticipantScene
     contact: PreparedConvergentContactPotential
-    search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan
+    search: (
+        DenseContactSearchPlan
+        | SweepAndPruneContactSearchPlan
+        | CompiledContactSearchPlan
+        | LBVHContactSearchPlan
+    )
     ccd: ContactCCDPlan
     geometry_owner_indices: tuple[int | None, ...] = eqx.field(static=True)
     fixed_geometry_states: tuple[PyTree[Array] | None, ...]
@@ -136,7 +146,12 @@ class MonolithicContactPlan(StrictModule, NonTrainableState):
         participants: Sequence[AbstractImplicitContactParticipant],
         contact_scene: ContactParticipantScene,
         contact: PreparedConvergentContactPotential,
-        search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan,
+        search: (
+            DenseContactSearchPlan
+            | SweepAndPruneContactSearchPlan
+            | CompiledContactSearchPlan
+            | LBVHContactSearchPlan
+        ),
         ccd: ContactCCDPlan,
         /,
         *,
@@ -195,6 +210,13 @@ class MonolithicContactPlan(StrictModule, NonTrainableState):
             raise ValueError("Contact potential must belong to this participant scene.")
         if search.activation_distance != contact.plan.activation_distance:
             raise ValueError("Search and barrier activation distances must agree.")
+        if (
+            isinstance(search, (CompiledContactSearchPlan, LBVHContactSearchPlan))
+            and search.scene_id != contact_scene.scene_id
+        ):
+            raise ValueError("Device contact search must be prepared for this scene.")
+        if search.primitive_profile != ContactPrimitiveProfile.MESH:
+            raise ValueError("Monolithic barrier contact uses the mesh route profile.")
         if friction is not None and friction.scene.scene_id != contact_scene.scene_id:
             raise ValueError("Friction must belong to this participant scene.")
         policy_ = ContactSolvePolicy() if policy is None else policy
@@ -378,16 +400,7 @@ def _nonlinear_envelope_limit(
 
     def enclosed(rate: Array) -> Array:
         lower, upper, successful = trajectory(zero, rate)
-        extent = jnp.maximum(
-            jnp.abs(lower - epoch.reference_positions),
-            jnp.abs(upper - epoch.reference_positions),
-        )
-        squared_radius = jnp.sum(extent * extent, axis=-1)
-        return (
-            successful
-            & jnp.all(jnp.isfinite(squared_radius))
-            & jnp.all(squared_radius <= epoch.envelope_radius**2)
-        )
+        return successful & epoch.covers(lower, upper)
 
     def bisect(_: None) -> Array:
         def body(index: int, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
@@ -1062,13 +1075,7 @@ def _solve(runtime: _ContactRuntime, args: Any, /) -> MonolithicContactResult:
             )
     trajectory = _ContactTrajectory(plan, previous.coordinates, direction)
     lower, upper, bounds_valid = trajectory(jnp.zeros_like(alpha), jnp.ones_like(alpha))
-    extent = jnp.maximum(
-        jnp.abs(lower - runtime.epoch.reference_positions),
-        jnp.abs(upper - runtime.epoch.reference_positions),
-    )
-    envelope_valid = bounds_valid & jnp.all(
-        jnp.sum(extent * extent, axis=-1) <= runtime.epoch.envelope_radius**2
-    )
+    envelope_valid = bounds_valid & runtime.epoch.covers(lower, upper)
     rejection = _rejection_bit(runtime.epoch.successful, ContactRejectionReason.SEARCH)
     rejection = rejection | _rejection_bit(
         root_result.successful & physical_converged, ContactRejectionReason.NONLINEAR

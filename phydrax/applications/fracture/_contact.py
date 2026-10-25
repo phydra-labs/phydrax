@@ -24,13 +24,13 @@ from ...discretization.contact import (
     ContactKinematicsEvidence,
     ContactPairPolicy,
     ContactParticipantScene,
-    ContactStencilBatch,
     DenseContactSearchPlan,
     evaluate_contact_kinematics,
     LinearContactParticipant,
     PreparedCollisionSurface,
     selection_collision_operator,
 )
+from ...discretization.contact._stencils import prepare_contact_stencil_batch
 from ...linalg import ArraySpace
 from ...typing import checked
 from ..contact import (
@@ -172,47 +172,39 @@ def _filtered_crack_epoch(
         route_segment[row] = segments[segment_index]
         route_node_ids[row] = point_index
         route_segment_ids[row] = segment_index
+    # Compact the selected rows in their canonical key order (the source batch
+    # is key-ordered) so route metadata stays row-aligned with the new batch.
+    rows = np.flatnonzero(selected)
+    order = np.concatenate((rows, np.flatnonzero(~selected)))[: batch.capacity]
+    kept = np.arange(batch.capacity) < rows.size
+    # Unselected rows may reference the opposite face's vertex address space.
     weights = np.zeros((batch.capacity,), dtype=nodal_weights.dtype)
-    weights[selected] = nodal_weights[indices[selected, 0]]
-    filtered_batch = ContactStencilBatch(
-        batch.kind,
-        batch.vertex_indices,
-        batch.left_feature_ids,
-        batch.right_feature_ids,
-        capacity=batch.capacity,
-        feature_indices=jnp.stack(
-            (batch.left_feature_indices, batch.right_feature_indices), axis=1
-        ),
+    weights[: rows.size] = nodal_weights[indices[rows, 0]]
+    layout = search.layouts(scene).edge_vertex
+    filtered_batch = prepare_contact_stencil_batch(
+        scene,
+        layout,
+        np.where(kept, np.asarray(batch.left_feature_indices)[order], 0),
+        np.where(kept, np.asarray(batch.right_feature_indices)[order], 0),
+        witness_slots=np.zeros((batch.capacity,), dtype=np.int64),
         weights=weights,
-        minimum_separation=batch.minimum_separation,
-        valid=selected,
-        actual_count=int(np.sum(selected)),
+        minimum_separation=np.asarray(batch.minimum_separation)[order],
+        valid=kept,
+        actual_count=rows.size,
         overflow_count=0,
-        route_keys=batch.route_keys,
+        dtype=reference_positions.dtype,
     )
-    epoch_id = canonical_fingerprint(
-        {
-            "kind": "sharp-crack-contact-candidate-epoch",
-            "scene": scene.scene_id,
-            "search": search.plan_id,
-            "batch": filtered_batch.batch_id,
-        }
+    epoch = eqx.tree_at(
+        lambda value: (value.edge_vertex, value.candidate_count),
+        source,
+        (filtered_batch, jnp.asarray(rows.size, dtype=jnp.int32)),
     )
-    epoch = ContactCandidateEpoch(
-        filtered_batch,
-        source.edge_edge,
-        source.face_vertex,
-        source.reference_positions,
-        source.envelope_radius,
-        jnp.asarray(np.sum(selected), dtype=jnp.int32),
-        jnp.asarray(np.sum(selected) * 96, dtype=jnp.int64),
-        source.elapsed_seconds,
-        source.status,
-        source.complete,
-        search.plan_id,
-        epoch_id,
+    return (
+        epoch,
+        np.where(kept[:, None], route_segment[order], 0).astype(np.int32),
+        np.where(kept, route_node_ids[order], -1),
+        np.where(kept, route_segment_ids[order], -1),
     )
-    return epoch, route_segment, route_node_ids, route_segment_ids
 
 
 class CrackFaceContactAdapter(StrictModule, NonTrainableState):
@@ -410,6 +402,8 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             & jnp.isfinite(normal_velocity)
             & jnp.all(jnp.isfinite(tangential_velocity), axis=-1)
         )
+        candidate = self.candidate_epoch.edge_vertex.valid & (self.route_node_ids >= 0)
+        failed = candidate & ~((norm > 0.0) & finite_per_route)
         valid = valid & finite_per_route
         oriented_batch = ContactKinematicsBatch(
             batch.vertex_indices,
@@ -418,6 +412,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             batch.left_feature_indices,
             batch.right_feature_indices,
             batch.route_keys,
+            batch.witness_slots,
             batch.left_participant_ids,
             batch.right_participant_ids,
             batch.left_body_ids,
@@ -427,6 +422,8 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             batch.left_patch_ids,
             batch.right_patch_ids,
             batch.coefficients,
+            point,
+            closest,
             normal,
             tangent_basis,
             batch.distance,
@@ -438,9 +435,11 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             batch.minimum_separation,
             batch.feature,
             batch.feature_margin,
+            failed,
             valid,
-            jnp.all((~batch.valid) | finite_per_route),
+            ~jnp.any(failed),
             batch.kind,
+            batch.catalogue_id,
             canonical_fingerprint(
                 {
                     "kind": "oriented-sharp-crack-kinematics-batch",
@@ -454,6 +453,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         successful = self.candidate_epoch.successful & finite
         evidence = ContactKinematicsEvidence(
             active,
+            jnp.sum(failed, dtype=jnp.int32),
             minimum_gap,
             canonical.evidence.minimum_feature_margin,
             finite,

@@ -10,11 +10,13 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 import phydrax.ein as ein
 
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
+from ...._dtype_names import real_precision_dtype_name
 from ...._strict import StrictModule
 from ....typing import PRNGKey
 from ..._contracts import (
@@ -94,7 +96,11 @@ _AttentionCore = MeasureAwareAttention
 
 
 class OperatorAttention(StrictModule):
-    """Quadrature-aware self/cross attention between function sample sets."""
+    """Quadrature-aware self/cross attention between function sample sets.
+
+    `dtype` selects the real floating dtype of every projection parameter, as in
+    `MeasureAwareAttention`; `None` keeps JAX's default floating dtype.
+    """
 
     core: _AttentionCore
     source_channels: int
@@ -113,6 +119,7 @@ class OperatorAttention(StrictModule):
         execution: AttentionExecution = "auto",
         block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.source_channels = int(source_channels)
@@ -132,6 +139,7 @@ class OperatorAttention(StrictModule):
             execution=execution,
             block_size=block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=dtype,
             key=key,
         )
 
@@ -154,7 +162,7 @@ class OperatorAttention(StrictModule):
         query_mask = query.mask_array(case_shape=query_cases).reshape(
             query_flat.shape[:2] + (1,)
         )
-        output = output * query_mask
+        output = output * query_mask.astype(output.dtype)
         return output.reshape(query_cases + query.sample_shape + (self.out_channels,))
 
     def __call__(
@@ -172,7 +180,11 @@ class OperatorAttention(StrictModule):
 
 
 class SliceAttention(StrictModule):
-    """Transolver-style learned physical slices with latent self-attention."""
+    """Transolver-style learned physical slices with latent self-attention.
+
+    `dtype` selects the real floating dtype of the slice assignment, attention
+    and projection parameters; `None` keeps JAX's default floating dtype.
+    """
 
     assignment: Linear
     attention: _AttentionCore
@@ -189,8 +201,11 @@ class SliceAttention(StrictModule):
         out_channels: int | None = None,
         num_heads: int = 4,
         head_dim: int = 16,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.channels = int(channels)
         self.out_channels = self.channels if out_channels is None else int(out_channels)
         self.num_slices = int(num_slices)
@@ -201,6 +216,7 @@ class SliceAttention(StrictModule):
             in_size=self.channels,
             out_size=self.num_slices,
             activation=None,
+            dtype=param_dtype,
             key=assignment_key,
         )
         self.attention = _AttentionCore(
@@ -209,12 +225,14 @@ class SliceAttention(StrictModule):
             out_channels=self.channels,
             num_heads=num_heads,
             head_dim=head_dim,
+            dtype=param_dtype,
             key=attention_key,
         )
         self.projection = Linear(
             in_size=self.channels,
             out_size=self.out_channels,
             activation=None,
+            dtype=param_dtype,
             key=projection_key,
         )
 
@@ -239,14 +257,15 @@ class SliceAttention(StrictModule):
         tokens = self.attention(
             tokens,
             tokens,
-            jnp.ones((flattened.shape[0], self.num_slices), dtype=jnp.float64),
+            jnp.ones((flattened.shape[0], self.num_slices), dtype=tokens.dtype),
         )
         slice_to_point = jnn.softmax(logits, axis=-1)
         decoded = ein.contract("bns,bsc->bnc", slice_to_point, tokens)
         output = self.projection(decoded)
-        output = output * samples.mask_array(case_shape=case_shape).reshape(
+        sample_mask = samples.mask_array(case_shape=case_shape).reshape(
             flattened.shape[:2] + (1,)
         )
+        output = output * sample_mask.astype(output.dtype)
         return output.reshape(case_shape + samples.sample_shape + (self.out_channels,))
 
     def _value_regularity(self) -> DerivativeRegularity | None:
@@ -264,7 +283,11 @@ class SliceAttention(StrictModule):
 
 
 class CodomainAttention(StrictModule):
-    """Self-attention over a variable set of physical fields at every sample."""
+    """Self-attention over a variable set of physical fields at every sample.
+
+    `dtype` selects the real floating dtype of every projection parameter, as in
+    `MeasureAwareAttention`; `None` keeps JAX's default floating dtype.
+    """
 
     core: _AttentionCore
     channels: int
@@ -277,6 +300,7 @@ class CodomainAttention(StrictModule):
         out_channels: int | None = None,
         num_heads: int = 4,
         head_dim: int = 16,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
@@ -287,6 +311,7 @@ class CodomainAttention(StrictModule):
             out_channels=self.out_channels,
             num_heads=num_heads,
             head_dim=head_dim,
+            dtype=dtype,
             key=key,
         )
 
@@ -325,7 +350,11 @@ class CodomainAttention(StrictModule):
 
 
 class AxialOperatorAttention(StrictModule):
-    """Factorized quadrature-aware attention along tensor-product axes."""
+    """Factorized quadrature-aware attention along tensor-product axes.
+
+    `dtype` selects the real floating dtype of every projection parameter, as in
+    `MeasureAwareAttention`; `None` keeps JAX's default floating dtype.
+    """
 
     core: _AttentionCore
     channels: int
@@ -336,6 +365,7 @@ class AxialOperatorAttention(StrictModule):
         channels: int,
         num_heads: int = 4,
         head_dim: int = 16,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
@@ -345,6 +375,7 @@ class AxialOperatorAttention(StrictModule):
             out_channels=self.channels,
             num_heads=num_heads,
             head_dim=head_dim,
+            dtype=dtype,
             key=key,
         )
 
@@ -365,7 +396,7 @@ class AxialOperatorAttention(StrictModule):
             leading = moved.shape[:-2]
             flattened = moved.reshape((-1, axis.size, self.channels))
             weights = (
-                jnp.ones((axis.size,), dtype=jnp.float64)
+                jnp.ones((axis.size,), dtype=flattened.dtype)
                 if axis.quadrature_weights is None
                 else axis.quadrature_weights
             )

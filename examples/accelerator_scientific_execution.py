@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any, get_args, Literal, TYPE_CHECKING, TypeAlias
+from collections.abc import Callable
+from typing import Any, get_args, Literal, NamedTuple, TYPE_CHECKING, TypeAlias
 
 
 if TYPE_CHECKING:
@@ -26,14 +27,22 @@ if TYPE_CHECKING:
 Accelerator: TypeAlias = Literal["oneapi", "tpu", "rocm10"]
 
 
-def poisson_steps(
-    *, device: Device, steps: int = 20
-) -> tuple[dict[str, float], tuple[Array, ...]]:
-    """Differentiate a normal domain-bound MLP twice in space and train it.
+class PoissonTraining(NamedTuple):
+    """Float32 PINN parameters, Adam state, and their pure residual/update."""
+
+    parameters: Any
+    state: Any
+    residual: Callable[[Any], Array]
+    objective: Callable[[Any], Array]
+    step: Callable[[Any, Any], tuple[Any, Any, Array, Any]]
+
+
+def poisson_training(*, device: Device) -> PoissonTraining:
+    """Prepare a normal domain-bound MLP Poisson PINN and its Adam update step.
 
     The key, domain bounds, collocation points, parameters, and optimizer state
-    are committed to `device`, so training, every compiled step, and every
-    returned array run on that one device without per-step transfers.
+    are committed to `device`, so every residual, objective, and update derived
+    from them runs on that one device without per-step transfers.
     """
     import equinox as eqx
     import jax
@@ -45,8 +54,6 @@ def poisson_steps(
     from phydrax.operators.differential import laplacian
     from phydrax.optim import adam
 
-    if steps < 1:
-        raise ValueError("steps must be positive")
     box = phx.domain.HyperRectangle(
         jax.device_put(np.zeros(2, np.float32), device),
         jax.device_put(np.ones(2, np.float32), device),
@@ -86,11 +93,31 @@ def poisson_steps(
     def objective(candidate: Any) -> jax.Array:
         return jnp.mean(residual(candidate) ** 2)
 
-    @eqx.filter_jit
     def step(current: Any, current_state: Any) -> tuple[Any, Any, jax.Array, Any]:
         value, gradient = eqx.filter_value_and_grad(objective)(current)
         updates, next_state = optimizer.update(gradient, current_state, current)
         return eqx.apply_updates(current, updates), next_state, value, gradient
+
+    return PoissonTraining(parameters, state, residual, objective, step)
+
+
+def poisson_steps(
+    *, device: Device, steps: int = 20
+) -> tuple[dict[str, float], tuple[Array, ...]]:
+    """Differentiate a normal domain-bound MLP twice in space and train it.
+
+    Training, every compiled step, and every returned array run on `device`,
+    where `poisson_training` commits the prepared PINN.
+    """
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    if steps < 1:
+        raise ValueError("steps must be positive")
+    parameters, state, residual, objective, update = poisson_training(device=device)
+    step = eqx.filter_jit(update)
 
     initial, initial_gradient = eqx.filter_value_and_grad(objective)(parameters)
     directional = jnp.sqrt(
@@ -174,7 +201,12 @@ def selected_device_record(
     import jax
     import numpy as np
 
-    from phydrax.backends import oneapi_environment, rocm_environment, tpu_environment
+    from phydrax.backends import (
+        frontend_index_patch_identity,
+        oneapi_environment,
+        rocm_environment,
+        tpu_environment,
+    )
 
     match accelerator:
         case "oneapi":
@@ -225,6 +257,7 @@ def selected_device_record(
         "execution_device_count": 1,
         "global_device_count": jax.device_count(runtime_platform),
         "local_device_count": jax.local_device_count(runtime_platform),
+        "frontend_index_patch": frontend_index_patch_identity(),
         "results_on_device": placed,
         "steps": steps,
         "values": values,

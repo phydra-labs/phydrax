@@ -5,23 +5,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.control as control_api
+
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
+from ..dynamics._plant import PlantRuntimeState
 from ._constraints import PathConstraint, TerminalConstraint
 from ._cost import RunningCost, TerminalCost
-
-
-if TYPE_CHECKING:
-    from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
-    from ._parameterization import AbstractControlParameterization
-    from ._trajectory import ControlResult, ControlTrajectory
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -37,9 +34,25 @@ def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
     return shape
 
 
+def _require_array_dynamics(
+    problem: ControlProblem,
+) -> control_api.DiscreteControlDynamics | control_api.DifferentialControlDynamics:
+    """Admit only dynamics whose full Markov state is the optimization array."""
+    dynamics = problem.dynamics
+    if not isinstance(
+        dynamics,
+        (control_api.DiscreteControlDynamics, control_api.DifferentialControlDynamics),
+    ):
+        raise ValueError(
+            "This solver requires array-system dynamics; a complete plant requires "
+            "a state-aware solver and cannot be reconstructed from its vector view."
+        )
+    return dynamics
+
+
 def _validate_trajectory_problem(
-    problem: ControlProblem, trajectory: ControlTrajectory, /
-) -> ControlTrajectory:
+    problem: ControlProblem, trajectory: control_api.ControlTrajectory, /
+) -> control_api.ControlTrajectory:
     if trajectory.problem_id != problem.problem_id:
         raise ValueError("trajectory problem_id does not match the ControlProblem.")
     if trajectory.dynamics_id != problem.dynamics.dynamics_id:
@@ -70,9 +83,13 @@ def _validate_trajectory_problem(
 class ControlProblem(StrictModule):
     """Finite-horizon control problem with explicit physical and case axes."""
 
-    dynamics: DiscreteControlDynamics | DifferentialControlDynamics
+    dynamics: (
+        control_api.DiscreteControlDynamics
+        | control_api.DifferentialControlDynamics
+        | control_api.PlantControlDynamics
+    )
     time_grid: TimeGrid
-    initial_state: Array
+    _initial_state: Array | PlantRuntimeState
     running_cost: RunningCost | None = eqx.field(static=True)
     terminal_cost: TerminalCost | None = eqx.field(static=True)
     path_constraints: tuple[PathConstraint, ...]
@@ -85,9 +102,11 @@ class ControlProblem(StrictModule):
 
     def __init__(
         self,
-        dynamics: DiscreteControlDynamics | DifferentialControlDynamics,
+        dynamics: control_api.DiscreteControlDynamics
+        | control_api.DifferentialControlDynamics
+        | control_api.PlantControlDynamics,
         time_grid: TimeGrid,
-        initial_state: ArrayLike,
+        initial_state: ArrayLike | PlantRuntimeState,
         /,
         *,
         running_cost: RunningCost | None = None,
@@ -98,33 +117,46 @@ class ControlProblem(StrictModule):
         problem_id: str,
     ) -> None:
         from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
+        from ._plant_dynamics import PlantControlDynamics
 
         if not isinstance(
-            dynamics, (DiscreteControlDynamics, DifferentialControlDynamics)
+            dynamics,
+            (DiscreteControlDynamics, DifferentialControlDynamics, PlantControlDynamics),
         ):
             raise TypeError(
-                "ControlProblem dynamics must be DiscreteControlDynamics or DifferentialControlDynamics."
+                "ControlProblem dynamics must be a discrete, differential, or complete-plant dynamics contract."
             )
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ControlProblem time_grid must be a TimeGrid.")
-        state = jnp.asarray(initial_state)
         state_shape = dynamics.state_shape
-        if state.ndim < len(state_shape) or (
-            state_shape and tuple(state.shape[-len(state_shape) :]) != state_shape
-        ):
-            raise ValueError(
-                f"ControlProblem initial_state must end with dynamics state_shape {state_shape}; got {state.shape}."
+        if isinstance(dynamics, PlantControlDynamics):
+            if not isinstance(initial_state, PlantRuntimeState):
+                raise TypeError(
+                    "Plant control requires a complete initial PlantRuntimeState."
+                )
+            state, case_shape = dynamics.validate_initial_state(initial_state)
+        else:
+            if isinstance(initial_state, PlantRuntimeState):
+                raise TypeError(
+                    "Array control dynamics cannot consume a complete plant state."
+                )
+            state = jnp.asarray(initial_state)
+            if state.ndim < len(state_shape) or (
+                state_shape and tuple(state.shape[-len(state_shape) :]) != state_shape
+            ):
+                raise ValueError(
+                    f"ControlProblem initial_state must end with dynamics state_shape {state_shape}; got {state.shape}."
+                )
+            case_shape = tuple(state.shape[: state.ndim - len(state_shape)])
+            if any(size <= 0 for size in case_shape):
+                raise ValueError("ControlProblem case dimensions must be positive.")
+            if not jnp.issubdtype(state.dtype, jnp.inexact):
+                state = state.astype(jnp.float64)
+            state = eqx.error_if(
+                state,
+                jnp.any(~jnp.isfinite(state)),
+                "ControlProblem initial_state must be finite.",
             )
-        case_shape = tuple(state.shape[: state.ndim - len(state_shape)])
-        if any(size <= 0 for size in case_shape):
-            raise ValueError("ControlProblem case dimensions must be positive.")
-        if not jnp.issubdtype(state.dtype, jnp.inexact):
-            state = state.astype("float64")
-        state = eqx.error_if(
-            state,
-            jnp.any(~jnp.isfinite(state)),
-            "ControlProblem initial_state must be finite.",
-        )
         if running_cost is not None and not callable(running_cost):
             raise TypeError("ControlProblem running_cost must be callable or None.")
         if terminal_cost is not None and not callable(terminal_cost):
@@ -138,7 +170,7 @@ class ControlProblem(StrictModule):
 
         self.dynamics = dynamics
         self.time_grid = time_grid
-        self.initial_state = state
+        self._initial_state = state
         self.running_cost = running_cost
         self.terminal_cost = terminal_cost
         self.path_constraints = path
@@ -149,13 +181,24 @@ class ControlProblem(StrictModule):
         self.control_shape = dynamics.control_shape
         self.problem_id = _identifier(problem_id, "ControlProblem problem_id")
 
+    @property
+    def initial_state(self) -> Array:
+        """Continuous controller view; complete plant state remains authoritative."""
+        from ._plant_dynamics import PlantControlDynamics
+
+        if isinstance(self._initial_state, PlantRuntimeState):
+            if not isinstance(self.dynamics, PlantControlDynamics):
+                raise RuntimeError("Complete initial state has incompatible dynamics.")
+            return self.dynamics.state_vector(self._initial_state)
+        return self._initial_state
+
     def rollout(
         self,
-        parameterization: AbstractControlParameterization,
+        parameterization: control_api.AbstractControlParameterization,
         coefficients: ArrayLike,
         /,
         **solver_options: Any,
-    ) -> ControlTrajectory:
+    ) -> control_api.ControlTrajectory:
         """Roll out one parameterized control without evaluating objective terms."""
         from ._parameterization import (
             _validate_parameterization_grid,
@@ -173,6 +216,20 @@ class ControlProblem(StrictModule):
         parameterization = _validate_parameterization_grid(
             parameterization, self.time_grid
         )
+        from ._plant_dynamics import PlantControlDynamics
+
+        if isinstance(self.dynamics, PlantControlDynamics):
+            if not isinstance(self._initial_state, PlantRuntimeState):
+                raise RuntimeError("Plant control lost its complete initial state.")
+            return self.dynamics.rollout(
+                self.time_grid,
+                self._initial_state,
+                parameterization,
+                coefficients,
+                args=self.args,
+                problem_id=self.problem_id,
+                **solver_options,
+            )
         return self.dynamics.rollout(
             self.time_grid,
             self.initial_state,
@@ -185,11 +242,11 @@ class ControlProblem(StrictModule):
 
     def evaluate(
         self,
-        parameterization: AbstractControlParameterization,
+        parameterization: control_api.AbstractControlParameterization,
         coefficients: ArrayLike,
         /,
         **solver_options: Any,
-    ) -> ControlResult:
+    ) -> control_api.ControlResult:
         """Roll out and separately evaluate sampled loss and sampled feasibility."""
         from ._constraints import evaluate_sampled_feasibility
         from ._cost import evaluate_sampled_cost

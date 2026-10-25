@@ -36,7 +36,7 @@ from phydrax._execution_collectives import (
 )
 from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 
 
 @pytest.fixture(autouse=True)

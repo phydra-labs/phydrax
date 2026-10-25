@@ -54,7 +54,7 @@ def _cuda_case(provider: TensorProvider) -> Iterator[SimpleNamespace]:
     from phydrax import config, tensor_network as tn
     from phydrax._cuda_native import CudaNativeUnavailableError, load_cuda_component
     from phydrax._execution_device import device_platform
-    from phydrax._jax_config import default_device
+    from phydrax.execution import default_device
 
     devices = tuple(
         device for device in jax.local_devices() if device_platform(device) == "cuda"

@@ -4,8 +4,13 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -16,6 +21,7 @@ from benchmarks._memory import (
     fitted_scaling_exponent,
     host_allocation_peak,
     MemoryGatePolicy,
+    process_peak_rss_bytes,
 )
 from benchmarks.memory_scaling import build_summary, compare_gate, compare_growth
 
@@ -85,6 +91,47 @@ def test_host_allocation_peak_observes_released_scratch() -> None:
 
     assert value == scratch_bytes // 8
     assert peak >= scratch_bytes
+
+
+def test_peak_rss_observation_does_not_initialize_a_backend(tmp_path: Path) -> None:
+    source = (
+        "import json\n"
+        "from phydrax import config\n"
+        "from benchmarks._memory import process_peak_rss_bytes\n"
+        "assert not config.snapshot().backends_initialized\n"
+        "peak=process_peak_rss_bytes()\n"
+        "assert not config.snapshot().backends_initialized\n"
+        "print(json.dumps({'peak':peak}))\n"
+    )
+    environment = dict(os.environ)
+    environment["PHYDRAX_ACCELERATOR"] = "cpu"
+    environment["JAX_PLATFORMS"] = "cpu"
+    # Keep every temporary/cache write inside the test's profile-local root.
+    environment.update(TMP=str(tmp_path), TEMP=str(tmp_path), TMPDIR=str(tmp_path))
+    completed = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["peak"] > 0
+
+
+def test_peak_rss_unavailability_refuses_instead_of_reporting_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax import _execution_sampling as sampling
+
+    def denied() -> ctypes.CDLL:
+        raise PermissionError("current-process observation denied")
+
+    monkeypatch.setattr(sampling, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(sampling, "_windows_system", denied)
+    with pytest.raises(RuntimeError, match="current-process observation denied"):
+        process_peak_rss_bytes()
 
 
 @pytest.mark.parametrize(

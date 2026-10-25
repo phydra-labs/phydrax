@@ -31,7 +31,7 @@ from ._barrier import (
     clamped_log_barrier_first_derivative,
     physical_barrier_scale,
 )
-from ._potential import PreparedConvergentContactPotential
+from ._potential import PreparedConvergentContactPotential, require_mesh_contact_routes
 
 
 def smooth_coulomb_potential(speed: ArrayLike, threshold: ArrayLike, /) -> Array:
@@ -190,6 +190,7 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         stiffness: ArrayLike | None = None,
         state_version: ArrayLike = 0,
     ) -> ContactFrictionState:
+        require_mesh_contact_routes(epoch)
         current = jnp.asarray(positions, dtype=self.contact.reference_positions.dtype)
         expected = (self.scene.vertex_count, self.scene.ambient_dimension)
         if current.shape != expected:

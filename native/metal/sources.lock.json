@@ -252,6 +252,27 @@
       "path": "patches/13-mlx-output-argument-separators.patch",
       "sha256": "9546277d0b81d3083dbbbc52adf38539e32ef977b5684c9c655a664735fdb5e6",
       "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/14-native-admission-and-xor.patch",
+      "sha256": "920b17d183827d9bbfd6d936904112544dcd077d00fa553bae50d5206b296335",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/15-optimized-program-inspection.patch",
+      "sha256": "7576c13b59443a5bdf88b4ea965c81cacc2d333cf747e8381dd8d09d381fa8a2",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/16-optimized-custom-call-namespace.patch",
+      "sha256": "7bc76b152615a4967d232e1bb6ef7a4ec8a09501875586b27f82c2fa11193822",
+      "strip": 1
     }
   ]
 }

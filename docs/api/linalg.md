@@ -159,6 +159,48 @@ remain certified; invalid Hermitian/nonfinite inputs return unbounded brackets.
 Normal-equation rounding can prevent tight small-singular-value bounds for very
 ill-conditioned matrices: consumers must retain and honor this evidence.
 
+## Verified block-forest rank certificates
+
+`phydrax.linalg` also proves full numerical row rank of a block-forest operator
+without forming it. A forest operator `J` has one column block of width `c` per
+vertex and, for every non-root vertex `w`, one incoming row block
+`A_w x_w + B_w x_parent(w)` (`B_w` absent for an anchored edge whose other end
+carries no columns). `BlockForestTopology(parent_vertices, row_counts,
+column_width=..., row_capacity=...)` validates the rooted forest on the host:
+parents are `-1` or another vertex, no cycles, `0 <= rows <= row_capacity <=
+column_width`, and every vertex with a parent has rows.
+`prepare_block_forest(topology, child_blocks, parent_blocks,
+workspace_bytes=...)` binds real float32-or-wider blocks of shape
+`(vertices, row_capacity, column_width)` after admitting the rounding model and
+the logical workspace; `refresh_block_forest` rebinds new numbers to the same
+topology, dtype and budgets and increments `numeric_version`.
+
+`certify_block_forest_rank(prepared, relative_cutoff=..., absolute_cutoff=0.0)`
+stores approximate local right inverses `Q_w` and the propagation coefficients
+`C_w = Q_w B_w` actually held in memory, which define the right-inverse
+candidate `x_root = 0`, `x_w = Q_w y_w - C_w x_parent(w)`. With verified bounds
+`a_w >= ||Q_w||`, `b_w >= ||C_w||`, `u_w >= ||A_w Q_w - I||` and
+`v_w >= ||B_w - A_w C_w||`, forest recurrences give `||R|| <= V` and
+`||J R - I|| <= eps`. If `eps < 1`, an exact right inverse of norm at most
+`V / (1 - eps)` exists, so `sigma_min(J) >= L = (1 - eps) / V`; a Schur
+row/column-sum test gives `sigma_max(J) <= U`. Full row rank under the strict
+rule `sigma > absolute + relative * sigma_max` is certified only when
+`L > absolute + relative * U`. Every scalar carries an outward rounding pad, and
+preparation refuses topologies whose operation counts exceed the pad model
+(`16 k eps <= 1/4`). Pointer doubling keeps device work `O(n log depth)`.
+
+`BlockForestRankStatus` reports the first failing stage: `INVALID_BLOCKS`,
+`LOCAL_BOUND_UNRESOLVED`, `GLOBAL_BOUND_OVERFLOW`, `RESIDUAL_NOT_CONTRACTIVE`,
+`THRESHOLD_NOT_SEPARATED`, else `CERTIFIED`. Every non-certified outcome is
+inconclusive: `rank_lower_bound` is `0` and the certificate never claims rank
+deficiency. `minimum_singular_value_lower_bound` is always a valid lower bound
+(`0` without a contractive right inverse) and `condition_upper_bound = U / L` is
+infinite when `L` is zero; neither is a computed singular value or condition
+number. Long chains, unequal component scales and large lever arms can make the
+bound pessimistic. The dense SVD (`require_exact_svd_rank`, `SVDRankEvidence`)
+is unchanged; rigid-constraint consumers select this certificate explicitly
+through `phydrax.discretization.RigidConstraintRankAudit("certified-forest")`.
+
 ## Hermitian matrix functions and isotropic spectral maps
 
 `hermitian_log`, `hermitian_exp`, `hermitian_sqrt`, and
@@ -4648,6 +4690,50 @@ authoritative eigensolver.
 ---
 
 ::: phydrax.linalg.svd.svd
+
+### Block-forest rank certificates
+
+::: phydrax.linalg.BlockForestTopology
+
+---
+
+::: phydrax.linalg.PreparedBlockForest
+
+---
+
+::: phydrax.linalg.prepare_block_forest
+
+---
+
+::: phydrax.linalg.refresh_block_forest
+
+---
+
+::: phydrax.linalg.certify_block_forest_rank
+
+---
+
+::: phydrax.linalg.BlockForestRankCertificate
+
+---
+
+::: phydrax.linalg.BlockForestRankStatus
+
+---
+
+::: phydrax.linalg.ForestVertexDim
+
+---
+
+::: phydrax.linalg.ForestRowDim
+
+---
+
+::: phydrax.linalg.ForestColumnDim
+
+---
+
+::: phydrax.linalg.ForestLevelDim
 
 ## Explicit-norm generalized-pencil pseudospectra
 

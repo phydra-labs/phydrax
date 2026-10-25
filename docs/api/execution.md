@@ -5,6 +5,11 @@ decomposition, physical placement, and host lifecycle. Numerical values remain
 ordinary JAX arrays. The default path remains local; distributed execution is
 enabled by an explicit runtime or execution group.
 
+`execution.default_device(device)` scopes placement of uncommitted computations
+on a live JAX device and restores the enclosing placement after exit or failure.
+A live device is execution state, not a serializable `RuntimeConfig` or
+`NumericsConfig` field. This scope does not move already committed arrays.
+
 ## Bootstrap before device initialization
 
 Launcher rank settings must exist before `import phydrax`. The lazy root consumes
@@ -199,8 +204,10 @@ Memory quantities are distinct measurements, never one number. A
 `MemoryMeasurement` records its method, its scope (`baseline` instantaneous or
 `peak` over a window), the source counter resolution, or an explicit
 `unavailable_reason`. `sample_host_memory` reports process RSS, the kernel RSS
-high-water counter, and host physical and available memory (Linux procfs; Darwin
-Mach). On Linux, RSS and high-water counters come from one `/proc/self/status`
+high-water counter, and host physical and available memory (Linux procfs, Darwin
+Mach, or Windows working-set and memory-status APIs). Windows observations retain
+their method and page resolution; failures are unavailable evidence, not zero.
+On Linux, RSS and high-water counters come from one `/proc/self/status`
 snapshot (`VmRSS` and `VmHWM`), so the reported current value cannot exceed that
 snapshot's high-water value. Both counters use approximate kernel accounting:
 `VmHWM` can fall below an earlier RSS observation after pages are freed, and it
@@ -211,6 +218,30 @@ device IDs are not treated as interchangeable across clients. The CPU provider
 exposes no allocator statistics, and the sample says so.
 `compiled_memory_estimate` returns XLA's buffer-assignment plan for a compiled
 executable, which is an estimate rather than a measurement.
+
+Local Windows file publication uses held directory handles, reparse-point
+refusal, owner/DACL checks, and native namespace synchronization on NTFS.
+Unsupported filesystems or failed synchronization do not produce a publication
+receipt. Successful flush requests are not hardware power-loss qualification.
+The separately named `POSIXArtifactRepository` remains POSIX-only and refuses
+Windows construction rather than weakening its security or durability contract.
+
+Regular-file `DurableCheckpointStore` generations use an exclusive sibling hard
+link, remove the staged name, and synchronize the directory before publishing
+the commit pointer. This requires hard-link support, not Linux
+`RENAME_NOREPLACE`; collisions cannot overwrite an immutable generation. POSIX
+resource-set publication retains ordinary directory-rename semantics rather
+than adding a rename-flags requirement: exclusive mode refuses a nonempty
+destination, but can replace an empty directory, including one introduced
+concurrently after admission. It does not promise atomic no-replace for that
+race. Atomic replacement of an existing resource set still requires supported
+directory exchange. These contracts do not constitute qualification of a
+particular network filesystem.
+
+Windows SQLite service admission uses the same descriptor-relative primitives
+and retains its ancestor-handle chain until the connection closes. Admission,
+connect, or schema failures release the chain; database restarts do not bypass
+path ownership or reparse checks.
 
 ```python
 with phx.execution.PhaseMemorySampler("assemble", interval_seconds=0.005) as s:

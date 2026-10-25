@@ -9,7 +9,7 @@ import pytest
 from phydrax import config
 from phydrax._cuda_native import load_cuda_component
 from phydrax._execution_device import device_platform
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 
 
 @pytest.fixture

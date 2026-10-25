@@ -109,14 +109,20 @@ def test_rigid_joint_laws_scenario_1() -> None:
         RigidJointPDServoPlan(
             # ty: ignore[invalid-argument-type]
             [30],
-            0.0,
             proportional_gain=-1.0,
             derivative_gain=0.0,
             effort_limit=1.0,
         )
     with pytest.raises(ValueError, match="strictly positive"):
         # ty: ignore[invalid-argument-type]
-        RigidJointEffortMotorPlan([30], 1.0, effort_limit=0.0)
+        RigidJointEffortMotorPlan([30], effort_limit=0.0)
+    with pytest.raises(ValueError, match="hinge-axial or prismatic-axial"):
+        RigidJointEffortMotorPlan(
+            # ty: ignore[invalid-argument-type]
+            [30],
+            effort_limit=1.0,
+            coordinate=RigidJointCoordinate.BALL_ORIENTATION,
+        )
 
     first = CompliantRigidJointLawPlan(
         # ty: ignore[invalid-argument-type]
@@ -231,10 +237,11 @@ def test_compliance_energy_gradient_and_equal_opposite_wrench() -> None:
 def test_rigid_joint_laws_scenario_2() -> None:
     _, reference, graph = _prepared_mechanism()
     # ty: ignore[invalid-argument-type]
-    motor = RigidJointEffortMotorPlan([30], 3.0, effort_limit=5.0).prepare(graph)
+    motor = RigidJointEffortMotorPlan([30], effort_limit=5.0).prepare(graph)
+    command = jnp.asarray([3.0])
     state = motor.initialize_state(reference)
     kinematics = _moved(reference, body=3, angle=0.4, angular_velocity=2.0)
-    evaluation = motor.evaluate(kinematics, state)
+    evaluation = motor.evaluate(kinematics, command, state)
     mechanical_power = jnp.sum(
         evaluation.load.force * kinematics.velocity
         + evaluation.load.torque * kinematics.angular_velocity
@@ -247,9 +254,9 @@ def test_rigid_joint_laws_scenario_2() -> None:
     assert jnp.allclose(evaluation.actuator_source_power, 6.0, atol=1.0e-6)
     assert jnp.allclose(mechanical_power, evaluation.actuator_source_power, atol=1.0e-6)
 
-    near_branch = motor.evaluate(_moved(reference, body=3, angle=3.0), state)
+    near_branch = motor.evaluate(_moved(reference, body=3, angle=3.0), command, state)
     crossed = motor.evaluate(
-        _moved(reference, body=3, angle=3.2), near_branch.accepted_state
+        _moved(reference, body=3, angle=3.2), command, near_branch.accepted_state
     )
     assert jnp.allclose(
         # ty: ignore[unresolved-attribute]
@@ -270,21 +277,22 @@ def test_rigid_joint_laws_scenario_2() -> None:
         near_branch.accepted_state.unwrapped_coordinate,
     )
 
-    compiled = eqx.filter_jit(motor.evaluate)(kinematics, state)
+    compiled = eqx.filter_jit(motor.evaluate)(kinematics, command, state)
     assert jnp.allclose(compiled.load.torque, evaluation.load.torque)
     assert compiled.evidence.valid
     _, reference, graph = _prepared_mechanism()
     servo = RigidJointPDServoPlan(
         # ty: ignore[invalid-argument-type]
         [30],
-        1.0,
         proportional_gain=10.0,
         derivative_gain=0.0,
         effort_limit=2.0,
     ).prepare(graph)
     state = servo.initialize_state(reference)
     kinematics = _moved(reference, body=3, angular_velocity=0.5)
-    evaluation = servo.evaluate(kinematics, state)
+    evaluation = servo.evaluate(
+        kinematics, jnp.asarray([1.0]), jnp.asarray([0.0]), state
+    )
 
     assert jnp.allclose(evaluation.effort, jnp.asarray([[2.0]]))
     assert evaluation.saturated[0, 0]
@@ -293,9 +301,12 @@ def test_rigid_joint_laws_scenario_2() -> None:
     assert evaluation.evidence.valid
     _, reference, graph = _prepared_mechanism()
     # ty: ignore[invalid-argument-type]
-    motor = RigidJointEffortMotorPlan([30], 1.0, effort_limit=2.0).prepare(graph)
+    motor = RigidJointEffortMotorPlan([30], effort_limit=2.0).prepare(graph)
     motor_state = motor.initialize_state(reference)
-    chart_failure = motor.evaluate(_moved(reference, body=3, angle=jnp.pi), motor_state)
+    unit_command = jnp.asarray([1.0])
+    chart_failure = motor.evaluate(
+        _moved(reference, body=3, angle=jnp.pi), unit_command, motor_state
+    )
 
     assert chart_failure.chart_margin[0] <= motor.plan.chart_tolerance
     assert not chart_failure.evidence.chart_valid
@@ -315,7 +326,7 @@ def test_rigid_joint_laws_scenario_2() -> None:
         reference.orientation,
         reference.angular_velocity.at[3, 2].set(jnp.nan),
     )
-    actuator_failure = motor.evaluate(nonfinite_actuator, motor_state)
+    actuator_failure = motor.evaluate(nonfinite_actuator, unit_command, motor_state)
     assert not actuator_failure.evidence.finite
     assert jnp.array_equal(
         # ty: ignore[unresolved-attribute]
@@ -341,3 +352,83 @@ def test_rigid_joint_laws_scenario_2() -> None:
     assert not failure.evidence.finite
     assert not failure.evidence.valid
     assert not failure.successful
+
+
+def _prepared_slider() -> Any:
+    body_ids = jnp.asarray([200, 201], dtype=jnp.int64)
+    particles = phx.discretization.ParticleSetPlan(
+        body_ids, jnp.asarray([3.0, 2.0]), ambient_dimension=3
+    ).prepare()
+    bodies = phx.discretization.RigidBodySetPlan(
+        jnp.zeros((2,), dtype=jnp.int32),
+        jnp.stack((jnp.eye(3), jnp.eye(3))),
+        fixed_mask=jnp.asarray([True, False]),
+    ).prepare(particles)
+    position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    reference = bodies.kinematics(
+        position,
+        jnp.zeros_like(position),
+        jnp.asarray([[1.0, 0.0, 0.0, 0.0]] * 2),
+        jnp.zeros_like(position),
+    )
+    graph = phx.discretization.RigidJointGraphPlan(
+        prismatic=phx.discretization.PrismaticJointSetPlan(
+            jnp.asarray([40]),
+            body_ids[:1],
+            body_ids[1:],
+            jnp.asarray([[1.0, 0.0, 0.0]]),
+            jnp.asarray([[1.0, 0.0, 0.0]]),
+        )
+    ).prepare(bodies, reference)
+    return reference, graph
+
+
+def test_prismatic_axial_motor_applies_equal_opposite_axial_force() -> None:
+    reference, graph = _prepared_slider()
+    motor = RigidJointEffortMotorPlan(
+        # ty: ignore[invalid-argument-type]
+        [40],
+        effort_limit=4.0,
+        coordinate=RigidJointCoordinate.PRISMATIC_AXIAL,
+    ).prepare(graph)
+    displaced = phx.discretization.RigidBodyKinematics(
+        reference.position.at[1, 0].add(0.25),
+        reference.velocity.at[1, 0].set(-0.5),
+        reference.orientation,
+        reference.angular_velocity,
+    )
+    evaluation = motor.evaluate(displaced, jnp.asarray([6.0]))
+
+    assert motor.initialize_state(reference) is None
+    assert jnp.allclose(evaluation.coordinate, jnp.asarray([[0.25]]))
+    assert jnp.allclose(evaluation.rate, jnp.asarray([[-0.5]]))
+    assert jnp.allclose(evaluation.effort, jnp.asarray([[4.0]]))
+    assert evaluation.saturated[0, 0]
+    assert jnp.allclose(evaluation.load.force[1], jnp.asarray([4.0, 0.0, 0.0]))
+    assert jnp.allclose(evaluation.load.force[0], jnp.asarray([-4.0, 0.0, 0.0]))
+    assert jnp.allclose(evaluation.actuator_source_power, -2.0)
+    assert evaluation.evidence.valid
+
+
+def test_prismatic_axial_servo_tracks_runtime_targets() -> None:
+    reference, graph = _prepared_slider()
+    servo = RigidJointPDServoPlan(
+        # ty: ignore[invalid-argument-type]
+        [40],
+        proportional_gain=10.0,
+        derivative_gain=2.0,
+        effort_limit=100.0,
+        coordinate=RigidJointCoordinate.PRISMATIC_AXIAL,
+    ).prepare(graph)
+    moving = phx.discretization.RigidBodyKinematics(
+        reference.position.at[1, 0].add(0.1),
+        reference.velocity.at[1, 0].set(0.3),
+        reference.orientation,
+        reference.angular_velocity,
+    )
+    first = servo.evaluate(moving, jnp.asarray([0.5]), jnp.asarray([0.0]))
+    second = servo.evaluate(moving, jnp.asarray([-0.5]), jnp.asarray([0.3]))
+
+    assert jnp.allclose(first.effort, jnp.asarray([[10.0 * 0.4 - 2.0 * 0.3]]))
+    assert jnp.allclose(second.effort, jnp.asarray([[10.0 * -0.6]]))
+    assert first.evidence.valid and second.evidence.valid

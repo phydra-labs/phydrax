@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from functools import partial
+from functools import cache, partial
 from typing import assert_never
 
 import jax
@@ -34,6 +34,7 @@ def _erfc_shape(value: ShapedArray) -> ShapedArray:
 mlir.register_lowering(_erfc, mlir.lower_fun(jax.lax.erfc, multiple_results=False))
 
 
+@cache
 def _register_erfc_lowering() -> None:
     from jax._src.lib.mlir import ir
     from jax._src.lib.triton import dialect
@@ -46,9 +47,6 @@ def _register_erfc_lowering() -> None:
         return dialect.extern_elementwise(
             value.type, [value], libname="libdevice", libpath="", symbol=symbol, pure=True
         )
-
-
-_register_erfc_lowering()
 
 
 def _pair_value(
@@ -154,8 +152,14 @@ def pallas_leaf_pair_fragment(
     cutoff: float | None,
     interpret: bool,
 ) -> KeyGroupAccumulation:
+    # The Triton load/store wrappers bind these same generic Pallas primitives.
+    # Import their owner directly so explicit interpretation needs no dialect.
+    from jax._src.pallas import primitives as pallas_primitives
     from jax.experimental import pallas as pl
-    from jax.experimental.pallas import triton as plt
+
+    # Native libdevice registration belongs only to admitted compiled execution.
+    if not interpret:
+        _register_erfc_lowering()
 
     source_positions, strengths, source_mask, source_ids = sources
     receiver_positions, receiver_mask, receiver_ids = receivers
@@ -184,24 +188,27 @@ def pallas_leaf_pair_fragment(
         targets = jnp.arange(target_width, dtype=jnp.int32)
         channels = jnp.arange(4, dtype=jnp.int32)
         coords = jnp.minimum(channels, 2)
-        target_position = plt.load(
+        target_position = pallas_primitives.load(
             targets_ref.at[slot, targets[:, None], coords[None, :]],
+            None,
             mask=targets[:, None] < leaf_size,
             other=0.0,
         )
-        target_mask = plt.load(
-            target_mask_ref.at[slot, targets], mask=targets < leaf_size, other=False
+        target_mask = pallas_primitives.load(
+            target_mask_ref.at[slot, targets], None, mask=targets < leaf_size, other=False
         )
-        target_ids = plt.load(
-            target_ids_ref.at[slot, targets], mask=targets < leaf_size, other=0
+        target_ids = pallas_primitives.load(
+            target_ids_ref.at[slot, targets], None, mask=targets < leaf_size, other=0
         )
-        initial_high = plt.load(
+        initial_high = pallas_primitives.load(
             high_ref.at[slot, targets[:, None], channels[None, :]],
+            None,
             mask=targets[:, None] < leaf_size,
             other=0.0,
         )
-        initial_correction = plt.load(
+        initial_correction = pallas_primitives.load(
             correction_ref.at[slot, targets[:, None], channels[None, :]],
+            None,
             mask=targets[:, None] < leaf_size,
             other=0.0,
         )
@@ -254,13 +261,15 @@ def pallas_leaf_pair_fragment(
         )
         if mode == "fast":
             high = jnp.where(high != 0, initial_high + high, initial_high)
-        plt.store(
+        pallas_primitives.store(
             output_high_ref.at[slot, targets[:, None], channels[None, :]],
+            None,
             high,
             mask=targets[:, None] < leaf_size,
         )
-        plt.store(
+        pallas_primitives.store(
             output_correction_ref.at[slot, targets[:, None], channels[None, :]],
+            None,
             correction,
             mask=targets[:, None] < leaf_size,
         )

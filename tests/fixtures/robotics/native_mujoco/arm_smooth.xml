@@ -1,0 +1,35 @@
+<mujoco model="native-arm-smooth">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="false"/>
+  <option timestep="0.002" integrator="Euler" gravity="0 0 -9.81">
+    <flag eulerdamp="disable" contact="disable"/>
+  </option>
+  <worldbody>
+    <body name="base" pos="0 0 0.5">
+      <inertial pos="0 0 0" mass="4" diaginertia="0.05 0.05 0.05"/>
+      <site name="base_site" pos="0.1 0 0"/>
+      <body name="upper" pos="0 0 0.1" quat="0.9238795325112867 0 0 0.3826834323650898">
+        <joint name="shoulder" type="hinge" axis="0 1 0" pos="0 0 0" ref="0.3" damping="0.2"/>
+        <inertial pos="0.15 0 0" quat="0.9659258262890683 0.25881904510252074 0 0" mass="1.5" diaginertia="0.002 0.012 0.011"/>
+        <site name="elbow_site" pos="0.3 0 0"/>
+        <body name="fore" pos="0.3 0 0">
+          <joint name="slider" type="slide" axis="1 0 0" damping="0.5"/>
+          <inertial pos="0.1 0.01 0" mass="0.8" diaginertia="0.001 0.004 0.0045"/>
+          <body name="tool" pos="0.2 0 0" quat="0.7071067811865476 0 0.7071067811865476 0">
+            <inertial pos="0 0 0.02" mass="0.2" diaginertia="0.0001 0.0001 0.00005"/>
+            <site name="tip" pos="0 0 0.05"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="shoulder_motor" joint="shoulder" gear="2.5" ctrlrange="-1 1" forcerange="-0.8 0.8"/>
+    <motor name="slider_motor" joint="slider" gear="-1.5" ctrlrange="-2 3"/>
+  </actuator>
+  <sensor>
+    <jointpos name="shoulder_q" joint="shoulder"/>
+    <jointvel name="slider_v" joint="slider"/>
+    <framepos name="tip_pos" objtype="site" objname="tip"/>
+    <clock name="clock"/>
+  </sensor>
+</mujoco>

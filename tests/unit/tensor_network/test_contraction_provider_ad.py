@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 import phydrax as phx
 from phydrax import config
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 from phydrax.tensor_network import PreparedContraction
 
 

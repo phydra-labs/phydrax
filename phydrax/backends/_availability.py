@@ -123,17 +123,27 @@ def _native_module_specification(module: str, /) -> ModuleSpec | None:
     return specification
 
 
-def module_native_libraries(module: str, /, pattern: str = "*.so") -> tuple[str, ...]:
+def module_native_libraries(
+    module: str, /, pattern: str | None = None
+) -> tuple[str, ...]:
     """Locate native provider objects without importing the provider package."""
     specification = _native_module_specification(module)
     if specification is None:
         return ()
+    patterns = (
+        (pattern,)
+        if pattern is not None
+        else ("*.pyd", "*.dll")
+        if sys.platform == "win32"
+        else ("*.so",)
+    )
     if specification.submodule_search_locations is not None:
         return tuple(
             sorted(
                 str(path)
                 for directory in specification.submodule_search_locations
-                for path in Path(directory).glob(pattern)
+                for selected in patterns
+                for path in Path(directory).glob(selected)
                 if path.is_file()
             )
         )

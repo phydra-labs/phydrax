@@ -1220,6 +1220,12 @@ order-ablation studies, not an alias for the stable `FNO` architecture.
 `BasisSpectralConvND` provides quadrature-projected Fourier, sine, cosine, and
 Legendre policies for nonperiodic or nonuniform tensor axes.
 
+`SpectralConvND(..., dtype=...)` builds its dense or factorized spectral weights
+in the complex companion of one real floating dtype (`complex64` for
+`float32`), and its `maximum_parameter_bytes` check counts that storage; `None`
+keeps the default weights and the default 16-byte complex accounting. `FNO`
+and other spectral architectures do not forward a construction dtype.
+
 Periodic grid reconstruction is shared across spectral architectures and public
 array-level evaluation. `phydrax.signal.fourier_resample` transfers explicit
 spatial axes to aligned or period-shifted uniform grids.
@@ -2328,16 +2334,54 @@ forces source-blockwise `"auto"` execution, including for float32.
 `execution="blockwise"` selects this tiled route regardless of dtype, deriving
 the tile from the budget when `block_size=None`; a full-fit tile is still direct
 dense. `execution="dense"` ignores the budget and tile selection. Explicit
-`"xla"` and `"cudnn"` retain their fused-provider contracts and also ignore tile
-selection. Non-softmax kernels accept only `"auto"` or `"dense"`. Budgets must
-be positive integers, even when the selected route does not consult the budget.
+`"xla"` and `"cudnn"` retain their fused-provider primal contracts and also ignore
+tile selection for the primal. Non-softmax kernels accept only `"auto"` or
+`"dense"`. Budgets must be positive integers, even when the selected route does
+not consult the budget.
 
 Blockwise execution preserves physical measure normalization and zero outputs
-for fully masked sources, with fixed block order and reverse-mode differentiation
-support. The stored workspace budget and optional tile are module execution
-policy: they intentionally change model identity and persistence structure.
+for fully masked sources, with fixed block order and finite derivatives of every
+order, including rows without physical support. The dense softmax differentiates
+through its max shift instead of a softmax custom JVP, so saturated attention
+keeps accurate higher derivatives in float32. Fused XLA execution (`"xla"`, and
+`"auto"` when it selects XLA) keeps the fused primal and takes its derivatives of
+every order from this blockwise reference route, tiled by `block_size` or the
+workspace budget (direct dense when one tile covers every source). The upstream
+XLA attention derivative lost `4e-3` to `5e-2` relative accuracy in measured
+saturated float32 second derivatives. `"cudnn"` keeps its provider derivatives. The
+stored workspace budget and optional tile are module execution policy: they
+intentionally change model identity and persistence structure.
 Operator-attention layers and latent-token architecture attention tile defaults
 also use `None`, so they inherit the budget-derived behavior.
+
+`MeasureAwareAttention`, the operator-attention layers (`OperatorAttention`,
+`SliceAttention`, `CodomainAttention`, `AxialOperatorAttention`),
+`LatentTokenBlock`, `LatentTokenProcessor`, `UPT`, `ABUPT`, `Transolver`,
+`GNOT`, `InContextOperator`, `CoDABlock`, `CoDANO` and `SpectralConvND` accept a
+keyword-only construction `dtype` (default `None`), following `Linear` and
+`MLP`. It selects the real floating dtype of every learned parameter:
+projections, learned tokens and embeddings, normalization weights,
+feed-forward and MLP layers, and the complex companion (`complex64` for
+`float32`) of spectral weights. Invalid dtypes are refused before any key use;
+`None` keeps the default initialization and values. It is a construction
+choice, not an input cast, and stays separate from `accumulation_dtype`.
+`CoDANO` also builds its model-owned latent grid geometry in the selected
+dtype.
+
+Sample geometry has its own explicit precision. `OperatorAxis(..., dtype=...)`,
+`FunctionSamples(..., dtype=...)` and `TensorGridLatentGeometry(..., dtype=...)`
+(default `None`) store nodes, coordinates, quadrature weights, bounds and every
+derived quadrature, coordinate grid and latent axis in one real floating dtype.
+`None` keeps canonical float64 geometry; tensor-grid `FunctionSamples` instead
+inherit their axes' precision and refuse mixed or mismatched axes. An explicit
+`FunctionSamples` dtype requires axes or coordinates, and sample values are
+always stored as given. `FunctionSamples.geometry_dtype` reports the selected
+precision, and padding, slicing, stacking, value replacement, normalization,
+sharding, sampling and coreset selection preserve it. Case bounding boxes
+promote a float32 latent grid with float64 source coordinates rather than
+downcasting them. With x64 enabled, a `dtype=jnp.float32` model evaluated on
+float32 values and `dtype=jnp.float32` samples traces forward passes,
+derivatives, gradients and Adam updates with no float64 value.
 
 `UPT` compresses one source function to a fixed learned token set and decodes an
 independent query set. `ABUPT` extends that pattern to an `OperatorBranchGraph`

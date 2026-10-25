@@ -353,6 +353,184 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
         return bool(allowed.size and np.any(np.all(allowed == pair, axis=1)))
 
 
+class ContactFeatureCatalogue(StrictModule, NonTrainableState):
+    """Prepared typed feature catalogue binding device ranks to scientific IDs.
+
+    Every scene feature is identified by the typed triple ``(participant ID,
+    CollisionFeatureKind, original feature ID)``. Canonical ranks are the
+    lexicographic order of those triples, so they do not depend on surface,
+    participant, vertex, or primitive source ordering. A rank is an execution
+    address whose meaning is defined only together with ``catalogue_id``;
+    original IDs are retained unchanged and are never narrowed or hashed.
+    """
+
+    participant_ids: Array
+    feature_kinds: Array
+    feature_ids: Array
+    canonical_ranks: Array
+    scene_features: Array
+    feature_count: int = eqx.field(static=True)
+    catalogue_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        participant_ids: ArrayLike,
+        feature_kinds: ArrayLike,
+        feature_ids: ArrayLike,
+        /,
+    ) -> None:
+        participants = np.asarray(participant_ids)
+        kinds = np.asarray(feature_kinds)
+        identifiers = np.asarray(feature_ids)
+        if (
+            identifiers.ndim != 1
+            or identifiers.size == 0
+            or participants.shape != identifiers.shape
+            or kinds.shape != identifiers.shape
+        ):
+            raise ValueError(
+                "Catalogue participant, kind, and feature IDs must be matching "
+                "nonempty vectors."
+            )
+        if not (
+            np.issubdtype(participants.dtype, np.integer)
+            and np.issubdtype(kinds.dtype, np.integer)
+            and np.issubdtype(identifiers.dtype, np.integer)
+        ):
+            raise TypeError("Catalogue identities must contain integers.")
+        participants = participants.astype(np.int64, copy=False)
+        kinds = kinds.astype(np.int64, copy=False)
+        identifiers = identifiers.astype(np.int64, copy=False)
+        if np.any(participants < 0) or np.any(identifiers < 0):
+            raise ValueError("Catalogue participant and feature IDs must be nonnegative.")
+        known_kinds = np.asarray([int(kind) for kind in CollisionFeatureKind])
+        if np.any(~np.isin(kinds, known_kinds)):
+            raise ValueError("Catalogue feature kinds must be CollisionFeatureKind.")
+        count = identifiers.size
+        if count > np.iinfo(np.int32).max:
+            raise ValueError("Catalogue feature count exceeds int32 execution ranks.")
+        order = np.lexsort((identifiers, kinds, participants))
+        triples = np.stack(
+            (participants[order], kinds[order], identifiers[order]), axis=1
+        )
+        if count > 1 and np.any(np.all(triples[1:] == triples[:-1], axis=1)):
+            raise ValueError(
+                "Catalogue (participant, kind, feature ID) identities must be unique."
+            )
+        ranks = np.empty((count,), dtype=np.int32)
+        ranks[order] = np.arange(count, dtype=np.int32)
+        self.participant_ids = jnp.asarray(participants, dtype=jnp.int64)
+        self.feature_kinds = jnp.asarray(kinds, dtype=jnp.int32)
+        self.feature_ids = jnp.asarray(identifiers, dtype=jnp.int64)
+        self.canonical_ranks = jnp.asarray(ranks, dtype=jnp.int32)
+        self.scene_features = jnp.asarray(order, dtype=jnp.int32)
+        self.feature_count = count
+        self.catalogue_id = canonical_fingerprint(
+            {
+                "kind": "contact-feature-catalogue",
+                "identities": array_tree_fingerprint(triples),
+            }
+        )
+
+    def ranks(
+        self, scene_features: ArrayLike, /, *, valid: ArrayLike
+    ) -> tuple[Array, Array]:
+        """Canonical ranks of scene feature indices (device gather).
+
+        ``valid`` marks rows that claim a scientific address; padded rows are
+        ignored. Returns ``(ranks, resolved)``: ``resolved`` is ``valid`` and
+        in range, and unresolved rows get rank ``-1`` — an out-of-range claimed
+        address is never substituted by another feature's identity.
+        """
+        indices = jnp.asarray(scene_features, dtype=jnp.int32)
+        claimed = jnp.asarray(valid, dtype=jnp.bool_)
+        resolved = claimed & (indices >= 0) & (indices < self.feature_count)
+        gathered = self.canonical_ranks[jnp.clip(indices, 0, self.feature_count - 1)]
+        return jnp.where(resolved, gathered, -1), resolved
+
+    def identities(
+        self, ranks: ArrayLike, /, *, valid: ArrayLike
+    ) -> tuple[Array, Array, Array, Array]:
+        """Return ``(participant, kind, original ID, resolved)`` for ranks.
+
+        Rows not ``valid`` or out of range are unresolved and report ``-1``
+        identities instead of a clipped neighbour's identity.
+        """
+        values = jnp.asarray(ranks, dtype=jnp.int32)
+        claimed = jnp.asarray(valid, dtype=jnp.bool_)
+        resolved = claimed & (values >= 0) & (values < self.feature_count)
+        scene = self.scene_features[jnp.clip(values, 0, self.feature_count - 1)]
+        return (
+            jnp.where(resolved, self.participant_ids[scene], -1),
+            jnp.where(resolved, self.feature_kinds[scene], -1),
+            jnp.where(resolved, self.feature_ids[scene], -1),
+            resolved,
+        )
+
+
+def contact_routing_identity(
+    catalogue: ContactFeatureCatalogue,
+    pair_policies: Sequence[ContactPairPolicy],
+    static_mask: np.ndarray,
+    /,
+) -> str:
+    """Static identity of everything that decides route legality.
+
+    Binds the feature catalogue, every surface's reciprocal participant-pair
+    policy and local exclusions (in scene order), and the static-feature mask.
+    A same-sized scene with a changed pair policy therefore never reuses
+    coverage computed under another routing policy.
+    """
+    return canonical_fingerprint(
+        {
+            "kind": "contact-routing-policy",
+            "catalogue": catalogue.catalogue_id,
+            "pair_policies": [policy.policy_id for policy in pair_policies],
+            "static_mask": array_tree_fingerprint(
+                np.asarray(static_mask, dtype=np.bool_)
+            ),
+        }
+    )
+
+
+def scene_feature_catalogue(
+    surface_policies: Sequence[CollisionFeaturePolicy],
+    analytic_policies: Sequence[CollisionFeaturePolicy],
+    /,
+) -> ContactFeatureCatalogue:
+    """Catalogue scene features in scene-index order.
+
+    Scene feature indices concatenate all surface vertices, then all edges, then
+    all faces in surface order, followed by one analytic feature per analytic
+    geometry. The returned catalogue is independent of that source order.
+    """
+    columns: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for slice_name in ("vertex_slice", "edge_slice", "face_slice"):
+        for policy in surface_policies:
+            selected = getattr(policy, slice_name)
+            columns.append(
+                (
+                    np.asarray(policy.participant_ids)[selected],
+                    np.asarray(policy.feature_kinds)[selected],
+                    np.asarray(policy.feature_ids)[selected],
+                )
+            )
+    for policy in analytic_policies:
+        selected = policy.analytic_slice
+        columns.append(
+            (
+                np.asarray(policy.participant_ids)[selected],
+                np.asarray(policy.feature_kinds)[selected],
+                np.asarray(policy.feature_ids)[selected],
+            )
+        )
+    return ContactFeatureCatalogue(
+        np.concatenate(tuple(column[0] for column in columns)),
+        np.concatenate(tuple(column[1] for column in columns)),
+        np.concatenate(tuple(column[2] for column in columns)),
+    )
+
+
 def _surface_feature_values(
     vertex_values: np.ndarray,
     edges: np.ndarray,
@@ -975,10 +1153,12 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
     """Several collision surfaces sharing one mechanics state space."""
 
     surfaces: tuple[PreparedCollisionSurface, ...]
+    feature_catalogue: ContactFeatureCatalogue
     vertex_offsets: tuple[int, ...] = eqx.field(static=True)
     edge_offsets: tuple[int, ...] = eqx.field(static=True)
     face_offsets: tuple[int, ...] = eqx.field(static=True)
     scene_id: str = eqx.field(static=True)
+    routing_id: str = eqx.field(static=True)
 
     def __init__(self, surfaces: Sequence[PreparedCollisionSurface], /) -> None:
         values = tuple(surfaces)
@@ -1042,11 +1222,19 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
         self.vertex_offsets = tuple(vertex_offsets)
         self.edge_offsets = tuple(edge_offsets)
         self.face_offsets = tuple(face_offsets)
+        self.feature_catalogue = scene_feature_catalogue(
+            tuple(value.plan.feature_policy for value in values), ()
+        )
         self.scene_id = canonical_fingerprint(
             {
                 "kind": "prepared-collision-scene",
                 "surfaces": [value.prepared_id for value in values],
             }
+        )
+        self.routing_id = contact_routing_identity(
+            self.feature_catalogue,
+            tuple(value.plan.pair_policy for value in values),
+            np.asarray(self.feature_static_mask),
         )
 
     @property
@@ -1068,6 +1256,14 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
     @property
     def face_count(self) -> int:
         return self.face_offsets[-1]
+
+    @property
+    def plane_count(self) -> int:
+        return 0
+
+    @property
+    def feature_count(self) -> int:
+        return self.feature_catalogue.feature_count
 
     @property
     def edges(self) -> Array:
@@ -1360,10 +1556,13 @@ __all__ = [
     "CollisionFeaturePolicy",
     "CollisionMapEvidence",
     "CollisionSurfacePlan",
+    "ContactFeatureCatalogue",
     "ContactPairPolicy",
+    "contact_routing_identity",
     "PreparedCollisionScene",
     "PreparedCollisionSurface",
     "prepare_cell_mesh_collision_surface",
     "selection_collision_operator",
+    "scene_feature_catalogue",
     "static_collision_operator",
 ]

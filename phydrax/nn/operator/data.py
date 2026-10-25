@@ -14,7 +14,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import DTypeLike
 
+from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
@@ -70,7 +72,11 @@ OperatorBasis = Literal[
 
 
 class OperatorAxis(StrictModule, NonTrainableState):
-    """One named coordinate axis with its integration and basis metadata."""
+    """One named coordinate axis with its integration and basis metadata.
+
+    `dtype` selects the real floating dtype of the nodes and quadrature
+    weights; `None` keeps the canonical float64 geometry.
+    """
 
     name: str
     nodes: Array
@@ -87,14 +93,18 @@ class OperatorAxis(StrictModule, NonTrainableState):
         quadrature_weights: Array | None = None,
         basis: OperatorBasis = "uniform",
         periodic: bool = False,
+        dtype: DTypeLike | None = None,
     ) -> None:
-        nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+        geometry_dtype = (
+            jnp.float64 if dtype is None else real_precision_dtype_name(dtype)
+        )
+        nodes_ = jnp.asarray(nodes, dtype=geometry_dtype).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("OperatorAxis nodes must be non-empty.")
         if quadrature_weights is None:
             weights = None
         else:
-            weights = jnp.asarray(quadrature_weights, dtype=jnp.float64).reshape((-1,))
+            weights = jnp.asarray(quadrature_weights, dtype=geometry_dtype).reshape((-1,))
             if weights.shape != nodes_.shape:
                 raise ValueError(
                     "OperatorAxis quadrature weights must match the node shape."
@@ -134,6 +144,12 @@ class FunctionSamples(StrictModule, NonTrainableState):
     shared by every case. Quadrature weights and masks may likewise have either
     ``sample_shape`` or ``case_shape + sample_shape``. Optional native topology
     aligns these sample sites with nodes of a canonical graph.
+
+    `dtype` selects the real floating dtype of the coordinate and quadrature
+    geometry; it is an explicit construction choice and requires geometry.
+    `None` keeps tensor-axis node precision, or canonical float64 for point
+    clouds. Tensor axes must already use the selected dtype. Values are stored
+    as given.
     """
 
     values: Array | None
@@ -156,6 +172,7 @@ class FunctionSamples(StrictModule, NonTrainableState):
         topology: OperatorTopology | None = None,
         support_id: str | None = None,
         measure_id: str | None = None,
+        dtype: DTypeLike | None = None,
     ) -> None:
         axes_ = tuple(axes)
         if len({axis.name for axis in axes_}) != len(axes_):
@@ -172,6 +189,27 @@ class FunctionSamples(StrictModule, NonTrainableState):
             )
         values_ = None if values is None else jnp.asarray(values)
 
+        if dtype is not None and not axes_ and coordinates is None:
+            raise ValueError(
+                "FunctionSamples dtype selects geometry precision and requires "
+                "axes or coordinates."
+            )
+        axis_dtypes = {axis.nodes.dtype for axis in axes_}
+        if len(axis_dtypes) > 1:
+            raise ValueError("FunctionSamples axes must share one geometry dtype.")
+        geometry_dtype = (
+            real_precision_dtype_name(dtype)
+            if dtype is not None
+            else real_precision_dtype_name(next(iter(axis_dtypes)))
+            if axis_dtypes
+            else jnp.float64
+        )
+        if axis_dtypes and next(iter(axis_dtypes)) != jnp.dtype(geometry_dtype):
+            raise ValueError(
+                "FunctionSamples axes must use the selected geometry dtype; "
+                "construct OperatorAxis with the same dtype."
+            )
+
         coordinates_: Array | None
         sample_shape: tuple[int, ...]
         geometry_case_shapes: list[tuple[int, ...]] = []
@@ -179,7 +217,7 @@ class FunctionSamples(StrictModule, NonTrainableState):
             coordinates_ = None
             sample_shape = tuple(axis.size for axis in axes_)
         else:
-            coordinates_ = jnp.asarray(coordinates, dtype=jnp.float64)
+            coordinates_ = jnp.asarray(coordinates, dtype=geometry_dtype)
             if coordinates_.ndim < 2:
                 raise ValueError(
                     "Point-cloud coordinates must have shape case_shape + (num_points, coord_dim)."
@@ -215,7 +253,7 @@ class FunctionSamples(StrictModule, NonTrainableState):
 
         weights_ = prepare_geometry_array(
             quadrature_weights,
-            dtype=jnp.float64,
+            dtype=geometry_dtype,
             name="quadrature weights",
         )
         mask_ = prepare_geometry_array(mask, dtype=jnp.bool_, name="mask")
@@ -298,6 +336,15 @@ class FunctionSamples(StrictModule, NonTrainableState):
             raise ValueError("FunctionSamples measure_id requires quadrature_weights.")
         self.support_id = resolved_support_id
         self.measure_id = resolved_measure_id
+
+    @property
+    def geometry_dtype(self) -> RealPrecisionDType | None:
+        """Real floating dtype of the sample geometry, or `None` without geometry."""
+        if self.coordinates is not None:
+            return real_precision_dtype_name(self.coordinates.dtype)
+        if self.axes:
+            return real_precision_dtype_name(self.axes[0].nodes.dtype)
+        return None
 
     @property
     def sample_shape(self) -> tuple[int, ...]:
@@ -417,14 +464,14 @@ class FunctionSamples(StrictModule, NonTrainableState):
             factors = []
             for axis in self.axes:
                 factor = (
-                    jnp.ones_like(axis.nodes, dtype=jnp.float64)
+                    jnp.ones_like(axis.nodes)
                     if axis.quadrature_weights is None
                     else axis.quadrature_weights
                 )
                 factors.append(factor)
             weights = tensor_product(factors)
         elif self.coordinates is not None:
-            weights = jnp.ones(self.sample_shape, dtype=jnp.float64)
+            weights = jnp.ones(self.sample_shape, dtype=self.coordinates.dtype)
         else:
             weights = jnp.asarray(1.0, dtype=jnp.float64)
         return jnp.broadcast_to(weights, target_cases + self.sample_shape)
@@ -488,6 +535,7 @@ def function_samples_with_values(
         topology=samples.topology,
         support_id=samples.support_id,
         measure_id=samples.measure_id,
+        dtype=samples.geometry_dtype,
     )
 
 
@@ -1386,6 +1434,7 @@ def pad_function_samples(
             if samples.topology is None
             else pad_operator_topology(samples.topology, target)
         ),
+        dtype=samples.geometry_dtype,
     )
 
 
@@ -1439,6 +1488,7 @@ def _slice_samples(
         quadrature_weights=quadrature,
         mask=mask,
         topology=topology,
+        dtype=samples.geometry_dtype,
     )
 
 
@@ -1628,6 +1678,12 @@ def _stack_samples(
         topology=topology,
         support_id=first.support_id if shared_geometry else None,
         measure_id=first.measure_id if shared_geometry else None,
+        # Stacked point clouds keep their promoted coordinate precision.
+        dtype=(
+            first.geometry_dtype
+            if coordinates is None
+            else real_precision_dtype_name(coordinates.dtype)
+        ),
     )
 
 

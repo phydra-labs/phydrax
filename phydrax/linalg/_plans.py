@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .._execution_device import device_platform
+from .._cuda_capabilities import windows_topology_refusal
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import parse
@@ -791,7 +791,7 @@ def _auto_method(
         ):
             return SparseQR(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
-            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, no numerical rank cutoff, and FailurePolicy('error'); singular CUDA QR raises instead of returning failure status"
+            "sparse-qr/jax-cuda: execution requires a selected CUDA compiler with the sparse QR kernel, no preconditioning, no numerical rank cutoff, and FailurePolicy('error'); singular CUDA QR raises instead of returning failure status"
         )
     if isinstance(problem, LinearSystem):
         dense_method: AbstractLinearMethod
@@ -987,6 +987,9 @@ def _validate_distributed_cudss(
         raise TypeError("MGMN requires an explicit rank-local CSR operator.")
     if not isinstance(method, SparseLDLT) or method.execution.mode != "mgmn":
         raise ValueError("Rank-local CSR requires SparseLDLT with MGMN execution.")
+    refusal = windows_topology_refusal(site_mpi=True)
+    if refusal is not None:
+        raise ValueError(refusal)
     if not isinstance(problem, LinearSystem) or problem.nullspace_policy is not None:
         raise ValueError("MGMN requires an unconstrained rank-local LinearSystem.")
     if preconditioner is not None or _has_rank_cutoff(policy):
@@ -1027,6 +1030,11 @@ def _validate_resident_cudss(
     """Admit local/MG CSR ownership before allocating provider resources."""
     if method.execution.mode == "mgmn":
         raise ValueError("MGMN requires rank-local DistributedCSRLinearOperator storage.")
+    refusal = windows_topology_refusal(
+        device_count=2 if method.execution.mode == "mg" else 1
+    )
+    if refusal is not None:
+        raise ValueError(refusal)
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("SparseLDLT requires certified self-adjoint structure.")
     if operator.sparse_storage().index_width != 32:
@@ -1050,7 +1058,9 @@ def _validate_resident_cudss(
         raise ValueError(
             "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
         )
-    availability = sparse_provider_availability(method.provider)
+    availability = sparse_provider_availability(
+        method.provider, execution_mode=method.execution.mode
+    )
     if not availability.available:
         raise ValueError(availability.reason)
     return "cudss"
@@ -1072,8 +1082,11 @@ def _validate_native_sparse_provider(
             )
         return "jax-sparse"
     if isinstance(method, SparseQR) and method.provider == "jax-cuda":
-        if not _cuda_sparse_available():
-            raise ValueError("SparseQR(provider='jax-cuda') requires a JAX CUDA device.")
+        availability = sparse_provider_availability("jax-cuda")
+        if not availability.available:
+            raise ValueError(
+                f"SparseQR(provider='jax-cuda') requires a JAX CUDA sparse QR kernel. {availability.reason}"
+            )
         if policy.differentiation.mode == "algorithmic":
             raise ValueError(
                 "SparseQR exposes mathematical differentiation, not an algorithmic QR derivative."
@@ -2434,7 +2447,7 @@ def _is_explicit_operator(operator: AbstractLinearOperator, /) -> bool:
 
 
 def _cuda_sparse_available() -> bool:
-    return any(device_platform(device) == "cuda" for device in jax.devices())
+    return sparse_provider_availability("jax-cuda").available
 
 
 def _certified_positive_definite(operator: AbstractLinearOperator, /) -> bool:

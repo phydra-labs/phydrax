@@ -446,6 +446,10 @@ def test_quda_resource_path_subprocess(tmp_path: Path, user_path: bool) -> None:
     environment = dict(os.environ)
     environment["XDG_CACHE_HOME"] = str(tmp_path / "cache")
     environment.pop("QUDA_RESOURCE_PATH", None)
+    if sys.platform == "win32":
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        environment["USERPROFILE"] = str(profile)
     if user_path:
         resource = tmp_path / "user-quda"
         resource.mkdir()
@@ -460,15 +464,27 @@ from phydrax._cuda_native import load_cuda_component
 component = load_cuda_component("quda")
 requested = os.environ.get("QUDA_RESOURCE_PATH")
 action(links, mask).block_until_ready()
-libc = ctypes.CDLL(None)
-libc.getenv.argtypes = [ctypes.c_char_p]
-libc.getenv.restype = ctypes.c_char_p
-actual = Path(libc.getenv(b"QUDA_RESOURCE_PATH").decode())
+if sys.platform == "win32":
+    crt = ctypes.CDLL("ucrtbase.dll", winmode=0x00000800)
+    crt._wgetenv.argtypes = [ctypes.c_wchar_p]
+    crt._wgetenv.restype = ctypes.c_wchar_p
+    value = crt._wgetenv("QUDA_RESOURCE_PATH")
+    assert value is not None
+    actual = Path(value)
+    cache_root = Path(os.environ["USERPROFILE"]) / "AppData" / "Local"
+else:
+    libc = ctypes.CDLL(None)
+    libc.getenv.argtypes = [ctypes.c_char_p]
+    libc.getenv.restype = ctypes.c_char_p
+    value = libc.getenv(b"QUDA_RESOURCE_PATH")
+    assert value is not None
+    actual = Path(value.decode())
+    cache_root = Path(os.environ["XDG_CACHE_HOME"])
 if requested is not None:
     assert actual == Path(requested), (actual, requested)
 else:
     # One directory per QUDA build variant (architectures, compiler version).
-    release = Path(os.environ["XDG_CACHE_HOME"]) / "phydrax" / "quda" / component.build_hash
+    release = cache_root / "phydrax" / "quda" / component.build_hash
     assert actual.parent == release, (actual, release)
     assert "gpu_arch" in actual.name and "cuda_version" in actual.name, actual
 assert actual.is_dir(), actual

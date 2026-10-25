@@ -1,0 +1,205 @@
+diff --git a/src/pjrt_plugin/mlx_executable.cc b/src/pjrt_plugin/mlx_executable.cc
+index d0d22b6..3649796 100644
+--- a/src/pjrt_plugin/mlx_executable.cc
++++ b/src/pjrt_plugin/mlx_executable.cc
+@@ -541,6 +541,10 @@ size_t MlxExecutable::num_outputs() const {
+     return num_outputs_;
+ }
+ 
++std::string MlxExecutable::OptimizedProgramText() const {
++    return mps::printOptimizedProgram(parsed_module_.module.get());
++}
++
+ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+     MlxExecuteResult result;
+     if (!valid_) {
+diff --git a/src/pjrt_plugin/mlx_executable.h b/src/pjrt_plugin/mlx_executable.h
+index 737c454..cc13705 100644
+--- a/src/pjrt_plugin/mlx_executable.h
++++ b/src/pjrt_plugin/mlx_executable.h
+@@ -53,6 +53,12 @@ public:
+ 
+     MlxExecuteResult Execute(const std::vector<MlxBuffer*>& inputs);
+ 
++    // MLIR assembly of the finalized module Execute walks (after the parser's
++    // inlining, exact constant folding and admission checks), for
++    // PJRT_Executable_OptimizedProgram; see mps::printOptimizedProgram. Reads
++    // the module only, never compiles or executes it. Empty without a module.
++    std::string OptimizedProgramText() const;
++
+ private:
+     MlxExecutable() = default;
+ 
+diff --git a/src/pjrt_plugin/pjrt_executable.cc b/src/pjrt_plugin/pjrt_executable.cc
+index e4e403a..c06b98e 100644
+--- a/src/pjrt_plugin/pjrt_executable.cc
++++ b/src/pjrt_plugin/pjrt_executable.cc
+@@ -3,6 +3,7 @@
+ #include <string>
+ #include <algorithm>
+ #include <cstddef>
++#include <cstring>
+ #include <mlx/scheduler.h>
+ #include <memory>
+ #include <stdexcept>
+@@ -152,8 +153,68 @@ PJRT_Error* MPS_Executable_OutputDimensions(PJRT_Executable_OutputDimensions_Arg
+     return nullptr;
+ }
+ 
++// Returns the finalized module the executable walks as MLIR assembly ("mlir"),
++// which XLA's PjRtCApiExecutable::GetHloModule converts to an HloModule. A pure
++// query: it neither compiles, executes, nor runs host callbacks. The text is
++// printed once and cached on the executable, so the two-call protocol (size
++// query with code == nullptr, then fill) always agrees.
+ PJRT_Error* MPS_Executable_OptimizedProgram(PJRT_Executable_OptimizedProgram_Args* args) {
+-    return MakeError("OptimizedProgram not implemented", PJRT_Error_Code_UNIMPLEMENTED);
++    if (!args || args->struct_size < PJRT_Executable_OptimizedProgram_Args_STRUCT_SIZE) {
++        return MakeError("OptimizedProgram: missing or undersized argument struct",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    if (!args->executable) {
++        return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    PJRT_Program* program = args->program;
++    if (!program || program->struct_size < PJRT_Program_STRUCT_SIZE) {
++        return MakeError("OptimizedProgram: missing or undersized program struct",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    PJRT_Executable* executable = args->executable;
++    std::scoped_lock cache_lock(executable->optimized_program_mutex);
++    if (!executable->optimized_program) {
++        std::scoped_lock lock(GetPjrtGlobalMutex());
++        if (!executable->executable) {
++            return MakeError("OptimizedProgram: executable has no compiled module",
++                             PJRT_Error_Code_FAILED_PRECONDITION);
++        }
++        try {
++            std::string text = executable->executable->OptimizedProgramText();
++            if (text.empty()) {
++                return MakeError("OptimizedProgram: executable has no compiled module",
++                                 PJRT_Error_Code_FAILED_PRECONDITION);
++            }
++            executable->optimized_program = std::move(text);
++        } catch (const std::exception& e) {
++            return MakeError(std::string("OptimizedProgram: ") + e.what());
++        }
++    }
++    const std::string& code = *executable->optimized_program;
++    // PjRtCApiExecutable::GetHloModule CHECK-fails (aborting the process) on a
++    // program of 2 GiB or more; report it as an error instead.
++    constexpr size_t kMaxProgramBytes = size_t{2} * 1024 * 1024 * 1024;
++    if (code.size() >= kMaxProgramBytes) {
++        return MakeError("OptimizedProgram: the " + std::to_string(code.size()) +
++                             "-byte program exceeds the 2 GiB PJRT program limit",
++                         PJRT_Error_Code_RESOURCE_EXHAUSTED);
++    }
++    static constexpr char kFormat[] = "mlir";
++    program->format = kFormat;
++    program->format_size = sizeof(kFormat) - 1;
++    if (!program->code) {
++        program->code_size = code.size();
++        return nullptr;
++    }
++    if (program->code_size < code.size()) {
++        return MakeError("OptimizedProgram: caller buffer of " +
++                             std::to_string(program->code_size) + " bytes is smaller than the " +
++                             std::to_string(code.size()) + "-byte program",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    std::memcpy(program->code, code.data(), code.size());
++    program->code_size = code.size();
++    return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
+diff --git a/src/pjrt_plugin/pjrt_types.h b/src/pjrt_plugin/pjrt_types.h
+index 18bd51f..456bac5 100644
+--- a/src/pjrt_plugin/pjrt_types.h
++++ b/src/pjrt_plugin/pjrt_types.h
+@@ -6,6 +6,7 @@
+ 
+ #include <memory>
+ #include <mutex>
++#include <optional>
+ #include <string>
+ #include <vector>
+ 
+@@ -87,6 +88,14 @@ struct PJRT_Executable {
+     mutable std::vector<size_t> output_dim_sizes;
+     mutable std::once_flag output_metadata_flag;
+ 
++    // PJRT_Executable_OptimizedProgram text, printed on the first request and
++    // kept for the executable's lifetime so the size query and the fill of the
++    // two-call protocol return identical bytes. Guarded by
++    // optimized_program_mutex; the one-time printing additionally holds
++    // GetPjrtGlobalMutex, which serializes it with Execute/Compile on the
++    // executable's MLIR context. Cached queries never wait for an execution.
++    std::mutex optimized_program_mutex;
++    std::optional<std::string> optimized_program;
+ };
+ 
+ struct PJRT_LoadedExecutable {
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index 7ffb644..ef6680e 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -847,4 +847,39 @@ std::string bytecodeToText(const char* data, size_t size) {
+     return result;
+ }
+ 
++std::string printOptimizedProgram(mlir::ModuleOp module) {
++    std::string text;
++    if (!module) {
++        return text;
++    }
++    bool constrained = false;
++    module.walk([&](mlir::sdy::ShardingConstraintOp) {
++        constrained = true;
++        return mlir::WalkResult::interrupt();
++    });
++    llvm::raw_string_ostream os(text);
++    if (!constrained) {
++        module.print(os);
++        return text;
++    }
++    // checkSingleDevice admitted only single-device meshes, where a sharding
++    // constraint is the identity that HandleShardingConstraint executes. Spell
++    // it on a clone so the executed module stays untouched.
++    mlir::OwningOpRef<mlir::ModuleOp> program(module.clone());
++    program->walk([](mlir::sdy::ShardingConstraintOp constraint) {
++        mlir::OpBuilder builder(constraint);
++        mlir::Value input = constraint.getInput();
++        mlir::Type type = constraint.getResult().getType();
++        mlir::NamedAttribute attributes[] = {
++            builder.getNamedAttr("call_target_name", builder.getStringAttr("Sharding")),
++            builder.getNamedAttr("mhlo.sharding", builder.getStringAttr("{replicated}"))};
++        auto sharding = builder.create<mlir::stablehlo::CustomCallOp>(
++            constraint.getLoc(), mlir::TypeRange(type), mlir::ValueRange(input), attributes);
++        constraint.getResult().replaceAllUsesWith(sharding->getResult(0));
++        constraint.erase();
++    });
++    program->print(os);
++    return text;
++}
++
+ }  // namespace mps
+diff --git a/src/pjrt_plugin/stablehlo_parser.h b/src/pjrt_plugin/stablehlo_parser.h
+index 98a4868..20a48a3 100644
+--- a/src/pjrt_plugin/stablehlo_parser.h
++++ b/src/pjrt_plugin/stablehlo_parser.h
+@@ -68,6 +68,15 @@ ParsedModule parseStableHLOText(const std::string& text);
+ // Get the text representation from bytecode (for debugging)
+ std::string bytecodeToText(const char* data, size_t size);
+ 
++// MLIR assembly of a finalized module (the IR the executable walks) for
++// PJRT_Executable_OptimizedProgram. The module itself is never modified. Its
++// one export spelling: single-device sdy.sharding_constraint, which the XLA
++// StableHLO -> HLO conversion cannot lower, is printed as the equivalent
++// stablehlo.custom_call @Sharding {mhlo.sharding = "{replicated}"} identity
++// that this plugin admits and dispatches to the same pass-through. Empty if
++// there is no module.
++std::string printOptimizedProgram(mlir::ModuleOp module);
++
+ }  // namespace mps
+ 
+ #endif  // STABLEHLO_PARSER_H

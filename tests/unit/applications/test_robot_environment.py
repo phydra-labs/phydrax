@@ -5,11 +5,19 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from phydrax._array_tree import ArrayPyTreeSchema
 from phydrax._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from phydrax._strict import StrictModule
+from phydrax.applications.contact._articulated_step import ArticulatedActuationMode
+from phydrax.applications.robotics._articulated_plant import (
+    ArticulatedPlantCommand,
+    NativeArticulatedPlantPlan,
+    prepare_articulated_plant,
+    PreparedArticulatedPlant,
+)
 from phydrax.applications.robotics._environment import (
     AbstractRobotEnvironmentWrapper,
     AbstractRobotTask,
@@ -26,9 +34,18 @@ from phydrax.dynamics._plant import (
     PlantParameters,
     PlantProposal,
     PlantRuntimeState,
+    PlantStepContext,
 )
+from phydrax.dynamics._plant_codec import ControlVectorCodec
 from phydrax.dynamics._system import DiscreteTransitionResult
 from tests._support.assertions import assert_tree_equal
+from tests._support.native_articulated import (
+    LBVH_TRAVERSAL_VISITS,
+    route_budget,
+    slider_model,
+    standard_gravity,
+    step_policy,
+)
 
 
 class _ThresholdTask(AbstractRobotTask):
@@ -320,7 +337,7 @@ def test_robot_environment_scenario_1() -> None:
     assert result.candidate_state.plant_state.time == 2.0
     assert result.candidate_state.plant_state.step_index == 2
     assert result.candidate_state.episode_step_index == 2
-    assert_tree_equal(result.accepted_state, reset.state)
+    _assert_state_equal(result.accepted_state, reset.state)
     assert result.total_reward == 0.0
     assert not result.terminated
     assert not result.truncated
@@ -816,3 +833,657 @@ def test_robot_environment_scenario_3() -> None:
             stale_state,
             {"drive": jnp.zeros((2, 1), dtype=jnp.float32)},
         )
+
+
+class _CountingWrapper(AbstractRobotEnvironmentWrapper):
+    wrapper_id: str = eqx.field(static=True)
+    action_repeat: int = eqx.field(static=True)
+    horizon: int | None = eqx.field(static=True)
+    auto_reset: bool = eqx.field(static=True)
+
+    def __init__(self, *, action_repeat: int = 1, auto_reset: bool = False) -> None:
+        self.wrapper_id = "counting-wrapper"
+        self.action_repeat = action_repeat
+        self.horizon = None
+        self.auto_reset = auto_reset
+
+    def initialize(self, plant_state: Any, task_state: Any, key: Any, /) -> Any:
+        del task_state, key
+        return {"count": jnp.zeros(plant_state.step_index.shape, dtype=jnp.int32)}
+
+    def transition(
+        self,
+        context: Any,
+        wrapper_state: Any,
+        plant_state: Any,
+        task_state: Any,
+        observation: Any,
+        terminated: Any,
+        key: Any,
+        /,
+    ) -> Any:
+        del context, task_state, observation, terminated, key
+        return RobotEnvironmentWrapperTransition(
+            {"count": wrapper_state["count"] + 1},
+            jnp.zeros(plant_state.step_index.shape, dtype=jnp.bool_),
+        )
+
+
+class _AlternatingHistoryPlant(AbstractDiscretePlant):
+    """Actuator memory and a boolean mode decide the next position."""
+
+    state_schema: ArrayPyTreeSchema
+    control_schema: ArrayPyTreeSchema
+    parameter_schema: ArrayPyTreeSchema
+    reset_fallback: dict[str, jax.Array]
+    semantic_provenance: SemanticProvenance
+    numeric_revision: NumericRevision
+    execution_signature: ExecutableSignature
+    require_finite_state: bool = eqx.field(static=True)
+    require_finite_controls: bool = eqx.field(static=True)
+    require_finite_parameters: bool = eqx.field(static=True)
+
+    def __init__(self) -> None:
+        fallback = {
+            "position": jnp.zeros((1,), dtype=jnp.float32),
+            "memory": jnp.zeros((1,), dtype=jnp.float32),
+            "mode": jnp.asarray(False),
+        }
+        self.state_schema = ArrayPyTreeSchema.from_tree(
+            jax.tree.map(lambda leaf: jnp.stack((leaf, leaf)), fallback),
+            case_ndim=1,
+        )
+        self.control_schema = ArrayPyTreeSchema.from_tree(
+            jnp.zeros((2, 1), dtype=jnp.float32), case_ndim=1
+        )
+        self.parameter_schema = ArrayPyTreeSchema.from_tree((), case_ndim=0)
+        self.reset_fallback = fallback
+        self.semantic_provenance = SemanticProvenance(
+            {"kind": "alternating-actuator-memory-environment-plant"}
+        )
+        self.numeric_revision = NumericRevision(self.semantic_provenance, ())
+        self.execution_signature = ExecutableSignature(
+            shapes={"position": (1,), "memory": (1,), "command": (1,)},
+            dtypes={"position": jnp.float32, "mode": jnp.bool_},
+        )
+        self.require_finite_state = True
+        self.require_finite_controls = True
+        self.require_finite_parameters = True
+
+    def propose_reset(
+        self,
+        keys: Any,
+        parameters: Any,
+        /,
+        *,
+        case_shape: Any,
+        initial_time: Any,
+    ) -> Any:
+        del keys, parameters, initial_time
+        payload = jax.tree.map(
+            lambda leaf: jnp.broadcast_to(leaf, case_shape + leaf.shape),
+            self.reset_fallback,
+        )
+        valid = jnp.ones(case_shape, dtype=jnp.bool_)
+        status = jnp.zeros(case_shape, dtype=jnp.int32)
+        return PlantProposal(payload, payload, valid, valid, status, status, ())
+
+    def propose_step(
+        self, context: Any, source: Any, commands: Any, parameters: Any, keys: Any, /
+    ) -> Any:
+        del parameters, keys
+        duration = context.duration.astype(jnp.float32)[..., None]
+        candidate = {
+            "position": source["position"] + duration * (commands + source["memory"]),
+            "memory": jnp.where(source["mode"][..., None], -commands, commands),
+            "mode": ~source["mode"],
+        }
+        successful = commands[..., 0] >= -2.0
+        status = jnp.where(successful, 0, 37).astype(jnp.int32)
+        return PlantProposal(
+            candidate,
+            candidate,
+            jnp.ones(successful.shape, dtype=jnp.bool_),
+            successful,
+            status,
+            status,
+            (),
+        )
+
+
+class _PositionTask(AbstractRobotTask):
+    task_id: str = eqx.field(static=True)
+    observation_shape: tuple[int, ...] = eqx.field(static=True)
+    reward_component_names: tuple[str, ...] = eqx.field(static=True)
+    descriptor_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(self) -> None:
+        self.task_id = "position-progress-task"
+        self.observation_shape = (1,)
+        self.reward_component_names = ("progress",)
+        self.descriptor_shape = (1,)
+
+    def initialize(self, plant_state: Any, key: Any, /) -> Any:
+        del key
+        return {"progress": jnp.zeros_like(plant_state.payload["position"][..., 0])}
+
+    def evaluate(self, plant_state: Any, task_state: Any, /) -> Any:
+        del task_state
+        position = plant_state.payload["position"]
+        return RobotTaskEvaluation(
+            position,
+            jnp.zeros(position.shape[:-1], dtype=jnp.bool_),
+            plant_state.payload["memory"],
+        )
+
+    def transition(
+        self,
+        context: Any,
+        source_plant_state: Any,
+        accepted_plant_state: Any,
+        action: Any,
+        task_state: Any,
+        key: Any,
+        /,
+    ) -> Any:
+        del context, action, key
+        accepted = accepted_plant_state.payload["position"]
+        progress = accepted - source_plant_state.payload["position"]
+        return RobotTaskTransition(
+            {"progress": task_state["progress"] + progress[..., 0]},
+            accepted,
+            progress,
+            jnp.zeros(accepted.shape[:-1], dtype=jnp.bool_),
+            accepted_plant_state.payload["memory"],
+        )
+
+
+def _history_environment() -> PreparedRobotEnvironment:
+    plant = _AlternatingHistoryPlant()
+    parameters = PlantParameters(
+        (), plant.parameter_schema.schema_id, plant.numeric_revision
+    )
+    return PreparedRobotEnvironment(
+        plant,
+        parameters,
+        _PositionTask(),
+        (_CountingWrapper(action_repeat=2),),
+        step_size=0.5,
+    )
+
+
+def _case(tree: Any, index: int) -> Any:
+    return jax.tree.map(lambda leaf: leaf[index], tree)
+
+
+def _assert_state_equal(left: Any, right: Any) -> None:
+    """Compare complete states exactly, including typed plant PRNG keys."""
+
+    def raw(leaf: Any) -> Any:
+        if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return jax.random.key_data(leaf)
+        return leaf
+
+    assert_tree_equal(jax.tree.map(raw, left), jax.tree.map(raw, right))
+
+
+def _manual_steps(
+    environment: PreparedRobotEnvironment,
+    state: PlantRuntimeState,
+    command: Any,
+    count: int,
+) -> PlantRuntimeState:
+    for _ in range(count):
+        context = PlantStepContext(
+            state.time,
+            state.time + jnp.asarray(environment.step_size, dtype=state.time.dtype),
+            state.step_index,
+        )
+        result = environment.plant.step(context, state, command, environment.parameters)
+        assert bool(jnp.all(result.successful))
+        state = result.accepted_state
+    return state
+
+
+def test_history_with_equal_positions_steps_differently_and_rolls_back_casewise() -> None:
+    environment = _history_environment()
+    keys = jax.random.split(jax.random.key(80), 2)
+    reset = environment.reset(keys, case_shape=(2,))
+    source = eqx.tree_at(
+        lambda state: (
+            state.plant_state.payload["memory"],
+            state.plant_state.payload["mode"],
+        ),
+        reset.state,
+        (jnp.asarray([[0.0], [1.0]], dtype=jnp.float32), jnp.asarray([False, True])),
+    )
+    command = jnp.ones((2, 1), dtype=jnp.float32)
+
+    result = environment.step(source, command)
+    manual = _manual_steps(environment, source.plant_state, command, 2)
+
+    assert np.asarray(result.accepted).tolist() == [True, True]
+    assert environment.plant.state_digest(
+        result.accepted_state.plant_state
+    ) == environment.plant.state_digest(manual)
+    assert np.asarray(result.accepted_state.plant_state.payload["position"]).tolist() == [
+        [1.5],
+        [1.0],
+    ]
+    assert np.asarray(result.accepted_state.plant_state.payload["memory"]).tolist() == [
+        [-1.0],
+        [1.0],
+    ]
+    assert np.asarray(result.accepted_state.plant_state.payload["mode"]).tolist() == [
+        False,
+        True,
+    ]
+    assert np.asarray(result.accepted_state.wrapper_states[0]["count"]).tolist() == [2, 2]
+    assert np.asarray(result.accepted_state.task_state["progress"]).tolist() == [1.5, 1.0]
+
+    advanced = result.accepted_state
+    rejected = environment.step(advanced, jnp.asarray([[1.0], [-3.0]], dtype=jnp.float32))
+
+    assert np.asarray(rejected.accepted).tolist() == [True, False]
+    assert np.asarray(rejected.evidence.attempted).tolist() == [
+        [True, True],
+        [True, False],
+    ]
+    assert np.asarray(rejected.evidence.repeat_status).tolist() == [[0, 37], [0, 0]]
+    _assert_state_equal(_case(rejected.accepted_state, 1), _case(advanced, 1))
+    assert rejected.candidate_state.plant_state.payload["mode"][1] == jnp.asarray(False)
+    assert rejected.reward_components[1, 0] == 0.0
+    assert int(rejected.accepted_state.plant_state.step_index[0]) == 4
+    # Episode and wrapper counters advance once per accepted repeated substep.
+    assert int(rejected.accepted_state.episode_step_index[0]) == 4
+    assert int(rejected.accepted_state.wrapper_states[0]["count"][0]) == 4
+
+
+class _OffsetInitializer(StrictModule):
+    offset: jax.Array
+
+    def __init__(self, offset: Any) -> None:
+        self.offset = jnp.asarray(offset)
+
+    def __call__(self, key: Any) -> Any:
+        del key
+        return jnp.stack((self.offset, jnp.zeros_like(self.offset)))
+
+
+def test_task_and_initializer_arrays_remain_dynamic_under_compilation() -> None:
+    environment = _environment(
+        threshold=1.0, initializer=_OffsetInitializer(jnp.zeros(()))
+    )
+    threshold_dtype = environment.task.threshold.dtype
+    offset_dtype = environment.plant.initializer.offset.dtype
+    action = jnp.asarray([0.25])
+
+    def run(threshold: jax.Array, offset: jax.Array) -> Any:
+        prepared = eqx.tree_at(
+            lambda value: (value.task.threshold, value.plant.initializer.offset),
+            environment,
+            (threshold, offset),
+        )
+        reset = prepared.reset(jax.random.key(90))
+        result = prepared.step(reset.state, action)
+        return (
+            reset.state.plant_state.payload[0],
+            result.terminated,
+            result.accepted_state.plant_state.payload[0],
+        )
+
+    # Batched task/initializer arrays are traced data of one compiled program.
+    initial, terminated, accepted = jax.jit(jax.vmap(run))(
+        jnp.asarray([1.0, 0.5], dtype=threshold_dtype),
+        jnp.asarray([0.0, 0.5], dtype=offset_dtype),
+    )
+
+    assert np.asarray(initial).tolist() == [0.0, 0.5]
+    assert np.asarray(terminated).tolist() == [False, True]
+    assert np.asarray(accepted).tolist() == [0.25, 0.75]
+
+
+@functools.cache
+def _native_plant(mode: ArticulatedActuationMode) -> PreparedArticulatedPlant:
+    model = slider_model()
+    plan = NativeArticulatedPlantPlan(
+        step_policy(),
+        gravity=standard_gravity(),
+        actuation_mode=mode,
+        initial_lifted_configuration=[0.002],
+        initial_velocity=[0.0],
+        case_ndim=1,
+        activation_distance=0.05,
+        search_backend="lbvh",
+        route_capacities=route_budget(model),
+        maximum_traversal_visits=LBVH_TRAVERSAL_VISITS,
+    )
+    return prepare_articulated_plant(model, plan)
+
+
+def _command_codec(
+    plant: PreparedArticulatedPlant,
+    *,
+    size: int = 1,
+    case_ndim: int = 0,
+    numeric_revision: NumericRevision | None = None,
+) -> ControlVectorCodec:
+    dtype = plant.initial_state.command.dtype
+    template = ArticulatedPlantCommand(jnp.zeros((1,) * case_ndim + (size,), dtype=dtype))
+    return ControlVectorCodec(
+        ArrayPyTreeSchema.from_tree(template, case_ndim=case_ndim),
+        semantic_provenance=plant.semantic_provenance,
+        numeric_revision=(
+            plant.numeric_revision if numeric_revision is None else numeric_revision
+        ),
+        executable_signature=plant.execution_signature,
+    )
+
+
+class _NativeHeightTask(AbstractRobotTask):
+    ceiling: jax.Array
+    task_id: str = eqx.field(static=True)
+    observation_shape: tuple[int, ...] = eqx.field(static=True)
+    reward_component_names: tuple[str, ...] = eqx.field(static=True)
+    descriptor_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(self, ceiling: float) -> None:
+        self.ceiling = jnp.asarray(ceiling)
+        self.task_id = "native-slider-height-task"
+        self.observation_shape = (2,)
+        self.reward_component_names = ("rise",)
+        self.descriptor_shape = (1,)
+
+    def _evaluation(self, plant_state: Any) -> RobotTaskEvaluation:
+        payload = plant_state.payload
+        height = payload.configuration[..., 0]
+        return RobotTaskEvaluation(
+            jnp.stack((height, payload.velocity[..., 0]), axis=-1),
+            height >= self.ceiling,
+            payload.sensors.frame_transforms[..., 0, 2, 3:4],
+        )
+
+    def initialize(self, plant_state: Any, key: Any, /) -> Any:
+        del key
+        return {"steps": jnp.zeros(plant_state.step_index.shape, dtype=jnp.int32)}
+
+    def evaluate(self, plant_state: Any, task_state: Any, /) -> Any:
+        del task_state
+        return self._evaluation(plant_state)
+
+    def transition(
+        self,
+        context: Any,
+        source_plant_state: Any,
+        accepted_plant_state: Any,
+        action: Any,
+        task_state: Any,
+        key: Any,
+        /,
+    ) -> Any:
+        del context, action, key
+        evaluation = self._evaluation(accepted_plant_state)
+        rise = (
+            accepted_plant_state.payload.configuration
+            - source_plant_state.payload.configuration
+        )
+        return RobotTaskTransition(
+            {"steps": task_state["steps"] + 1},
+            evaluation.observation,
+            rise,
+            evaluation.terminated,
+            evaluation.descriptor,
+        )
+
+
+def _native_environment(
+    *,
+    mode: ArticulatedActuationMode = ArticulatedActuationMode.GENERALIZED_EFFORT,
+    repeat: int = 1,
+    auto_reset: bool = False,
+    ceiling: float = 1.0,
+) -> PreparedRobotEnvironment:
+    plant = _native_plant(mode)
+    return PreparedRobotEnvironment(
+        plant,
+        plant.bind_parameters(),
+        _NativeHeightTask(ceiling),
+        (_CountingWrapper(action_repeat=repeat, auto_reset=auto_reset),),
+        step_size=0.01,
+        control_codec=(
+            None if mode == ArticulatedActuationMode.AUTONOMOUS else _command_codec(plant)
+        ),
+    )
+
+
+def _native_reset(environment: PreparedRobotEnvironment) -> Any:
+    reset = environment.reset(jax.random.split(jax.random.key(70), 2), case_shape=(2,))
+    assert np.asarray(reset.successful).tolist() == [True, True]
+    # The native plant admits only typed keys; the environment keeps raw data.
+    assert jax.dtypes.issubdtype(reset.state.plant_state.key.dtype, jax.dtypes.prng_key)
+    assert reset.state.key.dtype == jnp.uint32
+    return reset
+
+
+def _native_vector(values: Any) -> jax.Array:
+    plant = _native_plant(ArticulatedActuationMode.GENERALIZED_EFFORT)
+    return jnp.asarray(values, dtype=plant.initial_state.command.dtype)
+
+
+def test_native_plant_environment_matches_manual_complete_transactions() -> None:
+    environment = _native_environment(repeat=2)
+    plant = environment.plant
+    assert isinstance(plant, PreparedArticulatedPlant)
+    state = _native_reset(environment).state
+    manual = state.plant_state
+    actions = _native_vector([[0.0], [5.0]])
+    command = ArticulatedPlantCommand(actions)
+    expected_time = state.plant_state.time
+
+    for _ in range(2):
+        result = environment.step(state, actions)
+        assert np.asarray(result.accepted).tolist() == [True, True]
+        manual = _manual_steps(environment, manual, command, 2)
+        state = result.accepted_state
+        assert plant.state_digest(state.plant_state) == plant.state_digest(manual)
+        for _ in range(2):
+            expected_time = expected_time + jnp.asarray(0.01, dtype=expected_time.dtype)
+
+    payload = state.plant_state.payload
+    observation = plant.observe(state.plant_state)
+    assert np.array_equal(np.asarray(state.plant_state.time), np.asarray(expected_time))
+    assert np.asarray(state.plant_state.step_index).tolist() == [4, 4]
+    assert np.asarray(state.episode_step_index).tolist() == [4, 4]
+    assert np.asarray(state.wrapper_states[0]["count"]).tolist() == [4, 4]
+    assert np.asarray(state.task_state["steps"]).tolist() == [4, 4]
+    assert np.asarray(payload.epoch).tolist() == [4, 4]
+    assert np.asarray(observation.fresh).tolist() == [True, True]
+    assert np.asarray(payload.command).tolist() == [[0.0], [5.0]]
+    assert payload.contact_history is not None
+    assert bool(jnp.any(payload.contact_history.active[0]))
+    assert float(jnp.sum(payload.sensors.contact_normal_impulse[0])) > 0.0
+
+    stale = eqx.tree_at(
+        lambda value: value.plant_state.payload.sensor_epoch,
+        state,
+        payload.sensor_epoch - 1,
+    )
+    assert np.asarray(plant.observe(stale.plant_state).fresh).tolist() == [False, False]
+    refreshed = environment.step(stale, actions)
+    assert np.asarray(refreshed.accepted).tolist() == [True, True]
+    assert np.asarray(
+        plant.observe(refreshed.accepted_state.plant_state).fresh
+    ).tolist() == [
+        True,
+        True,
+    ]
+
+
+def test_native_environment_failure_rolls_back_complete_case_state() -> None:
+    environment = _native_environment(repeat=2)
+    plant = environment.plant
+    reset = _native_reset(environment)
+    source = environment.step(reset.state, _native_vector([[0.0], [0.0]])).accepted_state
+
+    result = environment.step(source, _native_vector([[30.0], [jnp.nan]]))
+
+    assert np.asarray(result.accepted).tolist() == [True, False]
+    assert np.asarray(result.evidence.rollback_applied).tolist() == [False, True]
+    assert np.asarray(result.evidence.attempted).tolist() == [[True, True], [True, False]]
+    assert int(result.evidence.repeat_status[0, 1]) != 0
+    _assert_state_equal(_case(result.accepted_state, 1), _case(source, 1))
+    _assert_state_equal(_case(result.reset_state, 1), _case(source, 1))
+    assert np.array_equal(
+        np.asarray(result.final_observation[1]),
+        np.asarray(
+            environment.task.evaluate(source.plant_state, source.task_state).observation[
+                1
+            ]
+        ),
+    )
+    assert result.reward_components[1, 0] == 0.0
+    assert not bool(result.terminated[1]) and not bool(result.truncated[1])
+    assert int(result.accepted_state.plant_state.step_index[0]) == 4
+    assert float(result.accepted_state.plant_state.payload.velocity[0, 0]) > float(
+        source.plant_state.payload.velocity[0, 0]
+    )
+    assert np.asarray(result.accepted_state.plant_state.payload.command[0]).tolist() == [
+        30.0
+    ]
+    assert plant.state_digest(
+        jax.tree.map(lambda leaf: leaf[1:], result.accepted_state.plant_state)
+    ) == plant.state_digest(jax.tree.map(lambda leaf: leaf[1:], source.plant_state))
+
+
+def test_native_auto_reset_separates_terminal_and_reset_observations() -> None:
+    environment = _native_environment(repeat=2, auto_reset=True, ceiling=-1.0)
+    reset = _native_reset(environment)
+
+    result = environment.step(reset.state, _native_vector([[0.0], [10.0]]))
+
+    assert np.asarray(result.accepted).tolist() == [True, True]
+    assert np.asarray(result.terminated).tolist() == [True, True]
+    assert np.asarray(result.reset_performed).tolist() == [True, True]
+    assert np.asarray(result.reset_successful).tolist() == [True, True]
+    assert np.asarray(result.reset_status).tolist() == [0, 0]
+    assert np.asarray(result.evidence.attempted).tolist() == [
+        [True, True],
+        [False, False],
+    ]
+    assert np.asarray(result.accepted_state.plant_state.step_index).tolist() == [1, 1]
+    assert np.array_equal(
+        np.asarray(result.final_observation[..., 0]),
+        np.asarray(result.accepted_state.plant_state.payload.configuration[..., 0]),
+    )
+    assert np.array_equal(np.asarray(result.observation), np.asarray(reset.observation))
+    assert not np.array_equal(
+        np.asarray(result.observation), np.asarray(result.final_observation)
+    )
+    assert_tree_equal(
+        result.reset_state.plant_state.payload, reset.state.plant_state.payload
+    )
+    assert np.asarray(result.reset_state.plant_state.step_index).tolist() == [0, 0]
+    assert np.asarray(result.reset_state.plant_state.time).tolist() == [0.0, 0.0]
+    assert np.asarray(result.reset_state.episode_step_index).tolist() == [0, 0]
+    assert not np.array_equal(
+        np.asarray(jax.random.key_data(result.reset_state.plant_state.key)),
+        np.asarray(jax.random.key_data(result.accepted_state.plant_state.key)),
+    )
+    assert not np.array_equal(
+        np.asarray(result.reset_state.key), np.asarray(result.accepted_state.key)
+    )
+
+
+def test_native_environment_history_replays_from_plant_checkpoint() -> None:
+    environment = _native_environment()
+    plant = environment.plant
+    initial = _native_reset(environment).state
+    checkpoint = plant.checkpoint(initial.plant_state)
+    actions = (
+        _native_vector([[0.0], [0.0]]),
+        _native_vector([[25.0], [5.0]]),
+        _native_vector([[0.0], [40.0]]),
+    )
+    contexts: list[PlantStepContext] = []
+    digests: list[str] = []
+    state = initial
+    for action in actions:
+        plant_state = state.plant_state
+        contexts.append(
+            PlantStepContext(
+                plant_state.time,
+                plant_state.time + jnp.asarray(0.01, dtype=plant_state.time.dtype),
+                plant_state.step_index,
+            )
+        )
+        result = environment.step(state, action)
+        assert np.asarray(result.accepted).tolist() == [True, True]
+        state = result.accepted_state
+        digests.append(plant.state_digest(state.plant_state))
+
+    replay = plant.replay(
+        checkpoint,
+        contexts,
+        [ArticulatedPlantCommand(action) for action in actions],
+        environment.parameters,
+        expected_digests=digests,
+    )
+    repeated = initial
+    for action in actions:
+        repeated = environment.step(repeated, action).accepted_state
+
+    assert replay.matched
+    assert bool(jnp.all(replay.successful))
+    _assert_state_equal(repeated, state)
+
+
+def test_autonomous_plant_environment_and_command_codec_binding() -> None:
+    controlled = _native_plant(ArticulatedActuationMode.GENERALIZED_EFFORT)
+    environment = _native_environment(mode=ArticulatedActuationMode.AUTONOMOUS)
+    reset = _native_reset(environment)
+
+    result = environment.step(reset.state, None)
+
+    assert np.asarray(result.accepted).tolist() == [True, True]
+    assert np.asarray(result.accepted_state.plant_state.step_index).tolist() == [1, 1]
+    with pytest.raises(ValueError, match="action=None"):
+        environment.step(reset.state, _native_vector([[0.0], [0.0]]))
+
+    def prepared(plant: Any, codec: ControlVectorCodec) -> PreparedRobotEnvironment:
+        return PreparedRobotEnvironment(
+            plant,
+            plant.bind_parameters(),
+            _NativeHeightTask(1.0),
+            step_size=0.01,
+            control_codec=codec,
+        )
+
+    with pytest.raises(ValueError, match="Autonomous"):
+        prepared(environment.plant, _command_codec(controlled))
+    with pytest.raises(ValueError, match="unbatched"):
+        prepared(controlled, _command_codec(controlled, case_ndim=1))
+    with pytest.raises(ValueError, match="complete plant command"):
+        prepared(controlled, _command_codec(controlled, size=2))
+    stale_revision = NumericRevision(controlled.semantic_provenance, {"stale": 1})
+    with pytest.raises(ValueError, match="identities"):
+        prepared(controlled, _command_codec(controlled, numeric_revision=stale_revision))
+
+    bound = _native_environment()
+    unbound = PreparedRobotEnvironment(
+        controlled,
+        controlled.bind_parameters(),
+        _NativeHeightTask(1.0),
+        (_CountingWrapper(),),
+        step_size=0.01,
+    )
+    assert bound.provenance_id != unbound.provenance_id
+    bound_state = _native_reset(bound).state
+    unbound_state = _native_reset(unbound).state
+    vector = _native_vector([[3.0], [0.0]])
+    by_vector = bound.step(bound_state, vector)
+    by_command = unbound.step(unbound_state, ArticulatedPlantCommand(vector))
+    assert controlled.state_digest(
+        by_vector.accepted_state.plant_state
+    ) == controlled.state_digest(by_command.accepted_state.plant_state)
+    with pytest.raises(ValueError, match="codec size"):
+        bound.step(bound_state, _native_vector([[3.0, 1.0], [0.0, 1.0]]))

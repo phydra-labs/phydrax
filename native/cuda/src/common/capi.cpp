@@ -1,6 +1,7 @@
 #include "phx_cuda_common.hpp"
 #include <exception>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 namespace {
 thread_local std::string last_error;
@@ -47,6 +48,37 @@ int32_t current_device() {
 }
 extern "C" {
 const char* phx_cuda_last_error() { return cleanup_error[0] ? cleanup_error : last_error.c_str(); }
+void* phx_cuda_runtime_function(const char* name) {
+  void* result = nullptr;
+  const auto status = guard([&] {
+    if (!name) throw std::invalid_argument("CUDA runtime function name is null");
+    struct RuntimeFunction { const char* name; void* address; };
+    static const RuntimeFunction functions[] = {
+      {"cudaGetDevice", reinterpret_cast<void*>(&cudaGetDevice)},
+      {"cudaSetDevice", reinterpret_cast<void*>(&cudaSetDevice)},
+      {"cudaDeviceSynchronize", reinterpret_cast<void*>(&cudaDeviceSynchronize)},
+      {"cudaDriverGetVersion", reinterpret_cast<void*>(&cudaDriverGetVersion)},
+      {"cudaRuntimeGetVersion", reinterpret_cast<void*>(&cudaRuntimeGetVersion)},
+      {"cudaMemGetInfo", reinterpret_cast<void*>(&cudaMemGetInfo)},
+      {"cudaDeviceGetAttribute", reinterpret_cast<void*>(&cudaDeviceGetAttribute)},
+      {"cudaDeviceCanAccessPeer", reinterpret_cast<void*>(&cudaDeviceCanAccessPeer)},
+      {"cudaMalloc", reinterpret_cast<void*>(&cudaMalloc)},
+      {"cudaFree", reinterpret_cast<void*>(&cudaFree)},
+      {"cudaMemcpy", reinterpret_cast<void*>(&cudaMemcpy)},
+      {"cudaMemcpyPeer", reinterpret_cast<void*>(&cudaMemcpyPeer)},
+      {"cudaGetDriverEntryPointByVersion", reinterpret_cast<void*>(&cudaGetDriverEntryPointByVersion)},
+      {"cudaGetDeviceCount", reinterpret_cast<void*>(&cudaGetDeviceCount)},
+    };
+    for (const auto& function : functions) {
+      if (std::strcmp(name, function.name) == 0) {
+        result = function.address;
+        return;
+      }
+    }
+    throw std::invalid_argument("CUDA runtime function is not in the supported ABI");
+  });
+  return status == PHX_CUDA_SUCCESS ? result : nullptr;
+}
 int32_t phx_cuda_registry_partitions() {
   int32_t count = -1;
   const auto status = guard([&] {

@@ -1,0 +1,21 @@
+diff --git a/VERSION b/VERSION
+deleted file mode 100644
+index 5c33046..0000000
+--- a/VERSION
++++ /dev/null
+@@ -1 +0,0 @@
+-26.02.00
+diff --git a/cpp/include/rmm/detail/runtime_capabilities.hpp b/cpp/include/rmm/detail/runtime_capabilities.hpp
+index c4f0b79..f6bccc3 100644
+--- a/cpp/include/rmm/detail/runtime_capabilities.hpp
++++ b/cpp/include/rmm/detail/runtime_capabilities.hpp
+@@ -10,7 +10,9 @@
+ 
+ #include <cuda_runtime_api.h>
+ 
++#ifndef _WIN32
+ #include <dlfcn.h>
++#endif
+ 
+ namespace RMM_NAMESPACE {
+ namespace detail {

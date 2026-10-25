@@ -42,11 +42,36 @@ The principal SO(3) logarithm defines pose displacement. A step whose rotational
 
 `RigidConstraintSolverPlan` owns nonlinear and linear methods, work limits, a characteristic length, componentwise physical tolerances, chart/alignment margins, and invariant tolerances. Translation and rotation have different physical scales; the original componentwise residuals remain available even though scaled constraint coordinates are used by the nonlinear solve.
 
-Every nonempty step independently materializes the joint Jacobian for the native
-dense-SVD rank audit. A graph whose row rank falls below its declared row count is
-rejected even when the iterative KKT residual is compatible. The KKT solve itself
-remains matrix-free; the rank audit is an explicit first-implementation cost rather
-than a hidden pseudoinverse or regularization.
+Every nonempty step audits the rank of the joint Jacobian at the closing-kick
+kinematics. The audited operator is the unweighted Jacobian of the
+characteristic-length scaled joint residuals with respect to the mobile
+translation and rotation coordinates, not the mass-weighted Schur operator. A step
+requires full numerical row rank under the strict rule
+`sigma > rank_tolerance * sigma_max`, even when the iterative KKT residual is
+compatible. The KKT solve itself remains matrix-free; no rank audit becomes a hidden
+pseudoinverse or regularization. `RigidConstraintSolverPlan(rank_audit=...)` selects
+the route with a `RigidConstraintRankAudit`:
+
+- `"general-dense-svd"` (default) materializes the operator and consumes the native
+  exact SVD rank evidence for any joint graph.
+- `"certified-forest"` (opt-in) admits only acyclic joint graphs with at most one
+  fixed body per connected component; duplicate joints between one body pair count
+  as a cycle. It certifies full row rank from verified bounds without a dense matrix
+  (see [Certified forest rank audit](#certified-forest-rank-audit)). A failed
+  certificate is inconclusive, never a rank-deficiency claim, and rejects the step
+  with `RANK_INCONCLUSIVE` unless `dense_fallback` admitted the dense SVD. The
+  fallback is planned under its `SVDResourcePolicy` during preparation; an
+  unaffordable fallback or unsupported topology raises before tracing.
+
+`RigidConstraintDiagnostics.rank` is a `RigidConstraintRankEvidence`: status
+(certified, measured full rank, measured deficiency, dense failure, inconclusive,
+empty), executed route, rank lower/upper bounds, the dense condition estimate of an
+executed SVD, and, on the forest route, the complete certificate. The certificate
+reports a singular-value lower bound, an operator-norm upper bound, a condition
+upper bound (never a computed condition number), right-inverse and residual bounds,
+the cutoff threshold and its separation, and its numeric binding. A graph without
+rows keeps rank zero and condition one. `PreparedRigidConstraintDynamics.constraint_rank_evidence(kinematics)`
+runs the audit alone.
 
 `RigidConstraintState` carries position- and velocity-multiplier guesses. They are numerical warm starts tied to the prepared topology, not material state. Position multipliers are projection coordinates, not calibrated forces. Velocity multipliers are impulse coordinates for the executed projection.
 
@@ -62,9 +87,55 @@ A successful step requires all of the following:
 - valid quaternion norms, SO(3) chart margin, and hinge alignment margin;
 - unchanged fixed-body poses and velocities;
 - finite candidate state;
+- full row rank of the joint Jacobian, measured or certified by the selected route;
 - no kinetic-energy increase beyond tolerance in the isolated mass-orthogonal velocity projection.
 
 `RigidConstraintEvaluation` retains both solver results, both physical residual trees, multipliers, loads, numerical diagnostics, rejection bits, and prepared identity. Derivatives are meaningful only when the step is successful and locally valid; solver-status, rank, hinge-branch, or chart changes are not smooth events.
+
+## Certified forest rank audit
+
+Root every component at its fixed body (the edge to it carries no parent columns)
+or, for a free component, at its tree center. Each joint becomes the incoming row
+block `A_w x_w + B_w x_parent` of its child body `w`. The blocks are the columns of
+the audited operator itself: one operator action per depth-parity color and
+coordinate isolates every endpoint column, and preparation checks the assembled
+action against the operator on a probe before tracing.
+
+For each block the certificate stores an approximate local right inverse `Q_w` of
+`A_w` and the coefficient `C_w = Q_w B_w` actually held in memory. They define the
+right-inverse candidate `R`: `x_root = 0` and `x_w = Q_w y_w - C_w x_parent`.
+Setting a free root increment to zero only constructs `R`; it does not fix the
+body. With verified bounds `a_w >= ||Q_w||`, `b_w >= ||C_w||`,
+`u_w >= ||A_w Q_w - I||` and `v_w >= ||B_w - A_w C_w||`, the block-norm domination
+matrices of `R` and of `E = J R - I` give
+
+```text
+h_w = a_w + b_w h_parent           (0 at roots and anchored parents)
+t_v = 1 + sum_children b_w t_w
+d_v = sum_children (v_w + b_w d_w)
+||R|| <= V   = sqrt(max_w h_w * max_w a_w t_w)
+||E|| <= eps = sqrt(max_w (u_w + v_w h_parent) * max_w (u_w + a_w d_w))
+```
+
+because the row sums of the dominating matrix of `R` are `h`, its column sums are
+`a t`, and `||M|| <= sqrt(||M||_1 ||M||_inf)`. Row block `w` of `E` is
+`(A_w Q_w - I) y_w + (B_w - A_w C_w) x_parent`, which gives the two residual sums.
+If `eps < 1`, `R (I + E)^-1` is an exact right inverse of norm at most
+`V / (1 - eps)`, so `sigma_min(J) >= L = (1 - eps) / V`. The Schur row/column-sum
+test of the blocks gives `sigma_max(J) <= U`. Full row rank is certified only when
+`L > rank_tolerance * U`, which implies the strict dense rule for the same operator.
+
+Every bound is outward rounded: each floating operation group adds
+`16 k eps |x| + 8 k tiny` for its `k` operations, which covers reduction
+reassociation, fused multiply-add, flush-to-zero, and device division or square
+root within four units in the last place. Products use explicit IEEE arithmetic
+rather than reduced-precision matrix units. The recurrences use pointer doubling,
+`Sum_k B^k = Prod_j (I + B^(2^j))`, so device work is `O(n log depth)`. Local full
+rank, unit pivots, or a small residual alone prove nothing: long chains, large lever
+arms, and unequal component scales correctly make the certificate inconclusive when
+`L` cannot clear the threshold. The certificate concerns the operator assembled
+from the represented blocks; agreement with a separately computed dense SVD also
+requires a separation larger than that SVD's own backward error.
 
 ## Scope boundaries
 

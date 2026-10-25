@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
 
 import equinox as eqx
@@ -1204,6 +1205,85 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
             kinematics.velocity[self.mobile_indices],
             kinematics.angular_velocity[self.mobile_indices],
         )
+
+    def layout_endpoints(self) -> tuple[Array, Array]:
+        """Left and right body indices of every joint slot in `row_layout` order."""
+        return (
+            jnp.concatenate(
+                (
+                    self.fixed_left,
+                    self.ball_left,
+                    self.hinge_left,
+                    self.prismatic_left,
+                    self.distance_left,
+                )
+            ),
+            jnp.concatenate(
+                (
+                    self.fixed_right,
+                    self.ball_right,
+                    self.hinge_right,
+                    self.prismatic_right,
+                    self.distance_right,
+                )
+            ),
+        )
+
+    def endpoint_jacobian_blocks(
+        self,
+        action: Callable[[_RigidMobileIncrement], RigidJointResiduals],
+        body_colors: Array,
+        dtype: DTypeLike,
+        /,
+    ) -> tuple[Array, Array]:
+        """Exact endpoint blocks of a joint-local linear map of mobile increments.
+
+        ``action`` must be linear and give the rows of each joint as a function of
+        its two endpoint increments only, as every velocity residual of this graph
+        does. ``body_colors`` assigns each mobile body color ``0`` or ``1`` (other
+        bodies ``-1``) such that the two mobile endpoints of a joint differ. One
+        action per color and coordinate then isolates every endpoint column:
+        ``2 (dimension + angular)`` actions in total, independent of graph size.
+        Tangents use ``dtype``, the increment dtype of ``action``.
+
+        Returns ``(left, right)`` with shape ``(joints, dimension + angular,
+        dimension + angular)``: joint slots and local rows follow `row_layout`
+        (padded rows are zero), columns are the endpoint translation then
+        rotation coordinates. Blocks of non-mobile endpoints are zero.
+        """
+        dimension = self.bodies.ambient_dimension
+        width = dimension + self.bodies.angular_dimension
+        mobile_colors = body_colors[self.mobile_indices]
+        selected = mobile_colors[None, :] == jnp.arange(2, dtype=body_colors.dtype)[
+            :, None
+        ]
+        basis = jnp.eye(width, dtype=dtype)
+        tangents = jnp.where(
+            selected[:, None, :, None], basis[None, :, None, :], 0
+        ).reshape(2 * width, self.mobile_count, width)
+
+        def apply(tangent: Array) -> Array:
+            increment = _RigidMobileIncrement(
+                tangent[:, :dimension], tangent[:, dimension:]
+            )
+            return self.pack_residuals(action(increment))
+
+        columns = jax.vmap(apply)(tangents).reshape(2, width, self.row_layout.row_count)
+        slots = self.row_layout.row_joint_slots
+        local = self.row_layout.row_local_indices
+        rows = jnp.arange(self.row_layout.row_count)
+
+        def endpoint(bodies: Array) -> Array:
+            color = body_colors[bodies][slots]
+            values = columns[jnp.clip(color, 0, 1), :, rows]
+            values = jnp.where(color[:, None] >= 0, values, 0)
+            blocks = jnp.zeros(
+                (self.row_layout.joint_count, width, width), dtype=columns.dtype
+            )
+            return blocks.at[slots, local].set(values)
+
+        left, right = self.layout_endpoints()
+        return endpoint(left), endpoint(right)
 
 
 def rigid_joint_pairing(

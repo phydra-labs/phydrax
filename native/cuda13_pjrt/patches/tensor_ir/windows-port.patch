@@ -1,0 +1,9 @@
+diff --git a/lib/Analysis/Tiling/Evaluate.cpp b/lib/Analysis/Tiling/Evaluate.cpp
+--- a/lib/Analysis/Tiling/Evaluate.cpp
++++ b/lib/Analysis/Tiling/Evaluate.cpp
+@@ -969,1 +969,1 @@
+-        repeats * std::max(result.loopIterationCount, 1l);
++        repeats * std::max<int64_t>(result.loopIterationCount, 1);
+@@ -1086,1 +1086,1 @@
+-        repeats * std::max(result.loopIterationCount, 1l);
++        repeats * std::max<int64_t>(result.loopIterationCount, 1);

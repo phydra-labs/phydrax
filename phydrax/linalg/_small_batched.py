@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+import functools
+import operator
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,11 +15,12 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax.ein import contract
-
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+
+
+_LOCAL_EXTENT = 4
 
 
 class SmallLinearSolvePlan(StrictModule, NonTrainableState):
@@ -67,26 +72,73 @@ class SmallLinearSolveResult(StrictModule):
     status: Array
 
 
+def _local_fold(
+    value: Array,
+    combine: Callable[[Array, Array], Array],
+    reduce: Callable[..., Array],
+    /,
+) -> Array:
+    """Fold the trailing axis left to right when its static extent is local.
+
+    Matrix axes are bounded by the plan dimension, so their folds unroll into
+    elementwise algebra that XLA fuses with the surrounding solve and its
+    derivatives. Only caller-sized right-hand-side column axes wider than the
+    local bound use the generic reduction.
+    """
+    extent = value.shape[-1]
+    if not 0 < extent <= _LOCAL_EXTENT:
+        return reduce(value, axis=-1)
+    return functools.reduce(combine, [value[..., index] for index in range(extent)])
+
+
+def _local_sum(value: Array, /) -> Array:
+    return _local_fold(value, operator.add, jnp.sum)
+
+
+def _local_all(value: Array, /) -> Array:
+    return _local_fold(value, jnp.logical_and, jnp.all)
+
+
+def _local_max(value: Array, /) -> Array:
+    return _local_fold(value, jnp.maximum, jnp.max)
+
+
+def _local_product(left: Array, right: Array, /) -> Array:
+    """Multiply batched bounded matrices by an unrolled sum over the inner index."""
+    return functools.reduce(
+        operator.add,
+        [
+            left[..., :, inner, None] * right[..., None, inner, :]
+            for inner in range(left.shape[-1])
+        ],
+    )
+
+
+def _matrix_scale(matrix: Array, /) -> Array:
+    """Return the safe max-entry scale with its original differentiation path."""
+    scale = _local_max(_local_max(jnp.abs(matrix)))
+    return jnp.where(scale > 0.0, scale, 1.0).astype(matrix.dtype)
+
+
 def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
     """Factor scaled 4-by-4 batches with deterministic partial pivoting."""
     factors = matrix
     batch_shape = matrix.shape[:-2]
     identity = jnp.broadcast_to(jnp.eye(4, dtype=matrix.dtype), matrix.shape)
-    permutation = jnp.broadcast_to(
-        identity,
-        batch_shape + (4, 4),
-    )
+    permutation = identity
     parity = jnp.ones(batch_shape, dtype=matrix.real.dtype)
     row_indices = jnp.arange(4, dtype=jnp.int32)
     for column in range(3):
-        pivot = column + jnp.argmax(
-            jnp.abs(factors[..., column:, column]),
-            axis=-1,
-        )
-        column_row = jax.nn.one_hot(
-            jnp.full(batch_shape, column, dtype=jnp.int32),
-            4,
-            dtype=matrix.dtype,
+        # First maximal magnitude wins and a NaN candidate is maximal, as in argmax.
+        pivot = jnp.full(batch_shape, column, dtype=jnp.int32)
+        largest = jnp.abs(factors[..., column, column])
+        for row in range(column + 1, 4):
+            candidate = jnp.abs(factors[..., row, column])
+            take = (candidate > largest) | (jnp.isnan(candidate) & ~jnp.isnan(largest))
+            pivot = jnp.where(take, row, pivot)
+            largest = jnp.where(take, candidate, largest)
+        column_row = jnp.broadcast_to(
+            jnp.eye(4, dtype=matrix.dtype)[column], batch_shape + (4,)
         )
         pivot_row = jax.nn.one_hot(pivot, 4, dtype=matrix.dtype)
         swap = (
@@ -96,8 +148,8 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
             + column_row[..., :, None] * pivot_row[..., None, :]
             + pivot_row[..., :, None] * column_row[..., None, :]
         )
-        factors = contract("...ij,...jk->...ik", swap, factors)
-        permutation = contract("...ij,...jk->...ik", swap, permutation)
+        factors = _local_product(swap, factors)
+        permutation = _local_product(swap, permutation)
         parity = parity * jnp.where(pivot == column, 1.0, -1.0)
         pivot_value = factors[..., column, column]
         safe_pivot = jnp.where(jnp.abs(pivot_value) > 0.0, pivot_value, 1.0)
@@ -107,38 +159,71 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
         update = multipliers[..., :, None] * factors[..., None, column, :]
         active_trailing = active_rows[..., :, None] & active_rows[..., None, :]
         factors = factors - jnp.where(active_trailing, update, 0.0)
-        factors = factors.at[..., :, column].set(
-            jnp.where(active_rows, multipliers, factors[..., :, column])
-        )
-    determinant = parity.astype(matrix.dtype) * jnp.prod(
-        jnp.diagonal(factors, axis1=-2, axis2=-1),
-        axis=-1,
+        column_entries = jnp.broadcast_to(row_indices == column, batch_shape + (4,))
+        multiplier_entries = active_rows[..., :, None] & column_entries[..., None, :]
+        factors = jnp.where(multiplier_entries, multipliers[..., :, None], factors)
+    determinant = parity.astype(matrix.dtype) * functools.reduce(
+        operator.mul,
+        [factors[..., index, index] for index in range(4)],
     )
     return factors, permutation, determinant
 
 
 def _lu_solve_four(factors: Array, permutation: Array, right: Array, /) -> Array:
-    """Solve a factored 4-by-4 batch for one or more right-hand sides."""
-    permuted = contract("...ij,...jk->...ik", permutation, right)
-    lower_solution = jnp.zeros_like(permuted)
+    """Solve a factored 4-by-4 batch for one or more right-hand sides.
+
+    Each substitution row accumulates all four factor columns in index order,
+    with unsolved rows held at zero, so non-finite factors propagate exactly as
+    in a dense row product.
+    """
+    permuted = _local_product(permutation, right)
+    zero = jnp.zeros_like(permuted[..., 0, :])
+    lower_solution = [zero] * 4
     for row in range(4):
-        contribution = jnp.sum(
-            factors[..., row, :, None] * lower_solution,
-            axis=-2,
+        contribution = functools.reduce(
+            operator.add,
+            [
+                factors[..., row, column, None] * lower_solution[column]
+                for column in range(4)
+            ],
         )
-        value = permuted[..., row, :] - contribution
-        lower_solution = lower_solution.at[..., row, :].set(value)
-    solution = jnp.zeros_like(permuted)
+        lower_solution[row] = permuted[..., row, :] - contribution
+    solution = [zero] * 4
     for row in range(3, -1, -1):
-        contribution = jnp.sum(
-            factors[..., row, :, None] * solution,
-            axis=-2,
+        contribution = functools.reduce(
+            operator.add,
+            [factors[..., row, column, None] * solution[column] for column in range(4)],
         )
         pivot = factors[..., row, row]
         safe_pivot = jnp.where(jnp.abs(pivot) > 0.0, pivot, 1.0)
-        value = (lower_solution[..., row, :] - contribution) / safe_pivot[..., None]
-        solution = solution.at[..., row, :].set(value)
-    return solution
+        solution[row] = (lower_solution[row] - contribution) / safe_pivot[..., None]
+    return jnp.stack(solution, axis=-2)
+
+
+def _cross(left: Array, right: Array, /) -> Array:
+    """Batched 3-vector cross product with the ``jnp.cross`` term order."""
+    l0, l1, l2 = (left[..., index] for index in range(3))
+    r0, r1, r2 = (right[..., index] for index in range(3))
+    return jnp.stack((l1 * r2 - l2 * r1, l2 * r0 - l0 * r2, l0 * r1 - l1 * r0), axis=-1)
+
+
+def _cofactor_rows(matrix: Array, /) -> tuple[Array, Array, Array]:
+    first = matrix[..., 0, :]
+    second = matrix[..., 1, :]
+    third = matrix[..., 2, :]
+    return (
+        _cross(second, third),
+        _cross(third, first),
+        _cross(first, second),
+    )
+
+
+def _determinant_three(matrix: Array, cofactor: Array, /) -> Array:
+    return _local_sum(matrix[..., 0, :] * cofactor)
+
+
+def _determinant_two(matrix: Array, /) -> Array:
+    return matrix[..., 0, 0] * matrix[..., 1, 1] - matrix[..., 0, 1] * matrix[..., 1, 0]
 
 
 def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
@@ -151,35 +236,19 @@ def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
         b = matrix[..., 0, 1]
         c = matrix[..., 1, 0]
         d = matrix[..., 1, 1]
-        determinant = a * d - b * c
+        determinant = _determinant_two(matrix)
         adjugate = jnp.stack((d, -b, -c, a), axis=-1).reshape(matrix.shape)
         return adjugate / jnp.where(determinant != 0.0, determinant, 1.0)[
             ..., None, None
         ], determinant
-    if dimension == 3:
-        first = matrix[..., 0, :]
-        second = matrix[..., 1, :]
-        third = matrix[..., 2, :]
-        cofactor_rows = jnp.stack(
-            (
-                jnp.cross(second, third),
-                jnp.cross(third, first),
-                jnp.cross(first, second),
-            ),
-            axis=-2,
-        )
-        determinant = jnp.sum(first * cofactor_rows[..., 0, :], axis=-1)
-        inverse = (
-            jnp.swapaxes(cofactor_rows, -1, -2)
-            / jnp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
-        )
-        return inverse, determinant
-    factors, permutation, determinant = _lu_factor_four(matrix)
-    identity = jnp.broadcast_to(
-        jnp.eye(4, dtype=matrix.dtype),
-        matrix.shape,
+    cofactor_rows = _cofactor_rows(matrix)
+    determinant = _determinant_three(matrix, cofactor_rows[0])
+    # Stacking cofactor rows as columns forms the adjugate without a transpose.
+    inverse = (
+        jnp.stack(cofactor_rows, axis=-1)
+        / jnp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
     )
-    return _lu_solve_four(factors, permutation, identity), determinant
+    return inverse, determinant
 
 
 def determinant_small_linear(
@@ -196,20 +265,14 @@ def determinant_small_linear(
     dimension = plan.dimension
     if value.shape[-2:] != (dimension, dimension):
         raise ValueError("Small matrix shape does not match the plan dimension.")
-    scale = jnp.max(jnp.abs(value), axis=(-2, -1))
-    safe_scale = jnp.where(scale > 0.0, scale, 1.0).astype(value.dtype)
+    safe_scale = _matrix_scale(value)
     scaled = value / safe_scale[..., None, None]
     if dimension == 1:
         determinant = scaled[..., 0, 0]
     elif dimension == 2:
-        determinant = (
-            scaled[..., 0, 0] * scaled[..., 1, 1] - scaled[..., 0, 1] * scaled[..., 1, 0]
-        )
+        determinant = _determinant_two(scaled)
     elif dimension == 3:
-        determinant = jnp.sum(
-            scaled[..., 0, :] * jnp.cross(scaled[..., 1, :], scaled[..., 2, :]),
-            axis=-1,
-        )
+        determinant = _determinant_three(scaled, _cofactor_rows(scaled)[0])
     else:
         _, _, determinant = _lu_factor_four(scaled)
     return determinant * safe_scale**dimension
@@ -235,9 +298,7 @@ def solve_small_linear(
         right = right[..., :, None]
     if right.shape[:-2] != matrix_.shape[:-2] or right.shape[-2] != dimension:
         raise ValueError("Small linear right-hand side shape is incompatible.")
-    scale = jnp.max(jnp.abs(matrix_), axis=(-2, -1))
-    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
-    field_scale = safe_scale.astype(matrix_.dtype)
+    field_scale = _matrix_scale(matrix_)
     scaled_matrix = matrix_ / field_scale[..., None, None]
     if dimension == 4:
         factors, permutation, scaled_determinant = _lu_factor_four(scaled_matrix)
@@ -246,6 +307,7 @@ def solve_small_linear(
             matrix_.shape,
         )
         scaled_inverse = _lu_solve_four(factors, permutation, identity)
+        inverse = scaled_inverse / field_scale[..., None, None]
         value = _lu_solve_four(
             factors,
             permutation,
@@ -253,12 +315,8 @@ def solve_small_linear(
         )
     else:
         scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
-        value = contract(
-            "...ij,...jk->...ik",
-            scaled_inverse / field_scale[..., None, None],
-            right,
-        )
-    inverse = scaled_inverse / field_scale[..., None, None]
+        inverse = scaled_inverse / field_scale[..., None, None]
+        value = _local_product(inverse, right)
     determinant = scaled_determinant * field_scale**dimension
     dtype_tolerance = float(dimension) * jnp.finfo(matrix_.real.dtype).eps
     singular_tolerance = jnp.maximum(
@@ -268,7 +326,7 @@ def solve_small_linear(
     nonsingular = jnp.abs(scaled_determinant) > singular_tolerance
     refinement_count = jnp.zeros(determinant.shape, dtype=jnp.int32)
     for _ in range(plan.refinement_iterations):
-        residual = right - contract("...ij,...jk->...ik", matrix_, value)
+        residual = right - _local_product(matrix_, value)
         correction = (
             _lu_solve_four(
                 factors,
@@ -276,35 +334,28 @@ def solve_small_linear(
                 residual / field_scale[..., None, None],
             )
             if dimension == 4
-            else contract("...ij,...jk->...ik", inverse, residual)
+            else _local_product(inverse, residual)
         )
         candidate = value + correction
-        candidate_residual = right - contract(
-            "...ij,...jk->...ik",
-            matrix_,
-            candidate,
-        )
-        residual_size = jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1))
-        candidate_size = jnp.sum(
-            jnp.abs(candidate_residual) ** 2,
-            axis=(-2, -1),
-        )
+        candidate_residual = right - _local_product(matrix_, candidate)
+        residual_size = _local_sum(_local_sum(jnp.abs(residual) ** 2))
+        candidate_size = _local_sum(_local_sum(jnp.abs(candidate_residual) ** 2))
         apply = (
             nonsingular
-            & jnp.all(jnp.isfinite(correction), axis=(-2, -1))
+            & _local_all(_local_all(jnp.isfinite(correction)))
             & (candidate_size < residual_size)
         )
         value = jnp.where(apply[..., None, None], candidate, value)
         refinement_count = refinement_count + apply.astype(jnp.int32)
-    residual = right - contract("...ij,...jk->...ik", matrix_, value)
-    residual_norm = jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1)))
-    matrix_norm = jnp.max(jnp.sum(jnp.abs(matrix_), axis=-1), axis=-1)
-    inverse_norm = jnp.max(jnp.sum(jnp.abs(inverse), axis=-1), axis=-1)
+    residual = right - _local_product(matrix_, value)
+    residual_norm = jnp.sqrt(_local_sum(_local_sum(jnp.abs(residual) ** 2)))
+    matrix_norm = _local_max(_local_sum(jnp.abs(matrix_)))
+    inverse_norm = _local_max(_local_sum(jnp.abs(inverse)))
     condition = matrix_norm * inverse_norm
     finite = (
-        jnp.all(jnp.isfinite(matrix_), axis=(-2, -1))
-        & jnp.all(jnp.isfinite(right), axis=(-2, -1))
-        & jnp.all(jnp.isfinite(value), axis=(-2, -1))
+        _local_all(_local_all(jnp.isfinite(matrix_)))
+        & _local_all(_local_all(jnp.isfinite(right)))
+        & _local_all(_local_all(jnp.isfinite(value)))
     )
     successful = nonsingular & finite & (condition <= plan.maximum_condition)
     rank = jnp.where(successful, dimension, 0).astype(jnp.int32)

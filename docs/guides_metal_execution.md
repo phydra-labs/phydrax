@@ -94,6 +94,16 @@ by this profile. CUDA Pallas MACE, cuDSS, AmgX, QUDA, MPI, multiple devices,
 GPU LAPACK, and arbitrary direct factorizations are not Metal capabilities.
 Native MACE is a JAX route, not a new Pallas `metal` target.
 
+There is no CPU numerical route. Compilation refuses every
+`stablehlo.custom_call` target without a Metal GPU handler wherever it appears
+in the module, including unselected and loop-nested branches. This includes
+`mps.eigh`, `mps.qr`, and `mps.svd`, whose inherited JAX-MPS handlers called CPU
+LAPACK while labeling their results as MPS arrays and have been removed, and
+jaxlib's `lapack_*_ffi` targets. The error names the refused target; no
+executable is produced. Explicit host callbacks and the host orchestration of
+loops and branches remain admitted. The refusal is not a GPU eigendecomposition,
+QR, or SVD capability.
+
 The temporal qualification and benchmark use a fixed interval, save schedule, and
 step size, with dynamic state and rate parameters. Dynamically supplied Diffrax
 time bounds can introduce wide sentinel arithmetic and are not qualified here.
@@ -142,6 +152,22 @@ valid entries through JAX 0.12's generic shape-selected index conversion. The
 correction is a platform-specific lowering registration, not a replacement of
 JAX numerical functions or a change to CPU execution.
 
+Bitwise XOR is an exact `lax.reduce` and `lax.reduce_window` reducer for bool
+and signed or unsigned 8-, 16-, 32-, and 64-bit integers. Strict reducer
+detection admits it to the custom Metal reduction shader, where one thread per
+output folds serially at the declared width. The portable contract is the
+neutral initial value (`0` or `False`); empty, no-axis, scalar, padded, and
+dilated cases keep their StableHLO meaning. StableHLO leaves how often a
+nonidentity initial value is combined implementation-defined. The qualifier
+also pins this companion's once-per-output behavior, but that is not a portable
+guarantee. XOR does not use the parallel MLX route of ordinary sums and Boolean
+AND/OR, and no performance claim is made.
+The uint64 array-tree lineage of prepared low-rank updates uses this reducer.
+Mandatory cases compare its Metal values with an independent
+arbitrary-precision host evaluation of the same formula, so existing lineage
+values are unchanged and single high-bit changes alter them. Lineage is a change
+detector, not a cryptographic hash.
+
 ## Execution, memory, and failure
 
 The companion executes synchronously. Completion evidence must still be
@@ -163,6 +189,46 @@ Unsupported operations and zero-copy/pointer exports fail explicitly. Callback,
 readback, allocation, and numerical errors must reach the consumer. No failed
 solve may be replaced with a plausible zero or a CPU result under an MPS label.
 
+## Compiled-program inspection
+
+`Compiled.as_text()` and `compiled.runtime_executable().hlo_modules()` report
+the finalized module the companion executes: the program after native parser
+inlining, exact constant folding, and admission. PJRT `OptimizedProgram`
+returns that module as MLIR text with format `mlir`, and XLA converts it to an
+`HloModule`. JAX also queries it while compiling to obtain default parameter
+and output layouts, so printing the report is part of measured compilation.
+
+Phydrax's active frontend registers only its gather and host-callback/debug
+lowerings; it does not use upstream JAX-MPS Python lowerings. Its programs
+contain ordinary StableHLO, CHLO as JAX serializes it (for example `chlo.sinh`
+as a `stablehlo.composite`), single-device Shardy annotations, and
+`phydrax_metal.host_callback` calls, rather than upstream `mhlo.*` or fused
+`mps.*` custom calls. The companion keeps its own parser pipeline, without
+aggressive floating-point simplification or upstream's fusion pass, so reports
+need not match upstream JAX-MPS text. The executed module is never rewritten
+for reporting. Two export spellings let XLA's HLO conversion succeed: a
+single-device Shardy constraint is reported as the equivalent replicated
+`@Sharding` custom call, and an admitted incoming `mhlo.*` custom call (`mhlo.topk`
+and the native unary `mhlo.*` targets) is reported as `mps.mhlo.*` with only its
+target name changed, because the conversion reserves the `mhlo.*` namespace.
+The companion admits and executes `mps.mhlo.X` exactly like `mhlo.X`. Unknown
+targets in either namespace, such as `mps.mhlo.eigh`, are still refused at
+compilation and named as written.
+
+A query is read-only: it does not compile, execute, or run host callbacks. The
+text is printed once per executable and cached for that executable's lifetime.
+The size query and fill therefore agree, and the report is identical before
+and after execution. The first print is serialized with compilation and
+execution, and concurrent queries are safe. An undersized caller buffer
+returns `INVALID_ARGUMENT` without copying; a report of 2 GiB or more returns
+`RESOURCE_EXHAUSTED` instead of aborting the process.
+
+Executable serialization and deserialization remain unimplemented. The report
+is not an HLO protocol buffer or a source of cost analysis. A reported program
+containing host callbacks cannot be recompiled in another process because
+callback identifiers are process-local. The executable fingerprint remains the
+SHA-256 digest of the submitted program.
+
 ## Reproduce scientific and performance evidence
 
 `examples/metal_scientific_execution.py` runs a float32 Poisson PINN with native
@@ -174,9 +240,11 @@ CPU-only setup.
 The installed-wheel qualifier in `tools/qualify_metal_wheels.py` creates a fresh
 environment outside the checkout, verifies installed-file hashes and the current
 native source closure, and runs the mandatory primitive, scientific, import,
-and lifetime cases in isolated processes. Missing, skipped, duplicated, stale,
-or failed cases cannot produce a successful campaign. Its source/build and
-hardware identities are necessary to interpret any results.
+lifetime, custom-call admission, XOR and lineage, and optimized-program
+inspection cases (401 installed-wheel cases) in isolated processes. Missing,
+skipped, duplicated, stale, or failed cases cannot produce a successful
+campaign. Its source/build and hardware identities are necessary to interpret
+any results.
 
 Performance measurements follow numerical and lifetime qualification. Compare
 CPU float32 against Metal float32 using the same rounded inputs and algorithm;
@@ -205,6 +273,9 @@ without skips, plus the standalone Poisson example. Its source identity is
 `f346b2ade03dd5b73fe0542791411f2d2c154489cbcfc0b5da90795086d7f4b8`;
 the frozen wheels are under `.tmp/metal-native/frozen/f346b2ade03dd5b7/`.
 These are local artifacts, not a publication or qualification of every Apple GPU.
+That earlier inventory predates the custom-call admission, XOR, lineage, and
+optimized-program cases; its result does not qualify a companion containing
+those changes, and the timings below were not remeasured with them.
 
 Representative synchronized warm medians, in milliseconds:
 
@@ -254,3 +325,34 @@ policy was not bypassed, and no launch-count speedup is claimed. Instrumented
 trace timings are excluded from the table. Each benchmark process used a fresh
 JAX cache; the MLX cache was not reset. There is no cold Metal compiler-cache
 claim, and unsupported compiler estimates remain unknown.
+
+### Runtime-completion companion
+
+`benchmarks/metal_runtime_completion.json` binds the companion containing the
+custom-call admission, XOR, and optimized-program changes to its build evidence,
+full installed-wheel qualification, and wheel hashes. Its source identity is
+`3e24c46ab32036fd512dce2ec115304489b2d9559ef64c82cc74f50b18039442`. On the same
+M1 Max host, it passed all **401 mandatory installed-wheel cases** without skips,
+plus the standalone Poisson example. A throwaway C-level check of the
+`OptimizedProgram` protocol against the same library passed all 22 checks; its
+source and output are retained in the file. These are local artifacts, not a
+publication.
+
+The same file retains the phase-separated runs of
+`benchmarks/metal_runtime_completion.py` on MPS and on CPU through the installed
+wheels. All 19 cases pass on both backends with identical input hashes. Integer
+results match the NumPy oracle bit for bit. The CHLO `sinh` case stays within
+its predeclared float32 bound. Every inspection report is identical before and
+after execution. The measurements describe costs, not acceleration:
+
+- Serial XOR grows with the reduced-axis length. A 1,048,577-element uint64
+  reduction has a 143 ms warm median on Metal versus 0.14 ms on CPU. A
+  17-row reduction with 65,536 outputs is 0.29 ms on Metal.
+- `as_text()` on an unrolled 2,048-operation uint64 program, with 1.6 MB of
+  report text, takes about 92 ms per call, and repeated calls cost the same as
+  the first. For small programs, a call takes about 1 ms.
+- The first execution of the same unrolled program takes 34.1 s on Metal,
+  separate from its 0.45 s compilation. Its warm median is 2.6 ms.
+
+The backend exposes no compiler cost or memory analysis, so those values remain
+unknown. CPU remains faster for every measured case.

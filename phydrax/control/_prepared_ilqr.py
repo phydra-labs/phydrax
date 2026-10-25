@@ -40,7 +40,7 @@ from ._ilqr import (
     ILQRResult,
     ILQRStatus,
 )
-from ._problem import ControlProblem
+from ._problem import _require_array_dynamics, ControlProblem
 from ._trajectory import (
     CONTROL_DYNAMICS_FAILED,
     CONTROL_SUCCESS,
@@ -140,7 +140,7 @@ def plan_ilqr(
         raise TypeError("problem must be a ControlProblem.")
     if problem.path_constraints or problem.terminal_constraints:
         raise ValueError("iLQR supports unconstrained ControlProblem values only.")
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     if (
         not state_layout.geometry.supports_exact_inverse
         or not state_layout.geometry.supports_exact_differential
@@ -213,7 +213,7 @@ def prepare_ilqr(
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
         controls = controls.astype("float64")
     if plan.linearization_policy.route == "batched":
-        n = problem.dynamics.system.state_layout.local_size
+        n = _require_array_dynamics(problem).system.state_layout.local_size
         m = prod(problem.control_shape)
         t = problem.time_grid.num_steps
         entries = t * (2 * n * n + 2 * n * m + m * m + n + 2 * m) + n * n + n
@@ -389,7 +389,7 @@ def _feedback_rollout(
     feedback: Array,
     step_size: Array,
 ) -> _RolloutResult:
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     geometry = state_layout.geometry
     state_size = state_layout.local_size
     control_size = prod(problem.control_shape)
@@ -752,7 +752,7 @@ def _solve_case(
             (
                 problem.time_grid.num_steps,
                 prod(problem.control_shape),
-                problem.dynamics.system.state_layout.local_size,
+                _require_array_dynamics(problem).system.state_layout.local_size,
             ),
             dtype=controls.dtype,
         ),
@@ -1049,7 +1049,7 @@ def solve_prepared_ilqr(
         states,
         controls,
         feedback,
-        state_layout=problem.dynamics.system.state_layout,
+        state_layout=_require_array_dynamics(problem).system.state_layout,
         control_shape=problem.control_shape,
         policy_id=policy_name,
     )

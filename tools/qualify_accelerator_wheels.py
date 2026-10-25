@@ -11,6 +11,10 @@ Observed device counts do not qualify unselected devices or architectures.
 ROCm also initializes CPU for JAX host callbacks; scientific arrays must stay
 exclusively on the explicitly selected AMD device.
 Full provenance uses a validated, 64-MiB-limited JSON sidecar, never log tails.
+Declared compiled scientific regions must also report separate lowering,
+compilation, first and warm execution phases, logical retained bytes, XLA's
+compiled memory plan, and selected-device allocator samples, bound to the probed
+runtime and a per-run nonce. Resource evidence never replaces passing results.
 """
 
 from __future__ import annotations
@@ -18,13 +22,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
+import statistics
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from secrets import token_hex
 from typing import Any
 from xml.etree import ElementTree
 
@@ -54,6 +61,81 @@ REQUIRED_CASES = (
 )
 EXAMPLE = "examples/accelerator_scientific_execution.py"
 RUNTIME_PROPERTY = "accelerator_runtime"
+RESOURCE_PROPERTY = "accelerator_resources"
+EVIDENCE_NONCE_VARIABLE = "PHYDRAX_QUALIFICATION_NONCE"
+# Cases whose exact compiled scientific regions must carry resource evidence.
+RESOURCE_REGIONS: dict[str, tuple[str, ...]] = {
+    "test_mlp_pde_derivatives_and_update": ("pinn-training-step",),
+    "test_polynomial_coordinate_gradient_and_hessian": (
+        "coordinate-gradient",
+        "coordinate-hessian",
+    ),
+    **{
+        f"test_wide_integer_sort_and_arithmetic[{dtype}]": ("wide-integer-sort",)
+        for dtype in ("int64", "uint64")
+    },
+    "test_point_gather_scatter_full_width_addresses": ("full-width-gather-scatter",),
+    **{
+        f"test_full_width_window_gather[{dtype}]": ("full-width-window-gather",)
+        for dtype in ("int64", "uint64")
+    },
+    "test_compiled_loops_and_ordered_callbacks": ("bounded-loops",),
+    "test_bounded_linear_solve": ("bounded-pcg-solve",),
+    "test_linear_iteration_exhaustion": ("exhausted-pcg-solve",),
+    "test_real_fourier_resampling": ("fourier-resample", "fourier-resample-gradient"),
+}
+_RESOURCE_FIELDS = frozenset(
+    {
+        "region",
+        "evidence_nonce",
+        "runtime",
+        "program_sha256",
+        "input_signature",
+        "output_signature",
+        "lowering_seconds",
+        "compilation_seconds",
+        "first_execution_seconds",
+        "warm_execution",
+        "logical_retained_bytes",
+        "compiled_memory",
+        "compiled_memory_unavailable_reason",
+        "phase_memory",
+    }
+)
+_WARM_SUMMARY_FIELDS = (
+    "min_seconds",
+    "median_seconds",
+    "mean_seconds",
+    "std_seconds",
+    "max_seconds",
+)
+_WARM_FIELDS = frozenset({"count", "samples_seconds", *_WARM_SUMMARY_FIELDS})
+_COMPILED_MEMORY_FIELDS = (
+    "argument_bytes",
+    "output_bytes",
+    "alias_bytes",
+    "temporary_bytes",
+    "generated_code_bytes",
+    "host_argument_bytes",
+    "host_output_bytes",
+    "host_alias_bytes",
+    "host_temporary_bytes",
+    "host_generated_code_bytes",
+)
+_MEASUREMENT_FIELDS = frozenset(
+    {"method", "scope", "value_bytes", "resolution_bytes", "unavailable_reason"}
+)
+_ALLOCATOR_FIELDS = (
+    "allocator_limit",
+    "allocator_reserved",
+    "allocator_in_use",
+    "allocator_peak_in_use",
+    "live_array_bytes",
+)
+_EXECUTION_PHASES = {
+    "first_execution": "first-execution",
+    "warm_execution": "warm-execution",
+}
 ROCM_CASES = tuple(
     f"{name}[{kind}]"
     for name in (
@@ -189,10 +271,216 @@ def runtime_errors(record: Mapping[str, object], accelerator: Accelerator) -> li
     return errors
 
 
+def _seconds(value: object) -> bool:
+    return type(value) is float and math.isfinite(value) and value >= 0.0
+
+
+def _byte_count(value: object) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _signature_valid(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"shape", "dtype", "weak_type"}
+            and isinstance(item["shape"], list)
+            and all(_byte_count(extent) for extent in item["shape"])
+            and isinstance(item["dtype"], str)
+            and bool(item["dtype"])
+            and type(item["weak_type"]) is bool
+            for item in value
+        )
+    )
+
+
+def _warm_valid(value: object) -> bool:
+    """Every warm sample is retained and each summary matches those samples."""
+    if not isinstance(value, dict) or set(value) != _WARM_FIELDS:
+        return False
+    samples = value["samples_seconds"]
+    summaries = [value[key] for key in _WARM_SUMMARY_FIELDS]
+    if (
+        not isinstance(samples, list)
+        or not samples
+        or type(value["count"]) is not int
+        or value["count"] != len(samples)
+        or not all(_seconds(item) for item in [*samples, *summaries])
+    ):
+        return False
+    derived = (
+        min(samples),
+        statistics.median(samples),
+        statistics.fmean(samples),
+        statistics.pstdev(samples),
+        max(samples),
+    )
+    return all(
+        math.isclose(observed, expected, rel_tol=1e-12, abs_tol=1e-15)
+        for observed, expected in zip(summaries, derived, strict=True)
+    )
+
+
+def _measurement_valid(value: object) -> bool:
+    """A measured byte count or an explicit reason; absence never reads as zero."""
+    if not isinstance(value, dict) or set(value) != _MEASUREMENT_FIELDS:
+        return False
+    resolution = value["resolution_bytes"]
+    reason = value["unavailable_reason"]
+    if value["value_bytes"] is None:
+        return resolution is None and isinstance(reason, str) and bool(reason.strip())
+    return (
+        _byte_count(value["value_bytes"])
+        and type(resolution) is int
+        and resolution > 0
+        and reason is None
+    )
+
+
+def _compiled_memory_valid(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {*_COMPILED_MEMORY_FIELDS, "peak_bytes"}
+        and all(_byte_count(value[key]) for key in _COMPILED_MEMORY_FIELDS)
+        and (value["peak_bytes"] is None or _byte_count(value["peak_bytes"]))
+        and value["alias_bytes"] <= value["argument_bytes"] + value["output_bytes"]
+    )
+
+
+def _device_sample_valid(sample: object, runtime: Mapping[str, object]) -> bool:
+    return (
+        isinstance(sample, dict)
+        and all(type(sample.get(key)) is int for key in ("process_index", "device_id"))
+        and sample["process_index"] == runtime.get("process_index")
+        and sample["device_id"] == runtime.get("qualified_device_id")
+        and sample.get("platform") == runtime.get("platform")
+        and sample.get("provider_id") == runtime.get("client_platform")
+        and sample.get("provider_version") == runtime.get("platform_version")
+        and all(_measurement_valid(sample.get(key)) for key in _ALLOCATOR_FIELDS)
+    )
+
+
+def _phase_valid(value: object, phase: str, runtime: Mapping[str, object]) -> bool:
+    """Exactly the selected device was sampled across this execution phase."""
+    if not isinstance(value, dict) or value.get("phase") != phase:
+        return False
+    devices = value.get("devices")
+    if not isinstance(devices, list) or len(devices) != 1:
+        return False
+    device = devices[0]
+    return (
+        type(value.get("sample_count")) is int
+        and value["sample_count"] >= 2
+        and _seconds(value.get("duration_seconds"))
+        and _measurement_valid(value.get("sampled_peak_resident"))
+        and isinstance(device, dict)
+        and _measurement_valid(device.get("sampled_peak_in_use"))
+        and all(
+            _device_sample_valid(device.get(key), runtime)
+            for key in ("baseline", "final")
+        )
+    )
+
+
+def _region(record: object) -> str | None:
+    """Region name of a parsed record; malformed values never reach a Counter."""
+    region = record.get("region") if isinstance(record, dict) else None
+    return region if isinstance(region, str) else None
+
+
+def resource_record_errors(
+    record: object, expected_runtime: Mapping[str, object], nonce: str
+) -> list[str]:
+    """Refuse absent, stale, foreign-runtime, or incomplete compiled-region evidence.
+
+    XLA's compiled memory plan is the required resource evidence. Host and
+    allocator counters may be unavailable, but only with an explicit reason.
+    """
+    if not isinstance(record, dict) or set(record) != _RESOURCE_FIELDS:
+        return ["resource evidence schema differs"]
+    errors: list[str] = []
+    if _region(record) is None:
+        errors.append("resource region name missing")
+    if record["evidence_nonce"] != nonce:
+        errors.append("resource evidence is not bound to this qualification run")
+    if record["runtime"] != dict(expected_runtime):
+        errors.append("resource runtime differs from probed installed runtime")
+    if not (
+        _sha256_text(record["program_sha256"])
+        and _signature_valid(record["input_signature"])
+        and _signature_valid(record["output_signature"])
+    ):
+        errors.append("compiled program or input/output signature missing")
+    if not (
+        all(
+            _seconds(record[key])
+            for key in (
+                "lowering_seconds",
+                "compilation_seconds",
+                "first_execution_seconds",
+            )
+        )
+        and _warm_valid(record["warm_execution"])
+    ):
+        errors.append("lowering, compilation, first, or warm execution timing missing")
+    if not _byte_count(record["logical_retained_bytes"]):
+        errors.append("logical retained bytes missing")
+    if record["compiled_memory"] is None:
+        errors.append(
+            "compiled memory plan unavailable: "
+            f"{record['compiled_memory_unavailable_reason']}"
+        )
+    elif (
+        not _compiled_memory_valid(record["compiled_memory"])
+        or record["compiled_memory_unavailable_reason"] is not None
+    ):
+        errors.append("malformed compiled memory plan")
+    phases = record["phase_memory"]
+    if (
+        not isinstance(phases, dict)
+        or set(phases) != _EXECUTION_PHASES.keys()
+        or not all(
+            _phase_valid(phases[key], phase, expected_runtime)
+            for key, phase in _EXECUTION_PHASES.items()
+        )
+    ):
+        errors.append("selected-device execution phase memory samples missing")
+    return errors
+
+
+def _case_resource_errors(
+    name: str | None,
+    texts: list[str],
+    expected_runtime: Mapping[str, object],
+    nonce: str,
+) -> tuple[list[str], list[object]]:
+    errors: list[str] = []
+    records: list[object] = []
+    for text in texts:
+        try:
+            record = json.loads(text)
+        except json.JSONDecodeError:
+            errors.append(f"{name}: malformed resource evidence")
+            continue
+        records.append(record)
+        errors.extend(
+            f"{name}/{_region(record)}: {error}"
+            for error in resource_record_errors(record, expected_runtime, nonce)
+        )
+    regions = Counter(_region(record) for record in records)
+    if regions != Counter(RESOURCE_REGIONS.get(name or "", ())):
+        errors.append(
+            f"{name}: compiled-region resource coverage differs: {dict(regions)}"
+        )
+    return errors, records
+
+
 def case_report_errors(
-    path: Path, expected_runtime: Mapping[str, object]
+    path: Path, expected_runtime: Mapping[str, object], nonce: str
 ) -> tuple[list[str], list[dict[str, object]]]:
-    """Require every exact case once, passed with actual matching runtime evidence."""
+    """Require every exact case once, passed with matching runtime/resource evidence."""
     if not path.is_file():
         return ["Scientific case report is missing"], []
     try:
@@ -217,17 +505,18 @@ def case_report_errors(
         failures = [
             child.tag for child in node if child.tag in {"failure", "error", "skipped"}
         ]
-        properties = [
+        properties = node.findall("./properties/property")
+        runtime_texts = [
             prop.get("value", "")
-            for prop in node.findall("./properties/property")
+            for prop in properties
             if prop.get("name") == RUNTIME_PROPERTY
         ]
         if failures:
             errors.append(f"{name}: nonpassing stages {failures}")
-        if not properties:
+        if not runtime_texts:
             errors.append(f"{name}: actual result placement evidence missing")
         records: list[object] = []
-        for text in properties:
+        for text in runtime_texts:
             try:
                 record = json.loads(text)
             except json.JSONDecodeError:
@@ -236,12 +525,25 @@ def case_report_errors(
             records.append(record)
             if record != dict(expected_runtime):
                 errors.append(f"{name}: runtime differs from probed installed runtime")
+        resource_errors, resources = _case_resource_errors(
+            name,
+            [
+                prop.get("value", "")
+                for prop in properties
+                if prop.get("name") == RESOURCE_PROPERTY
+            ],
+            expected_runtime,
+            nonce,
+        )
+        errors.extend(resource_errors)
         cases.append(
             {
                 "name": name,
                 "outcome": "passed" if not failures else "failed",
                 "runtime": records,
-                "duration_seconds": node.get("time"),
+                "resources": resources,
+                # Whole pytest case, including setup and oracles; not kernel time.
+                "pytest_case_wall_seconds": node.get("time"),
             }
         )
     return errors, cases
@@ -323,7 +625,7 @@ def _distribution_record_valid(record: object) -> bool:
 
 
 def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]) -> bool:
-    """Bind all three architecture payloads and automatic setup to installed bytes."""
+    """Validate Linux-produced ROCm paths independently of the inspecting host."""
     try:
         bundle = provenance["rocm_bundle"]
         manifest_text = bundle["manifest"]
@@ -342,8 +644,8 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             != hashlib.sha256(manifest_text.encode()).hexdigest()
         ):
             return False
-        venv = Path(provenance["venv"])
-        manifest_path = Path(facts["bundle_manifest"])
+        venv = PurePosixPath(provenance["venv"])
+        manifest_path = PurePosixPath(facts["bundle_manifest"])
         if (
             not venv.is_absolute()
             or not manifest_path.is_absolute()
@@ -392,7 +694,7 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             inventory_paths = set()
             for item in inventory:
                 relative = item["path"]
-                path = Path(relative)
+                path = PurePosixPath(relative)
                 if (
                     path.is_absolute()
                     or ".." in path.parts
@@ -434,7 +736,7 @@ def _bundle_record_valid(provenance: dict[str, Any], diagnostics: dict[str, Any]
             ("LLVM_PATH", "llvm_path"),
             ("HIP_DEVICE_LIB_PATH", "bitcode_path"),
         ):
-            relative = Path(compiler[key])
+            relative = PurePosixPath(compiler[key])
             if relative.is_absolute() or ".." in relative.parts:
                 return False
             if environment.get(variable) != str(site / relative):
@@ -538,6 +840,7 @@ def _copy_harness(destination: Path) -> None:
     for relative in (
         TEST_FILE,
         "tests/_support/accelerator_qualification.py",
+        "benchmarks/_runtime.py",
         "tools/_accelerator_process.py",
         "tools/check_accelerator_extras.py",
         "tools/check_cuda_extras.py",
@@ -546,7 +849,14 @@ def _copy_harness(destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, target)
-    for package in ("tests", "tests/_support", "tests/integration", "tools", "examples"):
+    for package in (
+        "tests",
+        "tests/_support",
+        "tests/integration",
+        "tools",
+        "examples",
+        "benchmarks",
+    ):
         (destination / package / "__init__.py").touch()
 
 
@@ -685,10 +995,9 @@ def _qualify_device(
         f"import phydrax as phx{bootstrap}\n"
         "from tests._support.accelerator_qualification import accelerator_device,installed_provenance,runtime_evidence,diagnostic_evidence\n"
         "from tools._accelerator_process import write_json_evidence\n"
-        "from phydrax._jax_config import default_device\n"
         "import jax.numpy as jnp\n"
         f"provenance=installed_provenance(Path({str(venv)!r}),json.loads(Path({str(expected)!r}).read_text()))\n"
-        "with default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
+        "with phx.execution.default_device(accelerator_device()): runtime=runtime_evidence(jnp.asarray([1],dtype=jnp.int64))\n"
         "diagnostics=diagnostic_evidence()\n"
         f"write_json_evidence(Path({str(probe_path)!r}),dict(provenance=provenance,runtime=runtime,diagnostics=diagnostics))\n"
         "print(json.dumps(dict(status='observed')))"
@@ -736,13 +1045,16 @@ def _qualify_device(
         prefix
         + f"import sys; sys.path.insert(0,{str(harness)!r}); import pytest; raise SystemExit(pytest.main([{TEST_FILE!r},'-q','-o','addopts=','-o','junit_family=xunit2','--junitxml={cases_path}',*{case_selection!r}]))"
     )
+    # Fresh per-run nonce: earlier or foreign resource evidence cannot qualify.
+    nonce = token_hex(16)
+    report["evidence_nonce"] = nonce
     stages["scientific-cases"] = run(
         [python, "-I", "-c", test_source],
         cwd=harness,
-        environment=environment,
+        environment={**environment, EVIDENCE_NONCE_VARIABLE: nonce},
         timeout=args.timeout,
     )
-    case_errors, cases = case_report_errors(cases_path, probe["runtime"])
+    case_errors, cases = case_report_errors(cases_path, probe["runtime"], nonce)
     report["cases"] = cases
     errors.extend(case_errors)
     if (
@@ -750,23 +1062,19 @@ def _qualify_device(
         or stages["scientific-cases"]["timed_out"]
     ):
         errors.append("Scientific cases failed or timed out")
-    # The advertised example's own scenario runs in this fresh process; the
-    # installed frontend identity is observed in that same process afterwards.
-    example_source = (
-        "import sys,json\n"
-        f"sys.path.insert(0,{str(harness)!r})\n"
-        "from examples.accelerator_scientific_execution import selected_device_record\n"
-        f"record=selected_device_record({accelerator.value!r},device_id={device_id},tpu_autodetect={bool(args.tpu_autodetect)})\n"
-        "from phydrax._jax_indexing_frontend import frontend_index_patch_identity\n"
-        "record['frontend_index_patch']=frontend_index_patch_identity()\n"
-        "print(json.dumps(record,sort_keys=True))\n"
-        "raise SystemExit(0 if record['status']=='passed' else 1)"
-    )
+    command = [
+        python,
+        "-I",
+        str(harness / EXAMPLE),
+        "--accelerator",
+        accelerator.value,
+        "--device-id",
+        str(device_id),
+    ]
+    if args.tpu_autodetect:
+        command.append("--tpu-autodetect")
     stages["example"] = run(
-        [python, "-I", "-c", example_source],
-        cwd=harness,
-        environment=environment,
-        timeout=args.timeout,
+        command, cwd=harness, environment=environment, timeout=args.timeout
     )
     example = last_json(stages["example"])
     report["example"] = example

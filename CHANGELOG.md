@@ -95,6 +95,76 @@
   shard metadata `source_process_index` records the process that held the
   snapshot. Physical layout fingerprints are unchanged; shard records without
   `source_process_index` are refused rather than inferred.
+- `RobotAdaptation` now carries the source-neutral `model`, `report`, and
+  `evidence` contracts. Native plans, frames, laws, and name maps live on
+  `NativeRobotModel`; prepare them through `adaptation.model.prepare()`.
+  URDF collision, motor, damping, and stop policies now lower to executable
+  native owners rather than a parallel adaptation-only representation.
+- Contact searches now return catalogue-bound canonical epochs with dynamic
+  geometry binding and explicit coverage/exhaustion evidence. Route keys use
+  bounded canonical feature ranks without changing original scientific IDs.
+  Replace old compiled batches and recreate contact histories after cutover.
+- Contact cone programs now own a response operator and an explicit dimensional
+  `ContactCertificatePolicy`; dense and local-block responses are explicit
+  constructions. Generic `ContactManifoldState` replaces the rod-only history.
+  Fixed-branch derivatives require bounded native rank evidence and exact
+  numerical binding; frictionless Coulomb boundaries do not admit unqualified
+  friction derivatives.
+- Maximal rigid diagnostics now expose method-aware `rank` evidence instead of
+  ambiguous scalar rank/condition aliases. The general dense-SVD audit remains
+  the default; an inconclusive forest certificate never claims rank deficiency.
+- Reprepare reduced-articulation execution artifacts: static execution-address
+  tuples now contain Python integers, not NumPy/JAX scalars. Scientific body and
+  joint ID payloads are unchanged, but the static PyTree representation changes.
+- Articulated path bounds now accumulate ancestry work per body rather than
+  materializing vertex-by-edge products. Constant-rotation paths retain exact
+  prismatic cancellation through native-FK endpoint hulls. Reprepare geometry
+  and compiled artifacts: removal of the static per-vertex ancestry lists
+  changes prepared representation, not scientific geometry IDs.
+- `PreparedArticulatedContactStep` stores its articulation and collision
+  geometry once. With contact routes, `participant`, `articulation` and
+  `geometry` all read the scene's participant, so an update made through
+  `scene` reaches prediction, mass, route kinematics, trajectories and search
+  together. Contact-free steps keep a sole private articulation. The
+  constructor and the public read attributes are unchanged. The prepared
+  PyTree is not: it drops the separate articulation, geometry and participant
+  subtrees and renames the articulation field. Reprepare steps and plants and
+  rebuild their compiled, partitioned, tangent and checkpointed array PyTrees,
+  and select step leaves through the public attributes (for example
+  `eqx.tree_at(lambda step: step.articulation, ...)`). Step, program,
+  catalogue, geometry and articulation IDs are unchanged.
+- `ControlProblem` retains a complete runtime state for `PlantControlDynamics`.
+  Selected sampling-MPC replays retain complete plant histories; explicit model
+  realizations require `select_realization(index)` before restoring a state.
+  History budgets cover the entire retained realization ensemble.
+- `PreparedRobotEnvironment` runs any complete-state `AbstractDiscretePlant`,
+  including the native articulated plant and autonomous plants (`action=None`).
+  It accepts an optional identity-bound `control_codec` for vector actions.
+  Invalid source cases propose from the plant reset fallback. Rewards keep the
+  task reward dtype. `RobotEnvironmentTransition` adds
+  `reset_successful`/`reset_status`. Environment provenance now binds the codec
+  and resolved horizons, so environment IDs and transition PyTrees change.
+  Recreate environment states.
+- Replace CUDA environment major-only plugin facts with individual
+  `CudaPluginInstallation` records in `CudaEnvironmentFacts.plugins`; remove
+  `plugin_majors`. Compiler-bound atomistic targets now include `compiler_id`.
+  Reprepare affected execution artifacts instead of relabeling old identities.
+- Add native Windows CUDA 13 packaging, source-pinned PJRT/kernel preparation,
+  DLL ownership/admission, and cuDSS/AmgX/QUDA companion portability. Native
+  compilation and Windows GPU qualification remain required release gates.
+  Unsupported compiler/provider/topology requests refuse explicitly.
+- Add Windows process-tree ownership, host-memory evidence, and NTFS held-handle
+  publication. Missing measurements and failed namespace synchronization remain
+  failures or unavailable evidence, never plausible zero values or receipts.
+- Keep Windows CUDA bootstrap failures sticky across repeated JAX operations;
+  authenticate actual hook code rather than following arbitrary wrappers.
+  Resolve extension roots by full path, retain inspection causes, and reject
+  actual import ambiguities or foreign CUDA families without rejecting unrelated
+  extension basenames.
+- Expose execution-owned device scopes and detached frontend patch identity
+  through the canonical public facades. SQLite service paths retain ancestor
+  handles for the connection lifetime. Checkpoint generation publication uses
+  hard links without adding a Linux rename-flags requirement.
 - Move exact scalar GP execution to native prepared factors and solve evidence.
   `ExactGaussianProcessFactor.factorization` replaces its raw `cholesky` field;
   retained storage includes covariance, factor, and evidence. Likelihood states
@@ -252,6 +322,65 @@
   process checks run on one host with forced CPU devices. They are functional
   evidence only, not accelerator, multi-host, released-profile or pretrained
   parity qualification.
+- Add reusable articulated mass preparation with configuration-bound factors,
+  true-dual vector and multiple-RHS actions, failure evidence, and derivatives.
+- Fuse admitted articulated inertia, factor-substitution and reverse-force
+  sweeps into coarse Mosaic GPU kernels. Share inverse-dynamics motion and
+  geometry while preserving independent physical columns, reference
+  derivatives, mixed-dtype rounding, and all numerical certificates.
+- Fuse scalar-joint pose, velocity, pullback and directional-motion traversals
+  while retaining the original quaternion and symbolic-zero derivative
+  semantics. Reuse zero-rate geometry in mass preparation and preserve
+  independent failure evidence.
+- Separate compiled CUDA forward-query result storage from private work, with
+  projection pruning and explicit computation/binding/batching ownership.
+  Retained caller results remain immutable; forwarded numerical leaves are
+  not copied or made static. Rebuild compiled artifacts for the new native
+  primitive identities.
+- Select Mosaic architecture from the actual compilation target under scoped
+  device placement, and make spatial-inertia broadcasting explicit under
+  strict JAX rank-promotion policy.
+- Add a complete fixed-base articulated plant for scalar-joint trees,
+  sphere/capsule contacts with static planes, stateless motors and damping, and
+  coupled unilateral stops. It certifies the actual lifted trajectory, physical
+  endpoint contact law, momentum and energy ledger, and commits only complete
+  requested intervals. Native capsule support retains both endpoint witnesses.
+- Add optional host-only compiled-MuJoCo adaptation and same-model smooth
+  qualification. Transforming MuJoCo contact or limits into native hard laws
+  requires explicit loss accounting; cross-law trajectories are not parity
+  claims. Native execution has no external simulator runtime dependency.
+- Add opt-in verified forest rank bounds, complete-state control rollout and
+  replay, and phase-separated robotics/contact/rank qualification drivers with
+  explicit resource refusal and compiler/storage evidence.
+- Refuse inherited CPU-LAPACK Metal custom calls during native compilation,
+  including unreachable branches, while preserving explicit host callbacks.
+  Add exact-width Boolean/integer XOR reductions and low-rank lineage support
+  through the existing bounded reduction kernels.
+- Implement read-only Metal optimized-program inspection with checked PJRT
+  size/fill semantics and cached module text. Preserve the executed module,
+  adapt single-device Shardy annotations for reporting, and normalize admitted
+  MHLO custom-call names at the interchange boundary without widening admission.
+  New companion source/build identities require rebuilt, qualified artifacts.
+- Restore reverse-mode QP and MPC sensitivities by keeping the implicit KKT
+  tangent action linear in its right-hand side. Matrix rank/finiteness still
+  control derivative validity; irregular systems retain poisoned derivatives.
+- Keep optional PySCF and MJX typing independent of installed extras and refuse
+  authenticated MPI channel admission on hosts without Linux peer credentials.
+- Extend explicit construction dtype through measure-aware attention, its
+  operator-model family, sample geometry, and latent tensor grids. Preserve
+  selected geometry precision through reconstruction without casting caller
+  values or changing omitted-dtype construction.
+- Stabilize saturated and empty-support attention higher derivatives. Preserve
+  fused XLA forward execution while differentiating the bounded native
+  reference; cuDNN retains its existing provider derivative route.
+- Add a CPU-only scientific TPU lowering preflight with independent numerical
+  checks and explicitly transformed derivative programs. Required exports and
+  expected callback refusals are reported separately; successful preflight is
+  neither complete export coverage nor TPU compilation/hardware qualification.
+- Require phase-separated compiled-region resource evidence in installed
+  accelerator qualification, including the Poisson PINN training update.
+  Bind records to the observed runtime and qualification invocation; preserve
+  unavailable allocator counters instead of substituting zeros.
 - Add the `rocm10` extra for standard CPython 3.13 and matched
   JAX/JAXlib/AMD plugin 0.12.0, with packaged ROCm 10.1.0 userspace and
   `gfx942`, `gfx950`, and `gfx1250` payloads targeting the MI300/MI350 families
@@ -622,6 +751,30 @@
   complete registration, without masking a proven absence behind query overflow.
   Retain failed PIC physics and reference checks and require successful
   scientific terminal records.
+- Preserve direct `jax.linear_transpose` for streaming APIC moments, including
+  grid and metadata actions and output-specific symbolic zeros. This restores
+  MPM contact force pullbacks without reading unused nonfinite metadata or
+  changing the native primal kernel.
+- Stream admitted Cartesian APIC moments through native CUDA lanes with explicit
+  tail-safe indexing and output-specific accumulation. Retain native reference
+  derivatives and generic fallbacks, and share compile-target Mosaic admission
+  with compensated reductions. Moment sums
+  use route order rather than the reference reduction tree, within the existing
+  numerical tolerance contract.
+- Lower native small-matrix solve/refinement and APIC transfer algebra to bounded
+  elementwise operations rather than generic batched contractions. Keep native
+  conditioning, failure evidence, masks, axisymmetric and volumetric corrections,
+  and JAX derivatives. Consumer compilation can eliminate unused transfer
+  outputs. Floating-point rounding and refinement acceptance can differ from
+  GEMM execution; numerical tolerances and reported refinement decisions remain
+  authoritative. The existing solver API is unchanged.
+- Execute the shared ordered compensated recurrence and its common derivative
+  routes inside native CUDA kernels rather than launching a kernel per scan
+  iteration. Preserve block-32 expansion, chunk order, seeded high/correction
+  arithmetic, complex components, and nonfinite behavior; CPU and other
+  platforms retain the reference execution. Compiler identities now identify
+  the owned reduction primitives explicitly; reprepare compiler-bound artifacts.
+  No alternate scientific reduction policy is introduced.
 - Solve dependent or zero SCF DIIS histories through native constrained
   minimum-norm least squares, retaining rank, residual, and affine-constraint
   evidence instead of adding jitter or silently disabling acceleration.

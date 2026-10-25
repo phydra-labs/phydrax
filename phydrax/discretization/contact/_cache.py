@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -13,20 +14,25 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._compiled_search import (
+    CompiledContactSearchPlan,
+    ContactSearchPlan,
+    LBVHContactSearchPlan,
+)
 from ._search import (
     ContactCandidateEpoch,
+    ContactSearchScene,
     DenseContactSearchPlan,
+    enclosure_admits,
+    enclosure_binding,
     SweepAndPruneContactSearchPlan,
+    vertex_path_boxes,
 )
-from ._surface import PreparedCollisionScene
-
-
-ContactSearchPlan = DenseContactSearchPlan | SweepAndPruneContactSearchPlan
+from ._trajectory import ContactPathEnclosure
 
 
 class ContactSearchCacheState(StrictModule, NonTrainableState):
     epoch: ContactCandidateEpoch
-    reference_positions: Array
     rebuild_count: Array
     reuse_count: Array
     state_version: Array
@@ -35,6 +41,13 @@ class ContactSearchCacheState(StrictModule, NonTrainableState):
 
 
 class ContactSearchCacheUpdate(StrictModule):
+    """One cache refresh: candidate state, reuse decision and coverage evidence.
+
+    ``maximum_displacement`` is the largest Euclidean distance of any vertex
+    of the requested full-path boxes from the cached epoch's searched boxes;
+    ``envelope_margin`` is the reuse threshold minus that distance.
+    """
+
     candidate: ContactSearchCacheState
     reused: Array
     maximum_displacement: Array
@@ -42,8 +55,26 @@ class ContactSearchCacheUpdate(StrictModule):
     successful: Array
 
 
+def _box_excess(epoch: ContactCandidateEpoch, lower: Array, upper: Array, /) -> Array:
+    excess = jnp.maximum(
+        0.0,
+        jnp.maximum(epoch.coverage_lower - lower, upper - epoch.coverage_upper),
+    )
+    distance = jnp.sqrt(jnp.sum(excess * excess, axis=-1))
+    return jnp.max(distance, initial=0.0)
+
+
 class CachedContactSearchPlan(StrictModule, NonTrainableState):
-    """Accepted-state candidate cache with a fail-closed Verlet-style skin."""
+    """Accepted-state candidate cache with a fail-closed full-path skin.
+
+    A cached epoch is reused only while every vertex box of the requested full
+    path (from ``path_enclosure`` or the endpoint hull) lies within
+    ``rebuild_fraction * skin`` of the boxes the epoch searched, with
+    ``skin <= search.envelope_radius``; the search accounted for both moving
+    primitives of a pair, so this keeps the reused epoch complete. Device
+    searches decide reuse with a bounded ``lax.cond`` (one possible rebuild per
+    update, no host synchronization); host authorities decide on the host.
+    """
 
     search: ContactSearchPlan
     skin: float = eqx.field(static=True)
@@ -59,15 +90,21 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
         rebuild_fraction: float = 0.5,
     ) -> None:
         if not isinstance(
-            search, (DenseContactSearchPlan, SweepAndPruneContactSearchPlan)
+            search,
+            (
+                DenseContactSearchPlan,
+                SweepAndPruneContactSearchPlan,
+                CompiledContactSearchPlan,
+                LBVHContactSearchPlan,
+            ),
         ):
             raise TypeError("search must be a concrete contact search plan.")
         skin_ = float(skin)
         fraction = float(rebuild_fraction)
         if not np.isfinite(skin_) or skin_ <= 0.0:
             raise ValueError("skin must be finite and positive.")
-        if not 0.0 < fraction < 1.0:
-            raise ValueError("rebuild_fraction must lie strictly between zero and one.")
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError("rebuild_fraction must lie in (0, 1].")
         if search.envelope_radius < skin_:
             raise ValueError(
                 "The underlying search envelope_radius must cover the cache skin."
@@ -84,17 +121,29 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def device(self) -> bool:
+        return isinstance(
+            self.search, (CompiledContactSearchPlan, LBVHContactSearchPlan)
+        )
+
     def initialize(
         self,
-        scene: PreparedCollisionScene,
+        scene: ContactSearchScene,
         positions: ArrayLike,
         /,
+        *,
+        end_positions: ArrayLike | None = None,
+        path_enclosure: ContactPathEnclosure | None = None,
     ) -> ContactSearchCacheState:
-        current = jnp.asarray(positions)
-        epoch = self.search.build(scene, np.asarray(current))
+        epoch = self.search.build(
+            scene,
+            positions,
+            end_positions=end_positions,
+            path_enclosure=path_enclosure,
+        )
         return ContactSearchCacheState(
             epoch,
-            current,
             jnp.asarray(1, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
@@ -104,12 +153,13 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
 
     def update(
         self,
-        scene: PreparedCollisionScene,
+        scene: ContactSearchScene,
         state: ContactSearchCacheState,
         positions: ArrayLike,
         /,
         *,
         end_positions: ArrayLike | None = None,
+        path_enclosure: ContactPathEnclosure | None = None,
     ) -> ContactSearchCacheUpdate:
         if (
             not isinstance(state, ContactSearchCacheState)
@@ -119,60 +169,63 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Contact search cache state belongs to another plan or scene."
             )
-        current = jnp.asarray(positions, dtype=state.reference_positions.dtype)
-        if current.shape != state.reference_positions.shape:
-            raise ValueError("Cached contact positions changed shape.")
-        end = (
-            current
-            if end_positions is None
-            else jnp.asarray(end_positions, dtype=current.dtype)
+        trajectory_id = "" if path_enclosure is None else path_enclosure.trajectory_id
+        if trajectory_id != state.epoch.trajectory_id:
+            raise ValueError("Cached epochs are bound to one trajectory identity.")
+        dtype = state.epoch.reference_positions.dtype
+        start, lower, upper = vertex_path_boxes(
+            scene, jnp.asarray(positions, dtype=dtype), end_positions, path_enclosure
         )
-        if end.shape != current.shape:
-            raise ValueError("Cached contact end_positions changed shape.")
-        displacement = jnp.sqrt(
-            jnp.sum((current - state.reference_positions) ** 2, axis=-1)
+        end = start if end_positions is None else jnp.asarray(end_positions, dtype=dtype)
+        admitted = enclosure_admits(path_enclosure, start, end, lower, upper)
+        maximum = _box_excess(state.epoch, lower, upper)
+        threshold = jnp.asarray(self.rebuild_fraction * self.skin, dtype=dtype)
+        # Changed radii, clearances or planes invalidate coverage: rebuild.
+        reusable = (
+            state.epoch.successful
+            & state.epoch.binds(scene)
+            & admitted
+            & (maximum <= threshold)
         )
-        swept_displacement = jnp.sqrt(
-            jnp.sum((end - state.reference_positions) ** 2, axis=-1)
+        lower_time, upper_time, revision, _ = enclosure_binding(
+            path_enclosure, None, dtype
         )
-        maximum = jnp.maximum(
-            jnp.max(displacement, initial=0.0),
-            jnp.max(swept_displacement, initial=0.0),
+        rebound = eqx.tree_at(
+            lambda epoch: (epoch.lower_time, epoch.upper_time, epoch.revision),
+            state.epoch,
+            (lower_time, upper_time, revision),
         )
-        threshold = min(self.rebuild_fraction * self.skin, 0.5 * self.skin)
-        reusable = state.epoch.successful & (maximum <= threshold)
-        if bool(reusable):
-            candidate = ContactSearchCacheState(
-                state.epoch,
-                state.reference_positions,
-                state.rebuild_count,
-                state.reuse_count + 1,
-                state.state_version + 1,
-                state.scene_id,
-                self.plan_id,
-            )
-        else:
-            epoch = self.search.build(
+
+        def rebuild(_: None, /) -> ContactCandidateEpoch:
+            return self.search.build(
                 scene,
-                np.asarray(current),
-                end_positions=None if end_positions is None else np.asarray(end),
+                start,
+                end_positions=end_positions,
+                path_enclosure=path_enclosure,
             )
-            candidate = ContactSearchCacheState(
-                epoch,
-                current,
-                state.rebuild_count + 1,
-                state.reuse_count,
-                state.state_version + 1,
-                scene.scene_id,
-                self.plan_id,
-            )
-        margin = jnp.asarray(threshold, dtype=current.dtype) - maximum
+
+        def reuse(_: None, /) -> ContactCandidateEpoch:
+            return rebound
+
+        if self.device:
+            epoch = jax.lax.cond(reusable, reuse, rebuild, None)
+        else:
+            epoch = reuse(None) if bool(reusable) else rebuild(None)
+        rebuilt = (~reusable).astype(jnp.int32)
+        candidate = ContactSearchCacheState(
+            epoch,
+            state.rebuild_count + rebuilt,
+            state.reuse_count + 1 - rebuilt,
+            state.state_version + 1,
+            scene.scene_id,
+            self.plan_id,
+        )
         return ContactSearchCacheUpdate(
             candidate,
             reusable,
             maximum,
-            margin,
-            candidate.epoch.successful,
+            threshold - maximum,
+            epoch.successful,
         )
 
 

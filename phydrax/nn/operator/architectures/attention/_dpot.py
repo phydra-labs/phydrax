@@ -562,6 +562,7 @@ class DPOT(AbstractOperatorModel):
             quadrature_weights=source.quadrature_weights,
             mask=source.mask,
             topology=source.topology,
+            dtype=source.geometry_dtype,
         )
         return OperatorBatch(
             inputs=inputs,

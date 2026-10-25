@@ -28,13 +28,14 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax import _jax_config
+from phydrax import config
 from phydrax._execution_collectives import (
     CollectiveLease,
     CollectiveProgram,
     prepare_collective_program,
 )
 from phydrax._execution_device import device_platform
+from phydrax.execution import default_device
 
 
 @dataclass(frozen=True)
@@ -374,13 +375,13 @@ def cudss_execution_case(
     if dtype not in ("float32", "float64") or type(repeats) is not int or repeats < 1:
         raise ValueError("dtype must be float32/float64 and repeats must be positive")
     mode = method.execution.mode
-    if dtype == "float64" and not _jax_config.x64_enabled():
+    if dtype == "float64" and not config.x64_enabled():
         raise ValueError("float64 benchmark requires the existing runtime's x64 policy")
     if (mode == "mgmn") != (lease is not None):
         raise ValueError("only MGMN requires an existing live collective lease")
     selected = _select_device(method, local_device)
     reference = _reference_data(size, rhs_columns, dtype, indefinite, selected)
-    with _jax_config.default_device(selected):
+    with default_device(selected):
         case, preparation_seconds = measure_synchronized(
             lambda: _prepare_case(method, reference, selected, lease),
             synchronizer=lambda prepared: jax.block_until_ready(

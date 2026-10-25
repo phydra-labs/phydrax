@@ -9,14 +9,13 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections import deque
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from math import cos, isfinite, sin
+from math import cos, inf, isfinite, isnan, sin
 from pathlib import Path
-from typing import cast, Literal, Never
+from typing import assert_never, cast, Literal, Never
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 
 from ..._external_resource import (
@@ -28,34 +27,39 @@ from ..._external_resource import (
     ResourceManifest,
     ResourceReadError,
 )
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.particle._core import ParticleSetPlan
-from ...discretization.particle._reduced_articulation import ReducedArticulationPlan
-from ...discretization.particle._rigid_body import (
-    RigidBodyKinematics,
-    RigidBodySetPlan,
+from ...discretization.contact._articulated_geometry import ArticulatedPrimitiveKind
+from ...discretization.particle._rigid_joint_laws import (
+    ScalarJointDampingPlan,
+    ScalarJointMotorPlan,
 )
-from ...discretization.particle._rigid_joints import (
-    FixedJointSetPlan,
-    HingeJointSetPlan,
-    PrismaticJointSetPlan,
-    RigidJointGraphPlan,
-)
+from ...discretization.particle._rigid_unilateral import ReducedJointStopPlan
 from ...interchange._report import (
     _AdapterLossCategory,
     AdapterCapability,
     AdapterError,
     AdapterFormatProfile,
     AdapterLoss,
-    AdapterNegotiationResult,
     AdapterReport,
     AdapterRequirement,
     AdapterStatus,
     AdapterWaiver,
     negotiate_adapter,
+)
+from ...typing import parse
+from ._native_model import (
+    AbstractRobotSourceEvidence,
+    lower_native_robot_tree,
+    NativeTreeJoint,
+    NativeTreeJointKind,
+    RobotAdaptation,
+    RobotCollisionGeometryPlan,
+    RobotContactMaterialTable,
+    RobotFramePlan,
+    RobotNameIDMap,
 )
 
 
@@ -78,13 +82,14 @@ _XML_DECLARATION = re.compile(
 )
 _SUPPORTED_JOINT_KINDS = frozenset(("fixed", "revolute", "continuous", "prismatic"))
 _URDFRootPolicy = Literal["fixed_world", "reject_unpinned"]
+type URDFJointStopPolicy = Literal["evidence-only", "native-unilateral-stops"]
 _URDF_CAPABILITIES = (
     AdapterCapability("robot.connected-oriented-tree"),
     AdapterCapability("robot.inertial-rigid-links"),
     AdapterCapability("robot.fixed-hinge-prismatic-kinematics"),
     AdapterCapability("robot.reference-kinematics"),
     AdapterCapability("robot.joint-limit-evidence"),
-    AdapterCapability("robot.joint-damping-evidence"),
+    AdapterCapability("robot.executed-joint-damping"),
     AdapterCapability("robot.si-dimensional-contract"),
     AdapterCapability("robot.stable-int64-name-maps"),
     AdapterCapability("robot.fixed-world-root"),
@@ -96,60 +101,13 @@ _EXTENSION_CAPABILITY_ID = AdapterCapability(
     "robot.source-extension-semantics"
 ).capability_id
 _VISUAL_CAPABILITY_ID = AdapterCapability("robot.visual-description").capability_id
-_COLLISION_CAPABILITY_ID = AdapterCapability("robot.collision-geometry").capability_id
-_ACTUATION_CAPABILITY_ID = AdapterCapability("robot.actuation-mapping").capability_id
+_COLLISION_CAPABILITY = AdapterCapability("robot.collision-geometry")
+_ACTUATION_CAPABILITY = AdapterCapability("robot.actuation-mapping")
+_STOP_CAPABILITY = AdapterCapability("robot.unilateral-joint-stops")
+_COLLISION_CAPABILITY_ID = _COLLISION_CAPABILITY.capability_id
+_ACTUATION_CAPABILITY_ID = _ACTUATION_CAPABILITY.capability_id
 _FRICTION_CAPABILITY_ID = AdapterCapability("robot.joint-friction").capability_id
-
-
-class RobotNameIDMap(StrictModule, NonTrainableState):
-    """Deterministic bijection between sorted URDF names and signed 64-bit IDs."""
-
-    names: tuple[str, ...] = eqx.field(static=True)
-    ids: tuple[int, ...] = eqx.field(static=True)
-    mapping_id: str = eqx.field(static=True)
-
-    def __init__(self, names: Sequence[str], /) -> None:
-        names_ = tuple(str(name) for name in names)
-        if (
-            any(not name for name in names_)
-            or tuple(sorted(names_)) != names_
-            or len(set(names_)) != len(names_)
-        ):
-            raise ValueError("Robot name maps require unique, non-empty, sorted names.")
-        ids_host = np.arange(len(names_), dtype=np.int64)
-        self.names = names_
-        self.ids = tuple(int(identifier) for identifier in ids_host)
-        self.mapping_id = canonical_fingerprint(
-            {
-                "kind": "robot-name-id-map",
-                "entries": [
-                    [name, int(identifier)] for name, identifier in zip(names_, ids_host)
-                ],
-                "integer_dtype": "int64",
-            }
-        )
-
-    @property
-    def name_to_id(self) -> tuple[tuple[str, np.int64], ...]:
-        return tuple(
-            (name, np.int64(self.ids[index])) for index, name in enumerate(self.names)
-        )
-
-    @property
-    def id_to_name(self) -> tuple[tuple[np.int64, str], ...]:
-        return tuple((identifier, name) for name, identifier in self.name_to_id)
-
-    def id_for_name(self, name: str, /) -> np.int64:
-        name_ = str(name)
-        if name_ not in self.names:
-            raise KeyError(name_)
-        return np.int64(np.asarray(self.ids, dtype=np.int64)[self.names.index(name_)])
-
-    def name_for_id(self, identifier: int, /) -> str:
-        identifier_ = int(identifier)
-        if identifier_ < 0 or identifier_ >= len(self.names):
-            raise KeyError(identifier_)
-        return self.names[identifier_]
+_IDENTITY_ORIENTATION = (1.0, 0.0, 0.0, 0.0)
 
 
 class URDFLinkEvidence(StrictModule, NonTrainableState):
@@ -190,7 +148,143 @@ class URDFJointEvidence(StrictModule, NonTrainableState):
     damping: float | None = eqx.field(static=True)
 
 
-class URDFFormatEvidence(StrictModule, NonTrainableState):
+class URDFCollisionEvidence(StrictModule, NonTrainableState):
+    """One URDF collision sphere lowered into a native body-attached sphere."""
+
+    primitive_name: str = eqx.field(static=True)
+    primitive_id: int = eqx.field(static=True)
+    link: str = eqx.field(static=True)
+    source_index: int = eqx.field(static=True)
+    source_name: str | None = eqx.field(static=True)
+    radius_m: float = eqx.field(static=True)
+    center_in_link_frame_m: tuple[float, float, float] = eqx.field(static=True)
+    origin_rpy_rad: tuple[float, float, float] = eqx.field(static=True)
+    center_in_body_frame_m: tuple[float, float, float] = eqx.field(static=True)
+    material_id: int = eqx.field(static=True)
+
+
+class URDFJointMotor(StrictModule, NonTrainableState):
+    """Explicit caller mapping of one stateless motor onto a URDF joint.
+
+    URDF transmissions are not interpreted. The motor's effort clamp is the
+    joint's URDF ``<limit effort>``; a zero effort limit lowers to an
+    explicitly disabled motor. ``gear`` is signed and command bounds may be
+    infinite.
+    """
+
+    name: str = eqx.field(static=True)
+    joint: str = eqx.field(static=True)
+    gear: float = eqx.field(static=True)
+    command_lower: float = eqx.field(static=True)
+    command_upper: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        joint: str,
+        /,
+        *,
+        gear: float = 1.0,
+        command_lower: float = -inf,
+        command_upper: float = inf,
+    ) -> None:
+        name_ = str(name)
+        joint_ = str(joint)
+        if not name_ or not joint_:
+            raise ValueError("URDF motor and joint names must be non-empty.")
+        gear_ = float(gear)
+        lower = float(command_lower)
+        upper = float(command_upper)
+        if not isfinite(gear_) or gear_ == 0.0:
+            raise ValueError("URDF motor gear must be finite and nonzero.")
+        if isnan(lower) or isnan(upper) or not lower < upper:
+            raise ValueError("URDF motor command_lower must lie below command_upper.")
+        self.name = name_
+        self.joint = joint_
+        self.gear = gear_
+        self.command_lower = lower
+        self.command_upper = upper
+
+
+class URDFStaticPlane(StrictModule, NonTrainableState):
+    """A world-fixed plane ``n . x = offset`` with free space on ``n . x > offset``."""
+
+    name: str = eqx.field(static=True)
+    normal: tuple[float, float, float] = eqx.field(static=True)
+    offset: float = eqx.field(static=True)
+    material_id: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        normal: Sequence[float],
+        offset: float,
+        material_id: int,
+        /,
+    ) -> None:
+        name_ = str(name)
+        values = tuple(float(value) for value in normal)
+        if not name_ or len(values) != 3:
+            raise ValueError("URDF static planes need a name and a 3-vector normal.")
+        self.name = name_
+        self.normal = (values[0], values[1], values[2])
+        self.offset = float(offset)
+        self.material_id = int(material_id)
+
+
+class URDFCollisionPolicy(StrictModule, NonTrainableState):
+    """Explicit native contact declaration for URDF collision lowering.
+
+    URDF has no contact law, so the caller supplies the native Coulomb
+    material table, one material per link that owns a lowered sphere, any
+    static planes, and the excluded link pairs. Only URDF ``<sphere>``
+    collision geometry is lowered; every other shape is an unwaivable loss
+    once collision lowering is requested.
+    """
+
+    materials: RobotContactMaterialTable
+    planes: tuple[URDFStaticPlane, ...]
+    link_materials: tuple[tuple[str, int], ...] = eqx.field(static=True)
+    excluded_link_pairs: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    exclude_jointed_links: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        materials: RobotContactMaterialTable,
+        link_materials: Mapping[str, int],
+        /,
+        *,
+        planes: Sequence[URDFStaticPlane] = (),
+        excluded_link_pairs: Sequence[tuple[str, str]] = (),
+        exclude_jointed_links: bool = False,
+    ) -> None:
+        if not isinstance(materials, RobotContactMaterialTable):
+            raise TypeError("materials must be a RobotContactMaterialTable.")
+        planes_ = tuple(planes)
+        if not all(isinstance(plane, URDFStaticPlane) for plane in planes_):
+            raise TypeError("planes must contain URDFStaticPlane values.")
+        if len({plane.name for plane in planes_}) != len(planes_):
+            raise ValueError("URDF static plane names must be unique.")
+        pairs = tuple(
+            sorted(
+                (min(str(first), str(second)), max(str(first), str(second)))
+                for first, second in excluded_link_pairs
+            )
+        )
+        if len(set(pairs)) != len(pairs) or any(
+            first == second for first, second in pairs
+        ):
+            raise ValueError("excluded_link_pairs must be unique pairs of distinct links.")
+        self.materials = materials
+        self.planes = tuple(sorted(planes_, key=lambda plane: plane.name))
+        self.link_materials = tuple(
+            sorted((str(link), int(material)) for link, material in link_materials.items())
+        )
+        self.excluded_link_pairs = pairs
+        self.exclude_jointed_links = bool(exclude_jointed_links)
+
+
+class URDFFormatEvidence(AbstractRobotSourceEvidence):
     """Auditable format, security, topology, mapping, and frame evidence."""
 
     robot_name: str = eqx.field(static=True)
@@ -202,6 +296,7 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     source_content_sha256: str = eqx.field(static=True)
     resource_manifest: ResourceManifest = eqx.field(static=True)
     root_policy: _URDFRootPolicy = eqx.field(static=True)
+    joint_stop_policy: URDFJointStopPolicy = eqx.field(static=True)
     root_link: str = eqx.field(static=True)
     link_count: int = eqx.field(static=True)
     joint_count: int = eqx.field(static=True)
@@ -209,6 +304,8 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     joint_ids: RobotNameIDMap
     links: tuple[URDFLinkEvidence, ...]
     joints: tuple[URDFJointEvidence, ...]
+    collisions: tuple[URDFCollisionEvidence, ...]
+    motors: tuple[URDFJointMotor, ...]
     execution_policy: tuple[str, ...] = eqx.field(static=True)
     loss_paths: tuple[str, ...] = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
@@ -220,11 +317,14 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
         robot_name: str,
         resource: BoundedResource,
         root_policy: _URDFRootPolicy,
+        joint_stop_policy: URDFJointStopPolicy,
         root_link: str,
         link_ids: RobotNameIDMap,
         joint_ids: RobotNameIDMap,
         links: Sequence[URDFLinkEvidence],
         joints: Sequence[URDFJointEvidence],
+        collisions: Sequence[URDFCollisionEvidence],
+        motors: Sequence[URDFJointMotor],
         loss_paths: Sequence[str],
         source_id: str,
         target_id: str,
@@ -232,6 +332,8 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     ) -> None:
         links_ = tuple(links)
         joints_ = tuple(joints)
+        collisions_ = tuple(collisions)
+        motors_ = tuple(motors)
         manifest = resource.manifest
         policies = (
             "host-only parsing",
@@ -239,6 +341,10 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
             "DTD and entity declarations disabled",
             "xacro and include expansion disabled",
             "plugin execution disabled",
+            "URDF joint damping executed as native viscous damping",
+            f"URDF position limits lowered as {joint_stop_policy}",
+            "motors only from explicit caller joint mappings",
+            "collision spheres only under an explicit native contact policy",
             f"root interpretation explicitly selected as {root_policy}",
         )
         paths = tuple(loss_paths)
@@ -251,6 +357,7 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
         self.source_content_sha256 = manifest.content_sha256
         self.resource_manifest = manifest
         self.root_policy = root_policy
+        self.joint_stop_policy = joint_stop_policy
         self.root_link = root_link
         self.link_count = len(links_)
         self.joint_count = len(joints_)
@@ -258,6 +365,8 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
         self.joint_ids = joint_ids
         self.links = links_
         self.joints = joints_
+        self.collisions = collisions_
+        self.motors = motors_
         self.execution_policy = policies
         self.loss_paths = paths
         self.source_id = source_id
@@ -272,77 +381,22 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
                 "source_content_sha256": manifest.content_sha256,
                 "resource_manifest": manifest.manifest_id,
                 "root_policy": root_policy,
+                "joint_stop_policy": joint_stop_policy,
                 "root_link": root_link,
                 "link_mapping": link_ids.mapping_id,
                 "joint_mapping": joint_ids.mapping_id,
                 "links": [_link_evidence_payload(item) for item in links_],
                 "joints": [_joint_evidence_payload(item) for item in joints_],
+                "collisions": [
+                    _collision_evidence_payload(item) for item in collisions_
+                ],
+                "motors": [_motor_evidence_payload(item) for item in motors_],
                 "execution_policy": list(policies),
                 "loss_paths": list(paths),
                 "source_id": source_id,
                 "target_id": target_id,
             }
         )
-
-
-class RobotAdaptation(StrictModule, NonTrainableState):
-    """Final native robot plans, reference kinematics, and adapter evidence."""
-
-    particles: ParticleSetPlan
-    bodies: RigidBodySetPlan
-    joints: RigidJointGraphPlan
-    articulation: ReducedArticulationPlan
-    reference: RigidBodyKinematics
-    dimensions: DimensionalScaleContract
-    link_ids: RobotNameIDMap
-    joint_ids: RobotNameIDMap
-    report: AdapterReport
-    evidence: URDFFormatEvidence
-    target_id: str = eqx.field(static=True)
-
-    @property
-    def particle_plan(self) -> ParticleSetPlan:
-        return self.particles
-
-    @property
-    def body_plan(self) -> RigidBodySetPlan:
-        return self.bodies
-
-    @property
-    def joint_plan(self) -> RigidJointGraphPlan:
-        return self.joints
-
-    @property
-    def articulation_plan(self) -> ReducedArticulationPlan:
-        return self.articulation
-
-    @property
-    def reference_kinematics(self) -> RigidBodyKinematics:
-        return self.reference
-
-    @property
-    def dimensional_contract(self) -> DimensionalScaleContract:
-        return self.dimensions
-
-    @property
-    def link_name_to_id(self) -> tuple[tuple[str, np.int64], ...]:
-        return self.link_ids.name_to_id
-
-    @property
-    def link_id_to_name(self) -> tuple[tuple[np.int64, str], ...]:
-        return self.link_ids.id_to_name
-
-    @property
-    def joint_name_to_id(self) -> tuple[tuple[str, np.int64], ...]:
-        return self.joint_ids.name_to_id
-
-    @property
-    def joint_id_to_name(self) -> tuple[tuple[np.int64, str], ...]:
-        return self.joint_ids.id_to_name
-
-    @property
-    def negotiation(self) -> AdapterNegotiationResult:
-        return self.report.negotiation
 
 
 class URDFImportError(AdapterError):
@@ -366,6 +420,15 @@ class URDFImportError(AdapterError):
 
 
 @dataclass(frozen=True, slots=True)
+class _CollisionRecord:
+    index: int
+    source_name: str | None
+    xyz: np.ndarray
+    rpy: np.ndarray
+    radius: float
+
+
+@dataclass(frozen=True, slots=True)
 class _LinkRecord:
     name: str
     mass: float
@@ -373,6 +436,7 @@ class _LinkRecord:
     inertial_rpy: np.ndarray
     inertia_inertial: np.ndarray
     inertia_body: np.ndarray
+    collisions: tuple[_CollisionRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,7 +705,70 @@ def _quaternion_from_rotation(rotation: np.ndarray, /) -> np.ndarray:
     return quaternion if quaternion[0] >= 0.0 else -quaternion
 
 
-def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord:
+def _parse_collision(
+    element: ET.Element,
+    path: str,
+    index: int,
+    losses: _LossAccumulator,
+    requested: bool,
+    /,
+) -> _CollisionRecord | None:
+    if not requested:
+        losses.append(
+            _loss(
+                path,
+                "Collision geometry is not lowered because no native collision "
+                "policy was supplied.",
+                changes_interpretation=True,
+                category="dropped",
+                affected_capability_ids=(_COLLISION_CAPABILITY_ID,),
+            )
+        )
+        return None
+    _check_leaf_text(element, path)
+    _attribute_losses(element, frozenset(("name",)), path, losses)
+    _unknown_child_losses(element, frozenset(("origin", "geometry")), path, losses)
+    xyz, rpy = _parse_origin(element, path, losses)
+    geometry = _single_child(element, "geometry", path, required=True)
+    if geometry is None:
+        raise RuntimeError("A required URDF collision geometry was not returned.")
+    geometry_path = f"{path}/geometry"
+    _check_leaf_text(geometry, geometry_path)
+    _attribute_losses(geometry, frozenset(), geometry_path, losses)
+    shapes = tuple(geometry)
+    if len(shapes) != 1:
+        _fail(
+            AdapterStatus.MALFORMED_SOURCE,
+            f"{geometry_path} must contain exactly one shape.",
+        )
+    shape = shapes[0]
+    tag = _tag_name(shape)
+    if tag != "sphere":
+        losses.append(
+            _loss(
+                f"{geometry_path}/{_pointer(tag)}",
+                f"URDF {tag} collision geometry has no exact primitive in the "
+                "native sphere/capsule/plane profile and is not approximated.",
+                changes_interpretation=True,
+                affected_capability_ids=(_COLLISION_CAPABILITY_ID,),
+            )
+        )
+        return None
+    sphere_path = f"{geometry_path}/sphere"
+    _attribute_losses(shape, frozenset(("radius",)), sphere_path, losses)
+    _unknown_child_losses(shape, frozenset(), sphere_path, losses)
+    _check_leaf_text(shape, sphere_path)
+    radius = _float(
+        _required_attribute(shape, "radius", sphere_path), f"{sphere_path}/@radius"
+    )
+    if radius <= 0.0:
+        _fail(AdapterStatus.MALFORMED_SOURCE, f"{sphere_path}/@radius must be positive.")
+    return _CollisionRecord(index, element.attrib.get("name"), xyz, rpy, radius)
+
+
+def _parse_link(
+    element: ET.Element, losses: _LossAccumulator, collision_requested: bool, /
+) -> _LinkRecord:
     name = _required_attribute(element, "name", "/robot/link")
     path = f"/robot/links/{_pointer(name)}"
     _check_leaf_text(element, path)
@@ -721,17 +848,16 @@ def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord
                 affected_capability_ids=(_VISUAL_CAPABILITY_ID,),
             )
         )
-    for index, collision in enumerate(_children(element, "collision")):
-        del collision
-        losses.append(
-            _loss(
-                f"{path}/collision/{index}",
-                "Collision geometry is not represented by the articulation target.",
-                changes_interpretation=True,
-                category="dropped",
-                affected_capability_ids=(_COLLISION_CAPABILITY_ID,),
-            )
+    collisions = tuple(
+        _parse_collision(
+            collision,
+            f"{path}/collision/{index}",
+            index,
+            losses,
+            collision_requested,
         )
+        for index, collision in enumerate(_children(element, "collision"))
+    )
     return _LinkRecord(
         name,
         mass,
@@ -739,6 +865,7 @@ def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord
         inertial_rpy,
         inertia_inertial,
         inertia_body,
+        tuple(record for record in collisions if record is not None),
     )
 
 
@@ -825,7 +952,7 @@ def _parse_damping(
                 "Fixed-joint dynamics has no free coordinate and is not lowered.",
                 changes_interpretation=True,
                 affected_capability_ids=(
-                    _URDF_CAPABILITY_IDS["robot.joint-damping-evidence"],
+                    _URDF_CAPABILITY_IDS["robot.executed-joint-damping"],
                 ),
             )
         )
@@ -938,7 +1065,9 @@ def _parse_joint(element: ET.Element, losses: _LossAccumulator, /) -> _JointReco
     )
 
 
-def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
+def _parse_tree(
+    root: ET.Element, max_losses: int, collision_requested: bool, /
+) -> _ParsedURDF:
     if _tag_name(root) != "robot":
         _fail(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -962,7 +1091,9 @@ def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
         _fail(
             AdapterStatus.MALFORMED_SOURCE, "URDF robot must contain at least one link."
         )
-    links = tuple(_parse_link(element, losses) for element in link_elements)
+    links = tuple(
+        _parse_link(element, losses, collision_requested) for element in link_elements
+    )
     joints = tuple(_parse_joint(element, losses) for element in joint_elements)
     link_names = tuple(record.name for record in links)
     joint_names = tuple(record.name for record in joints)
@@ -1247,6 +1378,39 @@ def _joint_evidence_payload(item: URDFJointEvidence, /) -> dict[str, object]:
     }
 
 
+def _bound_payload(value: float, /) -> float | str:
+    # Canonical JSON admits only finite numbers; an absent bound is the explicit
+    # token for the corresponding infinite side, never a NaN/Infinity literal.
+    if isfinite(value):
+        return value
+    return "unbounded-above" if value > 0.0 else "unbounded-below"
+
+
+def _motor_evidence_payload(item: URDFJointMotor, /) -> dict[str, object]:
+    return {
+        "name": item.name,
+        "joint": item.joint,
+        "gear": item.gear,
+        "command_lower": _bound_payload(item.command_lower),
+        "command_upper": _bound_payload(item.command_upper),
+    }
+
+
+def _collision_evidence_payload(item: URDFCollisionEvidence, /) -> dict[str, object]:
+    return {
+        "primitive_name": item.primitive_name,
+        "primitive_id": item.primitive_id,
+        "link": item.link,
+        "source_index": item.source_index,
+        "source_name": item.source_name,
+        "radius_m": item.radius_m,
+        "center_in_link_frame_m": list(item.center_in_link_frame_m),
+        "origin_rpy_rad": list(item.origin_rpy_rad),
+        "center_in_body_frame_m": list(item.center_in_body_frame_m),
+        "material_id": item.material_id,
+    }
+
+
 def _tuple3(value: np.ndarray, /) -> tuple[float, float, float]:
     return float(value[0]), float(value[1]), float(value[2])
 
@@ -1288,15 +1452,208 @@ def _waivers_for_losses(
     return combined
 
 
+_NATIVE_JOINT_KINDS: dict[str, NativeTreeJointKind] = {
+    "fixed": "fixed",
+    "revolute": "hinge",
+    "continuous": "hinge",
+    "prismatic": "prismatic",
+}
+
+
+def _motor_components(
+    motors: Sequence[URDFJointMotor],
+    parsed: _ParsedURDF,
+    joint_ids: RobotNameIDMap,
+    /,
+) -> tuple[RobotNameIDMap | None, ScalarJointMotorPlan | None, tuple[URDFJointMotor, ...]]:
+    supplied = tuple(motors)
+    if not all(isinstance(motor, URDFJointMotor) for motor in supplied):
+        raise TypeError("motors must contain URDFJointMotor values.")
+    if not supplied:
+        return None, None, ()
+    ordered = tuple(sorted(supplied, key=lambda motor: motor.name))
+    names = RobotNameIDMap(tuple(motor.name for motor in ordered))
+    by_name = {joint.name: joint for joint in parsed.joints}
+    efforts: list[float] = []
+    for motor in ordered:
+        joint = by_name.get(motor.joint)
+        if joint is None or joint.kind == "fixed" or joint.effort is None:
+            raise ValueError(
+                f"URDF motor {motor.name!r} must map to a revolute, continuous, or "
+                "prismatic joint."
+            )
+        efforts.append(joint.effort)
+    plan = ScalarJointMotorPlan(
+        np.asarray([joint_ids.id_for_name(motor.joint) for motor in ordered], np.int64),
+        np.asarray([motor.gear for motor in ordered], dtype=np.float64),
+        effort_limit=np.asarray(efforts, dtype=np.float64),
+        command_lower=np.asarray(
+            [motor.command_lower for motor in ordered], dtype=np.float64
+        ),
+        command_upper=np.asarray(
+            [motor.command_upper for motor in ordered], dtype=np.float64
+        ),
+    )
+    return names, plan, ordered
+
+
+def _damping_plan(
+    parsed: _ParsedURDF, joint_ids: RobotNameIDMap, /
+) -> ScalarJointDampingPlan | None:
+    damped = tuple(
+        joint
+        for joint in parsed.joints
+        if joint.kind != "fixed" and joint.damping is not None
+    )
+    if not damped:
+        return None
+    return ScalarJointDampingPlan(
+        np.asarray([joint_ids.id_for_name(joint.name) for joint in damped], np.int64),
+        np.asarray([joint.damping for joint in damped], dtype=np.float64),
+    )
+
+
+def _stop_plan(
+    parsed: _ParsedURDF,
+    joint_ids: RobotNameIDMap,
+    policy: URDFJointStopPolicy,
+    /,
+) -> ReducedJointStopPlan | None:
+    match policy:
+        case "evidence-only":
+            return None
+        case "native-unilateral-stops":
+            limited = tuple(
+                joint
+                for joint in parsed.joints
+                if joint.lower is not None and joint.upper is not None
+            )
+            if not limited:
+                return None
+            return ReducedJointStopPlan(
+                np.asarray(
+                    [joint_ids.id_for_name(joint.name) for joint in limited], np.int64
+                ),
+                np.asarray([joint.lower for joint in limited], dtype=np.float64),
+                np.asarray([joint.upper for joint in limited], dtype=np.float64),
+            )
+        case unknown:
+            assert_never(unknown)
+
+
+def _collision_components(
+    policy: URDFCollisionPolicy | None,
+    parsed: _ParsedURDF,
+    link_ids: RobotNameIDMap,
+    /,
+) -> tuple[RobotCollisionGeometryPlan | None, tuple[URDFCollisionEvidence, ...]]:
+    if policy is None:
+        return None, ()
+    known = frozenset(link_ids.names)
+    materials = dict(policy.link_materials)
+    referenced = set(materials) | {
+        link for pair in policy.excluded_link_pairs for link in pair
+    }
+    unknown = sorted(referenced - known)
+    if unknown:
+        raise ValueError(f"URDF collision policy names unknown links {unknown!r}.")
+    records = sorted(
+        (
+            (f"{link.name}/collision/{collision.index}", link, collision)
+            for link in parsed.links
+            for collision in link.collisions
+        ),
+        key=lambda item: item[0],
+    )
+    missing = sorted({link.name for _, link, _ in records} - set(materials))
+    if missing:
+        raise ValueError(f"URDF collision policy has no material for links {missing!r}.")
+    if not records:
+        # Unsupported shapes are already unwaivable losses; with no lowered
+        # sphere there is no body-attached geometry to execute.
+        return None, ()
+    names = RobotNameIDMap(tuple(name for name, _, _ in records))
+    centers = np.asarray(
+        [collision.xyz - link.inertial_xyz for _, link, collision in records],
+        dtype=np.float64,
+    ).reshape((-1, 3))
+    excluded = set(policy.excluded_link_pairs)
+    if policy.exclude_jointed_links:
+        excluded |= {
+            (min(joint.parent, joint.child), max(joint.parent, joint.child))
+            for joint in parsed.joints
+        }
+    pairs = sorted(excluded)
+    planes = policy.planes
+    plan = RobotCollisionGeometryPlan(
+        names,
+        tuple(ArticulatedPrimitiveKind.SPHERE for _ in records),
+        np.asarray([link_ids.id_for_name(link.name) for _, link, _ in records], np.int64),
+        centers,
+        centers,
+        np.asarray([collision.radius for _, _, collision in records], np.float64),
+        np.asarray([materials[link.name] for _, link, _ in records], np.int64),
+        materials=policy.materials,
+        plane_names=RobotNameIDMap(tuple(plane.name for plane in planes)),
+        plane_normals=np.asarray([plane.normal for plane in planes]).reshape((-1, 3)),
+        plane_offsets=np.asarray([plane.offset for plane in planes], np.float64),
+        plane_material_ids=np.asarray(
+            [plane.material_id for plane in planes], np.int64
+        ),
+        excluded_body_pairs=np.asarray(
+            [
+                [link_ids.id_for_name(first), link_ids.id_for_name(second)]
+                for first, second in pairs
+            ],
+            dtype=np.int64,
+        ).reshape((-1, 2)),
+    )
+    evidence = tuple(
+        URDFCollisionEvidence(
+            name,
+            int(names.id_for_name(name)),
+            link.name,
+            collision.index,
+            collision.source_name,
+            collision.radius,
+            _tuple3(collision.xyz),
+            _tuple3(collision.rpy),
+            _tuple3(collision.xyz - link.inertial_xyz),
+            materials[link.name],
+        )
+        for name, link, collision in records
+    )
+    return plan, evidence
+
+
+def _requirements_and_capabilities(
+    *, motors: bool, stops: bool, collision: bool
+) -> tuple[tuple[AdapterRequirement, ...], tuple[AdapterCapability, ...]]:
+    capabilities = list(_URDF_CAPABILITIES)
+    if motors:
+        capabilities.append(_ACTUATION_CAPABILITY)
+    if stops:
+        capabilities.append(_STOP_CAPABILITY)
+    if collision:
+        capabilities.append(_COLLISION_CAPABILITY)
+    requirements = tuple(
+        AdapterRequirement(capability.semantic_id) for capability in capabilities
+    )
+    return requirements, tuple(capabilities)
+
+
 def _adapt(
     parsed: _ParsedURDF,
     source_id: str,
     resource: BoundedResource,
     root_policy: _URDFRootPolicy,
+    joint_stop_policy: URDFJointStopPolicy,
+    motors: Sequence[URDFJointMotor],
+    collision_policy: URDFCollisionPolicy | None,
     waivers: Sequence[AdapterWaiver],
     waived_loss_paths: Sequence[str],
     /,
-) -> RobotAdaptation:
+) -> RobotAdaptation[URDFFormatEvidence]:
     link_ids = RobotNameIDMap(tuple(link.name for link in parsed.links))
     joint_ids = RobotNameIDMap(tuple(joint.name for joint in parsed.joints))
     link_id = {name: int(identifier) for name, identifier in link_ids.name_to_id}
@@ -1329,37 +1686,10 @@ def _adapt(
                 _tuple4(quaternion),
             )
         )
-    particles = ParticleSetPlan(
-        np.asarray([link_id[link.name] for link in parsed.links], dtype=np.int64),
-        masses,
-        ambient_dimension=3,
-        name=f"{parsed.robot_name}-links",
-        domain_labels=("rigid_body", "robot_link"),
-        coordinate_dtype="float64",
-    )
-    fixed_mask = np.asarray(
-        [link.name == parsed.root_link for link in parsed.links], dtype=np.bool_
-    )
-    bodies = RigidBodySetPlan(
-        np.zeros((count,), dtype=np.int64),
-        inertias,
-        fixed_mask=fixed_mask,
-        name=f"{parsed.robot_name}-rigid-bodies",
-    )
-    reference = RigidBodyKinematics(
-        jnp.asarray(positions),
-        jnp.zeros_like(jnp.asarray(positions)),
-        jnp.asarray(orientations),
-        jnp.zeros((count, 3), dtype=jnp.asarray(positions).dtype),
-    )
-    anchors: dict[str, np.ndarray] = {}
-    axes: dict[str, np.ndarray] = {}
     joint_evidence: list[URDFJointEvidence] = []
     for joint in parsed.joints:
         anchor, joint_rotation = frames[joint.child]
         axis = joint_rotation @ joint.axis
-        anchors[joint.name] = anchor
-        axes[joint.name] = axis
         joint_evidence.append(
             URDFJointEvidence(
                 joint.name,
@@ -1381,118 +1711,86 @@ def _adapt(
                 joint.damping,
             )
         )
-    fixed_records = tuple(joint for joint in parsed.joints if joint.kind == "fixed")
-    hinge_records = tuple(
-        joint for joint in parsed.joints if joint.kind in ("revolute", "continuous")
-    )
-    prismatic_records = tuple(
-        joint for joint in parsed.joints if joint.kind == "prismatic"
-    )
-    fixed_plan = (
-        None
-        if not fixed_records
-        else FixedJointSetPlan(
-            np.asarray([joint_id[joint.name] for joint in fixed_records], dtype=np.int64),
-            np.asarray(
-                [link_id[joint.parent] for joint in fixed_records], dtype=np.int64
-            ),
-            np.asarray([link_id[joint.child] for joint in fixed_records], dtype=np.int64),
+    tree_joints = tuple(
+        NativeTreeJoint(
+            joint.name,
+            _NATIVE_JOINT_KINDS[joint.kind],
+            joint.parent,
+            joint.child,
+            anchor=_tuple3(frames[joint.child][0]),
+            axis=_tuple3(frames[joint.child][1] @ joint.axis),
         )
+        for joint in parsed.traversal
     )
-    hinge_plan = (
-        None
-        if not hinge_records
-        else HingeJointSetPlan(
-            np.asarray([joint_id[joint.name] for joint in hinge_records], dtype=np.int64),
-            np.asarray(
-                [link_id[joint.parent] for joint in hinge_records], dtype=np.int64
-            ),
-            np.asarray([link_id[joint.child] for joint in hinge_records], dtype=np.int64),
-            np.stack([anchors[joint.name] for joint in hinge_records]),
-            np.stack([axes[joint.name] for joint in hinge_records]),
-        )
+    # URDF body axes are the link axes, so the link frame sits at minus the
+    # inertial origin in the COM-centered body frame.
+    frame_plan = RobotFramePlan(
+        link_ids,
+        np.asarray(link_ids.ids, dtype=np.int64),
+        np.stack([-link.inertial_xyz for link in parsed.links], axis=0),
+        np.tile(np.asarray(_IDENTITY_ORIENTATION, dtype=np.float64), (count, 1)),
     )
-    prismatic_plan = (
-        None
-        if not prismatic_records
-        else PrismaticJointSetPlan(
-            np.asarray(
-                [joint_id[joint.name] for joint in prismatic_records], dtype=np.int64
-            ),
-            np.asarray(
-                [link_id[joint.parent] for joint in prismatic_records], dtype=np.int64
-            ),
-            np.asarray(
-                [link_id[joint.child] for joint in prismatic_records], dtype=np.int64
-            ),
-            np.stack([anchors[joint.name] for joint in prismatic_records]),
-            np.stack([axes[joint.name] for joint in prismatic_records]),
-        )
+    actuator_names, motor_plan, mapped_motors = _motor_components(
+        motors, parsed, joint_ids
     )
-    joints = RigidJointGraphPlan(
-        fixed=fixed_plan, hinge=hinge_plan, prismatic=prismatic_plan
+    collision, collision_evidence = _collision_components(
+        collision_policy, parsed, link_ids
     )
-    articulation = ReducedArticulationPlan(
-        link_id[parsed.root_link],
-        np.asarray([joint_id[joint.name] for joint in parsed.traversal], dtype=np.int64),
-        np.asarray([link_id[joint.parent] for joint in parsed.traversal], dtype=np.int64),
-        np.asarray([link_id[joint.child] for joint in parsed.traversal], dtype=np.int64),
+    model = lower_native_robot_tree(
+        parsed.robot_name,
+        link_ids,
+        masses,
+        inertias,
+        positions,
+        orientations,
+        parsed.root_link,
+        tree_joints,
+        DimensionalScaleContract.si(),
+        frame_plan,
+        actuator_names=actuator_names,
+        motors=motor_plan,
+        damping=_damping_plan(parsed, joint_ids),
+        stops=_stop_plan(parsed, joint_ids, joint_stop_policy),
+        collision=collision,
     )
-    dimensions = DimensionalScaleContract.si()
-    target_id = canonical_fingerprint(
-        {
-            "kind": "native-robot-articulation-adaptation",
-            "particles": particles.plan_id,
-            "bodies": bodies.plan_id,
-            "joints": joints.plan_id,
-            "articulation": articulation.plan_id,
-            "reference": array_tree_fingerprint(
-                {
-                    "position": positions,
-                    "orientation": orientations,
-                    "velocity": np.zeros_like(positions),
-                    "angular_velocity": np.zeros_like(positions),
-                }
-            ),
-            "dimensions": dimensions.scale_id,
-            "link_mapping": link_ids.mapping_id,
-            "joint_mapping": joint_ids.mapping_id,
-            "root_policy": root_policy,
-        }
-    )
+    target_id = model.model_id
     applied_waivers = _waivers_for_losses(parsed.losses, waivers, waived_loss_paths)
     evidence = URDFFormatEvidence(
         parsed.robot_name,
         resource,
         root_policy,
+        joint_stop_policy,
         parsed.root_link,
         link_ids,
         joint_ids,
         link_evidence,
         joint_evidence,
+        collision_evidence,
+        mapped_motors,
         tuple(loss.path for loss in parsed.losses),
         source_id,
         target_id,
     )
-    requirements = (
-        AdapterRequirement("robot.connected-oriented-tree"),
-        AdapterRequirement("robot.inertial-rigid-links"),
-        AdapterRequirement("robot.fixed-hinge-prismatic-kinematics"),
-        AdapterRequirement("robot.reference-kinematics"),
-        AdapterRequirement("robot.joint-limit-evidence"),
-        AdapterRequirement("robot.joint-damping-evidence"),
-        AdapterRequirement("robot.si-dimensional-contract"),
-        AdapterRequirement("robot.stable-int64-name-maps"),
-        AdapterRequirement("robot.fixed-world-root"),
+    requirements, capabilities = _requirements_and_capabilities(
+        motors=motor_plan is not None,
+        stops=joint_stop_policy == "native-unilateral-stops",
+        collision=collision_policy is not None,
     )
-    capabilities = _URDF_CAPABILITIES
     negotiation = negotiate_adapter(
         requirements, capabilities, losses=parsed.losses, waivers=applied_waivers
     )
+    target_qualifiers = {
+        "base": "fixed",
+        "body-frame": "center-of-mass",
+        "coordinates": "SI",
+        "joint-stops": joint_stop_policy,
+    }
+    if collision is not None:
+        target_qualifiers["contact-law"] = collision.contact_law
     report = AdapterReport(
         negotiation.status,
         "URDF 1.0",
-        "phydrax-native-robot-articulation",
+        "phydrax-native-robot-model",
         source_id=source_id,
         target_id=target_id,
         stage="host-import",
@@ -1506,28 +1804,27 @@ def _adapt(
             },
         ),
         target_profile=AdapterFormatProfile(
-            "phydrax-native-robot-articulation",
-            qualifiers={
-                "base": "fixed",
-                "body-frame": "center-of-mass",
-                "coordinates": "SI",
-            },
+            "phydrax-native-robot-model", qualifiers=target_qualifiers
         ),
         coordinate_mapping=(
             "URDF parent-link joint origin -> zero-configuration world anchor",
             "URDF joint-frame axis -> zero-configuration world reference axis",
-            "URDF link origin -> COM-centered body position with link-frame offset retained as evidence",
+            "URDF joint position -> native lifted coordinate (zero at the URDF origin)",
+            "URDF link origin -> COM-centered body position with the link frame "
+            "retained as a named native frame",
             "URDF inertial-frame tensor -> body-frame tensor by R_link_inertial I R_link_inertial^T",
             "URDF roll-pitch-yaw -> scalar-first unit quaternion",
+            "URDF collision sphere origin -> COM body-frame center (origin - inertial origin)",
         ),
         preserved_fields=(
             "robot and link/joint names",
             "oriented connected tree topology",
             "link masses and COM positions",
             "link inertial-frame rotations and tensors",
+            "link frames",
             "fixed, revolute, continuous, and prismatic joint kinematics",
             "joint position, effort, and velocity limits",
-            "joint damping",
+            "joint viscous damping (executed)",
             "zero-configuration reference kinematics",
         ),
         assumptions=(
@@ -1535,7 +1832,10 @@ def _adapt(
             "URDF masses are kilograms",
             "URDF angles are radians",
             "URDF inertia components are kg*m^2 about the link COM",
+            "URDF damping is linear viscous joint damping",
             "the caller explicitly selected fixed_world root attachment",
+            f"the caller explicitly selected {joint_stop_policy} for position limits",
+            "motors and contact materials are explicit caller declarations, not URDF semantics",
             "external macros, includes, resources, networks, and plugins are rejected",
         ),
         losses=parsed.losses,
@@ -1557,30 +1857,23 @@ def _adapt(
             report=report,
             evidence=evidence,
         )
-    return RobotAdaptation(
-        particles,
-        bodies,
-        joints,
-        articulation,
-        reference,
-        dimensions,
-        link_ids,
-        joint_ids,
-        report,
-        evidence,
-        target_id,
-    )
+    return RobotAdaptation(model, report, evidence)
 
 
 def _adapt_resource(
     resource: BoundedResource,
     root_policy: _URDFRootPolicy,
+    joint_stop_policy: URDFJointStopPolicy,
+    motors: Sequence[URDFJointMotor],
+    collision: URDFCollisionPolicy | None,
     waivers: Sequence[AdapterWaiver],
     waived_loss_paths: Sequence[str],
     /,
-) -> RobotAdaptation:
+) -> RobotAdaptation[URDFFormatEvidence]:
+    if collision is not None and not isinstance(collision, URDFCollisionPolicy):
+        raise TypeError("collision must be a URDFCollisionPolicy or None.")
     root, _, depth, nodes, attributes = _validated_xml(resource)
-    parsed = _parse_tree(root, resource.manifest.limits.max_losses)
+    parsed = _parse_tree(root, resource.manifest.limits.max_losses, collision is not None)
     try:
         accounted = account_bounded_resource(
             resource,
@@ -1609,6 +1902,9 @@ def _adapt_resource(
         source_id,
         accounted,
         root_policy,
+        joint_stop_policy,
+        motors,
+        collision,
         waivers,
         waived_loss_paths,
     )
@@ -1619,6 +1915,9 @@ def parse_urdf_text(
     /,
     *,
     root_policy: _URDFRootPolicy,
+    joint_stops: URDFJointStopPolicy = "evidence-only",
+    motors: Sequence[URDFJointMotor] = (),
+    collision: URDFCollisionPolicy | None = None,
     max_bytes: int = _DEFAULT_MAX_BYTES,
     max_depth: int = _DEFAULT_MAX_DEPTH,
     max_nodes: int = _DEFAULT_MAX_NODES,
@@ -1626,10 +1925,18 @@ def parse_urdf_text(
     max_losses: int = _DEFAULT_MAX_LOSSES,
     waivers: Sequence[AdapterWaiver] = (),
     waived_loss_paths: Sequence[str] = (),
-) -> RobotAdaptation:
-    """Parse bounded URDF text under an explicit root interpretation policy."""
+) -> RobotAdaptation[URDFFormatEvidence]:
+    """Lower bounded URDF text into a native robot model.
+
+    ``root_policy`` is the required root interpretation. URDF damping is
+    executed; position limits become native unilateral stops only under
+    ``joint_stops="native-unilateral-stops"``; motors exist only for explicit
+    ``motors`` mappings; sphere collisions are lowered only under an explicit
+    ``collision`` policy.
+    """
 
     policy = _root_policy(root_policy)
+    stop_policy = parse(joint_stops, URDFJointStopPolicy, "joint_stops")
     if not isinstance(text, str):
         raise TypeError("URDF text must be a string.")
     try:
@@ -1644,7 +1951,9 @@ def parse_urdf_text(
         resource = bounded_resource_from_bytes(data, limits=limits)
     except ResourceReadError as error:
         _resource_failure(error)
-    return _adapt_resource(resource, policy, waivers, waived_loss_paths)
+    return _adapt_resource(
+        resource, policy, stop_policy, motors, collision, waivers, waived_loss_paths
+    )
 
 
 def parse_urdf_file(
@@ -1653,6 +1962,9 @@ def parse_urdf_file(
     *,
     allowed_root: str | Path,
     root_policy: _URDFRootPolicy,
+    joint_stops: URDFJointStopPolicy = "evidence-only",
+    motors: Sequence[URDFJointMotor] = (),
+    collision: URDFCollisionPolicy | None = None,
     max_bytes: int = _DEFAULT_MAX_BYTES,
     max_depth: int = _DEFAULT_MAX_DEPTH,
     max_nodes: int = _DEFAULT_MAX_NODES,
@@ -1660,10 +1972,11 @@ def parse_urdf_file(
     max_losses: int = _DEFAULT_MAX_LOSSES,
     waivers: Sequence[AdapterWaiver] = (),
     waived_loss_paths: Sequence[str] = (),
-) -> RobotAdaptation:
-    """Descriptor-read one bounded UTF-8 URDF under an explicit root policy."""
+) -> RobotAdaptation[URDFFormatEvidence]:
+    """Descriptor-read one bounded UTF-8 URDF and lower it like `parse_urdf_text`."""
 
     policy = _root_policy(root_policy)
+    stop_policy = parse(joint_stops, URDFJointStopPolicy, "joint_stops")
     limits = _resource_limits(max_bytes, max_depth, max_nodes, max_attributes, max_losses)
     try:
         resource = read_bounded_resource(
@@ -1673,16 +1986,21 @@ def parse_urdf_file(
         )
     except ResourceReadError as error:
         _resource_failure(error)
-    return _adapt_resource(resource, policy, waivers, waived_loss_paths)
+    return _adapt_resource(
+        resource, policy, stop_policy, motors, collision, waivers, waived_loss_paths
+    )
 
 
 __all__ = [
-    "RobotAdaptation",
-    "RobotNameIDMap",
+    "URDFCollisionEvidence",
+    "URDFCollisionPolicy",
     "URDFFormatEvidence",
     "URDFImportError",
     "URDFJointEvidence",
+    "URDFJointMotor",
+    "URDFJointStopPolicy",
     "URDFLinkEvidence",
+    "URDFStaticPlane",
     "parse_urdf_file",
     "parse_urdf_text",
 ]

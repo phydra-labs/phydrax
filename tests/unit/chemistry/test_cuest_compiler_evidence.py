@@ -18,7 +18,7 @@ from benchmarks.cuest_molecular import (
     _DF_JK_RTOL,
 )
 from phydrax import config
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 
 
 def test_raw_kernel_closure_contains_only_static_metadata(

@@ -217,6 +217,8 @@ def collect_pytest_nodes(paths: Sequence[str], /, *, root: Path) -> PytestCollec
 
 
 def _stop_process_group(process: subprocess.Popen[str], /) -> None:
+    if os.name != "posix":
+        raise RuntimeError("pytest process-group supervision requires a POSIX host.")
     # pytest-xdist workers share the child's session; stopping the group leaves
     # no orphaned worker behind a missed deadline or an interrupted parent.
     # Darwin reports EPERM instead of ESRCH when only an unreaped zombie
@@ -241,6 +243,8 @@ def run_pytest_subprocess(
     child still running at the deadline is killed with its workers and likewise
     reported as a failed collection with no observed nodes.
     """
+    if os.name != "posix":
+        raise RuntimeError("pytest process-group supervision requires a POSIX host.")
     if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
         raise ValueError("workers must be a positive integer.")
     if timeout is not None and not (math.isfinite(timeout) and timeout > 0.0):

@@ -16,7 +16,7 @@ from phydrax import config as pxconfig
 from phydrax._cuda_native import cuda_native_resources, cuda_partition_key
 from phydrax._execution_device import device_platform
 from phydrax._execution_resources import ExecutionGroupSpec
-from phydrax._jax_config import default_device
+from phydrax.execution import default_device
 from phydrax.linalg.backends import _cudss_ffi
 
 

@@ -66,6 +66,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-prepared-tensor",
                     {
                         "platform": "cuda",
+                        "host_platform": host,
+                        "runtime": runtime,
                         "provider": provider,
                         "precision": precision,
                         "placement": "device-local",
@@ -81,6 +83,11 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                 )
                 for provider in get_args(CudaTensorProvider.__value__)
                 for precision in get_args(CudaTensorPrecision.__value__)
+                for host, runtime in (
+                    (("linux", "jax-cuda13-pjrt"), ("win32", "phydrax-cuda13-pjrt"))
+                    if provider == "cutensor"
+                    else (("linux", "jax-cuda13-pjrt"),)
+                )
             ),
             required_gates=(*_CUDA_GATES, "jvp-vjp-second-order-and-batching-reference"),
         ),
@@ -93,6 +100,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-tensor-path-planning",
                     {
                         "platform": "cuda",
+                        "host_platform": "linux",
+                        "runtime": "jax-cuda13-pjrt",
                         "provider": "cutensornet",
                         "process_count": 1,
                         "device_count": 1,
@@ -119,6 +128,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-tensor-host-slices",
                     {
                         "platform": "cuda",
+                        "host_platform": host,
+                        "runtime": runtime,
                         "provider": provider,
                         "precision": precision,
                         "process_count": 1,
@@ -132,6 +143,11 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                 )
                 for provider in get_args(CudaTensorProvider.__value__)
                 for precision in get_args(CudaTensorPrecision.__value__)
+                for host, runtime in (
+                    (("linux", "jax-cuda13-pjrt"), ("win32", "phydrax-cuda13-pjrt"))
+                    if provider == "cutensor"
+                    else (("linux", "jax-cuda13-pjrt"),)
+                )
             ),
             required_gates=(
                 *_CUDA_GATES,
@@ -148,6 +164,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-cuest-df-rhf",
                     {
                         "platform": "cuda",
+                        "host_platform": "linux",
+                        "runtime": "jax-cuda13-pjrt",
                         "provider": "cuest",
                         "precision": "float64",
                         "x64_enabled": True,
@@ -184,6 +202,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-cudss-local",
                     {
                         "platform": "cuda",
+                        "host_platform": host,
+                        "runtime": runtime,
                         "provider": "cudss",
                         "precision": precision,
                         "execution": "local",
@@ -200,6 +220,10 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                 )
                 for precision in get_args(CudaRealPrecision.__value__)
                 for memory_mode in get_args(CudaLocalMemoryMode.__value__)
+                for host, runtime in (
+                    ("linux", "jax-cuda13-pjrt"),
+                    ("win32", "phydrax-cuda13-pjrt"),
+                )
             ),
             required_gates=(
                 *_CUDA_GATES,
@@ -216,6 +240,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-cudss-mg",
                     {
                         "platform": "cuda",
+                        "host_platform": "linux",
+                        "runtime": "jax-cuda13-pjrt",
                         "provider": "cudss",
                         "precision": precision,
                         "execution": "mg",
@@ -250,6 +276,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-cudss-mgmn",
                     {
                         "platform": "cuda",
+                        "host_platform": "linux",
+                        "runtime": "jax-cuda13-pjrt",
                         "provider": "cudss",
                         "precision": precision,
                         "execution": "mgmn",
@@ -287,6 +315,8 @@ def cuda_candidate_profiles() -> tuple[CapabilityProfile, ...]:
                     "cuda-cudecomp-direct-slabs",
                     {
                         "platform": "cuda",
+                        "host_platform": "linux",
+                        "runtime": "jax-cuda13-pjrt",
                         "provider": "cudecomp",
                         "transform_precision": precision,
                         "host_count": 1,

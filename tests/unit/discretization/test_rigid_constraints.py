@@ -11,6 +11,9 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.discretization.particle._rigid_constraint_rank import (
+    RigidConstraintRankStatus,
+)
 
 
 def _quaternion_z(angle: Any) -> Any:
@@ -442,7 +445,10 @@ def test_redundant_joint_rows_fail_rank_qualification() -> None:
     )
     result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-3))
     assert not result.successful
-    assert result.evaluation.diagnostics.constraint_rank < graph.constraint_count
+    rank = result.evaluation.diagnostics.rank
+    assert int(rank.status) == RigidConstraintRankStatus.RANK_DEFICIENT_MEASURED
+    assert int(rank.rank_upper_bound) < graph.constraint_count
+    assert int(rank.rank_lower_bound) == int(rank.rank_upper_bound)
     assert int(result.rejection_reasons) & int(
         phx.discretization.RigidConstraintRejectionReason.RANK_OR_CONDITION
     )

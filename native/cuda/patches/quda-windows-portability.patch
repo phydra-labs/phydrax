@@ -1,0 +1,844 @@
+# Upstream: https://github.com/lattice/quda/tree/ba501e4
+# State: Windows CUDA portability for the pinned static internal QUDA build.
+# Apply after the existing gauge-force, CMake-subproject, and warp-election patches.
+# Host timers retain seconds/microseconds; GPU timers and solver arithmetic are unchanged.
+# UTF-8 cache names cross the Windows boundary through strict UTF-16 conversion.
+# Exclusive lock creation remains atomic; failed operations retain failure diagnostics.
+# LLP64 changes retain the Linux 48-bit RNG state and size_t reduction specializations.
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -355,6 +355,15 @@
+ # https://cmake.org/cmake/help/latest/module/CheckCXXCompilerFlag.html
+ 
+ set(CPU_ARCH ${CMAKE_HOST_SYSTEM_PROCESSOR})
++if(WIN32)
++  # clang-cl and the CUDA MSVC host share the MSVC ABI, not GNU driver flags.
++  foreach(language C CXX)
++    set(CMAKE_${language}_FLAGS_DEVEL "/Zi /O2" CACHE STRING "Development flags")
++    set(CMAKE_${language}_FLAGS_STRICT "/O2 /WX" CACHE STRING "Strict flags")
++    set(CMAKE_${language}_FLAGS_HOSTDEBUG "/Zi /Od" CACHE STRING "Host debug flags")
++    set(CMAKE_${language}_FLAGS_SANITIZE "/Zi /Od /fsanitize=address" CACHE STRING "Sanitizer flags")
++  endforeach()
++else()
+ if(${CPU_ARCH} STREQUAL "x86_64")
+   set(CXX_OPT "-mtune=native")
+ elseif(${CPU_ARCH} STREQUAL "ppc64le")
+@@ -380,9 +389,11 @@
+     "-g -fno-inline \"-fsanitize=address,undefined\""
+     CACHE STRING "Flags used by the C++ compiler during sanitizer debug builds.")
+ 
++endif()
+ enable_language(CXX)
+ 
+ # define C FLAGS
++if(NOT WIN32)
+ set(CMAKE_C_FLAGS_DEVEL
+   "-g -O3"
+   CACHE STRING "Flags used by the C compiler during regular development builds.")
+@@ -403,6 +414,7 @@
+     CACHE STRING "Flags used by the C compiler during sanitizer debug builds.")
+ 
+ 
++endif()
+ enable_language(C)
+ 
+ if(QUDA_INTERFACE_TIFR
+@@ -414,10 +426,12 @@
+ endif()
+ 
+ # define LINKER FLAGS
++if(NOT WIN32)
+ set(CMAKE_EXE_LINKER_FLAGS_SANITIZE
+     "-fsanitize=address,undefined"
+     CACHE STRING "Flags used by the linker during sanitizer debug builds.")
+ 
++endif()
+ if(QUDA_CLOVER_RECONSTRUCT AND NOT QUDA_CLOVER_DYNAMIC)
+   message(SEND_ERROR "QUDA_CLOVER_RECONSTRUCT requires QUDA_CLOVER_DYNAMIC")
+ endif()
+--- a/include/color_spinor_field.h
++++ b/include/color_spinor_field.h
+@@ -256,8 +256,8 @@
+       printfQuda("create = %d\n", create);
+       printfQuda("pc_type = %d\n", pc_type);
+       printfQuda("suggested_parity = %d\n", suggested_parity);
+-      printfQuda("v = %lx\n", (unsigned long)v);
+-      printfQuda("norm_offset = %lu\n", (unsigned long)norm_offset);
++      printfQuda("v = %p\n", v);
++      printfQuda("norm_offset = %zu\n", norm_offset);
+       //! for deflation etc.
+       if (is_composite) printfQuda("Number of elements = %d\n", composite_dim);
+     }
+--- a/include/communicator_quda.h
++++ b/include/communicator_quda.h
+@@ -1,6 +1,5 @@
+ #pragma once
+ 
+-#include <unistd.h> // for gethostname()
+ #include <cassert>
+ #include <csignal>
+ #include <limits>
+--- /dev/null
++++ b/include/host_platform.h
+@@ -0,0 +1,109 @@
++#pragma once
++
++#include <cerrno>
++#include <cstdlib>
++#include <filesystem>
++#include <optional>
++#include <string>
++#include <system_error>
++#include <fcntl.h>
++#ifdef _WIN32
++#include <windows.h>
++#include <io.h>
++#include <sys/stat.h>
++#else
++#include <unistd.h>
++#include <sys/stat.h>
++#endif
++
++namespace quda::host {
++#ifdef _WIN32
++  inline std::wstring utf16(const std::string &text)
++  {
++    if (text.empty()) return {};
++    int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1, nullptr, 0);
++    if (!length) throw std::system_error(GetLastError(), std::system_category(), "QUDA UTF-8 path conversion");
++    std::wstring result(length, L'\0');
++    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1, result.data(), length))
++      throw std::system_error(GetLastError(), std::system_category(), "QUDA UTF-8 path conversion");
++    result.pop_back();
++    return result;
++  }
++
++  inline std::string utf8(const wchar_t *text)
++  {
++    int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, nullptr, 0, nullptr, nullptr);
++    if (!length) throw std::system_error(GetLastError(), std::system_category(), "QUDA UTF-16 environment conversion");
++    std::string result(length, '\0');
++    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, result.data(), length, nullptr, nullptr))
++      throw std::system_error(GetLastError(), std::system_category(), "QUDA UTF-16 environment conversion");
++    result.pop_back();
++    return result;
++  }
++#endif
++
++  inline std::optional<std::string> environment(const char *name)
++  {
++#ifdef _WIN32
++    const auto wide_name = utf16(name);
++    const auto *value = _wgetenv(wide_name.c_str());
++    if (value) return utf8(value);
++#else
++    const auto *value = getenv(name);
++    if (value) return std::string(value);
++#endif
++    return std::nullopt;
++  }
++
++  inline std::filesystem::path path(const std::string &name)
++  {
++#ifdef _WIN32
++    return std::filesystem::path(utf16(name));
++#else
++    return std::filesystem::path(name);
++#endif
++  }
++
++  inline bool is_directory(const std::string &name)
++  {
++    std::error_code error;
++    return std::filesystem::is_directory(path(name), error);
++  }
++
++  // The create and existence check must be one atomic filesystem operation.
++  inline int exclusive_create(const std::string &name)
++  {
++#ifdef _WIN32
++    return _wopen(path(name).c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
++#else
++    return open(name.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
++#endif
++  }
++
++  inline int write_lock(int descriptor, const char *message, unsigned int size)
++  {
++#ifdef _WIN32
++    return _write(descriptor, message, size);
++#else
++    return write(descriptor, message, size);
++#endif
++  }
++
++  inline int close_lock(int descriptor)
++  {
++#ifdef _WIN32
++    return _close(descriptor);
++#else
++    return close(descriptor);
++#endif
++  }
++
++  inline int remove_lock(const std::string &name)
++  {
++#ifdef _WIN32
++    return _wremove(path(name).c_str());
++#else
++    return remove(name.c_str());
++#endif
++  }
++} // namespace quda::host
+--- /dev/null
++++ b/include/host_timer.h
+@@ -0,0 +1,33 @@
++#pragma once
++
++#ifdef _WIN32
++#include <windows.h>
++#include <system_error>
++
++namespace quda {
++  // Keep the POSIX seconds/microseconds representation used by all host timers.
++  // This type is namespace-local, so Winsock's unrelated timeval cannot collide.
++  struct timeval {
++    long long tv_sec;
++    long tv_usec;
++  };
++
++  inline int gettimeofday(timeval *time, void *)
++  {
++    static const long long frequency = [] {
++      LARGE_INTEGER value;
++      if (!QueryPerformanceFrequency(&value))
++        throw std::system_error(GetLastError(), std::system_category(), "QUDA timer frequency");
++      return value.QuadPart;
++    }();
++    LARGE_INTEGER counter;
++    if (!QueryPerformanceCounter(&counter))
++      throw std::system_error(GetLastError(), std::system_category(), "QUDA timer counter");
++    time->tv_sec = counter.QuadPart / frequency;
++    time->tv_usec = static_cast<long>((counter.QuadPart % frequency) * 1000000 / frequency);
++    return 0;
++  }
++} // namespace quda
++#else
++#include <sys/time.h>
++#endif
+--- a/include/timer.h
++++ b/include/timer.h
+@@ -1,6 +1,6 @@
+ #pragma once
+ 
+-#include <sys/time.h>
++#include <host_timer.h>
+ #include <stack>
+ #include <quda_internal.h>
+ #include <util_quda.h>
+--- a/include/util_quda.h
++++ b/include/util_quda.h
+@@ -14,8 +14,14 @@
+ {
+   // strip path from __FILE__
+   constexpr const char *str_end(const char *str) { return *str ? str_end(str + 1) : str; }
+-  constexpr bool str_slant(const char *str) { return *str == '/' ? true : (*str ? str_slant(str + 1) : false); }
+-  constexpr const char *r_slant(const char *str) { return *str == '/' ? (str + 1) : r_slant(str - 1); }
++  constexpr bool str_slant(const char *str)
++  {
++    return (*str == '/' || *str == '\\') ? true : (*str ? str_slant(str + 1) : false);
++  }
++  constexpr const char *r_slant(const char *str)
++  {
++    return (*str == '/' || *str == '\\') ? (str + 1) : r_slant(str - 1);
++  }
+   constexpr const char *file_name(const char *str) { return str_slant(str) ? r_slant(str_end(str)) : str; }
+ } // namespace quda
+ 
+@@ -185,8 +191,13 @@
+   } // namespace printf_detail
+ } // namespace quda
+ 
++#ifdef _MSC_VER
++#define QUDA_FUNCTION_NAME __FUNCSIG__
++#else
++#define QUDA_FUNCTION_NAME __PRETTY_FUNCTION__
++#endif
+ #define errorQuda(...)                                                                                                 \
+-  quda::printf_detail::errorQudaImpl(__PRETTY_FUNCTION__, quda::file_name(__FILE__), __LINE__, __VA_ARGS__)
++  quda::printf_detail::errorQudaImpl(QUDA_FUNCTION_NAME, quda::file_name(__FILE__), __LINE__, __VA_ARGS__)
+ 
+ #define zeroThread (threadIdx.x + blockDim.x*blockIdx.x==0 &&		\
+ 		    threadIdx.y + blockDim.y*blockIdx.y==0 &&		\
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -578,6 +578,7 @@
+                             ${QUDA_CU_OBJS})
+ 
+ # for a develop build reduce the size by compressing the debug information
++if(NOT WIN32)
+ include(CheckLinkerFlag)
+ check_linker_flag(CXX "-Wl,--compress-debug-sections=zlib" QUDA_LINKER_COMPRESS)
+ include(CheckCXXCompilerFlag)
+@@ -595,13 +596,20 @@
+   endif()
+ endif()
+ 
++endif()
+ # set up QUDA compile options, put them before target specific options
++if(WIN32)
++  target_compile_definitions(quda PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
++  target_compile_options(quda PRIVATE "$<$<COMPILE_LANGUAGE:CXX,C>:/W4;/bigobj>"
++    $<$<AND:$<COMPILE_LANGUAGE:CXX,C>,$<CONFIG:STRICT>>:/WX>)
++else()
+ target_compile_options(
+   quda BEFORE PRIVATE $<$<COMPILE_LANGUAGE:CXX,C,Fortran>:
+                $<IF:$<CONFIG:RELEASE>,-w,-Wall -Wextra>
+                $<$<CONFIG:STRICT>:-Werror>
+   >)
+ 
++endif()
+ target_compile_definitions(
+   quda PRIVATE $<$<CONFIG:DEVEL>:DEVEL> $<$<CONFIG:HOSTDEBUG>:HOST_DEBUG> $<$<CONFIG:DEBUG>:HOST_DEBUG>
+                $<$<CONFIG:DEBUG>:DEVICE_DEBUG> $<$<CONFIG:SANITIZE>:HOST_DEBUG>)
+@@ -642,7 +650,7 @@
+ endif()
+ 
+ # some clang warnings should be warning even when turning warnings into errors
+-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
++if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT WIN32)
+   target_compile_options(quda_cpp PUBLIC $<$<COMPILE_LANGUAGE:CXX>: -Wno-error=unused-function>)
+   # this is a hack to get colored diagnostics back when using Ninja and clang
+   if(CMAKE_GENERATOR MATCHES "Ninja")
+--- a/lib/comm_common.cpp
++++ b/lib/comm_common.cpp
+@@ -1,4 +1,9 @@
++#ifdef _WIN32
++#include <host_platform.h>
++#else
+ #include <unistd.h> // for gethostname()
++#endif
++#include <cstdint>
+ #include <assert.h>
+ #include <limits>
+ 
+@@ -15,7 +20,17 @@
+     static char hostname[QUDA_MAX_HOSTNAME_STRING];
+ 
+     if (!cached) {
+-      gethostname(hostname, QUDA_MAX_HOSTNAME_STRING);
++#ifdef _WIN32
++      wchar_t name[QUDA_MAX_HOSTNAME_STRING];
++      DWORD length = QUDA_MAX_HOSTNAME_STRING;
++      if (!GetComputerNameExW(ComputerNameDnsHostname, name, &length))
++        errorQuda("Unable to obtain hostname (Windows error %lu)", GetLastError());
++      const auto utf8_name = host::utf8(name);
++      if (utf8_name.size() >= QUDA_MAX_HOSTNAME_STRING) errorQuda("Hostname exceeds QUDA hostname buffer");
++      memcpy(hostname, utf8_name.c_str(), utf8_name.size() + 1);
++#else
++      if (gethostname(hostname, QUDA_MAX_HOSTNAME_STRING) != 0) errorQuda("Unable to obtain hostname");
++#endif
+       hostname[QUDA_MAX_HOSTNAME_STRING - 1] = '\0';
+       cached = true;
+     }
+@@ -23,7 +38,8 @@
+     return hostname;
+   }
+ 
+-  static unsigned long int rand_seed = 137;
++  // The rand48 state must remain 48 bits on Windows' LLP64 data model.
++  static uint64_t rand_seed = 137;
+ 
+   /**
+    * We provide our own random number generator to avoid re-seeding
+@@ -35,7 +51,7 @@
+   double comm_drand(void)
+   {
+     const double twoneg48 = 0.35527136788005009e-14;
+-    const unsigned long int m = 25214903917, a = 11, mask = 281474976710655;
++    const uint64_t m = 25214903917, a = 11, mask = 281474976710655;
+     rand_seed = (m * rand_seed + a) & mask;
+     return (twoneg48 * rand_seed);
+   }
+--- a/lib/interface_quda.cpp
++++ b/lib/interface_quda.cpp
+@@ -4,7 +4,6 @@
+ #include <cstring>
+ #include <iostream>
+ #include <functional>
+-#include <sys/time.h>
+ 
+ #include <quda.h>
+ #include <quda_internal.h>
+--- a/lib/inv_gcr_quda.cpp
++++ b/lib/inv_gcr_quda.cpp
+@@ -9,7 +9,7 @@
+ #include <util_quda.h>
+ #include <color_spinor_field.h>
+ 
+-#include <sys/time.h>
++#include <host_timer.h>
+ 
+ namespace quda {
+ 
+--- a/lib/inv_msrc_cg_quda.cpp
++++ b/lib/inv_msrc_cg_quda.cpp
+@@ -8,7 +8,6 @@
+ #include <dslash_quda.h>
+ #include <invert_quda.h>
+ #include <util_quda.h>
+-#include <sys/time.h>
+ #include <iostream>
+ 
+ namespace quda {
+--- a/lib/momentum.cu
++++ b/lib/momentum.cu
+@@ -5,6 +5,7 @@
+ #include <reduce_helper.h>
+ #include <instantiate.h>
+ #include <fstream>
++#include <host_platform.h>
+ 
+ #include <tunable_reduction.h>
+ #include <tunable_nd.h>
+@@ -17,7 +18,7 @@
+     static bool init = false;
+     static bool monitor = false;
+     if (!init) {
+-      char *path = getenv("QUDA_RESOURCE_PATH");
++      const auto path = host::environment("QUDA_RESOURCE_PATH");
+       char *enable_force_monitor = getenv("QUDA_ENABLE_FORCE_MONITOR");
+       if (path && enable_force_monitor && strcmp(enable_force_monitor, "1") == 0) monitor = true;
+       init = true;
+@@ -32,17 +33,18 @@
+   void flushForceMonitor() {
+     if (!forceMonitor() || comm_rank() != 0) return;
+ 
+-    static std::string path = std::string(getenv("QUDA_RESOURCE_PATH"));
+-    static char *profile_fname = getenv("QUDA_PROFILE_OUTPUT_BASE");
++    static std::string path = get_resource_path();
++    static const auto profile_value = host::environment("QUDA_PROFILE_OUTPUT_BASE");
++    const auto *profile_fname = profile_value ? profile_value->c_str() : nullptr;
+ 
+     std::ofstream force_file;
+     static long long count = 0;
+     if (count == 0) {
+       path += (profile_fname ? std::string("/") + profile_fname + "_force.tsv" : std::string("/force.tsv"));
+-      force_file.open(path.c_str());
++      force_file.open(host::path(path));
+       force_file << "Force\tL1\tL2\tdt" << std::endl;
+     } else {
+-      force_file.open(path.c_str(), std::ios_base::app);
++      force_file.open(host::path(path), std::ios_base::app);
+     }
+     if (getVerbosity() >= QUDA_VERBOSE) printfQuda("Flushing force monitor data to %s\n", path.c_str());
+     force_file << force_stream.str();
+--- a/lib/monitor.cpp
++++ b/lib/monitor.cpp
+@@ -3,6 +3,7 @@
+ #include <list>
+ #include <sstream>
+ #include <fstream>
++#include <host_platform.h>
+ 
+ #include "monitor.h"
+ #include "device.h"
+@@ -147,7 +148,11 @@
+       if (comm_rank() == 0) {
+         auto now_raw = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+         std::stringstream now;
++#ifdef _WIN32
++        now << std::put_time(std::localtime(&now_raw), "%Y_%m_%d_%H_%M_%S");
++#else
+         now << std::put_time(std::localtime(&now_raw), "%Y_%m_%d_%H:%M:%S");
++#endif
+         serialize_time = now.str();
+         size = serialize_time.size();
+       }
+@@ -158,7 +163,7 @@
+       std::string rank_str = std::to_string(comm_rank());
+       std::string monitor_path = resource_path + "/monitor_n" + rank_str + "_" + serialize_time + ".tsv";
+       std::ofstream monitor_file;
+-      monitor_file.open(monitor_path.c_str());
++      monitor_file.open(host::path(monitor_path));
+       monitor_file << "monitor"
+                    << "\t" << get_quda_version();
+       monitor_file << "\t" << get_quda_hash() << std::endl;
+--- a/lib/targets/cuda/malloc.cpp
++++ b/lib/targets/cuda/malloc.cpp
+@@ -2,8 +2,13 @@
+ #include <cstdio>
+ #include <string>
+ #include <map>
++#ifdef _WIN32
++#include <windows.h>
++#include <malloc.h>
++#else
+ #include <unistd.h>   // for getpagesize()
+ #include <execinfo.h> // for backtrace
++#endif
+ #include <quda_internal.h>
+ #include <device.h>
+ #include <shmem_helper.cuh>
+@@ -93,6 +98,11 @@
+   static void print_trace(void)
+   {
+     void *array[10];
++#ifdef _WIN32
++    const auto size = CaptureStackBackTrace(0, 10, array, nullptr);
++    printfQuda("Obtained %u stack frames.\n", static_cast<unsigned int>(size));
++    for (unsigned int i = 0; i < size; i++) printfQuda("%p\n", array[i]);
++#else
+     size_t size;
+     char **strings;
+     size = backtrace(array, 10);
+@@ -100,6 +110,7 @@
+     printfQuda("Obtained %zd stack frames.\n", size);
+     for (size_t i = 0; i < size; i++) printfQuda("%s\n", strings[i]);
+     free(strings);
++#endif
+   }
+ 
+   static void print_alloc_header()
+@@ -115,7 +126,7 @@
+     for (auto entry : alloc[type]) {
+       void *ptr = entry.first;
+       MemAlloc a = entry.second;
+-      printfQuda("%s  %15p  %15lu  %s(), %s:%d\n", type_str[type], ptr, (unsigned long)a.base_size, a.func.c_str(),
++      printfQuda("%s  %15p  %15zu  %s(), %s:%d\n", type_str[type], ptr, a.base_size, a.func.c_str(),
+                  a.file.c_str(), a.line);
+ #ifdef QUDA_BACKWARDSCPP
+       if (getRankVerbosity()) {
+@@ -162,9 +173,14 @@
+ 
+     a.size = size;
+ 
+-#if 0
+-    a.base_size = size;
+-    ptr = malloc(size);
++#ifdef _WIN32
++    static const size_t page_size = [] {
++      SYSTEM_INFO info;
++      GetSystemInfo(&info);
++      return 2 * static_cast<size_t>(info.dwPageSize);
++    }();
++    a.base_size = ((size + page_size - 1) / page_size) * page_size;
++    ptr = _aligned_malloc(a.base_size, page_size);
+     if (!ptr) {
+ #else
+     // we need to manually align to page boundaries to allow us to bind a texture to mapped memory
+@@ -485,7 +501,11 @@
+         errorQuda("Failed to unregister host-pinned memory (%s:%d in %s())", file, line, func);
+       }
+       track_free(HOST_PINNED, ptr);
++#ifdef _WIN32
++      _aligned_free(ptr);
++#else
+       free(ptr);
++#endif
+     } else {
+       printfQuda("ERROR: Attempt to free invalid host pointer (%s:%d in %s())\n", file, line, func);
+       print_trace();
+--- a/lib/targets/cuda/target_cuda.cmake
++++ b/lib/targets/cuda/target_cuda.cmake
+@@ -31,13 +31,26 @@
+ 
+ # ######################################################################################################################
+ # define CUDA flags
+-set(CMAKE_CUDA_HOST_COMPILER
+-    "${CMAKE_CXX_COMPILER}"
+-    CACHE FILEPATH "Host compiler to be used by nvcc")
++if(WIN32)
++  if(NOT CMAKE_CUDA_HOST_COMPILER)
++    message(FATAL_ERROR "Windows QUDA requires an explicit MSVC cl.exe CUDA host compiler")
++  endif()
++else()
++  set(CMAKE_CUDA_HOST_COMPILER
++      "${CMAKE_CXX_COMPILER}"
++      CACHE FILEPATH "Host compiler to be used by nvcc")
++endif()
+ set(CMAKE_CUDA_STANDARD ${CMAKE_CXX_STANDARD})
+ set(CMAKE_CUDA_STANDARD_REQUIRED True)
+ mark_as_advanced(CMAKE_CUDA_HOST_COMPILER)
+ 
++if(WIN32)
++  set(CMAKE_CUDA_FLAGS_DEVEL "-O3 -lineinfo -Xcompiler=/Zi" CACHE STRING "CUDA development flags")
++  set(CMAKE_CUDA_FLAGS_STRICT "-O3" CACHE STRING "CUDA strict flags")
++  set(CMAKE_CUDA_FLAGS_HOSTDEBUG "-g -Xcompiler=/Od" CACHE STRING "CUDA host debug flags")
++  set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -Xcompiler=/Od" CACHE STRING "CUDA debug flags")
++  set(CMAKE_CUDA_FLAGS_SANITIZE "-g -Xcompiler=/Od,/fsanitize=address" CACHE STRING "CUDA sanitizer flags")
++else()
+ set(CMAKE_CUDA_FLAGS_DEVEL
+     "-g -O3 "
+     CACHE STRING "Flags used by the CUDA compiler during regular development builds.")
+@@ -57,6 +70,7 @@
+     "-g -fno-inline \"-fsanitize=address,undefined\" "
+     CACHE STRING "Flags used by the CUDA compiler during sanitizer debug builds.")
+ 
++endif()
+ mark_as_advanced(CMAKE_CUDA_FLAGS_DEVEL)
+ mark_as_advanced(CMAKE_CUDA_FLAGS_STRICT)
+ mark_as_advanced(CMAKE_CUDA_FLAGS_RELEASE)
+@@ -438,23 +452,27 @@
+ 
+ # Specific config dependent warning suppressions and lineinfo forwarding
+ 
++if(WIN32)
++  target_compile_options(quda PRIVATE $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-Xcompiler=/W4,/bigobj>)
++else()
+ target_compile_options(
+   quda 
+   PRIVATE $<$<COMPILE_LANGUAGE:CUDA>: 
+           $<IF:$<CONFIG:RELEASE>,-w,-Wall -Wextra>
+           >)
+ 
++endif()
+ target_compile_options(
+   quda
+   PRIVATE $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:
+           -Wreorder
+-          $<$<CXX_COMPILER_ID:Clang>:
++          $<$<AND:$<CXX_COMPILER_ID:Clang>,$<NOT:$<PLATFORM_ID:Windows>>>:
+           -Xcompiler=-Wno-unused-function
+           -Xcompiler=-Wno-unknown-pragmas
+           -Xcompiler=-mllvm\ -unroll-count=4
+           $<$<CONFIG:STRICT>:-Xcompiler=-Wno-pass-failed>
+           >
+-          $<$<CXX_COMPILER_ID:GNU>:
++          $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<PLATFORM_ID:Windows>>>:
+           -Xcompiler=-Wno-unknown-pragmas>
+           $<$<CONFIG:DEVEL>:-Xptxas
+           -warn-lmem-usage,-warn-spills
+--- a/lib/transform_reduce.cu
++++ b/lib/transform_reduce.cu
+@@ -96,10 +96,10 @@
+   transform_reduce<plus<device_reduce_t>, complex<signed char>, unsigned int, abs_<double, signed char>, identity>(
+     QudaFieldLocation, std::vector<device_reduce_t> &, std::vector<complex<signed char> *> const &, unsigned int,
+     abs_<double, signed char>, identity);
+-  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<double>, unsigned long, abs_<double, double>>(
+-    QudaFieldLocation, complex<double> const *, unsigned long, abs_<double, double>);
+-  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<float>, unsigned long, abs_<double, float>>(
+-    QudaFieldLocation, complex<float> const *, unsigned long, abs_<double, float>);
++  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<double>, size_t, abs_<double, double>>(
++    QudaFieldLocation, complex<double> const *, size_t, abs_<double, double>);
++  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<float>, size_t, abs_<double, float>>(
++    QudaFieldLocation, complex<float> const *, size_t, abs_<double, float>);
+   // square
+   template void transform_reduce<plus<device_reduce_t>, complex<double>, unsigned int, square_<double, double>, identity>(
+     QudaFieldLocation, std::vector<device_reduce_t> &, std::vector<complex<double> *> const &, unsigned int,
+@@ -118,10 +118,10 @@
+     QudaFieldLocation, std::vector<device_reduce_t> &, std::vector<complex<short> *> const &, unsigned int,
+     square_<double, short>, identity);
+   template device_reduce_t
+-  transform_reduce<plus<device_reduce_t>, complex<double>, unsigned long, square_<double, double>>(
+-    QudaFieldLocation, complex<double> const *, unsigned long, square_<double, double>);
+-  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<float>, unsigned long, square_<double, float>>(
+-    QudaFieldLocation, complex<float> const *, unsigned long, square_<double, float>);
++  transform_reduce<plus<device_reduce_t>, complex<double>, size_t, square_<double, double>>(
++    QudaFieldLocation, complex<double> const *, size_t, square_<double, double>);
++  template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<float>, size_t, square_<double, float>>(
++    QudaFieldLocation, complex<float> const *, size_t, square_<double, float>);
+   template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<float>, unsigned int, square_<double, float>>(
+     QudaFieldLocation, complex<float> const *, unsigned int, square_<double, float>);
+   template device_reduce_t transform_reduce<plus<device_reduce_t>, complex<short>, unsigned int, square_<double, short>>(
+@@ -143,16 +143,16 @@
+   template void transform_reduce<maximum<float>, complex<short>, unsigned int, abs_max_<float, short>, identity>(
+     QudaFieldLocation, std::vector<float> &, std::vector<complex<short> *> const &, unsigned int,
+     abs_max_<float, short>, identity);
+-  template double transform_reduce<maximum<double>, complex<double>, unsigned long, abs_max_<double, double>>(
+-    QudaFieldLocation, complex<double> const *, unsigned long, abs_max_<double, double>);
++  template double transform_reduce<maximum<double>, complex<double>, size_t, abs_max_<double, double>>(
++    QudaFieldLocation, complex<double> const *, size_t, abs_max_<double, double>);
+   template double transform_reduce<maximum<double>, complex<double>, unsigned int, abs_max_<double, double>>(
+     QudaFieldLocation, complex<double> const *, unsigned int, abs_max_<double, double>);
+-  template float transform_reduce<maximum<float>, complex<float>, unsigned long, abs_max_<float, float>>(
+-    QudaFieldLocation, complex<float> const *, unsigned long, abs_max_<float, float>);
++  template float transform_reduce<maximum<float>, complex<float>, size_t, abs_max_<float, float>>(
++    QudaFieldLocation, complex<float> const *, size_t, abs_max_<float, float>);
+   template float transform_reduce<maximum<float>, complex<float>, unsigned int, abs_max_<float, float>>(
+     QudaFieldLocation, complex<float> const *, unsigned int, abs_max_<float, float>);
+-  template float transform_reduce<maximum<float>, complex<short>, unsigned long, abs_max_<float, short>>(
+-    QudaFieldLocation, complex<short> const *, unsigned long, abs_max_<float, short>);
++  template float transform_reduce<maximum<float>, complex<short>, size_t, abs_max_<float, short>>(
++    QudaFieldLocation, complex<short> const *, size_t, abs_max_<float, short>);
+   template float transform_reduce<maximum<float>, complex<short>, unsigned int, abs_max_<float, short>>(
+     QudaFieldLocation, complex<short> const*, unsigned int, abs_max_<float, short>);
+   // abs_min
+@@ -172,10 +172,10 @@
+   transform_reduce<minimum<float>, complex<signed char>, unsigned int, abs_min_<float, signed char>, identity>(
+     QudaFieldLocation, std::vector<float> &, std::vector<complex<signed char> *> const &, unsigned int,
+     abs_min_<float, signed char>, identity);
+-  template double transform_reduce<minimum<double>, complex<double>, unsigned long, abs_min_<double, double>>(
+-    QudaFieldLocation, complex<double> const *, unsigned long, abs_min_<double, double>);
+-  template float transform_reduce<minimum<float>, complex<float>, unsigned long, abs_min_<float, float>>(
+-    QudaFieldLocation, complex<float> const *, unsigned long, abs_min_<float, float>);
++  template double transform_reduce<minimum<double>, complex<double>, size_t, abs_min_<double, double>>(
++    QudaFieldLocation, complex<double> const *, size_t, abs_min_<double, double>);
++  template float transform_reduce<minimum<float>, complex<float>, size_t, abs_min_<float, float>>(
++    QudaFieldLocation, complex<float> const *, size_t, abs_min_<float, float>);
+ 
+   template void
+   quda::transform_reduce<plus<device_reduce_t>, complex<double>, unsigned int, square_<double, double>, milc_mapper>(
+--- a/lib/tune.cpp
++++ b/lib/tune.cpp
+@@ -2,15 +2,13 @@
+ #include <comm_quda.h>
+ #include <quda.h>     // for QUDA_VERSION_STRING
+ #include <timer.h>
+-#include <sys/stat.h> // for stat()
+-#include <fcntl.h>
++#include <host_platform.h>
+ #include <cfloat> // for FLT_MAX
+ #include <ctime>
+ #include <fstream>
+ #include <typeinfo>
+ #include <map>
+ #include <list>
+-#include <unistd.h>
+ #include <uint_to_char.h>
+ #include <target_device.h>
+ 
+@@ -19,6 +17,8 @@
+ #include <functional>
+ #include <utility>
+ #include <json_helper.h>
++#include <chrono>
++#include <thread>
+ 
+ #include <communicator_quda.h>
+ 
+@@ -107,12 +107,12 @@
+     static bool init = false;
+ 
+     if (!init) {
+-      auto path = getenv("QUDA_RESOURCE_PATH");
+-      struct stat pstat;
++      const auto value = host::environment("QUDA_RESOURCE_PATH");
++      const auto *path = value ? value->c_str() : nullptr;
+ 
+       if (!path) {
+         warningQuda("Environment variable QUDA_RESOURCE_PATH is not set.");
+-      } else if (stat(path, &pstat) || !S_ISDIR(pstat.st_mode)) {
++      } else if (!host::is_directory(path)) {
+         warningQuda("The path \"%s\" specified by QUDA_RESOURCE_PATH does not exist or is not a directory.", path);
+       } else {
+         resource_path = path;
+@@ -404,7 +404,7 @@
+     if (comm_rank_global() == 0) {
+       cache_path = get_resource_path();
+       cache_path += getTuneCacheName();
+-      cache_file.open(cache_path.c_str());
++      cache_file.open(host::path(cache_path));
+ 
+       if (cache_file) {
+ 
+@@ -486,10 +486,9 @@
+ 
+       if (tunecache.size() == initial_cache_size && !error) return;
+ 
+-      // Acquire lock.  Note that this is only robust if the filesystem supports flock() semantics, which is true for
+-      // NFS on recent versions of linux but not Lustre by default (unless the filesystem was mounted with "-o flock").
++      // Atomically create the lock; never truncate a lock owned by another process.
+       lock_path = resource_path + getTuneCacheName(error, true);
+-      lock_handle = open(lock_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
++      lock_handle = host::exclusive_create(lock_path);
+       if (lock_handle == -1) {
+         warningQuda("Unable to lock cache file.  Tuned launch parameters will not be cached to disk.  "
+                     "If you are certain that no other instances of QUDA are accessing this filesystem, "
+@@ -499,11 +498,11 @@
+       }
+       char msg[] = "If no instances of applications using QUDA are running,\n"
+                    "this lock file shouldn't be here and is safe to delete.";
+-      int stat = write(lock_handle, msg, sizeof(msg)); // check status to avoid compiler warning
++      int stat = host::write_lock(lock_handle, msg, sizeof(msg));
+       if (stat == -1) warningQuda("Unable to write to lock file for some bizarre reason");
+ 
+       cache_path = resource_path + getTuneCacheName(error);
+-      cache_file.open(cache_path.c_str());
++      cache_file.open(host::path(cache_path));
+ 
+       logQuda(QUDA_SUMMARIZE, "Saving %d sets of cached parameters to %s\n", static_cast<int>(tunecache.size()),
+               cache_path.c_str());
+@@ -525,15 +524,15 @@
+       cache_file.close();
+ 
+       // Release lock.
+-      close(lock_handle);
+-      remove(lock_path.c_str());
++      if (host::close_lock(lock_handle) != 0) warningQuda("Unable to close cache lock file: %s", lock_path.c_str());
++      if (host::remove_lock(lock_path) != 0) warningQuda("Unable to remove cache lock file: %s", lock_path.c_str());
+ 
+       initial_cache_size = tunecache.size();
+ 
+     } else {
+       // give process 0 time to write out its tunecache if needed, but
+       // doesn't cause a hang if error is not triggered on process 0
+-      if (error) sleep(10);
++      if (error) std::this_thread::sleep_for(std::chrono::seconds(10));
+     }
+   }
+ 
+@@ -573,10 +572,9 @@
+ 
+     if (comm_rank_global() == 0) { // Make sure only one rank is writing to disk
+ 
+-      // Acquire lock.  Note that this is only robust if the filesystem supports flock() semantics, which is true for
+-      // NFS on recent versions of linux but not Lustre by default (unless the filesystem was mounted with "-o flock").
++      // Atomically create the lock; never truncate a lock owned by another process.
+       lock_path = resource_path + "/profile.lock";
+-      lock_handle = open(lock_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
++      lock_handle = host::exclusive_create(lock_path);
+       if (lock_handle == -1) {
+         warningQuda("Unable to lock profile file.  Profile will not be saved to disk.  "
+                     "If you are certain that no other instances of QUDA are accessing this filesystem, "
+@@ -586,13 +584,14 @@
+       }
+       char msg[] = "If no instances of applications using QUDA are running,\n"
+                    "this lock file shouldn't be here and is safe to delete.";
+-      int stat = write(lock_handle, msg, sizeof(msg)); // check status to avoid compiler warning
++      int stat = host::write_lock(lock_handle, msg, sizeof(msg));
+       if (stat == -1) warningQuda("Unable to write to lock file for some bizarre reason");
+ 
+       // profile counter for writing out unique profiles
+       static int count = 0;
+ 
+-      char *profile_fname = getenv("QUDA_PROFILE_OUTPUT_BASE");
++      const auto profile_value = host::environment("QUDA_PROFILE_OUTPUT_BASE");
++      const auto *profile_fname = profile_value ? profile_value->c_str() : nullptr;
+ 
+       if (!profile_fname) {
+         warningQuda(
+@@ -609,9 +608,9 @@
+ 
+       count++;
+ 
+-      profile_file.open(profile_path.c_str());
+-      async_profile_file.open(async_profile_path.c_str());
+-      if (traceEnabled()) trace_file.open(trace_path.c_str());
++      profile_file.open(host::path(profile_path));
++      async_profile_file.open(host::path(async_profile_path));
++      if (traceEnabled()) trace_file.open(host::path(trace_path));
+ 
+       if (getVerbosity() >= QUDA_SUMMARIZE) {
+         // compute number of non-zero entries that will be output in the profile
+@@ -693,8 +692,8 @@
+       }
+ 
+       // Release lock.
+-      close(lock_handle);
+-      remove(lock_path.c_str());
++      if (host::close_lock(lock_handle) != 0) warningQuda("Unable to close profile lock file: %s", lock_path.c_str());
++      if (host::remove_lock(lock_path) != 0) warningQuda("Unable to remove profile lock file: %s", lock_path.c_str());
+     }
+   }
+ 
+--- a/lib/util_quda.cpp
++++ b/lib/util_quda.cpp
+@@ -3,7 +3,6 @@
+ #include <cstring>
+ #include <stack>
+ #include <sstream>
+-#include <sys/time.h>
+ 
+ #include <enum_quda.h>
+ #include <util_quda.h>

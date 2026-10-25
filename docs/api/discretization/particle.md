@@ -546,6 +546,151 @@ inside one mapped owner region. Completeness over translations is the caller's
 
 ::: phydrax.discretization.PreparedConvexShapeSet
 
+#### Reduced scalar-joint coordinates, actuation, and stops
+
+These owners serve prepared fixed-base reduced articulations with fixed, hinge
+and prismatic joints. Rows address scientific joint IDs, never source order;
+fixed edges and unknown IDs are refused.
+
+`PreparedLiftedJointCoordinates` keeps the standalone principal-angle reduced
+state unchanged and owns the integer hinge winding that lifts it.
+`advance(q0, state, v, h)` follows the actual increment `q0 + h v`, so a full
+turn with identical principal endpoints still advances the winding. The counter
+range is explicit (`maximum_turns` in `[1, 2**29]`); an out-of-range candidate,
+nonzero prismatic winding or excessive lift residual is refused and
+`accepted_state` retains the source winding. FK periodicity does not make stop
+or servo coordinates periodic.
+
+`ScalarJointMotorPlan` maps a separate command space to generalized effort in
+the fixed order: clip the command to `[command_lower, command_upper]`, multiply
+by the nonzero signed `gear`, then clip to `±effort_limit`. An effort limit of
+exactly zero is an explicitly disabled motor. Evaluations report margins,
+saturation flags and the actuator source power `tau · v`; `successful` is
+finiteness, and outputs are not zeroed on failure. `ScalarJointDampingPlan`
+executes `-c v` with `c >= 0` and reports the dissipation rate `sum(c v²)`. Source
+effort or velocity bounds are not motors and are not stops.
+
+`ReducedJointStopPlan` bounds lifted coordinates (radians with full winding, or
+meters); at least one bound per joint is finite and `lower < upper`. Prepared
+rows are ordered `(joint, lower/upper)` with signs `+1/-1` and units `rad`/`m`;
+infinite sides are masked. Gaps are affine in lifted coordinates, so
+`path_minimum_gaps` is exact on a linear lifted path. `jacobian_operator()`
+returns the normal-only stop rows `G` whose exact transpose feeds the same
+generalized contact response as geometric contacts. The stop owner never clips
+`q` or `v` and performs no separate correction. Activation, saturation and stop
+kinks are discrete events for derivatives.
+
+::: phydrax.discretization.PreparedLiftedJointCoordinates
+
+---
+
+::: phydrax.discretization.LiftedJointCoordinateState
+
+---
+
+::: phydrax.discretization.LiftedJointCoordinateUpdate
+
+---
+
+::: phydrax.discretization.ScalarJointMotorPlan
+
+---
+
+::: phydrax.discretization.PreparedScalarJointMotors
+
+---
+
+::: phydrax.discretization.ScalarJointMotorEvaluation
+
+---
+
+::: phydrax.discretization.ScalarJointDampingPlan
+
+---
+
+::: phydrax.discretization.PreparedScalarJointDamping
+
+---
+
+::: phydrax.discretization.ScalarJointDampingEvaluation
+
+---
+
+::: phydrax.discretization.ReducedJointStopPlan
+
+---
+
+::: phydrax.discretization.PreparedReducedJointStops
+
+#### Rigid-constraint rank routes
+
+The rank audit concerns the scaled, unweighted mobile-coordinate Jacobian of the
+retracted rigid-joint residuals, with the existing characteristic-length scaling
+and strict relative cutoff. It is not the mass-weighted Schur operator.
+`RigidConstraintSolverPlan(rank_audit=...)` selects the route; the default
+`RigidConstraintRankAudit()` is `"general-dense-svd"` and keeps the existing
+dense SVD audit for every maximal-coordinate graph. The kind selector is
+`RigidConstraintRankAuditKind = Literal["general-dense-svd", "certified-forest"]`;
+`dense_fallback` and `workspace_bytes` are refused on the general route.
+
+`RigidConstraintRankAudit("certified-forest", dense_fallback=..., workspace_bytes=...)`
+is opt-in. Host preparation admits a forest: no cycles or parallel edges, at
+most one fixed body per connected component (the root when present; a free
+component is rooted at its tree center, ties broken by the smallest stable body
+ID), isolated mobile bodies allowed. Setting a free root increment to zero is
+part of constructing a right inverse, not a physical constraint. Local blocks
+come from the audited constraint action and must reproduce it on reference
+probes. The generic `phydrax.linalg.certify_block_forest_rank` then proves full
+row rank only when its verified lower singular-value bound exceeds the
+threshold. Unsupported topologies, rounding profiles and insufficient resource
+budgets raise during preparation rather than becoming runtime results. An
+explicit `dense_fallback` runs the dense SVD only after an inconclusive
+certificate, with its memory planned before tracing; under `vmap` both
+branches may execute.
+
+`RigidConstraintDiagnostics.rank` is a `RigidConstraintRankEvidence`. It
+replaces the former ambiguous `constraint_rank` and `constraint_condition`
+scalars:
+
+| Question | Field |
+| --- | --- |
+| Outcome | `status` (`RigidConstraintRankStatus`) |
+| Route actually executed | `executed_route` (`RigidConstraintRankRoute`) |
+| Full row rank accepted | `full_row_rank` |
+| Rank bounds | `rank_lower_bound`, `rank_upper_bound` (equal when certified or measured; `[0, row_count]` when inconclusive or failed) |
+| Dense condition estimate | `measured_condition` (NaN when no SVD ran; `1` for zero rows) |
+| Forest condition upper bound | `certificate.condition_upper_bound` |
+
+Only dense measurements report `RANK_DEFICIENT_MEASURED`. `INCONCLUSIVE` means
+the sufficient forest test failed; it is never evidence of deficiency, and a
+step rejects it distinctly. A forest bound is never labeled a computed
+condition number, and no SVD is reported unless one executed.
+`PreparedRigidConstraintDynamics.constraint_rank_evidence(kinematics)` returns
+the evidence at one configuration alone. Full row rank of the velocity Jacobian
+does not establish regularity of the nonlinear position-root KKT system.
+
+::: phydrax.discretization.RigidConstraintRankAudit
+
+---
+
+::: phydrax.discretization.RigidConstraintRankRoute
+
+---
+
+::: phydrax.discretization.RigidConstraintRankStatus
+
+---
+
+::: phydrax.discretization.RigidConstraintRankEvidence
+
+---
+
+::: phydrax.discretization.PreparedRigidConstraintRank
+
+---
+
+::: phydrax.discretization.prepare_rigid_constraint_rank
+
 ### Internal particle state and processes
 
 ::: phydrax.discretization.RadialShellMeshPlan

@@ -26,20 +26,22 @@ from ...dynamics import (
     PlantStepContext,
 )
 from ...typing import checked
-from ..contact._cone import ContactConeSolverPlan
+from ..contact._cone import ContactCertificatePolicy, ContactConeSolverPlan
+from ..contact._manifold import ContactManifoldState, record_contact_response
 from ..contact._rod_capsule import ReducedRodCapsuleContactParticipant
 from ..contact._rod_contact_lifecycle import (
     CompositeContactResponse,
     CompositeContactResult,
+    empty_rod_contact_manifold,
     prepare_composite_contact_block,
     PreparedRodContactSearch,
     RodContactCCDPlan,
     RodContactCCDResult,
-    RodContactManifoldState,
     RodContactManifoldTransition,
     RodContactSearchFailure,
     RodContactSearchResult,
     RodContactWitnessBatch,
+    update_rod_contact_manifold,
 )
 from ._rod_loads import RodLoadLedger
 from ._rod_plant import (
@@ -102,7 +104,7 @@ class ReducedRodContactPlantState(StrictModule):
     reduced_state: ReducedRodState
     material_state: ReducedRodMaterialState
     actuator_state: ReducedRodPassiveActuatorState
-    contact_state: RodContactManifoldState
+    contact_state: ContactManifoldState
     sensor_state: ReducedRodPassiveSensorState
 
     @checked
@@ -111,7 +113,7 @@ class ReducedRodContactPlantState(StrictModule):
         reduced_state: ReducedRodState,
         material_state: ReducedRodMaterialState,
         actuator_state: ReducedRodPassiveActuatorState,
-        contact_state: RodContactManifoldState,
+        contact_state: ContactManifoldState,
         sensor_state: ReducedRodPassiveSensorState,
         /,
     ) -> None:
@@ -267,6 +269,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
     search: PreparedRodContactSearch
     ccd: RodContactCCDPlan
     cone_solver: ContactConeSolverPlan
+    contact_certificate: ContactCertificatePolicy
     native_loads: RodLoadLedger | None
     material_control: ReducedRodMaterialControl
     dynamic_friction: Array
@@ -304,6 +307,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         ccd: RodContactCCDPlan,
         /,
         *,
+        contact_certificate: ContactCertificatePolicy,
         dynamic_friction: ArrayLike = 0.0,
         static_friction: ArrayLike | None = None,
         compliance: ArrayLike = 0.0,
@@ -332,6 +336,8 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         solver = ContactConeSolverPlan() if cone_solver is None else cone_solver
         if not isinstance(solver, ContactConeSolverPlan):
             raise TypeError("cone_solver must be ContactConeSolverPlan or None.")
+        if contact_certificate.family_count != 1:
+            raise ValueError("Rod contact uses one translational contact unit family.")
         if dynamics.reduction.prepared_id != participant.reduced.prepared_id:
             raise ValueError("Dynamics and contact participant must share one reduction.")
         if search.surface_plan.topology_id != participant.surface_plan.topology_id:
@@ -421,7 +427,9 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             raise ValueError("Initial material history does not match prepared dynamics.")
         dtype = reduced.values.dtype
         empty = jnp.zeros((0,), dtype=dtype)
-        manifold = RodContactManifoldState.empty(capacity, dtype=np.dtype(dtype))
+        manifold = empty_rod_contact_manifold(
+            capacity, catalogue_id=search.catalogue_id, dtype=dtype
+        )
         initial = ReducedRodContactPlantState(
             reduced,
             material,
@@ -456,6 +464,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                 "search_id": search.prepared_id,
                 "ccd_id": ccd.plan_id,
                 "cone_solver_id": solver.plan_id,
+                "contact_certificate": contact_certificate,
                 "material_control": material_control,
                 "material_revision": revision,
                 "dynamic_friction": dynamic,
@@ -533,6 +542,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         self.search = search
         self.ccd = ccd
         self.cone_solver = solver
+        self.contact_certificate = contact_certificate
         self.native_loads = native_loads
         self.material_control = material_control
         self.dynamic_friction = dynamic
@@ -599,7 +609,8 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             self.initial_state.reduced_state.coefficients
         )
         search = self.search.search(positions)
-        transition = self.initial_state.contact_state.update(
+        transition = update_rod_contact_manifold(
+            self.initial_state.contact_state,
             search.witnesses,
             material_revision=self.material_revision,
             retention_steps=self.retention_steps,
@@ -609,13 +620,13 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         finite = (
             evaluation.finite
             & search.evidence.finite
-            & transition.finite
+            & transition.manifold.finite
             & jnp.isfinite(minimum_gap)
         )
         valid = (
             evaluation.valid
             & search.successful
-            & transition.successful
+            & transition.manifold.successful
             & gap_valid
             & finite
         )
@@ -629,7 +640,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                 ),
                 (search.successful, ReducedRodContactPlantStatus.SEARCH_FAILED),
                 (
-                    transition.successful,
+                    transition.manifold.successful,
                     ReducedRodContactPlantStatus.MANIFOLD_TRANSITION_FAILED,
                 ),
                 (gap_valid, ReducedRodContactPlantStatus.FINAL_GAP_INVALID),
@@ -640,7 +651,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             self.initial_state.reduced_state,
             self.initial_state.material_state,
             self.initial_state.actuator_state,
-            transition.state,
+            transition.manifold.candidate,
             self.initial_state.sensor_state,
         )
         evidence = ReducedRodContactPlantResetEvidence(
@@ -719,7 +730,8 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             event_positions,
             end_positions=free_positions,
         )
-        event_manifold = source.contact_state.update(
+        event_manifold = update_rod_contact_manifold(
+            source.contact_state,
             event_search.witnesses,
             material_revision=self.material_revision,
             retention_steps=self.retention_steps,
@@ -745,12 +757,13 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         response = CompositeContactResponse(
             (block,),
             event_manifold.witnesses,
+            certificate=self.contact_certificate,
             dynamic_friction=self.dynamic_friction,
             static_friction=self.static_friction,
             compliance=self.compliance,
             normal_bias=normal_bias,
             solver=self.cone_solver,
-        ).solve(initial_impulse=event_manifold.warm_start)
+        ).solve(initial_impulse=event_manifold.manifold.warm_start)
         post_velocity = response.post_velocities[0]
         uncorrected_q = event_q + remaining * post_velocity
         uncorrected_positions = self.participant.positions(uncorrected_q)
@@ -786,7 +799,8 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                 and position_correction_iterations == 0
             ):
                 break
-            speculative_manifold = source.contact_state.update(
+            speculative_manifold = update_rod_contact_manifold(
+                source.contact_state,
                 final_search.witnesses,
                 material_revision=self.material_revision,
                 retention_steps=self.retention_steps,
@@ -812,6 +826,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             speculative_response = CompositeContactResponse(
                 (speculative_block,),
                 speculative_manifold.witnesses,
+                certificate=self.contact_certificate,
                 dynamic_friction=self.dynamic_friction,
                 static_friction=self.static_friction,
                 compliance=self.compliance,
@@ -822,7 +837,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                     authoritative_response_manifold.witnesses,
                     response.impulse,
                     speculative_manifold.witnesses,
-                    speculative_manifold.warm_start,
+                    speculative_manifold.manifold.warm_start,
                 )
             )
             candidate_velocity = speculative_response.post_velocities[0]
@@ -872,24 +887,33 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             native_loads=self.native_loads,
         )
         response_manifold = authoritative_response_manifold
-        candidate_event_contact = response_manifold.state.record_response(
+        response_valid = response_manifold.witnesses.valid
+        candidate_event_contact = record_contact_response(
+            response_manifold.manifold.candidate,
             response.route_keys,
             response.candidate_impulse,
-            response.sticking,
+            response.branch,
             response.slip_velocity,
             step_size=remaining,
+            valid=response_valid,
         )
-        accepted_event_contact = response_manifold.state.commit(
-            response_manifold.witnesses,
-            response,
+        accepted_event_contact = record_contact_response(
+            response_manifold.manifold.candidate,
+            response.route_keys,
+            response.impulse,
+            response.branch,
+            response.slip_velocity,
             step_size=remaining,
+            valid=response_valid,
         )
-        candidate_final_manifold = candidate_event_contact.update(
+        candidate_final_manifold = update_rod_contact_manifold(
+            candidate_event_contact,
             final_search.witnesses,
             material_revision=self.material_revision,
             retention_steps=self.retention_steps,
         )
-        accepted_final_manifold = accepted_event_contact.update(
+        accepted_final_manifold = update_rod_contact_manifold(
+            accepted_event_contact,
             final_search.witnesses,
             material_revision=self.material_revision,
             retention_steps=self.retention_steps,
@@ -898,14 +922,14 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             corrected_reduced,
             corrected_evaluation.candidate_material_state,
             source.actuator_state,
-            candidate_final_manifold.state,
+            candidate_final_manifold.manifold.candidate,
             source.sensor_state,
         )
         accepted_payload = ReducedRodContactPlantState(
             corrected_reduced,
             corrected_evaluation.candidate_material_state,
             source.actuator_state,
-            accepted_final_manifold.state,
+            accepted_final_manifold.manifold.candidate,
             source.sensor_state,
         )
         final_minimum_gap = _minimum_gap(final_search)
@@ -932,7 +956,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                     ReducedRodContactPlantStatus.EVENT_SEARCH_FAILED,
                 ),
                 (
-                    event_manifold.successful,
+                    event_manifold.manifold.successful,
                     ReducedRodContactPlantStatus.MANIFOLD_TRANSITION_FAILED,
                 ),
                 (mass_valid, ReducedRodContactPlantStatus.MASS_RESPONSE_FAILED),
@@ -951,8 +975,8 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
                     ReducedRodContactPlantStatus.FINAL_SEARCH_FAILED,
                 ),
                 (
-                    candidate_final_manifold.successful
-                    & accepted_final_manifold.successful,
+                    candidate_final_manifold.manifold.successful
+                    & accepted_final_manifold.manifold.successful,
                     ReducedRodContactPlantStatus.FINAL_MANIFOLD_FAILED,
                 ),
                 (gap_valid, ReducedRodContactPlantStatus.FINAL_GAP_INVALID),
@@ -964,15 +988,15 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             free_step.evidence.finite
             & swept_ccd.evidence.finite
             & event_search.evidence.finite
-            & event_manifold.finite
+            & event_manifold.manifold.finite
             & inverse_mass.solve_evidence.finite
             & response.evidence.finite
             & corrected_evaluation.finite
             & position_correction_successful
             & correction_ccd.evidence.finite
             & final_search.evidence.finite
-            & candidate_final_manifold.finite
-            & accepted_final_manifold.finite
+            & candidate_final_manifold.manifold.finite
+            & accepted_final_manifold.manifold.finite
             & jnp.isfinite(final_minimum_gap)
             & energy.finite
             & conservation.finite
@@ -981,7 +1005,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         backend_status = jnp.where(
             response.successful,
             free_step.backend_status,
-            response.evidence.iterations,
+            response.cone.evidence.iterations,
         ).astype(jnp.int32)
         evidence = ReducedRodContactPlantStepEvidence(
             free_step,

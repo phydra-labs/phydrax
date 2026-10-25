@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import jax.numpy as jnp
 import pytest
@@ -131,7 +131,7 @@ def test_cuda_provider_probe_order_is_independent() -> None:
     source = """
 from phydrax._cuda_environment import collect_cuda_environment
 import sys
-if collect_cuda_environment(initialize_backend=False).plugin_majors != (13,):
+if tuple(plugin.cuda_major for plugin in collect_cuda_environment(initialize_backend=False).plugins) != (13,):
     print("The JAX CUDA13 plugin distribution is required")
     sys.exit(77)
 from phydrax.backends.cudss import cudss_availability
@@ -168,7 +168,7 @@ from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 from phydrax._cuda_environment import collect_cuda_environment
 facts = collect_cuda_environment(initialize_backend=False)
-if facts.plugin_majors != (13,):
+if tuple(plugin.cuda_major for plugin in facts.plugins) != (13,):
     print("The JAX CUDA13 plugin distribution is required")
     sys.exit(77)
 from tests._support.elf import write_shared_object
@@ -197,3 +197,45 @@ assert status.environment_issues[0].code == "provider-major-mismatch", status.re
 """,
         str(tmp_path),
     )
+
+
+@pytest.mark.parametrize("exception", [RuntimeError, ImportError])
+def test_windows_native_inspection_failure_is_a_probe_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    phydrax_events: Any, exception: type[Exception],
+) -> None:
+    from types import ModuleType
+
+    from phydrax._cuda_environment import CudaEnvironmentFacts, CudaPluginInstallation
+    from phydrax.backends import _availability as availability
+    from tests._support.pe import write_pe
+
+    path = write_pe(tmp_path / "provider.dll")
+    module = "inspection_refusal_provider"
+    (tmp_path / f"{module}.py").write_text(
+        'raise AssertionError("refused provider must not import")', encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    facts = CudaEnvironmentFacts(
+        host_platform="win32", host_machine="AMD64",
+        plugins=(CudaPluginInstallation(
+            distribution="phydrax-cuda13-pjrt", version="0.2.2", cuda_major=13,
+        ),),
+    )
+    monkeypatch.setattr(availability, "collect_cuda_environment", lambda **kwargs: facts)
+    runtime = ModuleType("phydrax_cuda13_pjrt.runtime")
+
+    def refused(path: str) -> NoReturn:
+        raise exception("Unowned resident CUDA DLL family member foreign/cudnn.dll")
+
+    setattr(runtime, "dependency_closure", refused)
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    result = availability.probe_backend(
+        _capabilities(), module=module, requirement="test provider",
+        cuda_libraries=lambda: (str(path),),
+    )
+    assert not result.available
+    assert "Unowned resident CUDA DLL family member" in result.reason
+    assert module not in sys.modules
+    event = phydrax_events.records("backend.probe.completed")[-1]
+    assert event["fields"]["failure_category"] == "cuda_environment_refused"

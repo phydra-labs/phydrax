@@ -6,8 +6,8 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import os
 import platform
-import resource
 import shutil
 import sys
 from collections.abc import Callable
@@ -61,6 +61,10 @@ def _runtime_identity() -> dict[str, object]:
 
 def _measured(call: Callable[[], object], /) -> tuple[object, dict[str, float]]:
     """Run one stage; report wall seconds and the process peak resident bytes."""
+    if os.name != "posix":
+        raise RuntimeError("Meshing resource qualification requires a POSIX host.")
+    import resource
+
     started = perf_counter()
     value = call()
     elapsed = perf_counter() - started
