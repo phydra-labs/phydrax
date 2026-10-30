@@ -104,6 +104,11 @@ class LocalIncidence {
   TetEditStatus relocate(TetMesh& mesh,
                          std::span<const TetEditVertex> moved_vertices,
                          const Star& star);
+  // Commits an interior reconnection or collapse through the cavity-local
+  // TetMesh route and updates this index. A collapse must pass this index's
+  // current star of the removed vertex as the removed cells.
+  TetEditStatus replace_cavity(TetMesh& mesh, const TetEdit& operation,
+                               const Star* collapsed_star);
 
  private:
   static bool erase_cell(std::vector<std::int32_t>& cells, std::int32_t cell);
