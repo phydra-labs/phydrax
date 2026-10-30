@@ -1048,72 +1048,55 @@ def _coverage_boundary_partition(
             None if expressions is None else affine_map(expressions, dimension)
             for expressions in preparation.coordinate_maps
         )
-        if any(value is None for value in affine_cells) and not any(
-            expressions is None for expressions in preparation.coordinate_maps
+        if (
+            isinstance(domain, MeshingDomain)
+            and any(value is None for value in affine_cells)
+            and not any(
+                expressions is None for expressions in preparation.coordinate_maps
+            )
         ):
-            if isinstance(domain, MeshingDomain):
-                from ._approximate_source_coverage import approximate_source_coverage
+            from ._approximate_source_coverage import approximate_source_coverage
 
-                attempt = approximate_source_coverage(
-                    mesh,
-                    geometry,
-                    domain,
-                    preparation.cell_regions,
-                    source=source,
-                    fidelity=fidelity,
-                    embedding=embedding,
-                    revalidate_fidelity=False,
-                )
-                if attempt.bounded is not None:
-                    bounded = attempt.bounded
-                    return _BoundaryCoverageProof(
-                        (),
-                        bounded.target_facet_count,
-                        None,
-                        bounded.source_facet_count,
-                        bounded.covered_source_facet_count,
-                        "source_boundary_homotopy",
-                        bounded.witness_id,
-                        bounded.distance_upper,
-                        bounded.boundary_degree_ids,
-                    )
-                for failure in attempt.failures:
-                    findings.append(
-                        _coverage_finding(
-                            failure.check,
-                            failure.status,
-                            "mesh",
-                            failure.entity_ids,
-                            detail=failure.detail,
-                        )
-                    )
+            attempt = approximate_source_coverage(
+                mesh,
+                geometry,
+                domain,
+                preparation.cell_regions,
+                source=source,
+                fidelity=fidelity,
+                embedding=embedding,
+                revalidate_fidelity=False,
+            )
+            if attempt.bounded is not None:
+                bounded = attempt.bounded
                 return _BoundaryCoverageProof(
                     (),
-                    0,
+                    bounded.target_facet_count,
                     None,
-                    len(source_domain.facets),
-                    0,
+                    bounded.source_facet_count,
+                    bounded.covered_source_facet_count,
                     "source_boundary_homotopy",
-                    None,
-                    None,
-                    (),
+                    bounded.witness_id,
+                    bounded.distance_upper,
+                    bounded.boundary_degree_ids,
                 )
-            findings.append(
-                _coverage_finding(
-                    "source_boundary_map_unresolved",
-                    "unresolved",
-                    "source_facet",
-                    tuple(range(len(source_domain.facets))),
-                    detail="Source chart facets cannot be compared exactly to non-affine target boundary maps.",
+            for failure in attempt.failures:
+                findings.append(
+                    _coverage_finding(
+                        failure.check,
+                        failure.status,
+                        "mesh",
+                        failure.entity_ids,
+                        detail=failure.detail,
+                    )
                 )
-            )
             return _BoundaryCoverageProof(
                 (),
                 0,
                 None,
                 len(source_domain.facets),
                 0,
-                "exact_oriented_facets",
+                "source_boundary_homotopy",
                 None,
                 None,
                 (),
@@ -1127,6 +1110,7 @@ def _coverage_boundary_partition(
                 preparation.coordinate_maps,
                 source_domain=source_domain,
                 geometry=geometry,
+                exact_face_images=True,
             )
             target_facet_count = len(target_facets)
             facet_overlaps, partition_issues = partition_overlaps(
