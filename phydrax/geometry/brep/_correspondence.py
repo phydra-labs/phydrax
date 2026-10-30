@@ -375,6 +375,8 @@ def native_edge_pcurve(
         return LineCurve((0.0, curve.fixed_value), (1.0, 0.0))
     if isinstance(curve, SurfaceMappedCurve) and _same_patch(curve.surface, patch):
         return curve.pcurve
+    if isinstance(patch, RevolutionSurface) and isinstance(curve, CircleCurve):
+        return _revolution_circle_pcurve_candidate(curve, patch)
     frame = _affine_surface_frame(patch)
     if frame is not None and curve.ambient_dimension == 3:
         plane_origin = frame[0]
@@ -390,6 +392,44 @@ def native_edge_pcurve(
         candidate = _affine_pcurve_carrier(curve, uv_origin, uv_direction)
         return candidate if _same_plane_line_lift(curve, candidate, frame) else None
     return None
+
+
+def _revolution_circle_pcurve_candidate(
+    curve: CircleCurve, patch: RevolutionSurface, /
+) -> AbstractCurve | None:
+    """Propose the profile-level ring ``(t, v0)`` of a circle on a line revolution.
+
+    The circle's start point must lie on the line profile at an exactly
+    representable ``v0``; ``exact_source_lift`` then proves the whole lift.
+    """
+    if isinstance(patch.curve, LineCurve):
+        origin, direction = patch.curve.origin_exact, patch.curve.direction_exact
+    elif isinstance(patch.curve, ExactLineCurve):
+        origin = patch.curve.first_exact
+        direction = tuple(
+            last - first
+            for first, last in zip(
+                patch.curve.first_exact, patch.curve.last_exact, strict=True
+            )
+        )
+    else:
+        return None
+    start = tuple(
+        center + curve.radius_exact * axis
+        for center, axis in zip(curve.center_exact, curve.first_axis_exact, strict=True)
+    )
+    pivot = next((index for index, value in enumerate(direction) if value != 0), None)
+    if pivot is None:
+        return None
+    parameter = (start[pivot] - origin[pivot]) / direction[pivot]
+    if not isinstance(parameter, Fraction) or any(
+        origin[index] + parameter * direction[index] != start[index] for index in range(3)
+    ):
+        return None
+    value = float(parameter)
+    if Fraction(value) != parameter:
+        return None
+    return LineCurve((0.0, value), (1.0, 0.0))
 
 
 def _cylinder_chart_line(

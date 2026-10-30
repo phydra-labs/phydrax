@@ -1825,6 +1825,15 @@ def _profile_trim(profile: PlanarProfile, /) -> TrimDomain | None:
     )
 
 
+def _is_chart_line(curve: AbstractCurve, /) -> bool:
+    """Accept chart lines, including lines on an integer native-period sheet."""
+    from ._boolean_core import PeriodicPCurve
+
+    while isinstance(curve, PeriodicPCurve):
+        curve = curve.source_curve
+    return isinstance(curve, (LineCurve, ExactLineCurve))
+
+
 def _line_trim_domain(
     geometry: BRepGeometry, face: int, bounds: np.ndarray, /
 ) -> TrimDomain | None:
@@ -1837,7 +1846,7 @@ def _line_trim_domain(
             if edge < 0 or edge >= len(geometry.edge_curves):
                 raise ValueError("A face coedge references an absent source edge.")
             curve = geometry.pcurves[coedge]
-            if not isinstance(curve, (LineCurve, ExactLineCurve)):
+            if not _is_chart_line(curve):
                 return None
             first, last = np.asarray(geometry.edge_ranges)[edge]
             parameters = (
