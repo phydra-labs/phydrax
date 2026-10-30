@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from fractions import Fraction
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
 
@@ -13,8 +13,8 @@ from ..typing import checked
 from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
-    ScalarCoordinateElement,
     coordinate_effective_basis,
+    ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import certify_cell_geometry_validity
 from ._cell_mesh import CellMesh
@@ -22,6 +22,7 @@ from ._coordinate_enclosure import (
     add,
     axes,
     bernstein_coefficients,
+    BernsteinDomain,
     compose,
     compose_expression,
     constant,
@@ -47,10 +48,11 @@ class MappedCellMeasures(NamedTuple):
     exact: bool
 
 
-MappedGeometryCell = tuple[
-    CellGeometryElement, tuple[tuple[ExactScalar, ...], ...], int
-]
+MappedGeometryCell = tuple[CellGeometryElement, tuple[tuple[ExactScalar, ...], ...], int]
 _BoxBounds = tuple[tuple[Fraction, Fraction], ...]
+# Bisections per reference axis before a rational denominator is declared
+# inseparable from zero; 2**-60 relative width is below binary64 resolution.
+_MAXIMUM_RATIONAL_SPLIT_DEPTH = 60
 
 
 class _PositiveMeasurePatch(NamedTuple):
@@ -66,7 +68,7 @@ class _PositiveMeasurePatch(NamedTuple):
     denominator_ratio: Fraction
 
 
-def _reference_domain(cell_kind: str, /) -> str:
+def _reference_domain(cell_kind: str, /) -> Literal["simplex", "prism", "pyramid", "box"]:
     if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith(
         "simplex:"
     ):
@@ -86,9 +88,17 @@ def _reference_domain(cell_kind: str, /) -> str:
     raise ValueError(f"Mapped measures do not support reference cell {cell_kind!r}.")
 
 
-def _reference_box_map(
-    cell_kind: str, /
-) -> tuple[tuple[Expression, ...], Polynomial]:
+def bernstein_reference_domain(cell_kind: str, /) -> BernsteinDomain:
+    """Return the polynomial Bernstein domain of a nonpyramidal reference cell."""
+    family = _reference_domain(cell_kind)
+    if family == "pyramid":
+        raise ValueError(
+            "Pyramid enclosures require the collapsed-box reference transformation."
+        )
+    return family
+
+
+def _reference_box_map(cell_kind: str, /) -> tuple[tuple[Expression, ...], Polynomial]:
     dimension = reference_cell_topology(cell_kind).dimension
     unit = axes(dimension)
     one = constant(1, dimension)
@@ -97,7 +107,9 @@ def _reference_box_map(
         return unit, one
     if family == "pyramid":
         if dimension != 3:
-            raise ValueError("Pyramid mapped measures require three reference dimensions.")
+            raise ValueError(
+                "Pyramid mapped measures require three reference dimensions."
+            )
         width = add(one, scale(unit[2], -1))
         return pyramid_reference_to_box_arguments(), multiply(width, width)
     if family == "prism":
@@ -130,11 +142,42 @@ def _pyramid_weighted_density(value: Expression, /) -> Expression:
     return normalized.expression
 
 
+def _shared_row_denominator(
+    row: tuple[Expression, ...], /
+) -> tuple[tuple[Polynomial, ...], Polynomial] | None:
+    """Return polynomial row numerators over one exactly shared row denominator."""
+    rational = tuple(entry for entry in row if isinstance(entry, RationalPolynomial))
+    if len(rational) != len(row) or not rational:
+        return None
+    denominator = dict(rational[0].denominator)
+    if any(dict(entry.denominator) != denominator for entry in rational[1:]):
+        return None
+    return tuple(dict(entry.numerator) for entry in rational), denominator
+
+
 def _determinant(
     matrix: tuple[tuple[Expression, ...], ...], dimension: int, /
 ) -> Expression:
+    """Expand an exact determinant, factoring out shared row denominators.
+
+    A rational coordinate's gradient row is ``(D grad N - N grad D) / D**2``;
+    pulling ``D**2`` out of each row before expansion keeps the determinant
+    denominator at the product of row denominators instead of their powers.
+    """
     if len(matrix) != dimension or any(len(row) != dimension for row in matrix):
         raise ValueError("Mapped Jacobian must be square for volume integration.")
+    rows: list[tuple[Expression, ...]] = []
+    denominator: Polynomial = constant(1, dimension)
+    factored = False
+    for row in matrix:
+        shared = _shared_row_denominator(row)
+        if shared is None:
+            rows.append(row)
+            continue
+        numerators, row_denominator = shared
+        rows.append(numerators)
+        denominator = multiply(denominator, row_denominator)
+        factored = True
     terms: list[Expression] = []
     for permutation in itertools.permutations(range(dimension)):
         inversions = sum(
@@ -144,26 +187,24 @@ def _determinant(
         )
         term: Expression = constant(1, dimension)
         for row, column in enumerate(permutation):
-            term = multiply(term, matrix[row][column])
+            term = multiply(term, rows[row][column])
         terms.append(scale(term, -1 if inversions % 2 else 1))
-    return sum_polynomials(terms, dimension)
-
-
-def _mapped_jacobian(
-    element: CellGeometryElement,
-    local: tuple[tuple[ExactScalar, ...], ...],
-    /,
-    *,
-    cell_row: int | None = None,
-) -> tuple[tuple[Expression, ...], ...]:
-    if not isinstance(element, ScalarCoordinateElement):
-        raise TypeError("Mapped coordinate Jacobians require a scalar coordinate element.")
-    coordinates = mapped_coordinate_expressions(element, local, cell_row=cell_row)
-    return tuple(
-        tuple(
-            derivative(coordinate, axis)
-            for axis in range(element.topological_dimension)
+    expanded = sum_polynomials(terms, dimension)
+    if not factored:
+        return expanded
+    if isinstance(expanded, RationalPolynomial):
+        return RationalPolynomial(
+            dict(expanded.numerator),
+            multiply(dict(expanded.denominator), denominator),
         )
+    return RationalPolynomial(expanded, denominator)
+
+
+def _coordinate_jacobian(
+    coordinates: tuple[Expression, ...], dimension: int, /
+) -> tuple[tuple[Expression, ...], ...]:
+    return tuple(
+        tuple(derivative(coordinate, axis) for axis in range(dimension))
         for coordinate in coordinates
     )
 
@@ -198,7 +239,9 @@ def mapped_coordinate_expressions(
     cell_row: int | None = None,
 ) -> tuple[Expression, ...]:
     if not isinstance(element, ScalarCoordinateElement):
-        raise TypeError("Mapped coordinate expressions require a scalar coordinate element.")
+        raise TypeError(
+            "Mapped coordinate expressions require a scalar coordinate element."
+        )
     scalar = element
     basis = coordinate_effective_basis(scalar, cell_row=cell_row)
     if not basis or len(basis) != len(local):
@@ -207,10 +250,88 @@ def mapped_coordinate_expressions(
     if any(len(row) != ambient for row in local):
         raise ValueError("Mapped coordinate coefficients must have one ambient width.")
     coefficients = tuple(
-        tuple(local[dof][axis] for dof in range(len(local)))
-        for axis in range(ambient)
+        tuple(local[dof][axis] for dof in range(len(local))) for axis in range(ambient)
     )
     return linear_combinations(basis, coefficients)
+
+
+def _exact_quotient(dividend: Polynomial, divisor: Polynomial, /) -> Polynomial | None:
+    """Divide exactly under lexicographic order, or return ``None`` if inexact."""
+    if not divisor:
+        raise ValueError("Exact polynomial division requires a nonzero divisor.")
+    lead = max(divisor)
+    lead_coefficient = divisor[lead]
+    if not isinstance(lead_coefficient, Fraction):
+        return None
+    remainder = dict(dividend)
+    quotient: Polynomial = {}
+    while remainder:
+        exponent = max(remainder)
+        shift = tuple(
+            power - lead_power for power, lead_power in zip(exponent, lead, strict=True)
+        )
+        coefficient = remainder[exponent]
+        if any(power < 0 for power in shift) or not isinstance(coefficient, Fraction):
+            return None
+        coefficient = coefficient / lead_coefficient
+        quotient[shift] = coefficient
+        for divisor_exponent, divisor_coefficient in divisor.items():
+            key = tuple(
+                power + divisor_power
+                for power, divisor_power in zip(shift, divisor_exponent, strict=True)
+            )
+            updated = remainder.get(key, Fraction(0)) - coefficient * divisor_coefficient
+            if updated:
+                remainder[key] = updated
+            else:
+                remainder.pop(key, None)
+    return quotient
+
+
+def _cancel_coordinate_factors(
+    value: Expression, coordinates: tuple[Expression, ...], dimension: int, /
+) -> Expression:
+    """Cancel coordinate denominators that exactly divide a rational density."""
+    if not isinstance(value, RationalPolynomial):
+        return value
+    numerator = dict(value.numerator)
+    denominator = dict(value.denominator)
+    factors: list[Polynomial] = []
+    for coordinate in coordinates:
+        if not isinstance(coordinate, RationalPolynomial):
+            continue
+        factor = dict(coordinate.denominator)
+        if any(any(exponent) for exponent in factor) and factor not in factors:
+            factors.append(factor)
+    for factor in factors:
+        while True:
+            reduced_denominator = _exact_quotient(denominator, factor)
+            reduced_numerator = _exact_quotient(numerator, factor)
+            if reduced_denominator is None or reduced_numerator is None:
+                break
+            numerator, denominator = reduced_numerator, reduced_denominator
+    constant_term = denominator.get((0,) * dimension)
+    if len(denominator) == 1 and constant_term is not None:
+        return scale(numerator, 1 / constant_term)
+    return RationalPolynomial(numerator, denominator)
+
+
+def _volume_density(
+    element: ScalarCoordinateElement,
+    local: tuple[tuple[ExactScalar, ...], ...],
+    /,
+    *,
+    cell_row: int | None,
+) -> Expression:
+    dimension = element.topological_dimension
+    coordinates = mapped_coordinate_expressions(element, local, cell_row=cell_row)
+    if len(coordinates) != dimension:
+        raise ValueError("Mapped volume integration requires a square physical map.")
+    return _cancel_coordinate_factors(
+        _determinant(_coordinate_jacobian(coordinates, dimension), dimension),
+        coordinates,
+        dimension,
+    )
 
 
 @checked
@@ -224,23 +345,19 @@ def mapped_density_expression(
     """Return the exact signed Jacobian determinant of a mapped volume cell."""
     if not isinstance(element, ScalarCoordinateElement):
         raise TypeError("Mapped volume density requires a scalar coordinate element.")
-    dimension = element.topological_dimension
-    jacobian = _mapped_jacobian(element, local, cell_row=cell_row)
-    if len(jacobian) != dimension:
-        raise ValueError("Mapped volume integration requires a square physical map.")
-    return _determinant(jacobian, dimension)
+    return _volume_density(element, local, cell_row=cell_row)
 
 
-def _polynomial_integral(
-    polynomial: Polynomial, cell_kind: str, /
-) -> ExactScalar:
+def _polynomial_integral(polynomial: Polynomial, cell_kind: str, /) -> ExactScalar:
     topology = reference_cell_topology(cell_kind)
     dimension = topology.dimension
     family = _reference_domain(cell_kind)
     if family == "pyramid":
         transformed = _pyramid_weighted_density(polynomial)
         if isinstance(transformed, RationalPolynomial):
-            raise RuntimeError("Polynomial pyramid measure normalization became rational.")
+            raise RuntimeError(
+                "Polynomial pyramid measure normalization became rational."
+            )
         polynomial = dict(transformed)
         family = "box"
     total: ExactScalar = Fraction(0)
@@ -253,13 +370,135 @@ def _polynomial_integral(
         elif family == "prism":
             moment = Fraction(
                 math.factorial(exponent[0]) * math.factorial(exponent[1]),
-                math.factorial(exponent[0] + exponent[1] + 2)
-                * (exponent[2] + 1),
+                math.factorial(exponent[0] + exponent[1] + 2) * (exponent[2] + 1),
             )
         else:
             moment = Fraction(1, math.prod(power + 1 for power in exponent))
         total += coefficient * moment
     return total
+
+
+class _RationalSeriesPatch(NamedTuple):
+    numerator: Polynomial
+    denominator: Polynomial
+    volume_scale: Fraction
+    center: Fraction
+    contraction: Fraction
+    numerator_bound: Fraction
+
+
+def _rational_controls(polynomial: Polynomial, dimension: int, /) -> tuple[Fraction, ...]:
+    controls = bernstein_coefficients(polynomial, "box", dimension)
+    rational = tuple(value for value in controls if isinstance(value, Fraction))
+    if len(rational) != len(controls):
+        raise ValueError(
+            "Rational mapped measure integration requires rational coefficients."
+        )
+    return rational
+
+
+def _rational_series_patch(
+    numerator: Polynomial, denominator: Polynomial, bounds: _BoxBounds, /
+) -> _RationalSeriesPatch | None:
+    dimension = len(bounds)
+    local_numerator = _restricted_polynomial(numerator, bounds)
+    local_denominator = _restricted_polynomial(denominator, bounds)
+    denominator_controls = _rational_controls(local_denominator, dimension)
+    if not denominator_controls:
+        return None
+    lower = min(denominator_controls)
+    upper = max(denominator_controls)
+    if lower > 0:
+        orientation = 1
+    elif upper < 0:
+        orientation = -1
+        lower, upper = -upper, -lower
+    else:
+        return None
+    contraction = (upper - lower) / (upper + lower)
+    if contraction > Fraction(1, 2):
+        return None
+    numerator_controls = _rational_controls(local_numerator, dimension)
+    volume_scale = Fraction(1)
+    for start, stop in bounds:
+        volume_scale *= stop - start
+    return _RationalSeriesPatch(
+        scale(local_numerator, orientation),
+        scale(local_denominator, orientation),
+        volume_scale,
+        (lower + upper) / 2,
+        contraction,
+        max((abs(value) for value in numerator_controls), default=Fraction(0)),
+    )
+
+
+def _rational_series_patches(
+    numerator: Polynomial, denominator: Polynomial, dimension: int, /
+) -> tuple[_RationalSeriesPatch, ...]:
+    """Split the unit box until each denominator enclosure contracts by one half."""
+    unit_bounds: _BoxBounds = tuple((Fraction(0), Fraction(1)) for _ in range(dimension))
+    pending: list[tuple[_BoxBounds, int]] = [(unit_bounds, 0)]
+    patches: list[_RationalSeriesPatch] = []
+    while pending:
+        bounds, depth = pending.pop()
+        patch = _rational_series_patch(numerator, denominator, bounds)
+        if patch is not None:
+            patches.append(patch)
+            continue
+        if depth >= _MAXIMUM_RATIONAL_SPLIT_DEPTH * dimension:
+            raise ValueError(
+                "Rational mapped measure denominator cannot be separated from zero."
+            )
+        first, second = _split_box(bounds, depth)
+        pending.append((second, depth + 1))
+        pending.append((first, depth + 1))
+    return tuple(patches)
+
+
+def _integrate_rational_patch(
+    patch: _RationalSeriesPatch,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    box_kind: str,
+    /,
+) -> tuple[Fraction, Fraction, bool]:
+    """Sum ``N / D = (1 / c) sum_k N (1 - D / c)^k`` with a Bernstein tail bound."""
+    dimension = reference_cell_topology(box_kind).dimension
+    ratio = add(constant(1, dimension), scale(patch.denominator, -1 / patch.center))
+    weighted = patch.numerator
+    tail_scale = (
+        patch.volume_scale
+        * patch.numerator_bound
+        / (patch.center * (1 - patch.contraction))
+    )
+    total = Fraction(0)
+    order = 0
+    while True:
+        integral_term = _polynomial_integral(weighted, box_kind)
+        if not isinstance(integral_term, Fraction):
+            raise ValueError("Rational mapped measure series requires rational moments.")
+        total += integral_term * patch.volume_scale / patch.center
+        remainder = tail_scale * patch.contraction ** (order + 1)
+        permitted = max(
+            absolute_tolerance,
+            relative_tolerance * max(abs(total) - remainder, Fraction(0)),
+        )
+        if remainder <= permitted:
+            return total - remainder, total + remainder, remainder == 0
+        weighted = multiply(weighted, ratio)
+        order += 1
+
+
+def _publish_enclosure(
+    lower: Fraction, upper: Fraction, exact: bool, /
+) -> tuple[float, float, bool]:
+    published = float((lower + upper) / 2)
+    if not math.isfinite(published):
+        raise ValueError("Mapped cell measure is not representable in binary64.")
+    lower_value = coefficient_endpoint(lower, upper=False, saturate=True)
+    upper_value = coefficient_endpoint(upper, upper=True, saturate=True)
+    error = max(published - lower_value, upper_value - published)
+    return published, _positive_outward_error(error), exact
 
 
 def _integrate_rational(
@@ -269,69 +508,33 @@ def _integrate_rational(
     relative_tolerance: Fraction,
     /,
 ) -> tuple[float, float, bool]:
-    if cell_kind == "pyramid":
-        transformed = _pyramid_weighted_density(value)
-        if not isinstance(transformed, RationalPolynomial):
-            exact_value = _polynomial_integral(dict(transformed), "hexahedron")
-            published, error = _publish_integral(exact_value)
-            return published, _positive_outward_error(error), True
-        value = transformed
-        cell_kind = "hexahedron"
     dimension = reference_cell_topology(cell_kind).dimension
-    domain = _reference_domain(cell_kind)
-    numerator_controls = bernstein_coefficients(value.numerator, domain, dimension)
-    denominator_controls = bernstein_coefficients(value.denominator, domain, dimension)
-    if any(not isinstance(coefficient, Fraction) for coefficient in (*numerator_controls, *denominator_controls)):
-        raise ValueError("Rational mapped measure integration requires rational coefficients.")
-    lower = min(denominator_controls)
-    upper = max(denominator_controls)
-    if upper < 0:
-        value = RationalPolynomial(
-            scale(value.numerator, -1), scale(value.denominator, -1)
-        )
-        numerator_controls = tuple(-coefficient for coefficient in numerator_controls)
-        lower, upper = -upper, -lower
-    if lower <= 0:
-        raise ValueError(
-            "Rational mapped measure requires a strictly positive denominator enclosure."
-        )
-    center = (lower + upper) / 2
-    ratio = add(constant(1, dimension), scale(value.denominator, -1 / center))
-    contraction = (upper - lower) / (upper + lower)
-    numerator_bound = max(
-        (abs(coefficient) for coefficient in numerator_controls), default=Fraction(0)
+    box_kind = _box_cell_kind(dimension)
+    box_arguments, box_jacobian = _reference_box_map(cell_kind)
+    mapped = compose_expression(value, box_arguments)
+    if not isinstance(mapped, RationalPolynomial):
+        exact_value = _polynomial_integral(multiply(dict(mapped), box_jacobian), box_kind)
+        published, error = _publish_integral(exact_value)
+        return published, _positive_outward_error(error), True
+    patches = _rational_series_patches(
+        multiply(dict(mapped.numerator), box_jacobian),
+        dict(mapped.denominator),
+        dimension,
     )
-    reference_volume = _polynomial_integral(constant(1, dimension), cell_kind)
-    term: Expression = constant(1, dimension)
-    total = Fraction(0)
-    order = 0
-    while True:
-        integral_term = _polynomial_integral(
-            multiply(value.numerator, term), cell_kind
+    lower = Fraction(0)
+    upper = Fraction(0)
+    exact = True
+    for patch in patches:
+        patch_lower, patch_upper, patch_exact = _integrate_rational_patch(
+            patch,
+            absolute_tolerance * patch.volume_scale,
+            relative_tolerance,
+            box_kind,
         )
-        if not isinstance(integral_term, Fraction):
-            raise ValueError("Rational mapped measure series requires rational moments.")
-        total += integral_term / center
-        remainder = (
-            reference_volume
-            * numerator_bound
-            * contraction ** (order + 1)
-            / (center * (1 - contraction))
-        )
-        permitted = max(
-            absolute_tolerance,
-            relative_tolerance * max(abs(total) - remainder, Fraction(0)),
-        )
-        if remainder <= permitted:
-            lower_value = coefficient_endpoint(total - remainder, upper=False, saturate=True)
-            upper_value = coefficient_endpoint(total + remainder, upper=True, saturate=True)
-            published = float(total)
-            if not math.isfinite(published):
-                raise ValueError("Mapped cell measure is not representable in binary64.")
-            error = max(published - lower_value, upper_value - published)
-            return published, _positive_outward_error(error), remainder == 0
-        term = multiply(term, ratio)
-        order += 1
+        lower += patch_lower
+        upper += patch_upper
+        exact = exact and patch_exact
+    return _publish_enclosure(lower, upper, exact)
 
 
 def _positive_outward_error(error: float, /) -> float:
@@ -364,13 +567,9 @@ def _box_arguments(bounds: _BoxBounds, /) -> tuple[Polynomial, ...]:
     )
 
 
-def _restricted_polynomial(
-    polynomial: Polynomial, bounds: _BoxBounds, /
-) -> Polynomial:
+def _restricted_polynomial(polynomial: Polynomial, bounds: _BoxBounds, /) -> Polynomial:
     dimension = len(bounds)
-    restricted = compose(
-        polynomial, _box_arguments(bounds), dimension=dimension
-    )
+    restricted = compose(polynomial, _box_arguments(bounds), dimension=dimension)
     if isinstance(restricted, RationalPolynomial):
         raise RuntimeError("Polynomial Bernstein restriction became rational.")
     return restricted
@@ -407,18 +606,14 @@ def _positive_measure_patch(
     denominator_maximum = max(normalized_denominator)
     numerator_center = (numerator_minimum + numerator_maximum) / 2
     denominator_center = (denominator_minimum + denominator_maximum) / 2
-    numerator_variation = (
-        numerator_maximum - numerator_minimum
-    ) / (numerator_maximum + numerator_minimum)
-    denominator_variation = (
-        denominator_maximum - denominator_minimum
-    ) / (denominator_maximum + denominator_minimum)
-    numerator_ratio = min(
-        coefficient_interval(numerator_variation)[1], Fraction(1)
+    numerator_variation = (numerator_maximum - numerator_minimum) / (
+        numerator_maximum + numerator_minimum
     )
-    denominator_ratio = min(
-        coefficient_interval(denominator_variation)[1], Fraction(1)
+    denominator_variation = (denominator_maximum - denominator_minimum) / (
+        denominator_maximum + denominator_minimum
     )
+    numerator_ratio = min(coefficient_interval(numerator_variation)[1], Fraction(1))
+    denominator_ratio = min(coefficient_interval(denominator_variation)[1], Fraction(1))
     normalized_numerator_polynomial = scale(local_numerator, orientation)
     normalized_denominator_polynomial = scale(local_denominator, orientation)
     if isinstance(normalized_numerator_polynomial, RationalPolynomial) or isinstance(
@@ -472,16 +667,12 @@ def _positive_measure_patches(
     dimension: int,
     /,
 ) -> tuple[_PositiveMeasurePatch, ...]:
-    unit_bounds: _BoxBounds = tuple(
-        (Fraction(0), Fraction(1)) for _ in range(dimension)
-    )
+    unit_bounds: _BoxBounds = tuple((Fraction(0), Fraction(1)) for _ in range(dimension))
     pending: list[tuple[_BoxBounds, int]] = [(unit_bounds, 0)]
     patches: list[_PositiveMeasurePatch] = []
     while pending:
         bounds, depth = pending.pop()
-        patch = _positive_measure_patch(
-            numerator, denominator, jacobian, bounds
-        )
+        patch = _positive_measure_patch(numerator, denominator, jacobian, bounds)
         if patch is None or max(
             patch.numerator_ratio, patch.denominator_ratio
         ) > Fraction(1, 2):
@@ -515,9 +706,7 @@ def _binomial_polynomial(
         total = add(total, scale(term, coefficient))
         if index < order:
             step = (
-                Fraction(-1, 2) - index
-                if inverse_square_root
-                else Fraction(1, 2) - index
+                Fraction(-1, 2) - index if inverse_square_root else Fraction(1, 2) - index
             )
             coefficient = coefficient * step / (index + 1)
             term = multiply(term, relative)
@@ -555,12 +744,14 @@ def _integrate_positive_measure_patch(
     order = 0
     while True:
         numerator_tail = numerator_ratio ** (order + 1) / (1 - numerator_ratio)
-        denominator_tail = denominator_ratio ** (order + 1) / (
-            1 - denominator_ratio
-        )
-        remainder = factor_upper * patch.jacobian_integral * (
-            numerator_tail / (1 - denominator_ratio)
-            + denominator_tail / (1 - numerator_ratio)
+        denominator_tail = denominator_ratio ** (order + 1) / (1 - denominator_ratio)
+        remainder = (
+            factor_upper
+            * patch.jacobian_integral
+            * (
+                numerator_tail / (1 - denominator_ratio)
+                + denominator_tail / (1 - numerator_ratio)
+            )
         )
         if remainder <= absolute_tolerance:
             break
@@ -586,9 +777,9 @@ def _integrate_positive_measure_patch(
     )
     if isinstance(approximation_expression, RationalPolynomial):
         raise RuntimeError("Polynomial measure approximation became rational.")
-    approximation = _polynomial_integral(
-        approximation_expression, box_kind
-    ) * patch.volume_scale
+    approximation = (
+        _polynomial_integral(approximation_expression, box_kind) * patch.volume_scale
+    )
     approximation_lower, approximation_upper = coefficient_interval(approximation)
     products = (
         factor_lower * approximation_lower,
@@ -621,9 +812,7 @@ def _integrate_embedded_measure(
     else:
         numerator = dict(mapped)
         denominator = constant(1, dimension)
-    patches = _positive_measure_patches(
-        numerator, denominator, box_jacobian, dimension
-    )
+    patches = _positive_measure_patches(numerator, denominator, box_jacobian, dimension)
     box_kind = _box_cell_kind(dimension)
     reference_volume = _polynomial_integral(box_jacobian, box_kind)
     if not isinstance(reference_volume, Fraction) or reference_volume <= 0:
@@ -632,23 +821,14 @@ def _integrate_embedded_measure(
     upper = Fraction(0)
     exact = True
     for patch in patches:
-        local_tolerance = (
-            absolute_tolerance * patch.jacobian_integral / reference_volume
-        )
+        local_tolerance = absolute_tolerance * patch.jacobian_integral / reference_volume
         patch_lower, patch_upper, patch_exact = _integrate_positive_measure_patch(
             patch, local_tolerance, box_kind
         )
         lower += patch_lower
         upper += patch_upper
         exact = exact and patch_exact
-    midpoint = (lower + upper) / 2
-    published = float(midpoint)
-    if not math.isfinite(published):
-        raise ValueError("Mapped cell measure is not representable in binary64.")
-    lower_value = coefficient_endpoint(lower, upper=False, saturate=True)
-    upper_value = coefficient_endpoint(upper, upper=True, saturate=True)
-    error = max(published - lower_value, upper_value - published)
-    return published, _positive_outward_error(error), exact
+    return _publish_enclosure(lower, upper, exact)
 
 
 def _publish_integral(value: ExactScalar, /) -> tuple[float, float]:
@@ -668,11 +848,12 @@ def mapped_geometry_cells(
     source_bank = geometry.source_coordinates()
     cells: list[MappedGeometryCell] = []
     for element, route in zip(elements, routes, strict=True):
-        for cell_row, row in enumerate(np.asarray(route, dtype=np.int64)):
+        rows = np.asarray(route, dtype=np.int64).tolist()
+        for cell_row, row in enumerate(rows):
             cells.append(
                 (
                     element,
-                    tuple(source_bank[int(index)] for index in row),
+                    tuple(source_bank[index] for index in row),
                     cell_row,
                 )
             )
@@ -715,10 +896,13 @@ def certified_cell_measures(
             raise TypeError("Mapped cell measures require scalar coordinate elements.")
         scalar = element
         dimension = scalar.topological_dimension
-        jacobian = _mapped_jacobian(element, local, cell_row=cell_row)
+        coordinates = mapped_coordinate_expressions(scalar, local, cell_row=cell_row)
+        jacobian = _coordinate_jacobian(coordinates, dimension)
         ambient_dimension = len(jacobian)
         if ambient_dimension == dimension:
-            integral = _determinant(jacobian, dimension)
+            integral = _cancel_coordinate_factors(
+                _determinant(jacobian, dimension), coordinates, dimension
+            )
             integration_cell_kind = scalar.cell_kind
             if scalar.cell_kind == "pyramid":
                 integral = _pyramid_weighted_density(integral)
@@ -747,9 +931,7 @@ def certified_cell_measures(
                 values[flattened_row],
                 errors[flattened_row],
                 cell_exact,
-            ) = _integrate_embedded_measure(
-                gram, scalar.cell_kind, absolute_per_cell
-            )
+            ) = _integrate_embedded_measure(gram, scalar.cell_kind, absolute_per_cell)
             exact = exact and cell_exact
         else:
             raise ValueError(

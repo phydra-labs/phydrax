@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import numpy as np
-
 import pytest
 
 import phydrax.discretization._cell_geometry_predecessor as predecessor_module
@@ -45,9 +44,7 @@ def test_unchanged_cell_validity_predecessor_matches_fresh_certification(
     )
     source_geometry = CellGeometrySpec.affine(source_mesh)
     target_geometry = CellGeometrySpec.affine(target_mesh)
-    source_validity = certify_cell_geometry_validity(
-        source_geometry, mesh=source_mesh
-    )
+    source_validity = certify_cell_geometry_validity(source_geometry, mesh=source_mesh)
     fresh = certify_cell_geometry_validity(target_geometry, mesh=target_mesh)
     predecessor = prepare_cell_geometry_predecessor(
         source_mesh,

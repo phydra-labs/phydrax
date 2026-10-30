@@ -21,25 +21,25 @@ from phydrax._validation import (
 )
 from phydrax.discretization._cell_complex import (
     PolyhedralConnectivity,
-    TetrahedralConnectivity,
 )
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-from phydrax.discretization._cell_mesh import CellMesh, SimplicialConnectivity
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._exact_power_geometry import (
     ExactPowerCellGeometrySource,
     prepare_exact_power_geometry_source,
 )
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import (
-    PeriodicIsometryGroup,
     exact_periodic_element,
     identification_orders,
+    PeriodicIsometryGroup,
 )
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.meshing._contracts import VolumeMeshingSpec
 from phydrax.meshing._controls import PeriodicConstraint
+from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing._volume_generation import (
     generate_plc_volume,
     NativeVolumeSchedule,
@@ -49,6 +49,7 @@ from phydrax.meshing.providers._native_sources import (
     NativePlcSource,
     NativePolyhedralSource,
 )
+
 
 type _ExactAffineTransform = tuple[tuple[Fraction, ...], ...]
 type _PeriodicControlBinding = tuple[int, int, _ExactAffineTransform]
@@ -129,6 +130,43 @@ class NativePolyhedralSchedule(StrictModule, NonTrainableState):
         )
 
 
+def effective_polyhedral_schedule(
+    specification: VolumeMeshingSpec,
+    supplied: NativePolyhedralSchedule,
+    /,
+) -> NativePolyhedralSchedule:
+    """Tighten the supplied cell-diameter bound by every hard uniform size control."""
+    hard_bounds = []
+    policy = specification.size_compliance
+    for control in specification.size_controls:
+        if not isinstance(control, UniformSizeControl):
+            continue
+        if control.strength is not SizeControlStrength.HARD:
+            continue
+        tolerance = policy.absolute_tolerance + policy.relative_tolerance * abs(
+            control.target_size
+        )
+        bound = (
+            control.maximum_size
+            if control.maximum_size is not None
+            else control.target_size + tolerance
+        )
+        hard_bounds.append(bound)
+    diameter = supplied.maximum_cell_diameter
+    if hard_bounds:
+        physical_bound = min(hard_bounds)
+        diameter = physical_bound if diameter is None else min(diameter, physical_bound)
+    return NativePolyhedralSchedule(
+        maximum_cell_diameter=diameter,
+        target_site_volumes=supplied.target_site_volumes,
+        relative_volume_tolerance=supplied.relative_volume_tolerance,
+        feature_tolerance=supplied.feature_tolerance,
+        protected_site_ids=supplied.protected_site_ids,
+        require_every_site=supplied.require_every_site,
+        lloyd_steps=supplied.lloyd_steps,
+    )
+
+
 def _carrier_tetrahedralization(
     carrier: VolumeConstruction, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -142,22 +180,11 @@ def _carrier_tetrahedralization(
             "Restricted-power construction requires one tetrahedral-family carrier block."
         )
     tetrahedra = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
-    connectivity = mesh.connectivity
-    if isinstance(connectivity, TetrahedralConnectivity):
-        faces = np.asarray(connectivity.faces, dtype=np.int64)
-        cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int64)
-    elif isinstance(connectivity, SimplicialConnectivity) and connectivity.dimension == 3:
-        faces = np.asarray(connectivity.entities[2], dtype=np.int64)
-        cell_faces = np.asarray(connectivity.cell_entities[2], dtype=np.int64)
-    else:
-        raise TypeError("Restricted-power carrier requires tetrahedral face incidence.")
     boundary_faces = np.asarray(carrier.boundary_faces, dtype=np.int64)
     face_sources = np.asarray(carrier.face_sources)
     if (
         tetrahedra.ndim != 2
         or tetrahedra.shape[1] != 4
-        or tetrahedra.shape[0] != cell_faces.shape[0]
-        or cell_faces.shape[1] != 4
         or boundary_faces.ndim != 2
         or boundary_faces.shape[1] != 3
         or face_sources.shape != (boundary_faces.shape[0],)
@@ -180,17 +207,15 @@ def _carrier_tetrahedralization(
             )
         constraint_by_vertices[key] = constraint
 
-    tet_face_facets = np.full(cell_faces.shape, -1, dtype=np.int32)
+    # Native restricted-power slot ``4 * cell + k`` is the face opposite vertex k.
+    tet_face_facets = np.full(tetrahedra.shape, -1, dtype=np.int32)
     matched = np.zeros(boundary_faces.shape[0], dtype=np.bool_)
-    for cell in range(cell_faces.shape[0]):
-        for local_face in range(cell_faces.shape[1]):
-            face_row = int(cell_faces[cell, local_face])
+    for cell in range(tetrahedra.shape[0]):
+        for local_face in range(4):
             sorted_vertices = sorted(
-                (
-                    int(faces[face_row, 0]),
-                    int(faces[face_row, 1]),
-                    int(faces[face_row, 2]),
-                )
+                int(tetrahedra[cell, vertex])
+                for vertex in range(4)
+                if vertex != local_face
             )
             key = (sorted_vertices[0], sorted_vertices[1], sorted_vertices[2])
             constraint = constraint_by_vertices.get(key)
@@ -1012,11 +1037,36 @@ def _source_split_flags(
     site_count: int,
     /,
 ) -> np.ndarray:
-    split = bool(source.complex.segments.shape[0]) or any(
-        feature.scope.entity_dimension == 0
-        for feature in specification.protected_features
+    """Split sites only for features that same-site joining would swallow.
+
+    Native joining merges a site's pieces across unconstrained carrier faces
+    only, so every facet-polygon edge and vertex stays on a constrained face.
+    Segments or protected vertices off every facet polygon lie in the volume
+    and survive only as edges or vertices of unjoined per-tetrahedron pieces.
+    """
+    complex_ = source.complex
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64).tolist()
+    loops = np.asarray(complex_.polygon_vertices, dtype=np.int64).tolist()
+    polygon_edges: set[tuple[int, int]] = set()
+    for start, stop in zip(offsets[:-1], offsets[1:], strict=True):
+        loop = loops[start:stop]
+        for first, second in zip(loop, (*loop[1:], loop[0]), strict=True):
+            polygon_edges.add((min(first, second), max(first, second)))
+    floating_segment = any(
+        (min(first, second), max(first, second)) not in polygon_edges
+        for first, second in np.asarray(complex_.segments, dtype=np.int64).tolist()
     )
-    return np.full((site_count,), split, dtype=np.int8)
+    vertex_bank = np.asarray(source.scope_entity_ids(0), dtype=np.int64)
+    polygon_vertices = set(loops)
+    floating_vertex = any(
+        int(row) not in polygon_vertices
+        for feature in specification.protected_features
+        if feature.scope.entity_dimension == 0
+        for row in np.flatnonzero(
+            np.isin(vertex_bank, np.asarray(feature.scope.entity_ids, dtype=np.int64))
+        )
+    )
+    return np.full((site_count,), floating_segment or floating_vertex, dtype=np.int8)
 
 
 def _mapped_face_ancestry(
@@ -1228,9 +1278,7 @@ def _periodic_transform_matrix(
         transform[3], np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float64)
     ):
         raise ValueError("Periodic PLC constraints require exact 3D affine maps.")
-    return tuple(
-        tuple(Fraction(float(value)) for value in row) for row in transform
-    )
+    return tuple(tuple(Fraction(float(value)) for value in row) for row in transform)
 
 
 def _periodic_identification(
@@ -1244,8 +1292,7 @@ def _periodic_identification(
         _periodic_transform_matrix(constraint) for constraint in constraints
     )
     identity = tuple(
-        tuple(Fraction(int(row == column)) for column in range(3))
-        for row in range(3)
+        tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
     )
     translations_only = all(
         tuple(tuple(transform[row][column] for column in range(3)) for row in range(3))
@@ -1256,15 +1303,13 @@ def _periodic_identification(
         normalized_translations: list[tuple[Fraction, Fraction, Fraction]] = []
         signs: list[int] = []
         for transform in exact_transforms:
-            translation = tuple(transform[axis][3] for axis in range(3))
-            first_nonzero = next(
-                (value for value in translation if value), Fraction(0)
-            )
+            translation = (transform[0][3], transform[1][3], transform[2][3])
+            first_nonzero = next((value for value in translation if value), Fraction(0))
             if not first_nonzero:
                 raise ValueError("Periodic PLC translations must be nonzero.")
             sign = 1 if first_nonzero > 0 else -1
             normalized_translations.append(
-                tuple(sign * value for value in translation)
+                (sign * translation[0], sign * translation[1], sign * translation[2])
             )
             signs.append(sign)
         lattice_vectors = tuple(sorted(set(normalized_translations)))
@@ -1275,9 +1320,7 @@ def _periodic_identification(
         identification: PeriodicCell | PeriodicIsometryGroup = PeriodicCell(
             vector_rows, periodic_axes=(True,) * len(lattice_vectors)
         )
-        generator_rows = {
-            vector: row for row, vector in enumerate(lattice_vectors)
-        }
+        generator_rows = {vector: row for row, vector in enumerate(lattice_vectors)}
         bindings = tuple(
             (
                 generator_rows[normalized],
@@ -1291,9 +1334,7 @@ def _periodic_identification(
     else:
         matrices = {
             transform: np.asarray(constraint.transform, dtype=np.float64)
-            for constraint, transform in zip(
-                constraints, exact_transforms, strict=True
-            )
+            for constraint, transform in zip(constraints, exact_transforms, strict=True)
         }
         actions: dict[_ExactAffineTransform, tuple[int, int]] = {}
         generator_matrices: list[np.ndarray] = []
@@ -1309,24 +1350,18 @@ def _periodic_identification(
             )
             actions.setdefault(inverse, (generator_index, -1))
             generator_matrices.append(generator)
-        identification = PeriodicIsometryGroup(
-            np.stack(generator_matrices, axis=0)
-        )
+        identification = PeriodicIsometryGroup(np.stack(generator_matrices, axis=0))
         bindings = tuple(
             (actions[transform][0], actions[transform][1], transform)
             for transform in exact_transforms
         )
     facet_generators = {
         generator
-        for constraint, (generator, _, _) in zip(
-            constraints, bindings, strict=True
-        )
+        for constraint, (generator, _, _) in zip(constraints, bindings, strict=True)
         if constraint.source_scope.entity_dimension == 2
     }
     if facet_generators != set(range(identification.rank)):
-        raise ValueError(
-            "Every periodic identification generator must pair a PLC facet."
-        )
+        raise ValueError("Every periodic identification generator must pair a PLC facet.")
     return identification, bindings
 
 
@@ -1363,9 +1398,9 @@ def _periodic_facet_rows(
     return rows
 
 
-def _periodic_face_vertex_rows(
+def _periodic_face_vertex_sets(
     construction: PolyhedralConstruction, facet_rows: set[int], /
-) -> np.ndarray:
+) -> tuple[frozenset[int], ...]:
     connectivity = construction.mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Periodic PLC generation requires polyhedral connectivity.")
@@ -1373,12 +1408,12 @@ def _periodic_face_vertex_rows(
     selected_faces = np.flatnonzero(np.isin(recovered, tuple(sorted(facet_rows))))
     if selected_faces.size == 0:
         raise ValueError("A periodic PLC facet scope has no output boundary faces.")
-    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-    vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
-    rows = np.concatenate(
-        tuple(vertices[offsets[face] : offsets[face + 1]] for face in selected_faces)
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64).tolist()
+    vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64).tolist()
+    return tuple(
+        frozenset(vertices[offsets[face] : offsets[face + 1]])
+        for face in selected_faces.tolist()
     )
-    return np.unique(rows)
 
 
 def _apply_periodic_transform(
@@ -1387,16 +1422,17 @@ def _apply_periodic_transform(
     /,
 ) -> tuple[Fraction, Fraction, Fraction]:
     homogeneous = (*point, Fraction(1))
-    return tuple(
-        sum(
+
+    def component(axis: int, /) -> Fraction:
+        return sum(
             (
                 transform[axis][coordinate] * homogeneous[coordinate]
                 for coordinate in range(4)
             ),
             Fraction(0),
         )
-        for axis in range(3)
-    )
+
+    return component(0), component(1), component(2)
 
 
 def _periodic_vertex_relations(
@@ -1413,27 +1449,30 @@ def _periodic_vertex_relations(
     ):
         if constraint.source_scope.entity_dimension != 2:
             continue
-        source_rows = _periodic_face_vertex_rows(
+        source_faces = _periodic_face_vertex_sets(
             construction, _periodic_facet_rows(source, constraint, target=False)
         )
-        target_rows = _periodic_face_vertex_rows(
+        target_faces = _periodic_face_vertex_sets(
             construction, _periodic_facet_rows(source, constraint, target=True)
         )
-        if source_rows.size != target_rows.size:
+        source_rows = sorted(set().union(*source_faces))
+        target_rows = sorted(set().union(*target_faces))
+        if len(source_rows) != len(target_rows) or len(source_faces) != len(target_faces):
             raise ValueError(
                 "Periodic PLC facets require matching output vertex subdivisions."
             )
         target_by_coordinate: dict[tuple[Fraction, ...], int] = {}
-        for row in target_rows.tolist():
-            point = exact_points[int(row)]
+        for row in target_rows:
+            point = exact_points[row]
             if point in target_by_coordinate:
                 raise ValueError(
                     "Periodic PLC target facets have ambiguous coincident output vertices."
                 )
-            target_by_coordinate[point] = int(row)
+            target_by_coordinate[point] = row
+        paired: dict[int, int] = {}
         paired_targets: set[int] = set()
-        for source_row in source_rows.tolist():
-            source_point = exact_points[int(source_row)]
+        for source_row in source_rows:
+            source_point = exact_points[source_row]
             target_point = _apply_periodic_transform(transform, source_point)
             try:
                 target_row = target_by_coordinate[target_point]
@@ -1443,11 +1482,20 @@ def _periodic_vertex_relations(
                 ) from error
             if target_row in paired_targets:
                 raise ValueError("Periodic PLC vertex pairs must be bijective.")
+            paired[source_row] = target_row
             paired_targets.add(target_row)
             if target_row != source_row:
-                relations.append((int(source_row), target_row, generator, sign))
-        if len(paired_targets) != target_rows.size:
+                relations.append((source_row, target_row, generator, sign))
+        if len(paired) != len(target_rows):
             raise ValueError("Periodic PLC vertex pairs must cover both facet scopes.")
+        target_face_set = set(target_faces)
+        if any(
+            frozenset(paired[row] for row in face) not in target_face_set
+            for face in source_faces
+        ):
+            raise ValueError(
+                "Periodic PLC facets do not have an exact transformed output face subdivision."
+            )
     if not relations:
         raise ValueError("Periodic quotient generation requires a paired PLC facet.")
     return tuple(relations)
@@ -1472,9 +1520,7 @@ def _periodic_vertex_orbits(
         [] for _ in range(mesh.coordinates.shape[0])
     ]
     for source_row, target_row, generator, sign in relations:
-        step = tuple(
-            sign if axis == generator else 0 for axis in range(rank)
-        )
+        step = tuple(sign if axis == generator else 0 for axis in range(rank))
         reverse = tuple(-value for value in step)
         adjacency[source_row].append((target_row, step))
         adjacency[target_row].append((source_row, reverse))
@@ -1493,10 +1539,7 @@ def _periodic_vertex_orbits(
             component.append(row)
             for neighbor, step in adjacency[row]:
                 candidate = reduce_potential(
-                    tuple(
-                        potentials[row][axis] + step[axis]
-                        for axis in range(rank)
-                    )
+                    tuple(potentials[row][axis] + step[axis] for axis in range(rank))
                 )
                 existing = potentials.get(neighbor)
                 if existing is None:
@@ -1511,22 +1554,20 @@ def _periodic_vertex_orbits(
         for row in component:
             relative = reduce_potential(
                 tuple(
-                    potentials[row][axis] - root_potential[axis]
-                    for axis in range(rank)
+                    potentials[row][axis] - root_potential[axis] for axis in range(rank)
                 )
             )
             if any(
-                value < np.iinfo(np.int32).min
-                or value > np.iinfo(np.int32).max
+                value < np.iinfo(np.int32).min or value > np.iinfo(np.int32).max
                 for value in relative
             ):
-                raise ValueError("Periodic PLC winding lies outside the mesh index range.")
+                raise ValueError(
+                    "Periodic PLC winding lies outside the mesh index range."
+                )
             representatives[row] = root
             shifts[row] = relative
             assigned[row] = True
     return representatives, shifts.astype(np.int32)
-
-
 
 
 def _bind_periodic_polyhedral_quotient(
@@ -1538,9 +1579,7 @@ def _bind_periodic_polyhedral_quotient(
     if not specification.periodic_constraints:
         return construction
     identification, bindings = _periodic_identification(specification)
-    relations = _periodic_vertex_relations(
-        source, specification, construction, bindings
-    )
+    relations = _periodic_vertex_relations(source, specification, construction, bindings)
     representatives, shifts = _periodic_vertex_orbits(
         construction.mesh, relations, identification
     )
@@ -1548,9 +1587,7 @@ def _bind_periodic_polyhedral_quotient(
     connectivity = lifted.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Periodic quotient binding requires polyhedral connectivity.")
-    topology = PeriodicMeshTopology(
-        lifted, periodic_cell, representatives, shifts
-    )
+    topology = PeriodicMeshTopology(lifted, identification, representatives, shifts)
     entity_ids = {
         degree: np.asarray(lifted.entity_set(degree).entity_ids, dtype=np.int64)
         for degree in range(4)
@@ -1581,7 +1618,6 @@ def _bind_periodic_polyhedral_quotient(
         geometry=geometry,
         construction_id=construction_id,
     )
-
 
 
 def generate_polyhedral_volume(
@@ -1760,14 +1796,10 @@ def generate_polyhedral_volume(
 
         requested = schedule.maximum_cell_diameter
         if requested is None:
-            return _bind_periodic_polyhedral_quotient(
-                source, specification, construction
-            )
+            return _bind_periodic_polyhedral_quotient(source, specification, construction)
         oversized = np.flatnonzero(construction.cell_diameter_upper > requested)
         if not oversized.size:
-            return _bind_periodic_polyhedral_quotient(
-                source, specification, construction
-            )
+            return _bind_periodic_polyhedral_quotient(source, specification, construction)
         maximum = float(np.max(construction.cell_diameter_upper))
         if previous_maximum is not None and maximum >= previous_maximum:
             raise PolyhedralGenerationError(

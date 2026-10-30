@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import numpy as np
 
 import phydrax as phx
@@ -8,10 +7,10 @@ from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.discretization.fem import lagrange_element
 from phydrax.discretization.finite_volume._polyhedral import (
     prepare_polyhedral_finite_volume_geometry,
 )
-from phydrax.discretization.fem import lagrange_element
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.meshing import (
@@ -31,14 +30,16 @@ from phydrax.meshing import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
+from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
 from phydrax.meshing.providers._native_sources import (
     NativePlcSource,
     NativePolyhedralSource,
 )
-from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
 
 
-def _mapped_stretched_polyhedral_source() -> tuple[NativePolyhedralSource, VolumeMeshingSpec]:
+def _mapped_stretched_polyhedral_source() -> tuple[
+    NativePolyhedralSource, VolumeMeshingSpec
+]:
     source_id = "mapped-stretched-tetra"
     source_revision = "r1"
     topology = reference_cell_topology("tetrahedron")
@@ -87,7 +88,9 @@ def _mapped_stretched_polyhedral_source() -> tuple[NativePolyhedralSource, Volum
         coordinate_contract=phx.SpatialCoordinateContract.si(),
     )
     segments = np.asarray(
-        tuple(tuple(sorted(int(value) for value in edge)) for edge in topology.entities[1]),
+        tuple(
+            tuple(sorted(int(value) for value in edge)) for edge in topology.entities[1]
+        ),
         dtype=np.int64,
     )
     complex_ = PiecewiseLinearComplex(
@@ -171,10 +174,10 @@ def _independent_polyhedral_volumes(mesh: CellMesh, /) -> np.ndarray:
     result = np.zeros((connectivity.cell_count,), dtype=np.float64)
     for cell in range(connectivity.cell_count):
         first, last = map(int, cell_offsets[cell : cell + 2])
-        for face, sign in zip(cell_faces[first:last], cell_signs[first:last], strict=True):
-            face_first, face_last = map(
-                int, face_offsets[int(face) : int(face) + 2]
-            )
+        for face, sign in zip(
+            cell_faces[first:last], cell_signs[first:last], strict=True
+        ):
+            face_first, face_last = map(int, face_offsets[int(face) : int(face) + 2])
             polygon = points[face_vertices[face_first:face_last]]
             for row in range(1, polygon.shape[0] - 1):
                 result[cell] += (
@@ -187,16 +190,20 @@ def _independent_polyhedral_volumes(mesh: CellMesh, /) -> np.ndarray:
 
 def test_mapped_stretched_polyhedral_provider_preserves_features_and_fv_measure() -> None:
     source, specification = _mapped_stretched_polyhedral_source()
-    result = NativeMeshingProvider(
-        NativeMeshingOptions(
-            "plc_restricted_power",
-            polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+    result = (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
         )
-    ).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     geometry = prepare_polyhedral_finite_volume_geometry(result.mesh)
     independent = _independent_polyhedral_volumes(result.mesh)
@@ -229,15 +236,21 @@ def test_periodic_polyhedral_source_reaches_fv_measure_consumer() -> None:
         VolumeFillStrategy.POLYHEDRAL,
         size_controls=(),
     )
-    result = NativeMeshingProvider(NativeMeshingOptions("periodic_power")).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("periodic_power"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     geometry = prepare_polyhedral_finite_volume_geometry(result.mesh)
     independent = _independent_polyhedral_volumes(result.mesh)
 
     assert result.mesh.periodic_topology is not None
     np.testing.assert_allclose(geometry.cell_volumes, independent, rtol=0.0, atol=1e-12)
-    np.testing.assert_allclose(np.sum(independent), abs(np.linalg.det(cell.vectors)), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        np.sum(independent), abs(np.linalg.det(cell.vectors)), rtol=0.0, atol=1e-12
+    )

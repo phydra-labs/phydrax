@@ -7,13 +7,24 @@ import pytest
 
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_transition_types import CellGeometryTransition
+from phydrax.discretization._coordinate_enclosure import (
+    add,
+    axes,
+    ExactScalar,
+    scale,
+)
 from phydrax.discretization._nested_reference_types import (
-    ReferenceCellMapWitnesses,
     evaluate_reference_chart_arguments,
     freeze_reference_chart_arguments,
+    ReferenceCellMapWitnesses,
 )
-from phydrax.discretization._coordinate_enclosure import add, axes, scale
 from phydrax.discretization.fem import lagrange_element
+
+
+def _rational_point(point: tuple[ExactScalar, ...], /) -> tuple[Fraction, ...]:
+    if not all(isinstance(value, Fraction) for value in point):
+        raise TypeError("Affine chart corners of rational vertices must stay rational.")
+    return tuple(value for value in point if isinstance(value, Fraction))
 
 
 def _surface_reconstruction_case(
@@ -82,22 +93,19 @@ def _surface_reconstruction_case(
     )
     exact_corners = tuple(
         tuple(
-            evaluate_reference_chart_arguments("triangle", arguments, point)
+            _rational_point(
+                evaluate_reference_chart_arguments("triangle", arguments, point)
+            )
             for point in target_reference_vertices
         )
         for arguments in chart_arguments
     )
     execution_corners = np.asarray(
-        [
-            [[float(value) for value in point] for point in cell]
-            for cell in exact_corners
-        ],
+        [[[float(value) for value in point] for point in cell] for cell in exact_corners],
         dtype=np.float64,
     )
     chart_bank = (
-        freeze_reference_chart_arguments(chart_arguments)
-        if explicit_charts
-        else None
+        freeze_reference_chart_arguments(chart_arguments) if explicit_charts else None
     )
     reference_map = ReferenceCellMapWitnesses(
         np.asarray((201, 202), dtype=np.int64),
@@ -150,9 +158,7 @@ def test_nonnested_surface_reconstruction_uses_source_map_and_bounds_error() -> 
         else:
             source_u = 0.5 * x_values
             source_v = 0.5 * x_values + y_values
-        oracle = np.column_stack(
-            (source_u, source_v, source_u * source_v)
-        )
+        oracle = np.column_stack((source_u, source_v, source_u * source_v))
         represented = transition.target_geometry.evaluate(
             transition.target_mesh,
             np.asarray((cell_id,), dtype=np.int64),
