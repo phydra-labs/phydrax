@@ -316,6 +316,12 @@ It is an explicit topological correspondence: coordinate equality does not
 infer profile ancestry, and the map contributes to the source binding identity.
 The PWL boundary query must be full-scope and bound to that same domain.
 
+A graded `LayerSchedule` sweeps a whole slab natively without a core fill: the
+stations are the cumulative layer thicknesses, so the first-cell height is the
+first scheduled thickness exactly. Each PWL wall facet must map to one swept
+target face, so the domain carries a vertex at every station on its walls
+rather than one tall facet spanning several layers.
+
 The composed boundary witness keeps source-chart and target-reference
 coordinates distinct. A standard triangular boundary face of a 3D swept cell
 retains all three coordinates in the parent cell's 3D reference domain even
@@ -794,6 +800,16 @@ periodic directions, every lifted triangle or tetrahedron is checked against
 each overlapping image, and the nonperiodic directions are closed by the
 quotient's oriented physical boundary. A mesh that wraps the quotient twice
 overlaps its own image and is refused as violated.
+
+Quotient cells may be convex vertex-defined polyhedra, as produced by the
+restricted-power polyhedral fill, and a single cell may span a whole period or
+touch a fixed rotation axis. The quotient is then a cell complex rather than a
+simplicial one: an edge may be a loop whose two ends lie in one vertex orbit,
+and a face may traverse an edge twice (the folded cap at a rotation axis). The
+boundary check therefore reads each boundary face's corners from its lifted
+representative and requires every boundary vertex to join all of its
+boundary edge ends (an edge plus its start or finish) into one cycle. Pinched
+quotients, such as two columns touching along one edge, are left unresolved.
 
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
@@ -1420,6 +1436,21 @@ region and layer classes. The route carries exact cell-reference ancestry into
 the finalized target geometry, including high-order coordinate maps, and
 exposes `MixedCellContentTransfer` for conservative transfer of extensive
 per-cell quantities.
+
+Marked cells keep their preferred family refinement; face closure then chooses
+neighbor templates that match the refined shared faces, so a marked cell is
+never downgraded to a partial split to spare its neighbors. Every
+family-preserving template is an affine sub-cell of its parent, and target
+charts are the exact affine child-to-parent maps (pyramids included), composed
+with the source coordinate map. Coarsening restores a parent only when every
+sibling chart reconstructs one exact parent map. A source without acceptance
+inputs yields a target without a certification; whole-cell validity of the
+restricted map is still checked.
+
+Simplex coarsening of a piecewise-linear mesh keeps the restored parents affine
+on their exact corners; refine/coarsen round trips through the bisection
+hierarchy restore the original topology, coordinates, and global IDs exactly.
+Non-P1 coarsening requires one exact root chart per restored parent.
 
 `NATIVE_POLYHEDRAL` selects one explicit operation: `PLANE_SPLIT`,
 `AGGLOMERATE`, or `REGENERATE`. Plane splits and agglomerations retain exact

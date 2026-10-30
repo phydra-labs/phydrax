@@ -18,6 +18,7 @@ from phydrax.discretization import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     lagrange_element,
+    reference_cell_topology,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
@@ -25,7 +26,7 @@ from phydrax.geometry.brep._measure import brep_mass_properties
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 
-from .._runtime import accepted_result_record
+from .._runtime import accepted_result_record, single_cell_kind
 
 
 _SOURCE_BRANCH = "feature/native-meshing-20260929"
@@ -235,9 +236,20 @@ def _roundtrip(
     exported = getattr(phx.interchange, writer_name)(
         model, destination, policy=phx.interchange.CadExportPolicy()
     )
-    if exported.report.status.name != "LOSSLESS" or exported.report.losses:
+    # External formats may declare identifier/carrier-encoding transforms and
+    # physical-tag label drops; exact geometry may not be approximated, dropped,
+    # or left unsupported. Geometry is checked independently after re-import.
+    geometry_losses = tuple(
+        loss
+        for loss in exported.report.losses
+        if loss.category not in ("transformed", "synthesized")
+        and not (loss.category == "dropped" and loss.path.endswith(".physical-tag"))
+    )
+    if exported.report.status.name not in ("LOSSLESS", "DECLARED_LOSS") or (
+        geometry_losses
+    ):
         raise RuntimeError(
-            f"Native {format_name} export did not preserve the exact CAD carriers: {exported.report.losses!r}."
+            f"Native {format_name} export did not preserve the exact CAD carriers: {exported.report.status.name}, {geometry_losses!r}."
         )
     imported = _import_cad(
         destination,
@@ -276,6 +288,11 @@ def _roundtrip(
         "source_digest": imported.source_digest,
         "source_length_unit_meters": imported.source_length_unit_meters,
         "export_report_id": exported.report.report_id,
+        "export_status": exported.report.status.name,
+        "export_declared_losses": [
+            {"path": loss.path, "category": loss.category, "rationale": loss.rationale}
+            for loss in exported.report.losses
+        ],
         "export_entity_counts": dict(exported.entity_counts),
         "import_id": imported.result_id,
         "import_report_id": imported.report.report_id,
@@ -1025,7 +1042,9 @@ def _solve_curved_cad_p2_fe(
         raise ValueError(
             f"CAD manufactured length must be finite and positive; got {length!r}."
         )
-    field = FiniteElementFieldSpec("u", lagrange_element("tetrahedron", 2))
+    field = FiniteElementFieldSpec(
+        "u", lagrange_element(single_cell_kind(result.mesh, "tetrahedron"), 2)
+    )
     space = FiniteElementPlan(
         result.mesh, field, coordinate_spec=result.geometry
     ).prepare()
@@ -1131,9 +1150,9 @@ def _curve_cad_result(
         element.local_dof_count for element in curved.geometry.elements
     ]
     geometry_cell_kinds = [element.cell_kind for element in curved.geometry.elements]
-    expected_p2_local_dof_count = lagrange_element("tetrahedron", 2).local_dof_count
     geometry_is_p2 = bool(geometry_local_dof_counts) and all(
-        cell_kind == "tetrahedron" and count == expected_p2_local_dof_count
+        reference_cell_topology(cell_kind).family == "tetrahedron"
+        and count == lagrange_element(cell_kind, 2).local_dof_count
         for cell_kind, count in zip(
             geometry_cell_kinds, geometry_local_dof_counts, strict=True
         )
@@ -1186,7 +1205,7 @@ def _curve_cad_result(
             {
                 "stage": "curved_geometry_order",
                 "type": "RuntimeError",
-                "detail": f"Native CAD geometry must use tetrahedral P2 reference elements with {expected_p2_local_dof_count} local dofs; got cell_kinds={geometry_cell_kinds!r}, local_dof_counts={geometry_local_dof_counts!r}.",
+                "detail": f"Native CAD geometry must use tetrahedral-family P2 reference elements; got cell_kinds={geometry_cell_kinds!r}, local_dof_counts={geometry_local_dof_counts!r}.",
             }
         )
     if curved.evidence.maximum_residual > policy.residual_tolerance:

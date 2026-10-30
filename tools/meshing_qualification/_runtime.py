@@ -51,6 +51,19 @@ def require_meshcore() -> str:
     return meshcore_identity()
 
 
+def single_cell_kind(mesh: phx.discretization.CellMesh, family: str, /) -> str:
+    """Return the one published cell kind of ``family`` (e.g. ``simplex:3`` tetrahedra)."""
+    kinds = {block.cell_kind for block in mesh.blocks if block.cell_count}
+    if len(kinds) != 1:
+        raise RuntimeError(
+            f"Expected one published {family} cell kind; got {sorted(kinds)}."
+        )
+    kind = kinds.pop()
+    if phx.discretization.reference_cell_topology(kind).family != family:
+        raise RuntimeError(f"Published cell kind {kind!r} is not in the {family} family.")
+    return kind
+
+
 def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
     result.audit.require_passed()
     if result.certification is None:

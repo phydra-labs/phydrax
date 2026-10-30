@@ -968,8 +968,9 @@ def _site_representation(
     cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     attributes = {attribute.name: attribute for attribute in result.attributes}
     site_attribute = attributes.get("power_site_index")
+    # MeshingScope stores sorted entity IDs; attribute values follow that order.
     if site_attribute is None or not np.array_equal(
-        np.asarray(site_attribute.scope.entity_ids, dtype=np.int64), cell_ids
+        np.asarray(site_attribute.scope.entity_ids, dtype=np.int64), np.sort(cell_ids)
     ):
         raise RuntimeError(
             "Restricted-power output omitted cell-aligned power-site ownership."

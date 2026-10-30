@@ -98,6 +98,9 @@ def _mapped_cube(
         },
         mapped_coordinates,
     )
+    # The PLC, reference domain, and root hexahedron share one vertex array, so
+    # each reference vertex is the root vertex with the same global ID.
+    root_vertex_ids = np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64)
     domain = MappedReferenceDomain(
         reference_domain,
         reference_mesh,
@@ -106,9 +109,12 @@ def _mapped_cube(
         source_id=source_id,
         source_revision=revision,
         coordinate_contract=coordinate_contract,
+        reference_domain_vertex_root_ids=root_vertex_ids,
     )
     return NativeMappedHexSource(
-        NativePlcSource(complex_, source_id, revision), domain
+        NativePlcSource(complex_, source_id, revision),
+        domain,
+        plc_vertex_root_global_ids=root_vertex_ids,
     ), domain
 
 

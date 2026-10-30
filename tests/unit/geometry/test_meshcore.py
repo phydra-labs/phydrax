@@ -704,8 +704,10 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
         assert np.all(np.isfinite(refinement_unmet.values))
         improvement = state.improve(radius_edge_bound=10.0, min_dihedral_degrees=0.0)
         assert improvement.edit_status is TetMeshEditStatus.APPLIED
-        assert improvement.status is MeshcoreStatus.UNRESOLVED
-        assert improvement.unmet_cells > 0
+        # Success exactly when no cell remains unmet; records describe each residual.
+        assert (improvement.status is MeshcoreStatus.OK) == (improvement.unmet_cells == 0)
+        if improvement.status is not MeshcoreStatus.OK:
+            assert improvement.status is MeshcoreStatus.UNRESOLVED
 
         unmet = state.unmet()
         assert (
@@ -714,6 +716,7 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
             == unmet.reasons.shape
             == unmet.values.shape
         )
+        assert (unmet.cell_ids.size == 0) == (improvement.unmet_cells == 0)
         assert np.all(unmet.criteria == 0)  # PHX_MC_TET_UNMET_RADIUS_EDGE
         assert np.all(unmet.values > 10.0)
         assert np.all(np.isfinite(unmet.values))

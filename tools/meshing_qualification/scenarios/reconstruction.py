@@ -6,6 +6,7 @@ import numpy as np
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.reconstruction import (
+    AuthoredTriangleSheet,
     reconstruct_surface_region,
     ReconstructionRobustness,
 )
@@ -18,7 +19,12 @@ from phydrax.meshing._contracts import (
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing.providers import NativeMeshingProvider
 
-from .._runtime import accepted_result_record, require_meshcore, runtime_identity
+from .._runtime import (
+    accepted_result_record,
+    require_meshcore,
+    runtime_identity,
+    single_cell_kind,
+)
 
 
 _CENTER = np.asarray((0.07, -0.03, 0.02), dtype=np.float64)
@@ -146,6 +152,57 @@ def _source_deviation(kind: str, coordinates: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unknown reconstruction source {kind!r}.")
 
 
+def _affine_harmonic_solve(
+    result: phx.meshing.CellMeshingResult, form_id: str, /
+) -> dict[str, object]:
+    """Solve Laplace with affine Dirichlet data; P1 reproduces it to roundoff."""
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u",
+        phx.discretization.lagrange_element(
+            single_cell_kind(result.mesh, "tetrahedron"), 1
+        ),
+    )
+    space = phx.discretization.FiniteElementPlan(
+        result.mesh, field, coordinate_spec=result.geometry
+    ).prepare()
+    constraint = phx.discretization.dirichlet_constraint(space, "u")
+    form = phx.equations.FiniteElementForm(
+        form_id, "u", (phx.equations.DiffusionAction("u", 1.0),)
+    )
+    problem = phx.equations.compile_finite_element_problem(
+        form,
+        space,
+        constraint=constraint,
+        dirichlet_values=lambda values: (
+            1.0 + 2.0 * values[..., 0] - values[..., 1] + 0.5 * values[..., 2]
+        ),
+    )
+    operator, rhs = problem.linear_system()
+    solve = phx.linalg.solve(operator, rhs)
+    values = np.asarray(problem.expand(solve.value), dtype=np.float64)
+    points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
+    exact = 1.0 + 2.0 * points[:, 0] - points[:, 1] + 0.5 * points[:, 2]
+    error = float(np.max(np.abs(values - exact), initial=0.0))
+    residual = float(jnp.linalg.norm(problem.residual(solve.value)))
+    rhs_norm = float(jnp.linalg.norm(rhs))
+    if (
+        not bool(jnp.all(solve.successful))
+        or values.shape != exact.shape
+        or error > 2.0e-9
+        or residual > 2.0e-8 * max(1.0, rhs_norm)
+    ):
+        raise RuntimeError(
+            f"{form_id} FE solve failed its affine solution/residual oracle: {error=}, {residual=}, {rhs_norm=}."
+        )
+    return {
+        "form": form.form_id,
+        "successful": True,
+        "maximum_affine_error": error,
+        "normalized_residual": residual / max(1.0, rhs_norm),
+        "tolerance": 2.0e-9,
+    }
+
+
 def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
     count = 320 * scale
     spacing = 0.08 / scale
@@ -256,45 +313,7 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
     ).plan(envelope, volume_specification, coordinate_contract=contract)
     volume_result = volume_plan.execute()
     volume_accepted = accepted_result_record(volume_result)
-    fe_field = phx.discretization.FiniteElementFieldSpec(
-        "u", phx.discretization.lagrange_element("tetrahedron", 1)
-    )
-    fe_space = phx.discretization.FiniteElementPlan(
-        volume_result.mesh,
-        fe_field,
-        coordinate_spec=volume_result.geometry,
-    ).prepare()
-    fe_constraint = phx.discretization.dirichlet_constraint(fe_space, "u")
-    fe_form = phx.equations.FiniteElementForm(
-        f"native-reconstruction-{kind}-harmonic",
-        "u",
-        (phx.equations.DiffusionAction("u", 1.0),),
-    )
-    fe_problem = phx.equations.compile_finite_element_problem(
-        fe_form,
-        fe_space,
-        constraint=fe_constraint,
-        dirichlet_values=lambda values: (
-            1.0 + 2.0 * values[..., 0] - values[..., 1] + 0.5 * values[..., 2]
-        ),
-    )
-    fe_operator, fe_rhs = fe_problem.linear_system()
-    fe_solve = phx.linalg.solve(fe_operator, fe_rhs)
-    fe_values = np.asarray(fe_problem.expand(fe_solve.value), dtype=np.float64)
-    fe_points = np.asarray(fe_space.dof_maps[0].dof_coordinates, dtype=np.float64)
-    fe_exact = 1.0 + 2.0 * fe_points[:, 0] - fe_points[:, 1] + 0.5 * fe_points[:, 2]
-    fe_error = float(np.max(np.abs(fe_values - fe_exact), initial=0.0))
-    fe_residual = float(jnp.linalg.norm(fe_problem.residual(fe_solve.value)))
-    fe_rhs_norm = float(jnp.linalg.norm(fe_rhs))
-    if (
-        not bool(jnp.all(fe_solve.successful))
-        or fe_values.shape != fe_exact.shape
-        or fe_error > 2.0e-9
-        or fe_residual > 2.0e-8 * max(1.0, fe_rhs_norm)
-    ):
-        raise RuntimeError(
-            f"{kind} reconstructed-envelope FE solve failed its affine solution/residual oracle: {fe_error=}, {fe_residual=}, {fe_rhs_norm=}."
-        )
+    fe = _affine_harmonic_solve(volume_result, f"native-reconstruction-{kind}-harmonic")
     envelope_volume = float(
         np.sum(np.asarray(volume_result.quality.evaluation.measures, dtype=np.float64))
     )
@@ -350,11 +369,7 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
             "maximum_deviation_m": envelope.maximum_deviation,
             "measured_volume_m3": envelope_volume,
             "accepted": volume_accepted,
-            "fe_form": fe_form.form_id,
-            "fe_successful": bool(jnp.all(fe_solve.successful)),
-            "fe_maximum_affine_error": fe_error,
-            "fe_normalized_residual": fe_residual / max(1.0, fe_rhs_norm),
-            "fe_tolerance": 2.0e-9,
+            "fe": fe,
         },
         "runtime": runtime_identity(),
     }
@@ -381,71 +396,218 @@ def native_reconstruction() -> dict[str, object]:
     }
 
 
+# Donor `scenarios/envelope.py` open-sheet fixture (commit c56614a9f): one open
+# triangle with an authored feature edge, thickened as the sampled
+# unsigned-distance sublevel with rounding and topology change permitted.
+_ENVELOPE_SHEET_VERTICES = ((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), (0.0, 0.2, 0.0))
+_ENVELOPE_SHEET_TRIANGLES = ((0, 1, 2),)
+_ENVELOPE_OFFSET = 0.263
+_ENVELOPE_MAXIMUM_DEVIATION = 0.55
+_ENVELOPE_RESOLUTION = 4
+
+
+def _point_triangle_distances(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
+    """Brute-force distance from points to a triangle soup by Voronoi-region tests."""
+    p = points[:, None, :]
+    a, b, c = (triangles[None, :, k, :] for k in range(3))
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = np.sum(ab * ap, axis=-1), np.sum(ac * ap, axis=-1)
+    bp, cp = p - b, p - c
+    d3, d4 = np.sum(ab * bp, axis=-1), np.sum(ac * bp, axis=-1)
+    d5, d6 = np.sum(ab * cp, axis=-1), np.sum(ac * cp, axis=-1)
+    va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denominator = va + vb + vc
+        closest = (
+            a + (vb / denominator)[..., None] * ab + (vc / denominator)[..., None] * ac
+        )
+        on_ab = a + (d1 / (d1 - d3))[..., None] * ab
+        on_ac = a + (d2 / (d2 - d6))[..., None] * ac
+        on_bc = b + ((d4 - d3) / ((d4 - d3) + (d5 - d6)))[..., None] * (c - b)
+    conditions = (
+        (d1 <= 0.0) & (d2 <= 0.0),
+        (d3 >= 0.0) & (d4 <= d3),
+        (vc <= 0.0) & (d1 >= 0.0) & (d3 <= 0.0),
+        (d6 >= 0.0) & (d5 <= d6),
+        (vb <= 0.0) & (d2 >= 0.0) & (d6 <= 0.0),
+        (va <= 0.0) & ((d4 - d3) >= 0.0) & ((d5 - d6) >= 0.0),
+    )
+    choices = (a, b, on_ab, c, on_ac, on_bc)
+    for condition, choice in zip(reversed(conditions), reversed(choices), strict=True):
+        closest = np.where(
+            condition[..., None], np.broadcast_to(choice, closest.shape), closest
+        )
+    return np.min(np.linalg.norm(p - closest, axis=-1), axis=1)
+
+
+def _triangle_samples(triangles: np.ndarray, divisions: int, /) -> np.ndarray:
+    weights = np.asarray(
+        [
+            (i, j, divisions - i - j)
+            for i in range(divisions + 1)
+            for j in range(divisions + 1 - i)
+        ],
+        dtype=np.float64,
+    ) / float(divisions)
+    return np.einsum("wk,tkd->twd", weights, triangles).reshape((-1, 3))
+
+
+def _flat_convex_offset_volume(area: float, perimeter: float, radius: float, /) -> float:
+    """Steiner volume of the closed ``radius`` neighbourhood of a planar convex set."""
+    return (
+        2.0 * area * radius
+        + 0.5 * np.pi * perimeter * radius**2
+        + 4.0 / 3.0 * np.pi * radius**3
+    )
+
+
 def native_envelope() -> dict[str, object]:
     meshcore = require_meshcore()
-    points, input_record = _defective_samples("lobed-sphere", 320, 1723)
-    reconstructed = reconstruct_surface_region(
-        points,
-        neighborhood_size=16,
-        sample_spacing=0.08,
-        robustness=ReconstructionRobustness(
-            outlier_std_ratio=2.0,
-            coverage_distance=0.16,
-            incomplete_sampling="close",
-            thin_feature_distance=0.16,
-            component_fit_tolerance=0.4,
-        ),
-        feature_id="native-qualification:imperfect-envelope-source",
+    vertices = np.asarray(_ENVELOPE_SHEET_VERTICES, dtype=np.float64)
+    triangles = np.asarray(_ENVELOPE_SHEET_TRIANGLES, dtype=np.int64)
+    sheet = AuthoredTriangleSheet(
+        vertices, triangles, feature_id="qualification-open-envelope-sheet"
     )
+    repair = sheet.repair
+    if (
+        sheet.report.watertight
+        or not sheet.report.winding_consistent
+        or sheet.report.connected_components != 1
+        or sheet.report.euler_characteristic != 1
+        or repair.boundary_edges != 3
+        or repair.repaired_triangles != 1
+    ):
+        raise RuntimeError(
+            f"Authored open sheet repair disagrees with its open one-triangle topology: {repair!r}, {sheet.report!r}."
+        )
+    contract = SpatialCoordinateContract.si()
     source = phx.meshing.SurfaceEnvelopeSource(
-        reconstructed,
-        source_id="native-qualification:reconstructed-surface-envelope",
-        coordinate_contract=SpatialCoordinateContract.si(),
-        offset=0.02,
-        spacing=0.08,
-        certificate_spacing=0.04,
-        maximum_deviation=0.16,
+        sheet,
+        source_id="native-qualification:open-sheet-envelope",
+        coordinate_contract=contract,
+        offset=_ENVELOPE_OFFSET,
+        spacing=0.44 / _ENVELOPE_RESOLUTION,
+        certificate_spacing=0.2 / _ENVELOPE_RESOLUTION,
+        maximum_deviation=_ENVELOPE_MAXIMUM_DEVIATION,
     )
+    # bounds[0]: input-to-envelope upper; bounds[2] <= envelope-to-input <= bounds[1].
+    certified_bounds = np.asarray(source.result.bounds, dtype=np.float64)
+    input_to_envelope_bound = float(certified_bounds[0])
+    envelope_upper_bound = float(certified_bounds[1])
+    envelope_lower_bound = float(certified_bounds[2])
+    # Independent two-sided deviation against the AUTHORED triangles.
+    authored_triangles = vertices[triangles]
+    envelope_vertices = np.asarray(source.domain.vertices, dtype=np.float64)
+    envelope_triangles = envelope_vertices[
+        np.asarray(source.domain.facets, dtype=np.int64)
+    ]
+    input_to_envelope = float(
+        np.max(
+            _point_triangle_distances(
+                _triangle_samples(authored_triangles, 16), envelope_triangles
+            )
+        )
+    )
+    envelope_to_input = _point_triangle_distances(
+        np.concatenate((envelope_vertices, envelope_triangles.mean(axis=1))),
+        authored_triangles,
+    )
+    roundoff = 1.0e-12
+    if (
+        input_to_envelope > input_to_envelope_bound + roundoff
+        or float(np.min(envelope_to_input)) < envelope_lower_bound - roundoff
+        or float(np.max(envelope_to_input)) > envelope_upper_bound + roundoff
+        or max(input_to_envelope_bound, envelope_upper_bound)
+        > _ENVELOPE_MAXIMUM_DEVIATION
+        or envelope_lower_bound <= 0.0
+    ):
+        raise RuntimeError(
+            "Open-sheet envelope violates its independent input/envelope deviation oracle: "
+            f"{input_to_envelope=}, envelope_to_input=[{np.min(envelope_to_input)}, {np.max(envelope_to_input)}], "
+            f"certified=({input_to_envelope_bound}, {envelope_upper_bound}, {envelope_lower_bound})."
+        )
     scope = MeshingScope.whole(source, 2)
     specification = phx.meshing.VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
         scope,
         phx.meshing.VolumeFillStrategy.SIMPLEX,
-        size_controls=(UniformSizeControl(scope, 0.12),),
+        size_controls=(UniformSizeControl(scope, source.spacing),),
         maximum_deviation=source.maximum_deviation,
     )
     plan = NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions("surface_envelope_tetrahedral")
-    ).plan(source, specification, coordinate_contract=source.coordinate_contract)
+    ).plan(source, specification, coordinate_contract=contract)
     result = plan.execute()
     accepted = accepted_result_record(result)
-    envelope_record = {
-        "status": "passed",
-        "source_id": source.source_id,
-        "source_revision": source.source_revision,
-        "envelope_id": source.envelope_id,
-        "offset_m": source.offset,
-        "spacing_m": source.spacing,
-        "certificate_spacing_m": source.certificate_spacing,
-        "maximum_deviation_m": source.maximum_deviation,
-        "native_volume_result": accepted,
-        "independent_volume_m3": float(
-            np.sum(np.asarray(result.quality.evaluation.measures))
-        ),
+    achieved = dict(result.compliance.achieved)
+    repair_quantities = {
+        name: achieved.get(f"source_topology_repair:{name}")
+        for name, _ in repair.quantities
     }
-    # The recovered contract requires repair of an imperfect open sheet. The
-    # current SurfaceEnvelopeSource accepts only a reconstructed closed MeshRegion;
-    # keep that missing source representation visible as a failing gate.
+    if any(repair_quantities[name] != float(value) for name, value in repair.quantities):
+        raise RuntimeError(
+            f"Envelope volume result lost the authored topology-repair interpretation: {repair_quantities}."
+        )
+    measures = np.asarray(result.quality.evaluation.measures, dtype=np.float64)
+    volume = float(np.sum(measures))
+    edge_lengths = np.linalg.norm(
+        authored_triangles[0] - np.roll(authored_triangles[0], -1, axis=0), axis=1
+    )
+    area = 0.5 * float(
+        np.linalg.norm(
+            np.cross(
+                authored_triangles[0, 1] - authored_triangles[0, 0],
+                authored_triangles[0, 2] - authored_triangles[0, 0],
+            )
+        )
+    )
+    perimeter = float(np.sum(edge_lengths))
+    # The meshed region contains {d < lower} and lies inside {d <= upper}.
+    volume_lower = _flat_convex_offset_volume(area, perimeter, envelope_lower_bound)
+    volume_upper = _flat_convex_offset_volume(area, perimeter, envelope_upper_bound)
+    if np.any(measures <= 0.0) or not volume_lower <= volume <= volume_upper:
+        raise RuntimeError(
+            f"Envelope tetrahedra integrate {volume} m^3 outside the Steiner offset bracket [{volume_lower}, {volume_upper}] m^3."
+        )
+    fe = _affine_harmonic_solve(result, "native-open-sheet-envelope-harmonic")
     return {
-        "status": "failed",
+        "status": "passed",
         "workflow": "native imperfect-surface envelope -> tetrahedral volume mesh",
         "source_registry": "tools/meshing_qualification/native_case_migration.json#imperfect-surface",
         "profile": "native-envelope-lifecycle",
-        "actual_closed_surface_envelope": envelope_record,
-        "source_input": input_record,
-        "missing_production_contracts": [
-            "native envelope construction directly from the authored imperfect open triangle sheet, with explicit topology-repair interpretation and independent input-to-envelope fidelity oracle"
-        ],
+        "source_input": {
+            "vertices": vertices.tolist(),
+            "triangles": triangles.tolist(),
+            "provenance": "PHYDRA synthetic open sheet; donor envelope qualification fixture",
+            "interpretation": "sampled unsigned-distance sublevel; feature rounding and topology change permitted",
+        },
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "original_source_id": sheet.source_id,
+        "original_source_revision": sheet.source_revision,
+        "repair_interpretation": sheet.report.repair_interpretation,
+        "topology_repair": dict(repair.quantities),
+        "envelope": {
+            "envelope_id": source.envelope_id,
+            "offset_m": source.offset,
+            "spacing_m": source.spacing,
+            "certificate_spacing_m": source.certificate_spacing,
+            "maximum_deviation_m": source.maximum_deviation,
+            "certified_input_to_envelope_upper_m": input_to_envelope_bound,
+            "certified_envelope_to_input_bounds_m": [
+                envelope_lower_bound,
+                envelope_upper_bound,
+            ],
+        },
+        "oracle": {
+            "independent_input_to_envelope_max_m": input_to_envelope,
+            "independent_envelope_to_input_min_m": float(np.min(envelope_to_input)),
+            "independent_envelope_to_input_max_m": float(np.max(envelope_to_input)),
+            "measured_volume_m3": volume,
+            "steiner_volume_bracket_m3": [volume_lower, volume_upper],
+        },
+        "native_volume_result": accepted,
+        "fe": fe,
         "runtime": runtime_identity(),
         "meshcore_identity": meshcore,
     }
