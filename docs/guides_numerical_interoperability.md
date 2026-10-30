@@ -2043,13 +2043,24 @@ disposition:
 State is never reprepared from nothing, invalidated, or zero-filled: model state,
 optimizer moments, histories, statistics, and RNG cross only by retention (their
 bindings unchanged) or by an explicit owner transport, otherwise the rebind is
-refused. Ownership migration must report the content it moves; created rows are
-never physical content. A `budget` entry (a conservation ledger) crosses only by
-retention, refresh, or a transport with conserved-content evidence.
+refused. A physical remap retains its numerical conservation contract: it may
+report source and target conserved-content arrays with an owner tolerance.
+Ownership migration requires exactly one complete evidence mode: that numerical
+trio or paired `source_content_root` / `target_content_root` canonical string IDs;
+the modes cannot be mixed, and exact roots are not valid for physical remaps.
+Exact roots identify the owner-verified semantic-key/value banks and are compared
+directly, so integer and typed RNG state need not be cast into inexact arrays.
+They do not prove geometry, route validity, or transferred values: the owner route
+must independently verify source and target values plus explicit-ID row
+correspondence. Created rows are never physical content. A `budget` entry (a
+conservation ledger) crosses only by retention, refresh, or a transport with
+conserved-content evidence.
 `commit_composition_rebind(rebind, accepted_boundary=...)`
-takes one explicit host decision and publishes only when the boundary is accepted
-and every transport reports owner success and, when conservative, content
-agreement within its owner tolerance. Otherwise the receipt carries the original
+takes one explicit host decision and publishes only when the boundary is accepted,
+every transport reports owner success, and its evidence agrees (numeric content
+within its owner tolerance or exact roots by direct equality). Generic lifecycle
+acceptance treats exact roots only as the owner's content-identity claim, never as
+geometric or scientific validity. Otherwise the receipt carries the original
 composition object, so every old owner stays usable. The receipt lists retained,
 refreshed, reprepared, remapped, migrated, consumed, and invalidated entries and
 the transport evidence; `Composition.structure_id` is the topology identity a

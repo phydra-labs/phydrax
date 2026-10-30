@@ -277,7 +277,7 @@ class _VirtualElementProjectionBasis(AbstractPolygonLocalBasis, NonTrainableStat
         return self.projected_shape
 
     @property
-    def fan_continuity(self) -> int | None:
+    def triangulation_continuity(self) -> int | None:
         return None
 
     def cell_weights(
@@ -361,21 +361,9 @@ def _polygon_locator(
     discretization: VirtualElementDiscretization,
     runtime: VirtualElementRuntimeData,
     /,
-) -> tuple[PreparedPolygonMeshLocator, np.ndarray]:
-    """Fan locator over the star-kernel witnesses of the runtime geometry."""
+) -> PreparedPolygonMeshLocator:
+    """Prepare exact simple-polygon triangles for bounded point location."""
     connectivity = polygonal_connectivity_of(discretization.mesh)
-    witness = np.concatenate(
-        tuple(
-            np.asarray(
-                ein.contract(
-                    "cv,cvd->cd", triangulation.witness_weights, geometry.vertices
-                )
-            )
-            for triangulation, geometry in zip(
-                discretization.triangulations, runtime.geometries, strict=True
-            )
-        )
-    )
     valid = np.concatenate(
         tuple(
             np.asarray(geometry.evidence.valid & projection.evidence.factorization_valid)
@@ -385,16 +373,14 @@ def _polygon_locator(
         )
     )
     dtype = np.dtype(discretization.precision_policy.geometry_dtype)
-    locator = PreparedPolygonMeshLocator(
+    return PreparedPolygonMeshLocator(
         np.asarray(runtime.coordinates),
         np.asarray(connectivity.cell_vertices, dtype=np.int32),
         np.asarray(connectivity.cell_kinds, dtype=np.int32),
-        witness,
         valid,
         tolerance=_LOCATION_TOLERANCE_MULTIPLIER * float(np.finfo(dtype).eps),
         maximum_condition=_LOCATION_MAXIMUM_CONDITION,
     )
-    return locator, witness
 
 
 def virtual_element_projection_basis(
@@ -458,7 +444,7 @@ def prepare_virtual_element_field_reconstruction(
     runtime_ = discretization.default_runtime if runtime is None else runtime
     if not virtual_element_runtime_matches(discretization, runtime_):
         raise ValueError("VEM reconstruction runtime is incompatible with the space.")
-    locator, witness = _polygon_locator(discretization, runtime_)
+    locator = _polygon_locator(discretization, runtime_)
     basis, routes = virtual_element_projection_basis(discretization, runtime_, channel_)
     field_space_id = discretization.field_space.field_space_id
     coordinates = np.asarray(runtime_.coordinates)
@@ -484,7 +470,6 @@ def prepare_virtual_element_field_reconstruction(
             coordinates,
             np.asarray(connectivity.cell_vertices, dtype=np.int32),
             np.asarray(connectivity.cell_kinds, dtype=np.int32),
-            witness,
             support_id,
         ),
         value_port=polygon_value_port(

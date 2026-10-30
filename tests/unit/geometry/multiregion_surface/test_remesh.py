@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax._geometry_predicates as geometry_predicates
+from phydrax.discretization.contact import PreparedCollisionScene
 from phydrax.geometry.multiregion_surface import (
     apply_surface_events,
     EdgeCollapseProposal,
@@ -36,12 +37,10 @@ DRY_SPLITS = SurfaceEventPolicy(
 
 
 def _with_fields(
-    seed: MultiRegionSurfaceSeed, *, headroom: float = 2.0, events: int = 64
+    seed: MultiRegionSurfaceSeed, *, headroom: float = 2.0
 ) -> tuple[MultiRegionSurfaceTopology, MultiRegionSurfaceState]:
     """Liquid (nonuniform thickness), surfactant and gas amounts on a seed."""
-    plan = seed.capacity_plan(
-        resource_id="remesh-test", headroom=headroom, event_capacity=events
-    )
+    plan = seed.capacity_plan(resource_id="remesh-test", headroom=headroom)
     topology = seed.topology(plan)
     base = seed.state(topology)
     prepared = PreparedMultiRegionSurface(topology, base)
@@ -85,7 +84,7 @@ def test_split_preserves_geometry_uniform_thickness_and_content(
             validation=MultiRegionSurfaceValidationPolicy(check_self_intersection=False)
         )
     seed = seed_sphere(1.0, subdivisions=1)
-    plan = seed.capacity_plan(resource_id="split", headroom=2.0, event_capacity=8)
+    plan = seed.capacity_plan(resource_id="split", headroom=2.0)
     topology = seed.topology(plan)
     base = seed.state(topology)
     prepared = PreparedMultiRegionSurface(topology, base)
@@ -142,13 +141,15 @@ def test_split_preserves_geometry_uniform_thickness_and_content(
 
 def test_junction_split_keeps_the_plateau_border() -> None:
     seed = seed_double_bubble(1.0, 0.8, ring_points=12)
-    topology, state = _with_fields(seed)
+    topology, state = _with_fields(seed, headroom=1.0)
     junction = seed.vertex_indices(seed.vertex_set("junction")[:2])
     ids = tuple(int(value) for value in seed.vertex_global_ids[junction])
     result = apply_surface_events(
         topology, state, [EdgeSplitProposal(ids)], policy=DRY_SPLITS
     )
     assert result.committed
+    assert result.topology.vertex_capacity > topology.vertex_capacity
+    assert result.topology.face_capacity > topology.face_capacity
     record = result.evidence.records[0]
     assert len(record.removed_face_ids) == 3 and len(record.created_face_ids) == 6
     evidence = validate_multiregion_surface(
@@ -205,7 +206,7 @@ def test_collapse_restores_region_volumes_and_keeps_topology() -> None:
 
 def test_collapse_guards_features_and_duplicate_faces() -> None:
     seed = seed_sphere(1.0, subdivisions=1)
-    topology, state = _with_fields(seed, events=4)
+    topology, state = _with_fields(seed)
     edge = _edge_ids(topology, 0)
     fixed = SurfaceEventPolicy(fixed_vertex_ids=edge)
     refused = apply_surface_events(
@@ -222,7 +223,7 @@ def test_collapse_guards_features_and_duplicate_faces() -> None:
         ("finite", "boundary"),
         source="tetrahedron",
     )
-    topology, state = _with_fields(tetrahedron, events=4)
+    topology, state = _with_fields(tetrahedron)
     result = apply_surface_events(topology, state, [EdgeCollapseProposal((0, 1))])
     assert result.evidence.records[0].status is SurfaceEventStatus.DUPLICATE_FACE
     assert result.state is state
@@ -258,7 +259,7 @@ def _tent_seed(*, pebble: bool) -> MultiRegionSurfaceSeed:
 
 def test_flip_sweep_is_certified_by_ccd() -> None:
     free = _tent_seed(pebble=False)
-    topology, state = _with_fields(free, events=2)
+    topology, state = _with_fields(free)
     result = apply_surface_events(topology, state, [EdgeFlipProposal((0, 1))])
     assert result.committed
     record = result.evidence.records[0]
@@ -268,7 +269,7 @@ def test_flip_sweep_is_certified_by_ccd() -> None:
     np.testing.assert_allclose(_totals(result.state), _totals(state), rtol=1e-14)
 
     blocked = _tent_seed(pebble=True)
-    topology, state = _with_fields(blocked, events=2)
+    topology, state = _with_fields(blocked)
     before = validate_multiregion_surface(topology, state)
     assert before.accepted
     result = apply_surface_events(topology, state, [EdgeFlipProposal((0, 1))])
@@ -279,7 +280,7 @@ def test_flip_sweep_is_certified_by_ccd() -> None:
     assert result.topology is topology and result.state is state
 
 
-def test_failed_transfer_and_capacity_return_the_source_state() -> None:
+def test_failed_transfer_rolls_back_and_small_topology_grows() -> None:
     seed = seed_sphere(1.0, subdivisions=1)
     topology, state = _with_fields(seed)
     poisoned = np.asarray(state.sheet_fields).copy()
@@ -301,20 +302,46 @@ def test_failed_transfer_and_capacity_return_the_source_state() -> None:
     sheet = result.evidence.sheet_transfer
     assert sheet is not None and not bool(sheet.finite)
 
-    tight = seed.capacity_plan(resource_id="full", event_capacity=4)
+    tight = seed.capacity_plan(resource_id="full")
     full_topology = seed.topology(tight)
     full_state = seed.state(full_topology)
-    refused = apply_surface_events(
+    source_vertex_ids = np.asarray(
+        full_topology.vertex_global_ids[: full_topology.vertex_count]
+    )
+    grown = apply_surface_events(
         full_topology, full_state, [EdgeSplitProposal(_edge_ids(full_topology, 2))]
     )
-    assert refused.evidence.records[0].status is SurfaceEventStatus.CAPACITY_EXCEEDED
-    assert refused.topology is full_topology and refused.state is full_state
+    assert grown.committed
+    assert grown.topology.vertex_capacity > full_topology.vertex_capacity
+    assert grown.topology.face_capacity > full_topology.face_capacity
+    assert full_topology.vertex_capacity == tight.vertex_capacity
+    assert set(source_vertex_ids) <= set(
+        np.asarray(grown.topology.vertex_global_ids[: grown.topology.vertex_count])
+    )
 
-    no_budget = seed.capacity_plan(resource_id="no-events", headroom=2.0)
-    idle = seed.topology(no_budget)
-    idle_state = seed.state(idle)
-    held = apply_surface_events(idle, idle_state, [EdgeSplitProposal(_edge_ids(idle, 2))])
-    assert held.evidence.records[0].status is SurfaceEventStatus.EVENT_BUDGET_EXCEEDED
+    roomy = seed.capacity_plan(resource_id="full", headroom=2.0)
+    roomy_topology = seed.topology(roomy)
+    with pytest.raises(ValueError, match="capacity layout"):
+        full_state.require_topology(roomy_topology)
+    assert full_topology.topology_id == roomy_topology.topology_id
+    assert full_topology.lineage_id == roomy_topology.lineage_id
+    roomy_state = seed.state(roomy_topology)
+    roomy_result = apply_surface_events(
+        roomy_topology,
+        roomy_state,
+        [EdgeSplitProposal(_edge_ids(roomy_topology, 2))],
+    )
+    assert roomy_result.committed
+    assert grown.topology.topology_id == roomy_result.topology.topology_id
+    assert grown.topology.lineage_id == roomy_result.topology.lineage_id
+    np.testing.assert_array_equal(
+        grown.topology.vertex_global_ids[: grown.topology.vertex_count],
+        roomy_result.topology.vertex_global_ids[: roomy_result.topology.vertex_count],
+    )
+    np.testing.assert_array_equal(
+        grown.topology.face_global_ids[: grown.topology.face_count],
+        roomy_result.topology.face_global_ids[: roomy_result.topology.face_count],
+    )
 
 
 def test_remesh_pass_conserves_content_and_is_order_independent() -> None:
@@ -362,3 +389,98 @@ def test_remesh_pass_conserves_content_and_is_order_independent() -> None:
     np.testing.assert_array_equal(
         np.asarray(again.state.sheet_fields), np.asarray(result.state.sheet_fields)
     )
+
+
+def test_volume_restoration_reports_representable_nonprogress() -> None:
+    from phydrax.geometry.multiregion_surface._edits import (
+        _new_edit,
+        _restore_volumes,
+        _working_mesh,
+    )
+
+    seed = seed_sphere(1.0, subdivisions=1)
+    topology = seed.topology(seed.capacity_plan(resource_id="restore", headroom=1.0))
+    state = seed.state(topology)
+    vertex_ids = tuple(
+        int(value) for value in topology.vertex_global_ids[: topology.vertex_count]
+    )
+    policy = SurfaceEventPolicy(fixed_vertex_ids=vertex_ids)
+    mesh = _working_mesh(topology, state, policy)
+    slot = 0
+    moved = 1.1 * np.asarray(state.positions[slot])
+    edit = _new_edit(
+        SurfaceEventKind.COLLAPSE,
+        removed_faces=(),
+        new_faces=(),
+        new_labels=(),
+        new_face_parents=(),
+        moved={slot: moved},
+    )
+
+    restored, residual, successful = _restore_volumes(mesh, edit, policy)
+
+    assert restored is edit and not successful
+    assert np.isfinite(residual) and residual > 0.0
+
+
+def _grazing_contact_scene() -> tuple[PreparedCollisionScene, np.ndarray, np.ndarray]:
+    from phydrax.discretization.contact import (
+        CollisionSurfacePlan,
+        PreparedCollisionSurface,
+        selection_collision_operator,
+    )
+    from phydrax.linalg import ArraySpace
+
+    start = np.asarray(
+        (
+            (1.0, 0.0, 1.0),
+            (2.0, 0.0, 1.0),
+            (2.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        )
+    )
+    end = start.copy()
+    end[:3, 2] = -1.0
+    source_space = ArraySpace((6, 3), dtype=np.float64)
+    plan = CollisionSurfacePlan(
+        np.arange(6, dtype=np.int64),
+        ambient_dimension=3,
+        faces=np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int32),
+        body_ids=np.asarray((0, 0, 0, 1, 1, 1), dtype=np.int32),
+        static_mask=np.asarray((False, False, False, True, True, True)),
+    )
+    surface = PreparedCollisionSurface(
+        plan,
+        start,
+        selection_collision_operator(source_space, np.arange(6, dtype=np.int64)),
+    )
+    return PreparedCollisionScene((surface,)), start, end
+
+
+def test_ccd_reprepares_a_small_candidate_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    import phydrax.geometry.multiregion_surface._edits as surface_edits
+
+    monkeypatch.setattr(surface_edits, "_CCD_INITIAL_CANDIDATE_CAPACITY", 1)
+    scene, start, end = _grazing_contact_scene()
+    epoch = surface_edits._complete_ccd_epoch(scene, start, end, 1.0e-12)
+
+    assert bool(epoch.successful)
+    assert int(epoch.candidate_count) > 1
+    assert int(epoch.overflow_count) == 0
+
+
+def test_ccd_rejects_grazing_triangle_contact() -> None:
+    import phydrax.geometry.multiregion_surface._edits as surface_edits
+    from phydrax.discretization.contact import (
+        collision_free_step_limit,
+        InclusionCCDPlan,
+    )
+
+    scene, start, end = _grazing_contact_scene()
+    epoch = surface_edits._complete_ccd_epoch(scene, start, end, 1.0e-12)
+    safety = collision_free_step_limit(InclusionCCDPlan(), scene, epoch, start, end)
+
+    assert 0.0 < float(safety.minimum_time_of_impact) < 1.0
+    assert float(safety.step_size) < 1.0

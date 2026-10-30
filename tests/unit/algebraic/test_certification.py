@@ -48,6 +48,29 @@ def test_certification_scenario_1() -> None:
     assert repeated == (phx.algebraic.ExactRealRootInterval(Fraction(1), Fraction(1), 2),)
 
 
+def test_univariate_sturm_isolation_avoids_rational_divisor_enumeration() -> None:
+    root = Fraction(1, 2**80)
+    isolated = phx.algebraic.isolate_univariate_real_roots(
+        (-1, 2**80), tolerance=Fraction(1, 2**90)
+    )
+
+    assert isolated == (
+        phx.algebraic.ExactRealRootInterval(root, root, 1),
+    )
+
+
+
+def test_sturm_rational_reconstruction_preserves_large_denominator_roots() -> None:
+    denominator = 2**80 - 1
+    root = Fraction(1, denominator)
+    isolated = phx.algebraic.isolate_univariate_real_roots(
+        (-1, denominator)
+    )
+
+    assert isolated == (
+        phx.algebraic.ExactRealRootInterval(root, root, 1),
+    )
+
 def test_krawczyk_dense_admission_and_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     system = _square_root_system()
     center = np.asarray([1.4142])

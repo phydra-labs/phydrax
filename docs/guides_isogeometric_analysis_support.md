@@ -61,9 +61,10 @@ bytes, and operation rates are observations and never release gates.
 ## S1 migration boundary
 
 The former S1 workflow is retained as a migration fixture: a regular untrimmed
-2D single patch, equal clamped axis grids, positive mean-one-gauge NURBS weights,
-one isoparametric scalar H1 field, explicit Gauss quadrature, homogeneous strong
-trace constraints, and matrix-free sum-factorized diffusion/source execution.
+2D single patch, equal clamped axis grids, positive authored NURBS weights with
+their common projective scale preserved, one isoparametric scalar H1 field,
+explicit Gauss quadrature, homogeneous strong trace constraints, and matrix-free
+sum-factorized diffusion/source execution.
 The fixture must preserve its coefficient layout, exact quadratic Poisson result,
 prepared execution, runtime numeric refresh, geometry diagnostics, and natural
 boundary measure. R1 documentation and examples use the R1 topology/atlas/
@@ -96,6 +97,39 @@ It never signs evidence and never marks `iga.tensor` released.
 complete, passing manifests. Release status belongs to the qualification
 registry and requires separately produced `ReleaseGateEvidence`; editing JSON or
 running the profile producer cannot create it.
+
+## ASTS2D T-spline candidate path
+
+The rectilinear bicubic analysis-suitable T-spline path is an explicit CAD/IGA
+candidate route, not an R1 `SupportTuple` and not a release claim. It shares one
+`TSplineSurfacePatch` between B-Rep evaluation and trimmed scalar surface H1 IGA.
+The selected profile excludes extraordinary points, arbitrary T-mesh variants,
+and repeated interior knots.
+
+`ASTSCertificate` binds parameter-partition admissibility, basis identities,
+analysis-suitability premises, and exact cross-cell continuity. It does not prove
+the physical control-point map is regular. `TSplineGeometryCertificate` separately
+binds the exact source and numeric geometry banks and proves a positive rational
+denominator plus a fail-closed regularity/embedding criterion. Runtime/query reuse
+requires the same immutable source definition and raw bank; concrete edits require a
+new source patch and revision. Knot/T-junction refinement is discrete, with exact
+sparse target-by-source prolongation. Rational geometry uses homogeneous transfer;
+independently weighted rational fields transfer `(a q, a)` and divide by the target
+weight. Small nonzero exact routes are retained; binary64 realization errors are
+reported separately.
+
+The runnable end-to-end witness is
+`python examples/iga_tspline_surface_poisson.py`. It builds one source-parametric
+curved CAD surface, locally refines its ASTS basis, then solves a manufactured
+trimmed-surface H1 Poisson problem through the ordinary finite-element compiler.
+`python tools/iga_closure_qualification.py` adds a locality case and records actual
+basis/physical-map certificates. `python tools/iga_tspline_benchmarks.py --smoke`
+and `python tools/iga_tspline_benchmarks.py` are record-only timings of refinement
+and prepared realization; elapsed time is not a pass gate.
+
+No T-spline tuple is inferred in the R1 table above. Broader basis families,
+shell/compatible spaces, vendor import/export, and persistence require their own
+independent evidence and are not implied by this scalar H1 route.
 
 ## Exterior realization boundary
 

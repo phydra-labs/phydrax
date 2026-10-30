@@ -42,7 +42,6 @@ from .._contracts import (
     MeshingExecutionMode,
     MeshingFailure,
     MeshingFailureCategory,
-    MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
@@ -987,6 +986,10 @@ def _carrier(
     order = np.argsort(vertex_ids, kind="stable")
     inverse = np.empty_like(order)
     inverse[order] = np.arange(order.size)
+    if inverse.size and inverse.max(initial=-1) > _LOCAL_INDEX_LIMIT:
+        raise _conversion(
+            "input local vertex indices exceed Omega_h's int32 representation"
+        )
     packed = _checked_metric(mesh, metric, vertex_ids)
     cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
     cell_ids = np.concatenate(
@@ -1033,29 +1036,6 @@ def _carrier(
     return _Carrier(arrays, classification)
 
 
-def _refuse_resources(mesh: CellMesh, limits: MeshingLimits, /) -> None:
-    vertices = mesh.coordinates.shape[0]
-    cells = sum(block.cell_count for block in mesh.blocks)
-    connectivity = sum(block.vertices.size for block in mesh.blocks)
-    if (
-        vertices > limits.maximum_vertices
-        or cells > limits.maximum_cells
-        or connectivity > limits.maximum_connectivity_entries
-    ):
-        raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Omega_h input exceeds configured entity limits.",
-        )
-
-
-def _refuse_bytes(arrays: Mapping[str, np.ndarray], limits: MeshingLimits, /) -> None:
-    # Payload plus a manifest allowance; the exchange enforces the exact bound.
-    estimate = sum(value.nbytes for value in arrays.values()) + 4096 + 256 * len(arrays)
-    if estimate > limits.maximum_data_bytes:
-        raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Omega_h input exceeds maximum_data_bytes.",
-        )
 
 
 def _require(condition: bool, message: str, /) -> None:
@@ -1388,19 +1368,12 @@ def _decode_outputs(
     call: NativeWorkerCall,
     dimension: int,
     fields: tuple[OmegaHField, ...],
-    limits: MeshingLimits,
     carrier: _Carrier,
     /,
 ) -> tuple[tuple[_RankArrays, ...], dict[str, Any]]:
     """Verified rank arrays and their owner-resolved concatenation."""
     record = call.result
     ranks = record["ranks"]
-    _require(
-        record["vertex_count"] <= limits.maximum_vertices
-        and record["cell_count"] <= limits.maximum_cells
-        and record["cell_count"] * (dimension + 1) <= limits.maximum_connectivity_entries,
-        "adapted mesh exceeds entity limits",
-    )
     if ranks == 1:
         _require(not call.parts, "a serial worker returned rank parts")
         outputs = (call.arrays,)
@@ -1819,7 +1792,6 @@ class OmegaHProvider:
         fields: Sequence[OmegaHField] = (),
         ranks: int = 1,
         gather: bool = False,
-        limits: MeshingLimits | None = None,
         association_transfer: BRepAssociationTransfer | None = None,
     ) -> OmegaHAdaptationResult:
         """Adapt ``source`` to ``metric`` and transfer ``fields``.
@@ -1834,11 +1806,8 @@ class OmegaHProvider:
         ):
             raise TypeError("Omega_h requires a CellMeshingResult and MeshMetricField.")
         options_ = OmegaHOptions() if options is None else options
-        limits_ = MeshingLimits() if limits is None else limits
         if not isinstance(options_, OmegaHOptions):
             raise TypeError("options must be OmegaHOptions or None.")
-        if not isinstance(limits_, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits or None.")
         fields_ = tuple(fields)
         if not all(isinstance(field, OmegaHField) for field in fields_):
             raise TypeError("fields must contain OmegaHField values.")
@@ -1852,19 +1821,8 @@ class OmegaHProvider:
             raise TypeError(
                 "association_transfer must be BRepAssociationTransfer or None."
             )
-        if (
-            max(
-                limits_.maximum_vertices,
-                limits_.maximum_cells,
-                limits_.maximum_connectivity_entries,
-            )
-            > _LOCAL_INDEX_LIMIT
-        ):
-            raise ValueError("limits exceed Omega_h local indexing.")
-        mesh, dimension = _source_mesh(source, association_transfer)
-        _refuse_resources(mesh, limits_)
+        _, dimension = _source_mesh(source, association_transfer)
         carrier = _carrier(source, metric, fields_, options_)
-        _refuse_bytes(carrier.arrays, limits_)
 
         worker, reported, identity_id = self._identity(count)
         parameters = {
@@ -1878,17 +1836,13 @@ class OmegaHProvider:
                 }
                 for index, field in enumerate(fields_)
             ],
-            "maximum_vertices": limits_.maximum_vertices,
-            "maximum_cells": limits_.maximum_cells,
-            "maximum_connectivity_entries": limits_.maximum_connectivity_entries,
         }
-        call = worker.call("adapt", parameters, carrier.arrays, limits=limits_)
+        call = worker.call("adapt", parameters, carrier.arrays)
         return self._result(
             source,
             metric,
             fields_,
             options_,
-            limits_,
             count,
             gather,
             carrier,
@@ -1905,7 +1859,6 @@ class OmegaHProvider:
         metric: MeshMetricField,
         fields: tuple[OmegaHField, ...],
         options: OmegaHOptions,
-        limits: MeshingLimits,
         ranks: int,
         gather: bool,
         carrier: _Carrier,
@@ -1919,7 +1872,7 @@ class OmegaHProvider:
         record = call.result
         _decode_record(record, options, fields, ranks)
         rank_arrays, merged = _decode_outputs(
-            call, source.mesh.topological_dimension, fields, limits, carrier
+            call, source.mesh.topological_dimension, fields, carrier
         )
         _require_adapted_metric_bounds(metric, merged["metric"])
         field_evidence = tuple(
@@ -1940,17 +1893,6 @@ class OmegaHProvider:
             provider.version,
             MeshingExecutionMode.SUBPROCESS,
             deterministic=True,
-            enforced_limits=(
-                "wall_seconds",
-                "input_entities",
-                "input_connectivity_entries",
-                "input_bytes",
-                "output_entities",
-                "output_bytes",
-                "aggregate_output_bytes",
-                worker.memory_limit_evidence(),
-            ),
-            unenforced_limits=("native_adaptation_intermediate_entities",),
         )
         provenance = SemanticProvenance(
             {

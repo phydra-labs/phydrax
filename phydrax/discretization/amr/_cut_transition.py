@@ -163,7 +163,6 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
                 | CommonRefinementStatus.PREDICATE_UNCERTAIN
                 | CommonRefinementStatus.INTERSECTION_FAILURE
                 | CommonRefinementStatus.DOUBLE_COVERAGE
-                | CommonRefinementStatus.RESOURCE_LIMIT
             ):
                 raise ValueError(
                     "Cut-cell common refinement failed with status "

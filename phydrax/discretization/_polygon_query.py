@@ -4,16 +4,14 @@
 
 """Point location, side geometry, and support regions of polygon meshes.
 
-Explicit polygon H1 and virtual-element fields share one located evaluation
-substrate. Every star-shaped cell is covered by the fan triangles
-`(w, v_i, v_{i+1})` of its star-kernel witness `w`. A query point is tested
-only against the fan triangles of its bounded BVH candidate cells, and point
-chunks are mapped with a fixed batch size, so no point-by-cell-by-triangle
-tensor is formed. A family supplies the local weights of located points through
-an `AbstractPolygonLocalBasis`; `PolygonFieldReconstructionKernel` owns side
-resolution, pointwise evidence, and the exact gather/scatter route. The facet
-helpers prepare the edge sites, measures, outward normals, and geometry
-revision of polygon side actions.
+Polygon cells are located through deterministic ear-clipped triangulations.
+Exact binary-rational orientation tests establish simple loops and avoid
+star-kernel assumptions; bounded BVH candidates and fixed-size point batches
+keep the query workspace independent of the number of mesh cells. A family
+supplies local weights through `AbstractPolygonLocalBasis`, while
+`PolygonFieldReconstructionKernel` owns side resolution, pointwise evidence,
+and the exact gather/scatter route. Facet helpers prepare edge sites, measures,
+outward normals, and geometry revisions for polygon side actions.
 """
 
 from __future__ import annotations
@@ -21,6 +19,7 @@ from __future__ import annotations
 import abc
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import assert_never, final, TYPE_CHECKING
 
 import equinox as eqx
@@ -80,51 +79,174 @@ def polygonal_connectivity_of(mesh: CellMesh, /) -> PolygonalConnectivity:
     return connectivity
 
 
-def polygon_fan_slots(arity: np.ndarray, width: int, /) -> tuple[np.ndarray, np.ndarray]:
-    """Return host `(valid, following)` slot routes of padded polygon cells."""
-    slots = np.arange(width, dtype=np.int32)[None, :]
-    valid = slots < arity[:, None]
-    following = np.where(slots + 1 < arity[:, None], slots + 1, 0).astype(np.int32)
-    return valid, following
+def _polygon_twice_area(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
+    return sum(
+        (
+            points[index][0] * points[(index + 1) % len(points)][1]
+            - points[index][1] * points[(index + 1) % len(points)][0]
+            for index in range(len(points))
+        ),
+        Fraction(0),
+    )
+
+
+def _orientation(
+    first: tuple[Fraction, Fraction],
+    second: tuple[Fraction, Fraction],
+    third: tuple[Fraction, Fraction],
+    /,
+) -> Fraction:
+    return (second[0] - first[0]) * (third[1] - first[1]) - (
+        second[1] - first[1]
+    ) * (third[0] - first[0])
+
+
+def _point_on_segment(
+    point: tuple[Fraction, Fraction],
+    start: tuple[Fraction, Fraction],
+    stop: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    return (
+        _orientation(start, stop, point) == 0
+        and min(start[0], stop[0]) <= point[0] <= max(start[0], stop[0])
+        and min(start[1], stop[1]) <= point[1] <= max(start[1], stop[1])
+    )
+
+
+def _segments_intersect(
+    first_start: tuple[Fraction, Fraction],
+    first_stop: tuple[Fraction, Fraction],
+    second_start: tuple[Fraction, Fraction],
+    second_stop: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    first_left = _orientation(first_start, first_stop, second_start)
+    first_right = _orientation(first_start, first_stop, second_stop)
+    second_left = _orientation(second_start, second_stop, first_start)
+    second_right = _orientation(second_start, second_stop, first_stop)
+    if (
+        (first_left < 0 < first_right or first_right < 0 < first_left)
+        and (second_left < 0 < second_right or second_right < 0 < second_left)
+    ):
+        return True
+    return (
+        (first_left == 0 and _point_on_segment(second_start, first_start, first_stop))
+        or (
+            first_right == 0
+            and _point_on_segment(second_stop, first_start, first_stop)
+        )
+        or (
+            second_left == 0
+            and _point_on_segment(first_start, second_start, second_stop)
+        )
+        or (
+            second_right == 0
+            and _point_on_segment(first_stop, second_start, second_stop)
+        )
+    )
+
+
+def _triangulate_simple_polygon(
+    coordinates: np.ndarray, vertices: np.ndarray, /
+) -> tuple[tuple[int, int, int], ...]:
+    """Triangulate one simple polygon with exact binary-rational predicates."""
+    points = tuple(
+        (
+            Fraction.from_float(float(coordinates[int(vertex), 0])),
+            Fraction.from_float(float(coordinates[int(vertex), 1])),
+        )
+        for vertex in vertices
+    )
+    if len(set(points)) != len(points):
+        raise ValueError("Polygon location requires distinct loop vertices.")
+    count = len(points)
+    for first in range(count):
+        first_next = (first + 1) % count
+        for second in range(first + 1, count):
+            second_next = (second + 1) % count
+            if second == first_next or (first == 0 and second_next == 0):
+                continue
+            if _segments_intersect(
+                points[first],
+                points[first_next],
+                points[second],
+                points[second_next],
+            ):
+                raise ValueError("Polygon location requires a simple boundary loop.")
+    area = _polygon_twice_area(points)
+    if area == 0:
+        raise ValueError("Polygon location requires nonzero exact signed area.")
+    order = list(range(count)) if area > 0 else list(reversed(range(count)))
+    triangles: list[tuple[int, int, int]] = []
+    while len(order) > 3:
+        for position, current in enumerate(order):
+            previous = order[position - 1]
+            following = order[(position + 1) % len(order)]
+            triangle = (previous, current, following)
+            if _orientation(*(points[index] for index in triangle)) <= 0:
+                continue
+            contains_vertex = any(
+                all(
+                    _orientation(
+                        points[triangle[edge]],
+                        points[triangle[(edge + 1) % 3]],
+                        points[other],
+                    )
+                    >= 0
+                    for edge in range(3)
+                )
+                for other in order
+                if other not in triangle
+            )
+            if contains_vertex:
+                continue
+            triangles.append(triangle)
+            del order[position]
+            break
+        else:
+            raise ValueError("Exact ear clipping could not triangulate a simple polygon.")
+    final_triangle = (order[0], order[1], order[2])
+    if _orientation(*(points[index] for index in final_triangle)) <= 0:
+        raise ValueError("Polygon triangulation contains a degenerate final triangle.")
+    triangles.append(final_triangle)
+    return tuple(triangles)
 
 
 class PolygonMeshLocation(StrictModule):
     """Every containing candidate cell of each located point.
 
     `candidate_cells` is `-1` for a bounded candidate that does not contain the
-    point; `candidate_fans` is the first containing fan triangle of each
-    candidate with its `candidate_barycentric` coordinates `(w, v_i, v_{i+1})`;
-    `candidate_fan_shared` marks points on an interior fan edge (inside more
-    than one fan triangle of one cell). `status` holds `FieldQueryStatus`
-    codes and `conditioning` the worst fan-Jacobian condition of the
-    containing candidates (infinite when none contains the point).
+    point; `candidate_triangles` is the first containing ear-clipped triangle
+    of each candidate with its `candidate_barycentric` coordinates; and
+    `candidate_triangle_vertices` records that triangle's local polygon slots.
+    `candidate_triangle_shared` marks points on an internal triangulation edge.
     """
 
     candidate_cells: Array
-    candidate_fans: Array
+    candidate_triangles: Array
     candidate_barycentric: Array
-    candidate_fan_shared: Array
+    candidate_triangle_vertices: Array
+    candidate_triangle_shared: Array
     count: Array
     status: Array
     conditioning: Array
 
-
 @final
 class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
-    """Bounded point location in star-shaped polygon cells through witness fans.
+    """Bounded point location in arbitrary simple polygon cells.
 
-    `cell_vertices` has one padded row per global cell with `arity` active
-    vertices in counter-clockwise order; `witness` is each cell's star-kernel
-    witness. Fan Jacobians are inverted once with the native small solve; a
-    cell with a singular, inverted, or ill-conditioned fan triangle (or with
-    `cell_valid` false) is degenerate, and a point whose candidate box meets a
-    degenerate cell reports `LOCATION_FAILED` instead of a guessed cell.
+    Every boundary loop is validated and triangulated with exact predicates
+    over the binary-rational input coordinates. Point queries use those
+    nonoverlapping triangles and bounded BVH candidates; no star-kernel
+    witness or guessed polygon diagonal is used.
     """
 
-    witness: Array
-    fan_inverse: Array
-    fan_condition: Array
-    fan_valid: Array
+    triangle_vertices: Array
+    triangle_origin: Array
+    triangle_inverse: Array
+    triangle_condition: Array
+    triangle_valid: Array
     cell_valid: Array
     lower: Array
     upper: Array
@@ -140,7 +262,6 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         coordinates: ArrayLike,
         cell_vertices: ArrayLike,
         arity: ArrayLike,
-        witness: ArrayLike,
         cell_valid: ArrayLike,
         /,
         *,
@@ -152,42 +273,62 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         points = np.asarray(coordinates)
         cells = np.asarray(cell_vertices, dtype=np.int32)
         arity_ = np.asarray(arity, dtype=np.int32)
-        witness_ = np.asarray(witness)
         valid = np.asarray(cell_valid, dtype=np.bool_)
         limit = finite_real_scalar(tolerance, "tolerance")
         condition = finite_real_scalar(maximum_condition, "maximum_condition")
         capacity = positive_integer(maximum_candidates, "maximum_candidates")
         batch = positive_integer(batch_size, "batch_size")
-        _validate_locator_inputs(points, cells, arity_, witness_, valid)
+        _validate_locator_inputs(points, cells, arity_, valid)
         if limit <= 0.0 or condition <= 1.0:
             raise ValueError("Polygon location tolerances are invalid.")
-        slot_valid, following = polygon_fan_slots(arity_, cells.shape[1])
-        vertices = points[cells]
-        following_vertices = np.take_along_axis(vertices, following[:, :, None], axis=1)
+        maximum_triangles = cells.shape[1] - 2
+        triangle_vertices = np.zeros(
+            (cells.shape[0], maximum_triangles, 3), dtype=np.int32
+        )
+        triangle_active = np.zeros(
+            (cells.shape[0], maximum_triangles), dtype=np.bool_
+        )
+        for cell in range(cells.shape[0]):
+            if not valid[cell]:
+                continue
+            triangulation = _triangulate_simple_polygon(
+                points, cells[cell, : int(arity_[cell])]
+            )
+            triangle_vertices[cell, : len(triangulation)] = triangulation
+            triangle_active[cell, : len(triangulation)] = True
+        triangle_points = points[
+            cells[np.arange(cells.shape[0])[:, None, None], triangle_vertices]
+        ]
+        triangle_origin = triangle_points[:, :, 0, :]
         jacobians = np.stack(
             (
-                vertices - witness_[:, None, :],
-                following_vertices - witness_[:, None, :],
+                triangle_points[:, :, 1, :] - triangle_origin,
+                triangle_points[:, :, 2, :] - triangle_origin,
             ),
             axis=-1,
         )
-        jacobians = np.where(slot_valid[:, :, None, None], jacobians, np.eye(2))
+        jacobians = np.where(triangle_active[:, :, None, None], jacobians, np.eye(2))
         inverse = inverse_small_linear(
             SmallLinearSolvePlan(
                 2, singular_tolerance=limit, maximum_condition=condition
             ),
             jnp.asarray(jacobians),
         )
-        fan_ok = np.asarray(inverse.successful) & (np.asarray(inverse.determinant) > 0.0)
-        cell_ok = valid & np.all(fan_ok | ~slot_valid, axis=1)
+        triangle_ok = np.asarray(inverse.successful) & (
+            np.asarray(inverse.determinant) > 0.0
+        )
+        cell_ok = valid & np.all(triangle_ok | ~triangle_active, axis=1)
+        slot_valid = np.arange(cells.shape[1])[None, :] < arity_[:, None]
+        vertices = points[cells]
         active = np.where(slot_valid[:, :, None], vertices, np.nan)
         lower = np.nanmin(active, axis=1)
         upper = np.nanmax(active, axis=1)
         extent = max(1.0, float(np.max(upper - lower)))
-        self.witness = jnp.asarray(witness_)
-        self.fan_inverse = inverse.value
-        self.fan_condition = inverse.condition_estimate
-        self.fan_valid = jnp.asarray(slot_valid & fan_ok)
+        self.triangle_vertices = jnp.asarray(triangle_vertices)
+        self.triangle_origin = jnp.asarray(triangle_origin)
+        self.triangle_inverse = inverse.value
+        self.triangle_condition = inverse.condition_estimate
+        self.triangle_valid = jnp.asarray(triangle_active & triangle_ok)
         self.cell_valid = jnp.asarray(cell_ok)
         self.lower = jnp.asarray(lower)
         self.upper = jnp.asarray(upper)
@@ -207,7 +348,7 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
                 "vertices": array_tree_fingerprint(vertices),
                 "cells": array_tree_fingerprint(cells),
                 "arity": array_tree_fingerprint(arity_),
-                "witness": array_tree_fingerprint(witness_),
+                "triangles": array_tree_fingerprint(triangle_vertices),
                 "cell_valid": array_tree_fingerprint(valid),
                 "tolerance": limit,
                 "maximum_condition": condition,
@@ -222,20 +363,22 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
 
     def _locate_point(
         self, point: Array, cells: Array, valid: Array, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array]:
-        relative = point[None, :] - self.witness[cells]
-        reference = ein.contract("kwrd,kd->kwr", self.fan_inverse[cells], relative)
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+        relative = point[None, None, :] - self.triangle_origin[cells]
+        reference = ein.contract(
+            "ktrd,kd->ktr", self.triangle_inverse[cells], relative
+        )
         barycentric = jnp.concatenate(
             (1.0 - jnp.sum(reference, axis=-1, keepdims=True), reference), axis=-1
         )
-        inside_fans = (
-            self.fan_valid[cells]
+        inside_triangles = (
+            self.triangle_valid[cells]
             & valid[:, None]
             & jnp.all(barycentric >= -self.tolerance, axis=-1)
         )
-        inside = jnp.any(inside_fans, axis=1) & self.cell_valid[cells]
-        fans = jnp.argmax(inside_fans, axis=1).astype(jnp.int32)
-        shared = jnp.sum(inside_fans, axis=1) > 1
+        inside = jnp.any(inside_triangles, axis=1) & self.cell_valid[cells]
+        triangles = jnp.argmax(inside_triangles, axis=1).astype(jnp.int32)
+        shared = jnp.sum(inside_triangles, axis=1) > 1
         rows = jnp.arange(cells.shape[0])
         in_box = valid & jnp.all(
             (point >= self.lower[cells] - self.padding)
@@ -245,18 +388,19 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         degenerate = jnp.any(in_box & ~self.cell_valid[cells])
         return (
             inside,
-            fans,
-            barycentric[rows, fans],
+            triangles,
+            barycentric[rows, triangles],
+            self.triangle_vertices[cells, triangles],
             shared & inside,
             degenerate,
-            self.fan_condition[cells, fans],
+            self.triangle_condition[cells, triangles],
         )
 
     def locate(
         self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
     ) -> PolygonMeshLocation:
         """Locate `(n, 2)` points, optionally restricted to masked cells."""
-        values = jnp.asarray(points, dtype=self.witness.dtype)
+        values = jnp.asarray(points, dtype=self.triangle_origin.dtype)
         if values.ndim != 2 or values.shape[1] != 2:
             raise ValueError("Polygon location points must have shape (points, 2).")
         candidates, valid, complete = point_select_leaf_items(
@@ -272,7 +416,15 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
                     "cell_mask must be a boolean array with one entry per cell."
                 )
             valid = valid & mask[candidates]
-        inside, fans, barycentric, shared, degenerate, condition = jax.lax.map(
+        (
+            inside,
+            triangles,
+            barycentric,
+            triangle_vertices,
+            shared,
+            degenerate,
+            condition,
+        ) = jax.lax.map(
             lambda arguments: self._locate_point(*arguments),
             (values, candidates, valid),
             batch_size=self.batch_size,
@@ -297,8 +449,9 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         )
         return PolygonMeshLocation(
             jnp.where(inside, candidates, -1),
-            fans,
+            triangles,
             barycentric,
+            triangle_vertices,
             shared,
             count,
             status,
@@ -310,7 +463,6 @@ def _validate_locator_inputs(
     points: np.ndarray,
     cells: np.ndarray,
     arity: np.ndarray,
-    witness: np.ndarray,
     valid: np.ndarray,
     /,
 ) -> None:
@@ -328,24 +480,23 @@ def _validate_locator_inputs(
         raise ValueError("Polygon arities must lie in [3, width] for every cell.")
     if np.any(cells < 0) or np.any(cells >= points.shape[0]):
         raise ValueError("Polygon locator cells index an undeclared vertex.")
-    if witness.shape != (cells.shape[0], 2) or not np.all(np.isfinite(witness)):
-        raise ValueError("Polygon witnesses must be finite with shape (cells, 2).")
     if valid.shape != cells.shape[:1]:
         raise ValueError("cell_valid must provide one flag per cell.")
 
 
 class LocatedPolygonPoints(StrictModule):
-    """Located points with their cell, fan triangle, and fan coordinates.
+    """Located points with their cell, selected triangle, and local vertex slots.
 
-    `barycentric` are the coordinates of `points` in the fan triangle
-    `(w, v_i, v_{i+1})` of `fans`; `fan_inverse` is that triangle's inverse
+    `barycentric` are the coordinates of `points` in `triangle_vertices` of
+    `triangles`; `triangle_inverse` is the selected triangle's inverse
     Jacobian (rows: reference axes, columns: physical axes).
     """
 
     cells: Array
-    fans: Array
+    triangles: Array
     barycentric: Array
-    fan_inverse: Array
+    triangle_vertices: Array
+    triangle_inverse: Array
     points: Array
 
 
@@ -355,8 +506,8 @@ class AbstractPolygonLocalBasis(StrictModule):
     `weights(located, derivative)` returns the weights of every local DOF of
     each point's cell with shape `(points, local_width, *value_shape)` for the
     coordinate multi-index `derivative` (total order at most one); padded
-    local slots carry zero weight. `fan_continuity` is the continuity across
-    interior fan edges, or `None` when each cell is one smooth piece.
+    local slots carry zero weight. `triangulation_continuity` is continuity
+    across internal triangulation edges, or `None` for one smooth cell piece.
     """
 
     @property
@@ -376,7 +527,7 @@ class AbstractPolygonLocalBasis(StrictModule):
 
     @property
     @abc.abstractmethod
-    def fan_continuity(self) -> int | None:
+    def triangulation_continuity(self) -> int | None:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -386,11 +537,10 @@ class AbstractPolygonLocalBasis(StrictModule):
         raise NotImplementedError
 
 
-def fan_barycentric_gradients(fan_inverse: Array, /) -> Array:
-    """Physical gradients `(points, 3, 2)` of the fan-triangle coordinates."""
-    reference = jnp.asarray(_REFERENCE_GRADIENT, dtype=fan_inverse.dtype)
-    return ein.contract("ar,nrd->nad", reference, fan_inverse)
-
+def triangle_barycentric_gradients(triangle_inverse: Array, /) -> Array:
+    """Physical gradients `(points, 3, 2)` of selected triangle coordinates."""
+    reference = jnp.asarray(_REFERENCE_GRADIENT, dtype=triangle_inverse.dtype)
+    return ein.contract("ar,nrd->nad", reference, triangle_inverse)
 
 class _PolygonRoute(StrictModule):
     dofs: Array
@@ -403,13 +553,10 @@ class PolygonFieldReconstructionKernel(
 ):
     """Located evaluation of one polygon-mesh field through a family basis.
 
-    Every query point is located in the witness fans of its bounded candidate
-    cells. Values (and first derivatives) come from the family's local basis
-    and the padded cell DOF routes. A point inside several cells needs a bound
-    side when the derivative order exceeds `continuity`; a derivative above
-    the basis' fan continuity on an interior fan edge is `SIDE_UNRESOLVED` for
-    every side, because the cell itself is not smooth there and no fan triangle
-    is selected silently.
+    Every query point is located in ear-clipped triangles of bounded BVH
+    candidate cells. Values and first derivatives come from the family's local
+    basis and padded cell DOF routes. Derivatives across an internal
+    triangulation edge are unresolved when that basis lacks continuity.
     """
 
     locator: PreparedPolygonMeshLocator
@@ -480,15 +627,18 @@ class PolygonFieldReconstructionKernel(
         mask = None if side is None else side.cell_mask
         location = self.locator.locate(points, cell_mask=mask)
         average = side is not None and side.side == "average"
-        cells, fans, barycentric, share = _selected_candidates(location, average)
+        cells, triangles, barycentric, triangle_vertices, share = (
+            _selected_candidates(location, average)
+        )
         slots = cells.shape[1]
         flat_cells = jnp.maximum(cells, 0).reshape((-1,))
-        flat_fans = fans.reshape((-1,))
+        flat_triangles = triangles.reshape((-1,))
         located = LocatedPolygonPoints(
             flat_cells,
-            flat_fans,
+            flat_triangles,
             barycentric.reshape((-1, 3)),
-            self.locator.fan_inverse[flat_cells, flat_fans],
+            triangle_vertices.reshape((-1, 3)),
+            self.locator.triangle_inverse[flat_cells, flat_triangles],
             jnp.repeat(points, slots, axis=0),
         )
         weights = self.basis.weights(located, derivative)
@@ -517,11 +667,11 @@ class PolygonFieldReconstructionKernel(
     ) -> Array:
         status = location.status
         valid = status == int(FieldQueryStatus.VALID)
-        fan_continuity = self.basis.fan_continuity
-        if fan_continuity is not None and order > fan_continuity:
-            on_fan_edge = jnp.any(location.candidate_fan_shared, axis=1)
+        triangulation_continuity = self.basis.triangulation_continuity
+        if triangulation_continuity is not None and order > triangulation_continuity:
+            on_internal_edge = jnp.any(location.candidate_triangle_shared, axis=1)
             status = jnp.where(
-                valid & on_fan_edge, int(FieldQueryStatus.SIDE_UNRESOLVED), status
+                valid & on_internal_edge, int(FieldQueryStatus.SIDE_UNRESOLVED), status
             )
             valid = status == int(FieldQueryStatus.VALID)
         if side is not None and side.side == "average":
@@ -590,21 +740,27 @@ class PolygonFieldReconstructionKernel(
 
 def _selected_candidates(
     location: PolygonMeshLocation, average: bool, /
-) -> tuple[Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array, Array]:
     accepted = location.candidate_cells >= 0
     if average:
         share = accepted / jnp.maximum(location.count, 1)[:, None]
         return (
             location.candidate_cells,
-            location.candidate_fans,
+            location.candidate_triangles,
             location.candidate_barycentric,
+            location.candidate_triangle_vertices,
             share,
         )
     first = jnp.argmax(accepted, axis=1)[:, None]
     return (
         jnp.take_along_axis(location.candidate_cells, first, axis=1),
-        jnp.take_along_axis(location.candidate_fans, first, axis=1),
-        jnp.take_along_axis(location.candidate_barycentric, first[:, :, None], axis=1),
+        jnp.take_along_axis(location.candidate_triangles, first, axis=1),
+        jnp.take_along_axis(
+            location.candidate_barycentric, first[:, :, None], axis=1
+        ),
+        jnp.take_along_axis(
+            location.candidate_triangle_vertices, first[:, :, None], axis=1
+        ),
         jnp.any(accepted, axis=1)[:, None],
     )
 
@@ -635,27 +791,26 @@ def polygon_mesh_support_geometry(
     coordinates: ArrayLike,
     cell_vertices: ArrayLike,
     arity: ArrayLike,
-    witness: ArrayLike,
     support_id: str,
     /,
 ) -> CompiledGeometry:
-    """Compile the region covered by the witness fans of a polygon mesh."""
+    """Compile the region covered by exact simple-polygon triangulations."""
     from ..geometry.simplicial._io import planar_region_from_triangles
 
     points = np.asarray(coordinates, dtype=np.float64)
     cells = np.asarray(cell_vertices, dtype=np.int32)
     arity_ = np.asarray(arity, dtype=np.int32)
-    witness_ = np.asarray(witness, dtype=np.float64)
-    valid, following = polygon_fan_slots(arity_, cells.shape[1])
-    centers = np.broadcast_to(
-        points.shape[0] + np.arange(cells.shape[0], dtype=np.int32)[:, None],
-        cells.shape,
+    triangles = np.asarray(
+        [
+            tuple(int(vertices[index]) for index in triangle)
+            for cell in range(cells.shape[0])
+            for vertices in (cells[cell, : int(arity_[cell])],)
+            for triangle in _triangulate_simple_polygon(points, vertices)
+        ],
+        dtype=np.int32,
     )
-    triangles = np.stack(
-        (centers, cells, np.take_along_axis(cells, following, axis=1)), axis=-1
-    )[valid]
     region = planar_region_from_triangles(
-        np.concatenate((points, witness_), axis=0),
+        points,
         triangles,
         recenter=False,
         feature_id=f"polygon-mesh-support:{support_id}",
@@ -1020,9 +1175,7 @@ __all__ = [
     "PolygonFieldReconstructionKernel",
     "PolygonMeshLocation",
     "PreparedPolygonMeshLocator",
-    "fan_barycentric_gradients",
     "polygon_facet_domain",
-    "polygon_fan_slots",
     "polygon_mesh_support_geometry",
     "polygon_side_frame",
     "polygon_side_revision",
@@ -1032,4 +1185,5 @@ __all__ = [
     "prepare_polygon_facet_sites",
     "require_polygon_facet_domain",
     "subset_polygon_domain",
+    "triangle_barycentric_gradients",
 ]

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.meshing.providers._vorocrust import _polyhedra
 
 
@@ -69,11 +70,7 @@ def test_real_vorocrust_preserves_closed_cube_volume() -> None:
         )
     with phx.meshing.VoroCrustProvider(executable, worker) as provider:
         info = provider.info()
-        result = provider.execute(
-            _cube_surface(),
-            phx.meshing.VoroCrustOptions(1.0),
-            limits=phx.meshing.MeshingLimits(maximum_wall_seconds=120.0),
-        )
+        result = provider.execute(_cube_surface(), phx.meshing.VoroCrustOptions(1.0))
         assert provider.worker.launches == 1
     assert result.provider.version == info.version
     assert all(
@@ -85,8 +82,6 @@ def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     )
     assert result.audit.passed
     assert result.compliance.passed
-    assert "native_output_entities_preallocation" in result.runtime.unenforced_limits
-    assert "native_output_connectivity_preallocation" in result.runtime.unenforced_limits
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
 
 
@@ -115,7 +110,6 @@ def test_vorocrust_contracts() -> None:
         ),
     )
     base = phx.meshing.certify_cell_mesh(
-        # ty: ignore[invalid-argument-type]
         phx.discretization.CellMesh.from_polyhedra(coordinates, cells),
         phx.SpatialCoordinateContract.si(),
     )
@@ -153,8 +147,9 @@ def test_vorocrust_contracts() -> None:
         result.coordinate_contract,
         vertical_datum="local-survey-datum",
     )
-    # ty: ignore[unresolved-attribute]
-    boundary = np.flatnonzero(np.asarray(result.mesh.connectivity.boundary_faces))
+    connectivity = result.mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    boundary = np.flatnonzero(np.asarray(connectivity.boundary_faces))
     qualified = phx.applications.porous_media.qualify_vorocrust_porous_mesh(
         result,
         geospatial,
@@ -166,12 +161,9 @@ def test_vorocrust_contracts() -> None:
     assert not qualified.tpfa_certified
     with pytest.raises(ValueError, match="does not certify TPFA"):
         qualified.require_tpfa()
-    mesh, merged, collapsed = _polyhedra(
-        _two_box_extraction(), phx.meshing.MeshingLimits(), 1e-12
-    )
+    mesh, collapsed = _polyhedra(_two_box_extraction())
     certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
-    assert merged == 2
     assert collapsed == 1
     np.testing.assert_array_equal(mesh.vertex_global_ids, np.arange(12))
     np.testing.assert_array_equal(
@@ -181,13 +173,8 @@ def test_vorocrust_contracts() -> None:
         np.asarray(certified.quality.evaluation.measures), (0.5, 0.5), rtol=1e-12
     )
     assert certified.audit.passed
-    # Consecutive chain members lie within the tolerance of each other, but
-    # the chain end is farther than the tolerance from its representative.
-    step = 0.6 * 1e-9 * np.sqrt(3.0)
-    arrays = _two_box_extraction(((step, 0.0, 0.0), (2 * step, 0.0, 0.0)))
-
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        _polyhedra(arrays, phx.meshing.MeshingLimits(), 1e-9)
+        _polyhedra(_two_box_extraction(unwelded_corners=True))
 
     assert failure.value.category is phx.meshing.MeshingFailureCategory.CONVERSION_FAILED
 
@@ -258,43 +245,19 @@ def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path: Any) -
     assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_vorocrust_fails_closed_when_native_preallocation_is_required(
-    tmp_path: Any,
-) -> None:
-    worker = _fake_worker(tmp_path, "sys.exit(0)\n")
 
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        phx.meshing.VoroCrustProvider(sys.executable, worker).execute(
-            _cube_surface(),
-            phx.meshing.VoroCrustOptions(
-                1.0,
-                require_native_output_preallocation=True,
-            ),
-        )
-
-    assert (
-        failure.value.category
-        is phx.meshing.MeshingFailureCategory.UNSUPPORTED_CAPABILITY
-    )
-
-
-def _two_box_extraction(extra_vertices: Any = ()) -> Any:
-    """Packed extraction output of two unit-height boxes split at x = 0.5.
-
-    Vertex 12 aliases 7 and vertex 13 aliases 3 within the merge tolerance.
-    Loop orientations are deliberately mixed, one face uses an alias, and one
-    face degenerates to two vertices once aliases are normalized.
-    """
+def _two_box_extraction(unwelded_corners: bool = False) -> Any:
+    """Packed two-box output, optionally with un-welded provider vertex IDs."""
     grid = np.stack(
         np.meshgrid((0.0, 0.5, 1.0), (0.0, 1.0), (0.0, 1.0), indexing="ij"), axis=-1
     ).reshape(-1, 3)
-    vertices = np.concatenate(
-        (
-            grid,
-            grid[[7, 3]] + (1e-14, -1e-14, 1e-14),
-            np.asarray(extra_vertices, dtype=np.float64).reshape(-1, 3),
+    vertices = grid
+    upper_corner, lower_corner = 7, 3
+    if unwelded_corners:
+        vertices = np.concatenate(
+            (grid, grid[[7, 3]] + (1e-14, -1e-14, 1e-14))
         )
-    )
+        upper_corner, lower_corner = 12, 13
     faces = (
         ((0, 2, 3, 1), (2, 0)),
         ((0, 4, 5, 1), (0, 2)),
@@ -304,10 +267,10 @@ def _two_box_extraction(extra_vertices: Any = ()) -> Any:
         ((4, 6, 7, 5), (0, 1)),
         ((8, 10, 11, 9), (1, 2)),
         ((4, 8, 9, 5), (2, 1)),
-        ((6, 10, 11, 12), (1, 2)),
+        ((6, 10, 11, upper_corner), (1, 2)),
         ((6, 4, 8, 10), (2, 1)),
         ((5, 9, 11, 7), (1, 2)),
-        ((3, 13, 7), (0, 2)),
+        ((3, lower_corner, 7), (0, 2)),
     )
     loops = [np.asarray(loop, dtype=np.int64) for loop, _ in faces]
     return {

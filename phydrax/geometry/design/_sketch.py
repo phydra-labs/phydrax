@@ -16,15 +16,30 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import normalized_identifier
+from ._schema import DesignState, ParameterId, ParameterSchema
+from ._sketch_certificate import RootDOFEvidence
+from ._sketch_dimensions import (
+    compile_sketch_dimensions,
+    require_dimension_state,
+    SketchDimensionAttribute,
+    SketchDimensionBinding,
+    SketchDimensionSensitivity,
+)
+from ._solve import solve_design_residual
 
 
 if TYPE_CHECKING:
+    from ..._physical import SpatialCoordinateContract
+    from ...optim import DifferentialEvolutionSearch
+    from ...typing import PRNGKey
     from ..analytic import Circle
+    from ..brep._constructors import PlanarProfile, ProfilePlane
+    from ..brep._model import BRepModel
     from ..simplicial import PlanarMeshRegion
-
-
-_SolveState: TypeAlias = tuple[Array, Array, Array]
+    from ._search_result import SketchSearchResult
 
 
 @jax.custom_jvp
@@ -127,6 +142,7 @@ class PointDistance(AbstractSketchConstraint):
     first_point: int = eqx.field(static=True)
     second_point: int = eqx.field(static=True)
     distance: Array
+    parameter_id: ParameterId | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -134,14 +150,18 @@ class PointDistance(AbstractSketchConstraint):
         second_point: int,
         distance: float,
         *,
+        parameter_id: ParameterId | None = None,
         weight: float = 1.0,
     ) -> None:
         super().__init__(weight)
         if not np.isfinite(distance) or distance < 0.0:
             raise ValueError("distance must be finite and non-negative.")
+        if parameter_id is not None and not isinstance(parameter_id, ParameterId):
+            raise TypeError("parameter_id must be ParameterId or None.")
         self.first_point = int(first_point)
         self.second_point = int(second_point)
         self.distance = jnp.asarray(distance, dtype=jnp.float64).reshape(())
+        self.parameter_id = parameter_id
 
     def residual(
         self,
@@ -269,6 +289,7 @@ class LineAngle(AbstractSketchConstraint):
     first_line: int = eqx.field(static=True)
     second_line: int = eqx.field(static=True)
     angle: Array
+    parameter_id: ParameterId | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -276,14 +297,18 @@ class LineAngle(AbstractSketchConstraint):
         second_line: int,
         angle: float,
         *,
+        parameter_id: ParameterId | None = None,
         weight: float = 1.0,
     ) -> None:
         super().__init__(weight)
         if not np.isfinite(angle):
             raise ValueError("angle must be finite.")
+        if parameter_id is not None and not isinstance(parameter_id, ParameterId):
+            raise TypeError("parameter_id must be ParameterId or None.")
         self.first_line = int(first_line)
         self.second_line = int(second_line)
         self.angle = jnp.asarray(angle, dtype=jnp.float64).reshape(())
+        self.parameter_id = parameter_id
 
     def residual(
         self,
@@ -350,13 +375,24 @@ class PointOnLine(AbstractSketchConstraint):
 class Radius(AbstractSketchConstraint):
     circle: int = eqx.field(static=True)
     radius: Array
+    parameter_id: ParameterId | None = eqx.field(static=True)
 
-    def __init__(self, circle: int, radius: float, *, weight: float = 1.0) -> None:
+    def __init__(
+        self,
+        circle: int,
+        radius: float,
+        *,
+        parameter_id: ParameterId | None = None,
+        weight: float = 1.0,
+    ) -> None:
         super().__init__(weight)
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("radius must be finite and positive.")
+        if parameter_id is not None and not isinstance(parameter_id, ParameterId):
+            raise TypeError("parameter_id must be ParameterId or None.")
         self.circle = int(circle)
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
+        self.parameter_id = parameter_id
 
     def residual(
         self,
@@ -471,6 +507,9 @@ class SketchSolution(StrictModule):
     residual_norm: Array
     converged: Array
     iterations: Array
+    status: Array
+    root_evidence: RootDOFEvidence
+    dimensions: DesignState
 
     def __init__(
         self,
@@ -481,13 +520,104 @@ class SketchSolution(StrictModule):
         residual_norm: ArrayLike,
         converged: ArrayLike,
         iterations: ArrayLike,
+        status: ArrayLike,
+        root_evidence: RootDOFEvidence,
+        dimensions: DesignState,
     ) -> None:
+        if not isinstance(root_evidence, RootDOFEvidence):
+            raise TypeError("root_evidence must be RootDOFEvidence.")
+        if not isinstance(dimensions, DesignState):
+            raise TypeError("dimensions must be a DesignState.")
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.circle_radii = jnp.asarray(circle_radii, dtype=jnp.float64)
         self.residual = jnp.asarray(residual, dtype=jnp.float64)
         self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
         self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
+        self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
+        self.root_evidence = root_evidence
+        self.dimensions = dimensions
+
+
+class SketchProfileResult(StrictModule):
+    """Exact native planar profile plus the sketch root and source-lineage scope."""
+
+    profile: PlanarProfile
+    root_evidence: RootDOFEvidence
+    recipe_name: str = eqx.field(static=True)
+    lineage_id: str = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    derivative_scope: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        profile: PlanarProfile,
+        root_evidence: RootDOFEvidence,
+        recipe_name: str,
+        lineage_id: str,
+        source_id: str,
+    ) -> None:
+        if not isinstance(root_evidence, RootDOFEvidence):
+            raise TypeError("root_evidence must be RootDOFEvidence.")
+        if not isinstance(recipe_name, str):
+            raise TypeError("recipe_name must be a string.")
+        name = recipe_name.strip()
+        if not name:
+            raise ValueError("recipe_name must be non-empty.")
+        for identifier, field_name in (
+            (lineage_id, "lineage_id"),
+            (source_id, "source_id"),
+        ):
+            if (
+                not isinstance(identifier, str)
+                or len(identifier) != 64
+                or identifier != identifier.lower()
+                or any(character not in "0123456789abcdef" for character in identifier)
+            ):
+                raise ValueError(f"{field_name} must be a lowercase SHA-256 fingerprint.")
+        self.profile = profile
+        self.root_evidence = root_evidence
+        self.recipe_name = name
+        self.lineage_id = lineage_id
+        self.source_id = source_id
+        self.derivative_scope = (
+            "value-only-profile-lowering; named local root sensitivities are separate"
+        )
+
+
+class SketchModelResult(StrictModule):
+    """Native B-Rep face model kept distinct from its source-profile result."""
+
+    model: BRepModel
+    source_profile: SketchProfileResult
+    root_evidence: RootDOFEvidence
+    recipe_name: str = eqx.field(static=True)
+    source_lineage_id: str = eqx.field(static=True)
+    model_revision_id: str = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    derivative_scope: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: BRepModel,
+        source_profile: SketchProfileResult,
+    ) -> None:
+        from ..brep._model import BRepModel
+
+        if not isinstance(model, BRepModel):
+            raise TypeError("model must be a BRepModel.")
+        if not isinstance(source_profile, SketchProfileResult):
+            raise TypeError("source_profile must be a SketchProfileResult.")
+        self.model = model
+        self.source_profile = source_profile
+        self.root_evidence = source_profile.root_evidence
+        self.recipe_name = source_profile.recipe_name
+        self.source_lineage_id = source_profile.lineage_id
+        self.model_revision_id = model.source_revision
+        self.source_id = source_profile.source_id
+        self.derivative_scope = (
+            "value-only-native-face-construction; no automatic sketch derivative"
+        )
 
 
 class Sketch(StrictModule):
@@ -498,7 +628,12 @@ class Sketch(StrictModule):
     circle_centers: Array
     circle_radii: Array
     constraints: tuple[AbstractSketchConstraint, ...]
+    constraint_ids: tuple[str, ...] = eqx.field(static=True)
+    constraint_priorities: tuple[int, ...] = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
+    dimension_schema: ParameterSchema = eqx.field(static=True)
+    dimensions: DesignState
+    dimension_bindings: tuple[SketchDimensionBinding, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -509,6 +644,8 @@ class Sketch(StrictModule):
         circle_radii: Array | None = None,
         constraints: Sequence[AbstractSketchConstraint] = (),
         feature_id: str | None = None,
+        constraint_ids: Sequence[str] | None = None,
+        constraint_priorities: Sequence[int] | None = None,
     ) -> None:
         points_host = np.asarray(points, dtype=np.float64)
         lines_host = (
@@ -528,6 +665,8 @@ class Sketch(StrictModule):
         )
         if points_host.ndim != 2 or points_host.shape[1] != 2:
             raise ValueError("points must have shape (num_points, 2).")
+        if np.any(~np.isfinite(points_host)):
+            raise ValueError("points must contain only finite coordinates.")
         if lines_host.ndim != 2 or lines_host.shape[1] != 2:
             raise ValueError("lines must have shape (num_lines, 2).")
         if np.any(lines_host < 0) or np.any(lines_host >= points_host.shape[0]):
@@ -546,12 +685,105 @@ class Sketch(StrictModule):
         self._validate_constraint_indices(
             constraints_, points_host.shape[0], lines_host.shape[0], radii_host.shape[0]
         )
+        if feature_id is not None and not isinstance(feature_id, str):
+            raise TypeError("feature_id must be a string or None.")
+        feature_id_ = f"sketch-{uuid4().hex}" if feature_id is None else feature_id
+        if not feature_id_:
+            raise ValueError("feature_id must be non-empty.")
+        if constraint_ids is None:
+            constraint_ids_ = tuple(
+                f"{feature_id_}.constraint.{index}" for index in range(len(constraints_))
+            )
+        else:
+            if not isinstance(constraint_ids, Sequence) or isinstance(
+                constraint_ids, str
+            ):
+                raise TypeError("constraint_ids must be a sequence of strings.")
+            constraint_ids_ = tuple(
+                normalized_identifier(value, "constraint_id") for value in constraint_ids
+            )
+        if len(constraint_ids_) != len(constraints_) or len(set(constraint_ids_)) != len(
+            constraint_ids_
+        ):
+            raise ValueError("constraint_ids must be unique, one per sketch constraint.")
+        if constraint_priorities is None:
+            constraint_priorities_ = (0,) * len(constraints_)
+        else:
+            if not isinstance(constraint_priorities, Sequence) or isinstance(
+                constraint_priorities, str
+            ):
+                raise TypeError("constraint_priorities must be a sequence of integers.")
+            if any(
+                isinstance(priority, bool) or not isinstance(priority, int)
+                for priority in constraint_priorities
+            ):
+                raise TypeError("Every constraint priority must be an integer.")
+            constraint_priorities_ = tuple(constraint_priorities)
+            if len(constraint_priorities_) != len(constraints_):
+                raise ValueError(
+                    "constraint_priorities must contain one value per sketch constraint."
+                )
+            if any(priority < 0 for priority in constraint_priorities_):
+                raise ValueError("constraint_priorities must be non-negative.")
+        dimension_entries: list[
+            tuple[
+                int,
+                ParameterId,
+                ArrayLike,
+                SketchDimensionAttribute,
+                tuple[float | None, float | None],
+            ]
+        ] = []
+        for constraint_index, constraint in enumerate(constraints_):
+            if (
+                isinstance(constraint, PointDistance)
+                and constraint.parameter_id is not None
+            ):
+                dimension_entries.append(
+                    (
+                        constraint_index,
+                        constraint.parameter_id,
+                        constraint.distance,
+                        "distance",
+                        (0.0, None),
+                    )
+                )
+            elif (
+                isinstance(constraint, LineAngle) and constraint.parameter_id is not None
+            ):
+                dimension_entries.append(
+                    (
+                        constraint_index,
+                        constraint.parameter_id,
+                        constraint.angle,
+                        "angle",
+                        (None, None),
+                    )
+                )
+            elif isinstance(constraint, Radius) and constraint.parameter_id is not None:
+                dimension_entries.append(
+                    (
+                        constraint_index,
+                        constraint.parameter_id,
+                        constraint.radius,
+                        "radius",
+                        (0.0, None),
+                    )
+                )
+        dimension_schema, dimensions, dimension_bindings = compile_sketch_dimensions(
+            dimension_entries, feature_id_
+        )
         self.points = jnp.asarray(points_host, dtype=jnp.float64)
         self.lines = jnp.asarray(lines_host, dtype=jnp.int32)
         self.circle_centers = jnp.asarray(centers_host, dtype=jnp.int32)
         self.circle_radii = jnp.asarray(radii_host, dtype=jnp.float64)
         self.constraints = constraints_
-        self.feature_id = feature_id or f"sketch-{uuid4().hex}"
+        self.constraint_ids = constraint_ids_
+        self.constraint_priorities = constraint_priorities_
+        self.feature_id = feature_id_
+        self.dimension_schema = dimension_schema
+        self.dimensions = dimensions
+        self.dimension_bindings = dimension_bindings
 
     @staticmethod
     def _validate_constraint_indices(
@@ -595,34 +827,111 @@ class Sketch(StrictModule):
             require(line_indices, num_lines, "line")
             require(circle_indices, num_circles, "circle")
 
-    def residual(self, points: Array, circle_radii: Array, /) -> Array:
+    def _residual_components(
+        self,
+        points: Array,
+        circle_radii: Array,
+        /,
+        *,
+        dimensions: DesignState | None = None,
+    ) -> tuple[Array, ...]:
         points_ = jnp.asarray(points, dtype=self.points.dtype).reshape(self.points.shape)
         radii_ = jnp.asarray(circle_radii, dtype=self.circle_radii.dtype).reshape(
             self.circle_radii.shape
         )
-        values = tuple(
-            constraint.residual(points_, self.lines, self.circle_centers, radii_).reshape(
-                (-1,)
+        dimension_state = self.dimensions if dimensions is None else dimensions
+        if not isinstance(dimension_state, DesignState):
+            raise TypeError("dimensions must be a DesignState.")
+        if dimension_state.schema != self.dimension_schema:
+            raise ValueError(
+                "Sketch dimensions do not match the sketch dimension schema."
             )
-            for constraint in self.constraints
-        )
+        binding_by_constraint = {
+            binding.constraint_index: binding for binding in self.dimension_bindings
+        }
+        values: list[Array] = []
+        for index, constraint in enumerate(self.constraints):
+            binding = binding_by_constraint.get(index)
+            if binding is not None:
+                value = dimension_state.values[binding.state_index]
+                match binding.attribute:
+                    case "distance":
+                        constraint = eqx.tree_at(
+                            lambda item: item.distance, constraint, value
+                        )
+                    case "angle":
+                        constraint = eqx.tree_at(
+                            lambda item: item.angle, constraint, value
+                        )
+                    case "radius":
+                        constraint = eqx.tree_at(
+                            lambda item: item.radius, constraint, value
+                        )
+                    case _:
+                        raise RuntimeError("Unknown sketch dimension attribute.")
+            values.append(
+                constraint.residual(
+                    points_, self.lines, self.circle_centers, radii_
+                ).reshape((-1,))
+            )
+        return tuple(values)
+
+    def residual(
+        self,
+        points: Array,
+        circle_radii: Array,
+        /,
+        *,
+        dimensions: DesignState | None = None,
+    ) -> Array:
+        values = self._residual_components(points, circle_radii, dimensions=dimensions)
         if not values:
             return jnp.empty((0,), dtype=self.points.dtype)
         return jnp.concatenate(values)
 
+    def _problem_id(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "line-circle-sketch",
+                "feature_id": self.feature_id,
+                "lines": np.asarray(self.lines).tolist(),
+                "circle_centers": np.asarray(self.circle_centers).tolist(),
+                "constraint_types": [
+                    type(value).__qualname__ for value in self.constraints
+                ],
+                "constraint_ids": list(self.constraint_ids),
+                "constraint_priorities": list(self.constraint_priorities),
+                "dimension_ids": [
+                    str(value) for value in self.dimension_schema.parameter_ids
+                ],
+            }
+        )
+
     def solve(
         self,
         *,
+        initial_coordinates: ArrayLike | None = None,
+        dimensions: DesignState | None = None,
         max_iterations: int = 32,
         tolerance: float = 1e-9,
         damping: float = 1e-8,
     ) -> SketchSolution:
-        if max_iterations <= 0:
-            raise ValueError("max_iterations must be positive.")
-        if tolerance <= 0.0 or damping <= 0.0:
-            raise ValueError("tolerance and damping must be positive.")
+        dimension_state = (
+            self.dimensions
+            if dimensions is None
+            else require_dimension_state(dimensions, self.dimension_schema)
+        )
         point_size = self.points.size
-        initial = jnp.concatenate((self.points.reshape((-1,)), self.circle_radii))
+        initial_default = jnp.concatenate((self.points.reshape((-1,)), self.circle_radii))
+        initial = (
+            initial_default
+            if initial_coordinates is None
+            else jnp.asarray(initial_coordinates, dtype=jnp.float64).reshape((-1,))
+        )
+        if initial.shape != initial_default.shape:
+            raise ValueError(
+                f"initial_coordinates must have shape {initial_default.shape}."
+            )
 
         def unpack(vector: Array) -> tuple[Array, Array]:
             points = vector[:point_size].reshape(self.points.shape)
@@ -630,53 +939,210 @@ class Sketch(StrictModule):
             return points, radii
 
         def residual(vector: Array) -> Array:
-            return self.residual(*unpack(vector))
+            return self.residual(*unpack(vector), dimensions=dimension_state)
 
-        initial_norm = jnp.linalg.norm(residual(initial))
-        loop_state: _SolveState = (
-            initial,
-            initial_norm <= tolerance,
-            jnp.asarray(0, dtype=jnp.int32),
-        )
-
-        def iteration(_: int | Array, state: _SolveState) -> _SolveState:
-            vector, converged, count = state
-
-            def update(current: Array) -> Array:
-                values = residual(current)
-                jacobian = jax.jacfwd(residual)(current)
-                normal = jacobian.T @ jacobian + damping * jnp.eye(
-                    current.shape[0], dtype=current.dtype
+        bounds = None
+        if self.circle_radii.size:
+            lower = jnp.concatenate(
+                (
+                    jnp.full((point_size,), -jnp.inf, dtype=initial.dtype),
+                    jnp.full(
+                        self.circle_radii.shape,
+                        np.finfo(np.float64).tiny,
+                        dtype=initial.dtype,
+                    ),
                 )
-                step = jnp.linalg.solve(normal, -(jacobian.T @ values))
-                candidate = current + step
-                candidate = candidate.at[point_size:].set(
-                    jnp.maximum(candidate[point_size:], jnp.finfo(current.dtype).eps)
-                )
-                return candidate
-
-            candidate = jax.lax.cond(converged, lambda value: value, update, vector)
-            candidate_norm = jnp.linalg.norm(residual(candidate))
-            active = ~converged
-            return (
-                candidate,
-                converged | (candidate_norm <= tolerance),
-                count + active.astype(jnp.int32),
             )
-
-        vector, converged, iterations = jax.lax.fori_loop(
-            0, max_iterations, iteration, loop_state
+            upper = jnp.full(initial.shape, jnp.inf, dtype=initial.dtype)
+            bounds = (lower, upper)
+        problem_id = self._problem_id()
+        solved = solve_design_residual(
+            residual,
+            initial,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            damping=damping,
+            problem_id=problem_id,
+            bounds=bounds,
         )
-        points, radii = unpack(vector)
-        residual_value = residual(vector)
-        residual_norm = jnp.linalg.norm(residual_value)
+        points, radii = unpack(solved.coordinates)
+        jacobian = jax.jacfwd(residual)(solved.coordinates)
+        root_evidence = RootDOFEvidence(
+            problem_id,
+            solved.coordinates,
+            solved.residual,
+            jacobian,
+            residual_tolerance=tolerance,
+        )
         return SketchSolution(
             points=points,
             circle_radii=radii,
-            residual=residual_value,
-            residual_norm=residual_norm,
-            converged=converged,
-            iterations=iterations,
+            residual=solved.residual,
+            residual_norm=solved.residual_norm,
+            converged=solved.converged,
+            iterations=solved.iterations,
+            status=solved.status,
+            root_evidence=root_evidence,
+            dimensions=dimension_state,
+        )
+
+    def search(
+        self,
+        search: DifferentialEvolutionSearch,
+        /,
+        *,
+        key: PRNGKey,
+        bounds: tuple[ArrayLike, ArrayLike],
+        max_iterations: int = 32,
+        tolerance: float = 1e-9,
+        damping: float = 1e-8,
+    ) -> SketchSearchResult:
+        """Search a finite coordinate box and return separate search/root evidence."""
+        from ._search import search_sketch
+
+        return search_sketch(
+            self,
+            search,
+            key=key,
+            bounds=bounds,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            damping=damping,
+        )
+
+    def dimension_sensitivity(
+        self,
+        solution: SketchSolution,
+        parameter_id: ParameterId,
+        /,
+    ) -> SketchDimensionSensitivity:
+        """Differentiate a regular converged sketch root with respect to one named dimension."""
+        if not isinstance(solution, SketchSolution):
+            raise TypeError("solution must be a SketchSolution.")
+        if not isinstance(parameter_id, ParameterId):
+            raise TypeError("parameter_id must be ParameterId.")
+        if solution.root_evidence.problem_id != self._problem_id():
+            raise ValueError("Sketch solution belongs to a different sketch definition.")
+        if not bool(np.asarray(solution.converged)):
+            raise ValueError("Dimension sensitivity requires a converged sketch root.")
+        if not solution.root_evidence.regular_root_indicated:
+            raise NotImplementedError(
+                "Dimension sensitivity requires a full-column-rank local root."
+            )
+        dimension_index = self.dimension_schema.index(parameter_id)
+        binding = next(
+            (
+                value
+                for value in self.dimension_bindings
+                if value.parameter_id == parameter_id
+            ),
+            None,
+        )
+        if binding is None:
+            raise KeyError(f"Unknown sketch dimension {parameter_id}.")
+        dimension_value = float(
+            np.asarray(solution.dimensions.values[dimension_index], dtype=np.float64)
+        )
+        if binding.attribute == "distance" and dimension_value == 0.0:
+            raise NotImplementedError(
+                "A zero point-distance dimension is not classically differentiable."
+            )
+        points_host = np.asarray(solution.points, dtype=np.float64)
+        lines_host = np.asarray(self.lines, dtype=np.int32)
+        if lines_host.size:
+            vectors = points_host[lines_host[:, 1]] - points_host[lines_host[:, 0]]
+            if np.any(np.linalg.norm(vectors, axis=1) == 0.0):
+                raise NotImplementedError(
+                    "Dimension sensitivity is unsupported at a collapsed sketch line."
+                )
+        centers = points_host[np.asarray(self.circle_centers, dtype=np.int32)]
+        radii_host = np.asarray(solution.circle_radii, dtype=np.float64)
+        for constraint in self.constraints:
+            if (
+                isinstance(constraint, PointDistance)
+                and np.linalg.norm(
+                    points_host[constraint.second_point]
+                    - points_host[constraint.first_point]
+                )
+                == 0.0
+            ):
+                raise NotImplementedError(
+                    "Dimension sensitivity is unsupported at coincident distance points."
+                )
+            if isinstance(constraint, TangentCircles):
+                first_center = centers[constraint.first_circle]
+                second_center = centers[constraint.second_circle]
+                if np.linalg.norm(second_center - first_center) == 0.0:
+                    raise NotImplementedError(
+                        "Dimension sensitivity is unsupported at coincident circle centers."
+                    )
+                if constraint.internal and (
+                    radii_host[constraint.first_circle]
+                    == radii_host[constraint.second_circle]
+                ):
+                    raise NotImplementedError(
+                        "Internal circle tangency is nonsmooth at equal radii."
+                    )
+        coordinates = jnp.concatenate(
+            (solution.points.reshape((-1,)), solution.circle_radii)
+        )
+        point_size = self.points.size
+
+        def unpack(vector: Array) -> tuple[Array, Array]:
+            return (
+                vector[:point_size].reshape(self.points.shape),
+                vector[point_size:],
+            )
+
+        def residual_coordinates(vector: Array) -> Array:
+            return self.residual(
+                *unpack(vector),
+                dimensions=solution.dimensions,
+            )
+
+        def residual_dimension(value: Array) -> Array:
+            dimensions = solution.dimensions.replace_at(dimension_index, value)
+            return self.residual(*unpack(coordinates), dimensions=dimensions)
+
+        coordinate_jacobian = jax.jacfwd(residual_coordinates)(coordinates)
+        dimension_tangent = jax.jacfwd(residual_dimension)(
+            solution.dimensions.values[dimension_index]
+        )
+        from ...linalg import (
+            DenseLinearOperator,
+            DenseSVD,
+            LeastSquaresProblem,
+            LinearSolvePolicy,
+            solve as solve_linear,
+        )
+
+        linear = solve_linear(
+            LeastSquaresProblem(DenseLinearOperator(coordinate_jacobian)),
+            -dimension_tangent,
+            policy=LinearSolvePolicy(DenseSVD()),
+        )
+        if not bool(np.all(np.asarray(linear.successful))):
+            raise NotImplementedError(
+                "The native linear solver could not resolve the sketch dimension sensitivity."
+            )
+        tangent = jnp.asarray(linear.value, dtype=coordinates.dtype).reshape((-1,))
+        residual_tangent = coordinate_jacobian @ tangent + dimension_tangent
+        residual_tangent_norm = float(
+            np.linalg.norm(np.asarray(residual_tangent, dtype=np.float64))
+        )
+        scale = max(
+            1.0,
+            float(np.linalg.norm(np.asarray(dimension_tangent, dtype=np.float64))),
+        )
+        if residual_tangent_norm > solution.root_evidence.residual_tolerance * scale:
+            raise NotImplementedError(
+                "The dimension perturbation is inconsistent with the retained sketch constraints."
+            )
+        return SketchDimensionSensitivity(
+            parameter_id,
+            tangent,
+            residual_tangent,
+            solution.root_evidence.evidence_id,
         )
 
     def to_source(
@@ -694,7 +1160,9 @@ class Sketch(StrictModule):
             center = points[int(np.asarray(self.circle_centers)[0])]
             return Circle(center, float(radii[0]), feature_id=self.feature_id)
         if self.circle_centers.shape[0] != 0:
-            raise ValueError("Mixed line/circle profile lowering is not yet defined.")
+            raise NotImplementedError(
+                "Mixed line/circle profiles are unsupported by Sketch.to_source."
+            )
         lines = np.asarray(self.lines, dtype=np.int32)
         if lines.shape[0] < 3:
             raise ValueError("A planar region sketch requires at least three lines.")
@@ -731,6 +1199,113 @@ class Sketch(StrictModule):
 
         return PlanarMeshRegion(polygon, (loop,), feature_id=self.feature_id)
 
+    def to_profile(
+        self,
+        solution: SketchSolution,
+        /,
+        *,
+        name: str,
+        plane: ProfilePlane | None = None,
+    ) -> SketchProfileResult:
+        """Lower one converged sketch root to an exact native planar profile."""
+        if not isinstance(solution, SketchSolution):
+            raise TypeError("solution must be a SketchSolution.")
+        if solution.root_evidence.problem_id != self._problem_id():
+            raise ValueError("Sketch solution belongs to a different sketch definition.")
+        if not bool(np.asarray(solution.converged)):
+            raise ValueError("Source-profile lowering requires a converged sketch root.")
+        if not solution.root_evidence.root_converged:
+            raise ValueError("Root evidence does not resolve a sketch residual root.")
+        if not isinstance(name, str):
+            raise TypeError("name must be a string.")
+        recipe_name = name.strip()
+        if not recipe_name:
+            raise ValueError("name must be non-empty.")
+        from ..analytic import Circle
+        from ..brep._constructors import PlanarProfile, ProfileLoop, ProfilePlane
+        from ..simplicial import PlanarMeshRegion
+
+        plane_ = ProfilePlane() if plane is None else plane
+        if not isinstance(plane_, ProfilePlane):
+            raise TypeError("plane must be a ProfilePlane or None.")
+        source = self.to_source(solution)
+        if isinstance(source, Circle):
+            outer = ProfileLoop.circle(
+                np.asarray(source.center, dtype=np.float64),
+                float(source.radius),
+            )
+            profile_geometry = {
+                "kind": "circle",
+                "center": np.asarray(source.center, dtype=np.float64).tolist(),
+                "radius": float(source.radius),
+            }
+        elif isinstance(source, PlanarMeshRegion):
+            vertices = np.asarray(source.vertices, dtype=np.float64)
+            outer = ProfileLoop.polygon(vertices)
+            profile_geometry = {
+                "kind": "polygon",
+                "vertices": vertices.tolist(),
+            }
+        else:
+            raise TypeError("Sketch.to_source returned an unsupported source type.")
+        profile = PlanarProfile(
+            plane_,
+            outer,
+        )
+        lineage_id = canonical_fingerprint(
+            {
+                "kind": "sketch-planar-profile-lineage",
+                "feature_id": self.feature_id,
+                "lines": np.asarray(self.lines, dtype=np.int32).tolist(),
+                "circle_centers": np.asarray(
+                    self.circle_centers, dtype=np.int32
+                ).tolist(),
+                "plane": {
+                    "origin": np.asarray(plane_.origin, dtype=np.float64).tolist(),
+                    "x_axis": np.asarray(plane_.x_axis, dtype=np.float64).tolist(),
+                    "y_axis": np.asarray(plane_.y_axis, dtype=np.float64).tolist(),
+                },
+                "geometry": profile_geometry,
+            }
+        )
+        source_id = canonical_fingerprint(
+            {
+                "kind": "native-sketch-profile-source",
+                "lineage": lineage_id,
+            }
+        )
+        return SketchProfileResult(
+            profile,
+            solution.root_evidence,
+            recipe_name,
+            lineage_id,
+            source_id,
+        )
+
+    def to_model(
+        self,
+        source_profile: SketchProfileResult,
+        /,
+        *,
+        coordinate_contract: SpatialCoordinateContract,
+    ) -> SketchModelResult:
+        """Construct the native B-Rep face model from one explicit profile result."""
+        if not isinstance(source_profile, SketchProfileResult):
+            raise TypeError("source_profile must be a SketchProfileResult.")
+        if source_profile.root_evidence.problem_id != self._problem_id():
+            raise ValueError("Source profile belongs to a different sketch definition.")
+        from ..._physical import SpatialCoordinateContract
+        from ..brep._constructors import brep_planar_face
+
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+        model = brep_planar_face(
+            source_profile.profile,
+            coordinate_contract=coordinate_contract,
+            source_id=source_profile.source_id,
+        )
+        return SketchModelResult(model, source_profile)
+
 
 __all__ = [
     "AbstractSketchConstraint",
@@ -750,5 +1325,9 @@ __all__ = [
     "SketchSolution",
     "TangentCircles",
     "TangentLineCircle",
+    "SketchDimensionBinding",
+    "SketchDimensionSensitivity",
+    "SketchModelResult",
+    "SketchProfileResult",
     "Vertical",
 ]

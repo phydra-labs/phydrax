@@ -336,6 +336,27 @@ matrix-free local actions. Partition, affine reproduction, fan validity, local
 rank, and conditioning remain explicit runtime evidence. See
 [Explicit polygon H1 elements](guides_explicit_polygon_h1.md).
 
+### General polygon location and mapped cell measures
+
+Polygon point queries are independent of the star-kernel construction used by
+`ExplicitPolygonH1Plan`: simple boundary loops are checked with exact
+binary-rational predicates and covered by deterministic ear-clipped triangles.
+Self-intersecting loops are refused. Bounded BVH candidates return a selected
+triangle, its local vertex slots, barycentric coordinates, and conditioning
+evidence; the query does not silently extrapolate across an unresolved cell.
+
+Full-dimensional polynomial mapped measures on supported simplex, tensor-box,
+and prism cells use exact reference-cell moments. Rational volume densities use
+a positive Bernstein denominator enclosure and a geometric-series remainder.
+Embedded curves and surfaces integrate their polynomial or rational Gram
+density over positive Bernstein patches; pyramid volumes use the collapsed-box
+chart with its exact Jacobian weight. Every result retains per-cell outward
+measure errors; quadrature samples are never used as certification evidence.
+`SourceGeometryRealization` binds two independently certified embeddings on a
+shared reference complex with a displacement bound and endpoint measures. A
+`CellGeometryPredecessor` matches complete unchanged-cell coordinate laws and
+reuses their bound validity proof rows when preparing target evidence.
+
 ## Virtual elements
 
 `CellMesh.from_polygons` extends the canonical cell complex to fixed-arity

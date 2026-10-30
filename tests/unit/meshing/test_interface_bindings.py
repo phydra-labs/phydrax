@@ -14,12 +14,14 @@ from OCP.gp import gp_Pnt
 from OCP.TopoDS import TopoDS_Face
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
 from phydrax.geometry.multiregion_surface import (
     multiregion_sheet_views,
     PreparedMultiRegionSurface,
     seed_double_bubble,
 )
 from phydrax.geometry.surface import InterfaceSide
+from phydrax.interchange import model_from_occt_shape
 from phydrax.meshing import MeshInterfaceAttachment, MeshPart
 from phydrax.solver.coupling import (
     InterfaceBinding,
@@ -44,20 +46,22 @@ def _rectangle(x0: float, x1: float) -> TopoDS_Face:
     return BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
 
 
-def _plate_projection(width: float) -> phx.geometry.PreparedBRepProjection:
+def _plate_projection(width: float) -> phx.geometry.AbstractBRepProjection:
     """Two rectangles sharing the B-Rep edge x = 0; ``width`` sets the right one."""
     shape = BRepAlgoAPI_Fuse(_rectangle(-1.0, 0.0), _rectangle(0.0, width)).Shape()
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
-    return phx.geometry.prepare_brep_projection(model, shape, embedding=_EMBEDDING)
+    return phx.geometry.prepare_brep_projection(model, embedding=_EMBEDDING)
 
 
 def _entity_at(
-    projection: phx.geometry.PreparedBRepProjection,
+    projection: phx.geometry.AbstractBRepProjection,
     dimension: int,
     point: tuple[float, float],
 ) -> str:
@@ -71,7 +75,7 @@ def _entity_at(
     matches = np.flatnonzero(np.asarray(projected.residuals) < 1e-12)
     assert matches.size == 1
     return phx.geometry.brep_entity_id(
-        projection.source_revision, dimension, int(matches[0])
+        projection.source_id, projection.source_revision, dimension, int(matches[0])
     )
 
 
@@ -100,7 +104,7 @@ class PlateSide:
 
 
 def _plate_side(
-    projection: phx.geometry.PreparedBRepProjection,
+    projection: phx.geometry.AbstractBRepProjection,
     name: str,
     bounds: tuple[float, float],
     count: int,
@@ -165,7 +169,7 @@ def _wall(side: PlateSide, wall_entity: str) -> MeshInterfaceAttachment:
 class Plate:
     """Two independently meshed parts of one two-face B-Rep revision."""
 
-    projection: phx.geometry.PreparedBRepProjection
+    projection: phx.geometry.AbstractBRepProjection
     wall_entity: str
     left_face: str
     source: InterfaceSource

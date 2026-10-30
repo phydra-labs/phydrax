@@ -252,17 +252,17 @@ Admission is exactly:
   charge-free induced-dipole sites [inference from the formula]. This exclusion is
   distinct from the Fourier D3 dispersion route, whose `k = 0` mode is part of that method
   (see the [dispersion guide](guides_atomistic_dispersion.md)).
-- **Real space.** Either `real_space="explicit-image-reference"` (the default), every
-  lattice translation of the prepared image stencil bounded by `maximum_image_count` and
-  `maximum_workspace_bytes` with a traced completeness margin, or
-  `real_space="neighborhood"`, which consumes a bound neighborhood view through
-  `NeighborhoodPairs(view, site_capacity)`. That view must be the complete `IMAGE_PAIR_SUM`
-  role (or an unselected directed image graph) of the system atoms, with a cutoff not
-  below `real_cutoff`; its own stale, capacity, and scientific evidence gates the result.
-  The explicit-image route refuses `pairs=`. `alpha` and `real_cutoff` must make omitted
-  real-space images negligible for the chosen cell; the mode extents or mesh control
-  reciprocal resolution, and an optional `reciprocal_cutoff` is checked against the
-  current cell's support.
+- **Real space.** Either `real_space="explicit-image-reference"` (the default), with
+  every lattice translation from the complete image stencil derived from the cell and
+  cutoff (no arbitrary image-count allowance), or `real_space="neighborhood"`, which
+  consumes a bound neighborhood view through `NeighborhoodPairs(view, site_capacity)`.
+  That view must be the complete `IMAGE_PAIR_SUM` role (or an unselected directed
+  image graph) of the system atoms, with a cutoff not below `real_cutoff`; its own
+  stale, capacity, and scientific evidence gates the result. The explicit-image route
+  refuses `pairs=`. `alpha` and `real_cutoff` must make omitted real-space images
+  negligible for the chosen cell; the mode extents or mesh control reciprocal
+  resolution, and an optional `reciprocal_cutoff` is checked against the current
+  cell's support.
 
 Reciprocal modes are unscaled, so damping and d/p/u pair scales act on the real-space
 (respectively current minimum-image) member only, through explicit correction routes. This

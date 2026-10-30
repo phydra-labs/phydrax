@@ -36,7 +36,6 @@ from phydrax.sparse import EdgeRelation
 def qualify() -> dict[str, object]:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     blocks = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     ifc = normalize_second_order_force_constants(

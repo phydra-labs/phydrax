@@ -1407,6 +1407,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
                     evidence_policy_id=source.evidence_policy_id,
                     evidence_version=source.evidence_version,
                     precision=source.precision,
+                    owned_cell_mask=source.owned_cell_mask,
                 )
 
             new_coarse_content = rebind(

@@ -46,15 +46,16 @@ from ...typing import Dim, Float, parse
 from ._contracts import (
     MultiRegionKind,
     MultiRegionSurfaceCapacityEvidence,
-    MultiRegionSurfaceCounts,
+    MultiRegionSurfaceCapacityPlan,
     MultiRegionSurfaceEvidence,
 )
 from ._edits import (
     _apply_edit,
-    _capacity_admits,
     _certify_legs,
     _duplicate_faces,
     _Edit,
+    _ensure_edit_workspace,
+    _grow_surface_capacity,
     _local_guards,
     _restoration_leg,
     _restore_volumes,
@@ -289,8 +290,7 @@ def _evaluate(
     draft = _draft(mesh, proposal, core)
     if isinstance(draft, SurfaceEventStatus):
         return draft, None, float("nan"), 0.0
-    if not _capacity_admits(mesh, draft):
-        return SurfaceEventStatus.CAPACITY_EXCEEDED, None, float("nan"), 0.0
+    _ensure_edit_workspace(mesh, draft)
     if _duplicate_faces(mesh, draft):
         return SurfaceEventStatus.DUPLICATE_FACE, None, float("nan"), 0.0
     restored, residual, restored_ok = _restore_volumes(mesh, draft, policy)
@@ -420,11 +420,9 @@ def _geometric_phase(
     policy: SurfaceEventPolicy,
     ledger: _Ledger,
     /,
-) -> tuple[list[SurfaceEventRecord], int]:
+) -> list[SurfaceEventRecord]:
     records: list[SurfaceEventRecord] = []
     claimed: set[int] = set()
-    budget = mesh.topology.plan.event_capacity
-    accepted = 0
     for proposal in proposals:
         support = _support(mesh, proposal)
         if support is None:
@@ -451,13 +449,6 @@ def _geometric_phase(
                 float("nan"),
                 0.0,
             )
-        elif accepted >= budget:
-            status, edit, impact, residual = (
-                SurfaceEventStatus.EVENT_BUDGET_EXCEEDED,
-                None,
-                float("nan"),
-                0.0,
-            )
         else:
             status, edit, impact, residual = _evaluate(mesh, proposal, core, policy)
         if edit is None:
@@ -474,8 +465,7 @@ def _geometric_phase(
             continue
         records.append(_record_edit(mesh, proposal, ids, edit, impact, residual, ledger))
         claimed |= ring
-        accepted += 1
-    return records, accepted
+    return records
 
 
 class _Regions:
@@ -527,7 +517,6 @@ def _region_phase(
     mesh: _WorkingMesh,
     requested: Sequence[RegionSplitProposal],
     ledger: _Ledger,
-    budget: int,
     /,
 ) -> tuple[list[SurfaceEventRecord], _Regions, np.ndarray]:
     """Split labels left in several components; returns records, table and face labels.
@@ -562,7 +551,6 @@ def _region_phase(
     volumes, _ = _component_volumes(points, faces, labels, component)
     side_labels = labels.reshape(-1)
     side_faces = np.repeat(mesh.face_ids[faces_alive], 2)
-    explicit_accepted = 0
     for region, explicit in sorted(targets.items()):
         sides = np.flatnonzero(side_labels == region)
         parts = np.unique(component[sides])
@@ -573,10 +561,6 @@ def _region_phase(
         if bool(mesh.region_finite[region]) and np.any(volumes[parts] <= 0.0):
             records.append(_region_record(SurfaceEventStatus.SUPPORT_INVALID))
             continue
-        if explicit and explicit_accepted >= budget:
-            records.append(_region_record(SurfaceEventStatus.EVENT_BUDGET_EXCEEDED))
-            continue
-        explicit_accepted += int(explicit)
         first_face = [
             int(np.min(side_faces[sides[component[sides] == part]])) for part in parts
         ]
@@ -803,6 +787,57 @@ def _velocity_reconstruction(
     )
 
 
+def _rebase_source_state(
+    topology: MultiRegionSurfaceTopology,
+    state: MultiRegionSurfaceState,
+    plan: MultiRegionSurfaceCapacityPlan,
+    /,
+) -> tuple[MultiRegionSurfaceTopology, MultiRegionSurfaceState]:
+    """Reprepare an unchanged source on grown private shapes for atomic commit."""
+    if plan.plan_id == topology.plan.plan_id:
+        return topology, state
+    source = MultiRegionSurfaceTopology(
+        plan,
+        topology.host_faces(),
+        topology.host_face_labels(),
+        topology.region_ids,
+        topology.region_kinds,
+        vertex_count=topology.vertex_count,
+        vertex_global_ids=np.asarray(
+            topology.vertex_global_ids[: topology.vertex_count], dtype=np.int64
+        ),
+        face_global_ids=np.asarray(
+            topology.face_global_ids[: topology.face_count], dtype=np.int64
+        ),
+        epoch=topology.epoch,
+        domain=topology.domain,
+    )
+    positions = np.zeros((plan.vertex_capacity, 3), dtype=np.asarray(state.positions).dtype)
+    velocities = np.zeros_like(positions)
+    positions[: topology.vertex_capacity] = np.asarray(state.positions)
+    velocities[: topology.vertex_capacity] = np.asarray(state.velocities)
+    slots = plan.maximum_vertex_region_pairs
+    fields = len(state.sheet_field_names)
+    sheet = np.zeros(
+        (plan.vertex_capacity, slots, fields), dtype=np.asarray(state.sheet_fields).dtype
+    )
+    sheet[: topology.vertex_capacity, : topology.slot_width] = np.asarray(state.sheet_fields)
+    region_fields = np.zeros(
+        (plan.region_capacity, len(state.region_field_names)),
+        dtype=np.asarray(state.region_fields).dtype,
+    )
+    region_fields[: topology.region_capacity] = np.asarray(state.region_fields)
+    return source, MultiRegionSurfaceState(
+        source,
+        positions,
+        velocities=velocities,
+        sheet_fields=sheet,
+        region_fields=region_fields,
+        sheet_field_names=state.sheet_field_names,
+        region_field_names=state.region_field_names,
+    )
+
+
 def _assemble(
     topology: MultiRegionSurfaceTopology,
     state: MultiRegionSurfaceState,
@@ -812,8 +847,8 @@ def _assemble(
     ledger: _Ledger,
     policy: SurfaceEventPolicy,
     /,
-) -> _Candidate | MultiRegionSurfaceCounts:
-    """Candidate topology, exact validation and transfers (or refused counts)."""
+) -> _Candidate:
+    """Grow private topology shapes, then validate and transfer the candidate."""
     order = _region_order(regions)
     rank = np.empty_like(order)
     rank[order] = np.arange(order.size)
@@ -824,20 +859,24 @@ def _assemble(
     faces = compact[mesh.faces[faces_alive]]
     labels = rank[face_labels]
     incidence = _host_incidence(faces, labels, vertices.size)
-    counts = MultiRegionSurfaceCounts(
-        vertex=vertices.size,
-        edge=incidence.edges.shape[0],
-        face=faces.shape[0],
-        region=order.size,
-        region_pair=incidence.region_pairs.shape[0],
-        edge_valence=int(np.max(np.sum(incidence.edge_faces >= 0, axis=1))),
-        vertex_region_pairs=int(np.max(incidence.vertex_slot_count)),
+    mesh.capacity_plan = _grow_surface_capacity(
+        mesh.capacity_plan,
+        vertex_capacity=vertices.size,
+        edge_capacity=incidence.edges.shape[0],
+        face_capacity=faces.shape[0],
+        region_capacity=order.size,
+        region_pair_capacity=incidence.region_pairs.shape[0],
+        maximum_edge_valence=int(
+            np.max(np.sum(incidence.edge_faces >= 0, axis=1), initial=1)
+        ),
+        maximum_vertex_region_pairs=int(
+            np.max(incidence.vertex_slot_count, initial=1)
+        ),
     )
-    if not topology.plan.capacity_evidence(counts).admitted:
-        return counts
+    candidate_plan = mesh.capacity_plan
     kinds = tuple(regions.kinds[index] for index in order.tolist())
     candidate = MultiRegionSurfaceTopology(
-        topology.plan,
+        candidate_plan,
         faces,
         labels,
         [regions.ids[index] for index in order.tolist()],
@@ -849,45 +888,61 @@ def _assemble(
         domain=topology.domain,
     )
     points = mesh.positions[vertices]
-    padded = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
+    padded = np.zeros((candidate.vertex_capacity, 3), dtype=np.float64)
     padded[: vertices.size] = points
     validation = validate_multiregion_surface(
         candidate, MultiRegionSurfaceState(candidate, padded), policy=policy.validation
     )
     if not validation.accepted:
         return _Candidate(candidate, validation, None)
-    source_points = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
+    source_topology, source_state = _rebase_source_state(
+        topology, state, candidate_plan
+    )
+    source_points = np.asarray(
+        source_state.positions[: source_topology.vertex_count], dtype=np.float64
+    )
     parents = np.zeros((candidate.region_capacity,), dtype=np.int64)
     parents[: order.size] = np.asarray(regions.parent, dtype=np.int64)[order]
     sheet = _sheet_transfer(
-        topology, source_points, candidate, points, mesh, faces_alive, parents, ledger
+        source_topology,
+        source_points,
+        candidate,
+        points,
+        mesh,
+        faces_alive,
+        parents,
+        ledger,
     )
-    face = _face_transfer(topology, candidate, points, mesh, faces_alive, parents, ledger)
-    region = _region_transfer(topology, candidate, points, parents)
-    velocity = _velocity_reconstruction(topology, candidate, vertices, ledger)
-    width, fields = topology.slot_width, len(state.sheet_field_names)
-    source_sheet = state.sheet_fields.reshape((topology.vertex_capacity * width, fields))
+    face = _face_transfer(
+        source_topology, candidate, points, mesh, faces_alive, parents, ledger
+    )
+    region = _region_transfer(source_topology, candidate, points, parents)
+    velocity = _velocity_reconstruction(source_topology, candidate, vertices, ledger)
+    width, fields = source_topology.slot_width, len(source_state.sheet_field_names)
+    source_sheet = source_state.sheet_fields.reshape(
+        (source_topology.vertex_capacity * width, fields)
+    )
     target_sheet = sheet.apply(source_sheet)
-    target_region = region.apply(state.region_fields)
-    target_velocity = velocity.apply(state.velocities)
+    target_region = region.apply(source_state.region_fields)
+    target_velocity = velocity.apply(source_state.velocities)
     new_state = MultiRegionSurfaceState(
         candidate,
         padded,
         velocities=target_velocity,
-        sheet_fields=target_sheet.reshape((topology.vertex_capacity, width, fields)),
+        sheet_fields=target_sheet.reshape((candidate.vertex_capacity, width, fields)),
         region_fields=target_region,
-        sheet_field_names=state.sheet_field_names,
-        region_field_names=state.region_field_names,
+        sheet_field_names=source_state.sheet_field_names,
+        region_field_names=source_state.region_field_names,
     )
     transfers = _Transfers(
         state=new_state,
         sheet=sheet,
         face=face,
         sheet_evidence=sheet.evidence(source_sheet, target_sheet) if fields else None,
-        region_evidence=region.evidence(state.region_fields, target_region)
-        if state.region_field_names
+        region_evidence=region.evidence(source_state.region_fields, target_region)
+        if source_state.region_field_names
         else None,
-        velocity_evidence=velocity.evidence(state.velocities, target_velocity),
+        velocity_evidence=velocity.evidence(source_state.velocities, target_velocity),
     )
     return _Candidate(candidate, validation, transfers)
 
@@ -985,12 +1040,13 @@ def apply_surface_events(
     *,
     policy: SurfaceEventPolicy | None = None,
 ) -> SurfaceEventPassResult:
-    """Apply one transactional pass of topology events (host boundary).
+    """Apply one transactional pass of all ordered topology event proposals.
 
-    Proposals of any kind may be mixed; they are evaluated in canonical order
-    independent of the input order. At most ``topology.plan.event_capacity``
-    events are accepted per pass. The result holds the committed candidate or
-    the unchanged source objects, and evidence for every proposal.
+    Proposals are evaluated in canonical order, independent of input order.
+    Complete proposal lists are staged privately; geometry, physical and
+    validation guards decide acceptance without a count-based event allowance.
+    The result holds the committed candidate or unchanged source objects and
+    evidence for every proposal.
     """
     if not isinstance(topology, MultiRegionSurfaceTopology):
         raise TypeError("topology must be a MultiRegionSurfaceTopology.")
@@ -1018,10 +1074,8 @@ def apply_surface_events(
     requested = [p for p in ordered if isinstance(p, RegionSplitProposal)]
     mesh = _working_mesh(topology, state, policy_)
     ledger = _Ledger()
-    records, accepted = _geometric_phase(mesh, geometric, policy_, ledger)
-    region_records, regions, face_labels = _region_phase(
-        mesh, requested, ledger, topology.plan.event_capacity - accepted
-    )
+    records = _geometric_phase(mesh, geometric, policy_, ledger)
+    region_records, regions, face_labels = _region_phase(mesh, requested, ledger)
     records += region_records
     source_points = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
     source_epoch = _epoch(topology, source_points)
@@ -1031,15 +1085,6 @@ def apply_surface_events(
         )
         return SurfaceEventPassResult(topology, state, evidence, None, None, None, None)
     assembled = _assemble(topology, state, mesh, regions, face_labels, ledger, policy_)
-    if isinstance(assembled, MultiRegionSurfaceCounts):
-        evidence = _evidence(
-            SurfaceEventPassStatus.CAPACITY_EXCEEDED,
-            records,
-            policy_,
-            source_epoch,
-            capacity=topology.plan.capacity_evidence(assembled),
-        )
-        return SurfaceEventPassResult(topology, state, evidence, None, None, None, None)
     candidate = assembled
     target_points = np.asarray(
         mesh.positions[np.flatnonzero(mesh.vertex_alive[: mesh.vertex_count])],
@@ -1070,8 +1115,11 @@ def apply_surface_events(
             target_epoch=target_epoch,
         )
         return SurfaceEventPassResult(topology, state, evidence, None, None, None, None)
+    _, commit_source = _rebase_source_state(
+        topology, state, candidate.topology.plan
+    )
     transaction = TransactionalCandidate(
-        _payload(state),
+        _payload(commit_source),
         _payload(transfers.state),
         candidate.validation,
         _accepted_flag(transfers),

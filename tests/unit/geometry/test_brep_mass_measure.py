@@ -1,0 +1,194 @@
+from math import pi
+
+import numpy as np
+
+from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry.brep._assembly import (
+    BRepAffinePlacement,
+    BRepAssemblyGraph,
+    BRepAssemblyUse,
+)
+from phydrax.geometry.brep._boolean import boolean_brep
+from phydrax.geometry.brep._constructors import (
+    brep_box,
+    brep_revolution,
+    brep_sphere,
+    PlanarProfile,
+    ProfileLoop,
+    ProfilePlane,
+)
+from phydrax.geometry.brep._defeature import _hole_wall_data, brep_defeature
+from phydrax.geometry.brep._measure import (
+    brep_mass_properties,
+    brep_shell_volume_sign,
+)
+from phydrax.geometry.brep._model import BRepGeometry, BRepModel
+from phydrax.geometry.brep._patches import PlanePatch, RevolutionSurface
+
+
+_COORDINATES = SpatialCoordinateContract.si()
+
+
+def _contains(bounds: np.ndarray, reference: float, /) -> None:
+    assert bounds[0] <= reference <= bounds[1]
+
+
+def _with_assembly_graph(model: BRepModel, graph: BRepAssemblyGraph, /) -> BRepModel:
+    source = model.geometry
+    geometry = BRepGeometry(
+        vertex_points=source.vertex_points,
+        vertex_exact_points=source.vertex_exact_points,
+        vertex_roots=source.vertex_roots,
+        edge_endpoint_roots=source.edge_endpoint_roots,
+        coedge_endpoint_roots=source.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=source.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=source.edge_face_gap_bounds,
+        curves=source.curves,
+        edge_curves=source.edge_curves,
+        edge_ranges=source.edge_ranges,
+        edge_vertices=source.edge_vertices,
+        pcurves=source.pcurves,
+        coedge_edges=source.coedge_edges,
+        coedge_senses=source.coedge_senses,
+        face_loops=source.face_loops,
+        shell_faces=source.shell_faces,
+        shell_orientations=source.shell_orientations,
+        solid_shells=source.solid_shells,
+        assembly_graph=graph,
+    )
+    return BRepModel(
+        geometry=geometry,
+        patches=model.patches,
+        parameter_bounds=np.asarray(model.parameter_bounds),
+        orientation=np.asarray(model.orientation),
+        physical_tags=model.physical_tags,
+        coordinate_contract=model.coordinate_contract,
+        report=model.report,
+        trim_domains=model.trim_domains,
+    )
+
+
+def test_box_measure_is_source_bound_and_shell_sign_remains_distinct() -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 2.0, 3.0),
+        coordinate_contract=_COORDINATES,
+    )
+
+    measured = brep_mass_properties(model, subdivisions=4)
+
+    assert measured.status == ("certified",)
+    assert measured.model_id == model.model_id
+    assert measured.solid_ids[0].source_revision == model.source_revision
+    assert measured.solid_ids[0].occurrence_path == ("solid-0",)
+    _contains(np.asarray(measured.volume_enclosures)[0], 6.0)
+    assert brep_shell_volume_sign(model, 0) == 1
+
+
+def test_curved_sphere_volume_encloses_independent_analytic_reference() -> None:
+    model = brep_sphere(1.0, coordinate_contract=_COORDINATES)
+
+    measured = brep_mass_properties(model, subdivisions=12)
+
+    assert measured.status == ("certified",), measured.reasons
+    _contains(np.asarray(measured.volume_enclosures)[0], 4.0 * pi / 3.0)
+
+
+def test_hollow_boolean_measure_subtracts_oriented_cavity_shell() -> None:
+    outer = brep_box(
+        (0.0, 0.0, 0.0),
+        (2.0, 2.0, 2.0),
+        coordinate_contract=_COORDINATES,
+    )
+    inner = brep_box(
+        (0.5, 0.5, 0.5),
+        (1.5, 1.5, 1.5),
+        coordinate_contract=_COORDINATES,
+    )
+    result = boolean_brep(outer, inner, "difference")
+    assert result.model is not None
+
+    measured = brep_mass_properties(result.model, subdivisions=4)
+
+    assert measured.status == ("certified",), measured.reasons
+    _contains(np.asarray(measured.volume_enclosures)[0], 7.0)
+
+
+def test_assembly_measure_applies_exact_placement_per_occurrence() -> None:
+    definition = brep_box(
+        (0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=_COORDINATES
+    )
+    reflected_scale = BRepAffinePlacement.from_matrix(
+        ((-2, 0, 0, 10), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    graph = BRepAssemblyGraph(
+        roots=(
+            BRepAssemblyUse("unit-copy", solid_index=0),
+            BRepAssemblyUse("reflected-double", placement=reflected_scale, solid_index=0),
+        ),
+        definitions=(),
+        solid_count=1,
+    )
+    assembly = _with_assembly_graph(definition, graph)
+
+    measured = brep_mass_properties(assembly, subdivisions=2)
+
+    assert measured.status == ("certified", "certified")
+    bounds = np.asarray(measured.volume_enclosures)
+    _contains(bounds[0], 6.0)
+    _contains(bounds[1], 12.0)
+    assert measured.occurrence_paths == (("unit-copy",), ("reflected-double",))
+    assert measured.solid_ids[0].index == measured.solid_ids[1].index == 0
+    assert measured.solid_ids[0].occurrence_path != measured.solid_ids[1].occurrence_path
+
+
+def test_missing_curved_source_trim_reports_unsupported_without_finite_result() -> None:
+    source = brep_sphere(1.0, coordinate_contract=_COORDINATES)
+    face = next(
+        index
+        for index, patch in enumerate(source.patches)
+        if not isinstance(patch, PlanePatch)
+    )
+    trims = list(source.trim_domains)
+    trims[face] = None
+    incomplete = BRepModel(
+        geometry=source.geometry,
+        patches=source.patches,
+        parameter_bounds=np.asarray(source.parameter_bounds),
+        orientation=np.asarray(source.orientation),
+        physical_tags=source.physical_tags,
+        coordinate_contract=source.coordinate_contract,
+        report=source.report,
+        trim_domains=tuple(trims),
+    )
+
+    measured = brep_mass_properties(incomplete, subdivisions=4)
+
+    assert measured.status == ("unsupported",)
+    assert measured.reasons[0]
+    assert np.all(np.isinf(np.asarray(measured.volume_enclosures)[0]))
+    assert np.isnan(np.asarray(measured.volume)[0])
+
+
+def test_conical_hole_defeature_publishes_measured_shape_change() -> None:
+    profile = PlanarProfile(
+        ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        ProfileLoop.polygon(((0.5, 0.0), (2.0, 0.0), (2.0, 1.0), (0.75, 1.0))),
+    )
+    source = brep_revolution(
+        profile, (0.0, 0.0), (0.0, 1.0), coordinate_contract=_COORDINATES
+    )
+    face = next(
+        index
+        for index, patch in enumerate(source.patches)
+        if isinstance(patch, RevolutionSurface)
+        and (wall := _hole_wall_data(source, index)) is not None
+        and wall.family == "revolved-cone"
+    )
+
+    result = brep_defeature(source, source.face_ids[face], operation="hole")
+
+    assert result.status == "certified", result.reason
+    assert result.volume_kind == "enclosed"
+    expected = pi * (0.5**2 + 0.5 * 0.75 + 0.75**2) / 3.0
+    _contains(np.asarray(result.volume_change_enclosure), expected)

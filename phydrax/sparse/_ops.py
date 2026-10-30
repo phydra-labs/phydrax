@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import prod
 from typing import Any, Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -39,6 +40,20 @@ def _expanded_mask(valid: Array, payload_ndim: int, /) -> Array:
     return valid.reshape(valid.shape + (1,) * int(payload_ndim))
 
 
+def _zero_endpoint_routes(
+    valid: Array,
+    output_shape: tuple[int, ...],
+    dtype: jnp.dtype,
+    /,
+) -> Array:
+    result = jnp.zeros(output_shape, dtype=dtype)
+    return eqx.error_if(
+        result,
+        jnp.any(valid),
+        "A zero-sized relation endpoint cannot contain valid routes.",
+    )
+
+
 def mask_routes(relation: SparseRelation, values: Any, /) -> Any:
     """Make invalid route payloads numerically inert without changing their layout."""
     route_shape = relation.route_shape
@@ -64,6 +79,10 @@ def _gather_indexed_leaf(
 ) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix(name, array, input_shape)
+    if input_shape and input_shape[0] == 0:
+        return _zero_endpoint_routes(
+            valid, tuple(indices.shape) + payload_shape, array.dtype
+        )
     safe = jnp.where(valid, indices, 0)
     gathered = (
         jax.lax.map(lambda index: array[index], safe)
@@ -103,6 +122,12 @@ def _gather_row_events(
 def _gather_row_leaf(relation: RowRelation, value: Any, /, *, ordered: bool) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix("Row source values", array, relation.input_shape)
+    if relation.source_size == 0:
+        return _zero_endpoint_routes(
+            relation.valid,
+            relation.route_shape + payload_shape,
+            array.dtype,
+        )
     flattened = array.reshape((relation.num_cases, relation.source_size) + payload_shape)
     events = jnp.where(relation.valid, relation.source_indices, 0).reshape(
         (relation.num_cases, relation.targets_per_case * relation.width)
@@ -186,6 +211,8 @@ def _finalize_reduction(
 
 def _edge_counts(relation: EdgeRelation, /) -> Array:
     """Exact number of valid routes of every edge-relation target."""
+    if relation.target_size == 0:
+        return _zero_endpoint_routes(relation.valid, (0,), jnp.dtype(jnp.int32))
     return jax.ops.segment_sum(
         relation.valid.astype(jnp.int32),
         jnp.where(relation.valid, relation.target_indices, 0),
@@ -202,6 +229,10 @@ def _reduce_edge_leaf(
 ) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix("Edge route values", array, relation.route_shape)
+    if relation.target_size == 0:
+        return _zero_endpoint_routes(
+            relation.valid, relation.output_shape + payload_shape, array.dtype
+        )
     payload_ndim = len(payload_shape)
     valid = _expanded_mask(relation.valid, payload_ndim)
     safe_target = jnp.where(relation.valid, relation.target_indices, 0)

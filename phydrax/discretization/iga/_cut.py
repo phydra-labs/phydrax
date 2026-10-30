@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import ConvertibleToArray
 
 
 _INSIDE = 1
@@ -27,7 +28,9 @@ _BOUNDARY = 0
 _OUTSIDE = -1
 
 
-def _finite_array(value: ArrayLike, shape_tail: tuple[int, ...], name: str) -> np.ndarray:
+def _finite_array(
+    value: ConvertibleToArray, shape_tail: tuple[int, ...], name: str
+) -> np.ndarray:
     array = np.asarray(value, dtype=np.float64)
     if array.ndim < len(shape_tail) or array.shape[-len(shape_tail) :] != shape_tail:
         raise ValueError(f"{name} must end in shape {shape_tail}.")
@@ -112,7 +115,7 @@ class UVTrimLoop(StrictModule, NonTrainableState):
     orientation: int = eqx.field(static=True)
     loop_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, /) -> None:
+    def __init__(self, vertices: ConvertibleToArray, /) -> None:
         vertices_ = _finite_array(vertices, (2,), "UV loop vertices")
         if vertices_.ndim != 2 or vertices_.shape[0] < 3:
             raise ValueError("A UV trim loop requires at least three rank-2 vertices.")
@@ -292,7 +295,7 @@ class UVTrimmedSurface(StrictModule, NonTrainableState):
             }
         )
 
-    def classify(self, uv_points: ArrayLike, /) -> Array:
+    def classify(self, uv_points: ConvertibleToArray, /) -> Array:
         """Return +1 inside, 0 on a loop, and -1 outside without sampling masks."""
 
         points = _finite_array(uv_points, (2,), "UV classification points")
@@ -919,7 +922,7 @@ def build_trimmed_surface_quadrature(
         raise ValueError("The supplied cells do not intersect the trimmed domain.")
 
     clipped_segments: dict[
-        tuple[float, ...], tuple[int, int, np.ndarray, np.ndarray]
+        tuple[str, int, float, float], tuple[int, int, np.ndarray, np.ndarray]
     ] = {}
     for loop_id, loop in enumerate(loops):
         vertices = np.asarray(loop.vertices)
@@ -933,7 +936,12 @@ def build_trimmed_surface_quadrature(
                 if clipped is None:
                     continue
                 segment = np.stack(clipped)
-                key = tuple(np.round(segment.reshape((-1,)), 14))
+                axis = int(np.argmax(np.abs(direction)))
+                first_parameter = float(
+                    (segment[0, axis] - start[axis]) / direction[axis]
+                )
+                last_parameter = float((segment[1, axis] - start[axis]) / direction[axis])
+                key = (loop.loop_id, edge_id, first_parameter, last_parameter)
                 previous = clipped_segments.get(key)
                 candidate = (cell_id, loop_id, segment, normal)
                 if previous is None or cell_id < previous[0]:

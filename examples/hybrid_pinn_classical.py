@@ -538,7 +538,10 @@ def classical_field(
     reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
         region.space, "u", value_port=TEMPERATURE
     )
-    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    geometry = reconstruction.support_geometry
+    if not isinstance(geometry, phx.geometry.CompiledGeometry):
+        raise TypeError("Finite-element reconstruction requires compiled geometry support.")
+    domain = phx.domain.GeometryDomain(geometry, label="x")
     return phx.discretization.DiscreteFieldFunctionView(
         reconstruction,
         region.problem.expand(state),

@@ -20,7 +20,7 @@ from .._cell_mesh import CellMesh
 
 
 class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
-    """Certified fixed-capacity planar-face polyhedral FV geometry."""
+    """Certified planar-face polyhedral FV geometry."""
 
     cell_volumes: Array
     cell_centers: Array
@@ -46,7 +46,6 @@ def prepare_polyhedral_finite_volume_geometry(
     *,
     planarity_tolerance: float = 1.0e-10,
     closure_tolerance: float = 1.0e-10,
-    maximum_workset_entries: int = 100_000_000,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
     """Prepare Newell/divergence geometry from canonical polyhedral connectivity."""
     if not isinstance(mesh, CellMesh) or not isinstance(
@@ -66,10 +65,7 @@ def prepare_polyhedral_finite_volume_geometry(
         raise ValueError("Polyhedral geometry tolerances must be positive and finite.")
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     connectivity = mesh.connectivity
-    worksets = prepare_polyhedral_worksets(
-        connectivity,
-        maximum_entries=maximum_workset_entries,
-    )
+    worksets = prepare_polyhedral_worksets(connectivity)
     face_vertices = np.asarray(worksets.face_vertices, dtype=np.int32)
     face_valid = np.asarray(worksets.face_vertex_valid, dtype=np.bool_)
     face_count, max_vertices = face_vertices.shape
@@ -189,7 +185,6 @@ def prepare_polyhedral_finite_volume_geometry(
             "mesh": mesh.mesh_id,
             "planarity_tolerance": planarity,
             "closure_tolerance": closure,
-            "maximum_workset_entries": int(maximum_workset_entries),
         }
     )
     return PreparedPolyhedralFiniteVolumeGeometry(

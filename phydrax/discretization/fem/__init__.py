@@ -35,7 +35,13 @@ from ._constraints import (
     FiniteElementLinearConstraint,
     periodic_constraint,
 )
-from ._de_rham import FiniteElementDeRhamComplex
+from ._de_rham import (
+    DistributedFiniteElementTransfer,
+    FiniteElementDeRhamComplex,
+    FiniteElementTransferResult,
+    SparseCommutingEvidence,
+    SparseTransferEntryEvidence,
+)
 from ._distributed import (
     CostAwareFiniteElementPartition,
     distributed_finite_element_mortar_plan,
@@ -44,6 +50,8 @@ from ._distributed import (
     DistributedFiniteElementOperator,
     finite_element_partition_workset_plan,
     FiniteElementDistributedPhasePlan,
+    FiniteElementDofIdentityPlan,
+    FiniteElementDofOwnership,
     FiniteElementFacetOwnershipPlan,
     FiniteElementHaloPlan,
     FiniteElementHPPartitionPlan,
@@ -239,12 +247,14 @@ from ._recovery import (
     recovery_error_estimate,
 )
 from ._reference import (
+    canonical_nodal_entity_identity,
     discontinuous_element,
     ElementConformity,
     ElementContinuity,
     ElementMapping,
     FiniteElementSpec,
     lagrange_element,
+    lagrange_reference_node_data,
 )
 from ._reference_operator import (
     FiniteElementFacetReference,
@@ -300,6 +310,23 @@ from ._spectral_hp_io import (
     write_adaptive_xdmf,
     write_hp_forest,
 )
+from ._sphere_chart_transfer import (
+    prepare_sphere_chart_compatible_transfer,
+    prepare_sphere_chart_field_transfer,
+    prepare_sphere_chart_finite_volume_contents,
+    PreparedSphereChartCompatibleTransfer,
+)
+from ._surface_chart_compatible import (
+    prepare_surface_chart_compatible_transfer,
+    PreparedSurfaceChartCompatibleTransfer,
+)
+from ._surface_chart_transfer import (
+    prepare_surface_chart_field_transfer,
+    prepare_surface_chart_finite_volume_contents,
+    PreparedSurfaceChartFieldTransfer,
+    PreparedSurfaceChartFiniteVolumeContents,
+    SurfaceChartFieldSemantics,
+)
 from ._topology_transfer import (
     FiniteElementL2Projection,
     FiniteElementTopologyTransfer,
@@ -317,6 +344,15 @@ __all__ = [
     "ElementContinuity",
     "ElementMapping",
     "FiniteElementDeRhamComplex",
+    "DistributedFiniteElementTransfer",
+    "FiniteElementTransferResult",
+    "SparseCommutingEvidence",
+    "SparseTransferEntryEvidence",
+    "PreparedSphereChartCompatibleTransfer",
+    "PreparedSurfaceChartCompatibleTransfer",
+    "PreparedSurfaceChartFieldTransfer",
+    "PreparedSurfaceChartFiniteVolumeContents",
+    "SurfaceChartFieldSemantics",
     "FormBasis",
     "FormElementFamily",
     "FormFieldReconstructionKernel",
@@ -347,6 +383,7 @@ __all__ = [
     "FiniteElementEnrichment",
     "FiniteElementErrorEstimate",
     "FiniteElementFacetOwnershipPlan",
+    "FiniteElementHaloPlan",
     "FiniteElementFacetReference",
     "FiniteElementFieldReconstructionKernel",
     "FiniteElementFieldSpec",
@@ -376,7 +413,9 @@ __all__ = [
     "FiniteElementHPTransferKind",
     "FiniteElementHPTransferPlan",
     "FiniteElementHPWorksetPlan",
-    "FiniteElementHaloPlan",
+    "FiniteElementDofIdentityPlan",
+    "FiniteElementDofOwnership",
+    "finite_element_dof_identity_plan",
     "FiniteElementImmersedMarkerMapPlan",
     "FiniteElementL2Projection",
     "FiniteElementLinearConstraint",
@@ -489,6 +528,7 @@ __all__ = [
     "constrain_masked_dofs",
     "dirichlet_constraint",
     "discontinuous_element",
+    "canonical_nodal_entity_identity",
     "distributed_finite_element_mortar_plan",
     "dorfler_mark",
     "dual_weighted_residual_estimate",
@@ -512,6 +552,7 @@ __all__ = [
     "initial_finite_element_hp_topology",
     "lagrange_1d_tabulation",
     "lagrange_element",
+    "lagrange_reference_node_data",
     "local_diagonal",
     "local_dual_weighted_residual",
     "low_order_auxiliary_preconditioner_builder",
@@ -530,6 +571,12 @@ __all__ = [
     "prepare_gradient_recovery",
     "prepare_l2_projection_target",
     "prepare_l2_projection_transfer",
+    "prepare_sphere_chart_compatible_transfer",
+    "prepare_sphere_chart_field_transfer",
+    "prepare_sphere_chart_finite_volume_contents",
+    "prepare_surface_chart_compatible_transfer",
+    "prepare_surface_chart_field_transfer",
+    "prepare_surface_chart_finite_volume_contents",
     "prepare_maxwell_mortar_interface_trace_3d",
     "prepare_multi_field_finite_element_hp_epoch",
     "prepare_scalar_mortar_interface_trace_3d",

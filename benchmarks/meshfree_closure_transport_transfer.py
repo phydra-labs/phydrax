@@ -1661,7 +1661,6 @@ def merge_capacity_plan(
         maximum_edge_valence=3,
         maximum_vertex_region_pairs=9,
         resource_id="q13-merge",
-        event_capacity=16,
     )
 
 
@@ -1672,7 +1671,7 @@ def pinch_seed(ring_points: int, rows: int, /) -> MultiRegionSurfaceSeed:
 def pinch_capacity_plan(
     seed: MultiRegionSurfaceSeed, /
 ) -> MultiRegionSurfaceCapacityPlan:
-    return seed.capacity_plan(resource_id="q13-pinch", headroom=2.0, event_capacity=32)
+    return seed.capacity_plan(resource_id="q13-pinch", headroom=2.0)
 
 
 def _surfactant_state(

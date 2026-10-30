@@ -538,7 +538,6 @@ def _execute_remesh(
 ) -> CellMeshingResult:
     source = plan.source
     surface = plan.specification.surface
-    limits = surface.limits
     background = plan.background_metric
     geometry_order = surface.target.geometry_order
     closed = bool(source.audit().closed)
@@ -551,18 +550,8 @@ def _execute_remesh(
     order = np.argsort(node_tags, kind="stable")
     node_tags = node_tags[order]
     points = np.asarray(node_coordinates, dtype=np.float64).reshape((-1, 3))[order]
-    if points.shape[0] > limits.maximum_vertices:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_vertices.",
-        )
     top = _element_rows(gmsh, 2, geometry_order)
     cell_count = sum(rows.tags.size for rows in top)
-    if cell_count > limits.maximum_cells:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_cells.",
-        )
     if len(top) != 1 or top[0].cell_kind != "triangle":
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
@@ -611,6 +600,7 @@ def _execute_remesh(
     )
     audit, compliance = _audit_gmsh_mesh(
         surface,
+        plan.source,
         plan.specification.specification_id,
         curved.geometry,
         organization,
@@ -645,8 +635,6 @@ def _execute_remesh(
         version,
         MeshingExecutionMode.IN_PROCESS,
         deterministic=plan.options.num_threads == 1,
-        enforced_limits=("vertices", "cells"),
-        unenforced_limits=("provider_workspace", "converted_arrays", "wall_time"),
     )
     provenance = SemanticProvenance(
         {

@@ -109,6 +109,7 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
         binding = reconstruction._side(side)
         host = _host_points(points, reconstruction.physical_dimension)
         query = reconstruction._points(jnp.asarray(host))
+        reconstruction._require_support_binding()
         route, evidence = reconstruction.kernel.locate(query, index, binding)
         valid = np.asarray(evidence.valid)
         admitted = np.flatnonzero(valid).astype(np.int32)

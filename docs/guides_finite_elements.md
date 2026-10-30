@@ -240,6 +240,35 @@ lineage that `FiniteElementTopologyTransaction.execute(accepted, mesh,
 adaptation)` consumes as a single-device accepted topology transaction. Failed
 material transfer or certification preserves the accepted state.
 
+`FiniteElementAcceptedState` binds each coefficient array to a
+`FiniteElementAcceptedFieldLayout`, which records its canonical
+`FiniteElementFieldSpec` and storage convention. A form-basis layout must
+explicitly declare `periodic_quotient=True` for quotient coefficients or
+`False` for lifted coefficients; adaptation never infers that distinction from
+array length. Exact topology transitions carry reference-cell maps into the
+finite-element transfer. Periodic quotient fields use the quotient transfer
+and retain its descent proof; unsupported or failed transfer/certification
+leaves the previously accepted state intact. Restart readers receive the same
+field layouts and reject a layout-identity mismatch.
+
+`FiniteElementDeRhamComplex.transfer(...)` returns a
+`FiniteElementTransferResult`: `.complex_map` supplies the action, while sparse
+entry-error and commuting-residual evidence retain the strength of that action.
+Nonconstant-denominator rational reference charts require an explicit
+`CurvedOverlapIntegrationPolicy`; exact polynomial moments do not. Periodic
+transfers retain both their lifted and quotient transfer results, and distributed
+transfers retain the underlying result. None of these algebraic actions alone
+proves physical coverage or conservation.
+
+`FiniteElementTopologyTransaction(..., integration_policy=...)` passes that
+policy to canonical form transfers. Its result retains `field_transfers` on
+commit and on later rollback, so rejecting a candidate does not erase completed
+transfer evidence. A native transfer refusal retains its reason when no explicit
+field-transfer callback is supplied. Accepted-state recipes rebuild the same
+canonical field and element identities; they do not infer lifted versus quotient
+storage from array dimensions.
+
+
 `FiniteElementTopologyTransfer` stores the primal coefficient map (target DOFs by
 source DOFs) either as one `SparseLinearMap` with O(targets x stencil width)
 memory or as a linear operator whose action couples every DOF. `apply` is the
@@ -330,13 +359,14 @@ Rejected attempts do not increment state or material versions.
 
 ## CAD meshing and prepared cell maps
 
-`phydrax.meshing.GmshProvider` owns Gmsh construction from a reopenable,
-revision-checked `BRepModel` or solid `BRepSource`. Native specifications are separate from
-`GmshOptions`. Audited results retain `CellMesh`, independent `CellGeometrySpec`,
-source associations, compliance, and an execution trace; FEM consumes these
-artifacts rather than a solver-specific meshing API. There is no query-
-tessellation fallback or differentiable host remeshing. Provider preflight
-rejects unsupported controls. See [Meshing](guides_meshing.md).
+`phydrax.meshing.GmshProvider` constructs from a `BRepModel` or solid `BRepSource`,
+exports the immutable model to native BRep text, and requires an exact
+`source_revision` round trip. Native specifications are separate from `GmshOptions`.
+Audited results retain `CellMesh`, independent `CellGeometrySpec`, source
+associations, compliance, and an execution trace; FEM consumes these artifacts
+rather than a solver-specific meshing API. There is no query-tessellation fallback
+or differentiable host remeshing. Provider preflight rejects unsupported controls.
+See [Meshing](guides_meshing.md).
 
 `prepare_finite_element_cell_map(discretization, block_index)` freezes the
 coordinate element and gathers while keeping coordinates, cell indices and
@@ -364,6 +394,9 @@ Quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
 Support geometry still follows exact region admission: warped hex needs an
 explicit curved witness. Prepared quadrature/node interpolation also supports
 physical derivatives with `derivative_axis=`.
+Compiled support geometry is bound by its content, including its kernel,
+design state, tolerance, and field certificate; finite-element and
+finite-volume reconstruction use the same identity.
 
 A view binds coefficients to an explicit, equivalent `GeometryDomain`:
 

@@ -312,9 +312,7 @@ def test_native_route_message_passing_scenario_1() -> None:
             apply(_padded(graph)), apply(graph), rtol=1e-14, atol=1e-14
         )
     relation = phx.sparse.EdgeRelation(
-        # ty: ignore[invalid-argument-type]
         [0, -5, 2, 1],
-        # ty: ignore[invalid-argument-type]
         [1, 9, 0, 0],
         source_size=3,
         target_size=3,
@@ -334,7 +332,6 @@ def test_native_route_message_passing_scenario_1() -> None:
         phx.sparse.gather_routes(view, graph.nodes),
         phx.sparse.gather_routes(relation, graph.nodes),
     )
-    # ty: ignore[invalid-argument-type]
     rectangular = phx.sparse.EdgeRelation([0], [1], source_size=1, target_size=2)
 
     with pytest.raises(ValueError, match="one node space"):

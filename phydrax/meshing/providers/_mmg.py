@@ -48,7 +48,6 @@ from .._contracts import (
     MeshingExecutionMode,
     MeshingFailure,
     MeshingFailureCategory,
-    MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
@@ -69,7 +68,7 @@ from .._trace import (
     MeshingStageStatus,
     MeshingTrace,
 )
-from ._conversion import _check_arrays, _check_result_limits, _fresh_ids
+from ._conversion import _check_arrays, _fresh_ids
 from ._worker import ProviderWorker
 
 
@@ -919,7 +918,6 @@ class MmgAdaptationPlan:
 
     source: CellMeshingResult
     options: MmgOptions
-    limits: MeshingLimits
     audit_policy: CellMeshAuditPolicy
     metric: MeshMetricField | None = None
     level_set: MmgLevelSet | None = None
@@ -936,8 +934,6 @@ class MmgAdaptationPlan:
             raise TypeError("source must be CellMeshingResult.")
         if not isinstance(self.options, MmgOptions):
             raise TypeError("options must be MmgOptions.")
-        if not isinstance(self.limits, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits.")
         if not isinstance(self.audit_policy, CellMeshAuditPolicy):
             raise TypeError("audit_policy must be CellMeshAuditPolicy.")
         if self.metric is not None and not isinstance(self.metric, MeshMetricField):
@@ -1001,7 +997,6 @@ class MmgAdaptationPlan:
                     if self.association_transfer is None
                     else self.association_transfer.transfer_id,
                     "parameters": encoding.parameters,
-                    "limits": self.limits.limits_id,
                     "audit_policy": self.audit_policy.policy_id,
                 }
             ),
@@ -1364,9 +1359,9 @@ def _collect(call: NativeWorkerCall, /) -> _Output:
     )
 
 
-def _compact(output: _Output, backend: str, limits: MeshingLimits, /) -> _Output:
+def _compact(output: _Output, backend: str, /) -> _Output:
     """Drop vertices no cell uses and orient tetrahedra positively."""
-    _check_arrays(output.vertices, output.cells, limits)
+    _check_arrays(output.vertices, output.cells)
     used, remapped = np.unique(output.cells, return_inverse=True)
     cells = remapped.reshape(output.cells.shape)
     vertices = output.vertices[used]
@@ -1859,14 +1854,12 @@ class MmgProvider:
         ridges: MeshingScope | None = None,
         fields: tuple[MeshAttribute, ...] = (),
         options: MmgOptions | None = None,
-        limits: MeshingLimits | None = None,
         audit_policy: CellMeshAuditPolicy | None = None,
         association_transfer: BRepAssociationTransfer | None = None,
     ) -> MmgAdaptationPlan:
         return MmgAdaptationPlan(
             source,
             MmgOptions() if options is None else options,
-            MeshingLimits() if limits is None else limits,
             CellMeshAuditPolicy() if audit_policy is None else audit_policy,
             metric=metric,
             level_set=level_set,
@@ -1889,7 +1882,6 @@ class MmgProvider:
         ridges: MeshingScope | None = None,
         fields: tuple[MeshAttribute, ...] = (),
         options: MmgOptions | None = None,
-        limits: MeshingLimits | None = None,
         audit_policy: CellMeshAuditPolicy | None = None,
         association_transfer: BRepAssociationTransfer | None = None,
     ) -> MmgAdaptationResult:
@@ -1903,7 +1895,6 @@ class MmgProvider:
                 ridges=ridges,
                 fields=fields,
                 options=options,
-                limits=limits,
                 audit_policy=audit_policy,
                 association_transfer=association_transfer,
             )
@@ -1921,7 +1912,7 @@ class MmgProvider:
             program=encoding.program,
         )
         call = self.worker.call(
-            encoding.backend, encoding.parameters, encoding.arrays, limits=plan.limits
+            encoding.backend, encoding.parameters, encoding.arrays
         )
         emit(
             "DEBUG",
@@ -1940,7 +1931,7 @@ class MmgProvider:
     ) -> MmgAdaptationResult:
         encoding = plan._encoding
         source = plan.source
-        output = _compact(_collect(call), encoding.backend, plan.limits)
+        output = _compact(_collect(call), encoding.backend)
         region, side = _decode_regions(encoding, output.cell_references)
         mesh, order = _build_mesh(plan, output, region)
         region, side = region[order], side[order]
@@ -1979,7 +1970,6 @@ class MmgProvider:
                 attributes=attributes,
                 associations=associations,
             )
-        _check_result_limits(certified, plan.limits)
         identity = self.worker.identity
         provider = self.info
         session = MmgSessionEvidence(
@@ -2012,14 +2002,6 @@ class MmgProvider:
                 provider.version,
                 MeshingExecutionMode.SUBPROCESS,
                 deterministic=False,
-                enforced_limits=(
-                    "wall_time",
-                    "exchange_bytes",
-                    self.worker.memory_limit_evidence(),
-                    "output_vertices",
-                    "output_cells",
-                    "output_incidence",
-                ),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             SemanticProvenance(

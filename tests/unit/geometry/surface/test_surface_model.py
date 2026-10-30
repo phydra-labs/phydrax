@@ -18,6 +18,7 @@ from phydrax.geometry.surface import (
     SurfaceFileFormat,
     SurfaceImportPolicy,
     SurfaceOrientationPolicy,
+    SurfaceUnsupportedFormatError,
 )
 from phydrax.geometry.surface._contracts import (
     InterfaceSide,
@@ -113,15 +114,6 @@ def test_surface_model_scenario_1() -> None:
         error.value.report is report or error.value.report.report_id == report.report_id
     )
 
-    valid_points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
-    valid = SurfaceModel.from_triangles(
-        valid_points, np.asarray(((0, 1, 2),), dtype=np.int32), _metadata()
-    )
-    with pytest.raises(SurfacePreparationError) as capacity_error:
-        valid.prepare(SurfaceAuditPolicy(maximum_vertices=2))
-    assert capacity_error.value.status is SurfacePreparationStatus.AUDIT_REJECTED
-    # ty: ignore[unresolved-attribute]
-    assert not bool(capacity_error.value.report.capacity_valid)
     points, faces = _tetrahedron()
     nonfinite = points.copy()
     nonfinite[0, 0] = np.nan
@@ -258,3 +250,15 @@ def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(
     )
     with pytest.raises(ValueError, match="maximum_file_bytes"):
         SurfaceExportPolicy(METER, maximum_file_bytes=0)
+
+
+def test_triangle_surface_cad_export_refuses(tmp_path: Any) -> None:
+    points, faces = _tetrahedron()
+    model = SurfaceModel.from_triangles(points, faces, _metadata())
+    with pytest.raises(SurfaceUnsupportedFormatError, match="no exact STEP/IGES"):
+        export_surface(
+            tmp_path / "unsupported.step",
+            model,
+            SurfaceExportPolicy(METER),
+            file_format=SurfaceFileFormat.STEP,
+        )

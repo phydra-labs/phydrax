@@ -116,6 +116,50 @@ def test_active_and_inactive_cell_average_content_round_trip_is_safe() -> None:
     np.testing.assert_allclose(state.conservation_change(state), 0.0)
 
 
+def test_owner_local_integral_excludes_ghost_cells_without_losing_their_state() -> None:
+    average = jnp.asarray(((1.0, 2.0), (3.0, 4.0), (5.0, 6.0)))
+    volumes = jnp.asarray((2.0, 3.0, 4.0))
+    owned = jnp.asarray((True, False, True))
+    state = FiniteVolumeConservativeContentState.from_cell_average(
+        average,
+        volumes,
+        jnp.ones((3,), dtype=jnp.bool_),
+        jnp.asarray(0.0),
+        owned_cell_mask=owned,
+        topology_epoch_id="topology:owner-local",
+        geometry_family_id="geometry-family:owner-local",
+        geometry_layout_id="geometry-layout:owner-local",
+        geometry_version=jnp.asarray(0, dtype=jnp.int32),
+        evidence_policy_id="evidence-policy:owner-local",
+        evidence_version=jnp.asarray(0, dtype=jnp.int32),
+        precision=FiniteVolumePrecisionPolicy(),
+    )
+
+    np.testing.assert_array_equal(state.owned_cell_mask, owned)
+    np.testing.assert_allclose(state.cell_average(), average)
+    np.testing.assert_allclose(state.volume_integral(), (22.0, 28.0))
+
+
+def test_empty_owner_local_content_has_zero_integral() -> None:
+    state = FiniteVolumeConservativeContentState.from_cell_average(
+        jnp.empty((0, 2)),
+        jnp.empty((0,)),
+        jnp.empty((0,), dtype=jnp.bool_),
+        jnp.asarray(0.0),
+        owned_cell_mask=jnp.empty((0,), dtype=jnp.bool_),
+        topology_epoch_id="topology:empty-owner-local",
+        geometry_family_id="geometry-family:empty-owner-local",
+        geometry_layout_id="geometry-layout:empty-owner-local",
+        geometry_version=jnp.asarray(0, dtype=jnp.int32),
+        evidence_policy_id="evidence-policy:empty-owner-local",
+        evidence_version=jnp.asarray(0, dtype=jnp.int32),
+        precision=FiniteVolumePrecisionPolicy(),
+    )
+
+    assert state.cell_count == 0
+    np.testing.assert_array_equal(state.volume_integral(), jnp.zeros((2,)))
+
+
 def test_cell_average_changes_with_volume_while_content_stays_authoritative() -> None:
     original = _state(content=((4.0, 2.0), (3.0, 9.0)), volumes=(2.0, 3.0))
     changed_geometry = FiniteVolumeConservativeContentState(

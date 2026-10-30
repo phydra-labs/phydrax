@@ -14,7 +14,6 @@ from phydrax.sparse import EdgeRelation
 def test_lattice_force_constants_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     blocks = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     raw = blocks.copy()
@@ -57,7 +56,6 @@ def test_lattice_force_constants_scenario_1() -> None:
         cell,
         primitive_system_id="primitive-chain",
     )
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     source, target = image_map.route_supercell_indices(
         relation,

@@ -47,7 +47,7 @@ def test_iga_single_patch_scenario_1() -> None:
     )
     assert prepared.cell_gathers.shape == (1, 9)
     assert prepared.default_runtime.numeric_version == "unit-square"
-    np.testing.assert_allclose(prepared.default_runtime.weights, 1.0)
+    np.testing.assert_allclose(prepared.default_runtime.weights, 3.0)
     assert float(prepared.default_geometry_evidence.minimum_rank_ratio) > 0.0
     assert float(prepared.default_geometry_evidence.minimum_orientation_ratio) > 0.0
 
@@ -91,4 +91,47 @@ def test_iga_single_patch_scenario_1() -> None:
     assert prepared.field_spaces[0].layout.value_shape == (
         quadratic.coefficient_count,
         cubic.coefficient_count,
+    )
+
+def test_nonuniform_raw_weights_survive_runtime_refresh() -> None:
+    grid = iga.BSplineGrid.open_uniform(2, 1)
+    coordinates = grid.greville_abscissae
+    xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
+    control_points = jnp.stack((xx, yy), axis=-1)
+    raw_weights = jnp.arange(1, 17, dtype=jnp.float64).reshape((4, 4)) / 7.0
+    geometry = iga.NURBSGeometryState(control_points, raw_weights)
+    np.testing.assert_array_equal(np.asarray(geometry.weights), np.asarray(raw_weights))
+
+    prepared = iga.IsogeometricPlan.isoparametric(
+        (grid, grid),
+        geometry,
+        axis_names=("xi", "eta"),
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
+    ).prepare(numeric_version="awkward-raw-weights")
+    refreshed_geometry = iga.NURBSGeometryState(control_points, raw_weights * 3.7)
+    refreshed = prepared.prepare_runtime(
+        refreshed_geometry, numeric_version="awkward-scaled-raw-weights"
+    )
+    np.testing.assert_array_equal(np.asarray(refreshed.weights), np.asarray(raw_weights * 3.7))
+    assert refreshed.runtime_id != prepared.default_runtime.runtime_id
+
+    region = prepared.prepare_local_regions(
+        prepared.cell_domain,
+        field_names=("u",),
+        maximum_derivative_order=1,
+        kernel_mode="sum_factorized",
+    )[0]
+    original_metric = region.geometry_actions.realize(prepared.default_runtime)
+    refreshed_metric = region.geometry_actions.realize(refreshed)
+    np.testing.assert_allclose(
+        np.asarray(refreshed_metric.points),
+        np.asarray(original_metric.points),
+        rtol=2.0e-13,
+        atol=2.0e-13,
+    )
+    np.testing.assert_allclose(
+        np.asarray(refreshed_metric.physical_weights),
+        np.asarray(original_metric.physical_weights),
+        rtol=2.0e-13,
+        atol=2.0e-13,
     )

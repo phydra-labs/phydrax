@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
+from ..typing import ConvertibleToArray
 from ._topology import (
     _has_duplicate_rows,
     _row_order,
@@ -89,7 +90,7 @@ def _variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarra
 
 def _validated_cells(
     name: str,
-    value: ArrayLike | None,
+    value: ConvertibleToArray | None,
     arity: int,
     vertex_count: int,
     /,
@@ -294,12 +295,8 @@ class PolyhedralConnectivity(StrictModule, NonTrainableState):
     maximum_cell_vertices: int = eqx.field(static=True)
 
 
-class PolyhedralWorksetLimitError(ValueError):
-    """Raised before a dense polyhedral workset exceeds its declared capacity."""
-
-
 class PolyhedralWorksets(StrictModule, NonTrainableState):
-    """Bounded dense worksets prepared from packed polyhedral incidence."""
+    """Dense cell-local incidence views materialized from packed connectivity."""
 
     face_vertices: Array
     face_vertex_valid: Array
@@ -311,7 +308,6 @@ class PolyhedralWorksets(StrictModule, NonTrainableState):
     cell_face_valid: Array
     cell_vertices: Array
     cell_vertex_valid: Array
-    allocated_entries: int = eqx.field(static=True)
 
 
 def _dense_rows(
@@ -329,24 +325,14 @@ def _dense_rows(
 def prepare_polyhedral_worksets(
     connectivity: PolyhedralConnectivity,
     /,
-    *,
-    maximum_entries: int,
 ) -> PolyhedralWorksets:
-    """Materialize dense incidence only within an aggregate entry budget.
-
-    The budget includes every index, sign, and validity entry in the returned
-    worksets. Capacity is checked before allocating any dense row arrays.
-    """
-
+    """Materialize dense cell-local views of packed polyhedral incidence."""
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("connectivity must be PolyhedralConnectivity.")
-    limit = int(maximum_entries)
-    if limit <= 0:
-        raise ValueError("maximum_entries must be positive.")
-    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
-    face_edge_offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int32)
-    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
-    vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    face_edge_offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int64)
     face_widths = np.diff(face_offsets)
     edge_widths = np.diff(face_edge_offsets)
     cell_widths = np.diff(cell_offsets)
@@ -355,16 +341,6 @@ def prepare_polyhedral_worksets(
     edge_width = int(np.max(edge_widths, initial=0))
     cell_width = int(np.max(cell_widths, initial=0))
     vertex_width = int(np.max(vertex_widths, initial=0))
-    entries = (
-        2 * face_widths.size * face_width
-        + 3 * edge_widths.size * edge_width
-        + 3 * cell_widths.size * cell_width
-        + 2 * vertex_widths.size * vertex_width
-    )
-    if entries > limit:
-        raise PolyhedralWorksetLimitError(
-            f"Dense polyhedral worksets require {entries} entries; limit is {limit}."
-        )
     return PolyhedralWorksets(
         face_vertices=jnp.asarray(
             _dense_rows(
@@ -420,7 +396,6 @@ def prepare_polyhedral_worksets(
         cell_vertex_valid=jnp.asarray(
             np.arange(vertex_width)[None, :] < vertex_widths[:, None]
         ),
-        allocated_entries=entries,
     )
 
 
@@ -435,8 +410,8 @@ def polygonal_connectivity(
     """Build one edge-manifold record for mixed 2-D polygonal cells."""
 
     vertices = int(vertex_count)
-    if vertices <= 0:
-        raise ValueError("vertex_count must be positive.")
+    if vertices < 0:
+        raise ValueError("vertex_count must be nonnegative.")
     triangle_cells = _validated_cells("triangles", triangles, 3, vertices)
     quadrilateral_cells = _validated_cells("quadrilaterals", quadrilaterals, 4, vertices)
     polygon_cells = []
@@ -453,7 +428,7 @@ def polygonal_connectivity(
             )
         )
     blocks = (triangle_cells, quadrilateral_cells, *polygon_cells)
-    if sum(block.shape[0] for block in blocks) == 0:
+    if sum(block.shape[0] for block in blocks) == 0 and vertices != 0:
         raise ValueError("At least one polygonal cell is required.")
     for arity in sorted({block.shape[1] for block in blocks}):
         same_arity = tuple(block for block in blocks if block.shape[1] == arity)
@@ -673,7 +648,7 @@ _POLYHEDRAL_LOOP_DEFECTS = (
 
 
 def _polyhedral_face_loops(
-    cells: Sequence[Sequence[ArrayLike] | tuple[str, ArrayLike]],
+    cells: Sequence[Sequence[ConvertibleToArray] | tuple[str, ConvertibleToArray]],
     vertex_count: int,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -687,7 +662,7 @@ def _polyhedral_face_loops(
 
     entries = tuple(cells)
     standard: dict[int, tuple[str, np.ndarray]] = {}
-    explicit: dict[int, tuple[ArrayLike, ...]] = {}
+    explicit: dict[int, tuple[ConvertibleToArray, ...]] = {}
     for index, entry in enumerate(entries):
         descriptor = (
             isinstance(entry, tuple) and len(entry) == 2 and isinstance(entry[0], str)
@@ -907,7 +882,7 @@ def _first_polyhedral_cell_defect(
 
 
 def polyhedral_connectivity(
-    cells: Sequence[Sequence[ArrayLike] | tuple[str, ArrayLike]],
+    cells: Sequence[Sequence[ConvertibleToArray] | tuple[str, ConvertibleToArray]],
     vertex_count: int,
     /,
     *,
@@ -1081,8 +1056,8 @@ def polyhedral_connectivity(
 def polyhedral_cell_complex(
     value: (
         PolyhedralConnectivity
-        | Sequence[Sequence[ArrayLike]]
-        | Sequence[tuple[str, ArrayLike]]
+        | Sequence[Sequence[ConvertibleToArray]]
+        | Sequence[tuple[str, ConvertibleToArray]]
     ),
     vertex_count: int | None = None,
     /,
@@ -1210,10 +1185,10 @@ def tetrahedral_connectivity(
     """Build canonical oriented connectivity for an affine tetrahedral mesh."""
 
     vertices = int(vertex_count)
-    if vertices <= 0:
-        raise ValueError("vertex_count must be positive.")
+    if vertices < 0:
+        raise ValueError("vertex_count must be nonnegative.")
     cells = _validated_cells("tetrahedra", tetrahedra, 4, vertices)
-    if cells.shape[0] == 0:
+    if cells.shape[0] == 0 and vertices != 0:
         raise ValueError("At least one tetrahedral cell is required.")
 
     # Local faces enumerate (cell, local face) in scan order, so first-appearance
@@ -1675,7 +1650,6 @@ __all__ = [
     "interval_cell_complex",
     "interval_connectivity",
     "PolyhedralConnectivity",
-    "PolyhedralWorksetLimitError",
     "PolyhedralWorksets",
     "prepare_polyhedral_worksets",
     "TetrahedralConnectivity",

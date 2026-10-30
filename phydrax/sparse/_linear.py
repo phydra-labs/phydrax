@@ -176,6 +176,11 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         safe_target = jnp.where(relation.valid, relation.target_indices, 0)
 
         def materialize_one(values: Array) -> Array:
+            if relation.source_size == 0 or relation.target_size == 0:
+                return jnp.zeros(
+                    (relation.target_size, relation.source_size),
+                    dtype=values.dtype,
+                )
             values = jnp.where(
                 relation.valid,
                 values,
@@ -452,6 +457,11 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     def as_dense(self) -> Array:
         relation, coefficients = self._edge_form()
         coefficients = coefficients.astype(self.accumulation_dtype)
+        if relation.source_size == 0 or relation.target_size == 0:
+            return jnp.zeros(
+                (relation.target_size, relation.source_size),
+                dtype=coefficients.dtype,
+            ).astype(_coordinate_dtype(self.target))
         safe_source = jnp.where(relation.valid, relation.source_indices, 0)
         safe_target = jnp.where(relation.valid, relation.target_indices, 0)
         values = jnp.where(
@@ -539,6 +549,9 @@ def _assemble_relation_diagonal(
     coefficients: Array,
     /,
 ) -> Array:
+    batch_shape = coefficients.shape[: -len(relation.route_shape)]
+    if relation.source_size == 0 or relation.target_size == 0:
+        return jnp.zeros(batch_shape + (relation.target_size,), dtype=coefficients.dtype)
     diagonal_entry = relation.valid & (relation.source_indices == relation.target_indices)
     safe_target = jnp.where(diagonal_entry, relation.target_indices, 0)
 
@@ -554,7 +567,6 @@ def _assemble_relation_diagonal(
             .add(values)
         )
 
-    batch_shape = coefficients.shape[: -len(relation.route_shape)]
     if not batch_shape:
         return assemble_one(coefficients)
     flattened = coefficients.reshape((-1,) + relation.route_shape)

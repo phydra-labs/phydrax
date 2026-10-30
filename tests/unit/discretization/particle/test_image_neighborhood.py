@@ -347,11 +347,23 @@ def test_dense_reference_and_cell_list_refuse_unbounded_preparation() -> None:
         ).prepare(_particles(4))
 
 
-def test_image_stencil_is_complete_against_brute_force_and_bounded() -> None:
+def test_image_stencil_is_complete_against_brute_force() -> None:
     cell = PeriodicCell(TRICLINIC)
     radius = 4.4
-    stencil = cell.image_stencil(radius, maximum_image_count=10_000)
+    stencil = cell.image_stencil(radius)
     shifts = {tuple(int(value) for value in row) for row in np.asarray(stencil.shifts)}
+    expected_images = np.asarray(
+        tuple(
+            product(
+                *(
+                    range(-int(extent), int(extent) + 1)
+                    for extent in np.asarray(stencil.extents)
+                )
+            )
+        ),
+        dtype=np.int32,
+    )
+    np.testing.assert_array_equal(stencil.shifts, expected_images)
     box = np.asarray(tuple(product(range(-8, 9), repeat=3)), dtype=np.float64)
     rng = np.random.default_rng(13)
     endpoints = rng.uniform(0.0, 1.0, size=(200, 2, 3)) @ TRICLINIC
@@ -362,8 +374,6 @@ def test_image_stencil_is_complete_against_brute_force_and_bounded() -> None:
         tuple(int(value) for value in box[index]) for index in np.flatnonzero(reachable)
     }
     assert needed <= shifts
-    with pytest.raises(ValueError, match="maximum_image_count"):
-        cell.image_stencil(radius, maximum_image_count=8)
     margin = cell.image_stencil_margin(stencil, TRICLINIC, radius, jnp.ones((3,)))
     assert bool(jnp.all(margin > 0.0))
     shrunk = 0.5 * TRICLINIC
@@ -378,7 +388,6 @@ def test_image_stencil_is_complete_against_brute_force_and_bounded() -> None:
     with pytest.raises(ValueError, match="condition certificate"):
         certified.image_stencil(
             1.0,
-            maximum_image_count=100,
             cell_vectors=np.asarray([[2.0, 0.0, 0.0], [1.99, 0.05, 0.0], [0, 0, 2.0]]),
         )
 
@@ -599,7 +608,7 @@ def test_lattice_failure_is_refused_even_without_active_particles(
     assert not bool(state.capacity_failure)
 
 
-def test_resource_quotas_refuse_before_enumerating_radius_sized_stencils() -> None:
+def test_cell_list_candidate_quota_refuses_before_radius_sized_enumeration() -> None:
     tiny = ParticleImageCapacity(
         maximum_particles_per_cell=1,
         maximum_edges=10,
@@ -608,13 +617,11 @@ def test_resource_quotas_refuse_before_enumerating_radius_sized_stencils() -> No
     )
     tracemalloc.start()
     try:
-        # 61**3 offsets / 71**3 shifts would be enumerated by an eager stencil.
+        # The radius requires a large candidate neighborhood.
         with pytest.raises(ValueError, match="maximum_candidate_slots"):
             CellListParticleImageNeighborhoodPlan(
                 60.0, PeriodicCell(CUBE), tiny, maximum_candidate_slots=10
             ).prepare(_particles(1))
-        with pytest.raises(ValueError, match="maximum_image_count"):
-            PeriodicCell(CUBE, maximum_condition_number=20.0, maximum_image_count=27)
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -743,7 +750,7 @@ def test_host_lattice_coordinates_and_reach_match_dense_reference(
     np.testing.assert_allclose(
         cell.reciprocal_vectors, 2 * np.pi * reference.T, rtol=1e-9
     )
-    stencil = cell.image_stencil(1.3, maximum_image_count=1)
+    stencil = cell.image_stencil(1.3)
     np.testing.assert_allclose(stencil.axis_reach, reach, rtol=1e-9)
     np.testing.assert_allclose(_host_reach(vectors[None]), reach[None], rtol=1e-9)
     singular = vectors.copy()
@@ -751,7 +758,7 @@ def test_host_lattice_coordinates_and_reach_match_dense_reference(
     with pytest.raises(ValueError, match="full row rank"):
         PeriodicCell(singular, periodic_axes=(False,) * rank)
     with pytest.raises(ValueError, match="rank deficient"):
-        cell.image_stencil(1.3, maximum_image_count=1, cell_vectors=singular)
+        cell.image_stencil(1.3, cell_vectors=singular)
     with pytest.raises(ValueError, match="rank deficient"):
         _host_reach(singular[None])
 
@@ -774,7 +781,7 @@ def test_image_stencil_integer_reaches_match_inverse_at_cutoff_boundaries(
             boundary,
             np.nextafter(boundary, np.inf),
         ):
-            stencil = cell.image_stencil(float(radius), maximum_image_count=100_000)
+            stencil = cell.image_stencil(float(radius))
             exact = np.floor(1.0 + radius * reach).astype(int)
             extents = np.asarray(stencil.extents)
             # Sizing headroom never removes a required shell; at these O(1)
@@ -807,7 +814,7 @@ def test_reference_image_stencil_keeps_a_positive_margin_on_its_own_lattice() ->
     )
     radius = 3.19046819940291
     cell = PeriodicCell(vectors)
-    stencil = cell.image_stencil(radius, maximum_image_count=4096)
+    stencil = cell.image_stencil(radius)
     inverse = vectors.T @ np.linalg.inv(vectors @ vectors.T)
     reach = np.sqrt(np.sum(inverse * inverse, axis=0))
     np.testing.assert_allclose(stencil.axis_reach, reach, rtol=1e-12)

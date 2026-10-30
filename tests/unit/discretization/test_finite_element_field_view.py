@@ -18,6 +18,7 @@ from phydrax.discretization import (
     DiscreteFieldFunctionView,
     FieldQueryStatus,
 )
+from phydrax.discretization._mapped_locator import PreparedMappedCellLocator
 from phydrax.discretization.fem import (
     FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
@@ -291,9 +292,7 @@ def test_default_location_finds_generic_interior_points_of_small_meshes() -> Non
     assert isinstance(kernel, FiniteElementFieldReconstructionKernel)
     located = kernel.locator.locate(points)
     # Barycentric weights of the located cell's vertices must rebuild each point.
-    corners = np.asarray(kernel.locator.coordinates)[
-        np.asarray(kernel.locator.cell_map.coordinate_dofs)[np.asarray(located.cell_ids)]
-    ]
+    corners = vertices[cells[np.asarray(located.cell_ids)]]
     barycentric = np.asarray(located.barycentric)
     assert np.all(barycentric >= -1e-12)
     np.testing.assert_allclose(
@@ -324,22 +323,19 @@ def test_location_finds_points_where_curved_cells_bulge_past_their_nodes() -> No
     mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(vertices), jnp.asarray(((0, 1, 2), (3, 4, 5)), dtype=jnp.int32)
     )
-    discretization = phx.discretization.FiniteElementPlan(
+    geometry = phx.discretization.CellGeometrySpec(
+        {"triangles": phx.discretization.lagrange_element("triangle", 2)},
+        {"triangles": jnp.arange(12, dtype=jnp.int32).reshape(2, 6)},
+        jnp.asarray(coordinates),
+    )
+    phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
             "u", phx.discretization.lagrange_element("triangle", 1)
         ),
-        coordinate_spec=phx.discretization.CellGeometrySpec(
-            {"triangles": phx.discretization.lagrange_element("triangle", 2)},
-            {"triangles": jnp.arange(12, dtype=jnp.int32).reshape(2, 6)},
-            jnp.asarray(coordinates),
-        ),
+        coordinate_spec=geometry,
     ).prepare()
-    locator = phx.discretization.PreparedSimplicialCellLocator(
-        phx.discretization.prepare_finite_element_cell_map(discretization, 0),
-        discretization.default_runtime.coordinates,
-        phx.discretization.SimplicialLocationPolicy(2, 32, 1),
-    )
+    locator = PreparedMappedCellLocator.from_cell_geometry(mesh, geometry, 0)
     reference = np.asarray(((0.2, 0.01), (0.3, 0.005), (0.25, 0.3), (0.6, 0.02)))
     straight = np.asarray(((2.3, 0.2),))
     below_curve = np.asarray(((0.5, 0.0),))

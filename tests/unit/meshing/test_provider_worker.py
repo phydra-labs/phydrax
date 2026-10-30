@@ -12,7 +12,7 @@ import pytest
 from phydrax import _config_state, config as pxconfig
 from phydrax._external_exchange import read_exchange, write_exchange
 from phydrax._external_runtime import NativeWorkerPolicy
-from phydrax.meshing import MeshingFailure, MeshingFailureCategory, MeshingLimits
+from phydrax.meshing import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing.providers._worker import ProviderWorker
 
 
@@ -82,6 +82,31 @@ def _worker(tmp_path: Any, mode: Any, **options: Any) -> Any:
         arguments=(mode,),
         **options,
     )
+
+
+def test_native_worker_policy_operation_and_exchange_defaults() -> None:
+    policy = NativeWorkerPolicy()
+
+    assert policy.operation_timeout_seconds == 3600.0
+    assert policy.maximum_input_exchange_bytes == 4_000_000_000
+    assert policy.maximum_output_exchange_bytes == 4_000_000_000
+    assert (
+        NativeWorkerPolicy(operation_timeout_seconds=30.0).policy_id
+        != policy.policy_id
+    )
+
+
+def test_provider_worker_uses_input_exchange_policy(tmp_path: Any) -> None:
+    worker = _worker(
+        tmp_path,
+        "echo",
+        policy=NativeWorkerPolicy(maximum_input_exchange_bytes=4),
+    )
+    try:
+        with pytest.raises(ValueError, match="maximum_input_bytes"):
+            worker.call("scale", {}, {"x": np.ones((1,), dtype=np.float64)})
+    finally:
+        worker.close()
 
 
 @pytest.fixture(autouse=True)
@@ -178,8 +203,8 @@ def test_worker_selection_is_lazy_and_rechecked_for_each_session(
 def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "echo")
     values = np.arange(6, dtype=np.float64).reshape(3, 2)
-    first = worker.call("scale", {"factor": 2}, {"x": values}, limits=MeshingLimits())
-    second = worker.call("scale", {"factor": 2}, {"x": values}, limits=MeshingLimits())
+    first = worker.call("scale", {"factor": 2}, {"x": values})
+    second = worker.call("scale", {"factor": 2}, {"x": values})
     worker.close()
 
     assert worker.launches == 1
@@ -191,13 +216,13 @@ def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> 
 
 
 def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path: Any) -> None:
-    worker = _worker(tmp_path, "sleep")
+    worker = _worker(
+        tmp_path, "sleep", policy=NativeWorkerPolicy(operation_timeout_seconds=0.5)
+    )
     values = np.zeros((2, 2), dtype=np.float64)
 
     with pytest.raises(MeshingFailure) as failure:
-        worker.call(
-            "scale", {}, {"x": values}, limits=MeshingLimits(maximum_wall_seconds=0.5)
-        )
+        worker.call("scale", {}, {"x": values})
 
     assert failure.value.category is MeshingFailureCategory.TIMED_OUT
     # ty: ignore[unresolved-attribute]
@@ -214,8 +239,8 @@ def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path: Any) -> 
     values = np.ones((1, 1), dtype=np.float64)
 
     with pytest.raises(MeshingFailure) as failure:
-        worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
-    result = worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+        worker.call("scale", {}, {"x": values})
+    result = worker.call("scale", {}, {"x": values})
     worker.close()
 
     assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
@@ -238,9 +263,7 @@ def test_worker_failures_surface_as_meshing_failures_with_evidence(
     )
 
     with pytest.raises(MeshingFailure) as failure:
-        worker.call(
-            "scale", {}, {"x": np.ones((2,), dtype=np.float64)}, limits=MeshingLimits()
-        )
+        worker.call("scale", {}, {"x": np.ones((2,), dtype=np.float64)})
 
     assert failure.value.category is category
     # ty: ignore[unresolved-attribute]
@@ -259,7 +282,7 @@ def test_concurrent_calls_share_one_session_in_sequence(tmp_path: Any) -> None:
     def run(index: Any) -> Any:
         values = np.full((2, 2), index, dtype=np.float64)
         barrier.wait()
-        return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+        return worker.call("scale", {}, {"x": values})
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(run, range(8)))
@@ -281,7 +304,7 @@ def test_concurrent_calls_replace_exhausted_sessions_without_failure(
 
     def run(_: Any) -> Any:
         barrier.wait()
-        return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+        return worker.call("scale", {}, {"x": values})
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(run, range(4)))
@@ -314,7 +337,7 @@ def test_session_close_waits_for_the_call_in_flight(tmp_path: Any) -> None:
 
     assert session.closed
     np.testing.assert_array_equal(result.arrays["y"], 2.0 * values)
-    replacement = worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+    replacement = worker.call("scale", {}, {"x": values})
     worker.close()
     assert replacement.evidence["session_id"] != result.evidence["session_id"]
     assert worker.launches == 2
@@ -330,7 +353,7 @@ def test_missing_worker_is_provider_unavailable(tmp_path: Any) -> None:
     )
 
     with pytest.raises(MeshingFailure) as failure:
-        worker.call("scale", {}, {}, limits=MeshingLimits())
+        worker.call("scale", {}, {})
 
     assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
 

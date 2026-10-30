@@ -24,7 +24,7 @@ from ..._external_runtime import (
 )
 from ...logging import emit
 from ...typing import checked
-from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
+from .._contracts import MeshingFailure, MeshingFailureCategory
 
 
 _REJECTION_CATEGORIES = {
@@ -161,8 +161,6 @@ class ProviderWorker:
         parameters: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray],
         /,
-        *,
-        limits: MeshingLimits,
     ) -> NativeWorkerCall:
         # Holding the provider lock across the call keeps a concurrent caller from
         # replacing or closing this session between its selection and its use.
@@ -173,20 +171,13 @@ class ProviderWorker:
                     operation,
                     parameters,
                     arrays,
-                    timeout=limits.maximum_wall_seconds,
-                    maximum_input_bytes=limits.maximum_data_bytes,
-                    maximum_output_bytes=limits.maximum_data_bytes,
+                    timeout=self.policy.operation_timeout_seconds,
+                    maximum_input_bytes=self.policy.maximum_input_exchange_bytes,
+                    maximum_output_bytes=self.policy.maximum_output_exchange_bytes,
                 )
             except NativeWorkerError as error:
                 raise _failure(self.provider, operation, error) from error
 
-    def memory_limit_evidence(self) -> str:
-        """Enforced-limit label describing how worker memory is bounded."""
-        return (
-            "worker_address_space"
-            if self.identity.memory_enforcement == "address-space-rlimit"
-            else "worker_peak_resident_audit"
-        )
 
     def close(self) -> None:
         with self._lock:

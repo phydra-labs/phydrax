@@ -21,7 +21,6 @@ from phydrax.applications.foams import (
 from phydrax.geometry.multiregion_surface import (
     LabelFieldSurfaceExtractionPlan,
     LabelFieldSurfaceExtractionStatus,
-    MultiRegionSurfaceCapacityPlan,
     MultiRegionSurfaceValidationPolicy,
 )
 from phydrax.qualification import QualificationRuntimeIdentity
@@ -43,19 +42,15 @@ def _runtime() -> dict[str, Any]:
     return dict(identity.to_record())
 
 
-def _capacity(name: str, resolution: int) -> MultiRegionSurfaceCapacityPlan:
-    scale = resolution**2
-    return MultiRegionSurfaceCapacityPlan(
-        vertex_capacity=160 * scale,
-        edge_capacity=480 * scale,
-        face_capacity=320 * scale,
-        region_capacity=8,
-        region_pair_capacity=28,
-        maximum_edge_valence=3,
-        maximum_vertex_region_pairs=6,
-        resource_id=name,
+def _image_affine(
+    spacing: float, *, origin: tuple[float, float, float] | None = None
+) -> np.ndarray:
+    affine = np.eye(4)
+    affine[:3, :3] *= spacing
+    affine[:3, 3] = (
+        (0.5 * spacing,) * 3 if origin is None else np.asarray(origin)
     )
-
+    return affine
 
 def _state(labels: np.ndarray, label_ids: tuple[str, ...]) -> LabelFieldState:
     counts = np.bincount(labels.reshape(-1), minlength=len(label_ids))
@@ -85,9 +80,7 @@ def _sphere_row(resolution: int) -> dict[str, Any]:
     labels, spacing = _sphere_labels(resolution)
     plan = LabelFieldSurfaceExtractionPlan(
         ("bubble", "ambient"),
-        _capacity(f"sphere-{resolution}", resolution),
-        spacing=(spacing, spacing, spacing),
-        origin=(0.5 * spacing, 0.5 * spacing, 0.5 * spacing),
+        index_to_world=_image_affine(spacing),
         boundary_region_id="ambient",
         validation_policy=MultiRegionSurfaceValidationPolicy(
             profile="manifold_two_region"
@@ -124,19 +117,28 @@ def _three_cell_labels(resolution: int) -> np.ndarray:
     ).astype(np.int32)
 
 
+def _reflection_shear() -> np.ndarray:
+    return np.asarray(
+        (
+            (-1.0, 0.20, 0.05, 1.2),
+            (0.15, 0.90, 0.25, -0.4),
+            (0.02, 0.10, 1.10, 0.7),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+    )
+
+
 def _junction_and_preparation() -> dict[str, Any]:
     resolution = 3
     labels = _three_cell_labels(resolution)
     spacing = 1.0 / resolution
-    plan = LabelFieldSurfaceExtractionPlan(
-        ("cell-a", "cell-b", "cell-c"),
-        _capacity("junction", resolution),
-        spacing=(spacing, spacing, spacing),
-        origin=(0.5 * spacing, 0.5 * spacing, 0.5 * spacing),
-        validation_policy=MultiRegionSurfaceValidationPolicy(profile="dry_foam"),
-    )
-    prepared = plan.prepare(labels.shape)
-    state = _state(labels, ("cell-a", "cell-b", "cell-c"))
+    ids = ("cell-a", "cell-b", "cell-c")
+    policy = MultiRegionSurfaceValidationPolicy(profile="dry_foam")
+    base_affine = _image_affine(spacing)
+    prepared = LabelFieldSurfaceExtractionPlan(
+        ids, index_to_world=base_affine, validation_policy=policy
+    ).prepare(labels.shape)
+    state = _state(labels, ids)
     result = prepared.extract(state)
     repeated = prepared.extract(state)
     validation = result.evidence.validation
@@ -157,6 +159,43 @@ def _junction_and_preparation() -> dict[str, Any]:
         and result.candidate_seed.seed_id == repeated.candidate_seed.seed_id
         and result.lineage.lineage_id == repeated.lineage.lineage_id
     )
+    transformed = (
+        LabelFieldSurfaceExtractionPlan(
+            ids,
+            index_to_world=_reflection_shear() @ base_affine,
+            validation_policy=policy,
+        )
+        .prepare(labels.shape)
+        .extract(state)
+    )
+    affine_covariant = False
+    if (
+        result.accepted
+        and transformed.accepted
+        and result.candidate_seed is not None
+        and transformed.candidate_seed is not None
+    ):
+        transform = _reflection_shear()
+        expected = (
+            np.asarray(result.candidate_seed.positions) @ transform[:3, :3].T
+            + transform[:3, 3]
+        )
+        affine_covariant = bool(
+            np.allclose(
+                transformed.candidate_seed.positions,
+                expected,
+                rtol=0.0,
+                atol=1.0e-12,
+            )
+            and np.array_equal(
+                np.sort(transformed.candidate_seed.faces, axis=1),
+                np.sort(result.candidate_seed.faces, axis=1),
+            )
+            and np.array_equal(
+                transformed.candidate_seed.face_labels,
+                result.candidate_seed.face_labels,
+            )
+        )
     passed = bool(
         result.accepted
         and validation is not None
@@ -168,6 +207,7 @@ def _junction_and_preparation() -> dict[str, Any]:
         and result.evidence.collision_certified
         and deterministic
         and equilibrium_prepared
+        and affine_covariant
     )
     return {
         "status": result.evidence.status.name,
@@ -185,55 +225,90 @@ def _junction_and_preparation() -> dict[str, Any]:
         else validation.label_orientation_consistent,
         "collision_certified": result.evidence.collision_certified,
         "deterministic": deterministic,
+        "affine_covariant": affine_covariant,
         "equilibrium_prepared": equilibrium_prepared,
         "passed": passed,
     }
 
 
-def _refusals() -> dict[str, Any]:
+def _tiny_material() -> dict[str, Any]:
+    labels = np.zeros((5, 5, 5), dtype=np.int32)
+    labels[2, 2, 2] = 1
+    ids = ("ambient", "tiny-material")
+    affine = _reflection_shear() @ _image_affine(0.2)
+    result = (
+        LabelFieldSurfaceExtractionPlan(
+            ids,
+            index_to_world=affine,
+            boundary_region_id="ambient",
+            validation_policy=MultiRegionSurfaceValidationPolicy(
+                profile="manifold_two_region"
+            ),
+        )
+        .prepare(labels.shape)
+        .extract(_state(labels, ids))
+    )
+    retained = (
+        result.accepted
+        and result.lineage.source_label_counts == (124, 1)
+        and "tiny-material" in result.lineage.region_ids
+        and result.candidate_seed is not None
+        and bool(np.any(np.all(result.candidate_seed.face_labels == (0, 1), axis=1)))
+    )
+    determinant = abs(float(np.linalg.det(affine[:3, :3])))
+    measure = bool(
+        retained
+        and np.isclose(
+            result.evidence.source_finite_region_volumes[0],
+            determinant,
+            rtol=1.0e-12,
+        )
+    )
+    return {
+        "status": result.evidence.status.name,
+        "accepted": result.accepted,
+        "source_label_counts": result.lineage.source_label_counts,
+        "tiny_material_retained": retained,
+        "affine_voxel_measure_preserved": measure,
+        "passed": bool(retained and measure),
+    }
+
+
+def _source_semantics() -> dict[str, Any]:
     labels = np.indices((2, 2, 2)).sum(axis=0).astype(np.int32) % 3
     state = _state(labels, ("a", "b", "c"))
-    ambiguity = (
+    unsupported = (
         LabelFieldSurfaceExtractionPlan(
             ("a", "b", "c"),
-            _capacity("ambiguity", 2),
-            spacing=(1.0, 1.0, 1.0),
-            maximum_ambiguous_cells=0,
+            index_to_world=np.eye(4),
+            validation_policy=MultiRegionSurfaceValidationPolicy(
+                profile="manifold_two_region"
+            ),
         )
         .prepare(labels.shape)
         .extract(state)
     )
-    tiny = MultiRegionSurfaceCapacityPlan(
-        vertex_capacity=1,
-        edge_capacity=1,
-        face_capacity=1,
-        region_capacity=4,
-        region_pair_capacity=6,
-        maximum_edge_valence=3,
-        maximum_vertex_region_pairs=6,
-        resource_id="capacity-refusal",
-    )
-    capacity = (
-        LabelFieldSurfaceExtractionPlan(("a", "b", "c"), tiny, spacing=(1.0, 1.0, 1.0))
-        .prepare(labels.shape)
-        .extract(state)
-    )
+    incomplete = np.asarray(((0, 0, 0), (0, 0, 1), (0, 1, 0), (1, 0, 0)))
+    try:
+        LabelFieldSurfaceExtractionPlan(
+            ("a", "b", "c"), index_to_world=np.eye(4)
+        ).prepare((2, 2, 2), site_coordinates=incomplete)
+    except ValueError as error:
+        missing_samples_rejected = "missing categorical samples" in str(error)
+    else:
+        missing_samples_rejected = False
     passed = bool(
-        ambiguity.evidence.status
-        is LabelFieldSurfaceExtractionStatus.AMBIGUITY_CAPACITY_EXCEEDED
-        and ambiguity.surface is None
-        and capacity.evidence.status
-        is LabelFieldSurfaceExtractionStatus.CAPACITY_EXCEEDED
-        and capacity.surface is None
-        and not capacity.evidence.capacity.admitted
+        unsupported.evidence.status is LabelFieldSurfaceExtractionStatus.UNSUPPORTED_VALENCE
+        and unsupported.surface is None
+        and missing_samples_rejected
     )
     return {
-        "ambiguity_status": ambiguity.evidence.status.name,
-        "ambiguous_cells": ambiguity.evidence.ambiguous_cell_count,
-        "capacity_status": capacity.evidence.status.name,
-        "capacity_exceeded": capacity.evidence.capacity.exceeded,
+        "unsupported_valence_status": unsupported.evidence.status.name,
+        "unknown_sparse_samples_rejected": missing_samples_rejected,
         "passed": passed,
     }
+
+
 
 
 def run() -> dict[str, Any]:
@@ -290,8 +365,14 @@ def run() -> dict[str, Any]:
         "passed": sphere_passed,
     }
     junction = _junction_and_preparation()
-    refusals = _refusals()
-    successful = bool(sphere_passed and junction["passed"] and refusals["passed"])
+    source_semantics = _source_semantics()
+    tiny_material = _tiny_material()
+    successful = bool(
+        sphere_passed
+        and junction["passed"]
+        and source_semantics["passed"]
+        and tiny_material["passed"]
+    )
     return {
         "runtime": _runtime(),
         "source": {
@@ -299,12 +380,14 @@ def run() -> dict[str, Any]:
                 "Junction-conforming multi-label marching tetrahedra on a "
                 "Freudenthal cube split"
             ),
+            "semantics": "categorical labels with full image index-to-world affine",
             "reference": ("Da, Batty and Grinspun, ACM TOG 33, 112 (2014), ideas only"),
             "copying_permitted": False,
         },
         "sphere_convergence": sphere,
         "junction_and_foam_preparation": junction,
-        "resource_refusals": refusals,
+        "source_semantics": source_semantics,
+        "tiny_material": tiny_material,
         "successful": successful,
     }
 

@@ -105,7 +105,8 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
 
     ``face_labels[f] = (left, right)`` index ``region_ids``; normals point out
     of ``left``. ``vertex_sets`` maps names (for example wire rings) to global
-    vertex ids.
+    vertex ids. ``vertex_source_keys`` optionally carries exact source-lattice
+    feature keys, independent of physical coordinates.
     """
 
     __strict_contract__ = True
@@ -118,6 +119,7 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
     region_ids: tuple[str, ...] = eqx.field(static=True)
     region_kinds: tuple[MultiRegionKind, ...] = eqx.field(static=True)
     vertex_sets: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
+    vertex_source_keys: tuple[tuple[int, ...], ...] | None = eqx.field(static=True)
     source: Identifier = eqx.field(static=True)
     seed_id: Identifier = eqx.field(static=True)
 
@@ -134,6 +136,7 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         vertex_global_ids: ArrayLike | None = None,
         face_global_ids: ArrayLike | None = None,
         vertex_sets: Mapping[str, Sequence[int]] | None = None,
+        vertex_source_keys: Sequence[Sequence[int]] | None = None,
     ) -> None:
         scope = Scope()
         points = parse(
@@ -176,6 +179,28 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         parse(vertex_ids, HostInt64[_SeedVertexDim], "vertex_global_ids", scope=scope)
         parse(face_ids, HostInt64[_SeedFaceDim], "face_global_ids", scope=scope)
         sets = _vertex_sets({} if vertex_sets is None else vertex_sets, vertex_ids)
+        if vertex_source_keys is None:
+            source_keys = None
+        else:
+            source_keys = tuple(
+                tuple(int(value) for value in key) for key in vertex_source_keys
+            )
+            if (
+                len(source_keys) != points.shape[0]
+                or any(not key for key in source_keys)
+                or len(set(source_keys)) != len(source_keys)
+                or any(
+                    any(
+                        not isinstance(value, (int, np.integer))
+                        or isinstance(value, (bool, np.bool_))
+                        for value in key
+                    )
+                    for key in vertex_source_keys
+                )
+            ):
+                raise ValueError(
+                    "vertex_source_keys must provide one unique nonempty integer key per vertex."
+                )
         source_ = canonical_identifier(source, "source")
         self.positions = points
         self.faces = rows
@@ -185,21 +210,23 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         self.region_ids = ids
         self.region_kinds = kinds
         self.vertex_sets = sets
+        self.vertex_source_keys = source_keys
         self.source = source_
-        self.seed_id = canonical_fingerprint(
-            {
-                "kind": "multiregion-surface-seed",
-                "source": source_,
-                "positions": array_tree_fingerprint(points),
-                "faces": array_tree_fingerprint(rows),
-                "face_labels": array_tree_fingerprint(labels),
-                "region_ids": list(ids),
-                "region_kinds": list(kinds),
-                "vertex_global_ids": array_tree_fingerprint(vertex_ids),
-                "face_global_ids": array_tree_fingerprint(face_ids),
-                "vertex_sets": [[name, list(members)] for name, members in sets],
-            }
-        )
+        seed_fingerprint = {
+            "kind": "multiregion-surface-seed",
+            "source": source_,
+            "positions": array_tree_fingerprint(points),
+            "faces": array_tree_fingerprint(rows),
+            "face_labels": array_tree_fingerprint(labels),
+            "region_ids": list(ids),
+            "region_kinds": list(kinds),
+            "vertex_global_ids": array_tree_fingerprint(vertex_ids),
+            "face_global_ids": array_tree_fingerprint(face_ids),
+            "vertex_sets": [[name, list(members)] for name, members in sets],
+        }
+        if source_keys is not None:
+            seed_fingerprint["vertex_source_keys"] = [list(key) for key in source_keys]
+        self.seed_id = canonical_fingerprint(seed_fingerprint)
 
     def vertex_set(self, name: str, /) -> tuple[int, ...]:
         """Global vertex ids of one named vertex set."""
@@ -226,7 +253,6 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         *,
         resource_id: str,
         headroom: float = 1.0,
-        event_capacity: int = 0,
         coordinate_dtype: MultiRegionCoordinateDtype = "float64",
         index_dtype: MultiRegionIndexDtype = "int32",
     ) -> MultiRegionSurfaceCapacityPlan:
@@ -248,7 +274,6 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
             maximum_edge_valence=counts.edge_valence,
             maximum_vertex_region_pairs=counts.vertex_region_pairs,
             resource_id=resource_id,
-            event_capacity=event_capacity,
             coordinate_dtype=coordinate_dtype,
             index_dtype=index_dtype,
         )

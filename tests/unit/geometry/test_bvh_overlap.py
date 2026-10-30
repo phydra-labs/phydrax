@@ -7,9 +7,10 @@ from typing import Any
 
 import numpy as np
 
-from phydrax.geometry._bvh_overlap import (
+from phydrax.geometry import (
     build_host_aabb_overlap_bvh,
     OverlapSearchStatus,
+    OverlapTolerance,
     query_host_aabb_overlaps,
 )
 
@@ -27,9 +28,11 @@ def test_bvh_overlap_scenario_1() -> None:
     index = build_host_aabb_overlap_bvh(
         [[0.0, 0.0], [3.0, 3.0]],
         [[2.0, 2.0], [4.0, 4.0]],
-        global_ids=[20, 10],
-        local_ids=[7, 3],
+        target_global_ids=[20, 10],
+        target_local_ids=[7, 3],
     )
+    assert index.target_global_ids.tolist() == [10, 20]
+    assert index.target_local_ids.tolist() == [3, 7]
     result = _query(
         index,
         [[0.5, 0.5], [10.0, 10.0]],
@@ -44,7 +47,12 @@ def test_bvh_overlap_scenario_1() -> None:
     assert result.source_local_ids.tolist() == [5]
     assert result.target_local_ids.tolist() == [7]
     assert result.content_identity
-    index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[1.0, 1.0]], global_ids=[4])
+    assert result.valid
+    assert result.pairs.tolist() == [[5, 7]]
+    (candidate,) = result.candidates
+    assert (candidate.source_global_id, candidate.target_global_id) == (101, 20)
+    assert (candidate.source_local_id, candidate.target_local_id) == (5, 7)
+    index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[1.0, 1.0]], target_global_ids=[4])
     lower = [[1.0, 0.0]]
     upper = [[2.0, 1.0]]
     excluded = _query(index, lower, upper)
@@ -55,14 +63,14 @@ def test_bvh_overlap_scenario_1() -> None:
     index_a = build_host_aabb_overlap_bvh(
         [[0.0, 0.0], [0.0, 0.0]],
         [[3.0, 3.0], [2.0, 2.0]],
-        global_ids=[30, 10],
-        local_ids=[1, 8],
+        target_global_ids=[30, 10],
+        target_local_ids=[1, 8],
     )
     index_b = build_host_aabb_overlap_bvh(
         [[0.0, 0.0], [0.0, 0.0]],
         [[2.0, 2.0], [3.0, 3.0]],
-        global_ids=[10, 30],
-        local_ids=[8, 1],
+        target_global_ids=[10, 30],
+        target_local_ids=[8, 1],
     )
     lower = [[0.0, 0.0], [1.0, 1.0]]
     upper = [[1.5, 1.5], [2.5, 2.5]]
@@ -77,45 +85,57 @@ def test_bvh_overlap_scenario_1() -> None:
     assert first.content_identity == second.content_identity
 
 
-def test_bvh_overlap_scenario_2() -> None:
+def test_bvh_overlap_malformed_inputs_and_tolerance() -> None:
     index = build_host_aabb_overlap_bvh(
-        [[0.0, 0.0]], [[1.0, 1.0]], global_ids=[1], absolute_tolerance=1e-10
+        [[0.0, 0.0]], [[1.0, 1.0]], target_global_ids=[1], absolute_tolerance=1e-10
     )
     result = _query(index, [[1.0 - 5e-12, 0.0]], [[2.0, 1.0]], source_global_ids=[2])
     assert result.candidate_count == 1
-    index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[2.0, 2.0]], global_ids=[1])
-    kwargs = {"source_global_ids": [2, 3], "source_local_ids": [0, 1]}
-    candidate_limited = _query(
-        index,
-        [[0.0, 0.0], [0.0, 0.0]],
-        [[1.0, 1.0], [1.0, 1.0]],
-        max_candidates=1,
-        **kwargs,
-    )
-    memory_limited = _query(
-        index,
+
+    tolerant_index = build_host_aabb_overlap_bvh(
         [[0.0, 0.0]],
         [[1.0, 1.0]],
-        max_memory_bytes=31,
-        source_global_ids=[2],
-        source_local_ids=[0],
+        target_global_ids=[1],
+        tolerance=OverlapTolerance(absolute=1e-8),
     )
-    assert candidate_limited.status is OverlapSearchStatus.CANDIDATE_LIMIT
-    assert candidate_limited.candidate_count == 0
-    assert memory_limited.status is OverlapSearchStatus.MEMORY_LIMIT
-    assert memory_limited.candidate_count == 0
-    index = build_host_aabb_overlap_bvh([[0.0, np.nan]], [[1.0, 1.0]], global_ids=[1])
-    assert index.status is OverlapSearchStatus.INVALID_BOUNDS
-    result = _query(index, [[0.0, 0.0]], [[1.0, 1.0]])
-    assert result.status is OverlapSearchStatus.INVALID_BOUNDS
-    assert result.candidate_count == 0
+    touching = _query(
+        tolerant_index,
+        [[1.0 + 5e-9, 0.0]],
+        [[2.0, 1.0]],
+        source_global_ids=[2],
+        include_zero_measure=True,
+    )
+    assert touching.candidate_count == 1
+
+    invalid_index = build_host_aabb_overlap_bvh(
+        [[0.0, np.nan]], [[1.0, 1.0]], target_global_ids=[1]
+    )
+    assert invalid_index.status is OverlapSearchStatus.INVALID_BOUNDS
+    invalid_index_result = _query(invalid_index, [[0.0, 0.0]], [[1.0, 1.0]])
+    assert invalid_index_result.status is OverlapSearchStatus.INVALID_BOUNDS
+    assert invalid_index_result.candidate_count == 0
+    assert invalid_index_result.message == invalid_index.message
+
+    malformed_query = _query(
+        index,
+        [[0.0, 0.0], [0.0, 0.0]],
+        [[1.0, 1.0]],
+        source_global_ids=[2, 3],
+    )
+    assert malformed_query.status is OverlapSearchStatus.INVALID_BOUNDS
+    assert malformed_query.candidate_count == 0
+    assert malformed_query.message
+    assert malformed_query.source_global_ids.size == 0
+    assert malformed_query.target_global_ids.size == 0
+    assert malformed_query.source_local_ids.size == 0
+    assert malformed_query.target_local_ids.size == 0
 
 
 def test_bvh_overlap_scenario_3() -> None:
     index = build_host_aabb_overlap_bvh(
         [[-1.0, -1.0], [0.0, 0.0]],
         [[2.0, 2.0], [3.0, 3.0]],
-        global_ids=[9, 3],
+        target_global_ids=[9, 3],
     )
     first = _query(index, [[0.5, 0.5]], [[2.5, 2.5]], source_global_ids=[77])
     second = _query(index, [[0.5, 0.5]], [[2.5, 2.5]], source_global_ids=[77])
@@ -131,7 +151,7 @@ def test_bvh_overlap_scenario_3() -> None:
     target_ids = rng.permutation(150) * 3 + 1
     source_ids = rng.permutation(120) * 5 + 2
     index = build_host_aabb_overlap_bvh(
-        target_lower, target_upper, global_ids=target_ids, absolute_tolerance=1e-9
+        target_lower, target_upper, target_global_ids=target_ids, absolute_tolerance=1e-9
     )
     extent = np.minimum(source_upper[:, None], target_upper[None]) - np.maximum(
         source_lower[:, None], target_lower[None]
@@ -153,14 +173,3 @@ def test_bvh_overlap_scenario_3() -> None:
         )
         assert observed == expected
         assert result.candidate_count == len(expected)
-    limited = _query(
-        index,
-        source_lower,
-        source_upper,
-        source_global_ids=source_ids,
-        include_zero_measure=True,
-        max_candidates=len(expected) - 1,
-        max_memory_bytes=32 * len(expected),
-    )
-    assert limited.status is OverlapSearchStatus.CANDIDATE_LIMIT
-    assert limited.candidate_count == 0

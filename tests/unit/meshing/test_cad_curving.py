@@ -14,6 +14,14 @@ from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
 from scipy.spatial import Delaunay
 
 import phydrax as phx
+from phydrax.discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    certify_cell_geometry_validity,
+)
+from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import model_from_occt_shape
+from phydrax.meshing._curving import _straight_geometry
 from phydrax.meshing._lineage import EntityLineage, EntityLineageKind, MeshLineage
 
 
@@ -23,13 +31,15 @@ _STATUS = phx.meshing.HighOrderCurvingStatus
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
-    return phx.geometry.prepare_brep_projection(model, shape, embedding=embedding)
+    return phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
 def _plate_projection() -> Any:
@@ -268,15 +278,27 @@ def test_cad_curving_scenario_1() -> None:
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
     removed, corner, hole = _rows(mesh, [[0.0, -2.0], [2.0, -2.0], [1.0, 0.0]])
 
-    target, lineage = _collapse(mesh, removed, corner)
+    target, lineage, stencil = _collapse(mesh, removed, corner)
     legal = phx.meshing.propagate_association(
-        association, lineage, mesh, target, projection, policy=_POLICY
+        association,
+        lineage,
+        mesh,
+        target,
+        projection,
+        policy=_POLICY,
+        vertex_stencil=stencil,
     )
     assert legal.complete
-    target, lineage = _collapse(mesh, removed, hole)
+    target, lineage, stencil = _collapse(mesh, removed, hole)
     with pytest.raises(phx.meshing.AssociationPropagationError) as error:
         phx.meshing.propagate_association(
-            association, lineage, mesh, target, projection, policy=_POLICY
+            association,
+            lineage,
+            mesh,
+            target,
+            projection,
+            policy=_POLICY,
+            vertex_stencil=stencil,
         )
     assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[hole])]
     projection = _plate_projection()
@@ -304,7 +326,7 @@ def test_cad_curving_scenario_1() -> None:
 
 
 def _collapse(mesh: Any, removed: Any, kept: Any) -> Any:
-    """Target mesh and lineage of collapsing vertex row ``removed`` into ``kept``."""
+    """Target mesh, lineage, and vertex stencil of a source-row collapse."""
     identifiers = np.asarray(mesh.vertex_global_ids)
     cells = np.asarray(mesh.blocks[0].vertices)
     survivors = ~np.any(cells == removed, axis=1)
@@ -325,7 +347,17 @@ def _collapse(mesh: Any, removed: Any, kept: Any) -> Any:
         [identifiers[kept]],
         [EntityLineageKind.COLLAPSED_INTO],
     )
-    return target, MeshLineage(mesh.topology_id, target.topology_id, (record,))
+    target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    stencil = phx.meshing.VertexInterpolationStencil(
+        mesh.entity_set(0).entity_set_id,
+        target.entity_set(0).entity_set_id,
+        target_vertex_ids,
+        target_vertex_ids[:, None],
+        np.ones((target_vertex_ids.size, 1), dtype=np.float64),
+        np.ones((target_vertex_ids.size, 1), dtype=np.bool_),
+    )
+    lineage = MeshLineage(mesh.topology_id, target.topology_id, (record,))
+    return target, lineage, stencil
 
 
 def test_cad_curving_scenario_2() -> None:
@@ -384,6 +416,7 @@ def test_cad_curving_scenario_2() -> None:
         projection,
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1),
         periodic=(coupling,),
+        source_result=result,
     )
     nodes = np.asarray(curved.geometry.coordinates)
     straight = np.asarray(curved.straight.coordinates)
@@ -394,6 +427,13 @@ def test_cad_curving_scenario_2() -> None:
     )
 
     assert curved.status is _STATUS.CURVED
+    assert curved.evidence.coordinate_transition is not None
+    assert curved.evidence.coordinate_transition.source_geometry_id == cell_geometry_id(
+        result.geometry
+    )
+    assert curved.evidence.coordinate_transition.target_geometry_id == cell_geometry_id(
+        curved.geometry
+    )
     assert curved.evidence.certificate.all_certified
     assert _lateral_error(curved.geometry, mesh) < 0.05 * _lateral_error(
         curved.straight, mesh
@@ -491,4 +531,139 @@ def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted
     assert replaced.relaxation_statuses == budget and replaced.evidence.accepted
     assert not np.array_equal(
         replaced.geometry.coordinates, projected.geometry.coordinates
+    )
+
+
+def test_mixed_prism_pyramid_tet_hex_curving_builds_complete_geometry_maps() -> None:
+    kinds = ("tetrahedron", "prism", "pyramid", "hexahedron")
+    coordinates = []
+    blocks = []
+    vertex_offset = 0
+    for cell_id, kind in enumerate(kinds):
+        reference = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+        local = 0.1 * reference + np.asarray((2.0 * cell_id, 0.0, 0.0))
+        coordinates.append(local)
+        blocks.append(
+            phx.discretization.CellBlock(
+                f"{kind}s",
+                kind,
+                np.arange(vertex_offset, vertex_offset + local.shape[0], dtype=np.int64)[
+                    None, :
+                ],
+                global_ids=np.asarray((100 + cell_id,), dtype=np.int64),
+            )
+        )
+        vertex_offset += local.shape[0]
+    mesh = phx.discretization.CellMesh(np.concatenate(coordinates), tuple(blocks))
+
+    geometry = _straight_geometry(mesh, 2)
+    elements, routes, mapped = geometry.resolve(mesh)
+    certificate = certify_cell_geometry_validity(geometry, mesh=mesh)
+
+    assert {element.cell_kind for element in elements} == set(kinds)
+    assert len(routes) == len(kinds)
+    assert mapped.shape[0] > mesh.coordinates.shape[0]
+    assert certificate.all_certified
+
+
+def test_p3_straight_geometry_reuses_reversed_shared_edge_nodes() -> None:
+    coordinates = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (-1.0, 0.0, 0.0),
+            (0.0, -1.0, 0.0),
+        )
+    )
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        coordinates, np.asarray(((0, 2, 3, 1), (1, 5, 4, 0)), dtype=np.int64)
+    )
+    geometry = _straight_geometry(mesh, 3)
+    element = phx.discretization.fem.lagrange_element("tetrahedron", 3)
+    topology = reference_cell_topology("tetrahedron")
+    connectivity = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    routes = np.asarray(geometry.geometry_dofs[0], dtype=np.int64)
+    shared_edge_rows = []
+    for cell_row in range(connectivity.shape[0]):
+        cell_vertices = tuple(
+            int(connectivity[cell_row, local]) for local in range(connectivity.shape[1])
+        )
+        edge_index = next(
+            index
+            for index, edge in enumerate(topology.entities[1])
+            if {int(vertex_ids[cell_vertices[int(local)]]) for local in edge}
+            == {0, 1}
+        )
+        edge = topology.entities[1][edge_index]
+        edge_orientation = tuple(
+            int(vertex_ids[cell_vertices[int(local)]]) for local in edge
+        )
+        shared_edge_rows.append(
+            set(routes[cell_row, list(element.entity_dofs[1][edge_index])].tolist())
+        )
+        if cell_row == 0:
+            assert edge_orientation == (0, 1)
+        else:
+            assert edge_orientation == (1, 0)
+
+    assert len(shared_edge_rows[0]) == 2
+    assert shared_edge_rows[0] == shared_edge_rows[1]
+    exact_coordinates = geometry.exact_coordinate_bank
+    assert exact_coordinates is not None
+    assert all(
+        exact_coordinates[row][0] == 0 and exact_coordinates[row][1] == 0
+        for row in shared_edge_rows[0]
+    )
+
+
+def test_p3_straight_geometry_reuses_reversed_shared_face_nodes() -> None:
+    coordinates = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, -1.0),
+        )
+    )
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        coordinates, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int64)
+    )
+    geometry = _straight_geometry(mesh, 3)
+    element = phx.discretization.fem.lagrange_element("tetrahedron", 3)
+    topology = reference_cell_topology("tetrahedron")
+    connectivity = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    routes = np.asarray(geometry.geometry_dofs[0], dtype=np.int64)
+    shared_face_rows = []
+    for cell_row in range(connectivity.shape[0]):
+        cell_vertices = tuple(
+            int(connectivity[cell_row, local]) for local in range(connectivity.shape[1])
+        )
+        face_index = next(
+            index
+            for index, face in enumerate(topology.entities[2])
+            if {int(vertex_ids[cell_vertices[int(local)]]) for local in face}
+            == {0, 1, 2}
+        )
+        face_vertices = set(topology.entities[2][face_index])
+        local_dofs = set(element.entity_dofs[2][face_index])
+        for vertex in face_vertices:
+            local_dofs.update(element.entity_dofs[0][int(vertex)])
+        for edge_index, edge in enumerate(topology.entities[1]):
+            if set(edge) <= face_vertices:
+                local_dofs.update(element.entity_dofs[1][edge_index])
+        shared_face_rows.append(
+            set(routes[cell_row, sorted(local_dofs)].tolist())
+        )
+
+    assert len(shared_face_rows[0]) == 10
+    assert shared_face_rows[0] == shared_face_rows[1]
+    exact_coordinates = geometry.exact_coordinate_bank
+    assert exact_coordinates is not None
+    assert all(
+        exact_coordinates[row][2] == 0 for row in shared_face_rows[0]
     )

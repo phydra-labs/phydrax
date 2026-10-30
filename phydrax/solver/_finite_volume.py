@@ -84,6 +84,37 @@ class FiniteVolumeStageStateProvider(StrictModule, NonTrainableState):
         return provided
 
 
+
+class FiniteVolumeStageDecisionProvider(StrictModule, NonTrainableState):
+    """Collective decision hook used before distributed SSPRK branch points."""
+
+    callback: Callable[[Array], ArrayLike]
+    provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        callback: Callable[[Array], ArrayLike],
+        /,
+        *,
+        provider_id: str,
+    ) -> None:
+        identity = str(provider_id)
+        if not callable(callback):
+            raise TypeError("callback must be callable.")
+        if not identity:
+            raise ValueError("provider_id must be non-empty.")
+        self.callback = callback
+        self.provider_id = identity
+
+    def __call__(self, decision: Array, /) -> Array:
+        value = jnp.asarray(decision)
+        if value.shape != () or value.dtype != jnp.bool_:
+            raise TypeError("Stage decision input must be a scalar bool.")
+        result = jnp.asarray(self.callback(value))
+        if result.shape != () or result.dtype != jnp.bool_:
+            raise TypeError("Stage decision callback must return a scalar bool.")
+        return result
+
 SplittingKind: TypeAlias = Literal["godunov", "strang"]
 
 
@@ -151,6 +182,7 @@ def _content_at_metrics(
         evidence_policy_id=metrics.evidence.policy_id,
         evidence_version=metrics.evidence.evidence_version,
         precision=reference.precision,
+        owned_cell_mask=reference.owned_cell_mask,
     )
 
 
@@ -220,6 +252,7 @@ def unstructured_ssprk33_content_candidate(
     cfl: float,
     redistribution: ConservativeSmallCellRedistributionPlan | None = None,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
+    stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
 ) -> FiniteVolumeSSPRK3ContentCandidate:
     """Form Shu--Osher content combinations over certified stage metrics."""
 
@@ -241,6 +274,12 @@ def unstructured_ssprk33_content_candidate(
     ):
         raise TypeError(
             "stage_state_provider must be FiniteVolumeStageStateProvider or None."
+        )
+    if stage_decision_provider is not None and not isinstance(
+        stage_decision_provider, FiniteVolumeStageDecisionProvider
+    ):
+        raise TypeError(
+            "stage_decision_provider must be FiniteVolumeStageDecisionProvider or None."
         )
     if (
         not isinstance(stage_metrics, tuple)
@@ -282,6 +321,11 @@ def unstructured_ssprk33_content_candidate(
             "stage_state_provider": (
                 None if stage_state_provider is None else stage_state_provider.provider_id
             ),
+            "stage_decision_provider": (
+                None
+                if stage_decision_provider is None
+                else stage_decision_provider.provider_id
+            ),
             "redistribution": (
                 None if redistribution is None else redistribution.plan_id
             ),
@@ -312,6 +356,7 @@ def unstructured_ssprk33_content_candidate(
         fallback_1.ledger,
         dt,
         stage_2.effective_cell_volumes,
+        owned_cell_mask=stage_initial.owned_cell_mask,
     )
     finite_1 = jnp.all(jnp.isfinite(limited_1.euler_content))
     safe_q1_content = jnp.where(
@@ -331,6 +376,8 @@ def unstructured_ssprk33_content_candidate(
             >= dt
         )
     )
+    if stage_decision_provider is not None:
+        stage_1_valid = stage_decision_provider(stage_1_valid)
 
     def continue_after_stage_1(_: None) -> FiniteVolumeSSPRK3ContentCandidate:
         stage_q1 = _provided_content_at_metrics(stage_state_provider, q1, stage_2)
@@ -355,6 +402,7 @@ def unstructured_ssprk33_content_candidate(
             fallback_2.ledger,
             0.25 * dt,
             stage_3.effective_cell_volumes,
+            owned_cell_mask=stage_initial.owned_cell_mask,
         )
         finite_2 = jnp.all(jnp.isfinite(limited_2.euler_content))
         safe_q2_content = jnp.where(
@@ -374,6 +422,8 @@ def unstructured_ssprk33_content_candidate(
                 >= dt
             )
         )
+        if stage_decision_provider is not None:
+            stage_2_valid = stage_decision_provider(stage_2_valid)
 
         def continue_after_stage_2(
             _: None,
@@ -399,6 +449,7 @@ def unstructured_ssprk33_content_candidate(
                 fallback_3.ledger,
                 (2.0 / 3.0) * dt,
                 accepted_metrics.effective_cell_volumes,
+                owned_cell_mask=stage_initial.owned_cell_mask,
             )
             finite_3 = jnp.all(jnp.isfinite(limited_3.euler_content))
             safe_qnew_content = jnp.where(
@@ -420,6 +471,8 @@ def unstructured_ssprk33_content_candidate(
                     >= dt
                 )
             )
+            if stage_decision_provider is not None:
+                stage_3_valid = stage_decision_provider(stage_3_valid)
             ledgers = (
                 limited_1.ledger,
                 limited_2.ledger,
@@ -516,6 +569,7 @@ def unstructured_ale_ssprk33_candidate(
     *,
     cfl: float,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
+    stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
 ) -> FiniteVolumeALESSPRK3Candidate:
     """Form exact Shu--Osher content and volume combinations for ALE."""
 
@@ -539,6 +593,7 @@ def unstructured_ale_ssprk33_candidate(
         args,
         cfl=cfl,
         stage_state_provider=stage_state_provider,
+        stage_decision_provider=stage_decision_provider,
     )
     return FiniteVolumeALESSPRK3Candidate(
         content_state=content.content_state,
@@ -568,6 +623,7 @@ def zero_unstructured_ssprk33_content_candidate(
     *,
     redistribution: ConservativeSmallCellRedistributionPlan | None = None,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
+    stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
 ) -> FiniteVolumeSSPRK3ContentCandidate:
     """Build a no-physics, zero-integral candidate over fixed stage routes."""
 
@@ -592,8 +648,19 @@ def zero_unstructured_ssprk33_content_candidate(
         raise TypeError(
             "stage_state_provider must be FiniteVolumeStageStateProvider or None."
         )
+    if stage_decision_provider is not None and not isinstance(
+        stage_decision_provider, FiniteVolumeStageDecisionProvider
+    ):
+        raise TypeError(
+            "stage_decision_provider must be FiniteVolumeStageDecisionProvider or None."
+        )
     candidate_id = canonical_fingerprint(
         {
+            "stage_decision_provider": (
+                None
+                if stage_decision_provider is None
+                else stage_decision_provider.provider_id
+            ),
             "kind": "unstructured-ssprk33-content-candidate",
             "dynamics": dynamics.dynamics_id,
             "stage_state_provider": (
@@ -638,7 +705,11 @@ def zero_unstructured_ssprk33_content_candidate(
         fallback_valid=jnp.asarray(False),
         blend_factor=zero,
         activated=jnp.asarray(False),
-        minimum_density=jnp.min(active_density),
+        minimum_density=(
+            jnp.asarray(jnp.inf, dtype=average.dtype)
+            if average.shape[0] == 0
+            else jnp.min(active_density)
+        ),
         limited_state_valid=jnp.asarray(False),
         secondary_reduction_applied=jnp.asarray(False),
         secondary_reduction_factor=zero,
@@ -664,6 +735,7 @@ def zero_unstructured_ale_ssprk33_candidate(
     /,
     *,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
+    stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
 ) -> FiniteVolumeALESSPRK3Candidate:
     """Build a no-physics, zero-integral candidate for rejected ALE geometry."""
 
@@ -675,6 +747,7 @@ def zero_unstructured_ale_ssprk33_candidate(
         step_size,
         accepted_step,
         stage_state_provider=stage_state_provider,
+        stage_decision_provider=stage_decision_provider,
     )
     return FiniteVolumeALESSPRK3Candidate(
         content_state=content.content_state,
@@ -873,6 +946,7 @@ __all__ = [
     "FiniteVolumeSSPRK3ContentCandidate",
     "FiniteVolumeStepResult",
     "FiniteVolumeStageStateCallback",
+    "FiniteVolumeStageDecisionProvider",
     "FiniteVolumeStageStateProvider",
     "SplittingKind",
     "UnsplitFiniteVolumeSSPRK3Plan",

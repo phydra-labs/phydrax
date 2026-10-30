@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
+from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization._tensor_support import PreparedTensorGrid
@@ -61,9 +62,7 @@ class ImplicitCurveRealization(StrictModule):
         if not bool(np.asarray(self.accepted)):
             raise ValueError("Only an accepted implicit curve can be materialized.")
         return SegmentMesh(
-            # ty: ignore[invalid-argument-type]
             np.asarray(self.vertices),
-            # ty: ignore[invalid-argument-type]
             np.asarray(self.edges),
             source_id=self.source_id,
         )
@@ -253,12 +252,6 @@ def discover_implicit_curve(
         np.asarray(axis.point_coordinates, dtype=np.float64)
         for axis in grid.structured_axes
     )
-    lattice_count = axes[0].size * axes[1].size
-    if lattice_count > policy.maximum_lattice_points:
-        raise ValueError(
-            "Implicit curve grid exceeds maximum_lattice_points: "
-            f"required {lattice_count}, allowed {policy.maximum_lattice_points}."
-        )
     first, second = np.meshgrid(*axes, indexing="ij")
     lattice_points = np.stack((first, second), axis=-1)
     values = np.asarray(
@@ -304,14 +297,6 @@ def discover_implicit_curve(
                 if vertex is None:
                     vertex = len(vertices)
                     vertices.append(key)
-                    if len(vertices) > policy.maximum_vertices:
-                        raise ValueError(
-                            "Implicit curve discovery exceeds maximum_vertices."
-                        )
-                    if len(edge_vertices) > policy.maximum_crossings:
-                        raise ValueError(
-                            "Implicit curve discovery exceeds maximum_crossings."
-                        )
                     edge_vertices[key] = vertex
                 crossing_vertices[edge] = vertex
 
@@ -341,8 +326,6 @@ def discover_implicit_curve(
                 segments.append(
                     (crossing_vertices[first_edge], crossing_vertices[second_edge])
                 )
-                if len(segments) > policy.maximum_faces:
-                    raise ValueError("Implicit curve discovery exceeds maximum_faces.")
 
     if not vertices or not segments:
         raise ValueError("Implicit curve discovery found no closed zero contour.")
@@ -374,21 +357,29 @@ def discover_implicit_curve(
     degree = np.bincount(segment_array.reshape((-1,)), minlength=len(vertices))
     if np.any(degree != 2):
         raise ValueError("Implicit curve discovery produced a nonmanifold open topology.")
-    intersection_pairs = np.asarray(
-        [
-            (first_index, second_index)
-            for first_index in range(segment_array.shape[0])
-            for second_index in range(first_index + 1, segment_array.shape[0])
-            if not np.intersect1d(
-                segment_array[first_index],
-                segment_array[second_index],
-            ).size
-        ],
-        dtype=np.int32,
-    ).reshape((-1, 2))
-    if intersection_pairs.shape[0] > policy.maximum_intersection_pairs:
-        raise ValueError("Implicit curve exceeds maximum_intersection_pairs.")
     base_segments = vertices_array[segment_array]
+    tolerance = policy.projection.root_tolerance
+    box_min = np.min(base_segments, axis=1) - tolerance
+    box_max = np.max(base_segments, axis=1) + tolerance
+    diagonal = float(np.max(np.linalg.norm(box_max - box_min, axis=1)))
+    padding = tolerance * (1.0 + 2.0 * diagonal)
+    hierarchy = prepare_bvh(box_min, box_max, dtype=jnp.float64)
+    first, second = bvh_overlap_pairs_host(
+        hierarchy,
+        hierarchy,
+        include_touching=True,
+        absolute_tolerance=padding,
+    )
+    ordered = first < second
+    first = first[ordered]
+    second = second[ordered]
+    shares_vertex = np.any(
+        segment_array[first][:, :, None] == segment_array[second][:, None, :],
+        axis=(1, 2),
+    )
+    intersection_pairs = np.stack(
+        (first[~shares_vertex], second[~shares_vertex]), axis=1
+    ).astype(np.int32)
     if intersection_pairs.shape[0]:
         intersections = jax.vmap(
             lambda pair: _segment_pair_intersects(

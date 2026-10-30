@@ -7,8 +7,8 @@
 Coupling requires the complete set of AABB candidates: dropping a pair because
 it is not among a nearest-item beam is not a safe failure mode.  Candidates come
 from the exact host simultaneous traversal of two float64 packed BVHs, which
-enumerates every overlapping pair in bounded blocks so resource limits are
-enforced before the result is materialized.
+enumerates every overlapping pair in bounded blocks before the complete result
+is materialized.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import dataclasses
 import hashlib
 import json
 import math
-import time
 from enum import Enum
 from typing import Any, Iterable
 
@@ -27,26 +26,10 @@ from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 
 
 class OverlapSearchStatus(str, Enum):
-    """Terminal state of an exhaustive AABB search.
-
-    A limit or malformed input always returns an empty result.  In particular,
-    a result with a non-success status must never be interpreted as a partial
-    candidate list.
-    """
+    """Terminal state of an exhaustive AABB search."""
 
     SUCCESS = "success"
     INVALID_BOUNDS = "invalid_bounds"
-    INVALID_LIMIT = "invalid_limit"
-    CANDIDATE_LIMIT = "candidate_limit"
-    MEMORY_LIMIT = "memory_limit"
-    TIME_LIMIT = "time_limit"
-
-    # Descriptive spellings retained as enum aliases for callers that prefer
-    # explicit ``*_EXCEEDED`` names.
-    CANDIDATE_LIMIT_EXCEEDED = "candidate_limit"
-    MEMORY_LIMIT_EXCEEDED = "memory_limit"
-    TIME_LIMIT_EXCEEDED = "time_limit"
-    INVALID_INPUT = "invalid_bounds"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -58,15 +41,6 @@ class OverlapTolerance:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class OverlapSearchLimits:
-    """Fail-closed resource limits for one host overlap search."""
-
-    max_candidates: int | None = None
-    max_memory_bytes: int | None = None
-    max_time_seconds: float | None = None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class AabbOverlapCandidate:
     """One source/target broad-phase candidate."""
 
@@ -75,14 +49,6 @@ class AabbOverlapCandidate:
     source_local_id: Any
     target_local_id: Any
 
-    @property
-    def source_id(self) -> Any:
-        return self.source_global_id
-
-    @property
-    def target_id(self) -> Any:
-        return self.target_global_id
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AabbOverlapQueryResult:
@@ -90,7 +56,7 @@ class AabbOverlapQueryResult:
 
     The four ID arrays are aligned row-wise and sorted by source global ID,
     target global ID, source local ID, and target local ID.  They are empty for
-    every non-success status, including a search that hit a resource limit.
+    every non-success status.
     """
 
     status: OverlapSearchStatus
@@ -100,8 +66,6 @@ class AabbOverlapQueryResult:
     target_local_ids: np.ndarray
     content_identity: str
     candidate_count: int = 0
-    estimated_memory_bytes: int = 0
-    elapsed_seconds: float = 0.0
     message: str = ""
 
     @property
@@ -127,22 +91,6 @@ class AabbOverlapQueryResult:
     @property
     def valid(self) -> bool:
         return self.status is OverlapSearchStatus.SUCCESS
-
-    @property
-    def ok(self) -> bool:
-        return self.valid
-
-    @property
-    def source_ids(self) -> np.ndarray:
-        return self.source_global_ids
-
-    @property
-    def target_ids(self) -> np.ndarray:
-        return self.target_global_ids
-
-
-# A shorter spelling is convenient in downstream type annotations.
-OverlapQueryResult = AabbOverlapQueryResult
 
 
 def _freeze_array(value: np.ndarray) -> np.ndarray:
@@ -182,7 +130,6 @@ def _fingerprint(
     absolute_tolerance: float,
     relative_tolerance: float,
     include_zero_measure: bool = False,
-    limits: tuple[int | None, int | None, float | None] = (None, None, None),
     extra: Iterable[str] = (),
 ) -> str:
     payload = {
@@ -194,7 +141,6 @@ def _fingerprint(
         "absolute_tolerance": absolute_tolerance,
         "relative_tolerance": relative_tolerance,
         "include_zero_measure": bool(include_zero_measure),
-        "limits": limits,
         "extra": tuple(extra),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -235,70 +181,6 @@ def _resolve_tolerance(
     if not math.isfinite(atol) or atol < 0.0 or not math.isfinite(rtol) or rtol < 0.0:
         raise ValueError("tolerances must be finite and non-negative")
     return atol, rtol
-
-
-def _resolve_limits(
-    limits: Any,
-    max_candidates: int | None,
-    max_memory_bytes: int | None,
-    max_time_seconds: float | None,
-) -> tuple[int | None, int | None, float | None]:
-    if limits is not None:
-        if isinstance(limits, OverlapSearchLimits):
-            max_candidates, max_memory_bytes, max_time_seconds = (
-                limits.max_candidates,
-                limits.max_memory_bytes,
-                limits.max_time_seconds,
-            )
-        elif isinstance(limits, dict):
-            max_candidates = limits.get("max_candidates", limits.get("candidate_limit"))
-            max_memory_bytes = limits.get("max_memory_bytes", limits.get("memory_limit"))
-            max_time_seconds = limits.get("max_time_seconds", limits.get("time_limit"))
-        else:
-            max_candidates = getattr(
-                limits, "max_candidates", getattr(limits, "candidate_limit", None)
-            )
-            max_memory_bytes = getattr(
-                limits, "max_memory_bytes", getattr(limits, "memory_limit", None)
-            )
-            max_time_seconds = getattr(
-                limits, "max_time_seconds", getattr(limits, "time_limit", None)
-            )
-    status, values = _coerce_limits(max_candidates, max_memory_bytes, max_time_seconds)
-    if status is not None:
-        raise ValueError("limits must be finite and non-negative integers/seconds")
-    return values
-
-
-def _coerce_limits(
-    max_candidates: int | None,
-    max_memory_bytes: int | None,
-    max_time_seconds: float | None,
-) -> tuple[OverlapSearchStatus | None, tuple[int | None, int | None, float | None]]:
-    if max_candidates is not None:
-        if (
-            isinstance(max_candidates, bool)
-            or int(max_candidates) != max_candidates
-            or int(max_candidates) < 0
-        ):
-            return OverlapSearchStatus.INVALID_LIMIT, (None, None, None)
-        max_candidates = int(max_candidates)
-    if max_memory_bytes is not None:
-        if (
-            isinstance(max_memory_bytes, bool)
-            or int(max_memory_bytes) != max_memory_bytes
-            or int(max_memory_bytes) < 0
-        ):
-            return OverlapSearchStatus.INVALID_LIMIT, (None, None, None)
-        max_memory_bytes = int(max_memory_bytes)
-    if max_time_seconds is not None:
-        try:
-            max_time_seconds = float(max_time_seconds)
-        except (TypeError, ValueError):
-            return OverlapSearchStatus.INVALID_LIMIT, (None, None, None)
-        if not math.isfinite(max_time_seconds) or max_time_seconds < 0.0:
-            return OverlapSearchStatus.INVALID_LIMIT, (None, None, None)
-    return None, (max_candidates, max_memory_bytes, max_time_seconds)
 
 
 def _coerce_ids(values: Any, count: int, name: str) -> np.ndarray:
@@ -350,8 +232,8 @@ def _invalid_bvh(
     return HostAabbOverlapBvh(
         bbox_min=_freeze_array(empty),
         bbox_max=_freeze_array(empty),
-        global_ids=_freeze_array(ids),
-        local_ids=_freeze_array(ids),
+        target_global_ids=_freeze_array(ids),
+        target_local_ids=_freeze_array(ids),
         absolute_tolerance=absolute_tolerance,
         relative_tolerance=relative_tolerance,
         content_identity=hashlib.sha256(
@@ -368,16 +250,13 @@ class HostAabbOverlapBvh:
 
     bbox_min: np.ndarray
     bbox_max: np.ndarray
-    global_ids: np.ndarray
-    local_ids: np.ndarray
+    target_global_ids: np.ndarray
+    target_local_ids: np.ndarray
     absolute_tolerance: float
     relative_tolerance: float
     content_identity: str
     status: OverlapSearchStatus = OverlapSearchStatus.SUCCESS
     message: str = ""
-    max_candidates: int | None = None
-    max_memory_bytes: int | None = None
-    max_time_seconds: float | None = None
     packed_bvh: PackedBVH | None = None
 
     @property
@@ -387,14 +266,6 @@ class HostAabbOverlapBvh:
     @property
     def item_bbox_max(self) -> np.ndarray:
         return self.bbox_max
-
-    @property
-    def item_global_ids(self) -> np.ndarray:
-        return self.global_ids
-
-    @property
-    def item_local_ids(self) -> np.ndarray:
-        return self.local_ids
 
     @property
     def dimension(self) -> int:
@@ -408,73 +279,24 @@ class HostAabbOverlapBvh:
 def build_host_aabb_overlap_bvh(
     bounds_min: Any = None,
     bounds_max: Any = None,
-    global_ids: Any = None,
-    local_ids: Any = None,
-    stable_global_ids: Any = None,
-    item_global_ids: Any = None,
-    item_local_ids: Any = None,
+    target_global_ids: Any = None,
+    target_local_ids: Any = None,
     *,
     tolerance: Any = None,
-    limits: Any = None,
     absolute_tolerance: float = 0.0,
     relative_tolerance: float = 0.0,
-    max_candidates: int | None = None,
-    max_memory_bytes: int | None = None,
-    max_time_seconds: float | None = None,
 ) -> HostAabbOverlapBvh:
     """Build an immutable host AABB index.
 
-    The third and fourth positional arguments are global and local IDs.  The
-    keyword spellings ``stable_global_ids``, ``item_global_ids`` and
-    ``item_local_ids`` are accepted to make the source/target role explicit at
-    call sites.  Malformed bounds or limits produce an invalid index rather
-    than an index that could accidentally emit candidates.
+    The third and fourth positional arguments are target global and local IDs.
+    Malformed bounds or IDs produce an invalid index rather than
+    an index that could accidentally emit candidates.
     """
-    if stable_global_ids is not None:
-        if global_ids is not None:
-            return _invalid_bvh(
-                OverlapSearchStatus.INVALID_BOUNDS,
-                absolute_tolerance=0.0,
-                relative_tolerance=0.0,
-                message="global IDs supplied more than once",
-            )
-        global_ids = stable_global_ids
-    if item_global_ids is not None:
-        if global_ids is not None:
-            return _invalid_bvh(
-                OverlapSearchStatus.INVALID_BOUNDS,
-                absolute_tolerance=0.0,
-                relative_tolerance=0.0,
-                message="global IDs supplied more than once",
-            )
-        global_ids = item_global_ids
-    if item_local_ids is not None:
-        if local_ids is not None:
-            return _invalid_bvh(
-                OverlapSearchStatus.INVALID_BOUNDS,
-                absolute_tolerance=0.0,
-                relative_tolerance=0.0,
-                message="local IDs supplied more than once",
-            )
-        local_ids = item_local_ids
     try:
         atol, rtol = _resolve_tolerance(tolerance, absolute_tolerance, relative_tolerance)
-        if limits is not None:
-            resolved_limits = _resolve_limits(limits, None, None, None)
-        else:
-            limit_status, resolved_limits = _coerce_limits(
-                max_candidates, max_memory_bytes, max_time_seconds
-            )
-            if limit_status is not None:
-                return _invalid_bvh(
-                    limit_status,
-                    absolute_tolerance=atol,
-                    relative_tolerance=rtol,
-                    message="limits must be finite and non-negative integers/seconds",
-                )
         lower, upper = _coerce_bounds(bounds_min, bounds_max)
-        gids = _coerce_ids(global_ids, lower.shape[0], "global_ids")
-        lids = _coerce_ids(local_ids, lower.shape[0], "local_ids")
+        gids = _coerce_ids(target_global_ids, lower.shape[0], "target_global_ids")
+        lids = _coerce_ids(target_local_ids, lower.shape[0], "target_local_ids")
     except (TypeError, ValueError, OverflowError) as exc:
         try:
             atol = float(absolute_tolerance)
@@ -484,11 +306,7 @@ def build_host_aabb_overlap_bvh(
             rtol = float(relative_tolerance)
         except (TypeError, ValueError):
             rtol = 0.0
-        status = (
-            OverlapSearchStatus.INVALID_LIMIT
-            if "limits must" in str(exc)
-            else OverlapSearchStatus.INVALID_BOUNDS
-        )
+        status = OverlapSearchStatus.INVALID_BOUNDS
         return _invalid_bvh(
             status, absolute_tolerance=atol, relative_tolerance=rtol, message=str(exc)
         )
@@ -512,7 +330,6 @@ def build_host_aabb_overlap_bvh(
         lids,
         absolute_tolerance=atol,
         relative_tolerance=rtol,
-        limits=resolved_limits,
     )
     return HostAabbOverlapBvh(
         lower,
@@ -524,37 +341,17 @@ def build_host_aabb_overlap_bvh(
         identity,
         OverlapSearchStatus.SUCCESS,
         "",
-        *resolved_limits,
         prepare_bvh(lower, upper, dtype=np.float64) if lower.shape[0] > 0 else None,
     )
 
 
 def _empty_result(
-    status: OverlapSearchStatus, identity: str, message: str = "", *, elapsed: float = 0.0
+    status: OverlapSearchStatus, identity: str, message: str = ""
 ) -> AabbOverlapQueryResult:
     empty = np.empty((0,), dtype=np.int64)
     return AabbOverlapQueryResult(
-        status, empty, empty, empty, empty, identity, 0, 0, elapsed, message
+        status, empty, empty, empty, empty, identity, 0, message
     )
-
-
-def _limit_status(
-    count: int, max_candidates: int | None, max_memory_bytes: int | None, /
-) -> OverlapSearchStatus | None:
-    """First limit crossed while candidates accumulate one at a time.
-
-    Four ID arrays are materialized in the result; 8 bytes per scalar is a lower
-    bound, so the 32-byte-per-row estimate fails closed for object IDs too.
-    """
-    candidate_exceeded = max_candidates is not None and count > max_candidates
-    memory_exceeded = max_memory_bytes is not None and count * 32 > max_memory_bytes
-    if not (candidate_exceeded or memory_exceeded):
-        return None
-    candidate_row = math.inf if max_candidates is None else max_candidates + 1
-    memory_row = math.inf if max_memory_bytes is None else max_memory_bytes // 32 + 1
-    if candidate_row <= memory_row:
-        return OverlapSearchStatus.CANDIDATE_LIMIT
-    return OverlapSearchStatus.MEMORY_LIMIT
 
 
 def query_host_aabb_overlaps(
@@ -563,50 +360,25 @@ def query_host_aabb_overlaps(
     bounds_max: Any,
     source_global_ids: Any = None,
     source_local_ids: Any = None,
-    stable_global_ids: Any = None,
-    global_ids: Any = None,
     *,
     tolerance: Any = None,
-    limits: Any = None,
     absolute_tolerance: float | None = None,
     relative_tolerance: float | None = None,
     include_zero_measure: bool = False,
-    max_candidates: int | None = None,
-    max_memory_bytes: int | None = None,
-    max_time_seconds: float | None = None,
 ) -> AabbOverlapQueryResult:
     """Return every positive-measure source/target AABB candidate pair.
 
-    Search order and input permutation do not affect output order.  Limits are
-    checked before returning any rows; a limit hit is therefore fail-closed.
-    ``include_zero_measure=True`` includes touching boxes (and records them as
-    ordinary candidates) for algorithms whose conservative policy handles
-    measure-zero intersections explicitly.
+    Search order and input permutation do not affect output order.  Every pair
+    is returned.  ``include_zero_measure=True`` includes touching boxes (and
+    records them as ordinary candidates) for algorithms whose conservative
+    policy handles measure-zero intersections explicitly.
     """
-    started = time.perf_counter()
     if not isinstance(bvh, HostAabbOverlapBvh):
         return _empty_result(
             OverlapSearchStatus.INVALID_BOUNDS, "", "bvh must be a HostAabbOverlapBvh"
         )
     if bvh.status is not OverlapSearchStatus.SUCCESS:
         return _empty_result(bvh.status, bvh.content_identity, bvh.message)
-    if stable_global_ids is not None:
-        if source_global_ids is not None or global_ids is not None:
-            return _empty_result(
-                OverlapSearchStatus.INVALID_BOUNDS,
-                bvh.content_identity,
-                "source global IDs supplied more than once",
-            )
-        source_global_ids = stable_global_ids
-    if global_ids is not None:
-        if source_global_ids is not None:
-            return _empty_result(
-                OverlapSearchStatus.INVALID_BOUNDS,
-                bvh.content_identity,
-                "source global IDs supplied more than once",
-            )
-        source_global_ids = global_ids
-    limit_status: OverlapSearchStatus | None = None
     try:
         default_atol = (
             bvh.absolute_tolerance if absolute_tolerance is None else absolute_tolerance
@@ -615,12 +387,6 @@ def query_host_aabb_overlaps(
             bvh.relative_tolerance if relative_tolerance is None else relative_tolerance
         )
         atol, rtol = _resolve_tolerance(tolerance, default_atol, default_rtol)
-        if limits is not None:
-            resolved_limits = _resolve_limits(limits, None, None, None)
-        else:
-            limit_status, resolved_limits = _coerce_limits(
-                max_candidates, max_memory_bytes, max_time_seconds
-            )
         lower, upper = _coerce_bounds(bounds_min, bounds_max)
         if lower.shape[1] != bvh.dimension:
             raise ValueError("source bounds dimension must match the BVH dimension")
@@ -631,18 +397,9 @@ def query_host_aabb_overlaps(
             OverlapSearchStatus.INVALID_BOUNDS,
             bvh.content_identity,
             str(exc),
-            elapsed=time.perf_counter() - started,
-        )
-    if limit_status is not None:
-        return _empty_result(
-            limit_status,
-            bvh.content_identity,
-            "limits must be finite and non-negative integers/seconds",
-            elapsed=time.perf_counter() - started,
         )
 
-    # A query-specific identity includes all policy and source content.  It is
-    # deliberately independent of elapsed wall-clock time.
+    # A query-specific identity includes all policy and source content.
     source_order = sorted(
         range(lower.shape[0]),
         key=lambda i: (_id_sort_key(sgids[i]), _id_sort_key(slids[i])),
@@ -652,15 +409,6 @@ def query_host_aabb_overlaps(
     source_upper = upper[source_order_np]
     sgids = sgids[source_order_np]
     slids = slids[source_order_np]
-    effective_candidates = (
-        resolved_limits[0] if resolved_limits[0] is not None else bvh.max_candidates
-    )
-    effective_memory = (
-        resolved_limits[1] if resolved_limits[1] is not None else bvh.max_memory_bytes
-    )
-    effective_time = (
-        resolved_limits[2] if resolved_limits[2] is not None else bvh.max_time_seconds
-    )
     query_identity = _fingerprint(
         "host-aabb-overlap-query",
         source_lower,
@@ -670,7 +418,6 @@ def query_host_aabb_overlaps(
         absolute_tolerance=atol,
         relative_tolerance=rtol,
         include_zero_measure=include_zero_measure,
-        limits=(effective_candidates, effective_memory, effective_time),
         extra=(bvh.content_identity,),
     )
 
@@ -678,13 +425,6 @@ def query_host_aabb_overlaps(
     target_items: list[np.ndarray] = []
     count = 0
     if source_lower.shape[0] > 0 and bvh.packed_bvh is not None:
-        if effective_time is not None and time.perf_counter() - started >= effective_time:
-            return _empty_result(
-                OverlapSearchStatus.TIME_LIMIT,
-                query_identity,
-                "time limit exceeded",
-                elapsed=time.perf_counter() - started,
-            )
         # Tolerances only widen zero-measure inclusion; positive-measure overlap
         # is strict on every axis.
         blocks = bvh_overlap_pair_blocks(
@@ -696,26 +436,6 @@ def query_host_aabb_overlaps(
         )
         for block_source, block_target in blocks:
             count += block_source.shape[0]
-            status = _limit_status(count, effective_candidates, effective_memory)
-            if status is not None:
-                return _empty_result(
-                    status,
-                    query_identity,
-                    "candidate limit exceeded"
-                    if status is OverlapSearchStatus.CANDIDATE_LIMIT
-                    else "memory limit exceeded",
-                    elapsed=time.perf_counter() - started,
-                )
-            if (
-                effective_time is not None
-                and time.perf_counter() - started >= effective_time
-            ):
-                return _empty_result(
-                    OverlapSearchStatus.TIME_LIMIT,
-                    query_identity,
-                    "time limit exceeded",
-                    elapsed=time.perf_counter() - started,
-                )
             source_items.append(block_source)
             target_items.append(block_target)
 
@@ -731,21 +451,17 @@ def query_host_aabb_overlaps(
     source_index = source_index[order]
     target_index = target_index[order]
     source_global = _freeze_array(sgids[source_index])
-    target_global = _freeze_array(bvh.global_ids[target_index])
+    target_global = _freeze_array(bvh.target_global_ids[target_index])
     source_local = _freeze_array(slids[source_index])
-    target_local = _freeze_array(bvh.local_ids[target_index])
-    elapsed = time.perf_counter() - started
+    target_local = _freeze_array(bvh.target_local_ids[target_index])
     return AabbOverlapQueryResult(
-        OverlapSearchStatus.SUCCESS,
-        source_global,
-        target_global,
-        source_local,
-        target_local,
-        query_identity,
-        count,
-        count * 32,
-        elapsed,
-        "",
+        status=OverlapSearchStatus.SUCCESS,
+        source_global_ids=source_global,
+        target_global_ids=target_global,
+        source_local_ids=source_local,
+        target_local_ids=target_local,
+        content_identity=query_identity,
+        candidate_count=count,
     )
 
 
@@ -753,8 +469,6 @@ __all__ = [
     "AabbOverlapCandidate",
     "AabbOverlapQueryResult",
     "HostAabbOverlapBvh",
-    "OverlapQueryResult",
-    "OverlapSearchLimits",
     "OverlapSearchStatus",
     "OverlapTolerance",
     "build_host_aabb_overlap_bvh",

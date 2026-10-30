@@ -214,20 +214,24 @@ label IDs to explicit E region IDs through deterministic, junction-conforming
 multi-label marching tetrahedra on a Freudenthal cube split. Uniform states bind
 by their 3D shape; sparse states bind with
 `SparseLabelGrid.site_coordinates` and the route's full grid shape. The plan
-requires explicit spacing, origin, ambient identity, surface capacities and a
-host validation policy.
+requires the full homogeneous `index_to_world` image affine and an explicit
+ambient identity; anisotropic scales, reflections and shears are preserved.
+Sparse coordinates must describe a complete rectangular subimage. Missing
+sites are unknown categorical data and are rejected, not filled as background.
 
 Extraction is seed/repair, not coupled evolution. It requires the state's
 ordered label identity to match the extraction plan and fingerprints one
 `LabelFieldState` epoch together with its binding, route, source preparation and
 site identities. Those identities remain explicit in
-`LabelFieldSurfaceLineage`. Extraction resolves multi-label cells in a canonical
-tetrahedral order, then requires E's orientation, incidence, valence,
-watertightness, capacity and collision certificates. Only an accepted result
-exposes a new explicit topology, state and `PreparedMultiRegionSurface`; those
-objects become the sole geometry authority. Later threshold steps do not update
-them, and later E motion/events do not update the label field. Periodic C
-geometry is not unwrapped during this conversion.
+`LabelFieldSurfaceLineage`. Every nonempty material, including one-site
+regions, is kept. Extraction resolves multi-label cells in a canonical
+tetrahedral order, sizes topology arrays from the resulting seed and requires
+E's orientation, incidence, valence, watertightness and exhaustive collision
+validation. Only an accepted result exposes a new explicit topology, state and
+`PreparedMultiRegionSurface`; those objects become the sole geometry
+authority. Later threshold steps do not update them, and later E motion/events
+do not update the label field. Periodic C geometry is not unwrapped during this
+conversion.
 
 ## Qualification
 

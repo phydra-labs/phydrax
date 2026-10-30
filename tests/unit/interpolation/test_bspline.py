@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from fractions import Fraction
+from math import comb
 from typing import Any
 
 import equinox as eqx
@@ -9,15 +11,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import ArrayLike
 from scipy.interpolate import BSpline as SciPyBSpline
 
 from phydrax._interpolation import (
     apply_gather_stencil,
+    bezier_refinement,
     BoundsMode,
     bspline_evaluate,
     bspline_jet_stencil,
     bspline_stencil,
+    exact_bezier_refinement,
+    rational_bspline_curve_continuity,
+    rational_bspline_curve_spans,
+    rational_bspline_surface_spans,
     RationalSplineJet,
+    tensor_bspline_span_extraction,
     TensorBSplineJetPlan,
 )
 
@@ -467,3 +476,584 @@ def test_bspline_bounds_modes_are_explicit() -> None:
     with pytest.raises(eqx.EquinoxRuntimeError, match="outside"):
         stencil = bspline_stencil(knots, query, degree=degree, bounds="error")
         jax.block_until_ready(stencil.weights)
+
+
+def test_tensor_bezier_extraction_is_exact_local_and_id_preserving() -> None:
+    u_knots = (
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        Fraction(1, 3),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+    )
+    v_knots = (
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        Fraction(2, 5),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+    )
+    u_degree, v_degree = 3, 2
+    u_span, v_span = 4, 3
+    ids = tuple(1000 + 17 * row for row in range(20))
+    anchor_ids, extraction = tensor_bspline_span_extraction(
+        u_knots, v_knots, u_degree, v_degree, u_span, v_span, ids
+    )
+    expected_ids = tuple(
+        ids[u_row * 4 + v_row]
+        for u_row in range(u_span - u_degree, u_span + 1)
+        for v_row in range(v_span - v_degree, v_span + 1)
+    )
+    assert anchor_ids == expected_ids
+    assert len(extraction) == (u_degree + 1) * (v_degree + 1)
+    assert all(len(row) == (u_degree + 1) * (v_degree + 1) for row in extraction)
+    assert any(value == Fraction(1, 3) for row in extraction for value in row)
+    assert all(isinstance(value, Fraction) for row in extraction for value in row)
+
+    def cox(
+        knots: tuple[Fraction, ...], degree: int, index: int, point: Fraction
+    ) -> Fraction:
+        if degree == 0:
+            return Fraction(int(knots[index] <= point < knots[index + 1]))
+        left_width = knots[index + degree] - knots[index]
+        right_width = knots[index + degree + 1] - knots[index + 1]
+        left = (
+            (point - knots[index]) * cox(knots, degree - 1, index, point) / left_width
+            if left_width
+            else Fraction(0)
+        )
+        right = (
+            (knots[index + degree + 1] - point)
+            * cox(knots, degree - 1, index + 1, point)
+            / right_width
+            if right_width
+            else Fraction(0)
+        )
+        return left + right
+
+    def bernstein(degree: int, index: int, parameter: Fraction) -> Fraction:
+        return (
+            Fraction(comb(degree, index))
+            * parameter**index
+            * (1 - parameter) ** (degree - index)
+        )
+
+    u_lower, u_upper = u_knots[u_span], u_knots[u_span + 1]
+    v_lower, v_upper = v_knots[v_span], v_knots[v_span + 1]
+    for u_index in range(u_degree + 1):
+        u_reference = Fraction(u_index + 1, u_degree + 2)
+        u = u_lower + (u_upper - u_lower) * u_reference
+        for v_index in range(v_degree + 1):
+            v_reference = Fraction(v_index + 1, v_degree + 2)
+            v = v_lower + (v_upper - v_lower) * v_reference
+            for local_u in range(u_degree + 1):
+                for local_v in range(v_degree + 1):
+                    row = local_u * (v_degree + 1) + local_v
+                    actual = sum(
+                        (
+                            extraction[row][bern_u * (v_degree + 1) + bern_v]
+                            * bernstein(u_degree, bern_u, u_reference)
+                            * bernstein(v_degree, bern_v, v_reference)
+                            for bern_u in range(u_degree + 1)
+                            for bern_v in range(v_degree + 1)
+                        ),
+                        Fraction(0),
+                    )
+                    expected = cox(
+                        u_knots, u_degree, u_span - u_degree + local_u, u
+                    ) * cox(v_knots, v_degree, v_span - v_degree + local_v, v)
+                    assert actual == expected
+
+
+def test_tensor_bezier_extraction_rejects_zero_spans_and_forged_ids() -> None:
+    knots = (
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        Fraction(1, 2),
+        Fraction(1, 2),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+    )
+    ids = tuple(range(25))
+    with pytest.raises(ValueError, match="strictly positive width"):
+        tensor_bspline_span_extraction(knots, knots, 2, 2, 3, 2, ids)
+    with pytest.raises(ValueError, match="unique and nonnegative"):
+        tensor_bspline_span_extraction(knots, knots, 2, 2, 2, 2, (0, *ids[1:24], 0))
+
+
+def test_exact_bezier_refinement_is_enclosed_by_boehm_bounds() -> None:
+    knots = np.asarray((0.0, 0.0, 0.0, 0.0, 0.25, 1.0, 1.0, 1.0, 1.0))
+    controls = np.asarray((0.2, -0.5, 1.1, 0.3, 2.0))
+    exact_knots = np.asarray(
+        tuple(Fraction.from_float(float(value)) for value in knots), dtype=object
+    )
+    exact_controls = np.asarray(
+        tuple(Fraction.from_float(float(value)) for value in controls), dtype=object
+    )
+    exact_pieces, exact_bounds = exact_bezier_refinement(
+        exact_controls, exact_knots, 3, 0
+    )
+    lower = np.nextafter(controls, -np.inf)
+    upper = np.nextafter(controls, np.inf)
+    bounded_refinement = bezier_refinement(
+        lower, knots, 3, 0, control_upper=upper
+    )
+    assert len(bounded_refinement) == 3
+    lower_pieces, upper_pieces, bounds = bounded_refinement
+    assert exact_pieces.shape == lower_pieces.shape == upper_pieces.shape == (2, 4)
+    assert tuple(tuple(row) for row in exact_bounds) == (
+        (Fraction(0), Fraction(1, 4)),
+        (Fraction(1, 4), Fraction(1)),
+    )
+    assert np.array_equal(bounds, np.asarray(((0.0, 0.25), (0.25, 1.0))))
+    for span in range(exact_pieces.shape[0]):
+        for coefficient in range(exact_pieces.shape[1]):
+            exact_value = exact_pieces[span, coefficient]
+            assert (
+                Fraction.from_float(float(lower_pieces[span, coefficient])) <= exact_value
+            )
+            assert exact_value <= Fraction.from_float(
+                float(upper_pieces[span, coefficient])
+            )
+
+
+def test_rational_weight_gauge_is_a_jvp_vjp_hessian_null_direction() -> None:
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    point = jnp.asarray([0.29, 0.63])
+    stencils = tuple(
+        bspline_jet_stencil(knots, point[axis], degree=1, maximum_order=2)
+        for axis in range(2)
+    )
+    plan = TensorBSplineJetPlan(stencils, maximum_order=2)
+    raw_weights = jnp.asarray([[1.0, 1.7], [2.4, 4.1]])
+    controls = jnp.asarray([[0.2, 1.3], [2.1, 4.7]])
+
+    def value(scale: ArrayLike) -> Any:
+        return RationalSplineJet(plan, raw_weights * jnp.asarray(scale)).apply(controls)
+
+    scale = jnp.asarray(1.6)
+    base_value = value(scale)
+    scaled_value = value(7.25 * scale)
+    np.testing.assert_allclose(scaled_value, base_value, rtol=2.0e-14, atol=2.0e-14)
+    tangent = jax.jvp(value, (scale,), (jnp.ones_like(scale),))[1]
+    pullback = jax.vjp(value, scale)[1](jnp.ones_like(base_value))[0]
+    curvature = jax.hessian(lambda factor: jnp.sum(value(factor)))(scale)
+    np.testing.assert_allclose(tangent, 0.0, atol=2.0e-14)
+    np.testing.assert_allclose(pullback, 0.0, atol=2.0e-14)
+    np.testing.assert_allclose(curvature, 0.0, atol=2.0e-14)
+
+
+def test_rational_spline_jet_retains_the_raw_weight_bank() -> None:
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    point = jnp.asarray([0.29, 0.63])
+    stencils = tuple(
+        bspline_jet_stencil(knots, point[axis], degree=1, maximum_order=1)
+        for axis in range(2)
+    )
+    plan = TensorBSplineJetPlan(stencils, maximum_order=1)
+    weights = jnp.asarray([[0.7, 1.3], [2.1, 4.6]])
+
+    rational = RationalSplineJet(plan, weights)
+
+    np.testing.assert_array_equal(np.asarray(rational.weights), np.asarray(weights))
+
+
+def test_exact_rational_curve_span_enclosures_include_two_derivatives() -> None:
+    spans = rational_bspline_curve_spans(
+        ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0))),
+        (Fraction(1), Fraction(2)),
+        (Fraction(0), Fraction(0), Fraction(1), Fraction(1)),
+        1,
+    )
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.parameter_bounds == (Fraction(0), Fraction(1))
+    assert span.positive_denominator_lower_bound == 1
+    full = span.enclose((Fraction(0), Fraction(1)))
+    assert full.positive_denominator
+    assert full.denominator_bounds == (Fraction(1), Fraction(2))
+    restricted = span.enclose((Fraction(1, 4), Fraction(1, 2)))
+    assert restricted.denominator_bounds == (Fraction(5, 4), Fraction(3, 2))
+    nonbinary_spans = rational_bspline_curve_spans(
+        ((Fraction(0),), (Fraction(2),), (Fraction(4),)),
+        (Fraction(1), Fraction(2), Fraction(3)),
+        (Fraction(0), Fraction(0), Fraction(1, 3), Fraction(1), Fraction(1)),
+        1,
+    )
+    assert tuple(span.span_index for span in nonbinary_spans) == (1, 2)
+    assert tuple(span.parameter_bounds for span in nonbinary_spans) == (
+        (Fraction(0), Fraction(1, 3)),
+        (Fraction(1, 3), Fraction(1)),
+    )
+
+    start = span.enclose((Fraction(0), Fraction(0)))
+    assert start.value_bounds == ((Fraction(0), Fraction(0)),) * 2
+    assert start.first_derivative_bounds == (
+        (Fraction(2), Fraction(2)),
+        (Fraction(0), Fraction(0)),
+    )
+    assert start.second_derivative_bounds == (
+        (Fraction(-4), Fraction(-4)),
+        (Fraction(0), Fraction(0)),
+    )
+    end = span.enclose((Fraction(1), Fraction(1)))
+    assert end.value_bounds == ((Fraction(1), Fraction(1)),) + (
+        (Fraction(0), Fraction(0)),
+    )
+    assert end.first_derivative_bounds[0] == (Fraction(1, 2), Fraction(1, 2))
+    assert end.second_derivative_bounds[0] == (Fraction(-1, 2), Fraction(-1, 2))
+    outward = start.outward_float_bounds()
+    assert outward.position_lower == (0.0, 0.0)
+    assert outward.first_derivative_lower == (2.0, 0.0)
+    assert outward.second_derivative_upper == (-4.0, 0.0)
+
+
+def test_rational_curve_span_continuity_retains_knot_sides_and_closed_seam() -> None:
+    closed_spans = rational_bspline_curve_spans(
+        ((0, 0), (1, 0), (-1, 0), (0, 0)),
+        (1, 1, 1, 1),
+        (0, 0, 0, 0, 1, 1, 1, 1),
+        3,
+    )
+    closed_report = rational_bspline_curve_continuity(closed_spans, closed=True)
+    assert closed_report.junctions == ()
+    assert closed_report.closed_seam is not None
+    assert closed_report.closed_seam.observed_continuity_order == 1
+    assert (
+        closed_report.closed_seam.left_endpoint.value_bounds
+        == closed_report.closed_seam.right_endpoint.value_bounds
+    )
+    assert (
+        closed_report.closed_seam.left_endpoint.first_derivative_bounds
+        == closed_report.closed_seam.right_endpoint.first_derivative_bounds
+    )
+    assert (
+        closed_report.closed_seam.left_endpoint.second_derivative_bounds
+        != closed_report.closed_seam.right_endpoint.second_derivative_bounds
+    )
+
+    discontinuous_spans = rational_bspline_curve_spans(
+        ((0,), (1,), (4,), (5,)),
+        (1, 1, 1, 1),
+        (0, 0, Fraction(1, 2), Fraction(1, 2), 1, 1),
+        1,
+    )
+    report = rational_bspline_curve_continuity(discontinuous_spans)
+    assert len(discontinuous_spans) == 2
+    assert len(report.junctions) == 1
+    knot = report.junctions[0]
+    assert knot.endpoint_parameters == (Fraction(1, 2), Fraction(1, 2))
+    assert knot.guaranteed_continuity_order == -1
+    assert knot.observed_continuity_order == -1
+    assert knot.left_endpoint.value_bounds == ((Fraction(1), Fraction(1)),)
+    assert knot.right_endpoint.value_bounds == ((Fraction(4), Fraction(4)),)
+
+def test_algebraic_rational_curve_spans_preserve_exact_source_banks() -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+
+    root_two = RadicalElement.sqrt(Fraction(2))
+    interior_knot = root_two / 2
+    exact_control_points = (
+        (root_two,),
+        (root_two + 1,),
+        (root_two + 2,),
+    )
+    exact_weights = (Fraction(1), root_two + 1, Fraction(2))
+    exact_knots = (
+        Fraction(0),
+        Fraction(0),
+        interior_knot,
+        Fraction(1),
+        Fraction(1),
+    )
+    spans = rational_bspline_curve_spans(
+        tuple(tuple(float(value) for value in row) for row in exact_control_points),
+        tuple(float(value) for value in exact_weights),
+        tuple(float(value) for value in exact_knots),
+        1,
+        exact_control_points=exact_control_points,
+        exact_weights=exact_weights,
+        exact_knots=exact_knots,
+    )
+
+    assert tuple(span.parameter_bounds for span in spans) == (
+        (Fraction(0), interior_knot),
+        (interior_knot, Fraction(1)),
+    )
+    assert spans[0].homogeneous_bernstein_coefficients[0][0] == root_two
+    assert all(span.positive_denominator_lower_bound > 0 for span in spans)
+    start = spans[0].enclose((Fraction(0), Fraction(0)))
+    assert start.value_bounds[0][0] <= root_two <= start.value_bounds[0][1]
+    left_knot = spans[0].enclose((interior_knot, interior_knot))
+    right_knot = spans[1].enclose((interior_knot, interior_knot))
+    knot_value = exact_control_points[1][0]
+    assert (
+        left_knot.value_bounds[0][0]
+        <= knot_value
+        <= left_knot.value_bounds[0][1]
+    )
+    assert (
+        right_knot.value_bounds[0][0]
+        <= knot_value
+        <= right_knot.value_bounds[0][1]
+    )
+    continuity = rational_bspline_curve_continuity(spans)
+    assert continuity.junctions[0].observed_continuity_order >= 0
+    tiny = Fraction(1, 10**80)
+    nearby_control_points = (
+        (root_two + tiny,),
+        exact_control_points[1],
+        exact_control_points[2],
+    )
+    assert float(nearby_control_points[0][0]) == float(root_two)
+    nearby_spans = rational_bspline_curve_spans(
+        (
+            (float(root_two),),
+            (float(root_two + 1),),
+            (float(root_two + 2),),
+        ),
+        tuple(float(value) for value in exact_weights),
+        tuple(float(value) for value in exact_knots),
+        1,
+        exact_control_points=nearby_control_points,
+        exact_weights=exact_weights,
+        exact_knots=exact_knots,
+    )
+    assert nearby_spans[0].source_id != spans[0].source_id
+    assert (
+        nearby_spans[0].homogeneous_bernstein_coefficients[0][0]
+        != spans[0].homogeneous_bernstein_coefficients[0][0]
+    )
+
+
+def test_exact_rational_surface_spans_enclose_position_and_jacobian() -> None:
+    knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
+    control_points = (
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+        ),
+        (
+            (Fraction(1), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(1), Fraction(1)),
+        ),
+    )
+    weights = ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
+    spans = rational_bspline_surface_spans(
+        control_points, weights, knots, knots, 1, 1
+    )
+
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.span_indices == (1, 1)
+    assert span.coefficient_rows == (0, 1, 2, 3)
+    enclosure = span.enclose(
+        (
+            (Fraction(1, 4), Fraction(3, 4)),
+            (Fraction(1, 5), Fraction(4, 5)),
+        )
+    )
+    assert enclosure.positive_denominator
+
+    def evaluate(
+        u: Fraction, v: Fraction
+    ) -> tuple[
+        tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]
+    ]:
+        basis_u = (1 - u, u)
+        basis_v = (1 - v, v)
+        derivative_u = (Fraction(-1), Fraction(1))
+        derivative_v = (Fraction(-1), Fraction(1))
+        denominator = sum(
+            (
+                weights[i][j] * basis_u[i] * basis_v[j]
+                for i in range(2)
+                for j in range(2)
+            ),
+            Fraction(0),
+        )
+        denominator_u = sum(
+            (
+                weights[i][j] * derivative_u[i] * basis_v[j]
+                for i in range(2)
+                for j in range(2)
+            ),
+            Fraction(0),
+        )
+        denominator_v = sum(
+            (
+                weights[i][j] * basis_u[i] * derivative_v[j]
+                for i in range(2)
+                for j in range(2)
+            ),
+            Fraction(0),
+        )
+        value: list[Fraction] = []
+        du: list[Fraction] = []
+        dv: list[Fraction] = []
+        for component in range(3):
+            numerator = sum(
+                (
+                    weights[i][j]
+                    * control_points[i][j][component]
+                    * basis_u[i]
+                    * basis_v[j]
+                    for i in range(2)
+                    for j in range(2)
+                ),
+                Fraction(0),
+            )
+            numerator_u = sum(
+                (
+                    weights[i][j]
+                    * control_points[i][j][component]
+                    * derivative_u[i]
+                    * basis_v[j]
+                    for i in range(2)
+                    for j in range(2)
+                ),
+                Fraction(0),
+            )
+            numerator_v = sum(
+                (
+                    weights[i][j]
+                    * control_points[i][j][component]
+                    * basis_u[i]
+                    * derivative_v[j]
+                    for i in range(2)
+                    for j in range(2)
+                ),
+                Fraction(0),
+            )
+            value.append(numerator / denominator)
+            du.append(
+                (numerator_u * denominator - numerator * denominator_u)
+                / denominator**2
+            )
+            dv.append(
+                (numerator_v * denominator - numerator * denominator_v)
+                / denominator**2
+            )
+        return tuple(value), tuple(du), tuple(dv)
+
+    for u in (Fraction(1, 4), Fraction(2, 5), Fraction(3, 4)):
+        for v in (Fraction(1, 5), Fraction(1, 2), Fraction(4, 5)):
+            values = evaluate(u, v)
+            for observed, bounds in zip(
+                values,
+                (enclosure.value_bounds, enclosure.du_bounds, enclosure.dv_bounds),
+                strict=True,
+            ):
+                assert all(
+                    lower <= value <= upper
+                    for value, (lower, upper) in zip(observed, bounds, strict=True)
+                )
+
+def test_surface_span_enclosures_keep_internal_knot_pieces_separate() -> None:
+    u_knots = (
+        Fraction(0),
+        Fraction(0),
+        Fraction(1, 2),
+        Fraction(1),
+        Fraction(1),
+    )
+    v_knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
+    control_points = tuple(
+        (
+            (Fraction(index, 2), Fraction(0), Fraction(0)),
+            (Fraction(index, 2), Fraction(1), Fraction(0)),
+        )
+        for index in range(3)
+    )
+    weights = tuple((Fraction(1), Fraction(1)) for _ in range(3))
+    spans = rational_bspline_surface_spans(
+        control_points, weights, u_knots, v_knots, 1, 1
+    )
+
+    assert tuple(span.span_indices for span in spans) == ((1, 1), (2, 1))
+    assert tuple(span.parameter_bounds[0] for span in spans) == (
+        (Fraction(0), Fraction(1, 2)),
+        (Fraction(1, 2), Fraction(1)),
+    )
+    for span in spans:
+        enclosure = span.enclose(span.parameter_bounds)
+        assert enclosure.du_bounds == ((Fraction(1), Fraction(1)),) + (
+            (Fraction(0), Fraction(0)),
+        ) * 2
+        assert enclosure.dv_bounds == (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(1)),
+            (Fraction(0), Fraction(0)),
+        )
+
+
+def test_exact_surface_spans_preserve_subfloat_source_coefficients() -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+
+    knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
+    tiny = RadicalElement.sqrt(Fraction(2, 10**800))
+    exact_control_points = (
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+        ),
+        (
+            (Fraction(1), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(1), tiny),
+        ),
+    )
+    zero_control_points = (
+        exact_control_points[0],
+        (
+            exact_control_points[1][0],
+            (Fraction(1), Fraction(1), Fraction(0)),
+        ),
+    )
+    numeric_control_points = tuple(
+        tuple(tuple(float(value) for value in point) for point in row)
+        for row in exact_control_points
+    )
+    numeric_knots = tuple(float(value) for value in knots)
+    weights = ((1.0, 1.0), (1.0, 1.0))
+    spans = rational_bspline_surface_spans(
+        numeric_control_points,
+        weights,
+        numeric_knots,
+        numeric_knots,
+        1,
+        1,
+        exact_control_points=exact_control_points,
+        exact_weights=((Fraction(1), Fraction(1)), (Fraction(1), Fraction(1))),
+        exact_u_knots=knots,
+        exact_v_knots=knots,
+    )
+    zero_spans = rational_bspline_surface_spans(
+        numeric_control_points,
+        weights,
+        numeric_knots,
+        numeric_knots,
+        1,
+        1,
+        exact_control_points=zero_control_points,
+        exact_weights=((Fraction(1), Fraction(1)), (Fraction(1), Fraction(1))),
+        exact_u_knots=knots,
+        exact_v_knots=knots,
+    )
+
+    assert float(tiny) == 0.0
+    assert spans[0].source_id != zero_spans[0].source_id
+    assert isinstance(
+        spans[0].homogeneous_bernstein_coefficients[-1][-1][-2], RadicalElement
+    )
+    full_enclosure = spans[0].enclose(
+        ((Fraction(0), Fraction(1)), (Fraction(0), Fraction(1)))
+    )
+    assert full_enclosure.value_bounds[2][1] > 0

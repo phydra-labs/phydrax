@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from itertools import combinations
-from typing import final, NamedTuple
+from typing import final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked, Dim, Int32
+from ..typing import checked, ConvertibleToArray, Dim, Int32
 from ._cell_complex import (
     _canonical_entity_ids,
     _interval_complex,
@@ -54,6 +54,10 @@ from ._topology import (
 )
 
 
+if TYPE_CHECKING:
+    from ._periodic_topology import PeriodicMeshTopology
+
+
 def _admit_cell_kind(kind: str, /) -> ReferenceCellTopology | None:
     if (
         kind not in REFERENCE_TOPOLOGIES
@@ -67,9 +71,9 @@ def _admit_cell_kind(kind: str, /) -> ReferenceCellTopology | None:
 
 
 def _admit_cell_rows(
-    kind: str, reference: ReferenceCellTopology | None, vertices: ArrayLike, /
+    kind: str, reference: ReferenceCellTopology | None, vertices: ConvertibleToArray, /
 ) -> tuple[np.ndarray, int]:
-    """Own reference-cell arity and nonempty rank-two connectivity admission."""
+    """Admit rank-two connectivity, including an explicit zero-cell local block."""
     cells = np.asarray(vertices, dtype=np.int32)
     if reference is None:
         arity = cells.shape[1] if cells.ndim == 2 else -1
@@ -79,7 +83,6 @@ def _admit_cell_rows(
         minimum_arity = 2 if reference.dimension == 1 else 3
     if (
         cells.ndim != 2
-        or cells.shape[0] == 0
         or cells.shape[1] != arity
         or arity < minimum_arity
         or (kind == "polygon" and arity < 5)
@@ -89,7 +92,11 @@ def _admit_cell_rows(
 
 
 def _admit_active_cell_vertices(
-    kind: str, cells: np.ndarray, vertex_valid: ArrayLike | None, minimum_arity: int, /
+    kind: str,
+    cells: np.ndarray,
+    vertex_valid: ConvertibleToArray | None,
+    minimum_arity: int,
+    /,
 ) -> np.ndarray:
     """Validate fixed-capacity padding and active vertex-set uniqueness."""
     valid = (
@@ -115,7 +122,7 @@ def _admit_active_cell_vertices(
 
 
 def _admit_cell_global_ids(
-    cell_count: int, global_ids: ArrayLike | None, /
+    cell_count: int, global_ids: ConvertibleToArray | None, /
 ) -> np.ndarray:
     """Admit one unique stable identity per cell without changing numeric representation."""
     ids = (
@@ -144,11 +151,11 @@ class CellBlock(StrictModule, NonTrainableState):
         self,
         name: str,
         cell_kind: str,
-        vertices: ArrayLike,
+        vertices: ConvertibleToArray,
         /,
         *,
-        vertex_valid: ArrayLike | None = None,
-        global_ids: ArrayLike | None = None,
+        vertex_valid: ConvertibleToArray | None = None,
+        global_ids: ConvertibleToArray | None = None,
     ) -> None:
         block_name = str(name)
         kind = str(cell_kind)
@@ -265,6 +272,94 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
     @property
     def topological_dimension(self) -> int:
         return 3
+
+
+@final
+class EmptyLocalCellMeshAuthority(StrictModule, NonTrainableState):
+    """Partition-bound declaration for an exactly zero-resident cell carrier."""
+
+    source_topology_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+    group_id: str = eqx.field(static=True)
+    local_rank: int = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    block_name: str = eqx.field(static=True)
+    cell_kind: str = eqx.field(static=True)
+    topological_dimension: int = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+    authority_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        source_topology_id: str,
+        source_geometry_id: str,
+        distribution_id: str,
+        group_id: str,
+        local_rank: int,
+        part_count: int,
+        block_name: str,
+        cell_kind: str,
+        topological_dimension: int,
+        ambient_dimension: int,
+        /,
+    ) -> None:
+        identifiers = (
+            source_topology_id,
+            source_geometry_id,
+            distribution_id,
+            group_id,
+            block_name,
+            cell_kind,
+        )
+        reference = _admit_cell_kind(str(cell_kind))
+        if (
+            any(not isinstance(value, str) or not value.strip() for value in identifiers)
+            or reference is None
+            or isinstance(local_rank, (bool, np.bool_))
+            or not isinstance(local_rank, (int, np.integer))
+            or isinstance(part_count, (bool, np.bool_))
+            or not isinstance(part_count, (int, np.integer))
+            or int(part_count) <= 0
+            or not 0 <= int(local_rank) < int(part_count)
+            or isinstance(topological_dimension, (bool, np.bool_))
+            or not isinstance(topological_dimension, (int, np.integer))
+            or int(topological_dimension) != reference.dimension
+            or isinstance(ambient_dimension, (bool, np.bool_))
+            or not isinstance(ambient_dimension, (int, np.integer))
+            or int(ambient_dimension) < reference.dimension
+        ):
+            raise ValueError("Empty-local cell mesh authority is malformed.")
+        rank = int(local_rank)
+        parts = int(part_count)
+        dimension = int(topological_dimension)
+        ambient = int(ambient_dimension)
+        self.source_topology_id = source_topology_id
+        self.source_geometry_id = source_geometry_id
+        self.distribution_id = distribution_id
+        self.group_id = group_id
+        self.local_rank = rank
+        self.part_count = parts
+        self.block_name = block_name
+        self.cell_kind = cell_kind
+        self.topological_dimension = dimension
+        self.ambient_dimension = ambient
+        self.authority_id = canonical_fingerprint(
+            {
+                "kind": "empty-local-cell-mesh-authority",
+                "source_topology": source_topology_id,
+                "source_geometry": source_geometry_id,
+                "distribution": distribution_id,
+                "group": group_id,
+                "local_rank": rank,
+                "part_count": parts,
+                "block_name": block_name,
+                "cell_kind": cell_kind,
+                "topological_dimension": dimension,
+                "ambient_dimension": ambient,
+            }
+        )
 
 
 class SimplexCellDim(Dim):
@@ -803,25 +898,26 @@ def _simplex_mesh_topology(
     ), topology
 
 
-def _tensor_mesh_route_blocks(
+def _named_mesh_route_blocks(
     blocks: tuple[CellBlock | PolyhedralBlock, ...], /
 ) -> tuple[CellBlock | PolyhedralBlock, ...]:
-    """Bind dimension-qualified cubes to the native 1-D/2-D/3-D vertex routes."""
-    names = {1: "interval", 2: "quadrilateral", 3: "hexahedron"}
+    """Prepare native incidence routes without relabeling stored mesh blocks."""
     result: list[CellBlock | PolyhedralBlock] = []
     for block in blocks:
-        if not block.cell_kind.startswith("tensor:"):
+        if not block.cell_kind.startswith(("simplex:", "tensor:")):
             result.append(block)
             continue
-        dimension = block.topological_dimension
-        if dimension not in names:
+        family = reference_cell_topology(block.cell_kind).family
+        if family == block.cell_kind:
+            if block.cell_kind.startswith("tensor:"):
+                raise ValueError(
+                    "Unstructured tensor CellMesh supports dimensions one through three."
+                )
             raise ValueError(
-                "Unstructured tensor CellMesh supports dimensions one through three."
+                "Mixed reference-cell routing requires a native cell family."
             )
         result.append(
-            CellBlock(
-                block.name, names[dimension], block.vertices, global_ids=block.global_ids
-            )
+            CellBlock(block.name, family, block.vertices, global_ids=block.global_ids)
         )
     return tuple(result)
 
@@ -850,8 +946,19 @@ def _prepare_cell_mesh_topology(
         raise ValueError(
             "polyhedral_connectivity is valid only for three-dimensional meshes."
         )
-    route_blocks = _tensor_mesh_route_blocks(normalized_blocks)
-    if any(block.cell_kind.startswith("simplex:") for block in normalized_blocks):
+    general_simplex = any(
+        block.cell_kind.startswith("simplex:") for block in normalized_blocks
+    ) and all(
+        block.cell_kind in ("interval", "triangle", "tetrahedron")
+        or block.cell_kind.startswith("simplex:")
+        for block in normalized_blocks
+    )
+    route_blocks = (
+        normalized_blocks
+        if general_simplex
+        else _named_mesh_route_blocks(normalized_blocks)
+    )
+    if general_simplex:
         if polyhedral_connectivity is not None:
             raise ValueError("Simplicial meshes cannot use polyhedral connectivity.")
         connectivity, topology = _simplex_mesh_topology(
@@ -943,6 +1050,150 @@ def _reused_cell_mesh_topology(
     return prepared
 
 
+def _rebuild_polyhedral_connectivity_from_stored(
+    value: PolyhedralConnectivity,
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    vertex_global_ids: ArrayLike,
+    /,
+) -> PolyhedralConnectivity:
+    if type(value) is not PolyhedralConnectivity:
+        raise TypeError("Polyhedral mesh lost its canonical connectivity bank.")
+    cell_ids = np.asarray(value.cell_global_ids, dtype=np.int64)
+    cell_rows = {int(identifier): row for row, identifier in enumerate(cell_ids)}
+    if len(cell_rows) != cell_ids.size:
+        raise ValueError("Polyhedral connectivity cell IDs must be unique.")
+    face_offsets = np.asarray(value.face_vertex_offsets, dtype=np.int64)
+    face_vertices = np.asarray(value.face_vertex_values, dtype=np.int64)
+    cell_face_offsets = np.asarray(value.cell_face_offsets, dtype=np.int64)
+    cell_face_values = np.asarray(value.cell_face_values, dtype=np.int64)
+    cell_face_signs = np.asarray(value.cell_face_sign_values)
+    if (
+        face_offsets.shape != (int(value.face_count) + 1,)
+        or face_offsets.size == 0
+        or face_offsets[0] != 0
+        or face_offsets[-1] != face_vertices.size
+        or cell_face_offsets.shape != (cell_ids.size + 1,)
+        or cell_face_offsets.size == 0
+        or cell_face_offsets[0] != 0
+        or cell_face_offsets[-1] != cell_face_values.size
+        or cell_face_signs.shape != cell_face_values.shape
+    ):
+        raise ValueError("Polyhedral connectivity row offsets are malformed.")
+    entries: list[tuple[str, np.ndarray] | tuple[np.ndarray, ...]] = []
+    rebuilt_cell_ids: list[int] = []
+    for block in blocks:
+        if type(block) is CellBlock:
+            for row, identifier in enumerate(
+                np.asarray(block.global_ids, dtype=np.int64)
+            ):
+                cell_id = int(identifier)
+                if cell_id not in cell_rows:
+                    raise ValueError("Polyhedral connectivity lost a standard cell row.")
+                entries.append(
+                    (block.cell_kind, np.asarray(block.vertices[row], dtype=np.int32))
+                )
+                rebuilt_cell_ids.append(cell_id)
+        elif type(block) is PolyhedralBlock:
+            for identifier in np.asarray(block.global_ids, dtype=np.int64):
+                cell_id = int(identifier)
+                try:
+                    cell_row = cell_rows[cell_id]
+                except KeyError as error:
+                    raise ValueError(
+                        "Polyhedral connectivity lost a polyhedron row."
+                    ) from error
+                loops: list[np.ndarray] = []
+                for occurrence in range(
+                    int(cell_face_offsets[cell_row]),
+                    int(cell_face_offsets[cell_row + 1]),
+                ):
+                    face_row = int(cell_face_values[occurrence])
+                    if not 0 <= face_row < face_offsets.size - 1:
+                        raise ValueError("Polyhedral cell references an absent face row.")
+                    loop = face_vertices[
+                        int(face_offsets[face_row]) : int(face_offsets[face_row + 1])
+                    ].astype(np.int32, copy=True)
+                    orientation = cell_face_signs[occurrence]
+                    if orientation == -1:
+                        loop = loop[::-1]
+                    elif orientation != 1:
+                        raise ValueError(
+                            "Polyhedral face-use orientation is not signed unit data."
+                        )
+                    loops.append(loop)
+                if not loops:
+                    raise ValueError(
+                        "Polyhedral cell must retain its exact face-loop bank."
+                    )
+                entries.append(tuple(loops))
+                rebuilt_cell_ids.append(cell_id)
+        else:
+            raise TypeError("CellMesh contains an unsupported block type.")
+    if not np.array_equal(np.asarray(rebuilt_cell_ids, dtype=np.int64), cell_ids):
+        raise ValueError(
+            "Polyhedral cell blocks do not match the stored connectivity row order."
+        )
+    rebuilt = _build_polyhedral_connectivity(
+        tuple(entries),
+        int(value.vertex_count),
+        vertex_global_ids=vertex_global_ids,
+        edge_global_ids=value.edge_global_ids,
+        face_global_ids=value.face_global_ids,
+        cell_global_ids=np.asarray(rebuilt_cell_ids, dtype=np.int64),
+    )
+    arrays = (
+        "edges",
+        "face_vertex_offsets",
+        "face_vertex_values",
+        "face_edge_offsets",
+        "face_edge_values",
+        "face_edge_sign_values",
+        "cell_face_offsets",
+        "cell_face_values",
+        "cell_face_sign_values",
+        "cell_vertex_offsets",
+        "cell_vertex_values",
+        "face_owner",
+        "face_neighbor",
+        "face_owner_local",
+        "face_neighbor_local",
+        "face_cell_counts",
+        "boundary_vertices",
+        "boundary_edges",
+        "boundary_faces",
+        "vertex_global_ids",
+        "edge_global_ids",
+        "face_global_ids",
+        "cell_global_ids",
+    )
+    if any(
+        not np.array_equal(
+            np.asarray(getattr(rebuilt, name)), np.asarray(getattr(value, name))
+        )
+        for name in arrays
+    ) or (
+        rebuilt.vertex_count,
+        rebuilt.edge_count,
+        rebuilt.face_count,
+        rebuilt.cell_count,
+        rebuilt.maximum_face_arity,
+        rebuilt.maximum_cell_faces,
+        rebuilt.maximum_cell_vertices,
+    ) != (
+        value.vertex_count,
+        value.edge_count,
+        value.face_count,
+        value.cell_count,
+        value.maximum_face_arity,
+        value.maximum_cell_faces,
+        value.maximum_cell_vertices,
+    ):
+        raise ValueError(
+            "Stored polyhedral connectivity differs from its exact face loops."
+        )
+    return rebuilt
+
+
 class CellMesh(StrictModule, NonTrainableState):
     """Canonical computational mesh shared by unstructured discretizations."""
 
@@ -959,6 +1210,9 @@ class CellMesh(StrictModule, NonTrainableState):
     )
     topology: CellComplexTopology
     support: DiscreteSupport
+    periodic_topology: PeriodicMeshTopology | None
+    empty_local_authority: EmptyLocalCellMeshAuthority | None
+    lifted_topology_id: str = eqx.field(static=True)
     topological_dimension: int = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
@@ -969,7 +1223,7 @@ class CellMesh(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        coordinates: ArrayLike,
+        coordinates: ConvertibleToArray,
         blocks: Sequence[CellBlock | PolyhedralBlock],
         /,
         *,
@@ -977,17 +1231,51 @@ class CellMesh(StrictModule, NonTrainableState):
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
+        periodic_topology: PeriodicMeshTopology | None = None,
+        empty_local_authority: EmptyLocalCellMeshAuthority | None = None,
         _prepared_topology: _PreparedCellMeshTopology | None = None,
     ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
-        if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
-            raise ValueError("Cell mesh coordinates must have shape (n > 0, d > 0).")
+        if points.ndim != 2 or points.shape[1] == 0:
+            raise ValueError("Cell mesh coordinates must have shape (n >= 0, d > 0).")
         if not np.all(np.isfinite(points)):
             raise ValueError("Cell mesh coordinates must be finite.")
+        normalized_blocks = tuple(blocks)
+        if not all(
+            isinstance(block, (CellBlock, PolyhedralBlock)) for block in normalized_blocks
+        ):
+            raise TypeError(
+                "blocks must contain only CellBlock or PolyhedralBlock instances."
+            )
+        cell_count = sum(block.cell_count for block in normalized_blocks)
+        if cell_count == 0:
+            if not isinstance(empty_local_authority, EmptyLocalCellMeshAuthority):
+                raise ValueError(
+                    "Zero-resident CellMesh requires explicit partition authority."
+                )
+            if (
+                points.shape[0] != 0
+                or len(normalized_blocks) != 1
+                or type(normalized_blocks[0]) is not CellBlock
+                or normalized_blocks[0].name != empty_local_authority.block_name
+                or normalized_blocks[0].cell_kind != empty_local_authority.cell_kind
+                or points.shape[1] != empty_local_authority.ambient_dimension
+                or normalized_blocks[0].topological_dimension
+                != empty_local_authority.topological_dimension
+                or periodic_topology is not None
+                or _prepared_topology is not None
+            ):
+                raise ValueError(
+                    "Zero-resident CellMesh differs from its typed partition authority."
+                )
+        elif empty_local_authority is not None:
+            raise ValueError(
+                "Empty-local partition authority cannot bind resident cell rows."
+            )
         if _prepared_topology is None:
             prepared = _prepare_cell_mesh_topology(
                 points.shape,
-                blocks,
+                normalized_blocks,
                 vertex_global_ids=vertex_global_ids,
                 entity_global_ids=entity_global_ids,
                 polyhedral_connectivity=polyhedral_connectivity,
@@ -996,20 +1284,50 @@ class CellMesh(StrictModule, NonTrainableState):
             prepared = _reused_cell_mesh_topology(
                 _prepared_topology,
                 points.shape,
-                blocks,
+                normalized_blocks,
                 identities_supplied=(
                     vertex_global_ids is not None
                     or entity_global_ids is not None
                     or polyhedral_connectivity is not None
                 ),
             )
+        topology_identity = prepared.topology_id
+        if periodic_topology is not None:
+            from ._periodic_topology import PeriodicMeshTopology
+
+            if not isinstance(periodic_topology, PeriodicMeshTopology):
+                raise TypeError("periodic_topology must be PeriodicMeshTopology or None.")
+            periodic_topology.require_lifted(
+                prepared.topology, prepared.topology_id, prepared.blocks
+            )
+            periodic_topology.require_coordinates(points)
+            topology_identity = canonical_fingerprint(
+                {
+                    "kind": "periodic-cell-mesh-topology",
+                    "lifted_topology": prepared.topology_id,
+                    "periodic_topology": periodic_topology.periodic_topology_id,
+                }
+            )
+        if empty_local_authority is not None:
+            topology_identity = canonical_fingerprint(
+                {
+                    "kind": "empty-local-cell-mesh-topology",
+                    "local_topology": prepared.topology_id,
+                    "authority": empty_local_authority.authority_id,
+                }
+            )
         geometry_layout_id = canonical_fingerprint(
             {
                 "kind": "cell-mesh-geometry-layout",
-                "topology": prepared.topology_id,
+                "topology": topology_identity,
                 "ambient_dimension": points.shape[1],
                 "coordinate_count": points.shape[0],
                 "coordinate_dtype": str(points.dtype),
+                "empty_local_authority": (
+                    None
+                    if empty_local_authority is None
+                    else empty_local_authority.authority_id
+                ),
             }
         )
         geometry_id = canonical_fingerprint(
@@ -1027,19 +1345,206 @@ class CellMesh(StrictModule, NonTrainableState):
         self.topology = prepared.topology
         self.connectivity = prepared.connectivity
         self.support = support
+        self.periodic_topology = periodic_topology
+        self.empty_local_authority = empty_local_authority
+        self.lifted_topology_id = prepared.topology_id
         self.topological_dimension = prepared.topological_dimension
         self.ambient_dimension = points.shape[1]
-        self.topology_id = prepared.topology_id
+        self.topology_id = topology_identity
         self.geometry_layout_id = geometry_layout_id
         self.geometry_id = geometry_id
         self.mesh_id = canonical_fingerprint(
             {
                 "kind": "cell-mesh",
-                "topology": prepared.topology_id,
+                "topology": topology_identity,
                 "geometry": geometry_id,
             }
         )
         self.numeric_version = str(numeric_version)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[CellMesh],
+        value: CellMesh,
+        /,
+        *,
+        actual_geometry: object | None = None,
+    ) -> CellMesh:
+        if type(value) is not cls:
+            raise TypeError("value must be CellMesh.")
+        if not isinstance(value.topology, CellComplexTopology):
+            raise TypeError("Stored CellMesh must retain CellComplexTopology.")
+        blocks: list[CellBlock | PolyhedralBlock] = []
+        for block in value.blocks:
+            if type(block) is CellBlock:
+                rebuilt_block = CellBlock(
+                    block.name,
+                    block.cell_kind,
+                    block.vertices,
+                    vertex_valid=block.vertex_valid,
+                    global_ids=block.global_ids,
+                )
+            elif type(block) is PolyhedralBlock:
+                rebuilt_block = PolyhedralBlock(
+                    block.name,
+                    block.vertices,
+                    global_ids=block.global_ids,
+                )
+            else:
+                raise TypeError("CellMesh contains an unsupported block type.")
+            if (
+                rebuilt_block.block_id != block.block_id
+                or array_tree_fingerprint(rebuilt_block.vertices)
+                != array_tree_fingerprint(block.vertices)
+                or array_tree_fingerprint(rebuilt_block.vertex_valid)
+                != array_tree_fingerprint(block.vertex_valid)
+                or array_tree_fingerprint(rebuilt_block.global_ids)
+                != array_tree_fingerprint(block.global_ids)
+            ):
+                raise ValueError("Stored CellMesh block differs from its exact rows.")
+            blocks.append(rebuilt_block)
+        rebuilt_blocks = tuple(blocks)
+        entity_global_ids = {
+            entity.intrinsic_dimension: np.asarray(entity.entity_ids, dtype=np.int64)
+            for entity in value.topology.entity_sets
+            if entity.intrinsic_dimension > 0
+        }
+        polyhedral = (
+            _rebuild_polyhedral_connectivity_from_stored(
+                value.connectivity,
+                rebuilt_blocks,
+                value.vertex_global_ids,
+            )
+            if type(value.connectivity) is PolyhedralConnectivity
+            else None
+        )
+        if any(block.cell_kind == "polyhedron" for block in rebuilt_blocks) and (
+            polyhedral is None
+        ):
+            raise TypeError("Polyhedral CellMesh lost its exact connectivity owner.")
+        if value.periodic_topology is None:
+            if actual_geometry is not None:
+                raise ValueError(
+                    "A nonperiodic CellMesh cannot bind periodic actual_geometry."
+                )
+            rebuilt = cls(
+                value.coordinates,
+                rebuilt_blocks,
+                vertex_global_ids=value.vertex_global_ids,
+                entity_global_ids=entity_global_ids,
+                numeric_version=value.numeric_version,
+                empty_local_authority=value.empty_local_authority,
+                polyhedral_connectivity=polyhedral,
+            )
+        else:
+            from ._periodic_topology import PeriodicMeshTopology
+
+            if type(value.periodic_topology) is not PeriodicMeshTopology:
+                raise TypeError("CellMesh periodic topology has an unexpected type.")
+            if actual_geometry is not None:
+                from ._cell_geometry import CellGeometrySpec
+
+                if type(actual_geometry) is not CellGeometrySpec:
+                    raise TypeError("actual_geometry must be a CellGeometrySpec.")
+            lifted = cls(
+                value.coordinates,
+                rebuilt_blocks,
+                vertex_global_ids=value.vertex_global_ids,
+                entity_global_ids=entity_global_ids,
+                numeric_version=value.numeric_version,
+                empty_local_authority=value.empty_local_authority,
+                polyhedral_connectivity=polyhedral,
+            )
+            periodic = PeriodicMeshTopology.from_stored_fields(
+                value.periodic_topology,
+                lifted,
+                actual_geometry=actual_geometry,
+            )
+            rebuilt = cls(
+                value.coordinates,
+                rebuilt_blocks,
+                vertex_global_ids=value.vertex_global_ids,
+                entity_global_ids=entity_global_ids,
+                numeric_version=value.numeric_version,
+                periodic_topology=periodic,
+                empty_local_authority=value.empty_local_authority,
+                polyhedral_connectivity=polyhedral,
+            )
+        if (
+            rebuilt.mesh_id != value.mesh_id
+            or rebuilt.topology_id != value.topology_id
+            or rebuilt.lifted_topology_id != value.lifted_topology_id
+            or rebuilt.geometry_layout_id != value.geometry_layout_id
+            or rebuilt.geometry_id != value.geometry_id
+            or rebuilt.topological_dimension != value.topological_dimension
+            or rebuilt.ambient_dimension != value.ambient_dimension
+            or rebuilt.numeric_version != value.numeric_version
+            or type(rebuilt.connectivity) is not type(value.connectivity)
+            or array_tree_fingerprint(rebuilt.coordinates)
+            != array_tree_fingerprint(value.coordinates)
+            or (
+                None
+                if rebuilt.empty_local_authority is None
+                else rebuilt.empty_local_authority.authority_id
+            )
+            != (
+                None
+                if value.empty_local_authority is None
+                else value.empty_local_authority.authority_id
+            )
+            or array_tree_fingerprint(rebuilt.vertex_global_ids)
+            != array_tree_fingerprint(value.vertex_global_ids)
+            or array_tree_fingerprint(rebuilt.connectivity)
+            != array_tree_fingerprint(value.connectivity)
+            or array_tree_fingerprint(rebuilt.topology)
+            != array_tree_fingerprint(value.topology)
+            or array_tree_fingerprint(rebuilt.support)
+            != array_tree_fingerprint(value.support)
+            or rebuilt.support.support_id != value.support.support_id
+            or (
+                None
+                if rebuilt.periodic_topology is None
+                else rebuilt.periodic_topology.periodic_topology_id
+            )
+            != (
+                None
+                if value.periodic_topology is None
+                else value.periodic_topology.periodic_topology_id
+            )
+        ):
+            raise ValueError(
+                "Stored CellMesh differs from its canonical topology and geometry."
+            )
+        return rebuilt
+
+    @classmethod
+    @checked
+    def empty_local(
+        cls: type[CellMesh],
+        authority: EmptyLocalCellMeshAuthority,
+        /,
+        *,
+        numeric_version: str = "0",
+    ) -> CellMesh:
+        """Construct an explicitly authorized zero-resident local cell carrier."""
+        if type(authority) is not EmptyLocalCellMeshAuthority:
+            raise TypeError("authority must be EmptyLocalCellMeshAuthority.")
+        reference = reference_cell_topology(authority.cell_kind)
+        empty_ids = np.empty((0,), dtype=np.int64)
+        return cls(
+            np.empty((0, authority.ambient_dimension), dtype=np.float64),
+            (
+                CellBlock(
+                    authority.block_name,
+                    authority.cell_kind,
+                    np.empty((0, len(reference.vertices)), dtype=np.int32),
+                    global_ids=empty_ids,
+                ),
+            ),
+            numeric_version=numeric_version,
+            empty_local_authority=authority,
+        )
 
     @classmethod
     def from_simplices(
@@ -1076,13 +1581,13 @@ class CellMesh(StrictModule, NonTrainableState):
     @classmethod
     def from_triangles(
         cls,
-        coordinates: ArrayLike,
-        triangles: ArrayLike,
+        coordinates: ConvertibleToArray,
+        triangles: ConvertibleToArray,
         /,
         *,
         block_name: str = "triangles",
         vertex_global_ids: ArrayLike | None = None,
-        cell_global_ids: ArrayLike | None = None,
+        cell_global_ids: ConvertibleToArray | None = None,
         numeric_version: str = "0",
     ) -> CellMesh:
         return cls(
@@ -1195,7 +1700,7 @@ class CellMesh(StrictModule, NonTrainableState):
     def from_polyhedra(
         cls,
         coordinates: ArrayLike,
-        cells: Sequence[Sequence[ArrayLike]],
+        cells: Sequence[Sequence[ConvertibleToArray]],
         /,
         *,
         block_name: str = "polyhedra",
@@ -1444,21 +1949,35 @@ class CellMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fixed-topology coordinate refresh must preserve coordinate shape."
             )
+        if self.empty_local_authority is not None:
+            return CellMesh(
+                points,
+                self.blocks,
+                numeric_version=numeric_version,
+                empty_local_authority=self.empty_local_authority,
+            )
         # The blocks, identities, connectivity, and topology are coordinate
         # independent, so the refresh reuses them instead of rebuilding them.
         return CellMesh(
             points,
             self.blocks,
             numeric_version=numeric_version,
+            periodic_topology=self.periodic_topology,
             _prepared_topology=_PreparedCellMeshTopology(
                 self.blocks,
                 self.vertex_global_ids,
                 self.connectivity,
                 self.topology,
-                self.topology_id,
+                self.lifted_topology_id,
                 self.topological_dimension,
             ),
         )
 
 
-__all__ = ["CellBlock", "CellMesh", "PolyhedralBlock", "SimplicialConnectivity"]
+__all__ = [
+    "CellBlock",
+    "CellMesh",
+    "EmptyLocalCellMeshAuthority",
+    "PolyhedralBlock",
+    "SimplicialConnectivity",
+]

@@ -313,7 +313,7 @@ def _domain_plan(
     role = AtomisticDomainRolePlan(
         requirement,
         periodic.image_stencil(
-            CUTOFF + SKIN + (0.6 if dynamic_cell else 0.0), maximum_image_count=4096
+            CUTOFF + SKIN + (0.6 if dynamic_cell else 0.0)
         ),
         streaming=StreamedRelationPlan(
             receiver_tile=4,

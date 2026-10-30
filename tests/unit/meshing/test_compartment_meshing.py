@@ -1,9 +1,16 @@
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_complex import TetrahedralConnectivity
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.geometry._compartments import CompartmentMeshingSource
+from phydrax.meshing._association import GeometrySourceEntityRole
+from phydrax.meshing._compartments import prepare_compartment_plc
+from phydrax.meshing._volume_generation import NativeVolumeSchedule
 
 
 def _manifest() -> Any:
@@ -24,12 +31,10 @@ def _manifest() -> Any:
     )
 
 
-@pytest.mark.meshing_ftetwild
-def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> None:
-    pytest.importorskip(
-        "wildmeshing",
-        reason="requires the optional fTetWild provider",
-    )
+def _compartment_source(
+    *,
+    inner_index: tuple[int, int, int] = (2, 2, 2),
+) -> tuple[CompartmentMeshingSource, phx.SpatialCoordinateContract]:
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",
@@ -39,7 +44,7 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
         np.eye(4), "voxels", contract, phx.imaging.ImageAxisConvention.LPS
     )
     values = np.ones((5, 5, 5), dtype=np.int16)
-    values[2, 2, 2] = 2
+    values[inner_index] = 2
     asset = phx.imaging.MedicalImageAsset(
         "labels",
         "segmentation",
@@ -70,14 +75,14 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
             ),
         ),
     )
-    compartments = (
+    definitions = (
         phx.geometry.CompartmentDefinition(
-            "outer", ("outer-label",), "material", allowed_neighbor_ids=("inner",)
+            "outer", ("outer-label",), "fluid", allowed_neighbor_ids=("inner",)
         ),
         phx.geometry.CompartmentDefinition(
             "inner",
             ("inner-label",),
-            "material",
+            "solid",
             containment_parent_id="outer",
             allowed_neighbor_ids=("outer",),
         ),
@@ -85,43 +90,103 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
     interface = phx.geometry.CompartmentInterfaceDefinition(
         "outer-inner", "outer", "inner", "exchange"
     )
-    complex_ = phx.imaging.build_compartment_complex(labels, compartments, (interface,))
+    complex_ = phx.imaging.build_compartment_complex(labels, definitions, (interface,))
     interfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
-    manifold3d = pytest.importorskip("manifold3d")
-    arrays = (
-        manifold3d.Manifold.cube((5.0, 5.0, 5.0))
-        .translate((-0.5, -0.5, -0.5))
-        .to_mesh64()
+
+    lower, upper = -0.5, 4.5
+    vertices = np.asarray(
+        (
+            (lower, lower, lower),
+            (upper, lower, lower),
+            (upper, upper, lower),
+            (lower, upper, lower),
+            (lower, lower, upper),
+            (upper, lower, upper),
+            (upper, upper, upper),
+            (lower, upper, upper),
+        ),
+        dtype=np.float64,
+    )
+    quads = (
+        (0, 4, 7, 3),
+        (1, 2, 6, 5),
+        (0, 1, 5, 4),
+        (3, 7, 6, 2),
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+    )
+    triangles = np.asarray(
+        tuple(
+            triangle
+            for quad in quads
+            for triangle in ((quad[0], quad[1], quad[2]), (quad[0], quad[2], quad[3]))
+        ),
+        dtype=np.int64,
     )
     outer = phx.geometry.SurfaceModel.from_triangles(
-        arrays.vert_properties[:, :3],
-        arrays.tri_verts,
+        vertices,
+        triangles,
         phx.geometry.SurfaceMetadata(
             source_id="outer-surface",
-            source_revision="0",
+            source_revision=labels.label_volume_id,
             coordinate_contract=contract,
             provenance=("synthetic",),
         ),
     )
-    result = phx.meshing.FTetWildCompartmentProvider().execute(
-        phx.meshing.CompartmentMeshingSpec(
-            labels,
-            complex_,
-            outer,
-            interfaces,
-            1.5,
-            options=phx.meshing.FTetWildOptions(
-                envelope_distance=0.05, maximum_iterations=20, maximum_threads=1
-            ),
-        )
+    return CompartmentMeshingSource(labels, complex_, outer, interfaces), contract
+
+
+def _native_compartment_mesh(
+    source: CompartmentMeshingSource,
+    contract: phx.SpatialCoordinateContract,
+    *,
+    material_overrides: dict[str, str] | None = None,
+) -> phx.meshing.CellMeshingResult:
+    boundary_scope = phx.meshing.MeshingScope(
+        source.source_id,
+        source.source_revision,
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
     )
-    assert {zone.name for zone in result.zones} == {"outer", "inner"}
-    assert {patch.name for patch in result.interfaces} == {"outer-inner"}
-    assert result.adjacency_pairs == (("inner", "outer"),)
-    assert result.result.audit.passed
-    assert result.result.provider.name == "ftetwild"
-    assert result.result.runtime.actual_version.startswith("wildmeshing ")
-    network = phx.discretization.MetricNetworkPlan.from_arrays(
+    compartments = {
+        value.compartment_id: value for value in source.compartments.compartments
+    }
+    overrides = {} if material_overrides is None else material_overrides
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3,
+            3,
+            phx.meshing.CellFamilyPolicy(required=("tetrahedron",)),
+        ),
+        boundary_scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(boundary_scope, 1.5),),
+        region_seeds=tuple(
+            phx.meshing.RegionSeed(
+                np.asarray((0.0, 0.0, 0.0) if name == "outer" else (2.0, 2.0, 2.0)),
+                name,
+                overrides.get(name, name),
+                phx.meshing.RegionRole(compartment.material_role),
+            )
+            for name, compartment in compartments.items()
+        ),
+    )
+    options = phx.meshing.NativeMeshingOptions(
+        "image_material_tetrahedral",
+        volume_schedule=NativeVolumeSchedule(
+            radius_edge_bound=8.0,
+            minimum_dihedral_degrees=0.0,
+        ),
+    )
+    return phx.meshing.NativeMeshingProvider(options).plan(
+        source, specification, coordinate_contract=contract
+    ).execute()
+
+
+def _network(contract: phx.SpatialCoordinateContract) -> Any:
+    return phx.discretization.MetricNetworkPlan.from_arrays(
         np.asarray(((1.0, 1.0, 1.0), (3.0, 3.0, 3.0))),
         np.asarray(((0, 1),)),
         contract,
@@ -130,14 +195,79 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
         root_vertex_ids=np.asarray((0,)),
         tip_vertex_ids=np.asarray((1,)),
     ).prepare()
+
+
+@pytest.mark.meshcore
+def test_native_compartment_case_preserves_regions_and_coupled_transport() -> None:
+    source, contract = _compartment_source()
+    result = _native_compartment_mesh(source, contract)
+    network = _network(contract)
     case = phx.applications.neurofluid.NeurofluidCase(
-        "synthetic-case", labels, complex_, result, network
+        "synthetic-case", source, result, network
     )
     assert case.case_revision
-    mesh = result.result.mesh
+    certification = result.certification
+    assert certification is not None
+    coverage = certification.coverage
+    assert coverage is not None and coverage.status == "certified"
+    domain = certification.inputs.domain
+    assert domain is not None
+    assert set(domain.region_ids) == {"outer", "inner"}
+    assert source.source_revision == source.labels.label_volume_id
+    assert source.compartments.observed_adjacencies == (("inner", "outer"),)
+    assert source.compartments.interfaces[0].interface_role == "exchange"
+    assert result.boundary is not None
+    assert result.boundary.model_id == source.outer_surface.model_id
+    zones_by_material = {zone.material_id: zone for zone in result.zones}
+    assert set(zones_by_material) == {"outer", "inner"}
+    assert zones_by_material["outer"].region_role is phx.meshing.RegionRole.FLUID
+    assert zones_by_material["inner"].region_role is phx.meshing.RegionRole.SOLID
+    interface = next(patch for patch in result.patches if patch.name == "outer-inner")
+    preparation = prepare_compartment_plc(source)
+    interface_row = preparation.facet_interface_ids.index("outer-inner")
+    facet_id = preparation.complex.facet_ids[interface_row]
+    source_sides = preparation.facet_region_ids[interface_row]
+    assert set(source_sides) == {"outer", "inner"}
+    assert interface.source_adjacent_region_ids == source_sides
+    face_association = next(
+        association
+        for association in result.associations
+        if association.target_entity_set_id == result.mesh.entity_set(2).entity_set_id
+    )
+    source_face_rows = tuple(
+        row
+        for row, (source_id, role) in enumerate(
+            zip(
+                face_association.source_entity_ids,
+                face_association.source_roles,
+                strict=True,
+            )
+        )
+        if source_id == facet_id and role is GeometrySourceEntityRole.FACET
+    )
+    assert source_face_rows
+    assert {
+        face_association.source_region_sides[row] for row in source_face_rows
+    } == {source_sides}
+    assert set(interface.adjacent_zone_ids) == {
+        zones_by_material["outer"].zone_id,
+        zones_by_material["inner"].zone_id,
+    }
+
+    mesh = result.mesh
+    cell_association = next(
+        value
+        for value in result.associations
+        if value.target_entity_set_id == mesh.entity_set(3).entity_set_id
+    )
+    assert cell_association.source_id == source.source_id
+    assert cell_association.source_revision == source.source_revision
+    assert set(cell_association.source_entity_ids) == {"outer", "inner"}
+    assert all(role is not None and role.value == "region" for role in cell_association.source_roles)
     cell_count = mesh.entity_set(3).count
-    # ty: ignore[unresolved-attribute]
-    boundary_count = int(np.count_nonzero(np.asarray(mesh.connectivity.boundary_faces)))
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, (TetrahedralConnectivity, SimplicialConnectivity))
+    boundary_count = np.count_nonzero(np.asarray(connectivity.boundary_faces))
     parameters = phx.applications.neurofluid.NeurofluidTransportParameters(
         porosity=np.ones(cell_count),
         bulk_diffusivity=np.zeros(cell_count),
@@ -159,15 +289,35 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
         case, parameters
     ).prepare()
     state = phx.equations.MixedDimensionalTransportState(
-        # ty: ignore[invalid-argument-type]
-        np.ones(cell_count),
-        # ty: ignore[invalid-argument-type]
-        np.ones(2),
-        # ty: ignore[invalid-argument-type]
-        np.ones(1),
+        jnp.ones(cell_count, dtype=jnp.float64),
+        jnp.ones(2, dtype=jnp.float64),
+        jnp.ones(1, dtype=jnp.float64),
     )
-    step = runtime.step_backward_euler(state, 0.1)
-    assert bool(step.accepted)
+    assert bool(runtime.step_backward_euler(state, 0.1).accepted)
+
+    wrong_source, _ = _compartment_source(inner_index=(1, 2, 2))
+    with pytest.raises(ValueError, match="outer surface|source revision"):
+        phx.applications.neurofluid.NeurofluidCase(
+            "wrong-source", wrong_source, result, network
+        )
+
+    wrong_material_result = _native_compartment_mesh(
+        source, contract, material_overrides={"inner": "outer"}
+    )
+    with pytest.raises(ValueError, match="source-region cell associations"):
+        phx.applications.neurofluid.NeurofluidCase(
+            "wrong-material", source, wrong_material_result, network
+        )
+
+    foreign_contract = phx.SpatialCoordinateContract(
+        phx.units.MILLIMETER,
+        coordinate_system="cartesian-lps",
+        reference_frame="other-patient",
+    )
+    with pytest.raises(ValueError, match="coordinate contracts"):
+        phx.applications.neurofluid.NeurofluidCase(
+            "wrong-frame", source, result, _network(foreign_contract)
+        )
 
 
 def test_optional_compartment_interface_requires_declared_endpoints() -> None:

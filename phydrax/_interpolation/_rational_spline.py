@@ -129,10 +129,10 @@ def _rational_quotient_jets(
 
 
 class RationalSplineJet(StrictModule):
-    """Local rational tensor basis jet with exact payload actions and transposes."""
+    """Local rational tensor basis jet using the authored raw weight bank."""
 
     plan: TensorBSplineJetPlan
-    normalized_weights: Array
+    weights: Array
     jets: Array
     denominator_jets: Array
 
@@ -147,14 +147,12 @@ class RationalSplineJet(StrictModule):
             raise TypeError("Rational spline weights must be real-valued.")
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
             weights_ = weights_.astype("float64")
-        scale = jnp.max(jnp.abs(weights_))
-        scale = eqx.error_if(
-            scale,
-            ~jnp.isfinite(scale) | (scale == 0.0),
-            "Rational spline weights must contain a finite nonzero value.",
+        weights_ = eqx.error_if(
+            weights_,
+            jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
+            "Rational spline weights must be finite and strictly positive.",
         )
-        normalized_weights = weights_ / scale
-        local_weights = plan.gather(normalized_weights)
+        local_weights = plan.gather(weights_)
         polynomial_jets = jnp.stack(
             tuple(plan.basis(value) for value in plan.multi_indices),
             axis=plan.jet_axis,
@@ -171,7 +169,7 @@ class RationalSplineJet(StrictModule):
             jet_axis=plan.jet_axis,
         )
         self.plan = plan
-        self.normalized_weights = normalized_weights
+        self.weights = weights_
         self.jets = jets
         self.denominator_jets = denominator_jets
 

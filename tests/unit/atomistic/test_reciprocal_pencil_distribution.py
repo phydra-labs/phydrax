@@ -492,7 +492,7 @@ def _domain_case(
     (requirement,) = pme.requirements.neighborhoods
     role = AtomisticDomainRolePlan(
         requirement,
-        cell.image_stencil(requirement.bounded_cutoff() + SKIN, maximum_image_count=4096),
+        cell.image_stencil(requirement.bounded_cutoff() + SKIN),
         streaming=StreamedRelationPlan(),
         skin=SKIN,
         edge_capacity=2048,

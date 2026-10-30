@@ -582,14 +582,14 @@ def _drain_local_output(
 
 
 def _teardown_local_ranks(state: _LocalLaunchState) -> None:
-    from ._external_runtime import _kill_process_group
+    from ._external_runtime import _signal_process_group
 
-    # Signal every group before reaping a leader: no rank can hold another
+    # Signal every group before any blocking wait: no rank can hold another
     # rank hostage in a collective while cleanup waits.
     for process in state.processes:
-        _kill_launch_group(process.pid)
+        _signal_process_group(process)
     for process in state.processes:
-        _kill_process_group(process)
+        process.wait()
     for process_id, stream_id, stream in state.streams:
         _drain_local_output(state, process_id, stream_id, stream)
     for channel in state.channels:

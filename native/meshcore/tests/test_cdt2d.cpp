@@ -34,8 +34,6 @@ struct Input {
   int32_t keep_hull = 0;
   double min_angle = 0.0;
   double max_area = kInf;
-  int64_t max_steiner = 1 << 20;
-  int64_t max_triangles = 1 << 30;
 };
 
 struct Result {
@@ -44,6 +42,9 @@ struct Result {
   std::vector<int32_t> cells;
   std::vector<int32_t> segments;  // per cell edge
   std::vector<int32_t> vertex_map;
+  std::vector<int32_t> constraint_sources;
+  std::vector<int32_t> constraint_parents;
+  std::vector<double> constraint_ratios;
 };
 
 Result run(const Input& in) {
@@ -53,20 +54,32 @@ Result run(const Input& in) {
       static_cast<int64_t>(in.points.size() / 2), in.points.data(),
       static_cast<int64_t>(in.segments.size() / 2), in.segments.data(),
       static_cast<int64_t>(in.holes.size() / 2), in.holes.data(), in.keep_hull, in.min_angle,
-      in.max_area, in.max_steiner, in.max_triangles, &mesh);
-  const bool has_mesh = r.status == PHX_MC_OK || r.status == PHX_MC_REFINEMENT_LIMIT;
+      in.max_area, &mesh);
+  const bool has_mesh = r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED;
   PHX_CHECK(has_mesh == (mesh != nullptr));
   if (mesh == nullptr) {
     return r;
   }
-  r.points.resize(static_cast<std::size_t>(2 * phx_mc_mesh_point_count(mesh)));
-  r.cells.resize(static_cast<std::size_t>(3 * phx_mc_mesh_cell_count(mesh)));
+  const int64_t point_count = phx_mc_mesh_point_count(mesh);
+  const int64_t cell_count = phx_mc_mesh_cell_count(mesh);
+  const int64_t input_count = phx_mc_mesh_input_point_count(mesh);
+  r.points.resize(static_cast<std::size_t>(2 * point_count));
+  r.cells.resize(static_cast<std::size_t>(3 * cell_count));
   r.segments.resize(r.cells.size());
-  r.vertex_map.resize(static_cast<std::size_t>(phx_mc_mesh_input_point_count(mesh)));
-  phx_mc_mesh_copy_points(mesh, r.points.data());
-  phx_mc_mesh_copy_cells(mesh, r.cells.data());
-  phx_mc_mesh_copy_cell_segments(mesh, r.segments.data());
-  phx_mc_mesh_copy_vertex_map(mesh, r.vertex_map.data());
+  r.vertex_map.resize(static_cast<std::size_t>(input_count));
+  r.constraint_sources.resize(static_cast<std::size_t>(point_count));
+  r.constraint_parents.resize(static_cast<std::size_t>(2 * point_count));
+  r.constraint_ratios.resize(static_cast<std::size_t>(point_count));
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, point_count, r.points.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, cell_count, r.cells.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cell_segments(mesh, cell_count, r.segments.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, input_count, r.vertex_map.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_constraint_sources(
+                mesh, point_count, r.constraint_sources.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_constraint_parents(
+                mesh, point_count, r.constraint_parents.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_constraint_ratios(
+                mesh, point_count, r.constraint_ratios.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   return r;
 }
@@ -374,27 +387,32 @@ void test_ruppert_slanted_polygon() {
   }
 }
 
-void test_refinement_limit() {
+void test_constraint_source_witnesses() {
   Input in;
   in.points = {0, 0, 1, 0, 1, 1, 0, 1};
   in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
   in.min_angle = 30.0;
   in.max_area = 0.001;
-  in.max_steiner = 5;
   const Result r = run(in);
-  PHX_CHECK(r.status == PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(r.points.size() / 2 == 4 + 5);
+  PHX_CHECK(r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED);
   check_mesh(r);
   check_segments(r, in);
   check_constrained_delaunay(r);
   PHX_CHECK_NEAR(total_area(r), 1.0, 1e-12);
-  in.max_steiner = 0;
-  const Result none = run(in);
-  PHX_CHECK(none.status == PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(none.cells.size() / 3 == 2);
-  in.max_steiner = 1 << 20;
-  in.max_triangles = 50;
-  PHX_CHECK(run(in).status == PHX_MC_CAPACITY_EXCEEDED);
+  bool found_source_witness = false;
+  for (std::size_t vertex = in.points.size() / 2; vertex < r.constraint_sources.size(); ++vertex) {
+    const int32_t source = r.constraint_sources[vertex];
+    if (source < 0) continue;
+    PHX_CHECK(source < static_cast<int32_t>(in.segments.size() / 2));
+    const int32_t parent0 = r.constraint_parents[2 * vertex];
+    const int32_t parent1 = r.constraint_parents[2 * vertex + 1];
+    PHX_CHECK(parent0 >= 0 && parent0 < static_cast<int32_t>(vertex));
+    PHX_CHECK(parent1 >= 0 && parent1 < static_cast<int32_t>(vertex));
+    PHX_CHECK(std::isfinite(r.constraint_ratios[vertex]));
+    PHX_CHECK(r.constraint_ratios[vertex] > 0.0 && r.constraint_ratios[vertex] < 1.0);
+    found_source_witness = true;
+  }
+  PHX_CHECK(found_source_witness);
 }
 
 void test_arguments() {
@@ -407,9 +425,6 @@ void test_arguments() {
   PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
   bad = in;
   bad.max_area = 0.0;
-  PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
-  bad = in;
-  bad.max_steiner = -1;
   PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
   bad = in;
   bad.segments.push_back(0);
@@ -430,9 +445,15 @@ void test_arguments() {
   PHX_CHECK(run(bad).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = nullptr;
   PHX_CHECK(phx_mc_constrained_delaunay_2d(4, in.points.data(), 1, nullptr, 0, nullptr, 0, 0.0,
-                                           kInf, 0, 100, &mesh) == PHX_MC_INVALID_ARGUMENT);
+                                           kInf, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  const int32_t one_segment[2] = {0, 1};
+  constexpr int64_t unrepresentable_segment_count = (int64_t{1} << 31) + 1;
+  PHX_CHECK(phx_mc_constrained_delaunay_2d(
+                4, in.points.data(), unrepresentable_segment_count, one_segment, 0, nullptr, 0,
+                0.0, kInf, &mesh) == PHX_MC_INDEX_RANGE_ERROR);
+  PHX_CHECK(mesh == nullptr);
   PHX_CHECK(phx_mc_constrained_delaunay_2d(4, in.points.data(), 0, nullptr, 0, nullptr, 0, 0.0,
-                                           kInf, 0, 100, nullptr) == PHX_MC_INVALID_ARGUMENT);
+                                           kInf, nullptr) == PHX_MC_INVALID_ARGUMENT);
   // Duplicated points are merged; segments reference either copy.
   Input dup = in;
   dup.points.insert(dup.points.end(), {4, 0});
@@ -444,6 +465,7 @@ void test_arguments() {
   PHX_CHECK_NEAR(total_area(r), 12.0, 1e-12);
 }
 
+
 }  // namespace
 
 int main() {
@@ -454,7 +476,7 @@ int main() {
   test_ruppert_square();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
-  test_refinement_limit();
+  test_constraint_source_witnesses();
   test_arguments();
   return phx::mc::test::finish("test_cdt2d");
 }

@@ -50,13 +50,24 @@ def _active_cell_mask(value: ArrayLike, /, *, cell_count: int) -> Array:
         )
     return mask
 
+def _owned_cell_mask(value: ArrayLike | None, /, *, cell_count: int) -> Array | None:
+    if value is None:
+        return None
+    mask = jnp.asarray(value)
+    if mask.shape != (cell_count,) or mask.dtype != jnp.bool_:
+        raise ValueError(
+            "owned_cell_mask must be a boolean array with exact shape (cell_count,)."
+        )
+    return mask
+
 
 class FiniteVolumeConservativeContentState(StrictModule):
-    """Immutable content and active-cell ownership for one effective geometry."""
+    """Immutable FV content, physical activity, and rank-local ownership."""
 
     conservative_content: Array
     effective_cell_volumes: Array
     active_cell_mask: Array
+    owned_cell_mask: Array | None
     time: Array
     geometry_version: Array
     evidence_version: Array
@@ -82,6 +93,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         evidence_policy_id: str,
         evidence_version: ArrayLike,
         precision: FiniteVolumePrecisionPolicy,
+        owned_cell_mask: ArrayLike | None = None,
     ) -> None:
         content = precision.storage(conservative_content)
         volumes = _reduction_value(precision, effective_cell_volumes)
@@ -95,15 +107,16 @@ class FiniteVolumeConservativeContentState(StrictModule):
             raise TypeError(
                 "Finite-volume state time dtype does not match reduction precision."
             )
-        if content.ndim < 2 or any(size <= 0 for size in content.shape):
+        if content.ndim < 2 or any(size <= 0 for size in content.shape[1:]):
             raise ValueError(
-                "conservative_content must have shape (cells, *component_shape) with non-empty cell and component axes."
+                "conservative_content must have shape (cells, *component_shape) with non-empty component axes."
             )
         if volumes.shape != (content.shape[0],):
             raise ValueError(
                 "effective_cell_volumes must have exact shape (cell_count,)."
             )
         active = _active_cell_mask(active_cell_mask, cell_count=content.shape[0])
+        owned = _owned_cell_mask(owned_cell_mask, cell_count=content.shape[0])
         if time_.shape != ():
             raise ValueError("time must be scalar.")
         volumes = eqx.error_if(
@@ -129,6 +142,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         self.conservative_content = content
         self.effective_cell_volumes = volumes
         self.active_cell_mask = active
+        self.owned_cell_mask = owned
         self.time = time_
         self.geometry_version = _integer_scalar(geometry_version, name="geometry_version")
         self.evidence_version = _integer_scalar(evidence_version, name="evidence_version")
@@ -164,14 +178,15 @@ class FiniteVolumeConservativeContentState(StrictModule):
         evidence_policy_id: str,
         evidence_version: ArrayLike,
         precision: FiniteVolumePrecisionPolicy,
+        owned_cell_mask: ArrayLike | None = None,
     ) -> FiniteVolumeConservativeContentState:
         """Form content from active averages; inactive content is exactly zero."""
 
         average = precision.storage(cell_average)
         volumes = _reduction_value(precision, effective_cell_volumes)
-        if average.ndim < 2 or any(size <= 0 for size in average.shape):
+        if average.ndim < 2 or any(size <= 0 for size in average.shape[1:]):
             raise ValueError(
-                "cell_average must have shape (cells, *component_shape) with non-empty cell and component axes."
+                "cell_average must have shape (cells, *component_shape) with non-empty component axes."
             )
         if volumes.shape != (average.shape[0],):
             raise ValueError(
@@ -200,6 +215,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
             evidence_policy_id=evidence_policy_id,
             evidence_version=evidence_version,
             precision=precision,
+            owned_cell_mask=owned_cell_mask,
         )
 
     @property
@@ -253,6 +269,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
                 self.evidence_version if evidence_version is None else evidence_version
             ),
             precision=self.precision,
+            owned_cell_mask=self.owned_cell_mask,
         )
 
     def with_topology_epoch(
@@ -291,12 +308,21 @@ class FiniteVolumeConservativeContentState(StrictModule):
                 self.evidence_version if evidence_version is None else evidence_version
             ),
             precision=self.precision,
+            owned_cell_mask=self.owned_cell_mask,
         )
 
     def volume_integral(self) -> Array:
-        """Return the component-wise integral already represented by content."""
+        """Return the integral over cells owned by this rank."""
 
-        return jnp.sum(self.precision.reduction(self.conservative_content), axis=0)
+        content = self.precision.reduction(self.conservative_content)
+        owned = self.owned_cell_mask
+        if owned is not None:
+            content = jnp.where(
+                owned.reshape((-1,) + (1,) * (content.ndim - 1)),
+                content,
+                jnp.zeros((), dtype=content.dtype),
+            )
+        return jnp.sum(content, axis=0)
 
     def conservation_change(
         self,
@@ -436,6 +462,7 @@ def apply_stage_rate_euler_update(
             else target_evidence_version
         ),
         precision=state.precision,
+        owned_cell_mask=state.owned_cell_mask,
     )
 
 

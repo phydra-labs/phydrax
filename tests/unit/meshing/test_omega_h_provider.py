@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._external_runtime import NativeWorkerPolicy
 
 
 M = phx.meshing
@@ -151,11 +152,7 @@ def test_real_omega_h_refines_and_preserves_domain_measure() -> None:
     assert result.lineage_status == "unknown"
     # ty: ignore[unresolved-attribute]
     runtime = result.target.runtime
-    assert "aggregate_output_bytes" in runtime.enforced_limits
-    assert {"worker_address_space", "worker_peak_resident_audit"} & set(
-        runtime.enforced_limits
-    )
-    assert "native_adaptation_intermediate_entities" in runtime.unenforced_limits
+    assert runtime.deterministic
     evidence = result.evidence
     assert evidence.options == options
     assert (evidence.min_quality_allowed, evidence.min_quality_desired) == (0.25, 0.35)
@@ -181,12 +178,10 @@ def test_omega_h_contracts() -> None:
 
     with pytest.raises(M.MeshingFailure) as failure:
         M.OmegaHProvider("nonexistent-omega-h").execute(
-            source,
-            _metric(mesh, _uniform(1.0)),
-            limits=M.MeshingLimits(maximum_vertices=1),
+            source, _metric(mesh, _uniform(1.0))
         )
 
-    assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert failure.value.category is M.MeshingFailureCategory.PROVIDER_UNAVAILABLE
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     moved = mesh.with_coordinates(
@@ -208,23 +203,6 @@ def test_omega_h_contracts() -> None:
     assert failure.value.category is M.MeshingFailureCategory.UNSUPPORTED_CAPABILITY
 
 
-@requires_worker
-def test_omega_h_rank_outputs_share_one_aggregate_byte_budget() -> None:
-    for ranks in [1, 2]:
-        launcher = _launcher_or_skip() if ranks > 1 else ("mpiexec",)
-        mesh = _grid(2)
-        source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-
-        with M.OmegaHProvider(_worker(), mpi_launcher=launcher) as provider:
-            with pytest.raises(M.MeshingFailure) as failure:
-                provider.execute(
-                    source,
-                    _metric(mesh, _uniform(0.04)),
-                    ranks=ranks,
-                    limits=M.MeshingLimits(maximum_data_bytes=20_000),
-                )
-
-        assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
 @requires_worker
@@ -245,25 +223,18 @@ def test_omega_h_reuses_one_worker_session() -> None:
 
 
 @requires_worker
-def test_omega_h_timeout_fails_and_next_call_relaunches() -> None:
+def test_omega_h_timeout_fails_with_worker_policy() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
-    with M.OmegaHProvider(_worker()) as provider:
+    with M.OmegaHProvider(
+        _worker(),
+        policy=NativeWorkerPolicy(operation_timeout_seconds=0.05),
+    ) as provider:
         with pytest.raises(M.MeshingFailure) as failure:
-            provider.execute(
-                source,
-                _metric(mesh, _uniform(0.003)),
-                limits=M.MeshingLimits(maximum_wall_seconds=0.05),
-            )
-        timed_out_launches = provider.worker(1).launches
-        recovered = provider.execute(source, _metric(mesh, _uniform(0.25)))
-        launches = provider.worker(1).launches
+            provider.execute(source, _metric(mesh, _uniform(0.003)))
 
     assert failure.value.category is M.MeshingFailureCategory.TIMED_OUT
-    assert (timed_out_launches, launches) == (1, 2)
-    # ty: ignore[unresolved-attribute]
-    assert recovered.target.audit.passed
 
 
 @requires_worker

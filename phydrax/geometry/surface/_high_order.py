@@ -35,21 +35,13 @@ class HighOrderDifferentiationError(ValueError):
     """Raised when a caller requests an unimplemented derivative order."""
 
 
-class HighOrderResourceLimitError(ValueError):
-    """Raised before realization/evaluation exceeds a fixed host capacity."""
-
-
 class HighOrderGeometryMismatchError(ValueError):
     """Raised when high-order corner geometry disagrees with the CellMesh."""
 
 
 class HighOrderSurfacePolicy(StrictModule, NonTrainableState):
-    """Fixed capacities and geometry tolerances for high-order realization."""
+    """Geometry agreement and Jacobian requirements for high-order realization."""
 
-    maximum_order: int = eqx.field(static=True)
-    maximum_cells: int = eqx.field(static=True)
-    maximum_nodes_per_cell: int = eqx.field(static=True)
-    maximum_evaluation_points: int = eqx.field(static=True)
     corner_tolerance: float = eqx.field(static=True)
     minimum_jacobian: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -57,39 +49,20 @@ class HighOrderSurfacePolicy(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        maximum_order: int = 8,
-        maximum_cells: int = 1_000_000,
-        maximum_nodes_per_cell: int = 45,
-        maximum_evaluation_points: int = 1_000_000,
         corner_tolerance: float = 1.0e-10,
         minimum_jacobian: float = 0.0,
     ) -> None:
-        capacities = (
-            int(maximum_order),
-            int(maximum_cells),
-            int(maximum_nodes_per_cell),
-            int(maximum_evaluation_points),
-        )
-        if any(value <= 0 for value in capacities):
-            raise ValueError("High-order capacities and maximum_order must be positive.")
         tolerance = float(corner_tolerance)
         minimum = float(minimum_jacobian)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("corner_tolerance must be finite and non-negative.")
         if not np.isfinite(minimum) or minimum < 0.0:
             raise ValueError("minimum_jacobian must be finite and non-negative.")
-        (
-            self.maximum_order,
-            self.maximum_cells,
-            self.maximum_nodes_per_cell,
-            self.maximum_evaluation_points,
-        ) = capacities
         self.corner_tolerance = tolerance
         self.minimum_jacobian = minimum
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "bounded-high-order-surface-policy",
-                "capacities": capacities,
+                "kind": "high-order-surface-policy",
                 "corner_tolerance": tolerance,
                 "minimum_jacobian": minimum,
             }
@@ -97,7 +70,7 @@ class HighOrderSurfacePolicy(StrictModule, NonTrainableState):
 
 
 class HighOrderSurfaceReport(StrictModule, NonTrainableState):
-    """Immutable binding, units, capacity, and differentiation evidence."""
+    """Immutable binding, units, reference layout, and differentiation evidence."""
 
     source: HighOrderSurfaceSource = eqx.field(static=True)
     order: int = eqx.field(static=True)
@@ -377,7 +350,7 @@ HighOrderMapping = _PatchTriangleMap | _AtlasTriangleMap | _IsoparametricTriangl
 
 
 class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
-    """Bounded high-order coordinates bound to an authoritative SurfaceModel."""
+    """High-order coordinates bound to an authoritative SurfaceModel."""
 
     model: SurfaceModel
     mapping: HighOrderMapping
@@ -419,7 +392,7 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
         self.report = report
         self.realization_id = canonical_fingerprint(
             {
-                "kind": "bounded-high-order-surface-realization",
+                "kind": "high-order-surface-realization",
                 "model_id": model.model_id,
                 "report_id": report.report_id,
                 "cell_global_ids": array_tree_fingerprint(cell_ids),
@@ -435,10 +408,6 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
             raise ValueError("reference coordinates require trailing dimension 2.")
         if indices.shape != coordinates.shape[:-1]:
             raise ValueError("chart_indices must match reference leading dimensions.")
-        if indices.size > self.policy.maximum_evaluation_points:
-            raise HighOrderResourceLimitError(
-                "Evaluation exceeds maximum_evaluation_points."
-            )
         indices = eqx.error_if(
             indices,
             jnp.any((indices < 0) | (indices >= self.mapping.num_charts)),
@@ -536,17 +505,6 @@ def _corner_error(expected: np.ndarray, actual: np.ndarray, tolerance: float, /)
     return maximum
 
 
-def _preflight(
-    model: SurfaceModel, policy: HighOrderSurfacePolicy, nodes_per_cell: int, /
-) -> int:
-    count = int(model.mesh.connectivity.cell_count)
-    if count > policy.maximum_cells or nodes_per_cell > policy.maximum_nodes_per_cell:
-        raise HighOrderResourceLimitError(
-            "High-order realization exceeds fixed capacities."
-        )
-    return count
-
-
 def _report(
     model: SurfaceModel,
     policy: HighOrderSurfacePolicy,
@@ -581,9 +539,7 @@ def realize_bspline_surface(
         raise TypeError("Requires SurfaceModel and BSplineSurfacePatch.")
     policy_ = _policy(policy)
     order = max(patch.u_degree, patch.v_degree)
-    if order > policy_.maximum_order:
-        raise HighOrderResourceLimitError("B-spline degree exceeds maximum_order.")
-    count = _preflight(model, policy_, 3)
+    count = model.mesh.connectivity.cell_count
     parameters = _validate_parameter_triangles(cell_parameters, count)
     mapping = _PatchTriangleMap(patch, parameters)
     actual = np.asarray(patch.evaluate(jnp.asarray(parameters.reshape((-1, 2))))).reshape(
@@ -608,7 +564,7 @@ def realize_boundary_atlas(
     if not isinstance(model, SurfaceModel) or not isinstance(atlas, BoundaryAtlas):
         raise TypeError("Requires SurfaceModel and BoundaryAtlas.")
     policy_ = _policy(policy)
-    count = _preflight(model, policy_, 3)
+    count = model.mesh.connectivity.cell_count
     charts = np.asarray(source_chart_indices, dtype=np.int32)
     if (
         charts.shape != (count,)
@@ -658,11 +614,9 @@ def realize_isoparametric_triangles(
         raise TypeError("model must be SurfaceModel.")
     policy_ = _policy(policy)
     degree = int(order)
-    if degree < 1 or degree > policy_.maximum_order:
-        raise HighOrderResourceLimitError("Isoparametric order exceeds policy.")
     reference = isoparametric_triangle_reference_nodes(degree)
     nodes_per_cell = reference.shape[0]
-    count = _preflight(model, policy_, nodes_per_cell)
+    count = model.mesh.connectivity.cell_count
     nodes = np.asarray(coordinate_nodes, dtype=np.float64)
     if nodes.shape != (count, nodes_per_cell, 3) or not np.all(np.isfinite(nodes)):
         raise ValueError("coordinate_nodes have incompatible shape or non-finite data.")
@@ -699,7 +653,6 @@ def realize_isoparametric_triangles(
 __all__ = [
     "HighOrderDifferentiationError",
     "HighOrderGeometryMismatchError",
-    "HighOrderResourceLimitError",
     "HighOrderSurfaceFrameEvidence",
     "HighOrderSurfacePolicy",
     "HighOrderSurfaceRealization",

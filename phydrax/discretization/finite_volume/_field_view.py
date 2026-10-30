@@ -35,16 +35,31 @@ from ..._interpolation import GatherStencil
 from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...geometry._contracts import compiled_geometry_identity
 from ...sparse import linear_apply, linear_transpose_apply
 from ...typing import checked, parse
+from .._cell_complex import PolyhedralConnectivity
+from .._cell_geometry import CellGeometrySpec
+from .._cell_locator import AbstractCellLocator, CellLocationStatus
+from .._cell_mesh import CellMesh
+from .._mapped_locator import (
+    MappedLocationPolicy,
+    prepare_owner_local_mapped_cell_locator,
+    PreparedMappedCellLocator,
+    PreparedMappedCellMap,
+)
+from .._polyhedral_locator import PreparedPolyhedralCellLocator
+from .._reference_cell import reference_cell_topology
 from .._simplicial_locator import (
-    AbstractCellLocator,
-    CellLocationStatus,
     PreparedSimplicialCellLocator,
     SimplicialLocationPolicy,
 )
 from .._view_support import (
     cell_location_status,
+    MappedFieldSupport,
+    OwnerLocalCellGeometry,
+    OwnerLocalFieldSupport,
+    prepare_mapped_field_support,
     simplicial_mesh_support_geometry,
     tensor_box_support_geometry,
     verify_mesh_support_geometry,
@@ -390,19 +405,63 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         self,
         locator: AbstractCellLocator,
         reconstruction: UnstructuredCellReconstruction,
-        discretization: _MeshDiscretization,
+        discretization: _MeshDiscretization | OwnerLocalCellGeometry,
         /,
         *,
         field_space_id: str,
+        block_name: str | None = None,
     ) -> None:
-        if not isinstance(
-            discretization,
-            (UnstructuredFiniteVolumeDiscretization, TriangleFiniteVolumeDiscretization),
-        ):
-            raise TypeError(
-                "discretization must be UnstructuredFiniteVolumeDiscretization or "
-                "TriangleFiniteVolumeDiscretization."
+        if isinstance(discretization, OwnerLocalCellGeometry):
+            if not isinstance(reconstruction, PiecewiseConstantReconstruction):
+                raise ValueError(
+                    "Owner-local finite-volume field reconstruction currently "
+                    "requires PiecewiseConstantReconstruction."
+                )
+            if block_name is None:
+                raise ValueError("Owner-local field reconstruction requires block_name.")
+            block = next(
+                (item for item in discretization.blocks if item.name == block_name),
+                None,
             )
+            if block is None:
+                raise ValueError(f"Owner-local geometry has no block {block_name!r}.")
+            cell_map = getattr(locator, "cell_map", None)
+            if (
+                cell_map is None
+                or getattr(cell_map, "local_view_id", None)
+                != discretization.local_view_id
+                or not np.array_equal(
+                    np.asarray(cell_map.cell_global_ids, dtype=np.int64),
+                    np.asarray(block.cell_ids, dtype=np.int64),
+                )
+            ):
+                raise ValueError(
+                    "Owner-local locator does not cover the exact source-bound block."
+                )
+            owner_cells = jnp.empty((0,), dtype=jnp.int32)
+            neighbor_cells = jnp.empty((0,), dtype=jnp.int32)
+            cell_count = int(block.cell_ids.shape[0])
+            geometry_id = discretization.local_view_id
+        else:
+            if not isinstance(
+                discretization,
+                (
+                    UnstructuredFiniteVolumeDiscretization,
+                    TriangleFiniteVolumeDiscretization,
+                ),
+            ):
+                raise TypeError(
+                    "discretization must be an unstructured or triangular finite-volume "
+                    "discretization, or OwnerLocalCellGeometry."
+                )
+            if block_name is not None:
+                raise ValueError(
+                    "block_name applies only to owner-local field reconstruction."
+                )
+            owner_cells = discretization.owner_cells
+            neighbor_cells = discretization.neighbor_cells
+            cell_count = discretization.cell_count
+            geometry_id = discretization.prepared_id
         match reconstruction:
             case (
                 PiecewiseConstantReconstruction()
@@ -425,15 +484,15 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                 )
         self.locator = locator
         self.reconstruction = reconstruction
-        self.owner_cells = discretization.owner_cells
-        self.neighbor_cells = discretization.neighbor_cells
-        self._cell_count = discretization.cell_count
+        self.owner_cells = owner_cells
+        self.neighbor_cells = neighbor_cells
+        self._cell_count = cell_count
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-field-reconstruction-kernel",
                 "locator": locator.locator_id,
                 "reconstruction": reconstruction_id,
-                "geometry": discretization.prepared_id,
+                "geometry": geometry_id,
                 "field_space": field_space_id,
             }
         )
@@ -750,38 +809,69 @@ def _face_side_cells(
     return np.asarray(resolved, dtype=np.int32)
 
 
+def _query_mesh(discretization: _MeshDiscretization, /) -> CellMesh:
+    mesh = discretization.mesh
+    if mesh is None:
+        raise ValueError(
+            "An empty owner shard has no local mesh for coordinate field queries."
+        )
+    return mesh
+
+
 def _default_locator(
     discretization: _MeshDiscretization,
-    policy: SimplicialLocationPolicy | None,
+    policy: SimplicialLocationPolicy | MappedLocationPolicy | None,
     /,
-) -> PreparedSimplicialCellLocator:
+) -> AbstractCellLocator:
     from ..fem._cell_map import PreparedFiniteElementCellMap
     from ..fem._generic import FiniteElementFieldSpec, FiniteElementPlan
     from ..fem._reference import discontinuous_element
 
-    blocks = discretization.mesh.blocks
-    if len(blocks) != 1 or blocks[0].cell_kind not in _SIMPLICES:
+    mesh = _query_mesh(discretization)
+    if isinstance(mesh.connectivity, PolyhedralConnectivity):
+        if policy is not None:
+            raise ValueError(
+                "Polyhedral location uses exact incidence predicates, not a Newton policy."
+            )
+        return PreparedPolyhedralCellLocator(mesh)
+    blocks = mesh.blocks
+    if len(blocks) != 1:
         raise ValueError(
-            "Arbitrary-point location on non-simplicial or mixed finite-volume meshes "
-            "requires an explicit AbstractCellLocator inverse provider."
+            "Mixed finite-volume cell blocks require an explicit complete AbstractCellLocator."
         )
-    geometry = FiniteElementPlan(
-        discretization.mesh,
-        FiniteElementFieldSpec(
-            "cell_average", discontinuous_element(blocks[0].cell_kind, 0)
-        ),
-    ).prepare()
-    cell_map = PreparedFiniteElementCellMap(geometry, 0)
-    # Candidate capacity must cover every BVH leaf box around a query point.
-    policy_ = (
-        SimplicialLocationPolicy(min(cell_map.cell_count, 64), 16, 1)
-        if policy is None
-        else policy
+    block = blocks[0]
+    coordinate_spec = CellGeometrySpec.affine(mesh)
+    field = FiniteElementFieldSpec(
+        "cell_average", discontinuous_element(block.cell_kind, 0)
     )
-    if not isinstance(policy_, SimplicialLocationPolicy):
-        raise TypeError("location_policy must be a SimplicialLocationPolicy or None.")
-    return PreparedSimplicialCellLocator(
-        cell_map, geometry.default_runtime.coordinates, policy_
+    prepared = FiniteElementPlan(mesh, field, coordinate_spec=coordinate_spec).prepare()
+    if block.cell_kind in _SIMPLICES:
+        if policy is None:
+            simplex_policy = SimplicialLocationPolicy(
+                block.cell_count,
+                32,
+                1 + len(reference_cell_topology(block.cell_kind).vertices),
+            )
+        elif isinstance(policy, SimplicialLocationPolicy):
+            simplex_policy = policy
+        else:
+            raise TypeError("Simplex meshes require SimplicialLocationPolicy.")
+        cell_map = PreparedFiniteElementCellMap(prepared, 0)
+        return PreparedSimplicialCellLocator(
+            cell_map, prepared.default_runtime.coordinates, simplex_policy
+        )
+    if policy is None:
+        mapped_policy = MappedLocationPolicy()
+    elif isinstance(policy, MappedLocationPolicy):
+        mapped_policy = policy
+    else:
+        raise TypeError("Mapped coordinate meshes require MappedLocationPolicy.")
+    cell_map = PreparedMappedCellMap(mesh, coordinate_spec, 0)
+    return PreparedMappedCellLocator(
+        cell_map,
+        prepared.default_runtime.coordinates,
+        mapped_policy,
+        source_geometry=coordinate_spec,
     )
 
 
@@ -792,9 +882,10 @@ def _checked_locator(
 ) -> AbstractCellLocator:
     if not isinstance(locator, AbstractCellLocator):
         raise TypeError("locator must be an AbstractCellLocator or None.")
+    mesh = _query_mesh(discretization)
     if (
-        len(discretization.mesh.blocks) != 1
-        or locator.cell_map.topology_id != discretization.mesh.topology_id
+        len(mesh.blocks) != 1
+        or locator.cell_map.topology_id != mesh.topology_id
         or locator.cell_map.cell_count != discretization.cell_count
         or not np.array_equal(
             np.asarray(locator.coordinates), np.asarray(discretization.vertices)
@@ -906,7 +997,7 @@ def prepare_finite_volume_field_reconstruction(
     /,
     *,
     locator: AbstractCellLocator | None = None,
-    location_policy: SimplicialLocationPolicy | None = None,
+    location_policy: SimplicialLocationPolicy | MappedLocationPolicy | None = None,
     location_tolerance: float = 1.0e-12,
     support_geometry: Any = None,
     value_port: ValuePort | None = None,
@@ -930,15 +1021,18 @@ def prepare_finite_volume_field_reconstruction(
     Structured grids locate points by index arithmetic on the axis edges
     (closed intervals within `location_tolerance` of each axis extent) and
     cover the grid box. Unstructured and triangular meshes need an inverse cell
-    map: single-block triangle/tetrahedron meshes build a
-    `PreparedSimplicialCellLocator` from `location_policy`; other meshes need an
-    explicit `locator` over the same topology and vertices. The support is the
-    mesh region (an explicit geometry must be covered by the mesh). Coefficients
+    map: single-block simplex meshes use `SimplicialLocationPolicy`; other
+    standard mapped cell families use `MappedLocationPolicy` and complete
+    whole-source enclosures. Mixed families require an explicit complete locator.
+    Mapped-reference `DomainCoverageCertificate` binds the exact `CellGeometrySpec`
+    and a complete `PreparedMappedCellLocator`; its evidence, not a sampled
+    surrogate, admits that field support. Coefficients
     are cell averages with the discretization's `state_shape`; `layout="scalar"`
     reconstructs a one-component structured field from its cell coordinates
     (`finite_volume_scalar_space`) as a scalar-valued field.
     """
     from ...geometry import CompiledGeometry
+    from ...geometry._domain_certification import DomainCoverageCertificate
 
     if not isinstance(
         discretization,
@@ -992,11 +1086,110 @@ def prepare_finite_volume_field_reconstruction(
             UnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
-            located = (
-                _default_locator(discretization, location_policy)
-                if locator is None
-                else _checked_locator(discretization, locator)
+            mesh = _query_mesh(discretization)
+            mapped_support: MappedFieldSupport | None = None
+            mapped_requested = isinstance(
+                support_geometry, (MappedFieldSupport, DomainCoverageCertificate)
             )
+            mapped_policy: MappedLocationPolicy | None = None
+            if mapped_requested:
+                if location_policy is not None and not isinstance(
+                    location_policy, MappedLocationPolicy
+                ):
+                    raise TypeError(
+                        "Mapped reference coverage requires MappedLocationPolicy."
+                    )
+                mapped_policy = location_policy
+            if mapped_requested and not isinstance(
+                discretization, UnstructuredFiniteVolumeDiscretization
+            ):
+                raise TypeError(
+                    "Mapped reference coverage requires an unstructured CellMesh finite-volume owner."
+                )
+            if isinstance(support_geometry, MappedFieldSupport):
+                if (
+                    locator is not None
+                    and locator.locator_id != support_geometry.locator_id
+                ):
+                    raise ValueError(
+                        "The mapped field support locator cannot be replaced."
+                    )
+                if (
+                    mapped_policy is not None
+                    and support_geometry.locator.policy.policy_id
+                    != mapped_policy.policy_id
+                ):
+                    raise ValueError(
+                        "Mapped field support already binds its locator policy."
+                    )
+                if support_geometry.mesh.mesh_id != mesh.mesh_id:
+                    raise ValueError(
+                        "Mapped field support must bind this finite-volume mesh."
+                    )
+                located = support_geometry.locator
+                support_geometry.require_locator(located)
+                mapped_support = support_geometry
+            elif isinstance(support_geometry, DomainCoverageCertificate):
+                exact_mesh = support_geometry.binding.mesh
+                exact_geometry = support_geometry.binding.geometry
+                if exact_mesh.mesh_id != mesh.mesh_id or len(exact_mesh.blocks) != 1:
+                    raise ValueError(
+                        "Mapped FV coverage must bind this complete single-block mesh."
+                    )
+                if locator is None:
+                    mapped_cell_map = PreparedMappedCellMap(exact_mesh, exact_geometry, 0)
+                    mapped_policy = (
+                        MappedLocationPolicy() if mapped_policy is None else mapped_policy
+                    )
+                    locator = PreparedMappedCellLocator(
+                        mapped_cell_map,
+                        exact_geometry.resolve(exact_mesh)[2],
+                        mapped_policy,
+                        source_geometry=exact_geometry,
+                    )
+                if not isinstance(locator, PreparedMappedCellLocator):
+                    raise TypeError(
+                        "Mapped FV coverage requires PreparedMappedCellLocator."
+                    )
+                if (
+                    mapped_policy is not None
+                    and locator.policy.policy_id != mapped_policy.policy_id
+                ):
+                    raise ValueError(
+                        "Mapped locator and location_policy must bind one identical policy."
+                    )
+                located = locator
+                mapped_support = prepare_mapped_field_support(
+                    exact_mesh, exact_geometry, located, support_geometry
+                )
+            else:
+                if locator is None:
+                    located = _default_locator(discretization, location_policy)
+                else:
+                    located = _checked_locator(discretization, locator)
+                    if location_policy is not None:
+                        if isinstance(located, PreparedMappedCellLocator):
+                            if not isinstance(location_policy, MappedLocationPolicy):
+                                raise TypeError(
+                                    "PreparedMappedCellLocator requires MappedLocationPolicy."
+                                )
+                            if located.policy.policy_id != location_policy.policy_id:
+                                raise ValueError(
+                                    "Explicit mapped locator binds a different location policy."
+                                )
+                        elif isinstance(located, PreparedSimplicialCellLocator):
+                            if not isinstance(location_policy, SimplicialLocationPolicy):
+                                raise TypeError(
+                                    "PreparedSimplicialCellLocator requires SimplicialLocationPolicy."
+                                )
+                            if located.policy.policy_id != location_policy.policy_id:
+                                raise ValueError(
+                                    "Explicit simplex locator binds a different location policy."
+                                )
+                        else:
+                            raise ValueError(
+                                "location_policy applies only to canonical mapped/simplex locators."
+                            )
             kernel = UnstructuredFiniteVolumeFieldReconstructionKernel(
                 located, reconstruction, discretization, field_space_id=field_space_id
             )
@@ -1019,15 +1212,31 @@ def prepare_finite_volume_field_reconstruction(
             tolerance = float(support_tolerance)
             if not isfinite(tolerance) or tolerance < 0.0:
                 raise ValueError("support_tolerance must be finite and non-negative.")
-            if support_geometry is None:
-                geometry = simplicial_mesh_support_geometry(located, support_id)
+            if mapped_support is not None:
+                mapped_support.require_locator(located)
+                geometry = mapped_support
             elif isinstance(support_geometry, CompiledGeometry):
                 verify_mesh_support_geometry(
                     support_geometry, located, tolerance=tolerance
                 )
                 geometry = support_geometry
+            elif support_geometry is None:
+                geometry = simplicial_mesh_support_geometry(located, support_id)
             else:
-                raise TypeError("support_geometry must be a CompiledGeometry or None.")
+                raise TypeError(
+                    "support_geometry must be a CompiledGeometry, mapped field support, mapped coverage, or None."
+                )
+            support_id = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-query-support-binding",
+                    "mesh_support": support_id,
+                    "authority": (
+                        geometry.support_id
+                        if isinstance(geometry, MappedFieldSupport)
+                        else compiled_geometry_identity(geometry)
+                    ),
+                }
+            )
             dimension = mesh_cell_dimension(discretization)
         case _:
             raise TypeError(
@@ -1048,17 +1257,21 @@ def prepare_finite_volume_field_reconstruction(
             coefficient_shape = finite_volume_scalar_space(discretization).shape
         case _:
             assert_never(layout_)
-    port = (
-        ValuePort(
-            discretization.cell_space.name,
+    if value_port is None:
+        cell_space = discretization.cell_space
+        if cell_space is None:
+            raise ValueError(
+                "Coordinate field queries require an actual local cell field space."
+            )
+        port = ValuePort(
+            cell_space.name,
             event_shape=components,
             component_ids=discretization.component_names,
             representation="finite-volume-field",
             space_id=field_space_id,
         )
-        if value_port is None
-        else value_port
-    )
+    else:
+        port = value_port
     if not isinstance(port, ValuePort):
         raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
@@ -1080,8 +1293,102 @@ def prepare_finite_volume_field_reconstruction(
     )
 
 
+def prepare_owner_local_finite_volume_field_reconstruction(
+    view: OwnerLocalCellGeometry,
+    block_name: str,
+    field_name: str,
+    /,
+    *,
+    value_port: ValuePort | None = None,
+    reconstruction: PiecewiseConstantReconstruction | None = None,
+) -> PreparedFieldReconstruction:
+    """Prepare a cell-average field reconstruction over one exact local block.
+
+    The reconstruction is source-bound to the accepted owner-local view and
+    uses the canonical mapped or authored-polyhedral locator. Only P0 cell
+    averages are accepted here; higher-order local kernels need their own
+    complete stencil evidence.
+    """
+    if not isinstance(view, OwnerLocalCellGeometry):
+        raise TypeError("view must be an OwnerLocalCellGeometry.")
+    if not isinstance(block_name, str) or not block_name:
+        raise ValueError("block_name must be a non-empty string.")
+    if not isinstance(field_name, str) or not field_name:
+        raise ValueError("field_name must be a non-empty string.")
+    reconstruction_ = (
+        PiecewiseConstantReconstruction() if reconstruction is None else reconstruction
+    )
+    if not isinstance(reconstruction_, PiecewiseConstantReconstruction):
+        raise ValueError(
+            "Owner-local finite-volume reconstruction requires "
+            "PiecewiseConstantReconstruction."
+        )
+    block = next((item for item in view.blocks if item.name == block_name), None)
+    if block is None:
+        raise ValueError(f"Owner-local geometry has no block {block_name!r}.")
+    if block.cell_ids.shape[0] == 0:
+        raise ValueError(
+            "An owner-local field reconstruction requires at least one local cell."
+        )
+    locator = (
+        PreparedPolyhedralCellLocator.from_owner_local_geometry(view, block_name)
+        if block.cell_kind == "polyhedron"
+        else prepare_owner_local_mapped_cell_locator(view, block_name)
+    )
+    if value_port is not None and not isinstance(value_port, ValuePort):
+        raise TypeError("value_port must be a ValuePort or None.")
+    if value_port is not None and value_port.semantic_id != field_name:
+        raise ValueError("value_port semantic_id must equal field_name.")
+    field_space_id = (
+        value_port.space_id
+        if value_port is not None and value_port.space_id is not None
+        else canonical_fingerprint(
+            {
+                "kind": "owner-local-finite-volume-field-space",
+                "source": (view.source_id, view.source_revision),
+                "field": field_name,
+            }
+        )
+    )
+    port = (
+        ValuePort(
+            field_name,
+            event_shape=(),
+            component_ids=(field_name,),
+            representation="finite-volume-field",
+            space_id=field_space_id,
+        )
+        if value_port is None
+        else value_port
+    )
+    kernel = UnstructuredFiniteVolumeFieldReconstructionKernel(
+        locator,
+        reconstruction_,
+        view,
+        field_space_id=field_space_id,
+        block_name=block_name,
+    )
+    support = OwnerLocalFieldSupport(view, locator, block_name)
+    return PreparedFieldReconstruction(
+        kernel,
+        support_geometry=support,
+        value_port=port,
+        regularity=DerivativeRegularity.piecewise_polynomial(
+            continuity=-1, degree_bound=0
+        ),
+        trace_policy=FieldTracePolicy("cell-sided"),
+        coefficient_shape=(block.cell_ids.shape[0], *port.event_shape),
+        physical_dimension=support.ambient_dimension,
+        maximum_derivative_order=0,
+        field_space_id=field_space_id,
+        support_id=support.support_id,
+        coefficient_linear=True,
+    )
+
+
 __all__ = [
     "StructuredFiniteVolumeFieldReconstructionKernel",
     "UnstructuredFiniteVolumeFieldReconstructionKernel",
     "prepare_finite_volume_field_reconstruction",
+    "prepare_owner_local_finite_volume_field_reconstruction",
 ]

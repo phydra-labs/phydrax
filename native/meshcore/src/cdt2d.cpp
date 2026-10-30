@@ -128,14 +128,22 @@ struct Quality {
 class ConstrainedMesher {
  public:
   ConstrainedMesher(Triangulation2D& triangulation, int32_t input_count, double min_angle_degrees,
-                    double max_area, int64_t max_steiner, int64_t max_triangles)
+                    double max_area)
       : tri_(triangulation),
         input_count_(input_count),
         max_area_(max_area),
-        max_steiner_(max_steiner),
-        max_triangles_(max_triangles),
         angle_enabled_(min_angle_degrees > 0.0),
-        sin_min_angle_(std::sin(min_angle_degrees * (3.14159265358979323846 / 180.0))) {}
+        sin_min_angle_(std::sin(min_angle_degrees * (3.14159265358979323846 / 180.0))) {
+    constraint_sources_.assign(static_cast<std::size_t>(input_count), -1);
+    constraint_parents_.assign(2 * static_cast<std::size_t>(input_count), -1);
+    constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
+  }
+
+  void publish_witnesses(phx_mc_mesh& mesh) const {
+    mesh.constraint_sources = constraint_sources_;
+    mesh.constraint_parents = constraint_parents_;
+    mesh.constraint_ratios = constraint_ratios_;
+  }
 
   // Inserts the edge chain from a to b; vertices exactly on the open segment
   // split it and every piece carries id.
@@ -176,7 +184,8 @@ class ConstrainedMesher {
     }
   }
 
-  // Ruppert/Chew refinement; returns OK or REFINEMENT_LIMIT.
+  // Ruppert/Chew refinement stops only when all requested criteria hold or a
+  // finite numerical construction cannot add a distinct valid point.
   int32_t refine() {
     count_segment_degrees();
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
@@ -185,18 +194,13 @@ class ConstrainedMesher {
         enqueue_triangle_checks(slot);
       }
     }
-    bool limit_reached = false;
-    while (!limit_reached) {
+    for (;;) {
       if (!segment_queue_.empty()) {
         const auto [a, b] = segment_queue_.front();
         segment_queue_.pop_front();
         const auto [t, k] = find_edge(a, b);
         if (t < 0 || tri_.constraint(t, k) == kFree || !subsegment_encroached(t, k)) {
           continue;
-        }
-        if (steiner_count_ >= max_steiner_) {
-          limit_reached = true;
-          break;
         }
         split_subsegment(t, k);
         continue;
@@ -209,17 +213,13 @@ class ConstrainedMesher {
       if (!matches(entry)) {
         continue;
       }
-      if (steiner_count_ >= max_steiner_) {
-        limit_reached = true;
-        break;
-      }
-      process_bad_triangle(entry, limit_reached);
+      process_bad_triangle(entry);
     }
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0 &&
           quality(slot).bad) {
-        return PHX_MC_REFINEMENT_LIMIT;
+        return PHX_MC_UNRESOLVED;
       }
     }
     return PHX_MC_OK;
@@ -229,11 +229,8 @@ class ConstrainedMesher {
   Triangulation2D& tri_;
   int32_t input_count_;
   double max_area_;
-  int64_t max_steiner_;
-  int64_t max_triangles_;
   bool angle_enabled_;
   double sin_min_angle_;
-  int64_t steiner_count_ = 0;
   std::vector<int32_t> segment_degree_;
   // Per Steiner vertex (index - input_count_): the input vertices ending the
   // constrained chain it was inserted on, {-1, -1} for circumcenters.
@@ -243,6 +240,9 @@ class ConstrainedMesher {
   std::vector<int32_t> flip_stack_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
+  std::vector<int32_t> constraint_sources_;
+  std::vector<int32_t> constraint_parents_;
+  std::vector<double> constraint_ratios_;
 
   int32_t any_vertex() const {
     for (int32_t v = 0; v < tri_.vertex_count(); ++v) {
@@ -608,10 +608,6 @@ class ConstrainedMesher {
   }
 
   void after_insertion(int32_t m) {
-    ++steiner_count_;
-    if (tri_.finite_count > max_triangles_) {
-      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
-    }
     const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(m)];
     int32_t t = start;
     do {
@@ -622,12 +618,19 @@ class ConstrainedMesher {
     } while (t != start);
   }
 
-  int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1}) {
+  int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1},
+                     int32_t source = -1, int32_t parent_first = -1, int32_t parent_second = -1,
+                     double ratio = 0.0) {
     if (tri_.vertex_count() >= kMaxMeshPoints) {
-      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
+      throw StatusError{PHX_MC_INDEX_RANGE_ERROR};
     }
+    const int32_t vertex = tri_.add_vertex(xy);
     chain_ends_.push_back(ends);
-    return tri_.add_vertex(xy);
+    constraint_sources_.push_back(source);
+    constraint_parents_.push_back(parent_first);
+    constraint_parents_.push_back(parent_second);
+    constraint_ratios_.push_back(ratio);
+    return vertex;
   }
 
   std::pair<int32_t, int32_t> chain_ends_of(int32_t a, int32_t b) const {
@@ -914,9 +917,15 @@ class ConstrainedMesher {
       return false;
     }
     const std::pair<int32_t, int32_t> ends = chain_ends_of(a, b);
+    const double dx = pb[0] - pa[0], dy = pb[1] - pa[1];
+    const double ratio =
+        std::abs(dx) >= std::abs(dy) ? (chosen[0] - pa[0]) / dx : (chosen[1] - pa[1]) / dy;
+    if (!(ratio > 0.0 && ratio < 1.0)) {
+      return false;
+    }
     const int side = orient2d(pa, pb, chosen);
     if (side == 0) {
-      const int32_t v = new_vertex(chosen, ends);
+      const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       split_edge(t, k, v, id);
       legalize(v);
       after_insertion(v);
@@ -928,14 +937,14 @@ class ConstrainedMesher {
     const int32_t near_side = side > 0 ? t : across;
     const int32_t far_side = side > 0 ? across : t;
     if (tri_.is_ghost(near_side)) {
-      const int32_t v = new_vertex(chosen, ends);
+      const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       attach_to_hull(near_side, p, q, v, id);
       legalize(v);
       after_insertion(v);
       return true;
     }
     const uint8_t far_region = tri_.region[static_cast<std::size_t>(far_side)];
-    const int32_t v = new_vertex(chosen, ends);
+    const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
     split_triangle(near_side, v);
     const int32_t sliver = find_edge(p, q).first;
     tri_.set_edge_constraint(sliver, p, q, kFree);
@@ -956,7 +965,7 @@ class ConstrainedMesher {
     return split_subsegment(t, k);
   }
 
-  void process_bad_triangle(const BadTriangle& entry, bool& limit_reached) {
+  void process_bad_triangle(const BadTriangle& entry) {
     const int32_t t = entry.slot;
     const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
     const double* p0 = tri_.point(triangle.v[0]);
@@ -1015,10 +1024,6 @@ class ConstrainedMesher {
     to_split.erase(std::unique(to_split.begin(), to_split.end()), to_split.end());
     bool progress = false;
     for (const auto& [a, b] : to_split) {
-      if (steiner_count_ >= max_steiner_) {
-        limit_reached = true;
-        return;
-      }
       progress = split_named_subsegment(a, b) || progress;
     }
     if (progress && matches(entry)) {
@@ -1072,17 +1077,27 @@ class ConstrainedMesher {
 int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t segment_count,
                              const int32_t* segments, int64_t hole_count, const double* holes,
                              int32_t keep_convex_hull, double min_angle_degrees, double max_area,
-                             int64_t max_steiner, int64_t max_triangles, phx_mc_mesh** mesh) {
+                             phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   *mesh = nullptr;
-  if (point_count < 0 || point_count > kMaxMeshPoints || (point_count > 0 && points == nullptr) ||
+  if (point_count < 0 || !addressable(point_count, 2, sizeof(double)) ||
+      !addressable(point_count, 1, sizeof(int32_t)) ||
       !addressable(segment_count, 2, sizeof(int32_t)) ||
-      (segment_count > 0 && segments == nullptr) || !addressable(hole_count, 2, sizeof(double)) ||
-      (hole_count > 0 && holes == nullptr) || max_steiner < 0 || max_triangles < 0 ||
+      !addressable(hole_count, 2, sizeof(double)) ||
+      (point_count > 0 && points == nullptr) ||
+      (segment_count > 0 && segments == nullptr) || (hole_count > 0 && holes == nullptr) ||
+      (keep_convex_hull != 0 && keep_convex_hull != 1) ||
       !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0)) {
     return PHX_MC_INVALID_ARGUMENT;
+  }
+  // Vertex and constraint identifiers are stored as int32 indices. Keep only
+  // their actual representability bounds; this is not a work/entity quota.
+  constexpr int64_t kMaxConstraintCount =
+      static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1;
+  if (point_count > kMaxMeshPoints || segment_count > kMaxConstraintCount) {
+    return PHX_MC_INDEX_RANGE_ERROR;
   }
   int32_t status = validate_points(points, point_count, 2, nullptr);
   if (status == PHX_MC_OK) {
@@ -1104,8 +1119,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   result->input_point_count = point_count;
   Triangulation2D triangulation;
   triangulation.reset(points, point_count, nullptr);
-  status = build_delaunay_2d(triangulation, points, point_count, nullptr, max_triangles,
-                             result->vertex_map);
+  status = build_delaunay_2d(triangulation, points, point_count, nullptr, result->vertex_map);
   if (status != PHX_MC_OK) {
     return status;
   }
@@ -1117,7 +1131,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   }
   const bool refine = min_angle_degrees > 0.0 || std::isfinite(max_area);
   ConstrainedMesher mesher(triangulation, static_cast<int32_t>(point_count), min_angle_degrees,
-                           max_area, max_steiner, max_triangles);
+                           max_area);
   try {
     for (int64_t s = 0; s < segment_count; ++s) {
       mesher.insert_segment(result->vertex_map[static_cast<std::size_t>(segments[2 * s])],
@@ -1145,6 +1159,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       result->cell_segments.push_back(id >= 0 ? id : -1);
     }
   }
+  mesher.publish_witnesses(*result);
   canonicalize_cells(*result);
   *mesh = result.release();
   return status;
@@ -1159,12 +1174,10 @@ int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points
                                        int64_t segment_count, const int32_t* segments,
                                        int64_t hole_count, const double* holes,
                                        int32_t keep_convex_hull, double min_angle_degrees,
-                                       double max_area, int64_t max_steiner,
-                                       int64_t max_triangles, phx_mc_mesh** mesh) {
+                                       double max_area, phx_mc_mesh** mesh) {
   return phx::mc::guarded([&] {
     return phx::mc::constrained_delaunay(point_count, points, segment_count, segments, hole_count,
-                                         holes, keep_convex_hull, min_angle_degrees, max_area,
-                                         max_steiner, max_triangles, mesh);
+                                         holes, keep_convex_hull, min_angle_degrees, max_area, mesh);
   });
 }
 

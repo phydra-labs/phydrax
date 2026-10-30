@@ -11,7 +11,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._contracts import MeshingFailureCategory
+from ._contracts import MeshingFailure, MeshingFailureCategory, MeshingFailureEvidence
 
 
 class MeshingStageKind(StrEnum):
@@ -22,6 +22,7 @@ class MeshingStageKind(StrEnum):
     FEATURE_DISCOVERY = "feature_discovery"
     TOPOLOGY_REPAIR = "topology_repair"
     SURFACE_MESHING = "surface_meshing"
+    CURVE_MESHING = "curve_meshing"
     LAYER_GENERATION = "layer_generation"
     VOLUME_FILL = "volume_fill"
     OPTIMIZATION = "optimization"
@@ -53,7 +54,99 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
     failure_category: MeshingFailureCategory | None = eqx.field(static=True)
     entity_ids: tuple[int, ...] = eqx.field(static=True)
     locations: tuple[tuple[float, ...], ...] = eqx.field(static=True)
+    requested_quantities: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    achieved_quantities: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    checkpoint: str = eqx.field(static=True)
+    logical_findings: tuple[str, ...] = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
     diagnostic_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        severity: MeshingDiagnosticSeverity,
+        message: str,
+        /,
+        *,
+        provider_code: str = "",
+        failure_category: MeshingFailureCategory | None = None,
+        entity_ids: tuple[int, ...] = (),
+        locations: tuple[tuple[float, ...], ...] = (),
+        failure_evidence: MeshingFailureEvidence | None = None,
+    ) -> None:
+        if not isinstance(severity, MeshingDiagnosticSeverity):
+            raise TypeError("severity must be MeshingDiagnosticSeverity.")
+        if failure_category is not None and not isinstance(
+            failure_category, MeshingFailureCategory
+        ):
+            raise TypeError("failure_category must be MeshingFailureCategory or None.")
+        if failure_evidence is not None and not isinstance(
+            failure_evidence, MeshingFailureEvidence
+        ):
+            raise TypeError("failure_evidence must be MeshingFailureEvidence or None.")
+        text = str(message).strip()
+        if not text:
+            raise ValueError("Meshing diagnostic message must be non-empty.")
+        identifiers = tuple(entity_ids)
+        points = tuple(
+            tuple(float(component) for component in point) for point in locations
+        )
+        requested = (
+            ()
+            if failure_evidence is None
+            else failure_evidence.requested_quantities
+        )
+        achieved = (
+            ()
+            if failure_evidence is None
+            else failure_evidence.achieved_quantities
+        )
+        checkpoint = "" if failure_evidence is None else failure_evidence.checkpoint
+        findings = () if failure_evidence is None else failure_evidence.logical_findings
+        evidence_id = "" if failure_evidence is None else failure_evidence.evidence_id
+        self.severity = severity
+        self.message = text
+        self.provider_code = str(provider_code)
+        self.failure_category = failure_category
+        self.entity_ids = identifiers
+        self.locations = points
+        self.requested_quantities = requested
+        self.achieved_quantities = achieved
+        self.checkpoint = checkpoint
+        self.logical_findings = findings
+        self.evidence_id = evidence_id
+        self.diagnostic_id = canonical_fingerprint(
+            {
+                "kind": "meshing-diagnostic",
+                "severity": severity.value,
+                "message": text,
+                "provider_code": str(provider_code),
+                "failure_category": (
+                    None if failure_category is None else failure_category.value
+                ),
+                "entity_ids": identifiers,
+                "locations": points,
+                "requested_quantities": requested,
+                "achieved_quantities": achieved,
+                "checkpoint": checkpoint,
+                "logical_findings": findings,
+                "evidence_id": evidence_id,
+            }
+        )
+
+    @classmethod
+    def from_failure(cls, failure: MeshingFailure, /) -> MeshingDiagnostic:
+        """Carry the complete scientific failure record into a diagnostic."""
+        if not isinstance(failure, MeshingFailure):
+            raise TypeError("failure must be MeshingFailure.")
+        return cls(
+            MeshingDiagnosticSeverity.ERROR,
+            str(failure),
+            provider_code=failure.provider_code,
+            failure_category=failure.category,
+            entity_ids=failure.entity_ids,
+            locations=failure.locations,
+            failure_evidence=failure.evidence,
+        )
 
     def __init__(
         self,

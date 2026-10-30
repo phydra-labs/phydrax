@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import Any, assert_never, Literal, TypeVar
 
 import equinox as eqx
 import numpy as np
@@ -180,42 +180,18 @@ def _overset_masks(
     )
 
 
-def _validate_overset_epoch(
+def _overset_identity(
     overset: UnstructuredOversetPlan,
-    discretization: UnstructuredFiniteVolumeDiscretization
-    | DyadicFiniteVolumeDiscretization,
+    name: Literal["policy_id", "mapping_id"],
     /,
-) -> None:
-    """Reject maps compiled for a different receiver epoch."""
-
-    for name in ("receptor_epoch_id", "receiver_epoch_id"):
-        value = getattr(overset, name, None)
-        if value is not None and value not in (
-            discretization.prepared_id,
-            discretization.geometry_id,
-            discretization.topology_id,
-        ):
-            raise ValueError("Overset receptor map belongs to a stale geometry epoch.")
-
-
-def _overset_identity(overset: UnstructuredOversetPlan, name: str, /) -> str:
-    value = getattr(overset, name, None)
-    if value is None and name == "policy_id":
-        value = canonical_fingerprint(
-            {
-                "kind": "overset-interpolation-policy",
-                "policy": getattr(overset, "interpolation_policy", "conservative"),
-                "bounded": bool(getattr(overset, "bounded_interpolation", False)),
-                "tolerance_id": getattr(overset, "tolerance_id", None),
-            }
-        )
-    if value is None and name == "mapping_id":
-        value = getattr(overset, "identity", None)
-    if value is None:
-        value = overset.plan_id
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"Overset {name} must be a non-empty identifier.")
-    return value
+) -> str:
+    match name:
+        case "policy_id":
+            return overset.policy_id
+        case "mapping_id":
+            return overset.identity
+        case unknown:
+            assert_never(unknown)
 
 
 def _has_certified_receptor_face_routes(
@@ -645,7 +621,6 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 overset.receptor_geometry_id,
                 discretization,
             )
-            _validate_overset_epoch(overset, discretization)
             (
                 donor_active,
                 donor_hole,
@@ -676,9 +651,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 raise ValueError("Overset receptor active ownership must exclude holes.")
             overset_policy_id = _overset_identity(overset, "policy_id")
             overset_mapping_id = _overset_identity(overset, "mapping_id")
-            overset_epoch_id = getattr(overset, "epoch_id", None)
-            if overset_epoch_id is not None and not isinstance(overset_epoch_id, str):
-                raise ValueError("Overset epoch_id must be a string.")
+            overset_epoch_id = overset.epoch_id
         sliding_plan = plan.sliding
         if sliding_plan is None:
             if sliding_coupling is not None:

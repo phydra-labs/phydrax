@@ -18,7 +18,7 @@ from phydrax.discretization import (
     UnstructuredRemapLimiter,
     UnstructuredSecondOrderRemapPlan,
 )
-from phydrax.geometry import CommonRefinementPolicy, CommonRefinementStatus
+from phydrax.geometry import CommonRefinementStatus
 
 
 requires_meshcore = pytest.mark.skipif(
@@ -337,21 +337,6 @@ def test_first_order_remap_is_dual_to_the_reverse_remap() -> None:
     # ty: ignore[unresolved-attribute]
     source_pairing = jnp.sum(quads.cell_volumes * u * reverse.plan.apply(w))
     np.testing.assert_allclose(target_pairing, source_pairing, rtol=1e-13)
-
-
-@pytest.mark.meshcore
-@requires_meshcore
-def test_candidate_pair_limit_is_a_resource_refusal() -> None:
-    geometry = _quad_grid(2)
-    limited = prepare_unstructured_conservative_remap(
-        geometry,
-        geometry,
-        provenance="limits",
-        policy=CommonRefinementPolicy(maximum_candidate_pairs=1),
-    )
-    assert limited.status is CommonRefinementStatus.RESOURCE_LIMIT
-    assert limited.plan is None
-    assert limited.reason.startswith("RESOURCE_LIMIT")
 
 
 @pytest.mark.meshcore

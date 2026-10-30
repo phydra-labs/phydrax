@@ -549,7 +549,7 @@ class FiniteElementLocalProvider(StrictModule):
                 ],
                 dtype=np.int32,
             )
-            if selected.size == 0:
+            if selected.size == 0 and entity_set:
                 continue
             entities = block_cells[selected]
             rows_by_entity = {

@@ -193,8 +193,7 @@ def test_failed_candidate_validation_rolls_back_rim_and_surface() -> None:
     evidence = _film_evidence(thickness, pair_slots)
     restrictive = SurfaceEventPolicy(
         validation=MultiRegionSurfaceValidationPolicy(
-            check_self_intersection=True,
-            intersection_candidate_capacity=1,
+            profile="manifold_two_region"
         )
     )
 

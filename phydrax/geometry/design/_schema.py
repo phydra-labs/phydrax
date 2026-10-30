@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 
 
@@ -76,6 +77,30 @@ class ParameterSchema:
         identifiers = tuple(spec.parameter_id for spec in self.specs)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("ParameterSchema parameter IDs must be unique.")
+
+    @property
+    def schema_id(self) -> str:
+        """Canonical identity of every ordered parameter specification."""
+        return canonical_fingerprint(
+            {
+                "kind": "geometry-parameter-schema",
+                "specs": tuple(
+                    {
+                        "parameter_id": (
+                            spec.parameter_id.feature_id,
+                            spec.parameter_id.name,
+                        ),
+                        "shape": spec.shape,
+                        "dtype": spec.dtype,
+                        "role": spec.role,
+                        "physical_scale": spec.physical_scale,
+                        "bounds": spec.bounds,
+                        "trainable": spec.trainable,
+                    }
+                    for spec in self.specs
+                ),
+            }
+        )
 
     def __len__(self) -> int:
         return len(self.specs)

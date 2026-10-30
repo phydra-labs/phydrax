@@ -53,9 +53,61 @@ preflights never become implicit fallback dispatches.
 
 ## Surface geometry
 
-::: phydrax.geometry.SurfaceModel
+The host-side `geometry.surface.arrange_triangle_surfaces` and
+`geometry.surface.surface_boolean` operations work on the supplied affine
+triangle meshes, not on CAD source curves, faces, or feature history.
+Arrangements accept open embedded sheets and split every closed-box candidate
+with native meshcore predicates. Surface Booleans require closed, embedded,
+oriented solid operands in one coordinate frame. Invalid input and unresolved
+classification fail closed; orientation is not repaired. Both operations require
+native meshcore, with no optional-engine fallback. Use the B-Rep partition APIs
+below the CAD section of the meshing guide for source-level CAD operations.
+
+:::: phydrax.geometry.surface.arrange_triangle_surfaces
 
 ---
+
+:::: phydrax.geometry.surface.SurfaceArrangement
+
+---
+
+:::: phydrax.geometry.surface.SurfaceArrangementEvidence
+
+---
+
+:::: phydrax.geometry.surface.surface_boolean
+
+---
+
+:::: phydrax.geometry.surface.SurfaceBooleanResult
+
+---
+
+:::: phydrax.geometry.surface.SurfaceBooleanOperation
+
+---
+
+:::: phydrax.geometry.surface.SurfaceBooleanError
+
+---
+
+:::: phydrax.geometry.surface.SurfaceClosureEvidence
+
+---
+
+:::: phydrax.geometry.surface.SurfaceArrangementError
+
+---
+
+:::: phydrax.geometry.SurfaceModel
+
+---
+Surface audit policy controls metric tolerances, closure, and orientation—not
+entity-count allowances. High-order surface policy controls corner agreement
+and the minimum Jacobian; polynomial degree, node count, and evaluation batch
+size are not quota-limited. Positive polynomial order, finite inputs, valid chart
+indices, and the declared derivative support remain required.
+
 
 ::: phydrax.geometry.SurfaceAuditPolicy
 

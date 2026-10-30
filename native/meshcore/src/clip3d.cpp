@@ -17,21 +17,19 @@
 //                        input point on F when F is point-defined.
 // Exact sides with respect to a plane Q:
 //   EDGE_PLANE: sQ(X) (sP(u) - sP(v)) = sP(u) sQ(v) - sP(v) sQ(u);
-//   PLANES3 (Q explicit): rows (n_i, g_i) with g_i = s_i(o) (and (n_F, 0) for
-//     point-defined F, n_F = (b - a) x (c - a)); the block determinant gives
-//       det[[n1, g1], [n2, g2], [n3, g3], [nQ, gQ]] = det[n1; n2; n3] sQ(X),
-//     expanded along the last row with cofactors (C0, C1, C2, C3 = det N):
-//       C3 sQ(X) = C0 nQ0 + C1 nQ1 + C2 nQ2 + C3 sQ(o), and y_k = -C_k / C3.
+//   PLANES3: rows (n_i, g_i) with g_i = s_i(o) (and (n_F, 0) for point-
+//     defined F, n_F = (b - a) x (c - a)); their determinant cofactors C
+//     have C3 = det N and X = o - C / C3. For explicit/power Q, where
+//     sQ(x) = h - nQ . x, C3 sQ(X) = C . nQ + C3 sQ(o). For point-defined
+//     Q, where sQ(x) = nQ . (x - a), C3 sQ(X) = C3 sQ(o) - C . nQ.
 // Degrees stay <= 6 in coordinates (see clip_common.hpp).
 //
 // A vertex created on an edge whose faces lie on planes f, g, cut by P:
 //   f, g base planes          -> EDGE_PLANE(base edge endpoints, P);
 //   base F, clip C:  tet-tet  -> EDGE_PLANE(B edge shared by C and P, F),
-//                    explicit -> PLANES3(F, C, P);
-//   clips C1, C2:    tet-tet  -> POINT(B vertex common to C1, C2, P),
-//                    explicit -> PLANES3(C1, C2, P).
-// Hence tet-tet only classifies POINT and EDGE_PLANE vertices and PLANES3
-// vertices are only classified against explicit planes.
+//                    halfspace -> PLANES3(F, C, P);
+// Hence tet-tet only classifies POINT and EDGE_PLANE vertices. Other families
+// classify PLANES3 vertices against any supporting plane, including the base.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -42,7 +40,9 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "clip3d.hpp"
 #include "clip_common.hpp"
+#include "exact_scalar.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -58,15 +58,50 @@ using clip::mul;
 
 enum class Family { kTetTet, kTetHalfspaces, kBoxHalfspaces };
 
+struct PowerPlaneSource {
+  const double* site = nullptr;
+  const double* neighbor = nullptr;
+  double weight = 0.0;
+  double neighbor_weight = 0.0;
+  const ExactPowerCoordinates* exact_site = nullptr;
+  const ExactPowerCoordinates* exact_neighbor = nullptr;
+};
+
+template <class T>
+T power_coordinate(const double* raw, const ExactPowerCoordinates* source, int axis) {
+  if (source == nullptr) return clip::lift<T>(raw[axis]);
+  if constexpr (std::is_same_v<T, Approx>) return source->approximate[axis];
+  else return source->exact[axis];
+}
+
+template <class T>
+T power_plane_value(const PowerPlaneSource& source, const double* point) {
+  T value = clip::diff<T>(source.weight, source.neighbor_weight);
+  for (int axis = 0; axis < 3; ++axis) {
+    const T first = source.exact_site == nullptr
+                        ? clip::diff<T>(source.site[axis], point[axis])
+                        : power_coordinate<T>(source.site, source.exact_site, axis) -
+                              clip::lift<T>(point[axis]);
+    const T second = source.exact_neighbor == nullptr
+                         ? clip::diff<T>(source.neighbor[axis], point[axis])
+                         : power_coordinate<T>(source.neighbor, source.exact_neighbor, axis) -
+                               clip::lift<T>(point[axis]);
+    value = value + second * second - first * first;
+  }
+  return value;
+}
+
 // tag: tetrahedron face -> opposite vertex (0..3) of its tetrahedron;
 // box face -> 2 axis + side.  label: output face label.
 struct Plane {
   bool is_explicit = false;
+  bool is_power = false;
   int a = -1;
   int b = -1;
   int c = -1;
   double n[3] = {0.0, 0.0, 0.0};
   double h = 0.0;
+  PowerPlaneSource power_source{};
   int tag = 0;
   int label = 0;
 };
@@ -155,7 +190,6 @@ class PolytopeClipper {
   double points[kMaxPoints][3] = {};
   std::vector<Plane> planes;
   int base_planes = 0;
-  int64_t capacity = std::numeric_limits<int64_t>::max();
   bool clamp_to_box = false;
   double lower[3] = {0.0, 0.0, 0.0};
   double upper[3] = {0.0, 0.0, 0.0};
@@ -169,7 +203,6 @@ class PolytopeClipper {
     family = kind;
     planes.clear();
     base_planes = 0;
-    capacity = std::numeric_limits<int64_t>::max();
     clamp_to_box = false;
     vertices.clear();
     live.clear();
@@ -256,10 +289,19 @@ class PolytopeClipper {
     planes.push_back(plane);
   }
 
-  // Sizes the per-(plane, point) value caches once every plane is known and
-  // enforces the vertex capacity on the base polytope.
-  int32_t finish_setup(int64_t vertex_capacity) {
-    capacity = vertex_capacity;
+  void add_power_plane(const double* site, double weight, const double* neighbor,
+                       double neighbor_weight, int label,
+                       const ExactPowerCoordinates* exact_site,
+                       const ExactPowerCoordinates* exact_neighbor) {
+    Plane plane;
+    plane.is_power = true;
+    plane.power_source = {site, neighbor, weight, neighbor_weight, exact_site, exact_neighbor};
+    plane.label = label;
+    planes.push_back(plane);
+  }
+
+  // Sizes the per-(plane, point) value caches once every plane is known.
+  void finish_setup() {
     const std::size_t size = planes.size() * kMaxPoints;
     approx_values_.resize(size);
     approx_ready_.assign(size, 0);
@@ -267,7 +309,6 @@ class PolytopeClipper {
       exact_values_.resize(size);
     }
     exact_ready_.assign(size, 0);
-    return static_cast<int64_t>(live.size()) > capacity ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_OK;
   }
 
   // Keeps the part with s_plane >= 0.  `empty` reports a zero-measure result.
@@ -278,7 +319,6 @@ class PolytopeClipper {
     }
     bool positive = false;
     bool negative = false;
-    int64_t kept = 0;
     for (const int v : live) {
       const int side = classify(v, plane_id);
       if (side == kInvalidSide) {
@@ -287,7 +327,6 @@ class PolytopeClipper {
       side_[v] = static_cast<signed char>(side);
       positive = positive || side > 0;
       negative = negative || side < 0;
-      kept += side >= 0;
     }
     if (!positive) {
       live.clear();
@@ -322,10 +361,6 @@ class PolytopeClipper {
     });
     if (cuts_.size() % 2 != 0) {
       return PHX_MC_INTERNAL_ERROR;
-    }
-    const int64_t created = static_cast<int64_t>(cuts_.size() / 2);
-    if (kept + created > capacity) {
-      return PHX_MC_CAPACITY_EXCEEDED;
     }
     const int first_new = static_cast<int>(vertices.size());
     for (std::size_t k = 0; k < cuts_.size(); k += 2) {
@@ -549,6 +584,27 @@ class PolytopeClipper {
     return PHX_MC_OK;
   }
 
+  int symbolic_side(int vertex, int plane) { return classify(vertex, plane); }
+
+  int symbolic_power_side(int vertex, const double* site, double weight,
+                          const double* neighbor, double neighbor_weight,
+                          const ExactPowerCoordinates* exact_site,
+                          const ExactPowerCoordinates* exact_neighbor) {
+    const int plane = static_cast<int>(planes.size());
+    add_power_plane(site, weight, neighbor, neighbor_weight, -1, exact_site, exact_neighbor);
+    const std::size_t first = static_cast<std::size_t>(plane) * kMaxPoints;
+    const std::size_t size = first + kMaxPoints;
+    approx_values_.resize(size);
+    approx_ready_.resize(size);
+    exact_values_.resize(size);
+    exact_ready_.resize(size);
+    std::fill(approx_ready_.begin() + first, approx_ready_.end(), 0);
+    std::fill(exact_ready_.begin() + first, exact_ready_.end(), 0);
+    const int sign = classify(vertex, plane);
+    planes.pop_back();
+    return sign;
+  }
+
  private:
   void add_point_vertex(int point) {
     Vertex vertex;
@@ -564,6 +620,9 @@ class PolytopeClipper {
   T plane_value(int plane_id, int point) const {
     const Plane& plane = planes[plane_id];
     const double* x = points[point];
+    if (plane.is_power) {
+      return power_plane_value<T>(plane.power_source, x);
+    }
     if (plane.is_explicit) {
       return lift<T>(plane.h) -
              (mul<T>(plane.n[0], x[0]) + mul<T>(plane.n[1], x[1]) + mul<T>(plane.n[2], x[2]));
@@ -572,6 +631,16 @@ class PolytopeClipper {
       return T();
     }
     return orient_value<T>(points[plane.a], points[plane.b], points[plane.c], x);
+  }
+
+  template <class T>
+  T power_normal(const Plane& plane, int axis) const {
+    const PowerPlaneSource& source = plane.power_source;
+    const T difference = source.exact_site == nullptr && source.exact_neighbor == nullptr
+                             ? diff<T>(source.neighbor[axis], source.site[axis])
+                             : power_coordinate<T>(source.neighbor, source.exact_neighbor, axis) -
+                                   power_coordinate<T>(source.site, source.exact_site, axis);
+    return difference * lift<T>(2.0);
   }
 
   const Approx& approx_value(int plane_id, int point) {
@@ -597,9 +666,9 @@ class PolytopeClipper {
     T r[3][4];
     for (int i = 0; i < 3; ++i) {
       const Plane& plane = planes[vertex.plane[i]];
-      if (plane.is_explicit) {
+      if (plane.is_explicit || plane.is_power) {
         for (int k = 0; k < 3; ++k) {
-          r[i][k] = lift<T>(plane.n[k]);
+          r[i][k] = plane.is_power ? power_normal<T>(plane, k) : lift<T>(plane.n[k]);
         }
         r[i][3] = plane_value<T>(vertex.plane[i], vertex.a);
       } else {
@@ -650,22 +719,43 @@ class PolytopeClipper {
       }
       case Kind::kPlanes3: {
         const Plane& plane = planes[plane_id];
-        if (!plane.is_explicit) {
-          return kInvalidSide;
-        }
-        const Approx* c = cofactors_.data() + vertex.cofactors;
-        const Approx filtered = c[0] * Approx::exact(plane.n[0]) +
-                                c[1] * Approx::exact(plane.n[1]) +
-                                c[2] * Approx::exact(plane.n[2]) +
-                                c[3] * approx_value(plane_id, vertex.a);
+        const auto value = [&]<class T>(const T* c) {
+          T normal[3];
+          if (plane.is_power) {
+            for (int k = 0; k < 3; ++k) {
+              normal[k] = power_normal<T>(plane, k);
+            }
+          } else if (plane.is_explicit) {
+            for (int k = 0; k < 3; ++k) {
+              normal[k] = lift<T>(plane.n[k]);
+            }
+          } else {
+            const double* a = points[plane.a];
+            const double* b = points[plane.b];
+            const double* d = points[plane.c];
+            const T ab[3] = {diff<T>(b[0], a[0]), diff<T>(b[1], a[1]),
+                             diff<T>(b[2], a[2])};
+            const T ad[3] = {diff<T>(d[0], a[0]), diff<T>(d[1], a[1]),
+                             diff<T>(d[2], a[2])};
+            normal[0] = ab[1] * ad[2] - ab[2] * ad[1];
+            normal[1] = ab[2] * ad[0] - ab[0] * ad[2];
+            normal[2] = ab[0] * ad[1] - ab[1] * ad[0];
+          }
+          const T origin_value = plane_value<T>(plane_id, vertex.a);
+          if (!plane.is_explicit && !plane.is_power) {
+            return c[3] * origin_value - c[0] * normal[0] - c[1] * normal[1] -
+                   c[2] * normal[2];
+          }
+          return c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2] +
+                 c[3] * origin_value;
+        };
+        const Approx filtered = value(cofactors_.data() + vertex.cofactors);
         return vertex.denominator * clip::exact_sign(filtered, [&] {
-                 if (vertex.exact_cofactors < 0) {
-                   vertex.exact_cofactors = store_exact_cofactors(vertex);
-                 }
-                 const Expansion* e = exact_cofactors_.data() + vertex.exact_cofactors;
-                 return e[0].scaled(plane.n[0]) + e[1].scaled(plane.n[1]) +
-                        e[2].scaled(plane.n[2]) + e[3] * exact_value(plane_id, vertex.a);
-               });
+          if (vertex.exact_cofactors < 0) {
+            vertex.exact_cofactors = store_exact_cofactors(vertex);
+          }
+          return value(exact_cofactors_.data() + vertex.exact_cofactors);
+        });
       }
     }
     return kInvalidSide;
@@ -740,7 +830,7 @@ class PolytopeClipper {
       vertex.plane[0] = f;
       vertex.plane[1] = g;
       vertex.plane[2] = p;
-      vertex.a = planes[f].is_explicit ? 0 : planes[f].a;
+      vertex.a = (planes[f].is_explicit || planes[f].is_power) ? 0 : planes[f].a;
     }
 
     switch (vertex.kind) {
@@ -753,25 +843,39 @@ class PolytopeClipper {
         const int q = vertex.plane[0];
         const int u = vertex.a;
         const int w = vertex.b;
-        vertex.denominator = clip::exact_sign(approx_value(q, u) - approx_value(q, w), [&] {
-          return exact_value(q, u) - exact_value(q, w);
-        });
-        if (vertex.denominator == 0) {
-          return PHX_MC_INTERNAL_ERROR;
-        }
-        // X lies on the closed segment [u, w] (an edge of a base polytope),
-        // so both parameters are clamped to [0, 1].
-        const double su =
-            construction_value(approx_value(q, u), [&] { return exact_value(q, u); });
-        const double sw =
-            construction_value(approx_value(q, w), [&] { return exact_value(q, w); });
-        const double denominator = su - sw;
-        const double t = clip::clamp(su / denominator, 0.0, 1.0);
-        const double r = clip::clamp(-sw / denominator, 0.0, 1.0);
         const double* pu = points[u];
         const double* pw = points[w];
-        for (int k = 0; k < 3; ++k) {
-          vertex.x[k] = t <= 0.5 ? pu[k] + t * (pw[k] - pu[k]) : pw[k] + r * (pu[k] - pw[k]);
+        if (planes[q].is_power) {
+          const Dyadic su = exact::to_dyadic(exact_value(q, u));
+          const Dyadic sw = exact::to_dyadic(exact_value(q, w));
+          const Dyadic denominator = su - sw;
+          vertex.denominator = denominator.sign();
+          if (vertex.denominator == 0) {
+            return PHX_MC_INTERNAL_ERROR;
+          }
+          for (int k = 0; k < 3; ++k) {
+            const Dyadic numerator = su * Dyadic(pw[k]) - sw * Dyadic(pu[k]);
+            vertex.x[k] = exact::rounded_quotient(numerator, denominator);
+          }
+        } else {
+          vertex.denominator = clip::exact_sign(approx_value(q, u) - approx_value(q, w), [&] {
+            return exact_value(q, u) - exact_value(q, w);
+          });
+          if (vertex.denominator == 0) {
+            return PHX_MC_INTERNAL_ERROR;
+          }
+          // X lies on the closed segment [u, w], so both parameters are clamped to [0, 1].
+          const double su =
+              construction_value(approx_value(q, u), [&] { return exact_value(q, u); });
+          const double sw =
+              construction_value(approx_value(q, w), [&] { return exact_value(q, w); });
+          const double denominator = su - sw;
+          const double t = clip::clamp(su / denominator, 0.0, 1.0);
+          const double r = clip::clamp(-sw / denominator, 0.0, 1.0);
+          for (int k = 0; k < 3; ++k) {
+            vertex.x[k] =
+                t <= 0.5 ? pu[k] + t * (pw[k] - pu[k]) : pw[k] + r * (pu[k] - pw[k]);
+          }
         }
         break;
       }
@@ -780,28 +884,47 @@ class PolytopeClipper {
         planes3_cofactors<Approx>(vertex, c);
         vertex.cofactors = static_cast<int>(cofactors_.size());
         cofactors_.insert(cofactors_.end(), c, c + 4);
-        double value[4] = {c[0].value, c[1].value, c[2].value, c[3].value};
-        const double scale =
-            std::max({std::fabs(c[0].value), std::fabs(c[1].value), std::fabs(c[2].value)});
-        const bool accurate = clip::accurate(c[3]) &&
-                              c[0].bound <= kConstructionTolerance * scale &&
-                              c[1].bound <= kConstructionTolerance * scale &&
-                              c[2].bound <= kConstructionTolerance * scale;
-        vertex.denominator = c[3].certified_sign();
-        if (vertex.denominator == 2 || !accurate) {
+        if (planes[vertex.plane[2]].is_power) {
           vertex.exact_cofactors = store_exact_cofactors(vertex);
           const Expansion* e = exact_cofactors_.data() + vertex.exact_cofactors;
-          vertex.denominator = e[3].sign();
+          Dyadic exact_c[4];
           for (int k = 0; k < 4; ++k) {
-            value[k] = e[k].estimate();
+            exact_c[k] = exact::to_dyadic(e[k]);
           }
-        }
-        if (vertex.denominator == 0) {
-          return PHX_MC_INTERNAL_ERROR;
-        }
-        const double* o = points[vertex.a];
-        for (int k = 0; k < 3; ++k) {
-          vertex.x[k] = o[k] - value[k] / value[3];
+          const Dyadic& denominator = exact_c[3];
+          vertex.denominator = denominator.sign();
+          if (vertex.denominator == 0) {
+            return PHX_MC_INTERNAL_ERROR;
+          }
+          const double* o = points[vertex.a];
+          for (int k = 0; k < 3; ++k) {
+            const Dyadic numerator = Dyadic(o[k]) * denominator - exact_c[k];
+            vertex.x[k] = exact::rounded_quotient(numerator, denominator);
+          }
+        } else {
+          double value[4] = {c[0].value, c[1].value, c[2].value, c[3].value};
+          const double scale =
+              std::max({std::fabs(c[0].value), std::fabs(c[1].value), std::fabs(c[2].value)});
+          const bool accurate = clip::accurate(c[3]) &&
+                                c[0].bound <= kConstructionTolerance * scale &&
+                                c[1].bound <= kConstructionTolerance * scale &&
+                                c[2].bound <= kConstructionTolerance * scale;
+          vertex.denominator = c[3].certified_sign();
+          if (vertex.denominator == 2 || !accurate) {
+            vertex.exact_cofactors = store_exact_cofactors(vertex);
+            const Expansion* e = exact_cofactors_.data() + vertex.exact_cofactors;
+            vertex.denominator = e[3].sign();
+            for (int k = 0; k < 4; ++k) {
+              value[k] = e[k].estimate();
+            }
+          }
+          if (vertex.denominator == 0) {
+            return PHX_MC_INTERNAL_ERROR;
+          }
+          const double* o = points[vertex.a];
+          for (int k = 0; k < 3; ++k) {
+            vertex.x[k] = o[k] - value[k] / value[3];
+          }
         }
         break;
       }
@@ -860,7 +983,7 @@ int32_t run_clips(PolytopeClipper& clipper, bool& empty) {
 }
 
 // `simplices` (optional) receives the cone partition of a nonempty intersection.
-int32_t intersect_tetrahedra(const double* first, const double* second, int32_t vertex_capacity,
+int32_t intersect_tetrahedra(const double* first, const double* second,
                              PolytopeClipper& clipper, double& volume, double* first_moment,
                              clip::SimplexOutput* simplices) {
   int32_t status = clip::check_finite(first, 12);
@@ -884,11 +1007,9 @@ int32_t intersect_tetrahedra(const double* first, const double* second, int32_t 
   for (int k = 0; k < 4; ++k) {
     clipper.add_point_plane(4 + kTetFace[k][0], 4 + kTetFace[k][1], 4 + kTetFace[k][2], k);
   }
-  status = clipper.finish_setup(vertex_capacity);
+  clipper.finish_setup();
   bool empty = false;
-  if (status == PHX_MC_OK) {
-    status = run_clips(clipper, empty);
-  }
+  status = run_clips(clipper, empty);
   if (status == PHX_MC_OK && !empty) {
     clipper.moments(volume, first_moment);
     if (simplices != nullptr) {
@@ -899,8 +1020,8 @@ int32_t intersect_tetrahedra(const double* first, const double* second, int32_t 
 }
 
 int32_t clip_tetrahedron(const double* normals, const double* offsets, int32_t plane_count,
-                         const double* tetrahedron, int32_t vertex_capacity,
-                         PolytopeClipper& clipper, double& volume, double* first_moment) {
+                         const double* tetrahedron, PolytopeClipper& clipper, double& volume,
+                         double* first_moment) {
   const int64_t components = 3 * static_cast<int64_t>(plane_count);
   int32_t status = clip::check_finite(tetrahedron, 12);
   if (status == PHX_MC_OK) {
@@ -927,11 +1048,9 @@ int32_t clip_tetrahedron(const double* normals, const double* offsets, int32_t p
   for (int32_t plane = 0; plane < plane_count; ++plane) {
     clipper.add_explicit_plane(normals + 3 * static_cast<int64_t>(plane), offsets[plane], plane);
   }
-  status = clipper.finish_setup(vertex_capacity);
+  clipper.finish_setup();
   bool empty = false;
-  if (status == PHX_MC_OK) {
-    status = run_clips(clipper, empty);
-  }
+  status = run_clips(clipper, empty);
   if (status == PHX_MC_OK && !empty) {
     clipper.moments(volume, first_moment);
   }
@@ -1022,11 +1141,9 @@ int32_t clip_box(const double* lower, const double* upper, const double* normals
   for (int32_t plane = 0; plane < plane_count; ++plane) {
     clipper.add_explicit_plane(normals + 3 * static_cast<int64_t>(plane), offsets[plane], plane);
   }
-  status = clipper.finish_setup(out.vertex_capacity);
+  clipper.finish_setup();
   bool empty = false;
-  if (status == PHX_MC_OK) {
-    status = run_clips(clipper, empty);
-  }
+  status = run_clips(clipper, empty);
   if (status != PHX_MC_OK || empty) {
     return status;
   }
@@ -1040,10 +1157,10 @@ int32_t clip_box(const double* lower, const double* upper, const double* normals
 // Batched tetrahedron-pair intersections; `simplex_counts == nullptr` selects
 // the moments-only variant.
 int32_t tetrahedron_batch(int64_t count, const double* first, const double* second,
-                          int32_t vertex_capacity, int32_t simplex_capacity, double* simplices,
+                          int32_t simplex_capacity, double* simplices,
                           int32_t* simplex_counts, double* volumes, double* first_moments,
                           int32_t* item_status) {
-  if (count < 0 || vertex_capacity < 1 || simplex_capacity < 0 ||
+  if (count < 0 || simplex_capacity < 0 ||
       !addressable(count, 12, sizeof(double)) ||
       !addressable(count, 12 * static_cast<int64_t>(simplex_capacity), sizeof(double))) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -1062,9 +1179,9 @@ int32_t tetrahedron_batch(int64_t count, const double* first, const double* seco
     clip::SimplexOutput out{
         simplex_capacity,
         simplices == nullptr ? nullptr : simplices + 12 * item * simplex_capacity, 0};
-    const int32_t status =
-        intersect_tetrahedra(first + 12 * item, second + 12 * item, vertex_capacity, clipper,
-                             volume, moment, simplex_counts == nullptr ? nullptr : &out);
+    const int32_t status = intersect_tetrahedra(first + 12 * item, second + 12 * item, clipper,
+                                                volume, moment,
+                                                simplex_counts == nullptr ? nullptr : &out);
     if (status != PHX_MC_OK) {
       volume = 0.0;
       moment[0] = moment[1] = moment[2] = 0.0;
@@ -1083,25 +1200,182 @@ int32_t tetrahedron_batch(int64_t count, const double* first, const double* seco
 }
 
 }  // namespace
+struct TetrahedronClipper::Impl {
+  BoxWorkspace work;
+};
+
+TetrahedronClipper::TetrahedronClipper() : impl_(std::make_unique<Impl>()) {}
+
+TetrahedronClipper::~TetrahedronClipper() = default;
+
+int TetrahedronClipper::vertex_base_side(int32_t vertex, int32_t face) {
+  if (vertex < 0 || static_cast<std::size_t>(vertex) >= impl_->work.sorted_live.size() ||
+      face < 0 || face >= impl_->work.clipper.base_planes) {
+    return kInvalidSide;
+  }
+  return impl_->work.clipper.symbolic_side(impl_->work.sorted_live[vertex], face);
+}
+
+int TetrahedronClipper::vertex_power_side(
+    int32_t vertex, const double* site, double weight, const double* neighbor,
+    double neighbor_weight, const ExactPowerCoordinates* exact_site,
+    const ExactPowerCoordinates* exact_neighbor) {
+  if (vertex < 0 || static_cast<std::size_t>(vertex) >= impl_->work.sorted_live.size()) {
+    return kInvalidSide;
+  }
+  return impl_->work.clipper.symbolic_power_side(
+      impl_->work.sorted_live[vertex], site, weight, neighbor, neighbor_weight, exact_site,
+      exact_neighbor);
+}
+
+int TetrahedronClipper::point_power_side(
+    const double* point, const double* site, double weight, const double* neighbor,
+    double neighbor_weight, const ExactPowerCoordinates* exact_site,
+    const ExactPowerCoordinates* exact_neighbor) {
+  if (point == nullptr || (site == nullptr && exact_site == nullptr) ||
+      (neighbor == nullptr && exact_neighbor == nullptr)) {
+    return kInvalidSide;
+  }
+  const PowerPlaneSource source{site, neighbor, weight, neighbor_weight, exact_site,
+                                exact_neighbor};
+  return clip::exact_sign(power_plane_value<Approx>(source, point),
+                          [&] { return power_plane_value<Expansion>(source, point); });
+}
+
+int32_t TetrahedronClipper::clip(const double* tetrahedron, const double* normals,
+                                 const double* offsets, int32_t plane_count,
+                                 ClippedPolytope& out) {
+  out.vertices.clear();
+  out.face_offsets.assign(1, 0);
+  out.face_labels.clear();
+  out.face_vertices.clear();
+  out.volume = 0.0;
+  out.moment[0] = out.moment[1] = out.moment[2] = 0.0;
+  if (tetrahedron == nullptr || plane_count < 0 ||
+      (plane_count > 0 && (normals == nullptr || offsets == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  int32_t status = clip::check_finite(tetrahedron, 12);
+  if (status == PHX_MC_OK) status = clip::check_coordinates(tetrahedron, 12);
+  if (status == PHX_MC_OK) status = clip::check_halfspaces(normals, offsets, plane_count, 3);
+  if (status != PHX_MC_OK) return status;
+  if (orient3d(tetrahedron, tetrahedron + 3, tetrahedron + 6, tetrahedron + 9) <= 0) {
+    return PHX_MC_DEGENERATE_INPUT;
+  }
+  PolytopeClipper& clipper = impl_->work.clipper;
+  clipper.reset(Family::kTetHalfspaces);
+  load_tetrahedron(tetrahedron, 0, clipper);
+  clipper.begin_tetrahedron();
+  for (int32_t plane = 0; plane < plane_count; ++plane) {
+    clipper.add_explicit_plane(normals + 3 * static_cast<int64_t>(plane), offsets[plane], plane);
+  }
+  return finish_clip(out);
+}
+
+int32_t TetrahedronClipper::clip_power(
+    const double* tetrahedron, const double* sites, const double* weights, int32_t site,
+    const int32_t* neighbors, int32_t plane_count, ClippedPolytope& out,
+    const ExactPowerCoordinates* exact_coordinates) {
+  out.vertices.clear();
+  out.face_offsets.assign(1, 0);
+  out.face_labels.clear();
+  out.face_vertices.clear();
+  out.volume = 0.0;
+  out.moment[0] = out.moment[1] = out.moment[2] = 0.0;
+  if (tetrahedron == nullptr || plane_count < 0 || site < 0 || weights == nullptr ||
+      (plane_count > 0 && neighbors == nullptr) ||
+      (sites == nullptr && exact_coordinates == nullptr)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  int32_t status = clip::check_finite(tetrahedron, 12);
+  if (status == PHX_MC_OK) status = clip::check_coordinates(tetrahedron, 12);
+  if (status != PHX_MC_OK) return status;
+  if (orient3d(tetrahedron, tetrahedron + 3, tetrahedron + 6, tetrahedron + 9) <= 0) {
+    return PHX_MC_DEGENERATE_INPUT;
+  }
+  const auto validate_site = [&](int32_t index) -> int32_t {
+    if (index < 0) return PHX_MC_INVALID_INPUT;
+    if (exact_coordinates != nullptr &&
+        (exact_coordinates[index].approximate == nullptr || exact_coordinates[index].exact == nullptr))
+      return PHX_MC_INVALID_ARGUMENT;
+    if (sites != nullptr) {
+      int32_t site_status = clip::check_finite(sites + 3 * static_cast<int64_t>(index), 3);
+      if (site_status == PHX_MC_OK)
+        site_status = clip::check_coordinates(sites + 3 * static_cast<int64_t>(index), 3);
+      if (site_status != PHX_MC_OK) return site_status;
+    }
+    int32_t weight_status = clip::check_finite(weights + index, 1);
+    if (weight_status == PHX_MC_OK) weight_status = clip::check_offsets(weights + index, 1);
+    return weight_status;
+  };
+  status = validate_site(site);
+  if (status != PHX_MC_OK) return status;
+  for (int32_t plane = 0; plane < plane_count; ++plane) {
+    status = validate_site(neighbors[plane]);
+    if (status != PHX_MC_OK) return status;
+  }
+  PolytopeClipper& clipper = impl_->work.clipper;
+  clipper.reset(Family::kTetHalfspaces);
+  load_tetrahedron(tetrahedron, 0, clipper);
+  clipper.begin_tetrahedron();
+  for (int32_t plane = 0; plane < plane_count; ++plane) {
+    const int32_t neighbor = neighbors[plane];
+    clipper.add_power_plane(
+        sites == nullptr ? nullptr : sites + 3 * static_cast<int64_t>(site), weights[site],
+        sites == nullptr ? nullptr : sites + 3 * static_cast<int64_t>(neighbor), weights[neighbor],
+        plane, exact_coordinates == nullptr ? nullptr : exact_coordinates + site,
+        exact_coordinates == nullptr ? nullptr : exact_coordinates + neighbor);
+  }
+  return finish_clip(out);
+}
+
+int32_t TetrahedronClipper::finish_clip(ClippedPolytope& out) {
+  PolytopeClipper& clipper = impl_->work.clipper;
+  clipper.finish_setup();
+  bool empty = false;
+  int32_t status = run_clips(clipper, empty);
+  if (status != PHX_MC_OK || empty) return status;
+  constexpr std::size_t maximum = static_cast<std::size_t>(std::numeric_limits<int32_t>::max());
+  if (clipper.live.size() > maximum || clipper.faces.size() > maximum ||
+      clipper.loops.size() > maximum || clipper.live.size() > maximum / 3) {
+    return PHX_MC_INDEX_RANGE_ERROR;
+  }
+  out.vertices.resize(3 * clipper.live.size());
+  out.face_offsets.resize(clipper.faces.size() + 1);
+  out.face_labels.resize(clipper.faces.size());
+  out.face_vertices.resize(clipper.loops.size());
+  BoxOutput box{static_cast<int32_t>(clipper.live.size()),
+                static_cast<int32_t>(clipper.faces.size()),
+                static_cast<int32_t>(clipper.loops.size()),
+                out.vertices.data(),
+                out.face_offsets.data(),
+                out.face_labels.data(),
+                out.face_vertices.data(),
+                0,
+                0};
+  status = write_box_output(impl_->work, box);
+  if (status != PHX_MC_OK) return status;
+  clipper.moments(out.volume, out.moment);
+  return PHX_MC_OK;
+}
 }  // namespace phx::mc
 
 extern "C" {
 
 int32_t phx_mc_tetrahedron_intersection_moments(int64_t count, const double* first,
-                                                const double* second, int32_t vertex_capacity,
-                                                double* volumes, double* first_moments,
-                                                int32_t* item_status) {
+                                                const double* second, double* volumes,
+                                                double* first_moments, int32_t* item_status) {
   return phx::mc::guarded([&] {
-    return phx::mc::tetrahedron_batch(count, first, second, vertex_capacity, 0, nullptr,
-                                      nullptr, volumes, first_moments, item_status);
+    return phx::mc::tetrahedron_batch(count, first, second, 0, nullptr, nullptr, volumes,
+                                      first_moments, item_status);
   });
 }
 
 int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* first,
-                                                  const double* second, int32_t vertex_capacity,
-                                                  int32_t simplex_capacity, double* simplices,
-                                                  int32_t* simplex_counts, double* volumes,
-                                                  double* first_moments, int32_t* item_status) {
+                                                  const double* second, int32_t simplex_capacity,
+                                                  double* simplices, int32_t* simplex_counts,
+                                                  double* volumes, double* first_moments,
+                                                  int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
     if (simplex_capacity < 1) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1109,19 +1383,18 @@ int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* f
     if (count > 0 && (simplices == nullptr || simplex_counts == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    return phx::mc::tetrahedron_batch(count, first, second, vertex_capacity, simplex_capacity,
-                                      simplices, simplex_counts, volumes, first_moments,
-                                      item_status);
+    return phx::mc::tetrahedron_batch(count, first, second, simplex_capacity, simplices,
+                                      simplex_counts, volumes, first_moments, item_status);
   });
 }
 
 int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
                                        const double* normals, const double* offsets,
                                        const int32_t* plane_counts, const double* tetrahedra,
-                                       int32_t vertex_capacity, double* volumes,
-                                       double* first_moments, int32_t* item_status) {
+                                       double* volumes, double* first_moments,
+                                       int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
-    if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 ||
+    if (count < 0 || plane_capacity < 0 ||
         !phx::mc::addressable(count, 3 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
         !phx::mc::addressable(count, 12, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1143,7 +1416,7 @@ int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
       double moment[3] = {0.0, 0.0, 0.0};
       const int32_t status = phx::mc::clip_tetrahedron(
           normals + 3 * item * plane_capacity, offsets + item * plane_capacity,
-          plane_counts[item], tetrahedra + 12 * item, vertex_capacity, clipper, volume, moment);
+          plane_counts[item], tetrahedra + 12 * item, clipper, volume, moment);
       if (status != PHX_MC_OK) {
         volume = 0.0;
         moment[0] = moment[1] = moment[2] = 0.0;

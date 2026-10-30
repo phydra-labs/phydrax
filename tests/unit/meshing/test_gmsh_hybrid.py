@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import persist_occt_shape
 
 
 pytestmark = [
@@ -34,12 +36,14 @@ def _split_boxes(
 
 
 def _source(path: Any, shape: Any) -> Any:
-    return phx.geometry.persist_occt_shape(
+    return persist_occt_shape(
         shape,
         path,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
-        linear_deflection=0.03,
-        angular_deflection=0.15,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.03,
+            angular_deflection=0.15,
+        ),
     )
 
 
@@ -54,7 +58,7 @@ def _face_indices(source: Any, axis: Any, coordinate: Any) -> Any:
 
 def _scope(provider: Any, source: Any, dimension: Any, indices: Any) -> Any:
     entities = {2: source.face_ids, 3: source.solid_ids}[dimension]
-    return provider.entity_scope(source, tuple(entities[index] for index in indices))
+    return phx.meshing.MeshingScope.from_geometry(source, tuple(entities[index] for index in indices))
 
 
 def _slab_fixture(path: Any) -> Any:
@@ -88,7 +92,7 @@ def _hybrid_specification(
     policy: Any = None,
     patch_face: Any = None,
 ) -> Any:
-    whole = provider.whole_scope(source, 3)
+    whole = phx.meshing.MeshingScope.whole(source, 3)
     swept_scope = _scope(provider, source, 3, (swept,))
     core_scope = _scope(provider, source, 3, (core,))
     control = phx.meshing.BoundaryLayerControl(
@@ -168,7 +172,6 @@ def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(
     source, source_face, target_face, swept, core = _slab_fixture(
         tmp_path / "hybrid-slab.brep"
     )
-    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
     specification, control = _hybrid_specification(
         provider,
@@ -294,7 +297,6 @@ def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generati
         target_cap,
         swept,
         core,
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.25, 0.25, 0.25, 0.25)),
         patch_face=shared_face[0],
     )
@@ -325,7 +327,6 @@ def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
         target_face,
         swept,
         core,
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.08, 0.10, 0.11)),
     )
 
@@ -374,7 +375,6 @@ def test_hybrid_sweep_rejects_high_order_and_transition_cell_claims(
         target_face,
         swept,
         core,
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1, 0.1, 0.1)),
         geometry_order=geometry_order,
         policy=policy,

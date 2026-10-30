@@ -278,7 +278,9 @@ void test_box_halfplanes() {
   PHX_CHECK(phx_mc_clip_box_halfplanes(1, lower, bad_upper, 0, nullptr, nullptr, &zero, 4, v, l,
                                        &c, &a, m, &s) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_clip_box_halfplanes(1, lower, upper, 0, nullptr, nullptr, &zero, 0, v, l, &c,
-                                       &a, m, &s) == PHX_MC_INVALID_ARGUMENT);
+                                       &a, m, &s) == PHX_MC_OK);
+  PHX_CHECK(s == PHX_MC_CAPACITY_EXCEEDED && c == 0 && a == 0.0 && m[0] == 0.0 &&
+            m[1] == 0.0);
   PHX_CHECK(phx_mc_clip_box_halfplanes(-1, lower, upper, 0, nullptr, nullptr, &zero, 4, v, l, &c,
                                        &a, m, &s) == PHX_MC_INVALID_ARGUMENT);
   const double inf_upper[2] = {INFINITY, 5.0};
@@ -366,23 +368,21 @@ struct Volume {
   int32_t status = -1;
 };
 
-Volume tetrahedra(const std::array<double, 12>& a, const std::array<double, 12>& b,
-                  int32_t capacity = 48) {
+Volume tetrahedra(const std::array<double, 12>& a, const std::array<double, 12>& b) {
   Volume result;
   const int32_t call = phx_mc_tetrahedron_intersection_moments(
-      1, a.data(), b.data(), capacity, &result.volume, result.moment, &result.status);
+      1, a.data(), b.data(), &result.volume, result.moment, &result.status);
   PHX_CHECK(call == PHX_MC_OK);
   return result;
 }
 
 Volume halfspaces(const std::vector<double>& normals, const std::vector<double>& offsets,
-                  const std::array<double, 12>& tet, int32_t capacity = 64) {
+                  const std::array<double, 12>& tet) {
   Volume result;
   const int32_t planes = static_cast<int32_t>(offsets.size());
   const int32_t call =
       phx_mc_polyhedron_clip_moments(1, planes, normals.data(), offsets.data(), &planes,
-                                     tet.data(), capacity, &result.volume, result.moment,
-                                     &result.status);
+                                     tet.data(), &result.volume, result.moment, &result.status);
   PHX_CHECK(call == PHX_MC_OK);
   return result;
 }
@@ -435,9 +435,6 @@ void test_tetrahedron_overlaps() {
     PHX_CHECK_NEAR(via_planes.moment[k], octa.moment[k], 1e-15);
     PHX_CHECK_NEAR(octa.moment[k], octa.volume * 0.3, 1e-15);  // symmetric about (0.3, 0.3, 0.3)
   }
-  // Six vertices after the first clip exceed a capacity of five.
-  const Volume overflow = tetrahedra(kUnitTet, reflected, 5);
-  PHX_CHECK(overflow.status == PHX_MC_CAPACITY_EXCEEDED && overflow.volume == 0.0);
 }
 
 void test_tetrahedron_contacts() {
@@ -465,12 +462,13 @@ void test_tetrahedron_statuses() {
   PHX_CHECK(tetrahedra(huge, kUnitTet).status == PHX_MC_RANGE_ERROR);
   double v = 0, m[3];
   int32_t s = 0;
-  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(1, kUnitTet.data(), kUnitTet.data(), 0, &v,
-                                                    m, &s) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(1, kUnitTet.data(), nullptr, 48, &v, m,
+  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(1, kUnitTet.data(), kUnitTet.data(), &v, m,
+                                                    &s) == PHX_MC_OK);
+  PHX_CHECK(s == PHX_MC_OK && v > 0.0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(1, kUnitTet.data(), nullptr, &v, m, &s) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(-2, kUnitTet.data(), kUnitTet.data(), &v, m,
                                                     &s) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(-2, kUnitTet.data(), kUnitTet.data(), 48, &v,
-                                                    m, &s) == PHX_MC_INVALID_ARGUMENT);
 }
 
 std::array<double, 12> permuted(const std::array<double, 12>& tet, const std::array<int, 4>& p) {
@@ -561,10 +559,6 @@ void test_tetrahedron_halfspaces() {
   PHX_CHECK(halfspaces({1e40, 0, 0}, {1.0}, kUnitTet).status == PHX_MC_RANGE_ERROR);
   const std::array<double, 12> flat = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
   PHX_CHECK(halfspaces({1, 0, 0}, {0.5}, flat).status == PHX_MC_DEGENERATE_INPUT);
-  // Cutting a corner leaves 6 vertices: capacity 5 is exceeded.
-  PHX_CHECK(halfspaces({1, 0, 0}, {0.5}, kUnitTet, 5).status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(halfspaces({1, 0, 0}, {0.5}, kUnitTet, 6).status == PHX_MC_OK);
-  PHX_CHECK(halfspaces({}, {}, kUnitTet, 3).status == PHX_MC_CAPACITY_EXCEEDED);
 }
 
 struct Cell3 {
@@ -856,7 +850,7 @@ void test_intersection_simplices() {
     double volume = -1.0;
     double moment[3] = {0.0, 0.0, 0.0};
     int32_t status = -1;
-    PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 48, 20,
+    PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
                                                         simplices.data(), &simplex_count, &volume,
                                                         moment, &status) == PHX_MC_OK);
     PHX_CHECK(status == PHX_MC_OK);
@@ -890,11 +884,11 @@ void test_intersection_simplices() {
   double volume = -1.0;
   double moment[3] = {0.0, 0.0, 0.0};
   int32_t status = -1;
-  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, kUnitTet.data(), reflected.data(), 48, 4,
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, kUnitTet.data(), reflected.data(), 4,
                                                       simplices.data(), &simplex_count, &volume,
                                                       moment, &status) == PHX_MC_OK);
   PHX_CHECK(status == PHX_MC_CAPACITY_EXCEEDED && simplex_count == 0 && volume == 0.0);
-  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, kUnitTet.data(), reflected.data(), 48, 0,
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, kUnitTet.data(), reflected.data(), 0,
                                                       simplices.data(), &simplex_count, &volume,
                                                       moment, &status) ==
             PHX_MC_INVALID_ARGUMENT);

@@ -10,8 +10,7 @@ Workflow:
    orientation) and against every input point with the EXACT
    ``incircle``/``insphere`` predicates (empty circumcircle/circumsphere).
 2. A constrained Delaunay triangulation of a square plate with a square hole,
-   refined by Ruppert/Chew insertion to a minimum angle and a maximum area
-   within a Steiner-point budget.
+   refined by Ruppert/Chew insertion to a minimum angle and a maximum area.
 3. Voronoi and power diagrams of random generators clipped to a box in 2D and
    3D; the cell measures sum to the box measure.
 4. The refined triangulation is certified as a ``CellMesh`` and a P1 Poisson
@@ -139,7 +138,6 @@ cdt = phx.geometry.ConstrainedDelaunayTriangulation(
     holes=holes,
     min_angle=min_angle,
     max_area=max_area,
-    max_steiner=2000,
 )
 corners = tuple(cdt.points[cdt.triangles[:, index]] for index in range(3))
 orientation = phx.geometry.orient2d(*corners, mode=EXACT)

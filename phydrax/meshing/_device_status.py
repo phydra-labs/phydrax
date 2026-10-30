@@ -2,14 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Host interpretation of the cumulative status of one device adaptation epoch.
+"""Host interpretation of scientific device adaptation status.
 
-Device adaptation calls accumulate their `AdaptiveSimplexStatus` flags in the
-state of one prepared epoch, including the terminal flags of failed calls.
-This module is the single owner of their meaning at the host boundary: a
-terminal flag maps to one `MeshingFailure`, and ``NEEDS_HOST_RESOLUTION`` is
-resolved by exact host orientation of the committed cells before a commit is
-accepted.
+Device adaptation calls accumulate scientific failure and predicate-resolution
+flags in one prepared epoch. Capacity requests are transient execution signals
+handled by the adaptation host wrapper before this module sees an update. This
+module maps real scientific failures and resolves uncertain orientation with
+exact host predicates before a commit is accepted.
 """
 
 from __future__ import annotations
@@ -45,29 +44,10 @@ class DeviceEpoch(Enum):
 
 
 def require_applied_status(status: int, epoch: DeviceEpoch, /) -> None:
-    """Raise the failure of the first terminal flag in ``status``.
-
-    Capacity overflow and the closure bound exhaust the prepared resources, a
-    protected-edge conflict is an invalid specification, and a certified
-    inverted or degenerate cell rejects the epoch's quality. Recovery needs a
-    new prepared epoch (for resources, with larger capacities).
-    """
+    """Raise the first real scientific failure recorded in ``status``."""
 
     flags = AdaptiveSimplexStatus(status)
     operation, stage = epoch.operation, epoch.stage
-    if flags & AdaptiveSimplexStatus.CAPACITY_EXCEEDED:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            f"{operation} exceeded its capacity bucket; prepare a new epoch with "
-            "larger AdaptiveSimplexPolicy capacities.",
-            stage=stage,
-        )
-    if flags & AdaptiveSimplexStatus.CLOSURE_LIMIT:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            f"{operation} closure did not conform within the iteration bound.",
-            stage=stage,
-        )
     if flags & AdaptiveSimplexStatus.PROTECTED_CONFLICT:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,

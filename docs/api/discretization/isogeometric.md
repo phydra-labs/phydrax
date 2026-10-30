@@ -78,6 +78,94 @@ outward normals. See the
 ::: phydrax.discretization.iga.PreparedIsogeometricDiscretization.integration_domain
 
 
+## ASTS2D T-spline surface H1 candidate
+
+The shared `TMesh2D`/local-knot/extraction substrate admits one explicit
+analysis-suitable profile: rectilinear bicubic T-meshes with topology-derived
+local knot windows, simple interior knots, and no extraordinary vertices.
+Arbitrary quadrilateral meshes are not bases and are never tensorized as a
+fallback. This candidate route is separate from the tensor NURBS support tuple
+above; it does not qualify shell or compatible-form spaces.
+
+```python
+from fractions import Fraction
+
+import numpy as np
+import phydrax as phx
+from phydrax.geometry.brep import TSplineSurfacePatch
+
+iga = phx.discretization.iga
+breaks = tuple(Fraction(index, 4) for index in range(5))
+mesh = iga.TMesh2D.tensor_product(breaks, breaks)
+greville = tuple(anchor.local_knots.greville_parameter for anchor in mesh.anchors)
+exact_control_points = tuple((u, v, Fraction(0)) for u, v in greville)
+surface = TSplineSurfacePatch(
+    mesh,
+    np.asarray([[float(value) for value in row] for row in exact_control_points]),
+    np.ones((mesh.coefficient_count,), dtype=np.float64),
+    exact_control_points=exact_control_points,
+    exact_weights=tuple(Fraction(1) for _ in mesh.anchors),
+)
+trim = iga.UVTrimmedSurface(
+    iga.UVTrimLoop(((0, 0), (1, 0), (1, 1), (0, 1)))
+)
+plan = iga.TSplineIsogeometricPlan(
+    surface,
+    iga.TSplineH1FieldSpec(
+        "u", weights_from_geometry=True, anchor_count=mesh.coefficient_count
+    ),
+    trim=trim,
+    quadrature_policy=iga.IsogeometricQuadraturePolicy(4),
+)
+prepared = plan.prepare()
+uv_points = np.asarray(((0.2, 0.3), (0.7, 0.8)), dtype=np.float64)
+query_route = prepared.prepare_query_route(uv_points)
+geometry_jet = prepared.evaluate_geometry_route(query_route)
+```
+
+The basis certificate proves exact Bernstein partition identities and cross-cell
+C2 traces. `TSplineGeometryCertificate` separately checks positive rational
+denominator, regularity, and global embedding using exact Bernstein interval
+bounds on a strictly monotone physical-coordinate projection. A failed or
+unresolved geometry proof refuses IGA admission. Geometry and independent field
+weights remain raw. Refinement is an atomic discrete event; the returned
+`TSplineIsogeometricRefinement` retains exact target-by-source transfer and
+prolongs rational fields as `P(aq) / P(a)`. Exact homogeneous geometry uses
+`(wX,w)` and preserves non-binary coefficients such as 1/3; its bounded numeric
+JAX realization and conversion error remain separate.
+
+The route integrates the supplied `UVTrimmedSurface` by cut-cell quadrature and
+uses one-sided fixed cell IDs for JAX geometry/field queries. Concrete source
+bank edits require an explicitly re-authored exact source revision; a rounded
+target bank alone cannot retain the original exact-equivalence claim.
+
+::: phydrax.discretization.iga.TMesh2D
+
+---
+
+::: phydrax.discretization.iga.TSplineGeometryState
+
+---
+
+::: phydrax.discretization.iga.TSplineH1FieldSpec
+
+---
+
+::: phydrax.discretization.iga.TSplineIsogeometricPlan
+
+---
+
+::: phydrax.discretization.iga.PreparedTSplineIsogeometricDiscretization
+
+---
+
+::: phydrax.discretization.iga.TSplineIsogeometricRefinement
+
+---
+
+::: phydrax.discretization.iga.TSplineQueryRoute
+
+
 ## Public spline de Rham complex
 
 `SplineDeRhamComplex(grids, /, *, periodic=None, geometry=None,

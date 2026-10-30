@@ -6,6 +6,8 @@ import pytest
 
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import persist_occt_shape
 
 
 pytestmark = [
@@ -23,12 +25,14 @@ _SCHEDULE = phx.meshing.LayerSchedule.geometric(3, 0.02, growth_rate=1.25)
 
 
 def _persist(shape: Any, path: Any, **options: Any) -> Any:
-    return phx.geometry.persist_occt_shape(
+    return persist_occt_shape(
         shape,
         path,
         coordinate_contract=_COORDINATES,
-        linear_deflection=options.get("linear_deflection", 0.01),
-        angular_deflection=options.get("angular_deflection", 0.1),
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=options.get("linear_deflection", 0.01),
+            angular_deflection=options.get("angular_deflection", 0.1),
+        ),
     )
 
 
@@ -54,6 +58,18 @@ def _box(path: Any) -> Any:
     )
 
 
+def _box_with_height(path: Any, height: float) -> Any:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    return _persist(
+        BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, 0.0), 1.0, 1.0, height).Shape(),
+        path,
+        linear_deflection=0.03,
+        angular_deflection=0.15,
+    )
+
+
 def _faces(source: Any, predicate: Any) -> Any:
     points = np.asarray(source.mesh_vertices)
     triangles = points[np.asarray(source.mesh_faces)]
@@ -61,14 +77,14 @@ def _faces(source: Any, predicate: Any) -> Any:
     return tuple(np.unique(face_ids[np.all(predicate(triangles), axis=1)]))
 
 
-def _face_scope(provider: Any, source: Any, indices: Any) -> Any:
-    return provider.entity_scope(
+def _face_scope(source: Any, indices: Any) -> Any:
+    return phx.meshing.MeshingScope.from_geometry(
         source, tuple(source.face_ids[index] for index in indices)
     )
 
 
-def _layered_spec(provider: Any, source: Any, control: Any) -> Any:
-    whole = provider.whole_scope(source, 3)
+def _layered_spec(source: Any, control: Any) -> Any:
+    whole = phx.meshing.MeshingScope.whole(source, 3)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -88,13 +104,13 @@ def _layered_spec(provider: Any, source: Any, control: Any) -> Any:
     )
 
 
-def _ball_control(provider: Any, source: Any, route: Any, corner: Any) -> Any:
+def _ball_control(source: Any, route: Any, corner: Any) -> Any:
     ball = _faces(source, lambda triangles: np.linalg.norm(triangles, axis=2) < 0.5)
     return phx.meshing.BoundaryLayerControl(
-        _face_scope(provider, source, ball),
+        _face_scope(source, ball),
         _SCHEDULE,
         route=route,
-        volume_scope=provider.whole_scope(source, 3),
+        volume_scope=phx.meshing.MeshingScope.whole(source, 3),
         corner=corner,
     )
 
@@ -157,13 +173,12 @@ def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = _ball_control(
-        provider,
         source,
         phx.meshing.BoundaryLayerRoute.ADVANCING,
         phx.meshing.BoundaryLayerCornerPolicy.FAN,
     )
 
-    result = provider.plan(source, _layered_spec(provider, source, control)).execute()
+    result = provider.plan(source, _layered_spec(source, control)).execute()
 
     _assert_layered_organization(result)
     achieved = dict(result.compliance.achieved)
@@ -186,13 +201,12 @@ def test_provider_boundary_layer_extrusion_meets_measured_layer_compliance(
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = _ball_control(
-        provider,
         source,
         phx.meshing.BoundaryLayerRoute.PROVIDER,
         phx.meshing.BoundaryLayerCornerPolicy.SMOOTH,
     )
 
-    result = provider.plan(source, _layered_spec(provider, source, control)).execute()
+    result = provider.plan(source, _layered_spec(source, control)).execute()
 
     _assert_layered_organization(result)
     achieved = dict(result.compliance.achieved)
@@ -225,15 +239,15 @@ def test_layered_volume_routes_reject_unsupported_requests_before_generation(
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = phx.meshing.BoundaryLayerControl(
-        _face_scope(provider, source, _faces(source, wall_predicate)),
+        _face_scope(source, _faces(source, wall_predicate)),
         _SCHEDULE,
         route=route,
-        volume_scope=provider.whole_scope(source, 3),
+        volume_scope=phx.meshing.MeshingScope.whole(source, 3),
         corner=corner,
     )
 
     with pytest.raises(phx.meshing.MeshingFailure, match=message) as failure:
-        provider.plan(source, _layered_spec(provider, source, control))
+        provider.plan(source, _layered_spec(source, control))
 
     assert (
         failure.value.category
@@ -246,34 +260,36 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
 ) -> None:
     provider = phx.meshing.GmshProvider()
     source = _box(tmp_path / "box.brep")
-    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
     control = phx.meshing.BoundaryLayerControl(
         _face_scope(
-            provider,
             source,
             _faces(source, lambda triangles: np.isclose(triangles[:, :, 2], 0.0)),
         ),
         schedule,
         route=phx.meshing.BoundaryLayerRoute.CAD_EXTRUSION,
-        volume_scope=provider.whole_scope(source, 3),
+        volume_scope=phx.meshing.MeshingScope.whole(source, 3),
     )
     with pytest.raises(
         phx.meshing.MeshingFailure, match="prepare_boundary_layer_extrusion"
     ):
-        provider.plan(source, _layered_spec(provider, source, control))
+        provider.plan(source, _layered_spec(source, control))
 
-    extrusion = phx.meshing.prepare_boundary_layer_extrusion(
-        source, control, destination=tmp_path / "split.brep"
-    )
+    extrusion = phx.meshing.prepare_boundary_layer_extrusion(source, control)
 
     part = extrusion.source
     assert len(extrusion.layer_solid_ids) == 1 and len(extrusion.core_solid_ids) == 1
     assert np.asarray(extrusion.slab_volumes) == pytest.approx(0.3)
     assert extrusion.control.route is phx.meshing.BoundaryLayerRoute.EXACT_SWEEP
-    whole = provider.whole_scope(part, 3)
-    layers = provider.entity_scope(part, part.solid_ids[extrusion.layer_solid_ids[0]])
-    core = provider.entity_scope(part, part.solid_ids[extrusion.core_solid_ids[0]])
+    cap_scope = extrusion.control.cap_scope
+    assert cap_scope is not None
+    whole = phx.meshing.MeshingScope.whole(part, 3)
+    layers = phx.meshing.MeshingScope.from_geometry(
+        part, part.solid_ids[extrusion.layer_solid_ids[0]]
+    )
+    core = phx.meshing.MeshingScope.from_geometry(
+        part, part.solid_ids[extrusion.core_solid_ids[0]]
+    )
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -300,8 +316,7 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
         patch_controls=(
             phx.meshing.PatchControl(
                 "cap",
-                # ty: ignore[invalid-argument-type]
-                extrusion.control.cap_scope,
+                cap_scope,
                 ("core", "layers"),
             ),
         ),
@@ -313,6 +328,60 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
     prisms = result.mesh.block("prisms")
     heights = np.asarray(result.mesh.coordinates)[np.asarray(prisms.vertices)][:, :, 2]
     np.testing.assert_allclose(np.unique(np.round(heights, 12)), (0.0, 0.08, 0.18, 0.3))
+    assert result.audit.passed and result.compliance.passed
+
+
+@requires_meshcore
+def test_cad_extrusion_sweeps_a_whole_solid_without_core_fill(
+    tmp_path: Any,
+) -> None:
+    source = _box_with_height(tmp_path / "whole-layer.brep", 0.3)
+    schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
+    control = phx.meshing.BoundaryLayerControl(
+        _face_scope(
+            source,
+            _faces(source, lambda triangles: np.isclose(triangles[:, :, 2], 0.0)),
+        ),
+        schedule,
+        route=phx.meshing.BoundaryLayerRoute.CAD_EXTRUSION,
+        volume_scope=phx.meshing.MeshingScope.whole(source, 3),
+    )
+
+    extrusion = phx.meshing.prepare_boundary_layer_extrusion(source, control)
+
+    assert len(extrusion.layer_solid_ids) == 1
+    assert extrusion.core_solid_ids == ()
+    assert np.asarray(extrusion.slab_volumes) == pytest.approx((0.3,))
+    part = extrusion.source
+    whole = phx.meshing.MeshingScope.whole(part, 3)
+    layer = phx.meshing.MeshingScope.from_geometry(
+        part, part.solid_ids[extrusion.layer_solid_ids[0]]
+    )
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3,
+            3,
+            phx.meshing.CellFamilyPolicy(required=("prism",)),
+        ),
+        whole,
+        phx.meshing.VolumeFillStrategy.SWEEP,
+        size_controls=(phx.meshing.UniformSizeControl(whole, 0.24),),
+        region_controls=(
+            phx.meshing.RegionControl(
+                layer, "layers", "air", phx.meshing.RegionRole.FLUID
+            ),
+        ),
+        layer_controls=(extrusion.control,),
+    )
+    result = phx.meshing.GmshProvider().plan(part, specification).execute()
+
+    prisms = result.mesh.block("prisms")
+    heights = np.asarray(result.mesh.coordinates)[np.asarray(prisms.vertices)][:, :, 2]
+    np.testing.assert_allclose(np.unique(np.round(heights, 12)), (0.0, 0.08, 0.18, 0.3))
+    achieved = dict(result.compliance.achieved)
+    assert achieved[
+        f"layer:{extrusion.control.control_id}:first_layer_thickness"
+    ] == pytest.approx(schedule.thicknesses[0], rel=1e-6)
     assert result.audit.passed and result.compliance.passed
 
 
@@ -384,7 +453,6 @@ def test_core_fill_keeps_the_native_cap_bitwise_and_conforming() -> None:
             cells.entity_set_id,
             cells.entity_ids,
         ),
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.02, 0.03)),
         route=phx.meshing.BoundaryLayerRoute.ADVANCING,
     )
@@ -421,21 +489,20 @@ def test_core_fill_keeps_the_native_cap_bitwise_and_conforming() -> None:
     )
 
     result = provider.fill_boundary_layer_core(layers, outer, maximum_size=0.5)
+    cap = layers.cap
+    assert cap is not None
 
     coordinates = np.asarray(result.mesh.coordinates)
     layer_points = np.asarray(layers.mesh.coordinates)
     np.testing.assert_array_equal(coordinates[: layer_points.shape[0]], layer_points)
     np.testing.assert_array_equal(
         coordinates[np.asarray(layers.cap_vertices)],
-        # ty: ignore[unresolved-attribute]
-        np.asarray(layers.cap.coordinates),
+        np.asarray(cap.coordinates),
     )
     _assert_layered_organization(result)
 
 
-def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
-    tmp_path: Any,
-) -> None:
+def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field() -> None:
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
     region = phx.geometry.PlanarMeshRegion(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.5), (0.0, 0.5))),
@@ -452,16 +519,13 @@ def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
                 ),
             ),
             phx.geometry.BRepPartitionPolicy(("channel",)),
-        ),
-        destination=tmp_path / "channel.brep",
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        )
     )
     provider = phx.meshing.GmshProvider()
-    scope = provider.whole_scope(source, 2)
+    scope = phx.meshing.MeshingScope.whole(source.model, 2)
     schedule = phx.meshing.LayerSchedule.geometric(4, 0.01, growth_rate=1.2)
     control = phx.meshing.BoundaryLayerControl(
-        provider.whole_scope(source, 1),
+        phx.meshing.MeshingScope.whole(source.model, 1),
         schedule,
         route=phx.meshing.BoundaryLayerRoute.PROVIDER,
         corner=phx.meshing.BoundaryLayerCornerPolicy.SMOOTH,
@@ -479,7 +543,7 @@ def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
         size_controls=(phx.meshing.UniformSizeControl(scope, 0.1),),
         region_controls=tuple(
             phx.meshing.RegionControl(
-                provider.entity_scope(source, value.entity_ids),
+                phx.meshing.MeshingScope.from_geometry(source.model, value.entity_ids),
                 value.name,
                 "air",
                 phx.meshing.RegionRole.FLUID,
@@ -489,7 +553,7 @@ def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
         patch_controls=tuple(
             phx.meshing.PatchControl(
                 value.name,
-                provider.entity_scope(source, value.entity_ids),
+                phx.meshing.MeshingScope.from_geometry(source.model, value.entity_ids),
                 value.adjacent_region_ids,
             )
             for value in source.patches

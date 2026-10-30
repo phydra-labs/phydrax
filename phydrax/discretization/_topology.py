@@ -19,7 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, RowRelation, SparseLinearMap, SparseRelation
-from ..typing import checked
+from ..typing import checked, ConvertibleToArray
 from ._core import nonempty_identifier, resolved_identifier
 from .spatial._dyadic import DyadicCellTopology
 
@@ -114,7 +114,7 @@ class EntitySet(StrictModule, NonTrainableState):
         self,
         name: str,
         intrinsic_dimension: int,
-        entity_ids: ArrayLike,
+        entity_ids: ConvertibleToArray,
         /,
         *,
         active_mask: ArrayLike | None = None,

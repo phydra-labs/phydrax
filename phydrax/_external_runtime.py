@@ -377,17 +377,29 @@ def _stage_inputs(
     return identities
 
 
-def _kill_process_group(process: subprocess.Popen) -> None:
+def _signal_process_group(
+    process: subprocess.Popen[bytes] | subprocess.Popen[str],
+) -> None:
     # A child may have exited while its descendants still hold resources.
-    # Darwin reports EPERM instead of ESRCH when only an unreaped zombie
-    # remains in the group; wait() below reaps it.
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin can reject a zombie group before waitpid reports its status.
+            # Popen signals only its still-owned leader and preserves real denial.
+            if sys.platform != "darwin":
+                raise
+            process.kill()
     elif process.poll() is None:
         process.kill()
+
+
+def _kill_process_group(
+    process: subprocess.Popen[bytes] | subprocess.Popen[str],
+) -> None:
+    _signal_process_group(process)
     process.wait()
 
 
@@ -1257,6 +1269,9 @@ class NativeWorkerPolicy:
     maximum_log_bytes: int = 16 * 1024**2
     maximum_message_bytes: int = 1024**2
     maximum_calls: int = 10_000
+    operation_timeout_seconds: float = 3600.0
+    maximum_input_exchange_bytes: int = 4_000_000_000
+    maximum_output_exchange_bytes: int = 4_000_000_000
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1264,11 +1279,18 @@ class NativeWorkerPolicy:
             "startup_timeout_seconds",
             _positive_timeout(self.startup_timeout_seconds),
         )
+        object.__setattr__(
+            self,
+            "operation_timeout_seconds",
+            _positive_timeout(self.operation_timeout_seconds),
+        )
         for name in (
             "maximum_memory_bytes",
             "maximum_log_bytes",
             "maximum_message_bytes",
             "maximum_calls",
+            "maximum_input_exchange_bytes",
+            "maximum_output_exchange_bytes",
         ):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:
@@ -1284,6 +1306,9 @@ class NativeWorkerPolicy:
                 "maximum_log_bytes": self.maximum_log_bytes,
                 "maximum_message_bytes": self.maximum_message_bytes,
                 "maximum_calls": self.maximum_calls,
+                "operation_timeout_seconds": self.operation_timeout_seconds,
+                "maximum_input_exchange_bytes": self.maximum_input_exchange_bytes,
+                "maximum_output_exchange_bytes": self.maximum_output_exchange_bytes,
             }
         )
 

@@ -654,7 +654,8 @@ def test_order_transfer_reproduces_fields_and_commutes_with_d(
     mesh = _reference_simplex(dimension)
     source = FiniteElementDeRhamComplex(mesh, family=family, order=1)
     target = FiniteElementDeRhamComplex(mesh, family=family, order=2)
-    transfer = source.transfer(target)
+    transfer_result = source.transfer(target)
+    transfer = transfer_result.complex_map
     sites, _ = _integration_sites(mesh)
     for degree in range(dimension + 1):
         count = source.hilbert_complex().space(degree).size
@@ -717,7 +718,8 @@ def test_explicit_nested_refinement_transfer_commutes_with_d(dimension: int) -> 
     refined, parents = _star_refinement(mesh)
     source = FiniteElementDeRhamComplex(mesh, family="trimmed", order=2)
     target = FiniteElementDeRhamComplex(refined, family="trimmed", order=2)
-    transfer = source.transfer(target, parent_cells=parents)
+    transfer_result = source.transfer(target, parent_cells=parents)
+    transfer = transfer_result.complex_map
     for degree in range(dimension):
         count = source.hilbert_complex().space(degree).size
         coefficients = jnp.sin(0.39 * jnp.arange(count, dtype=jnp.float64) + 0.27)

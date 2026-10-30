@@ -13,14 +13,103 @@ import numpy as np
 import pytest
 
 from phydrax.discretization import (
+    CellBlock,
     CellMesh,
+    PolyhedralConnectivity,
     reference_cell_topology,
     SimplicialConnectivity,
 )
 from phydrax.discretization.fem import FiniteElementDeRhamComplex
+from phydrax.geometry import CompiledGeometry
 
 
 pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
+
+
+def test_mixed_qualified_simplex_keeps_conforming_interface_and_source_kinds() -> None:
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.5, 0.5, 1.0),
+            (0.5, -1.0, 0.25),
+        ),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (
+            CellBlock(
+                "layer",
+                "pyramid",
+                np.asarray(((0, 1, 2, 3, 4),), dtype=np.int32),
+                global_ids=(31,),
+            ),
+            CellBlock(
+                "core",
+                "simplex:3",
+                np.asarray(((0, 1, 4, 5),), dtype=np.int32),
+                global_ids=(47,),
+            ),
+        ),
+    )
+    assert isinstance(mesh.connectivity, PolyhedralConnectivity)
+    assert mesh.block("core").cell_kind == "simplex:3"
+    assert mesh.block("layer").cell_kind == "pyramid"
+    np.testing.assert_array_equal(mesh.block("core").global_ids, (47,))
+    boundary = mesh.topology.incidences[-1]
+    relation = boundary.relation
+    valid = np.asarray(relation.valid)
+    faces = np.asarray(relation.source_indices)[valid]
+    counts = np.bincount(faces, minlength=mesh.entity_set(2).count)
+    (interior,) = np.flatnonzero(counts == 2)
+    np.testing.assert_array_equal(counts[counts != 2], np.ones(7, dtype=np.int64))
+    np.testing.assert_allclose(
+        np.sum(np.asarray(boundary.signs)[valid][faces == interior]), 0.0, atol=0.0
+    )
+    from phydrax.meshing import evaluate_cell_quality
+
+    quality = evaluate_cell_quality(mesh)
+    measures = dict(
+        zip(
+            np.asarray(quality.cell_global_ids).tolist(),
+            np.asarray(quality.measures).tolist(),
+            strict=True,
+        )
+    )
+    np.testing.assert_allclose((measures[31], measures[47]), (1.0 / 3.0, 3.0 / 16.0))
+
+
+@pytest.mark.parametrize(
+    ("kind", "family"),
+    (
+        ("simplex:1", "interval"),
+        ("simplex:2", "triangle"),
+        ("simplex:3", "tetrahedron"),
+        ("tensor:1", "interval"),
+        ("tensor:2", "quadrilateral"),
+        ("tensor:3", "hexahedron"),
+    ),
+    ids=("simplex-1", "simplex-2", "simplex-3", "tensor-1", "tensor-2", "tensor-3"),
+)
+def test_named_cell_family_preserves_qualified_reference_identity(
+    kind: str, family: str
+) -> None:
+    qualified = reference_cell_topology(kind)
+    named = reference_cell_topology(family)
+    assert qualified.family == named.family == family
+    assert qualified.name == kind
+    assert qualified.topology_id != named.topology_id
+    assert qualified.vertices == named.vertices
+    assert qualified.entities == named.entities
+
+
+def test_higher_dimensional_reference_is_not_a_lower_dimensional_family() -> None:
+    reference = reference_cell_topology("simplex:4")
+    assert reference.family == "simplex:4"
+    assert reference.family != reference_cell_topology("tetrahedron").family
 
 
 @pytest.mark.parametrize(
@@ -65,6 +154,7 @@ def test_shared_four_dimensional_facet_is_not_a_support_boundary() -> None:
         mesh, family="trimmed", order=1, twist="untwisted"
     )
     geometry = complex_.reconstruction(0).support_geometry
+    assert isinstance(geometry, CompiledGeometry)
     queries = jnp.asarray(((0.1, 0.1, 0.1, 0.0), (0.5, 0.5, 0.5, 0.0)), dtype=jnp.float64)
     np.testing.assert_array_equal(geometry.contains(queries), [True, False])
     np.testing.assert_allclose(

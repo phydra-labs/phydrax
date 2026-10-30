@@ -463,9 +463,9 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
         closure_tolerance = jnp.asarray(face_closure_tolerance)
         gcl_defect = jnp.asarray(gcl_identity_defect)
         gcl_tolerance = jnp.asarray(gcl_identity_tolerance)
-        if coordinate_defect.ndim != 1 or coordinate_defect.size == 0:
+        if coordinate_defect.ndim != 1:
             raise ValueError(
-                "coordinate_effective_volume_defect must be a non-empty rank-1 array."
+                "coordinate_effective_volume_defect must be a rank-1 array."
             )
         cell_shape = coordinate_defect.shape
         if (
@@ -774,8 +774,8 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
             "time must be a finite scalar.",
         )
         volumes = jnp.asarray(effective_cell_volumes)
-        if volumes.ndim != 1 or volumes.size == 0:
-            raise ValueError("effective_cell_volumes must be a non-empty rank-1 array.")
+        if volumes.ndim != 1:
+            raise ValueError("effective_cell_volumes must be a rank-1 array.")
         cell_count = volumes.size
         coordinate = jnp.asarray(coordinate_effective_cell_volumes)
         volume_rate = jnp.asarray(mesh_volume_rate)
@@ -788,11 +788,11 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
             )
         if (
             vertices_.ndim != 2
-            or vertices_.shape[0] == 0
+            or (vertices_.shape[0] == 0) != (cell_count == 0)
             or vertices_.shape[1] != centers.shape[1]
         ):
             raise ValueError(
-                "vertices must have shape (vertex_count, spatial_dimension)."
+                "vertices must be empty exactly for a zero-cell stage, otherwise have shape (vertex_count, spatial_dimension)."
             )
         vertices_ = eqx.error_if(
             vertices_,
@@ -862,6 +862,8 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
             raise TypeError(
                 "face_blocks must contain only FiniteVolumeStageFaceBlock instances."
             )
+        if cell_count == 0 and blocks:
+            raise ValueError("Zero-cell stages cannot contain face blocks.")
         block_ids = tuple(block.layout.block_id for block in blocks)
         if len(set(block_ids)) != len(block_ids):
             raise ValueError("Stage face block IDs must be unique.")

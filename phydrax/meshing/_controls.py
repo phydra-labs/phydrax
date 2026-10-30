@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -18,7 +20,8 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellMesh
-from ..typing import checked
+from ..geometry.brep._patches import AbstractCurve, AbstractSurfacePatch
+from ..typing import checked, ConvertibleToArray
 from . import _organization
 from ._metric import MeshMetricField
 from ._scope import MeshingEntityKind, MeshingScope
@@ -114,6 +117,32 @@ class ProtectedFeature(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[ProtectedFeature], value: ProtectedFeature, /
+    ) -> ProtectedFeature:
+        if type(value) is not cls:
+            raise TypeError("value must be ProtectedFeature.")
+        if type(value.maximum_deviation) is not float:
+            raise TypeError("Stored protected-feature maximum_deviation must be float.")
+        if type(value.hard) is not bool:
+            raise TypeError("Stored protected-feature hard must be bool.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.scope),
+            value.feature_kind,
+            maximum_deviation=value.maximum_deviation,
+            hard=value.hard,
+        )
+        if (
+            rebuilt.feature_id != value.feature_id
+            or rebuilt.feature_kind is not value.feature_kind
+            or rebuilt.maximum_deviation != value.maximum_deviation
+            or rebuilt.hard != value.hard
+        ):
+            raise ValueError("Stored protected feature differs from its fields.")
+        return rebuilt
+
 
 class RegionSeed(StrictModule, NonTrainableState):
     point: Array
@@ -157,6 +186,22 @@ class RegionSeed(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[RegionSeed], value: RegionSeed, /) -> RegionSeed:
+        if type(value) is not cls:
+            raise TypeError("value must be RegionSeed.")
+        rebuilt = cls(value.point, value.region_name, value.material_id, value.role)
+        if (
+            rebuilt.seed_id != value.seed_id
+            or rebuilt.region_name != value.region_name
+            or rebuilt.material_id != value.material_id
+            or rebuilt.role is not value.role
+            or not np.array_equal(np.asarray(rebuilt.point), np.asarray(value.point))
+        ):
+            raise ValueError("Stored region seed differs from its exact point.")
+        return rebuilt
+
 
 class HoleSeed(StrictModule, NonTrainableState):
     point: Array
@@ -181,6 +226,23 @@ class HoleSeed(StrictModule, NonTrainableState):
                 "scope": scope.scope_id,
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[HoleSeed], value: HoleSeed, /) -> HoleSeed:
+        if type(value) is not cls:
+            raise TypeError("value must be HoleSeed.")
+        rebuilt = cls(
+            value.point,
+            MeshingScope.from_stored_fields(value.scope),
+        )
+        if (
+            rebuilt.seed_id != value.seed_id
+            or rebuilt.scope.scope_id != value.scope.scope_id
+            or not np.array_equal(np.asarray(rebuilt.point), np.asarray(value.point))
+        ):
+            raise ValueError("Stored hole seed differs from its exact point and scope.")
+        return rebuilt
 
 
 class RegionControl(StrictModule, NonTrainableState):
@@ -223,6 +285,32 @@ class RegionControl(StrictModule, NonTrainableState):
                 "meshing_enabled": bool(meshing_enabled),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[RegionControl], value: RegionControl, /
+    ) -> RegionControl:
+        if type(value) is not cls:
+            raise TypeError("value must be RegionControl.")
+        if type(value.meshing_enabled) is not bool:
+            raise TypeError("Stored region-control meshing_enabled must be bool.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.scope),
+            value.region_name,
+            value.material_id,
+            value.role,
+            meshing_enabled=value.meshing_enabled,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.region_name != value.region_name
+            or rebuilt.material_id != value.material_id
+            or rebuilt.role is not value.role
+            or rebuilt.meshing_enabled != value.meshing_enabled
+        ):
+            raise ValueError("Stored region control differs from its fields.")
+        return rebuilt
 
 
 class PatchControl(StrictModule, NonTrainableState):
@@ -270,6 +358,30 @@ class PatchControl(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PatchControl], value: PatchControl, /
+    ) -> PatchControl:
+        if type(value) is not cls:
+            raise TypeError("value must be PatchControl.")
+        if type(value.required) is not bool:
+            raise TypeError("Stored patch-control required must be bool.")
+        rebuilt = cls(
+            value.name,
+            MeshingScope.from_stored_fields(value.scope),
+            value.adjacent_region_names,
+            required=value.required,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.name != value.name
+            or rebuilt.adjacent_region_names != value.adjacent_region_names
+            or rebuilt.required != value.required
+        ):
+            raise ValueError("Stored patch control differs from its fields.")
+        return rebuilt
+
 
 class LayerSchedule(StrictModule, NonTrainableState):
     """Exact layer thicknesses, ordered from the wall outward."""
@@ -277,7 +389,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
     thicknesses: tuple[float, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, thicknesses: ArrayLike, /) -> None:
+    def __init__(self, thicknesses: ConvertibleToArray, /) -> None:
         values = np.asarray(thicknesses)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("thicknesses must be one non-empty vector.")
@@ -297,6 +409,25 @@ class LayerSchedule(StrictModule, NonTrainableState):
                 "thicknesses": explicit,
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[LayerSchedule], value: LayerSchedule, /
+    ) -> LayerSchedule:
+        if type(value) is not cls:
+            raise TypeError("value must be LayerSchedule.")
+        if type(value.thicknesses) is not tuple or any(
+            type(thickness) is not float for thickness in value.thicknesses
+        ):
+            raise TypeError("Stored layer schedule thicknesses must be float values.")
+        rebuilt = cls(value.thicknesses)
+        if (
+            rebuilt.schedule_id != value.schedule_id
+            or rebuilt.thicknesses != value.thicknesses
+        ):
+            raise ValueError("Stored layer schedule differs from its exact thicknesses.")
+        return rebuilt
 
     @classmethod
     def geometric(
@@ -337,7 +468,6 @@ class LayerSchedule(StrictModule, NonTrainableState):
             raise ValueError("first_layer_thickness must be positive and finite.")
         if not np.isfinite(growth) or growth <= 0.0:
             raise ValueError("growth_rate must be positive and finite.")
-        # ty: ignore[invalid-argument-type]
         return cls(tuple(first * growth**index for index in range(count)))
 
     @property
@@ -547,6 +677,65 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[BoundaryLayerControl], value: BoundaryLayerControl, /
+    ) -> BoundaryLayerControl:
+        if type(value) is not cls:
+            raise TypeError("value must be BoundaryLayerControl.")
+        if (
+            type(value.feature_angle) is not float
+            or type(value.minimum_thickness_fraction) is not float
+            or type(value.maximum_corner_stretch) is not float
+            or type(value.smoothing_iterations) is not int
+            or (
+                value.core_maximum_size is not None
+                and type(value.core_maximum_size) is not float
+            )
+            or (
+                value.growth_rate_bounds is not None
+                and (
+                    type(value.growth_rate_bounds) is not tuple
+                    or any(type(rate) is not float for rate in value.growth_rate_bounds)
+                )
+            )
+        ):
+            raise TypeError("Stored boundary-layer control fields are not canonical.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.wall_scope),
+            LayerSchedule.from_stored_fields(value.schedule),
+            route=value.route,
+            volume_scope=None
+            if value.volume_scope is None
+            else MeshingScope.from_stored_fields(value.volume_scope),
+            cap_scope=None
+            if value.cap_scope is None
+            else MeshingScope.from_stored_fields(value.cap_scope),
+            collision=value.collision,
+            corner=value.corner,
+            feature_angle=value.feature_angle,
+            minimum_thickness_fraction=value.minimum_thickness_fraction,
+            growth_rate_bounds=value.growth_rate_bounds,
+            maximum_corner_stretch=value.maximum_corner_stretch,
+            smoothing_iterations=value.smoothing_iterations,
+            core_maximum_size=value.core_maximum_size,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.route is not value.route
+            or rebuilt.collision is not value.collision
+            or rebuilt.corner is not value.corner
+            or rebuilt.feature_angle != value.feature_angle
+            or rebuilt.minimum_thickness_fraction != value.minimum_thickness_fraction
+            or rebuilt.growth_rate_bounds != value.growth_rate_bounds
+            or rebuilt.maximum_corner_stretch != value.maximum_corner_stretch
+            or rebuilt.smoothing_iterations != value.smoothing_iterations
+            or rebuilt.core_maximum_size != value.core_maximum_size
+        ):
+            raise ValueError("Stored boundary-layer control differs from its fields.")
+        return rebuilt
+
 
 class PeriodicConstraint(StrictModule, NonTrainableState):
     source_scope: MeshingScope
@@ -600,6 +789,42 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
                 "conforming_required": bool(conforming_required),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PeriodicConstraint], value: PeriodicConstraint, /
+    ) -> PeriodicConstraint:
+        if type(value) is not cls:
+            raise TypeError("value must be PeriodicConstraint.")
+        if type(value.conforming_required) is not bool:
+            raise TypeError(
+                "Stored periodic-constraint conforming_required must be bool."
+            )
+        stored_transform = np.asarray(value.transform)
+        if type(value.tolerance) is not float or stored_transform.dtype != np.dtype(
+            np.float64
+        ):
+            raise TypeError("Stored periodic-constraint fields are not canonical.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.source_scope),
+            MeshingScope.from_stored_fields(value.target_scope),
+            value.transform,
+            tolerance=value.tolerance,
+            conforming_required=value.conforming_required,
+        )
+        if (
+            rebuilt.constraint_id != value.constraint_id
+            or rebuilt.tolerance != value.tolerance
+            or rebuilt.conforming_required != value.conforming_required
+            or not np.array_equal(
+                np.asarray(rebuilt.transform), np.asarray(value.transform)
+            )
+        ):
+            raise ValueError(
+                "Stored periodic constraint differs from its exact transform."
+            )
+        return rebuilt
 
 
 class BackgroundMetricMode(StrEnum):
@@ -686,6 +911,42 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[BackgroundMetricControl], value: BackgroundMetricControl, /
+    ) -> BackgroundMetricControl:
+        if type(value) is not cls:
+            raise TypeError("value must be BackgroundMetricControl.")
+        if type(value.coordinate_contract) is not SpatialCoordinateContract:
+            raise TypeError(
+                "Stored background metric lost its exact coordinate contract."
+            )
+        if (
+            value.maximum_metric_edge_length is not None
+            and type(value.maximum_metric_edge_length) is not float
+        ):
+            raise TypeError("Stored background metric edge length must be float or None.")
+        mesh = CellMesh.from_stored_fields(value.mesh)
+        metric = MeshMetricField.from_stored_fields(value.metric)
+        coordinate_contract = SpatialCoordinateContract.from_dict(
+            value.coordinate_contract.to_dict()
+        )
+        rebuilt = cls(
+            mesh,
+            metric,
+            coordinate_contract,
+            mode=value.mode,
+            maximum_metric_edge_length=value.maximum_metric_edge_length,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.mode is not value.mode
+            or rebuilt.maximum_metric_edge_length != value.maximum_metric_edge_length
+        ):
+            raise ValueError("Stored background-metric control differs from its inputs.")
+        return rebuilt
+
     @property
     def vertex_metrics(self) -> np.ndarray:
         """Metric tensors in CellMesh vertex-row order."""
@@ -745,6 +1006,198 @@ class SurfaceReconstructionControl(StrictModule, NonTrainableState):
         )
 
 
+class TransfiniteCurveControl(StrictModule, NonTrainableState):
+    """Bind an oriented source-curve interval to a fixed interval count."""
+
+    curve: AbstractCurve
+    source_id: str = eqx.field(static=True)
+    parameter_range: tuple[float, float] = eqx.field(static=True)
+    intervals: int = eqx.field(static=True)
+    reversed: bool = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        curve: AbstractCurve,
+        source_id: str,
+        parameter_range: tuple[float, float],
+        intervals: int,
+        /,
+        *,
+        reversed: bool = False,
+    ) -> None:
+        if not isinstance(source_id, str) or not isinstance(reversed, bool):
+            raise TypeError("source_id must be a string and reversed must be bool.")
+        if not source_id.strip():
+            raise ValueError("source_id must be non-empty.")
+        if isinstance(intervals, bool) or not isinstance(intervals, int) or intervals < 1:
+            raise ValueError("intervals must be a positive integer.")
+        first, last = parameter_range
+        lower = finite_real_scalar(first, "parameter_range[0]")
+        upper = finite_real_scalar(last, "parameter_range[1]")
+        if lower >= upper:
+            raise ValueError("Transfinite curve ranges must be strictly increasing.")
+        domain = curve.parameter_domain
+        if domain is not None and (lower < domain[0] or upper > domain[1]):
+            raise ValueError("Transfinite curve ranges must lie in the source domain.")
+        bounds = (lower, upper)
+        self.curve = curve
+        self.source_id = source_id
+        self.parameter_range = bounds
+        self.intervals = intervals
+        self.reversed = reversed
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "transfinite-curve-control",
+                "source": source_id,
+                "curve": array_tree_fingerprint(curve),
+                "range": bounds,
+                "intervals": intervals,
+                "reversed": reversed,
+            }
+        )
+
+
+@final
+class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
+    """Bind a source face chart to the two increasing logical face axes."""
+
+    surface: AbstractSurfacePatch
+    parameter_box: Array
+    source_id: str = eqx.field(static=True)
+    intervals: tuple[int, int] = eqx.field(static=True)
+    permutation: tuple[int, int] = eqx.field(static=True)
+    flips: tuple[bool, bool] = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        surface: AbstractSurfacePatch,
+        source_id: str,
+        parameter_box: ArrayLike,
+        intervals: tuple[int, int],
+        /,
+        *,
+        permutation: tuple[int, int] = (0, 1),
+        flips: tuple[bool, bool] = (False, False),
+    ) -> None:
+        if not isinstance(source_id, str):
+            raise TypeError("source_id must be a string.")
+        if any(
+            isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
+        ) or any(not isinstance(flip, bool) for flip in flips):
+            raise TypeError(
+                "permutation axes must be integers and flips must be booleans."
+            )
+        if not source_id.strip():
+            raise ValueError("source_id must be non-empty.")
+        if len(intervals) != 2 or any(
+            isinstance(count, bool) or not isinstance(count, int) or count < 1
+            for count in intervals
+        ):
+            raise ValueError("intervals must contain two positive integers.")
+        if sorted(permutation) != [0, 1] or len(flips) != 2:
+            raise ValueError(
+                "permutation must contain each axis once and flips need two entries."
+            )
+        box = surface.validate_parameter_box(parameter_box)
+        self.surface = surface
+        self.parameter_box = jax.device_put(np.asarray(box, dtype=np.float64))
+        self.source_id = source_id
+        self.intervals = intervals
+        self.permutation = permutation
+        self.flips = flips
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "transfinite-surface-control",
+                "source": source_id,
+                "surface": array_tree_fingerprint(surface),
+                "box": box,
+                "intervals": intervals,
+                "permutation": permutation,
+                "flips": flips,
+            }
+        )
+
+
+@final
+class BlockInterfaceControl(StrictModule, NonTrainableState):
+    """Declare oriented logical-face gluing between two source blocks."""
+
+    first_block: str = eqx.field(static=True)
+    second_block: str = eqx.field(static=True)
+    first_face: int = eqx.field(static=True)
+    second_face: int = eqx.field(static=True)
+    permutation: tuple[int, ...] = eqx.field(static=True)
+    flips: tuple[bool, ...] = eqx.field(static=True)
+    conforming: bool = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        first_block: str,
+        first_face: int,
+        second_block: str,
+        second_face: int,
+        permutation: tuple[int, ...],
+        flips: tuple[bool, ...],
+        /,
+        *,
+        conforming: bool = True,
+        tolerance: float = 1e-12,
+    ) -> None:
+        dimension = len(permutation)
+        if not isinstance(first_block, str) or not isinstance(second_block, str):
+            raise TypeError("block IDs must be strings.")
+        if not isinstance(conforming, bool) or any(
+            not isinstance(flip, bool) for flip in flips
+        ):
+            raise TypeError("conforming and face flips must be booleans.")
+        if any(
+            isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
+        ):
+            raise TypeError("permutation axes must be integers.")
+        if dimension not in (1, 2) or sorted(permutation) != list(range(dimension)):
+            raise ValueError("permutation must contain each face axis exactly once.")
+        if len(flips) != dimension:
+            raise ValueError("flips must match the face dimension.")
+        if not first_block.strip() or not second_block.strip():
+            raise ValueError("block IDs must be non-empty.")
+        if any(
+            isinstance(face, bool)
+            or not isinstance(face, int)
+            or not 0 <= face < 2 * (dimension + 1)
+            for face in (first_face, second_face)
+        ):
+            raise ValueError("face indices must identify valid logical block faces.")
+        tolerance_ = finite_real_scalar(tolerance, "tolerance")
+        if tolerance_ < 0.0:
+            raise ValueError("tolerance must be nonnegative.")
+        self.first_block = first_block
+        self.second_block = second_block
+        self.first_face = first_face
+        self.second_face = second_face
+        self.permutation = permutation
+        self.flips = tuple(flips)
+        self.conforming = conforming
+        self.tolerance = tolerance_
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "block-interface-control",
+                "first": (first_block, first_face),
+                "second": (second_block, second_face),
+                "permutation": permutation,
+                "flips": self.flips,
+                "conforming": conforming,
+                "tolerance": tolerance_,
+            }
+        )
+
+
 __all__ = [
     "BackgroundMetricControl",
     "BackgroundMetricMode",
@@ -761,4 +1214,7 @@ __all__ = [
     "RegionControl",
     "RegionSeed",
     "SurfaceReconstructionControl",
+    "TransfiniteCurveControl",
+    "TransfiniteSurfaceControl",
+    "BlockInterfaceControl",
 ]

@@ -77,7 +77,6 @@ class MultiRegionSurfaceStatus(IntEnum):
     NONPOSITIVE_VOLUME = 6
     SELF_INTERSECTION = 7
     UNCERTAIN_PREDICATE = 8
-    INTERSECTION_CANDIDATES_EXCEEDED = 9
     SINGULAR_VERTEX = 10
     REGION_GRAPH_INCOMPLETE = 11
     DISCONNECTED_FINITE_REGION = 12
@@ -181,8 +180,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
     ``maximum_edge_valence`` bounds the faces incident to one edge and
     ``maximum_vertex_region_pairs`` bounds the distinct region pairs (sheet
     slots) meeting at one vertex. A dry-foam topology needs three and six; a
-    general complex may declare more. ``event_capacity`` reserves the topology
-    transaction budget of later remeshing/event passes.
     """
 
     vertex_capacity: int = eqx.field(static=True)
@@ -190,7 +187,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
     face_capacity: int = eqx.field(static=True)
     region_capacity: int = eqx.field(static=True)
     region_pair_capacity: int = eqx.field(static=True)
-    event_capacity: int = eqx.field(static=True)
     maximum_edge_valence: int = eqx.field(static=True)
     maximum_vertex_region_pairs: int = eqx.field(static=True)
     coordinate_dtype: MultiRegionCoordinateDtype = eqx.field(static=True)
@@ -209,7 +205,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
         maximum_edge_valence: int,
         maximum_vertex_region_pairs: int,
         resource_id: str,
-        event_capacity: int = 0,
         coordinate_dtype: MultiRegionCoordinateDtype = "float64",
         index_dtype: MultiRegionIndexDtype = "int32",
     ) -> None:
@@ -218,7 +213,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
         faces = positive_integer(face_capacity, "face_capacity")
         regions = positive_integer(region_capacity, "region_capacity")
         pairs = positive_integer(region_pair_capacity, "region_pair_capacity")
-        events = nonnegative_integer(event_capacity, "event_capacity")
         valence = positive_integer(maximum_edge_valence, "maximum_edge_valence")
         slots = positive_integer(
             maximum_vertex_region_pairs, "maximum_vertex_region_pairs"
@@ -239,7 +233,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
         self.face_capacity = faces
         self.region_capacity = regions
         self.region_pair_capacity = pairs
-        self.event_capacity = events
         self.maximum_edge_valence = valence
         self.maximum_vertex_region_pairs = slots
         self.coordinate_dtype = coordinate
@@ -253,7 +246,6 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
                 "face_capacity": faces,
                 "region_capacity": regions,
                 "region_pair_capacity": pairs,
-                "event_capacity": events,
                 "maximum_edge_valence": valence,
                 "maximum_vertex_region_pairs": slots,
                 "coordinate_dtype": coordinate,
@@ -296,7 +288,7 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
 
 @final
 class MultiRegionSurfaceValidationPolicy(StrictModule, NonTrainableState):
-    """Host validation profile and resource bounds.
+    """Host validation profile for labeled multiregion surfaces.
 
     ``profile="dry_foam"`` additionally enforces Plateau's topological laws:
     every edge whose incident films close around it carries exactly three
@@ -308,14 +300,10 @@ class MultiRegionSurfaceValidationPolicy(StrictModule, NonTrainableState):
     valence two, every vertex touches both regions, and no wire border exists.
     All profiles refuse singular vertices (two disconnected fans of one sheet
     at one vertex) and finite regions with more than one connected component.
-    ``intersection_candidate_capacity`` bounds the broad-phase face pairs
-    examined by exact predicates; exceeding it is a refusal, never a silent
-    pass.
     """
 
     profile: MultiRegionValidationProfile = eqx.field(static=True)
     check_self_intersection: bool = eqx.field(static=True)
-    intersection_candidate_capacity: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -323,23 +311,17 @@ class MultiRegionSurfaceValidationPolicy(StrictModule, NonTrainableState):
         *,
         profile: MultiRegionValidationProfile = "general",
         check_self_intersection: bool = True,
-        intersection_candidate_capacity: int = 4_000_000,
     ) -> None:
         profile_ = parse(profile, MultiRegionValidationProfile, "profile")
         if not isinstance(check_self_intersection, bool):
             raise TypeError("check_self_intersection must be a bool.")
-        capacity = positive_integer(
-            intersection_candidate_capacity, "intersection_candidate_capacity"
-        )
         self.profile = profile_
         self.check_self_intersection = check_self_intersection
-        self.intersection_candidate_capacity = capacity
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "multiregion-surface-validation-policy",
                 "profile": profile_,
                 "check_self_intersection": check_self_intersection,
-                "intersection_candidate_capacity": capacity,
             }
         )
 
@@ -387,7 +369,6 @@ class MultiRegionSurfaceEvidence(StrictModule, NonTrainableState):
     intersecting_pair_count: int = eqx.field(static=True)
     uncertain_pair_count: int = eqx.field(static=True)
     candidate_pair_count: int = eqx.field(static=True)
-    candidate_capacity_exceeded: bool = eqx.field(static=True)
     predicate_mode: str = eqx.field(static=True)
     capacity: MultiRegionSurfaceCapacityEvidence
     topology_id: str = eqx.field(static=True)

@@ -10,6 +10,7 @@ import jax.random as jr
 import numpy as np
 
 import phydrax as phx
+from phydrax.discretization._mapped_locator import PreparedMappedCellLocator
 
 
 def _population(capacity: Any = 4, dimension: Any = 3) -> Any:
@@ -334,15 +335,8 @@ def test_pic_advanced_scenario_1() -> None:
             jnp.zeros((reference_points.shape[0],), dtype=jnp.int32),
             reference_points,
         ).physical_points
-        locator = phx.discretization.PreparedSimplicialCellLocator(
-            cell_map,
-            coordinate_values,
-            phx.discretization.SimplicialLocationPolicy(
-                1,
-                12,
-                coordinate_element.local_dof_count + 1,
-                residual_tolerance=1.0e-9,
-            ),
+        locator = PreparedMappedCellLocator.from_cell_geometry(
+            mesh, coordinate_spec, 0
         )
         located = locator.locate(physical)
 

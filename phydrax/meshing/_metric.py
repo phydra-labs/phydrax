@@ -243,6 +243,32 @@ class MeshMetricField(StrictModule, NonTrainableState):
         )
 
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshMetricField], value: MeshMetricField, /
+    ) -> MeshMetricField:
+        if type(value) is not cls:
+            raise TypeError("value must be MeshMetricField.")
+        scope = MeshingScope.from_stored_fields(value.scope)
+        rebuilt = cls(
+            scope,
+            value.values,
+            minimum_size=value.minimum_size,
+            maximum_size=value.maximum_size,
+            maximum_anisotropy=value.maximum_anisotropy,
+        )
+        stored_values = np.asarray(value.values)
+        rebuilt_values = np.asarray(rebuilt.values)
+        if (
+            rebuilt.metric_id != value.metric_id
+            or rebuilt_values.shape != stored_values.shape
+            or rebuilt_values.dtype != stored_values.dtype
+            or not np.array_equal(rebuilt_values, stored_values)
+        ):
+            raise ValueError("Stored metric field differs from its exact validated tensor bank.")
+        return rebuilt
+
 class MeshMetricSamples(StrictModule, NonTrainableState):
     """Untrusted square tensors bound to one scope.
 
@@ -287,31 +313,24 @@ class MetricGradationStatus(StrEnum):
 
     CONVERGED = "converged"
     BOUNDS_CONFLICT = "bounds_conflict"
-    SWEEP_LIMIT = "sweep_limit"
+    NUMERICAL_STOP = "numerical_stop"
 
 
 class MetricGradationPolicy(StrictModule, NonTrainableState):
-    """Scalar or anisotropic gradation with an explicit convergence budget.
+    """Scalar or anisotropic metric gradation to convergence or a true stop.
 
-    Scalar gradation bounds the determinant size ``det(M)**(-1/(2d))`` by an
-    exact minimum-first relaxation and realizes it by uniform log-eigenvalue
-    shifts saturated at the field's upper eigenvalue bound, which never
-    increases anisotropy. Anisotropic gradation (Alauzet 2010) grows every metric
-    along each incident edge and intersects the grown metric at the neighbor; an
-    intersection outside the field's hard size or anisotropy bounds is withheld
-    (the hard bounds win, every row keeps dominating its input, and the
-    a-posteriori ``maximum_violation`` reports the growth the bounds prevent).
-    Sweeps repeat until no admissible metric grows by more than
-    ``relative_tolerance`` or ``maximum_sweeps`` is exhausted; exhaustion is
-    reported as non-convergence, never hidden. The policy owns the requested
-    gradation: metric fields carry no gradation bound.
+    Scalar gradation bounds determinant size by an exact minimum-first
+    relaxation and realizes it by uniform log-eigenvalue shifts, which never
+    increase anisotropy. Anisotropic gradation grows and intersects metrics
+    along each edge while respecting hard size and anisotropy bounds.
+    ``relative_tolerance`` is the numerical convergence criterion; no sweep
+    quota truncates the monotone update process.
     """
 
     maximum_gradation: float = eqx.field(static=True)
     kind: MetricGradationKind = eqx.field(static=True)
     anisotropic: bool = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
-    maximum_sweeps: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -322,7 +341,6 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
         kind: MetricGradationKind = MetricGradationKind.PHYSICAL,
         anisotropic: bool = False,
         relative_tolerance: float = 1.0e-10,
-        maximum_sweeps: int = 1024,
     ) -> None:
         gradation = _at_least_one(maximum_gradation, "maximum_gradation")
         if not isinstance(kind, MetricGradationKind):
@@ -332,13 +350,10 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
         tolerance = finite_real_scalar(relative_tolerance, "relative_tolerance")
         if tolerance < 0.0:
             raise ValueError("relative_tolerance must be non-negative.")
-        if not isinstance(maximum_sweeps, (int, np.integer)) or maximum_sweeps <= 0:
-            raise ValueError("maximum_sweeps must be a positive integer.")
         self.maximum_gradation = gradation
         self.kind = kind
         self.anisotropic = bool(anisotropic)
         self.relative_tolerance = tolerance
-        self.maximum_sweeps = int(maximum_sweeps)
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "metric-gradation-policy",
@@ -346,7 +361,6 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
                 "law": kind.value,
                 "anisotropic": bool(anisotropic),
                 "relative_tolerance": tolerance,
-                "maximum_sweeps": int(maximum_sweeps),
             }
         )
 
@@ -355,12 +369,10 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
     """Termination and a-posteriori edge certification of one gradation.
 
     ``CONVERGED`` requires ``maximum_violation <= relative_tolerance``.
-    ``BOUNDS_CONFLICT`` means the hard size or anisotropy bounds withheld every
-    remaining update; ``SWEEP_LIMIT`` means admissible updates remained at the
-    execution bound. ``maximum_violation`` is measured independently after
-    termination over every directed edge: the relative excess of a size over its
-    growth bound (scalar) or the largest eigenvalue of
-    ``M_q**(-1/2) G_(p->q) M_q**(-1/2)`` minus one (anisotropic), clipped at zero.
+    ``BOUNDS_CONFLICT`` records a required increase withheld by hard metric
+    bounds; ``NUMERICAL_STOP`` records representability stagnation while a
+    residual remains. ``maximum_violation`` is measured independently after
+    termination over every directed edge.
     """
 
     policy_id: str = eqx.field(static=True)
@@ -1001,7 +1013,7 @@ def _within_bounds(metrics: Array, bounds: Array, /) -> Array:
     )
 
 
-@partial(jax.jit, static_argnames=("kind", "maximum_sweeps"))
+@partial(jax.jit, static_argnames=("kind",))
 def _anisotropic_gradation_kernel(
     metrics: Array,
     sources: Array,
@@ -1014,14 +1026,13 @@ def _anisotropic_gradation_kernel(
     bounds: Array,
     *,
     kind: str,
-    maximum_sweeps: int,
 ) -> tuple[Array, Array, Array, Array, Array]:
     rows = metrics.shape[0]
     always = jnp.ones((rows, 1), dtype=jnp.bool_)
     candidate_valid = jnp.concatenate((always, slot_valid), axis=1)
 
     def body(state: Any) -> Any:
-        current, sweeps, updates, _ = state
+        current, sweeps, updates, _, _ = state
         spectrum = HermitianSpectrum(current)
         grown = _grow_metrics(
             spectrum.eigenvalues,
@@ -1034,31 +1045,33 @@ def _anisotropic_gradation_kernel(
         )
         candidates = jnp.concatenate((current[:, None], grown[slots]), axis=1)
         combined = _canonical_intersection(candidates, candidate_valid)
-        # Only admissible growth is accepted, so every row keeps dominating its
-        # input; an intersection outside the hard bounds is withheld and the
-        # a-posteriori violation reports the gradation the bounds prevent.
-        accept = (_maximum_growth(current, combined) > 1.0 + tolerance) & (
-            _within_bounds(combined, bounds)
+        needs_growth = _maximum_growth(current, combined) > 1.0 + tolerance
+        within_bounds = _within_bounds(combined, bounds)
+        accept = needs_growth & within_bounds & jnp.any(
+            combined != current, axis=(-2, -1)
         )
         updated = jnp.where(accept[:, None, None], combined, current)
+        blocked = jnp.any(needs_growth & ~within_bounds)
         return (
             updated,
             sweeps + 1,
-            updates + jnp.sum(accept, dtype=jnp.int32),
+            updates + jnp.sum(accept, dtype=jnp.int64),
             jnp.any(accept),
+            blocked,
         )
 
     def condition(state: Any) -> Any:
-        return state[3] & (state[1] < maximum_sweeps)
+        return state[3]
 
-    final, sweeps, updates, changed = jax.lax.while_loop(
+    final, sweeps, updates, changed, bounds_conflict = jax.lax.while_loop(
         condition,
         body,
         (
             metrics,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int64),
+            jnp.asarray(0, dtype=jnp.int64),
             jnp.asarray(True),
+            jnp.asarray(False),
         ),
     )
     spectrum = HermitianSpectrum(final)
@@ -1075,7 +1088,7 @@ def _anisotropic_gradation_kernel(
         jnp.maximum(_maximum_growth(final[targets], grown) - 1.0, 0.0),
         initial=0.0,
     )
-    return final, sweeps, updates, ~changed, violation
+    return final, sweeps, updates, bounds_conflict, violation
 
 
 def _incoming_slots(targets: np.ndarray, rows: int, /) -> tuple[np.ndarray, np.ndarray]:
@@ -1126,7 +1139,7 @@ def _grade_eigenpairs(
     targets = np.concatenate((edges[:, 1], edges[:, 0]))
     slots, slot_valid = _incoming_slots(targets, rows)
     initial = _compose(eigenvalues, eigenvectors)
-    final, sweeps, updates, fixed_point, violation = _anisotropic_gradation_kernel(
+    final, sweeps, updates, bounds_conflict, violation = _anisotropic_gradation_kernel(
         jnp.asarray(initial),
         jnp.asarray(sources, dtype=jnp.int32),
         jnp.asarray(targets, dtype=jnp.int32),
@@ -1137,18 +1150,16 @@ def _grade_eigenpairs(
         jnp.asarray(policy.relative_tolerance),
         jnp.asarray((bounds[1] ** -2, bounds[0] ** -2, bounds[2]), dtype=jnp.float64),
         kind=policy.kind.value,
-        maximum_sweeps=policy.maximum_sweeps,
     )
     graded = np.asarray(final)
     modified = np.any(graded != initial, axis=(1, 2))
     maximum_violation = float(np.asarray(violation))
-    reached_fixed_point = bool(np.asarray(fixed_point))
     status = (
         MetricGradationStatus.CONVERGED
         if maximum_violation <= policy.relative_tolerance
         else MetricGradationStatus.BOUNDS_CONFLICT
-        if reached_fixed_point
-        else MetricGradationStatus.SWEEP_LIMIT
+        if bool(np.asarray(bounds_conflict))
+        else MetricGradationStatus.NUMERICAL_STOP
     )
     evidence = MetricGradationEvidence(
         policy,

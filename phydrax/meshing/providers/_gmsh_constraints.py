@@ -19,6 +19,7 @@ from .._trace import MeshingStageKind
 from ._gmsh_elements import _evaluate_element_maps, _local_connectivity
 from ._gmsh_evidence import _connectivity_face_rows, _EvidenceSection
 from ._gmsh_import import (
+    _CadEntityMap,
     _match_entities,
     _resolve_entities,
     _scope_samples,
@@ -26,15 +27,24 @@ from ._gmsh_import import (
 )
 
 
-def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
+def _set_periodic(
+    gmsh: Any,
+    plan: Any,
+    /,
+    cad_entities: _CadEntityMap | None = None,
+) -> Any:
     records = []
     slaves_used = set()
     for constraint in plan.specification.periodic_constraints:
         dimension = constraint.source_scope.entity_dimension
-        masters = _resolve_entities(gmsh, plan.source, shape, constraint.source_scope)
-        candidates = _resolve_entities(gmsh, plan.source, shape, constraint.target_scope)
+        masters = _resolve_entities(
+            plan.source, constraint.source_scope, cad_entities=cad_entities
+        )
+        candidates = _resolve_entities(
+            plan.source, constraint.target_scope, cad_entities=cad_entities
+        )
         transform = np.asarray(constraint.transform)
-        samples = _scope_samples(plan.source, shape, constraint.source_scope)
+        samples = _scope_samples(plan.source, constraint.source_scope)
         transformed = tuple(
             points @ transform[:3, :3].T + transform[:3, 3] for points in samples
         )
@@ -192,10 +202,10 @@ def _free_entities(gmsh: Any, top_dimension: int, /) -> set[tuple[int, int]]:
 def _apply_protected_features(
     gmsh: Any,
     source: BRepModel,
-    shape: Any,
     specification: Any,
     embedding_allowed: bool,
     /,
+    cad_entities: _CadEntityMap | None = None,
 ) -> tuple[_ProtectedEntities, ...]:
     """Embed free protected entities into their hosts; discard other free entities.
 
@@ -209,7 +219,7 @@ def _apply_protected_features(
     embeddings: dict[tuple[int, int, int], list[int]] = {}
     for feature in specification.protected_features:
         dimension = feature.scope.entity_dimension
-        tags = _resolve_entities(gmsh, source, shape, feature.scope)
+        tags = _resolve_entities(source, feature.scope, cad_entities=cad_entities)
         embedded = 0
         for tag in tags:
             if (dimension, tag) not in free:

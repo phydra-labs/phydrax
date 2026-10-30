@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from fractions import Fraction
 from pathlib import Path
 
 import jax
@@ -19,6 +20,7 @@ from phydrax.discretization.iga._certificate import (
     certify_tensor_nurbs,
 )
 from phydrax.discretization.iga._volume import TensorNURBSVolume
+from phydrax.geometry.brep import TSplineSurfacePatch
 from phydrax.linalg import MaterializationPolicy, materialize
 
 
@@ -140,6 +142,105 @@ def _prepared_metric_refresh() -> dict[str, object]:
     }
 
 
+def _tspline_local_refinement() -> dict[str, object]:
+    span_count = 8
+    breaks = tuple(Fraction(index, span_count) for index in range(span_count + 1))
+    source_mesh = iga.TMesh2D.tensor_product(breaks, breaks)
+    greville_points = tuple(
+        anchor.local_knots.greville_parameter for anchor in source_mesh.anchors
+    )
+    exact_points = tuple((u, v, u * v) for u, v in greville_points)
+    numeric_points = np.asarray(
+        [[float(value) for value in row] for row in exact_points], dtype=np.float64
+    )
+    exact_weights = tuple(
+        Fraction(1) + v / 5 for _, v in greville_points
+    )
+    numeric_weights = np.asarray(
+        [float(weight) for weight in exact_weights], dtype=np.float64
+    )
+    source_patch = TSplineSurfacePatch(
+        source_mesh,
+        numeric_points,
+        numeric_weights,
+        exact_control_points=exact_points,
+        exact_weights=exact_weights,
+    )
+    trim = iga.UVTrimmedSurface(
+        iga.UVTrimLoop(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    )
+    plan = iga.TSplineIsogeometricPlan(
+        iga.TSplineGeometryState(source_patch),
+        iga.TSplineH1FieldSpec(
+            "u", weights_from_geometry=True, anchor_count=source_mesh.coefficient_count
+        ),
+        trim=trim,
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(5),
+    )
+    marked = next(
+        cell
+        for cell in source_mesh.cells
+        if cell.parameter_bounds
+        == (Fraction(3, 8), Fraction(4, 8), Fraction(3, 8), Fraction(4, 8))
+    )
+    distant = next(
+        cell
+        for cell in source_mesh.cells
+        if cell.parameter_bounds
+        == (Fraction(0), Fraction(1, 8), Fraction(0), Fraction(1, 8))
+    )
+    refinement = plan.refine((marked.cell_id,))
+    target_plan = refinement.target_plan
+    target_mesh = target_plan.geometry.mesh
+    target_cells = {cell.cell_id: cell for cell in target_mesh.cells}
+    tensor_cell_count = (len(target_mesh.axis_breaks[0]) - 1) * (
+        len(target_mesh.axis_breaks[1]) - 1
+    )
+    locality = target_cells[distant.cell_id].parameter_bounds == distant.parameter_bounds
+    nonsingular_source = (
+        target_plan.exact_geometry_certificate.passed
+        and target_plan.geometry_certificate.passed
+    )
+    local_structure = target_mesh.cell_count < tensor_cell_count and target_mesh.t_junction_count > 0
+    target_patch = target_plan.geometry.surface_patch
+    shared_source = (
+        target_patch.source_mesh.mesh_id == source_mesh.mesh_id
+        and target_patch.exact_source_control_points == source_patch.exact_source_control_points
+        and target_patch.exact_source_weights == source_patch.exact_source_weights
+    )
+    target_patch.validate_exact_transfer_chain()
+    transfer_chain_valid = (
+        len(target_patch.transfer_meshes) == len(target_patch.transfer_plans) + 1
+        and target_patch.transfer_meshes[0].mesh_id == source_mesh.mesh_id
+        and target_patch.transfer_meshes[-1].mesh_id == target_mesh.mesh_id
+    )
+    checks = {
+        "target_basis_certificate": target_plan.geometry.surface_patch.basis_certificate.passed,
+        "exact_and_numeric_physical_maps": nonsingular_source,
+        "local_non_tensor_structure": local_structure,
+        "distant_cell_unchanged": locality,
+        "source_definition_retained": shared_source,
+        "exact_transfer_chain": transfer_chain_valid,
+    }
+    return {
+        "passed": all(checks.values()),
+        "source_mesh_id": source_mesh.mesh_id,
+        "target_mesh_id": target_mesh.mesh_id,
+        "target_basis_certificate_id": target_plan.geometry.surface_patch.basis_certificate.certificate_id,
+        "exact_geometry_certificate_id": target_plan.exact_geometry_certificate.certificate_id,
+        "numeric_geometry_certificate_id": target_plan.geometry_certificate.certificate_id,
+        "marked_cell_ids": list(refinement.basis_refinement.marked_cell_ids),
+        "closure_cell_ids": list(refinement.basis_refinement.closure_cell_ids),
+        "source_cells": source_mesh.cell_count,
+        "target_cells": target_mesh.cell_count,
+        "cartesian_cells_at_target_breaks": tensor_cell_count,
+        "target_t_junctions": target_mesh.t_junction_count,
+        "transfer_route_count": refinement.basis_refinement.transfer_plan.route_count,
+        "transfer_mesh_ids": [mesh.mesh_id for mesh in target_patch.transfer_meshes],
+        "checks": checks,
+    }
+
+
 def _thb() -> dict[str, object]:
     from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
 
@@ -170,6 +271,7 @@ def run() -> dict[str, object]:
         "mapped_annulus": _mapped_annulus(),
         "prepared_metric_refresh": _prepared_metric_refresh(),
         "thb_basis": _thb(),
+        "tspline_local_refinement": _tspline_local_refinement(),
     }
     return {
         "kind": "iga-closure-substrate-qualification",

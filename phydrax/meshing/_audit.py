@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import Counter
 from enum import StrEnum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,7 +15,7 @@ import numpy as np
 
 import phydrax.ein as ein
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
@@ -24,12 +24,17 @@ from ..discretization._cell_complex import (
     PolygonalConnectivity,
     TetrahedralConnectivity,
 )
-from ..discretization._cell_geometry import CellVertexGeometryElement
+from ..discretization._cell_geometry import (
+    CellVertexGeometryElement,
+    ScalarCoordinateElement,
+)
 from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
     CellValidityCertificate,
     CellValidityPolicy,
     certify_cell_geometry_validity,
 )
+from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.fem._reference import FiniteElementSpec
@@ -53,6 +58,11 @@ from ._quality import (
 from ._scope import MeshingEntityKind
 
 
+if TYPE_CHECKING:
+    from ..geometry._global_embedding import GlobalEmbeddingCertificate
+
+
+
 class CellMeshAuditDisposition(StrEnum):
     """How one audit check affects the verdict.
 
@@ -74,15 +84,12 @@ def _disposition(
 
 
 class CellMeshAuditPolicy(StrictModule, NonTrainableState):
-    """Dispositions and limits of the cell-mesh audit.
+    """Dispositions and mathematical tolerances of the cell-mesh audit.
 
-    Topology checks run on the welded complex in which vertices closer than
-    ``coincident_vertex_tolerance`` times the bounding-box diagonal are merged.
-    ``maximum_coincidence_candidates`` bounds welding and
-    ``maximum_intersection_candidates`` bounds the streamed polygon-edge and
-    triangle-pair broad phases. Exhaustion is unresolved; ``unresolved`` decides
-    whether such capacities or predicates are rejected or recorded (it cannot
-    be SKIP).
+    Topology diagnostics use the welded complex at the declared geometric
+    tolerance without modifying source identities. Candidate processing is
+    complete and streamed; unresolved predicates are rejected or recorded,
+    never silently skipped.
     """
 
     unused_entities: CellMeshAuditDisposition = eqx.field(static=True)
@@ -90,11 +97,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
     minimum_measure: float = eqx.field(static=True)
     minimum_mean_ratio: float = eqx.field(static=True)
     maximum_aspect_ratio: float = eqx.field(static=True)
-    maximum_connectivity_entries: int = eqx.field(static=True)
     coincident_vertices: CellMeshAuditDisposition = eqx.field(static=True)
     coincident_vertex_tolerance: float = eqx.field(static=True)
-    maximum_coincidence_candidates: int = eqx.field(static=True)
-    maximum_intersection_candidates: int = eqx.field(static=True)
     duplicate_cells: CellMeshAuditDisposition = eqx.field(static=True)
     nonmanifold: CellMeshAuditDisposition = eqx.field(static=True)
     inconsistent_orientation: CellMeshAuditDisposition = eqx.field(static=True)
@@ -113,11 +117,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         minimum_measure: float = 0.0,
         minimum_mean_ratio: float = 0.0,
         maximum_aspect_ratio: float = 1.0e300,
-        maximum_connectivity_entries: int = 500_000_000,
         coincident_vertices: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         coincident_vertex_tolerance: float = 1.0e-12,
-        maximum_coincidence_candidates: int = 50_000_000,
-        maximum_intersection_candidates: int = 5_000_000,
         duplicate_cells: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         nonmanifold: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         inconsistent_orientation: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
@@ -130,10 +131,7 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         measure = float(minimum_measure)
         ratio = float(minimum_mean_ratio)
         aspect = float(maximum_aspect_ratio)
-        entries = int(maximum_connectivity_entries)
         tolerance = float(coincident_vertex_tolerance)
-        coincidence_candidates = int(maximum_coincidence_candidates)
-        intersection_candidates = int(maximum_intersection_candidates)
         dispositions = {
             name: _disposition(value, name)
             for name, value in (
@@ -155,14 +153,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
             raise ValueError("minimum_mean_ratio must lie in [0, 1].")
         if np.isnan(aspect) or aspect < 1.0:
             raise ValueError("maximum_aspect_ratio must be at least one.")
-        if entries <= 0:
-            raise ValueError("maximum_connectivity_entries must be positive.")
         if not np.isfinite(tolerance) or tolerance < 0.0 or tolerance >= 1.0:
             raise ValueError("coincident_vertex_tolerance must lie in [0, 1).")
-        if coincidence_candidates <= 0:
-            raise ValueError("maximum_coincidence_candidates must be positive.")
-        if intersection_candidates <= 0:
-            raise ValueError("maximum_intersection_candidates must be positive.")
         if unresolved == CellMeshAuditDisposition.SKIP:
             raise ValueError("Unresolved checks must be rejected or recorded.")
         if not isinstance(validity, CellValidityPolicy):
@@ -172,11 +164,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         self.minimum_measure = measure
         self.minimum_mean_ratio = ratio
         self.maximum_aspect_ratio = aspect
-        self.maximum_connectivity_entries = entries
         self.coincident_vertices = coincident_vertices
         self.coincident_vertex_tolerance = tolerance
-        self.maximum_coincidence_candidates = coincidence_candidates
-        self.maximum_intersection_candidates = intersection_candidates
         self.duplicate_cells = duplicate_cells
         self.nonmanifold = nonmanifold
         self.inconsistent_orientation = inconsistent_orientation
@@ -195,10 +184,7 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
                 "minimum_measure": measure,
                 "minimum_mean_ratio": ratio,
                 "maximum_aspect_ratio": aspect,
-                "maximum_connectivity_entries": entries,
                 "coincident_vertex_tolerance": tolerance,
-                "maximum_coincidence_candidates": coincidence_candidates,
-                "maximum_intersection_candidates": intersection_candidates,
                 "validity_policy": validity.policy_id,
             }
         )
@@ -243,6 +229,10 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
 
 def _connectivity_entries(mesh: CellMesh, /) -> int:
     connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        return sum(rows.size for rows in connectivity.entities[1:]) + sum(
+            rows.size for rows in connectivity.cell_entities[1:-1]
+        )
     if isinstance(connectivity, PolyhedralConnectivity):
         return int(
             connectivity.edges.size
@@ -275,14 +265,6 @@ def _connectivity_entries(mesh: CellMesh, /) -> int:
         )
     raise TypeError("Unsupported CellMesh connectivity.")
 
-
-def _geometry_id(geometry: CellGeometrySpec, /) -> str:
-    return canonical_fingerprint(
-        {
-            "layout": geometry.geometry_layout_id,
-            "coordinates": array_tree_fingerprint(np.asarray(geometry.coordinates)),
-        }
-    )
 
 
 def _evidence_id(
@@ -319,6 +301,16 @@ def _geometry_binding(
             )
         elif isinstance(element, CellVertexGeometryElement):
             corners = points[np.asarray(route)]
+        elif isinstance(element, ScalarCoordinateElement):
+            scope = "corner_cells"
+            reference = np.asarray(
+                reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
+            )
+            corners = geometry.evaluate(
+                mesh,
+                block.global_ids,
+                np.broadcast_to(reference, (block.global_ids.size, *reference.shape)),
+            )
         else:
             return "unsupported", ("unsupported_geometry_element",)
         expected = np.asarray(mesh.coordinates)[np.asarray(block.vertices)]
@@ -353,7 +345,9 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
     ):
         return ("boundary_coordinates",)
     if mesh.topological_dimension == 2:
-        if not isinstance(mesh.connectivity, PolygonalConnectivity):
+        if not isinstance(
+            mesh.connectivity, (PolygonalConnectivity, SimplicialConnectivity)
+        ):
             raise TypeError("Surface boundary audit requires polygonal connectivity.")
         loops = tuple(
             tuple(mesh_ids[row])
@@ -364,7 +358,12 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
         connectivity = mesh.connectivity
         if not isinstance(
             connectivity,
-            (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
+            (
+                TetrahedralConnectivity,
+                HexahedralConnectivity,
+                PolyhedralConnectivity,
+                SimplicialConnectivity,
+            ),
         ):
             raise TypeError("Volume boundary audit requires volume connectivity.")
         boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
@@ -376,6 +375,8 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
                 for index, is_boundary in enumerate(boundary_mask)
                 if is_boundary
             )
+        elif isinstance(connectivity, SimplicialConnectivity):
+            rows = np.asarray(connectivity.entities[2])[boundary_mask]
         else:
             rows = np.asarray(connectivity.faces)[boundary_mask]
         loops = tuple(tuple(mesh_ids[row]) for row in rows)
@@ -423,13 +424,18 @@ def _patch_zone_adjacency_issues(
         return ()
     connectivity = mesh.connectivity
     if mesh.topological_dimension == 2 and isinstance(
-        connectivity, PolygonalConnectivity
+        connectivity, (PolygonalConnectivity, SimplicialConnectivity)
     ):
         patch_dimension = 1
         zone_dimension = 2
     elif mesh.topological_dimension == 3 and isinstance(
         connectivity,
-        (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
+        (
+            TetrahedralConnectivity,
+            HexahedralConnectivity,
+            PolyhedralConnectivity,
+            SimplicialConnectivity,
+        ),
     ):
         patch_dimension = 2
         zone_dimension = 3
@@ -677,10 +683,40 @@ def _dispose(
     return issues, recorded, tuple(counts), tuple(skipped)
 
 
+def _periodic_self_intersection_evidence(
+    embedding: GlobalEmbeddingCertificate, /
+) -> tuple[int, bool]:
+    contact_checks = ("periodic_cell_contact", "periodic_cell_lift_collision")
+    periodic_findings = tuple(
+        finding
+        for finding in embedding.findings
+        if finding.check.startswith("periodic_")
+    )
+    violations = tuple(
+        finding
+        for finding in periodic_findings
+        if finding.check in contact_checks and finding.status == "violated"
+    )
+    complete = (
+        "periodic_exact_cell_contacts" in embedding.evaluated_checks
+        and all(
+            finding.check in contact_checks and finding.status == "violated"
+            for finding in periodic_findings
+        )
+    )
+    return len({finding.finding_id for finding in violations}), not complete
+
+
 def _topology_findings(
-    mesh: CellMesh, policy: CellMeshAuditPolicy, /
+    mesh: CellMesh,
+    policy: CellMeshAuditPolicy,
+    /,
+    *,
+    global_embedding: GlobalEmbeddingCertificate | None = None,
 ) -> tuple[tuple[tuple[str, int, CellMeshAuditDisposition], ...], tuple[str, ...]]:
     skip = CellMeshAuditDisposition.SKIP
+    periodic_mesh = mesh.periodic_topology is not None
+    periodic_embedding = periodic_mesh and global_embedding is not None
     evidence = audit_welded_topology(
         mesh,
         np.asarray(mesh.coordinates, dtype=np.float64),
@@ -689,12 +725,25 @@ def _topology_findings(
             if policy.coincident_vertices == skip
             else policy.coincident_vertex_tolerance
         ),
-        candidate_capacity=policy.maximum_coincidence_candidates,
-        intersection_candidate_capacity=policy.maximum_intersection_candidates,
         check_manifold=policy.nonmanifold != skip,
         check_watertight=policy.watertight_boundary != skip,
-        check_self_intersection=policy.self_intersection != skip,
+        check_self_intersection=(
+            policy.self_intersection != skip and not periodic_embedding
+        ),
     )
+    self_intersections = evidence.self_intersections
+    unresolved = list(evidence.unresolved)
+    if policy.self_intersection != skip and periodic_mesh:
+        if periodic_embedding:
+            if global_embedding is None:
+                raise RuntimeError("Periodic audit lost its quotient embedding proof.")
+            self_intersections, unresolved_contact = (
+                _periodic_self_intersection_evidence(global_embedding)
+            )
+            if unresolved_contact:
+                unresolved.append("self_intersection")
+        else:
+            unresolved.append("self_intersection")
     findings = (
         ("coincident_vertices", evidence.coincident_vertices, policy.coincident_vertices),
         ("collapsed_cells", evidence.collapsed_cells, policy.coincident_vertices),
@@ -708,9 +757,9 @@ def _topology_findings(
             policy.inconsistent_orientation,
         ),
         ("open_boundary", evidence.open_facets, policy.watertight_boundary),
-        ("self_intersection", evidence.self_intersections, policy.self_intersection),
+        ("self_intersection", self_intersections, policy.self_intersection),
     )
-    return findings, evidence.unresolved
+    return findings, tuple(dict.fromkeys(unresolved))
 
 
 def audit_cell_mesh(
@@ -726,6 +775,8 @@ def audit_cell_mesh(
     attributes: tuple[MeshAttribute, ...] = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
+    validity: CellValidityCertificate | None = None,
+    global_embedding: GlobalEmbeddingCertificate | None = None,
 ) -> CellMeshAuditReport:
     """Audit bindings, welded topology, sampled quality, and certified validity.
 
@@ -734,7 +785,9 @@ def audit_cell_mesh(
     feeds the quality thresholds. When ``quality`` is omitted it is evaluated
     once here; a supplied evaluation is verified against the mesh. Association
     residuals are structurally validated by GeometryAssociation; source-specific
-    residual tolerances remain the generating provider's responsibility.
+    residual tolerances remain the generating provider's responsibility. A supplied
+    global embedding proof is reused for periodic quotient self-intersection and
+    must bind the exact same geometry and periodic topology.
     """
 
     if not isinstance(mesh, CellMesh):
@@ -770,21 +823,34 @@ def audit_cell_mesh(
     if not quality_bound:
         issues.append("quality_binding")
     entries = _connectivity_entries(mesh)
-    if entries > audit_policy.maximum_connectivity_entries:
-        issues.append("connectivity_capacity_exceeded")
     unused, unused_nodes = _unused_counts(mesh, geometry)
-    validity = certify_cell_geometry_validity(
-        geometry, mesh=mesh, policy=audit_policy.validity_policy
+    validity_ = (
+        certify_cell_geometry_validity(
+            geometry, mesh=mesh, policy=audit_policy.validity_policy
+        )
+        if validity is None
+        else validity
     )
-    topology_findings, unresolved_checks = _topology_findings(mesh, audit_policy)
+    if not isinstance(validity_, CellValidityCertificate):
+        raise TypeError("validity must be CellValidityCertificate or None.")
+    validity_.require_bound(geometry, mesh=mesh)
+    if global_embedding is not None:
+        from ..geometry._global_embedding import GlobalEmbeddingCertificate
+
+        if not isinstance(global_embedding, GlobalEmbeddingCertificate):
+            raise TypeError("global_embedding must be GlobalEmbeddingCertificate or None.")
+        global_embedding.require_current(mesh, geometry, validity=validity_)
+    topology_findings, unresolved_checks = _topology_findings(
+        mesh, audit_policy, global_embedding=global_embedding
+    )
     unresolved = list(unresolved_checks)
-    if validity.unresolved_count:
+    if validity_.unresolved_count:
         unresolved.append("geometry_validity")
     checks = (
         ("unused_vertices", unused, audit_policy.unused_entities),
         ("unused_geometry_nodes", unused_nodes, audit_policy.unused_entities),
         *topology_findings,
-        ("invalid_geometry", validity.invalid_count, audit_policy.invalid_geometry),
+        ("invalid_geometry", validity_.invalid_count, audit_policy.invalid_geometry),
     )
     dispositioned = (
         *checks,
@@ -819,7 +885,7 @@ def audit_cell_mesh(
     normalized_issues = tuple(dict.fromkeys(issues))
     recorded_ = tuple(recorded)
     unresolved_ = tuple(unresolved)
-    geometry_id = _geometry_id(geometry)
+    geometry_id = cell_geometry_id(geometry)
     evidence_id = _evidence_id(patches, zones, labels, attributes, associations)
     return CellMeshAuditReport(
         mesh_id=mesh.mesh_id,
@@ -840,7 +906,7 @@ def audit_cell_mesh(
         connectivity_entries=entries,
         unused_vertex_count=unused,
         quality=quality_report,
-        validity=validity,
+        validity=validity_,
         policy_id=audit_policy.policy_id,
         report_id=canonical_fingerprint(
             {
@@ -851,7 +917,7 @@ def audit_cell_mesh(
                 "evidence": evidence_id,
                 "quality_scope": quality_scope,
                 "quality": quality_report.report_id,
-                "validity": validity.certificate_id,
+                "validity": validity_.certificate_id,
                 "issues": normalized_issues,
                 "recorded": recorded_,
                 "unresolved": unresolved_,

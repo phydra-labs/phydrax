@@ -44,7 +44,7 @@ xml = """
   </actuator>
 </mujoco>
 """
-# MuJoCo 3.12 Windows stubs omit this runtime-verified public binding.
+# MuJoCo's compiled public MjModel export is absent from its stubs.
 model = mujoco.MjModel.from_xml_string(xml)  # ty: ignore[unresolved-attribute]
 adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
 muscles = adapter.prepare_muscle_projection()

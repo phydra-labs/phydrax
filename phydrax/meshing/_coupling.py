@@ -6,13 +6,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import IntEnum, StrEnum
-from typing import Any
+from typing import Any, assert_never, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
 
 from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -23,12 +22,14 @@ from ..discretization import (
     PreparedSimplicialCellLocator,
     SimplicialLocationPolicy,
 )
+from ..discretization._field_query import PreparedFieldQuery
 from ..discretization.fem import (
     discontinuous_element,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     PreparedFiniteElementCellMap,
 )
+from ..typing import ConvertibleToArray, parse
 from ._assembly import MeshPart
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
@@ -84,10 +85,10 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
         method: str,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        status: ArrayLike,
-        donor_ids: ArrayLike,
-        source_cells: ArrayLike,
-        distances: ArrayLike,
+        status: ConvertibleToArray,
+        donor_ids: ConvertibleToArray,
+        source_cells: ConvertibleToArray,
+        distances: ConvertibleToArray,
         /,
     ) -> None:
         if not isinstance(kind, MeshCouplingKind):
@@ -205,7 +206,7 @@ def _point_pairs(
     target: MeshPart,
     source_scope: MeshingScope,
     target_scope: MeshingScope,
-    source_ids: ArrayLike | None,
+    source_ids: ConvertibleToArray | None,
 ) -> Any:
     _endpoints(source, target, source_scope, target_scope)
     ids = np.asarray(source_scope.entity_ids)
@@ -240,7 +241,7 @@ class MeshCoupling(StrictModule, NonTrainableState):
         _endpoints(source, target, self.source_scope, self.target_scope)
 
     @abstractmethod
-    def transfer(self, source_values: ArrayLike, /) -> Array:
+    def transfer(self, source_values: ConvertibleToArray, /) -> Array:
         """Evaluate this overlay's source-to-target field trace."""
         raise NotImplementedError
 
@@ -250,13 +251,13 @@ class _PointPairCoupling(MeshCoupling):
 
     source_rows: Array
 
-    def transfer(self, source_values: ArrayLike, /) -> Array:
+    def transfer(self, source_values: ConvertibleToArray, /) -> Array:
         values = jnp.asarray(source_values)
         if values.ndim == 0 or values.shape[0] != self.source_scope.entity_ids.size:
             raise ValueError("Source field must follow source scope entity order.")
         return values[self.source_rows]
 
-    def transpose(self, target_values: ArrayLike, /) -> Array:
+    def transpose(self, target_values: ConvertibleToArray, /) -> Array:
         values = jnp.asarray(target_values)
         if values.ndim == 0 or values.shape[0] != self.target_scope.entity_ids.size:
             raise ValueError("Target field must follow target scope entity order.")
@@ -283,7 +284,7 @@ class ConformalCoupling(_PointPairCoupling):
         target_scope: MeshingScope,
         /,
         *,
-        source_ids: ArrayLike | None = None,
+        source_ids: ConvertibleToArray | None = None,
         tolerance: float = 1e-10,
     ) -> None:
         tol = _tolerance(tolerance)
@@ -324,11 +325,11 @@ class PeriodicCoupling(_PointPairCoupling):
         target: MeshPart,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        rotation: ArrayLike,
-        translation: ArrayLike,
+        rotation: ConvertibleToArray,
+        translation: ConvertibleToArray,
         /,
         *,
-        source_ids: ArrayLike | None = None,
+        source_ids: ConvertibleToArray | None = None,
         tolerance: float = 1e-10,
     ) -> None:
         tol = _tolerance(tolerance)
@@ -372,14 +373,14 @@ class PeriodicCoupling(_PointPairCoupling):
             }
         )
 
-    def transfer_vectors(self, source_values: ArrayLike, /) -> Array:
+    def transfer_vectors(self, source_values: ConvertibleToArray, /) -> Array:
         values = self.transfer(source_values)
         if values.shape[-1] != self.rotation.shape[0]:
             raise ValueError("Periodic vectors must match the ambient dimension.")
         return values @ self.rotation.T
 
     def match_points(
-        self, source_points: ArrayLike, target_points: ArrayLike, /
+        self, source_points: ConvertibleToArray, target_points: ConvertibleToArray, /
     ) -> tuple[np.ndarray, np.ndarray]:
         """Pair two point sets (e.g. high-order geometry nodes) through the isometry.
 
@@ -437,10 +438,10 @@ class ContactCoupling(_PointPairCoupling):
         target: MeshPart,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        normals: ArrayLike,
+        normals: ConvertibleToArray,
         /,
         *,
-        source_ids: ArrayLike | None = None,
+        source_ids: ConvertibleToArray | None = None,
         clearance: float = 0.0,
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
@@ -497,7 +498,7 @@ class ContactCoupling(_PointPairCoupling):
         target: MeshPart,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        normals: ArrayLike,
+        normals: ConvertibleToArray,
         /,
         *,
         capture_radius: float,
@@ -528,7 +529,10 @@ class ContactCoupling(_PointPairCoupling):
         )
 
     def gaps(
-        self, source_displacement: ArrayLike, target_displacement: ArrayLike, /
+        self,
+        source_displacement: ConvertibleToArray,
+        target_displacement: ConvertibleToArray,
+        /,
     ) -> Array:
         left, right = self.transfer(source_displacement), jnp.asarray(target_displacement)
         if left.shape != self.normals.shape or right.shape != self.normals.shape:
@@ -537,8 +541,8 @@ class ContactCoupling(_PointPairCoupling):
 
     def penalty_forces(
         self,
-        source_displacement: ArrayLike,
-        target_displacement: ArrayLike,
+        source_displacement: ConvertibleToArray,
+        target_displacement: ConvertibleToArray,
         stiffness: float,
         /,
     ) -> tuple[Array, Array]:
@@ -550,22 +554,28 @@ class ContactCoupling(_PointPairCoupling):
         return -self.transpose(target_force), target_force
 
 
-class OversetCoupling(MeshCoupling):
-    """Positive partition-of-unity donor stencil, with explicit receptor/hole roles.
+type OversetValueAction = Literal["invariant", "polar-vector"]
 
-    This is interpolation, not a conservative overlap remap (``conservative``
-    is always false). Donor rows contain global IDs from source_scope; -1
-    padding has exactly zero weight. Stencils are explicit or found by
-    :meth:`search`. Multiple donor-part overlays must have disjoint receptors.
+
+class OversetCoupling(MeshCoupling):
+    """Interpolation coupling by explicit stencil or a prepared physical-field query.
+
+    Field-query couplings preserve the reconstruction's actual interpolation
+    action and transpose. Neither interpolation mode is conservative; physical
+    overlap remapping is owned by the finite-volume remap route.
     """
 
-    donor_ids: Array
-    donor_weights: Array
-    donor_rows: Array
+    donor_ids: Array | None
+    donor_weights: Array | None
+    donor_rows: Array | None
+    field_query: PreparedFieldQuery | None
+    rotation: Array | None
+    translation: Array | None
     hole_scope: MeshingScope | None
     search_evidence: CouplingSearchEvidence | None
     tolerance: float = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
+    value_action: OversetValueAction = eqx.field(static=True)
 
     def __init__(
         self,
@@ -573,18 +583,131 @@ class OversetCoupling(MeshCoupling):
         target: MeshPart,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        donor_ids: ArrayLike,
-        donor_weights: ArrayLike,
+        donor_ids: ConvertibleToArray | None = None,
+        donor_weights: ConvertibleToArray | None = None,
         /,
         *,
         hole_scope: MeshingScope | None = None,
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
+        field_query: PreparedFieldQuery | None = None,
+        rotation: ConvertibleToArray | None = None,
+        translation: ConvertibleToArray | None = None,
+        value_action: OversetValueAction = "invariant",
     ) -> None:
+        if field_query is not None:
+            if (
+                donor_ids is not None
+                or donor_weights is not None
+                or search_evidence is not None
+            ):
+                raise ValueError(
+                    "Overset coupling selects either a field query or an explicit vertex stencil."
+                )
+            if not isinstance(field_query, PreparedFieldQuery):
+                raise TypeError("field_query must be PreparedFieldQuery.")
+            source.require_scope(source_scope)
+            target.require_scope(target_scope)
+            if (
+                source.coordinate_contract.spatial_id
+                != target.coordinate_contract.spatial_id
+                or source.ambient_dimension != target.ambient_dimension
+                or source_scope.entity_dimension != source.intrinsic_dimension
+                or target_scope.entity_dimension != 0
+                or source.name == target.name
+                and source.part_id != target.part_id
+            ):
+                raise ValueError(
+                    "Field-query overset routes require compatible cell-to-point endpoint revisions."
+                )
+            if not field_query.complete:
+                raise ValueError(
+                    "Field-query overset routes require complete point coverage."
+                )
+            if field_query.output_shape[0] != target_scope.entity_ids.size:
+                raise ValueError(
+                    "Field-query output count must match the target receptor scope."
+                )
+            tol = _tolerance(tolerance)
+            action = parse(value_action, OversetValueAction, "value_action")
+            matrix = (
+                np.eye(source.ambient_dimension, dtype=np.float64)
+                if rotation is None
+                else np.asarray(rotation, dtype=np.float64)
+            )
+            offset = (
+                np.zeros(source.ambient_dimension, dtype=np.float64)
+                if translation is None
+                else np.asarray(translation, dtype=np.float64)
+            )
+            if (
+                matrix.shape != (source.ambient_dimension, source.ambient_dimension)
+                or offset.shape != (source.ambient_dimension,)
+                or not np.all(np.isfinite(matrix))
+                or not np.all(np.isfinite(offset))
+            ):
+                raise ValueError(
+                    "Field-query frame maps must be finite and dimensionally valid."
+                )
+            match action:
+                case "invariant":
+                    pass
+                case "polar-vector":
+                    if not np.allclose(
+                        matrix.T @ matrix,
+                        np.eye(matrix.shape[0]),
+                        rtol=0.0,
+                        atol=1.0e-12,
+                    ):
+                        raise ValueError(
+                            "Polar-vector actions require an orthogonal frame map."
+                        )
+                case other:
+                    assert_never(other)
+            if hole_scope is not None:
+                target.require_scope(hole_scope)
+                if (
+                    hole_scope.entity_set_id != target_scope.entity_set_id
+                    or hole_scope.entity_dimension != target_scope.entity_dimension
+                    or np.intersect1d(
+                        np.asarray(hole_scope.entity_ids),
+                        np.asarray(target_scope.entity_ids),
+                    ).size
+                ):
+                    raise ValueError("Hole and receptor scopes must be disjoint.")
+            self.source_scope, self.target_scope = source_scope, target_scope
+            self.donor_ids = self.donor_weights = self.donor_rows = None
+            self.field_query = field_query
+            self.rotation = jnp.asarray(matrix)
+            self.translation = jnp.asarray(offset)
+            self.hole_scope = hole_scope
+            self.search_evidence = None
+            self.tolerance = tol
+            self.conservative = False
+            self.value_action = action
+            self.kind = MeshCouplingKind.OVERSET
+            self.coupling_id = canonical_fingerprint(
+                {
+                    "kind": self.kind.value,
+                    "source": source_scope.scope_id,
+                    "target": target_scope.scope_id,
+                    "query": field_query.query_id,
+                    "rotation": array_tree_fingerprint(matrix),
+                    "translation": array_tree_fingerprint(offset),
+                    "value_action": action,
+                    "holes": None if hole_scope is None else hole_scope.scope_id,
+                    "tolerance": tol,
+                }
+            )
+            return
+        if rotation is not None or translation is not None:
+            raise ValueError("Frame maps require a field-query overset route.")
         _endpoints(source, target, source_scope, target_scope)
         tol = _tolerance(tolerance)
         if tol >= 1:
             raise ValueError("Overset normalization tolerance must be smaller than one.")
+        if donor_ids is None or donor_weights is None:
+            raise TypeError("Explicit overset stencils require donor IDs and weights.")
         donors, weights = (
             np.asarray(donor_ids),
             np.asarray(donor_weights, dtype=np.float64),
@@ -609,13 +732,12 @@ class OversetCoupling(MeshCoupling):
             or np.any(weights[~valid] != 0)
         ):
             raise ValueError(
-                "Overset donor IDs, padding or non-negative weights are invalid."
+                "Overset donors and weights contain invalid IDs, padding or weights."
             )
         if np.any(np.abs(np.sum(weights, axis=1) - 1.0) > tol):
             raise ValueError(
                 "Every overset receptor must have donor weights summing to one."
             )
-        # Distinct negative sentinels per column keep padding out of the check.
         stencil = np.sort(
             np.where(valid, donors, -1 - np.arange(donors.shape[1])), axis=1
         )
@@ -630,9 +752,7 @@ class OversetCoupling(MeshCoupling):
                     np.asarray(hole_scope.entity_ids), np.asarray(target_scope.entity_ids)
                 ).size
             ):
-                raise ValueError(
-                    "Overset holes must be disjoint from receptors in the same entity set."
-                )
+                raise ValueError("Overset holes and receptors must be disjoint.")
         if (
             source.name == target.name
             and source_scope.entity_set_id == target_scope.entity_set_id
@@ -641,7 +761,7 @@ class OversetCoupling(MeshCoupling):
             if hole_scope is not None:
                 forbidden = np.union1d(forbidden, np.asarray(hole_scope.entity_ids))
             if np.any(np.isin(donors[valid], forbidden)):
-                raise ValueError("Overset receptor or hole entities cannot be donors.")
+                raise ValueError("Overset donors cannot be receptors or holes.")
         _bound_search_evidence(
             search_evidence,
             MeshCouplingKind.OVERSET,
@@ -658,10 +778,13 @@ class OversetCoupling(MeshCoupling):
             jnp.asarray(weights),
             jnp.asarray(rows),
         )
+        self.field_query = None
+        self.rotation = self.translation = None
         self.hole_scope = hole_scope
         self.search_evidence = search_evidence
         self.tolerance = tol
         self.conservative = False
+        self.value_action = "invariant"
         self.kind = MeshCouplingKind.OVERSET
         self.coupling_id = canonical_fingerprint(
             {
@@ -679,6 +802,35 @@ class OversetCoupling(MeshCoupling):
         )
 
     @classmethod
+    def from_field_query(
+        cls,
+        source: MeshPart,
+        target: MeshPart,
+        source_scope: MeshingScope,
+        target_scope: MeshingScope,
+        field_query: PreparedFieldQuery,
+        /,
+        *,
+        hole_scope: MeshingScope | None = None,
+        rotation: ConvertibleToArray | None = None,
+        translation: ConvertibleToArray | None = None,
+        tolerance: float = 1e-10,
+        value_action: OversetValueAction = "invariant",
+    ) -> OversetCoupling:
+        return cls(
+            source,
+            target,
+            source_scope,
+            target_scope,
+            hole_scope=hole_scope,
+            tolerance=tolerance,
+            field_query=field_query,
+            rotation=rotation,
+            translation=translation,
+            value_action=value_action,
+        )
+
+    @classmethod
     def search(
         cls,
         source: MeshPart,
@@ -691,15 +843,6 @@ class OversetCoupling(MeshCoupling):
         location_policy: SimplicialLocationPolicy | None = None,
         tolerance: float = 1e-10,
     ) -> OversetCoupling:
-        """Locate every receptor in the donor simplex mesh and interpolate linearly.
-
-        Candidate cells come from the locator's BVH; weights are the clipped,
-        renormalized barycentric coordinates of the containing cell (lowest
-        cell index on shared faces). Donor vertices outside ``source_scope``
-        or claimed as receptors/holes of the same entity set are excluded.
-        Receptors without an admissible donor cell raise
-        :class:`CouplingSearchError` carrying per-receptor evidence.
-        """
         evidence, weights = _overset_donor_search(
             source, target, source_scope, target_scope, hole_scope, location_policy
         )
@@ -717,20 +860,61 @@ class OversetCoupling(MeshCoupling):
             search_evidence=evidence,
         )
 
-    def transfer(self, source_values: ArrayLike, /) -> Array:
+    def require_current(self, source: MeshPart, target: MeshPart, /) -> None:
+        if self.field_query is None:
+            _endpoints(source, target, self.source_scope, self.target_scope)
+            return
+        source.require_scope(self.source_scope)
+        target.require_scope(self.target_scope)
+        if (
+            source.coordinate_contract.spatial_id != target.coordinate_contract.spatial_id
+            or source.ambient_dimension != target.ambient_dimension
+            or self.source_scope.entity_dimension != source.intrinsic_dimension
+            or self.target_scope.entity_dimension != 0
+        ):
+            raise ValueError("Field-query overset endpoints are stale or incompatible.")
+
+    def transfer(self, source_values: ConvertibleToArray, /) -> Array:
         values = jnp.asarray(source_values)
+        if self.field_query is not None:
+            values = self.field_query.apply(values)
+            if self.value_action == "polar-vector":
+                rotation = self.rotation
+                if rotation is None:
+                    raise RuntimeError("Polar-vector overset coupling lost its rotation.")
+                if values.shape[-1] != rotation.shape[0]:
+                    raise ValueError(
+                        "Polar-vector values must match the frame dimension."
+                    )
+                return values @ rotation.astype(values.dtype).T
+            return values
         if values.ndim == 0 or values.shape[0] != self.source_scope.entity_ids.size:
             raise ValueError("Source field must follow source scope entity order.")
+        if self.donor_weights is None or self.donor_rows is None:
+            raise RuntimeError(
+                "Explicit overset stencil is missing prepared rows or weights."
+            )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
         )
         gathered = jnp.where(weights > 0, values[self.donor_rows], 0)
         return jnp.sum(gathered * weights, axis=1)
 
-    def transpose(self, target_values: ArrayLike, /) -> Array:
+    def transpose(self, target_values: ConvertibleToArray, /) -> Array:
         values = jnp.asarray(target_values)
+        if self.field_query is not None:
+            if self.value_action == "polar-vector":
+                rotation = self.rotation
+                if rotation is None:
+                    raise RuntimeError("Polar-vector overset coupling lost its rotation.")
+                values = values @ rotation.astype(values.dtype)
+            return self.field_query.transpose(values)
         if values.ndim == 0 or values.shape[0] != self.target_scope.entity_ids.size:
             raise ValueError("Target field must follow target scope entity order.")
+        if self.donor_weights is None or self.donor_rows is None:
+            raise RuntimeError(
+                "Explicit overset stencil is missing prepared rows or weights."
+            )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
         )
@@ -843,8 +1027,9 @@ def _overset_donor_search(
     if hole_scope is not None:
         target.require_scope(hole_scope)
     cell_map, coordinates, vertex_rows = _donor_cell_map(source)
+    # The vertex-aligned affine P1 inverse is solved by one centroid Newton step.
     policy = (
-        SimplicialLocationPolicy(min(cell_map.cell_count, 64), 16, 1)
+        SimplicialLocationPolicy(cell_map.cell_count, 1, 1)
         if location_policy is None
         else location_policy
     )
@@ -913,4 +1098,5 @@ __all__ = [
     "MeshCouplingKind",
     "OversetCoupling",
     "PeriodicCoupling",
+    "OversetValueAction",
 ]

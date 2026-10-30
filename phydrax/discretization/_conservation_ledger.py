@@ -484,8 +484,8 @@ class ConservationStageLedger(StrictModule):
         evidence = _integer_scalar(evidence_version, "evidence_version")
         topology_id = _flux_identity(topology_epoch_id, "topology_epoch_id")
         source = _finite_values(source_rate, "source_rate")
-        if source.ndim == 0 or source.shape[0] == 0:
-            raise ValueError("source_rate must begin with a nonempty cell axis.")
+        if source.ndim == 0 or any(size <= 0 for size in source.shape[1:]):
+            raise ValueError("source_rate must have a cell axis and non-empty components.")
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
@@ -877,8 +877,8 @@ class AcceptedConservationIntegralLedger(StrictModule):
                 "An accepted flux-integral ledger cannot span a topology epoch change."
             )
         source = _finite_values(source_integral, "source_integral")
-        if source.ndim == 0 or source.shape[0] == 0:
-            raise ValueError("source_integral must begin with a nonempty cell axis.")
+        if source.ndim == 0 or any(size <= 0 for size in source.shape[1:]):
+            raise ValueError("source_integral must have a cell axis and non-empty components.")
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)

@@ -89,7 +89,6 @@ def two_bubbles() -> tuple[MultiRegionSurfaceTopology, MultiRegionSurfaceState]:
         maximum_edge_valence=3,
         maximum_vertex_region_pairs=9,
         resource_id="meshfree-merge",
-        event_capacity=16,
     )
     topology = seed.topology(plan)
     return topology, _surfactant_state(topology, seed.state(topology))
@@ -314,7 +313,7 @@ def run_pinch_workflow(*, maximum_passes: int = 12) -> PinchMetrics:
     """Drive a catenoid neck to pinch-off, chaining every committed pass."""
     seed = seed_catenoid(1.0, 0.7, ring_points=12, rows=8, neck_radius=0.04)
     topology = seed.topology(
-        seed.capacity_plan(resource_id="meshfree-pinch", headroom=2.0, event_capacity=32)
+        seed.capacity_plan(resource_id="meshfree-pinch", headroom=2.0)
     )
     state = _surfactant_state(topology, seed.state(topology))
     composition = surfactant_composition(topology, state)

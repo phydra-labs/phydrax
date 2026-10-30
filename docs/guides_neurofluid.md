@@ -9,20 +9,34 @@ application package.
 
 `NeurofluidCase` binds one pseudonymous case revision to:
 
-- a `LabelVolume` and valid `CompartmentComplex`;
-- a certified tetrahedral bulk mesh;
+- a revision-bound `CompartmentMeshingSource` carrying the categorical `LabelVolume`,
+  exact `CompartmentComplex`, occupied-voxel interpretation, outer surface, and
+  oriented source interfaces;
+- an accepted tetrahedral `CellMeshingResult` from the unified native meshing API;
 - a prepared PVS metric network;
 - optional concentration and diffusion-tensor images.
 
-Every carrier must use one `SpatialCoordinateContract`. The case revision changes
-when segmentation, mesh, network, concentration, or tensor evidence changes.
+Create the bulk mesh from `CompartmentMeshingSource` with `NativeMeshingProvider`
+using the explicit `image_material_tetrahedral` route. Supply a `VolumeMeshingSpec`
+with a complete source-bound facet scope, size control, and a `RegionSeed` for each
+declared source region. The provider uses `NativeMeshingOptions` with the selected route
+and a native volume schedule; execute the plan with the source's physical coordinate
+contract. Region seed material IDs and roles bind to source region IDs. Result cell
+associations, material zones, and interface patches retain those bindings. Zone
+display names are not used to infer compartment identity.
 
-`CompartmentMeshingSpec` combines the label volume, exact compartment semantics,
-an outer surface, and one oriented surface per internal interface.
-`FTetWildCompartmentProvider` inserts all surfaces in one fTetWild run, classifies
-output tetrahedra against the source segmentation, emits exclusive material
-zones, derives mesh interfaces from neighboring zone cells, and rejects missing
-or forbidden adjacency. It does not infer persistent source-node identity.
+Construct the case as `NeurofluidCase(case_id, compartment_source, bulk_mesh, network)`.
+The case verifies the exact segmentation/source revision, every cell's source-region
+and material assignment, interface endpoint orientation, and one physical coordinate
+contract for the source, bulk mesh, network, and optional images.
+The native `CellMeshingResult` is consumed directly; there is no compartment-
+specific result wrapper or mandatory external meshing engine. It must retain passed
+volume-coverage certification; the case compares its dense per-cell region table with
+source associations and material-zone scopes.
+
+An explicitly extracted label-field surface is a distinct source interpretation; do
+not treat its triangles as a signed implicit field. fTetWild remains available through
+its explicit optional provider for independent comparison workflows.
 
 ## Tracer concentration
 

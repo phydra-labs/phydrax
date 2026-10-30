@@ -270,6 +270,62 @@ validates complete source/target coverage and applies conservative cell-integral
 transfer. A remesh is therefore a new topology and geometry plus an auditable remap,
 never an in-place mutation.
 
+## Owner-local conservative transfers
+
+`prepare_owner_local_conservative_remap(source_view, target_view, execution_group)`
+builds an owner-routed physical overlap map from accepted
+`OwnerLocalCellGeometry` views. Only candidate source-cell maps, requested source
+values, and target-owned overlap rows are communicated; fields and complete meshes
+are not gathered. The returned plan refreshes target ghosts from their actual
+owners.
+
+`UnstructuredFiniteVolumePlan.from_owner_local_geometry(view, ...)` prepares only
+the compact owned-plus-required-ghost cells already present in an
+`OwnerLocalCellGeometry`; it does not gather a root mesh. Physical-boundary faces
+and artificial owner-local halo faces have separate boundary patches. During
+SSPRK execution the runtime refreshes ghost state from each cell's owner, while
+`FiniteVolumeConservativeContentState.owned_cell_mask` keeps ghost copies out of
+integrals, source totals, and CFL decisions. A rank with no owned cells uses a
+genuine zero-cell plan and state, with no placeholder physical cell, and still
+participates in the same stage collectives.
+
+```python
+plan = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
+    source_view,
+    target_view,
+    execution_group,
+)
+target_averages = plan.apply_averages(
+    source_averages, source_view, target_view, execution_group
+)
+target_contents = plan.apply_content(
+    source_contents, source_view, target_view, execution_group
+)
+```
+
+`apply_averages` uses physical overlap divided by target-cell measure and returns
+cell averages. `apply_content` uses physical overlap divided by source-cell measure
+and returns extensive cell contents. `transpose` is the raw algebraic transpose of
+the average map; `weighted_adjoint` is the distinct adjoint under source/target
+cell-volume pairings.
+
+The plan retains cell measures, overlap moments, coverage defects and tolerances,
+owner routes, accepted global source/part composition IDs, and rank-local carrier
+IDs. An optional `CellGeometryTransition` binds its endpoints to the canonical
+rank-local meshes and coordinate maps; `advance_id` is common to the owner group,
+while transition identities remain rank-local. Straight-sided triangles,
+quadrilaterals, polygons, tetrahedra, and authored polyhedra use the native
+common-refinement path. Nonperiodic curved 3D tetrahedra require complete exact
+transition reference/refinement/coarsening maps to a shared root; overlap measures
+and moments then use the certified curved root Jacobian, retaining integration-error
+and reference-coverage evidence. Curved maps are never replaced by corner geometry.
+
+Incomplete or double coverage remains diagnostic evidence and is not transportable.
+`PreparedOwnerLocalConservativeRemap.from_stored_fields` rebuilds the current
+accepted views, directory routes, and physical overlap evidence, then rejects any
+replay whose recomputed remap identity differs from the stored artifact.
+
+
 ## Embedded boundaries and VOF
 
 `EmbeddedBoundaryPlan` performs exact linear-edge clipping of a level set on
@@ -298,6 +354,28 @@ fringe, donor-eligibility, global-ID, coverage, union-volume, and epoch evidence
 Conservative runtime correction requires a separate certified receptor-face artifact:
 face quadrature points, unit normals, positive face measures, and receptor ownership.
 Volume-overlap CSR entries are never treated as synthetic faces.
+
+This is a physical cell-overlap remap: each CSR measure is a donor/receptor
+intersection measure, and the map requires complete coverage evidence before its
+conservative content balance is used. `remap_to_receptors` returns overlap-weighted
+cell averages; this API has no interpolation or bounded-clipping mode. Native assembly
+overset connectivity separately classifies holes/fringes and prepares point-field
+queries through `PreparedFieldQuery`. Those queries preserve the selected FE/FV
+reconstruction, its action and exact transpose, but make no conservation claim. Use
+the common-refinement remap route when conservative transfer is required.
+
+At an accepted finite-volume step, `PreparedFiniteVolumeRuntime.commit_moving_overset_update`
+can rebind a serial native overset mesh. The supplied `MeshMotionAdvance` values are
+checked against `OversetConnectivity.moved_from_advances`; the successor FV map must
+bind that exact connectivity epoch. An Eulerian step permits only a fixed-time rezone
+with unchanged physical boundary coordinates, and transfers the accepted post-step
+content through native physical overlap. A continuously moving boundary instead requires
+accepted ALE geometry whose endpoint exactly matches the native coordinate transition,
+plus successor dynamics with an ALE plan that starts at that endpoint. The ALE transfer
+is formed from the realized endpoint geometry, so it does not replace or reset the
+accepted SSPRK/GCL update. In either mode, the topology event and
+`prepare_overset_motion_rebind` publish together; a failed candidate leaves the accepted
+predecessor state and its runtime executable.
 
 `PeriodicSlidingInterfacePlan` rebuilds a periodic one-dimensional overlap at accepted
 step boundaries and transfers interface flux with equal-and-opposite integrated budget.

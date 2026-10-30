@@ -35,9 +35,7 @@ from phydrax.sparse import EdgeRelation
 
 def main() -> None:
     relation = EdgeRelation(
-        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
-        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
         source_size=1,
         target_size=1,

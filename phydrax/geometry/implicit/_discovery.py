@@ -180,7 +180,7 @@ def _validate_discovery_inputs(
         raise ValueError("Implicit realization requires parameter-differentiable fields.")
 
 
-def _lattice_crossings(inside: np.ndarray, policy: ImplicitSurfacePolicy) -> _Crossings:
+def _lattice_crossings(inside: np.ndarray, /) -> _Crossings:
     """Sign-change lattice edges in canonical (axis, i, j, k) order."""
 
     axes: list[np.ndarray] = []
@@ -198,8 +198,6 @@ def _lattice_crossings(inside: np.ndarray, policy: ImplicitSurfacePolicy) -> _Cr
         edge_index.append(index)
     if offset == 0:
         raise ValueError("Implicit grid contains no surface crossings.")
-    if offset > policy.maximum_crossings:
-        raise ValueError("Implicit surface exceeds maximum_crossings.")
     return _Crossings(
         np.concatenate(axes),
         np.concatenate(lowers),
@@ -294,7 +292,6 @@ def _isolate_roots(
 def _dual_vertices(
     inside: np.ndarray,
     crossings: _Crossings,
-    policy: ImplicitSurfacePolicy,
 ) -> _DualVertices:
     """One dual vertex per inside-corner component of every mixed cell.
 
@@ -316,8 +313,6 @@ def _dual_vertices(
     vertex_count = int(np.sum(counts))
     if vertex_count == 0:
         raise ValueError("Implicit surface discovery produced no dual vertices.")
-    if vertex_count > policy.maximum_vertices:
-        raise ValueError("Implicit surface exceeds maximum_vertices.")
     first_vertex = np.concatenate(((0,), np.cumsum(counts)[:-1])).astype(np.int64)
     mixed_index = np.full(configuration.shape, -1, dtype=np.int64)
     mixed_index[mixed] = np.arange(mixed_cells.shape[0], dtype=np.int64)
@@ -452,8 +447,6 @@ def _dual_faces(
     first = np.where(short_02, quads[:, (0, 1, 2)], quads[:, (0, 1, 3)])
     second = np.where(short_02, quads[:, (0, 2, 3)], quads[:, (1, 2, 3)])
     faces = np.stack((first, second), axis=1).reshape((-1, 3))
-    if faces.shape[0] > policy.maximum_faces:
-        raise ValueError("Implicit surface face count is empty or exceeds policy.")
     triangles = base_vertices[faces]
     normals = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
@@ -510,8 +503,6 @@ def _intersection_candidates(
         faces[first][:, :, None] == faces[second][:, None, :], axis=(1, 2)
     )
     pairs = np.stack((first[~shares_vertex], second[~shares_vertex]), axis=1)
-    if pairs.shape[0] > policy.maximum_intersection_pairs:
-        raise ValueError("Implicit surface exceeds maximum_intersection_pairs.")
     return pairs.astype(np.int32)
 
 
@@ -533,8 +524,6 @@ def discover_implicit_surface(
     if any(axis.size < 2 or np.any(np.diff(axis) <= 0.0) for axis in axes):
         raise ValueError("Implicit grid axes must contain increasing point coordinates.")
     shape = tuple(axis.size for axis in axes)
-    if np.prod(shape, dtype=np.int64) > policy.maximum_lattice_points:
-        raise ValueError("Implicit lattice exceeds maximum_lattice_points.")
     lattice_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
     values = np.asarray(
         geometry.boundary_field(jnp.asarray(lattice_points.reshape((-1, 3))))
@@ -546,7 +535,7 @@ def discover_implicit_surface(
             "Implicit lattice contains an ambiguous zero; shift or refine the grid."
         )
     inside = values < 0.0
-    crossings = _lattice_crossings(inside, policy)
+    crossings = _lattice_crossings(inside)
 
     lower_key = tuple(crossings.lower.T)
     upper_key = tuple((crossings.lower + np.eye(3, dtype=np.int64)[crossings.axis]).T)
@@ -568,7 +557,7 @@ def discover_implicit_surface(
         upper_points - lower_points, axis=1
     )
 
-    dual = _dual_vertices(inside, crossings, policy)
+    dual = _dual_vertices(inside, crossings)
     axis_coordinates = (axes[0], axes[1], axes[2])
     cell_lower = np.stack(
         [axis_coordinates[axis][dual.cell[:, axis]] for axis in range(3)], axis=1

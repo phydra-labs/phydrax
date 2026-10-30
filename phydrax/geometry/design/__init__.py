@@ -41,6 +41,7 @@ _CONTINUATION_EXPORTS = frozenset(
 _SEARCH_EXPORTS = frozenset(
     {
         "DesignSearchResult",
+        "SketchSearchResult",
     }
 )
 _REDUCED_EXPORTS = frozenset(
@@ -77,8 +78,28 @@ _SKETCH_EXPORTS = frozenset(
         "TangentCircles",
         "TangentLineCircle",
         "Vertical",
+        "SketchDimensionBinding",
+        "SketchDimensionSensitivity",
+        "SketchModelResult",
+        "SketchProfileResult",
     }
 )
+
+_NAMING_EXPORTS = frozenset(
+    {
+        "RecipeEntityNames",
+        "RecipeEntityKind",
+        "RecipeEntityName",
+        "RecipeNamingError",
+        "name_partition_entities",
+        "transport_recipe_names",
+    }
+)
+
+_SKETCH_PRIORITY_EXPORTS = frozenset(
+    {"SketchPrioritySolution", "solve_priority_sketch"}
+)
+_ROOT_EVIDENCE_EXPORTS = frozenset({"RootDOFEvidence"})
 
 
 def __getattr__(name: str) -> Any:
@@ -97,6 +118,12 @@ def __getattr__(name: str) -> Any:
             from . import _reduced as module
         elif name in _SKETCH_EXPORTS:
             from . import _sketch as module
+        elif name in _SKETCH_PRIORITY_EXPORTS:
+            from . import _sketch_priority as module
+        elif name in _NAMING_EXPORTS:
+            from . import _naming as module
+        elif name in _ROOT_EVIDENCE_EXPORTS:
+            from . import _sketch_certificate as module
         else:
             raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
         value = vars(module)[name]
@@ -121,6 +148,11 @@ __all__ = [
     "DesignParameterization",
     "DesignQualificationEvidence",
     "DesignSearchResult",
+    "RecipeEntityNames",
+    "RecipeEntityKind",
+    "RecipeEntityName",
+    "RecipeNamingError",
+    "RootDOFEvidence",
     "DesignState",
     "EqualLength",
     "ExteriorClearance",
@@ -142,7 +174,16 @@ __all__ = [
     "Radius",
     "Sketch",
     "SketchConstraint",
+    "SketchDimensionBinding",
+    "SketchDimensionSensitivity",
+    "SketchModelResult",
+    "SketchProfileResult",
+    "SketchSearchResult",
+    "SketchPrioritySolution",
     "SketchSolution",
+    "solve_priority_sketch",
+    "name_partition_entities",
+    "transport_recipe_names",
     "ReducedDesignProblem",
     "TangentCircles",
     "TangentLineCircle",

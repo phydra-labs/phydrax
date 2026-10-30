@@ -878,8 +878,6 @@ def _lattice_topology(
     count = sum(int(np.count_nonzero(axis_ids >= 0)) for axis_ids in ids)
     if count == 0:
         raise ValueError("Neural implicit lattice contains no zero crossing.")
-    if count > policy.maximum_crossings:
-        raise ValueError("Neural implicit lattice exceeds maximum_crossings.")
     return _sampled_topology(inside, ids), _zero_crossings(network, nodes, values, ids)
 
 
@@ -908,8 +906,6 @@ def _certify(
     regularity = _network_contract(network, dimension)
     lipschitz, lipschitz_evidence = _lipschitz_evidence(network, lipschitz_upper_bound)
     nodes = _lattice_nodes(np.asarray(bounds), discovery_resolution)
-    if nodes[..., 0].size > policy.maximum_lattice_points:
-        raise ValueError("Neural implicit lattice exceeds maximum_lattice_points.")
     clearance_points = jnp.asarray(_bounds_nodes(nodes))
     # No covering argument bounds the field between samples, so neither the
     # sign nor the topology is certified: both are sampled evidence.

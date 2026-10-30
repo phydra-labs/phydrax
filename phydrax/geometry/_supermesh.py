@@ -23,8 +23,8 @@ interchange in three certified phases:
    simplex partitions) are summed per cell pair.
 
 Nothing is repaired: uncertified cells, unresolved predicates, native item
-failures, coverage gaps, double coverage, and resource refusals are reported
-through :class:`CommonRefinementStatus` with evidence.
+failures, coverage gaps, and double coverage are reported through
+:class:`CommonRefinementStatus` with evidence.
 """
 
 from __future__ import annotations
@@ -69,7 +69,6 @@ class CommonRefinementStatus(IntEnum):
     INTERSECTION_FAILURE = 3
     DOUBLE_COVERAGE = 4
     COVERAGE_GAP = 5
-    RESOURCE_LIMIT = 6
 
 
 class CommonRefinementCoverage(StrEnum):
@@ -84,38 +83,17 @@ class CommonRefinementCoverage(StrEnum):
     PARTIAL = "partial"
 
 
-def _limit(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 1:
-        raise ValueError(f"{name} must be positive.")
-    return int(value)
-
-
 class CommonRefinementPolicy(StrictModule):
-    """Certification mode, coverage requirement, and resource limits.
+    """Predicate and physical-coverage requirements of a common refinement.
 
-    ``coverage_tolerance`` is relative to the certified cell measure: cell ``i``
-    with measure ``m_i``, covered measure ``c_i``, and box diagonal ``h_i`` in
-    dimension ``d`` has tolerance ``t_i = coverage_tolerance * m_i + 256 eps
-    h_i**d`` (the roundoff floor keeps sliver cells, whose rounding scales with
-    ``h_i**d`` rather than with ``m_i``, from failing spuriously).  It is covered
-    when ``|c_i - m_i| <= t_i``, has a gap when ``m_i - c_i > t_i``, and is
-    double covered when ``c_i - m_i > t_i``.
-
-    ``maximum_candidate_pairs`` bounds broad-phase cell pairs,
-    ``maximum_accepted_pairs`` bounds positive-measure entries, and
-    ``maximum_memory_bytes`` bounds the retained artifact plus the narrow-phase
-    working set.  ``second_moments`` fills the overlap second moments and
-    ``overlap_simplices`` retains the exact simplex partition of every overlap.
+    ``coverage_tolerance`` is relative to the certified cell measure, with a
+    roundoff floor proportional to the cell-box diameter raised to the dimension.
+    Batch size is private scheduling and cannot change accepted problem sizes.
     """
 
     predicate_mode: PredicateMode = eqx.field(static=True)
     coverage: CommonRefinementCoverage = eqx.field(static=True)
     coverage_tolerance: float = eqx.field(static=True)
-    maximum_candidate_pairs: int = eqx.field(static=True)
-    maximum_accepted_pairs: int = eqx.field(static=True)
-    maximum_memory_bytes: int = eqx.field(static=True)
     second_moments: bool = eqx.field(static=True)
     overlap_simplices: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -126,36 +104,23 @@ class CommonRefinementPolicy(StrictModule):
         predicate_mode: PredicateMode = PredicateMode.EXACT,
         coverage: CommonRefinementCoverage = CommonRefinementCoverage.COMPLETE,
         coverage_tolerance: float = 1.0e-10,
-        maximum_candidate_pairs: int = 50_000_000,
-        maximum_accepted_pairs: int = 50_000_000,
-        maximum_memory_bytes: int = 4 * 1024**3,
         second_moments: bool = False,
         overlap_simplices: bool = False,
     ) -> None:
         if not isinstance(predicate_mode, PredicateMode):
             raise TypeError("predicate_mode must be a PredicateMode.")
         if predicate_mode is PredicateMode.FILTERED_DEVICE:
-            raise ValueError(
-                "Common refinement certifies on the host: use FILTERED or EXACT."
-            )
+            raise ValueError("Common refinement certifies on the host: use FILTERED or EXACT.")
         if not isinstance(coverage, CommonRefinementCoverage):
             raise TypeError("coverage must be a CommonRefinementCoverage.")
-        if not isinstance(second_moments, bool) or not isinstance(
-            overlap_simplices, bool
-        ):
+        if not isinstance(second_moments, bool) or not isinstance(overlap_simplices, bool):
             raise TypeError("second_moments and overlap_simplices must be bools.")
         tolerance = float(coverage_tolerance)
         if not np.isfinite(tolerance) or not 0.0 <= tolerance < 1.0:
             raise ValueError("coverage_tolerance must be finite and in [0, 1).")
-        candidates = _limit(maximum_candidate_pairs, "maximum_candidate_pairs")
-        accepted = _limit(maximum_accepted_pairs, "maximum_accepted_pairs")
-        memory = _limit(maximum_memory_bytes, "maximum_memory_bytes")
         self.predicate_mode = predicate_mode
         self.coverage = coverage
         self.coverage_tolerance = tolerance
-        self.maximum_candidate_pairs = candidates
-        self.maximum_accepted_pairs = accepted
-        self.maximum_memory_bytes = memory
         self.second_moments = second_moments
         self.overlap_simplices = overlap_simplices
         self.policy_id = canonical_fingerprint(
@@ -164,9 +129,6 @@ class CommonRefinementPolicy(StrictModule):
                 "predicate_mode": predicate_mode.value,
                 "coverage": coverage.value,
                 "coverage_tolerance": tolerance,
-                "maximum_candidate_pairs": candidates,
-                "maximum_accepted_pairs": accepted,
-                "maximum_memory_bytes": memory,
                 "second_moments": second_moments,
                 "overlap_simplices": overlap_simplices,
             }
@@ -174,12 +136,7 @@ class CommonRefinementPolicy(StrictModule):
 
 
 class CommonRefinementEvidence(StrictModule, NonTrainableState):
-    """Coverage, certification, and resource evidence of one refinement.
-
-    Coverage defects are ``covered - measure`` per cell (negative for gaps,
-    positive for double coverage) and the tolerances are the per-cell ``t_i`` of
-    :class:`CommonRefinementPolicy`.  ``piece_pair_count`` counts native clips.
-    """
+    """Coverage defects, required tolerances, and unresolved geometry findings."""
 
     status: CommonRefinementStatus = eqx.field(static=True)
     reason: str = eqx.field(static=True)
@@ -193,14 +150,9 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
     target_double_count: int = eqx.field(static=True)
     maximum_relative_source_defect: float = eqx.field(static=True)
     maximum_relative_target_defect: float = eqx.field(static=True)
-    candidate_pair_count: int = eqx.field(static=True)
-    accepted_pair_count: int = eqx.field(static=True)
-    piece_pair_count: int = eqx.field(static=True)
     uncertain_predicate_count: int = eqx.field(static=True)
     invalid_cell_count: int = eqx.field(static=True)
     intersection_failure_count: int = eqx.field(static=True)
-    retained_bytes: int = eqx.field(static=True)
-    working_bytes: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -215,22 +167,20 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
         source_tolerances: np.ndarray,
         target_tolerances: np.ndarray,
         counts: _Counts,
-        retained_bytes: int,
-        working_bytes: int,
     ) -> None:
         if not isinstance(status, CommonRefinementStatus):
             raise TypeError("status must be a CommonRefinementStatus.")
         source_defects = np.asarray(source_coverage_defects, dtype=np.float64)
         target_defects = np.asarray(target_coverage_defects, dtype=np.float64)
+        source_tolerance = np.asarray(source_tolerances, dtype=np.float64)
+        target_tolerance = np.asarray(target_tolerances, dtype=np.float64)
         if (
             source_defects.shape != source_measures.shape
             or target_defects.shape != target_measures.shape
-            or source_tolerances.shape != source_measures.shape
-            or target_tolerances.shape != target_measures.shape
+            or source_tolerance.shape != source_measures.shape
+            or target_tolerance.shape != target_measures.shape
         ):
-            raise ValueError("Coverage defects must align with the cell measures.")
-        source_tolerance = np.asarray(source_tolerances, dtype=np.float64)
-        target_tolerance = np.asarray(target_tolerances, dtype=np.float64)
+            raise ValueError("Coverage defects must align with cell measures.")
         self.status = status
         self.reason = str(reason)
         self.source_coverage_defects = jnp.asarray(source_defects)
@@ -241,20 +191,11 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
         self.target_gap_count = int(np.sum(-target_defects > target_tolerance))
         self.source_double_count = int(np.sum(source_defects > source_tolerance))
         self.target_double_count = int(np.sum(target_defects > target_tolerance))
-        self.maximum_relative_source_defect = _relative_maximum(
-            source_defects, source_measures
-        )
-        self.maximum_relative_target_defect = _relative_maximum(
-            target_defects, target_measures
-        )
-        self.candidate_pair_count = counts.candidates
-        self.accepted_pair_count = counts.accepted
-        self.piece_pair_count = counts.piece_pairs
+        self.maximum_relative_source_defect = _relative_maximum(source_defects, source_measures)
+        self.maximum_relative_target_defect = _relative_maximum(target_defects, target_measures)
         self.uncertain_predicate_count = counts.uncertain
         self.invalid_cell_count = counts.invalid
         self.intersection_failure_count = counts.failures
-        self.retained_bytes = int(retained_bytes)
-        self.working_bytes = int(working_bytes)
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "common-refinement-evidence",
@@ -262,9 +203,9 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
                 "reason": self.reason,
                 "source_defects": array_tree_fingerprint(source_defects),
                 "target_defects": array_tree_fingerprint(target_defects),
-                "counts": list(counts),
-                "retained_bytes": self.retained_bytes,
-                "working_bytes": self.working_bytes,
+                "source_tolerances": array_tree_fingerprint(source_tolerance),
+                "target_tolerances": array_tree_fingerprint(target_tolerance),
+                "unresolved": (self.uncertain_predicate_count, self.invalid_cell_count, self.intersection_failure_count),
             }
         )
 
@@ -854,26 +795,22 @@ def _outside_exact_domain(mesh: CellMesh, /) -> bool:
 
 
 def _candidate_pairs(
-    source: _Decomposition, target: _Decomposition, limit: int, /
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """All positive-extent box overlaps sorted by (target, source); None if refused."""
+    source: _Decomposition, target: _Decomposition, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exhaustively enumerate positive-extent box overlaps in stable cell-ID order."""
 
     target_bvh = prepare_bvh(target.bbox_min, target.bbox_max, dtype=jnp.float64)
     source_bvh = prepare_bvh(source.bbox_min, source.bbox_max, dtype=jnp.float64)
-    targets, sources = [], []
-    total = 0
+    target_parts, source_parts = [], []
     for target_items, source_items in bvh_overlap_pair_blocks(target_bvh, source_bvh):
-        total += target_items.size
-        if total > limit:
-            return None
-        targets.append(target_items)
-        sources.append(source_items)
-    if not targets:
+        target_parts.append(target_items)
+        source_parts.append(source_items)
+    if not target_parts:
         empty = np.empty((0,), dtype=np.int64)
         return empty, empty.copy()
-    target_cells = np.concatenate(targets)
-    source_cells = np.concatenate(sources)
-    order = np.lexsort((source_cells, target_cells))
+    target_cells = np.concatenate(target_parts)
+    source_cells = np.concatenate(source_parts)
+    order = np.lexsort((source.global_ids[source_cells], target.global_ids[target_cells]))
     return target_cells[order], source_cells[order]
 
 
@@ -1060,22 +997,8 @@ def _piece_pair_bytes(
 
 
 class _NarrowResult(NamedTuple):
-    entries: _Entries | None
+    entries: _Entries
     counts: _Counts
-    retained_bytes: int
-    working_bytes: int
-
-
-def _entries_bytes(parts: list[_BatchResult], dimension: int, /) -> int:
-    total = 0
-    for part in parts:
-        total += part.volumes.size * (4 + 4 + 8 + 8 * dimension)
-        if part.second is not None:
-            total += part.second.nbytes
-        if part.simplices is not None:
-            # ty: ignore[unresolved-attribute]
-            total += part.simplices.nbytes + 4 * part.simplex_counts.size
-    return total
 
 
 def _narrow_phase(
@@ -1084,7 +1007,6 @@ def _narrow_phase(
     target_cells: np.ndarray,
     source_cells: np.ndarray,
     policy: CommonRefinementPolicy,
-    base_bytes: int,
     /,
 ) -> _NarrowResult:
     dimension = source.first_moments.shape[1]
@@ -1094,26 +1016,17 @@ def _narrow_phase(
     parts: list[_BatchResult] = []
     kept_pairs: list[np.ndarray] = []
     accepted = piece_pairs = uncertain = failures = 0
-    working = base_bytes
     for start, stop in zip(bounds[:-1], bounds[1:], strict=True):
         batch = _clip_batch(
             source, target, target_cells[start:stop], source_cells[start:stop], simplices
         )
         piece_pairs += batch.pair.size
-        working = max(working, base_bytes + batch.pair.size * pair_bytes)
         result = _reduce_batch(batch, stop - start, policy, dimension)
         parts.append(result)
         kept_pairs.append(np.flatnonzero(result.keep) + start)
         accepted += result.volumes.size
         uncertain += result.uncertain
         failures += result.failures
-        retained = _entries_bytes(parts, dimension)
-        counts = _Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
-        if (
-            accepted > policy.maximum_accepted_pairs
-            or retained + working > policy.maximum_memory_bytes
-        ):
-            return _NarrowResult(None, counts, retained, working)
     counts = _Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
     selected = np.concatenate(kept_pairs) if kept_pairs else np.empty((0,), np.int64)
     entries = _Entries(
@@ -1122,31 +1035,50 @@ def _narrow_phase(
         volumes=_joined([part.volumes for part in parts], (0,)),
         first_moments=_joined([part.moments for part in parts], (0, dimension)),
         second_moments=(
-            # ty: ignore[invalid-argument-type]
-            _joined([part.second for part in parts], (0, dimension, dimension))
+            _joined_required(
+                [part.second for part in parts],
+                (0, dimension, dimension),
+                "second moments",
+            )
             if policy.second_moments
             else None
         ),
         simplex_offsets=(
-            # ty: ignore[invalid-argument-type]
-            _offsets(_joined([part.simplex_counts for part in parts], (0,)))
+            _offsets(
+                _joined_required(
+                    [part.simplex_counts for part in parts], (0,), "simplex counts"
+                )
+            )
             if policy.overlap_simplices
             else None
         ),
         simplices=(
-            # ty: ignore[invalid-argument-type]
-            _joined([part.simplices for part in parts], (0, dimension + 1, dimension))
+            _joined_required(
+                [part.simplices for part in parts],
+                (0, dimension + 1, dimension),
+                "overlap simplices",
+            )
             if policy.overlap_simplices
             else None
         ),
     )
-    return _NarrowResult(entries, counts, _entries_bytes(parts, dimension), working)
-
+    return _NarrowResult(entries, counts)
 
 def _joined(parts: list[np.ndarray], empty_shape: tuple[int, ...], /) -> np.ndarray:
     if not parts:
         return np.zeros(empty_shape, dtype=np.float64)
     return np.concatenate(parts)
+
+
+def _joined_required(
+    parts: list[np.ndarray | None],
+    empty_shape: tuple[int, ...],
+    role: str,
+    /,
+) -> np.ndarray:
+    if any(part is None for part in parts):
+        raise RuntimeError(f"Narrow phase omitted requested {role}.")
+    return _joined([part for part in parts if part is not None], empty_shape)
 
 
 def _offsets(counts: np.ndarray, /) -> np.ndarray:
@@ -1275,12 +1207,7 @@ def prepare_common_refinement(
     *,
     policy: CommonRefinementPolicy = CommonRefinementPolicy(),
 ) -> PreparedCommonRefinement:
-    """Certify the common refinement of two cell meshes of one dimension.
-
-    Requires meshcore (raises :class:`MeshcoreUnavailableError` otherwise).
-    Geometric failures never raise: they are reported by the returned status,
-    with empty entries when the narrow phase could not run.
-    """
+    """Exhaustively prepare physical cell-overlap CSR and coverage evidence."""
 
     _validate_meshes(source, target, policy)
     _meshcore.load_meshcore()
@@ -1291,68 +1218,20 @@ def prepare_common_refinement(
         target.topology_id,
     )
     outside = _outside_exact_domain(source) or _outside_exact_domain(target)
-    # Outside the exact domain native predicates refuse the call; the filter
-    # still yields the evidence measures while the status fails closed.
     mode = PredicateMode.FILTERED if outside else policy.predicate_mode
     first = _decompose(source, mode)
     second = _decompose(target, mode)
-    base_bytes = sum(
-        array.nbytes
-        for part in (first, second)
-        for array in (part.pieces, part.piece_offsets, part.bbox_min, part.bbox_max)
-    )
     counts = _Counts(
         0, 0, 0, first.uncertain + second.uncertain, first.invalid + second.invalid, 0
     )
     failure = _decomposition_failure(outside, counts)
     if failure is not None:
         return _prepared(
-            first, second, None, counts, *failure, identities, policy, 0, base_bytes
+            first, second, None, counts, *failure, identities, policy
         )
-    candidates = _candidate_pairs(first, second, policy.maximum_candidate_pairs)
-    if candidates is None:
-        counts = counts._replace(candidates=policy.maximum_candidate_pairs + 1)
-        return _prepared(
-            first,
-            second,
-            None,
-            counts,
-            CommonRefinementStatus.RESOURCE_LIMIT,
-            "broad-phase candidate pairs exceed maximum_candidate_pairs",
-            identities,
-            policy,
-            0,
-            base_bytes,
-        )
-    target_cells, source_cells = candidates
-    base_bytes += target_cells.nbytes + source_cells.nbytes
-    if base_bytes > policy.maximum_memory_bytes:
-        return _prepared(
-            first,
-            second,
-            None,
-            counts._replace(candidates=target_cells.size),
-            CommonRefinementStatus.RESOURCE_LIMIT,
-            "decomposition and candidates exceed maximum_memory_bytes",
-            identities,
-            policy,
-            0,
-            base_bytes,
-        )
-    narrow = _narrow_phase(first, second, target_cells, source_cells, policy, base_bytes)
-    if narrow.entries is None:
-        return _prepared(
-            first,
-            second,
-            None,
-            narrow.counts,
-            CommonRefinementStatus.RESOURCE_LIMIT,
-            "accepted pairs or memory exceed the policy limits",
-            identities,
-            policy,
-            narrow.retained_bytes,
-            narrow.working_bytes,
-        )
+    target_cells, source_cells = _candidate_pairs(first, second)
+    counts = counts._replace(candidates=target_cells.size)
+    narrow = _narrow_phase(first, second, target_cells, source_cells, policy)
     return _prepared(
         first,
         second,
@@ -1362,8 +1241,6 @@ def prepare_common_refinement(
         "",
         identities,
         policy,
-        narrow.retained_bytes,
-        narrow.working_bytes,
     )
 
 
@@ -1376,8 +1253,6 @@ def _prepared(
     reason: str,
     identities: tuple[str, str, str, str],
     policy: CommonRefinementPolicy,
-    retained_bytes: int,
-    working_bytes: int,
     /,
 ) -> PreparedCommonRefinement:
     dimension = source.first_moments.shape[1]
@@ -1425,8 +1300,6 @@ def _prepared(
         source_tolerances=source_tolerances,
         target_tolerances=target_tolerances,
         counts=counts,
-        retained_bytes=retained_bytes,
-        working_bytes=working_bytes,
     )
     return PreparedCommonRefinement(
         source=source,
@@ -1438,6 +1311,295 @@ def _prepared(
     )
 
 
+def prepare_compact_cell_common_refinement(
+    source_cell_vertices: Any,
+    source_cell_ids: Any,
+    target_cell_vertices: Any,
+    target_cell_ids: Any,
+    /,
+    *,
+    source_cell_kind: str,
+    target_cell_kind: str,
+    source_cell_faces: Any | None = None,
+    target_cell_faces: Any | None = None,
+    policy: CommonRefinementPolicy = CommonRefinementPolicy(),
+) -> PreparedCommonRefinement:
+    """Clip owner-routed straight-sided compact cells with the native supermesh.
+
+    Every input cell has a separate vertex bank. Coordinates are never pooled;
+    stable cell IDs and, for polyhedra, authored face loops preserve identity.
+    Source cells must already have been routed by a complete AABB query.
+    """
+    from ..discretization._cell_complex import polyhedral_connectivity
+    from ..discretization._cell_mesh import CellBlock, CellMesh
+
+    if not isinstance(policy, CommonRefinementPolicy):
+        raise TypeError("policy must be a CommonRefinementPolicy.")
+    dimensions = {
+        "triangle": 2,
+        "quadrilateral": 2,
+        "polygon": 2,
+        "tetrahedron": 3,
+        "hexahedron": 3,
+        "prism": 3,
+        "pyramid": 3,
+        "polyhedron": 3,
+    }
+    source_kind, target_kind = str(source_cell_kind), str(target_cell_kind)
+    if (
+        source_kind not in dimensions
+        or target_kind not in dimensions
+        or dimensions[source_kind] != dimensions[target_kind]
+    ):
+        raise ValueError("Compact common refinement requires matching 2D/3D cell dimensions.")
+    dimension = dimensions[source_kind]
+
+    def normalize(
+        raw_vertices: Any,
+        raw_ids: Any,
+        kind: str,
+        raw_faces: Any | None,
+        name: str,
+        /,
+    ) -> tuple[tuple[np.ndarray, ...], np.ndarray, tuple[tuple[np.ndarray, ...], ...] | None]:
+        if isinstance(raw_vertices, np.ndarray) and raw_vertices.ndim == 3:
+            vertices = tuple(
+                np.asarray(row, dtype=np.float64) for row in raw_vertices
+            )
+        else:
+            vertices = tuple(np.asarray(row, dtype=np.float64) for row in raw_vertices)
+        identifiers = np.asarray(raw_ids)
+        if (
+            identifiers.ndim != 1
+            or identifiers.dtype.kind not in "iu"
+            or identifiers.shape != (len(vertices),)
+            or np.any(identifiers < 0)
+            or np.unique(identifiers).size != identifiers.size
+        ):
+            raise ValueError(f"{name} compact cells need unique nonnegative stable IDs.")
+        if identifiers.dtype.kind == "u" and identifiers.size and int(
+            np.max(identifiers)
+        ) > np.iinfo(np.int64).max:
+            raise ValueError(f"{name} stable cell IDs must fit signed int64.")
+        minimum = {
+            "triangle": 3,
+            "quadrilateral": 4,
+            "polygon": 5,
+            "tetrahedron": 4,
+            "hexahedron": 8,
+            "prism": 6,
+            "pyramid": 5,
+            "polyhedron": 4,
+        }[kind]
+        for cell in vertices:
+            if (
+                cell.ndim != 2
+                or cell.shape[1] != dimension
+                or cell.shape[0] < minimum
+                or not np.all(np.isfinite(cell))
+            ):
+                raise ValueError(f"{name} compact cell vertices are malformed.")
+        if kind != "polyhedron":
+            if raw_faces is not None:
+                raise ValueError("Only compact polyhedra may carry authored face loops.")
+            faces = None
+        else:
+            if raw_faces is None or len(raw_faces) != len(vertices):
+                raise ValueError("Compact polyhedra require one authored face set per cell.")
+            normalized_faces = []
+            for cell, cell_faces in zip(vertices, raw_faces, strict=True):
+                loops = tuple(np.asarray(face, dtype=np.int32) for face in cell_faces)
+                if not loops or any(
+                    loop.ndim != 1
+                    or loop.size < 3
+                    or np.any(loop < 0)
+                    or np.any(loop >= cell.shape[0])
+                    or np.unique(loop).size != loop.size
+                    for loop in loops
+                ):
+                    raise ValueError("Compact polyhedron face loops are malformed.")
+                normalized_faces.append(loops)
+            faces = tuple(normalized_faces)
+        return (
+            vertices,
+            identifiers.astype(np.int64, copy=False),
+            faces,
+        )
+
+    source_vertices, source_ids, source_faces = normalize(
+        source_cell_vertices,
+        source_cell_ids,
+        source_kind,
+        source_cell_faces,
+        "Source",
+    )
+    target_vertices, target_ids, target_faces = normalize(
+        target_cell_vertices,
+        target_cell_ids,
+        target_kind,
+        target_cell_faces,
+        "Target",
+    )
+
+    def compact_mesh(
+        vertices: tuple[np.ndarray, ...],
+        identifiers: np.ndarray,
+        kind: str,
+        faces: tuple[tuple[np.ndarray, ...], ...] | None,
+        side: str,
+        /,
+    ) -> tuple[CellMesh | None, str, str]:
+        identity = canonical_fingerprint(
+            {
+                "kind": "compact-owner-local-cell-mesh",
+                "side": side,
+                "cell_kind": kind,
+                "cell_ids": array_tree_fingerprint(identifiers),
+                "cell_vertices": tuple(array_tree_fingerprint(row) for row in vertices),
+                "cell_faces": None
+                if faces is None
+                else tuple(
+                    tuple(array_tree_fingerprint(loop) for loop in cell)
+                    for cell in faces
+                ),
+            }
+        )
+        if not identifiers.size:
+            return None, identity, identity
+        offsets = np.concatenate(
+            (
+                np.zeros((1,), dtype=np.int64),
+                np.cumsum([row.shape[0] for row in vertices], dtype=np.int64),
+            )
+        )
+        coordinates = np.concatenate(vertices, axis=0)
+        if kind == "polyhedron":
+            width = max(row.shape[0] for row in vertices)
+            connectivity = np.full((len(vertices), width), -1, dtype=np.int32)
+            valid = np.zeros(connectivity.shape, dtype=np.bool_)
+            definitions = []
+            for cell, (row, cell_faces) in enumerate(zip(vertices, faces, strict=True)):
+                count = row.shape[0]
+                base = int(offsets[cell])
+                connectivity[cell, :count] = np.arange(base, base + count, dtype=np.int32)
+                valid[cell, :count] = True
+                definitions.append(
+                    tuple(
+                        np.asarray(loop, dtype=np.int32) + base for loop in cell_faces
+                    )
+                )
+            block = CellBlock(
+                f"{side}-compact-polyhedra",
+                "polyhedron",
+                connectivity,
+                vertex_valid=valid,
+                global_ids=identifiers,
+            )
+            polyhedra = polyhedral_connectivity(
+                definitions,
+                coordinates.shape[0],
+                cell_global_ids=identifiers,
+            )
+            local_mesh = CellMesh(
+                coordinates,
+                (block,),
+                polyhedral_connectivity=polyhedra,
+            )
+            return local_mesh, local_mesh.mesh_id, local_mesh.topology_id
+        groups: dict[int, list[int]] = {}
+        for row, cell in enumerate(vertices):
+            groups.setdefault(cell.shape[0], []).append(row)
+        blocks = []
+        for arity, rows in sorted(groups.items()):
+            connectivity = np.stack(
+                [
+                    np.arange(offsets[row], offsets[row + 1], dtype=np.int32)
+                    for row in rows
+                ]
+            )
+            blocks.append(
+                CellBlock(
+                    f"{side}-compact-{arity}",
+                    kind,
+                    connectivity,
+                    global_ids=identifiers[np.asarray(rows, dtype=np.int64)],
+                )
+            )
+        local_mesh = CellMesh(coordinates, tuple(blocks))
+        return local_mesh, local_mesh.mesh_id, local_mesh.topology_id
+
+    source_mesh, source_mesh_id, source_topology_id = compact_mesh(
+        source_vertices, source_ids, source_kind, source_faces, "source"
+    )
+    target_mesh, target_mesh_id, target_topology_id = compact_mesh(
+        target_vertices, target_ids, target_kind, target_faces, "target"
+    )
+    identities = (
+        source_mesh_id,
+        target_mesh_id,
+        source_topology_id,
+        target_topology_id,
+    )
+    if source_mesh is not None and target_mesh is not None:
+        return prepare_common_refinement(source_mesh, target_mesh, policy=policy)
+
+    def empty_decomposition(kind: str, ids: np.ndarray, /) -> _Decomposition:
+        if dimension == 2:
+            pieces = np.empty((0, 3, 2), dtype=np.float64)
+            piece_counts: np.ndarray | None = np.empty((0,), dtype=np.int32)
+        else:
+            pieces = np.empty((0, 4, 3), dtype=np.float64)
+            piece_counts = None
+        return _Decomposition(
+            cell_count=0,
+            global_ids=ids,
+            pieces=pieces,
+            piece_counts=piece_counts,
+            piece_offsets=np.zeros((1,), dtype=np.int64),
+            measures=np.empty((0,), dtype=np.float64),
+            first_moments=np.empty((0, dimension), dtype=np.float64),
+            bbox_min=np.empty((0, dimension), dtype=np.float64),
+            bbox_max=np.empty((0, dimension), dtype=np.float64),
+            invalid=0,
+            uncertain=0,
+        )
+
+    outside = any(
+        _outside_exact_domain(local_mesh)
+        for local_mesh in (source_mesh, target_mesh)
+        if local_mesh is not None
+    )
+    mode = PredicateMode.FILTERED if outside else policy.predicate_mode
+    source_decomposition = (
+        empty_decomposition(source_kind, source_ids)
+        if source_mesh is None
+        else _decompose(source_mesh, mode)
+    )
+    target_decomposition = (
+        empty_decomposition(target_kind, target_ids)
+        if target_mesh is None
+        else _decompose(target_mesh, mode)
+    )
+    counts = _Counts(0, 0, 0, 0, 0, 0)
+    failure = _decomposition_failure(
+        outside,
+        counts._replace(
+            uncertain=source_decomposition.uncertain + target_decomposition.uncertain,
+            invalid=source_decomposition.invalid + target_decomposition.invalid,
+        ),
+    )
+    return _prepared(
+        source_decomposition,
+        target_decomposition,
+        _empty_entries(dimension, policy),
+        counts,
+        None if failure is None else failure[0],
+        "" if failure is None else failure[1],
+        identities,
+        policy,
+    )
+
+
 __all__ = [
     "CommonRefinementCoverage",
     "CommonRefinementEvidence",
@@ -1445,4 +1607,5 @@ __all__ = [
     "CommonRefinementStatus",
     "PreparedCommonRefinement",
     "prepare_common_refinement",
+    "prepare_compact_cell_common_refinement",
 ]

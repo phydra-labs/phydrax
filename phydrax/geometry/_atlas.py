@@ -6,9 +6,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+from fractions import Fraction
+from typing import Protocol
 
 import equinox as eqx
 import jax
+import jax.core
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +20,14 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import orthonormal_frame
+
+
+class _CurveTrimSegment(Protocol):
+    def evaluate(self, parameters: Array, /) -> Array: ...
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray: ...
+
+    def identity_payload(self, /) -> dict[str, object]: ...
 
 
 class AbstractBoundaryMap(StrictModule):
@@ -46,13 +57,251 @@ class AbstractBoundaryMap(StrictModule):
         raise NotImplementedError
 
 
+class TrimClassification(StrictModule):
+    """Three-way host classification; unresolved is never treated as outside."""
+
+    inside: Array
+    boundary: Array
+    resolved: Array
+
+    def __init__(self, inside: ArrayLike, boundary: ArrayLike, resolved: ArrayLike) -> None:
+        inside_ = jnp.asarray(inside, dtype=jnp.bool_)
+        boundary_ = jnp.asarray(boundary, dtype=jnp.bool_)
+        resolved_ = jnp.asarray(resolved, dtype=jnp.bool_)
+        if inside_.shape != boundary_.shape or inside_.shape != resolved_.shape:
+            raise ValueError("Trim classification arrays must have matching shapes.")
+        self.inside, self.boundary, self.resolved = inside_, boundary_, resolved_
+
+
+def _polygon_point_state(
+    point: tuple[Fraction, Fraction],
+    vertices: tuple[tuple[Fraction, Fraction], ...],
+    /,
+) -> tuple[bool, bool]:
+    inside = False
+    px, py = point
+    for start, end in zip(vertices, (*vertices[1:], vertices[0]), strict=True):
+        x0, y0 = start
+        x1, y1 = end
+        cross = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+        if (
+            cross == 0
+            and min(x0, x1) <= px <= max(x0, x1)
+            and min(y0, y1) <= py <= max(y0, y1)
+        ):
+            return False, True
+        if (y0 > py) != (y1 > py):
+            crossing = x0 + (py - y0) * (x1 - x0) / (y1 - y0)
+            if px < crossing:
+                inside = not inside
+    return inside, False
+
+
+def _curve_segment_box(
+    segment: _CurveTrimSegment, first: float, last: float, /
+) -> np.ndarray | None:
+    try:
+        box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
+        endpoints = np.asarray(segment.evaluate(jnp.asarray((first, last))), dtype=np.float64)
+    except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
+        return None
+    if (
+        box.shape != (2, 2)
+        or endpoints.shape != (2, 2)
+        or not np.all(np.isfinite(box))
+        or not np.all(np.isfinite(endpoints))
+        or np.any(box[0] > box[1])
+    ):
+        return None
+    return np.stack(
+        (
+            np.minimum(box[0], np.min(endpoints, axis=0)),
+            np.maximum(box[1], np.max(endpoints, axis=0)),
+        )
+    )
+
+
+def _boxes_disjoint(first: np.ndarray, second: np.ndarray, /) -> bool:
+    return bool(np.any(first[1] < second[0]) or np.any(second[1] < first[0]))
+
+
+def _curve_loop_chords(
+    loop: tuple[_CurveTrimSegment, ...], query_box: np.ndarray, /
+) -> tuple[tuple[Fraction, Fraction], ...] | None:
+    points: list[np.ndarray] = []
+    for segment in loop:
+        pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
+        accepted: list[tuple[np.ndarray, np.ndarray]] = []
+        while pending:
+            first, last, parent_box = pending.pop()
+            box = _curve_segment_box(segment, first, last)
+            if box is None:
+                return None
+            if not _boxes_disjoint(box, query_box) and parent_box is not None and np.array_equal(box, parent_box):
+                return None
+            if _boxes_disjoint(box, query_box):
+                endpoints = np.asarray(
+                    segment.evaluate(jnp.asarray((first, last))), dtype=np.float64
+                )
+                accepted.append((endpoints[0], endpoints[1]))
+                continue
+            middle = first + 0.5 * (last - first)
+            if middle <= first or middle >= last:
+                return None
+            left_box = _curve_segment_box(segment, first, middle)
+            right_box = _curve_segment_box(segment, middle, last)
+            if left_box is None or right_box is None:
+                return None
+            if (
+                not _boxes_disjoint(left_box, query_box) and np.array_equal(left_box, box)
+            ) or (
+                not _boxes_disjoint(right_box, query_box) and np.array_equal(right_box, box)
+            ):
+                return None
+            pending.append((middle, last, box))
+            pending.append((first, middle, box))
+        for start, end in accepted:
+            if points and not np.array_equal(points[-1], start):
+                return None
+            if not points:
+                points.append(start)
+            points.append(end)
+    if len(points) < 4 or not np.array_equal(points[0], points[-1]):
+        return None
+    return tuple(
+        (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
+        for point in points[:-1]
+    )
+
+
+def _curve_loops_point_state(
+    loops: tuple[tuple[_CurveTrimSegment, ...], ...], point: np.ndarray, /
+) -> tuple[bool, bool, bool]:
+    query_box = np.stack((point, point))
+    states: list[bool] = []
+    for loop in loops:
+        polygon = _curve_loop_chords(loop, query_box)
+        if polygon is None:
+            return False, False, False
+        inside, boundary = _polygon_point_state(
+            (
+                Fraction.from_float(float(point[0])),
+                Fraction.from_float(float(point[1])),
+            ),
+            polygon,
+        )
+        if boundary:
+            return False, False, False
+        states.append(inside)
+    return bool(states and states[0] and not any(states[1:])), False, True
+
+
+def _curve_loops_avoid_box(
+    loops: tuple[tuple[_CurveTrimSegment, ...], ...], box: np.ndarray, /
+) -> bool:
+    for loop in loops:
+        for segment in loop:
+            pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
+            while pending:
+                first, last, parent_box = pending.pop()
+                image = _curve_segment_box(segment, first, last)
+                if image is None:
+                    return False
+                if _boxes_disjoint(image, box):
+                    continue
+                if parent_box is not None and np.array_equal(image, parent_box):
+                    return False
+                middle = first + 0.5 * (last - first)
+                if middle <= first or middle >= last:
+                    return False
+                left = _curve_segment_box(segment, first, middle)
+                right = _curve_segment_box(segment, middle, last)
+                if left is None or right is None:
+                    return False
+                if (
+                    not _boxes_disjoint(left, box) and np.array_equal(left, image)
+                ) or (
+                    not _boxes_disjoint(right, box) and np.array_equal(right, image)
+                ):
+                    return False
+                pending.append((middle, last, image))
+                pending.append((first, middle, image))
+    return True
+
+
 class TrimDomain(StrictModule):
-    """Oriented polygonal trim domain in a two-dimensional chart."""
+    """One source trim domain: an oriented polygon or exact source curve loops."""
 
-    outer: Array
+    outer: Array | None
     holes: tuple[Array, ...]
+    curve_loops: tuple[tuple[_CurveTrimSegment, ...], ...]
+    numeric_only: bool = eqx.field(static=True)
 
-    def __init__(self, outer: npt.ArrayLike, holes: Sequence[npt.ArrayLike] = ()) -> None:
+    def __init__(
+        self,
+        outer: npt.ArrayLike | None = None,
+        holes: Sequence[npt.ArrayLike] = (),
+        *,
+        curve_loops: Sequence[Sequence[_CurveTrimSegment]] = (),
+        _numeric_only: bool = False,
+    ) -> None:
+        if not isinstance(_numeric_only, bool):
+            raise TypeError("_numeric_only must be bool.")
+        loops = tuple(tuple(loop) for loop in curve_loops)
+        if loops:
+            from .brep._differentiable import _RealizedTrimSegment
+            from .brep._intersection_curve import CurveTrimSegment
+
+            if outer is not None or holes:
+                raise ValueError("A TrimDomain must use either polygon loops or exact curve loops, not both.")
+            if any(
+                not loop
+                or any(
+                    not isinstance(segment, (CurveTrimSegment, _RealizedTrimSegment))
+                    for segment in loop
+                )
+                for loop in loops
+            ):
+                raise TypeError("TrimDomain.curve_loops must contain nonempty trim-segment loops.")
+            self.outer = None
+            self.holes = ()
+            self.curve_loops = loops
+            self.numeric_only = _numeric_only or any(
+                isinstance(segment, _RealizedTrimSegment)
+                for loop in loops
+                for segment in loop
+            )
+            return
+        if outer is None:
+            raise ValueError("A TrimDomain requires a polygon outer loop or exact curve loops.")
+        if _numeric_only:
+            outer_ = jnp.asarray(outer, dtype=jnp.float64)
+            holes_ = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in holes)
+            if outer_.ndim != 2 or outer_.shape[1] != 2 or outer_.shape[0] < 3:
+                raise ValueError("TrimDomain.outer must have shape (num_points >= 3, 2).")
+            if any(
+                hole.ndim != 2 or hole.shape[1] != 2 or hole.shape[0] < 3
+                for hole in holes_
+            ):
+                raise ValueError("Every trim hole must have shape (num_points >= 3, 2).")
+            outer_ = eqx.error_if(
+                outer_,
+                jnp.any(~jnp.isfinite(outer_)),
+                "TrimDomain polygon coordinates must be finite.",
+            )
+            holes_ = tuple(
+                eqx.error_if(
+                    hole,
+                    jnp.any(~jnp.isfinite(hole)),
+                    "TrimDomain polygon coordinates must be finite.",
+                )
+                for hole in holes_
+            )
+            self.outer = outer_
+            self.holes = holes_
+            self.curve_loops = ()
+            self.numeric_only = True
+            return
         outer_host = np.asarray(outer, dtype=np.float64)
         hole_hosts = tuple(np.asarray(hole, dtype=np.float64) for hole in holes)
         if outer_host.ndim != 2 or outer_host.shape[1] != 2 or outer_host.shape[0] < 3:
@@ -62,8 +311,43 @@ class TrimDomain(StrictModule):
             for hole in hole_hosts
         ):
             raise ValueError("Every trim hole must have shape (num_points >= 3, 2).")
+        if not np.all(np.isfinite(outer_host)) or any(not np.all(np.isfinite(hole)) for hole in hole_hosts):
+            raise ValueError("TrimDomain polygon coordinates must be finite.")
         self.outer = jnp.asarray(outer_host, dtype=jnp.float64)
         self.holes = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in hole_hosts)
+        self.curve_loops = ()
+        self.numeric_only = False
+
+    @classmethod
+    def from_curve_loops(
+        cls, curve_loops: Sequence[Sequence[_CurveTrimSegment]], /
+    ) -> TrimDomain:
+        return cls(curve_loops=curve_loops)
+
+    def identity_payload(self) -> dict[str, object]:
+        if self.numeric_only:
+            raise NotImplementedError(
+                "A numeric trim realization has no exact source identity."
+            )
+        if self.curve_loops:
+            from .brep._intersection_curve import CurveTrimSegment
+
+            if any(
+                not isinstance(segment, CurveTrimSegment)
+                for loop in self.curve_loops
+                for segment in loop
+            ):
+                raise NotImplementedError(
+                    "A numeric trim realization has no exact source identity."
+                )
+            return {
+                "kind": "source-curve-trim-domain",
+                "curve_loops": tuple(
+                    tuple(segment.identity_payload() for segment in loop)
+                    for loop in self.curve_loops
+                ),
+            }
+        return {"kind": "polygon-trim-domain", "outer": self.outer, "holes": self.holes}
 
     @staticmethod
     def _inside_loop(points: Array, loop: Array) -> Array:
@@ -80,11 +364,97 @@ class TrimDomain(StrictModule):
         return jnp.sum(crossing & (x < intersection), axis=-1) % 2 == 1
 
     def contains(self, reference: Array, /) -> Array:
+        if self.curve_loops or self.outer is None:
+            raise NotImplementedError(
+                "Curve-backed TrimDomain membership requires certified host classification; no chord mask is authoritative."
+            )
         reference_ = jnp.asarray(reference, dtype=jnp.float64)
         inside = self._inside_loop(reference_, self.outer)
         for hole in self.holes:
             inside &= ~self._inside_loop(reference_, hole)
         return inside
+
+    def classify(self, points: npt.ArrayLike, /) -> TrimClassification:
+        points_ = np.asarray(points, dtype=np.float64)
+        if points_.ndim < 1 or points_.shape[-1] != 2 or not np.all(np.isfinite(points_)):
+            raise ValueError("TrimDomain.classify points must be finite with trailing dimension two.")
+        leading = points_.shape[:-1]
+        flat = points_.reshape((-1, 2))
+        inside = np.zeros((flat.shape[0],), dtype=np.bool_)
+        boundary = np.zeros_like(inside)
+        resolved = np.zeros_like(inside)
+        if self.curve_loops:
+            for index, point in enumerate(flat):
+                inside[index], boundary[index], resolved[index] = _curve_loops_point_state(
+                    self.curve_loops, point
+                )
+        else:
+            assert self.outer is not None
+            polygon_loops = (self.outer, *self.holes)
+            rational_loops = tuple(
+                tuple(
+                    (Fraction.from_float(float(row[0])), Fraction.from_float(float(row[1])))
+                    for row in np.asarray(loop, dtype=np.float64)
+                )
+                for loop in polygon_loops
+            )
+            for index, point in enumerate(flat):
+                query = (
+                    Fraction.from_float(float(point[0])),
+                    Fraction.from_float(float(point[1])),
+                )
+                states = tuple(_polygon_point_state(query, loop) for loop in rational_loops)
+                boundary[index] = any(on_boundary for _, on_boundary in states)
+                if boundary[index]:
+                    resolved[index] = True
+                    continue
+                inside[index] = bool(states[0][0] and not any(state[0] for state in states[1:]))
+                resolved[index] = True
+        return TrimClassification(
+            inside.reshape(leading), boundary.reshape(leading), resolved.reshape(leading)
+        )
+
+    def classify_boxes(self, boxes: npt.ArrayLike, /) -> TrimClassification:
+        boxes_ = np.asarray(boxes, dtype=np.float64)
+        if (
+            boxes_.ndim < 3
+            or boxes_.shape[-2:] != (2, 2)
+            or not np.all(np.isfinite(boxes_))
+            or np.any(boxes_[..., 0, :] > boxes_[..., 1, :])
+        ):
+            raise ValueError("TrimDomain.classify_boxes requires finite ordered (..., 2, 2) boxes.")
+        leading = boxes_.shape[:-2]
+        flat = boxes_.reshape((-1, 2, 2))
+        inside = np.zeros((flat.shape[0],), dtype=np.bool_)
+        boundary = np.zeros_like(inside)
+        resolved = np.zeros_like(inside)
+        for index, box in enumerate(flat):
+            if self.curve_loops:
+                clear = _curve_loops_avoid_box(self.curve_loops, box)
+            else:
+                assert self.outer is not None
+                clear = True
+                for loop in (self.outer, *self.holes):
+                    vertices = np.asarray(loop, dtype=np.float64)
+                    for start, end in zip(vertices, np.roll(vertices, -1, axis=0), strict=True):
+                        segment_box = np.stack((np.minimum(start, end), np.maximum(start, end)))
+                        if not _boxes_disjoint(segment_box, box):
+                            clear = False
+                            break
+                    if not clear:
+                        break
+            if not clear:
+                continue
+            center = box[0] + 0.5 * (box[1] - box[0])
+            decision = self.classify(center[None, :])
+            if not bool(np.asarray(decision.resolved[0])):
+                continue
+            inside[index] = bool(np.asarray(decision.inside[0]))
+            boundary[index] = bool(np.asarray(decision.boundary[0]))
+            resolved[index] = True
+        return TrimClassification(
+            inside.reshape(leading), boundary.reshape(leading), resolved.reshape(leading)
+        )
 
 
 class BoundaryFrame(StrictModule):
@@ -169,9 +539,16 @@ class BoundaryAtlas(StrictModule):
         )
         if orientation_.shape != (mapping.num_charts,):
             raise ValueError("orientation must contain one sign per chart.")
-        orientation_host = np.asarray(orientation_)
-        if np.any((orientation_host != 1.0) & (orientation_host != -1.0)):
-            raise ValueError("orientation entries must be +1 or -1.")
+        if isinstance(orientation_, jax.core.Tracer):
+            orientation_ = eqx.error_if(
+                orientation_,
+                jnp.any((orientation_ != 1.0) & (orientation_ != -1.0)),
+                "orientation entries must be +1 or -1.",
+            )
+        else:
+            orientation_host = np.asarray(orientation_)
+            if np.any((orientation_host != 1.0) & (orientation_host != -1.0)):
+                raise ValueError("orientation entries must be +1 or -1.")
         seam_owner_ = (
             jnp.ones((mapping.num_charts,), dtype=jnp.bool_)
             if seam_owner is None

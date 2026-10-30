@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from ...geometry._meshing_domain import MeshingDomain
 from ...geometry.brep import BRepModel, BRepSource
 from ...geometry.surface import SurfaceModel
 from .._contracts import (
@@ -30,13 +31,18 @@ from .._controls import (
 )
 from .._organization import RegionRole
 from .._planar_bands import PlanarBandResult
-from .._scope import MeshingEntityKind, MeshingScope
+from .._scope import MeshingEntityKind
 from .._sizing import (
     CurvatureSizeControl,
     ProximitySizeControl,
     SizeCombinationPolicy,
     SizeControlStrength,
     UniformSizeControl,
+)
+from ._gmsh_import import (
+    _scope_indices,
+    _source_mapping_issue,
+    _source_occurrence_issue,
 )
 from ._gmsh_options import (
     GmshHighOrderOptimization,
@@ -45,35 +51,13 @@ from ._gmsh_options import (
 )
 
 
-def _scope_indices(
-    source: BRepModel, scope: MeshingScope, dimension: int, /
-) -> np.ndarray | None:
-    counts = {
-        0: source.report.num_vertices,
-        1: source.report.num_edges,
-        2: source.report.num_faces,
-        3: source.topology.num_solids,
-    }
-    count = counts[dimension]
-    identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
-    if (
-        scope.source_id != source.report.source_id
-        or scope.source_revision != source.report.source_revision
-        or scope.entity_kind is not MeshingEntityKind.GEOMETRY
-        or scope.entity_dimension != dimension
-        or scope.entity_set_id != f"{source.report.source_revision}:brep:{dimension}"
-        or np.any(identifiers >= count)
-    ):
-        return None
-    return identifiers
-
-
 def _sweep_preflight_issues(
     source: BRepModel,
     controls: tuple[BoundaryLayerControl, ...],
     requested_kinds: set[str],
     geometry_order: int,
     /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     issues = []
     if geometry_order != 1:
@@ -82,10 +66,10 @@ def _sweep_preflight_issues(
     face_roles: dict[tuple[int, int], str] = {}
     for control_index, control in enumerate(controls):
         # ty: ignore[invalid-argument-type]
-        volume_ids = _scope_indices(source, control.volume_scope, 3)
-        source_faces = _scope_indices(source, control.wall_scope, 2)
+        volume_ids = _scope_indices(source, control.volume_scope, 3, domain=domain)
+        source_faces = _scope_indices(source, control.wall_scope, 2, domain=domain)
         # ty: ignore[invalid-argument-type]
-        target_faces = _scope_indices(source, control.cap_scope, 2)
+        target_faces = _scope_indices(source, control.cap_scope, 2, domain=domain)
         if volume_ids is None or not volume_ids.size:
             issues.append("EXACT_SWEEP volume scope is not a nonempty solid scope")
             continue
@@ -188,6 +172,7 @@ def _layered_volume_issues(
     requested_kinds: set[str],
     geometry_order: int,
     /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     """ADVANCING and PROVIDER layers grow from closed walls of one solid."""
     controls = specification.layer_controls
@@ -226,7 +211,7 @@ def _layered_volume_issues(
             "Layered volumes size their boundary surface with whole-source UniformSizeControl values only"
         )
     for control in controls:
-        faces = _scope_indices(source, control.wall_scope, 2)
+        faces = _scope_indices(source, control.wall_scope, 2, domain=domain)
         if faces is None or not faces.size:
             issues.append("Boundary-layer wall scope is not a face scope of this BRep")
         elif not _closed_wall(source, faces):
@@ -249,6 +234,7 @@ def _volume_layer_issues(
     requested_kinds: set[str],
     geometry_order: int,
     /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     controls = specification.layer_controls
     routes = {control.route for control in controls}
@@ -262,7 +248,9 @@ def _volume_layer_issues(
             if specification.periodic_constraints:
                 issues.append("Swept layers cannot be combined with periodic constraints")
             issues.extend(
-                _sweep_preflight_issues(source, controls, requested_kinds, geometry_order)
+                _sweep_preflight_issues(
+                    source, controls, requested_kinds, geometry_order, domain=domain
+                )
             )
             return issues
         case BoundaryLayerRoute.CAD_EXTRUSION:
@@ -271,7 +259,7 @@ def _volume_layer_issues(
             ]
         case BoundaryLayerRoute.ADVANCING | BoundaryLayerRoute.PROVIDER:
             return _layered_volume_issues(
-                source, specification, requested_kinds, geometry_order
+                source, specification, requested_kinds, geometry_order, domain=domain
             )
         case route:
             raise TypeError(f"Unsupported boundary-layer route {route!r}.")
@@ -283,6 +271,7 @@ def _surface_layer_issues(
     requested_kinds: set[str],
     planar_bands: bool,
     /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     """Planar provider layers lower to one Gmsh BoundaryLayer field."""
     controls = specification.layer_controls
@@ -304,7 +293,7 @@ def _surface_layer_issues(
     if not requested_kinds <= {"triangle", "quadrilateral"}:
         issues.append("Planar boundary layers produce triangles and quadrilaterals")
     for control in controls:
-        if _scope_indices(source, control.wall_scope, 1) is None:
+        if _scope_indices(source, control.wall_scope, 1, domain=domain) is None:
             issues.append("Planar boundary-layer walls must be edge scopes of this BRep")
         rates = np.asarray(control.schedule.growth_rates, dtype=np.float64)
         if rates.size and np.ptp(rates) > 1.0e-12 * np.max(rates):
@@ -381,7 +370,10 @@ def _uniform_control_conflicts(
 
 
 def _semantic_surface_issues(
-    source: BRepModel, specification: SurfaceMeshingSpec, /
+    source: BRepModel,
+    specification: SurfaceMeshingSpec,
+    /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     issues = []
     if not specification.region_controls:
@@ -390,7 +382,7 @@ def _semantic_surface_issues(
     face_regions = np.empty((source.report.num_faces,), dtype=object)
     face_regions[:] = None
     for control in specification.region_controls:
-        face_ids = _scope_indices(source, control.scope, 2)
+        face_ids = _scope_indices(source, control.scope, 2, domain=domain)
         if face_ids is None:
             issues.append(
                 f"RegionControl {control.region_name!r} is not a face scope of this BRep"
@@ -410,7 +402,7 @@ def _semantic_surface_issues(
 
     declared: set[int] = set()
     for control in specification.patch_controls:
-        edge_ids = _scope_indices(source, control.scope, 1)
+        edge_ids = _scope_indices(source, control.scope, 1, domain=domain)
         if edge_ids is None:
             issues.append(
                 f"PatchControl {control.name!r} is not an edge scope of this BRep"
@@ -451,7 +443,11 @@ def _semantic_surface_issues(
 
 
 def _semantic_region_issues(
-    specification: VolumeMeshingSpec, model: BRepModel, unsupported: list[str], /
+    specification: VolumeMeshingSpec,
+    model: BRepModel,
+    unsupported: list[str],
+    /,
+    domain: MeshingDomain | None = None,
 ) -> None:
     if not specification.region_controls:
         unsupported.append("Every solid requires an explicit RegionControl")
@@ -459,7 +455,7 @@ def _semantic_region_issues(
     region_names: set[str] = set()
     solid_region: dict[int, str] = {}
     for control in specification.region_controls:
-        identifiers = _scope_indices(model, control.scope, 3)
+        identifiers = _scope_indices(model, control.scope, 3, domain=domain)
         if identifiers is None:
             unsupported.append("RegionControl scope is not a solid scope of this BRep")
             continue
@@ -486,7 +482,7 @@ def _semantic_region_issues(
         }
         declared_internal_faces: set[int] = set()
         for control in specification.patch_controls:
-            face_ids = _scope_indices(model, control.scope, 2)
+            face_ids = _scope_indices(model, control.scope, 2, domain=domain)
             if face_ids is None:
                 unsupported.append(
                     f"PatchControl {control.name!r} is not a face scope of this BRep"
@@ -538,6 +534,7 @@ def _validate_gmsh_semantics(
     layers: Any,
     unsupported: list[str],
     /,
+    domain: MeshingDomain | None = None,
 ) -> bool:
     semantic_volume = False
     if isinstance(specification, VolumeMeshingSpec):
@@ -572,7 +569,7 @@ def _validate_gmsh_semantics(
         if layers:
             unsupported.extend(
                 _volume_layer_issues(
-                    model, specification, requested, target.geometry_order
+                    model, specification, requested, target.geometry_order, domain=domain
                 )
             )
         elif specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
@@ -584,8 +581,12 @@ def _validate_gmsh_semantics(
                 "Strict BRep volume meshing does not implement region or hole seeds"
             )
         if semantic_volume:
-            _semantic_region_issues(specification, model, unsupported)
+            _semantic_region_issues(specification, model, unsupported, domain=domain)
     else:
+        if target.ambient_dimension == 2 and specification.planar_embedding is None:
+            unsupported.append(
+                "Lowering a three-dimensional CAD source to a two-dimensional mesh requires an explicit PlanarEmbedding"
+            )
         semantic_surface = bool(
             target.ambient_dimension == 2
             or specification.region_controls
@@ -593,7 +594,9 @@ def _validate_gmsh_semantics(
             or isinstance(source, PlanarBandResult)
         )
         if semantic_surface:
-            unsupported.extend(_semantic_surface_issues(model, specification))
+            unsupported.extend(
+                _semantic_surface_issues(model, specification, domain=domain)
+            )
         elif model.topology.num_solids > 1:
             unsupported.append(
                 "Multi-solid BRep surface meshing is outside the strict semantic volume path"
@@ -604,6 +607,7 @@ def _validate_gmsh_semantics(
                 specification,
                 requested,
                 isinstance(source, PlanarBandResult),
+                domain=domain,
             )
         )
         if isinstance(source, PlanarBandResult):
@@ -623,13 +627,17 @@ def _validate_gmsh_semantics(
 
 
 def _validate_gmsh_periodicity(
-    specification: Any, model: Any, unsupported: list[str], /
+    specification: Any,
+    model: Any,
+    unsupported: list[str],
+    /,
+    domain: MeshingDomain | None = None,
 ) -> None:
     for constraint in specification.periodic_constraints:
         scopes = (constraint.source_scope, constraint.target_scope)
         if any(
             value.entity_dimension not in (1, 2)
-            or _scope_indices(model, value, value.entity_dimension) is None
+            or _scope_indices(model, value, value.entity_dimension, domain=domain) is None
             for value in scopes
         ):
             unsupported.append(
@@ -648,13 +656,17 @@ def _validate_gmsh_periodicity(
 
 
 def _proximity_issues(
-    model: BRepModel, specification: Any, control: ProximitySizeControl, /
+    model: BRepModel,
+    specification: Any,
+    control: ProximitySizeControl,
+    /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     dimension = control.source_scope.entity_dimension
     if dimension not in (1, 2):
         return ["Gmsh proximity sizing measures gaps between source curves or faces"]
-    source_ids = _scope_indices(model, control.source_scope, dimension)
-    target_ids = _scope_indices(model, control.target_scope, dimension)
+    source_ids = _scope_indices(model, control.source_scope, dimension, domain=domain)
+    target_ids = _scope_indices(model, control.target_scope, dimension, domain=domain)
     if source_ids is None or target_ids is None:
         return ["ProximitySizeControl scopes are not entity scopes of this BRep"]
     issues = []
@@ -674,11 +686,14 @@ def _validate_gmsh_size_controls(
     semantic_volume: bool,
     unsupported: list[str],
     /,
+    domain: MeshingDomain | None = None,
 ) -> None:
     covered_solids: set[int] = set()
     for control in specification.size_controls:
         if isinstance(control, ProximitySizeControl):
-            unsupported.extend(_proximity_issues(model, specification, control))
+            unsupported.extend(
+                _proximity_issues(model, specification, control, domain=domain)
+            )
             continue
         if isinstance(control, CurvatureSizeControl):
             if control.scope.scope_id != scope.scope_id:
@@ -696,11 +711,7 @@ def _validate_gmsh_size_controls(
             unsupported.append("Gmsh size control is unsupported")
             continue
         local_dimension = control.scope.entity_dimension
-        local_ids = (
-            _scope_indices(model, control.scope, local_dimension)
-            if local_dimension in (0, 1, 2, 3)
-            else None
-        )
+        local_ids = _scope_indices(model, control.scope, local_dimension, domain=domain)
         if local_ids is None:
             unsupported.append(
                 "UniformSizeControl scope is not an entity scope of this BRep"
@@ -797,6 +808,7 @@ def _protected_feature_issues(
     specification: Any,
     semantic: bool,
     /,
+    domain: MeshingDomain | None = None,
 ) -> list[str]:
     """Protected corners and curves are CAD-conforming or embedded; faces are bounded."""
     issues = []
@@ -810,7 +822,7 @@ def _protected_feature_issues(
             issues.append("Gmsh protected feature kind is unsupported")
             continue
         identifiers = (
-            _scope_indices(model, feature.scope, dimension)
+            _scope_indices(model, feature.scope, dimension, domain=domain)
             if feature.scope.entity_dimension == dimension
             else None
         )
@@ -868,9 +880,10 @@ def _background_metric_issues(
             "Gmsh background metrics require three-dimensional source coordinates"
         )
         return issues
-    source_points = np.asarray(model.mesh_vertices, dtype=np.float64)
+    tessellation = model.require_tessellation()
+    source_points = np.asarray(tessellation.vertices, dtype=np.float64)
     background_points = np.asarray(background.mesh.coordinates, dtype=np.float64)
-    tolerance = model.report.linear_deflection * options.association_tolerance_factor
+    tolerance = tessellation.linear_deflection * options.association_tolerance_factor
     if np.any(
         np.min(source_points, axis=0) < np.min(background_points, axis=0) - tolerance
     ) or np.any(
@@ -956,7 +969,28 @@ def _brep_support_issues(
         else specification.boundary_scope
     )
     dimension = target.topological_dimension
-    scope_ids = _scope_indices(model, scope, dimension)
+    domain = MeshingDomain.from_brep(model)
+    source_scopes_used = bool(
+        specification.size_controls
+        or specification.protected_features
+        or specification.region_controls
+        or specification.patch_controls
+        or specification.periodic_constraints
+        or specification.layer_controls
+        or (
+            isinstance(specification, SurfaceMeshingSpec)
+            and target.ambient_dimension == 2
+        )
+        or isinstance(source, PlanarBandResult)
+    )
+    mapping_issue = (
+        _source_mapping_issue(model, domain=domain)
+        if source_scopes_used
+        else _source_occurrence_issue(model, domain=domain)
+    )
+    if mapping_issue is not None:
+        unsupported.append(mapping_issue)
+    scope_ids = _scope_indices(model, scope, dimension, domain=domain)
     expected_ids = np.arange(
         model.topology.num_solids if dimension == 3 else model.report.num_faces,
         dtype=np.int64,
@@ -1023,6 +1057,7 @@ def _brep_support_issues(
         requested,
         layers,
         unsupported,
+        domain=domain,
     )
     semantic = semantic_volume or (
         isinstance(specification, SurfaceMeshingSpec)
@@ -1033,10 +1068,12 @@ def _brep_support_issues(
             or isinstance(source, PlanarBandResult)
         )
     )
-    unsupported.extend(_protected_feature_issues(model, specification, semantic))
-    _validate_gmsh_periodicity(specification, model, unsupported)
+    unsupported.extend(
+        _protected_feature_issues(model, specification, semantic, domain=domain)
+    )
+    _validate_gmsh_periodicity(specification, model, unsupported, domain=domain)
     _validate_gmsh_size_controls(
-        specification, model, scope, semantic_volume, unsupported
+        specification, model, scope, semantic_volume, unsupported, domain=domain
     )
     unsupported.extend(_generation_option_issues(options, specification))
     if background is not None:

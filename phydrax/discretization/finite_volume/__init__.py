@@ -31,6 +31,13 @@ _DEFERRED_EXPORTS = {
     "PreparedCompositeAMRDiffusion": "._amr_diffusion",
     "prepare_unstructured_conservative_remap": "._automatic_remap",
     "PreparedUnstructuredConservativeRemap": "._automatic_remap",
+    "MappedNestedRemapEvidence": "._remap_evidence",
+    "MappedSurfaceChartRemapEvidence": "._remap_evidence",
+    "RemapPreparationFailure": "._remap_evidence",
+    "OwnerLocalConservativeRemapEvidence": "._owner_local_remap",
+    "OwnerLocalConservativeRemapResult": "._owner_local_remap",
+    "PreparedOwnerLocalConservativeRemap": "._owner_local_remap",
+    "prepare_owner_local_conservative_remap": "._owner_local_remap",
     "BlockAMRFiniteVolumePlan": "._block_amr",
     "BlockAMRFiniteVolumeStageResult": "._block_amr",
     "PreparedBlockAMRFiniteVolumeDynamics": "._block_amr",
@@ -101,6 +108,7 @@ _DEFERRED_EXPORTS = {
     "integrated_finite_volume_relative_entropy": "._entropy",
     "StructuredFaceConductancePlan": "._face_conductance",
     "prepare_finite_volume_field_reconstruction": "._field_view",
+    "prepare_owner_local_finite_volume_field_reconstruction": "._field_view",
     "StructuredFiniteVolumeFieldReconstructionKernel": "._field_view",
     "UnstructuredFiniteVolumeFieldReconstructionKernel": "._field_view",
     "ALEGeometryConsistencyPolicy": "._geometry_protocol",
@@ -551,6 +559,7 @@ if TYPE_CHECKING:
     from ._face_conductance import StructuredFaceConductancePlan
     from ._field_view import (
         prepare_finite_volume_field_reconstruction,
+        prepare_owner_local_finite_volume_field_reconstruction,
         StructuredFiniteVolumeFieldReconstructionKernel,
         UnstructuredFiniteVolumeFieldReconstructionKernel,
     )
@@ -751,6 +760,12 @@ if TYPE_CHECKING:
         FiniteVolumeMultiblockRuntimePlan,
         MultiblockPositivityResult,
     )
+    from ._owner_local_remap import (
+        OwnerLocalConservativeRemapEvidence,
+        OwnerLocalConservativeRemapResult,
+        prepare_owner_local_conservative_remap,
+        PreparedOwnerLocalConservativeRemap,
+    )
     from ._physical_boundaries import (
         CharacteristicInflowBoundary,
         CharacteristicOutflowBoundary,
@@ -793,6 +808,11 @@ if TYPE_CHECKING:
         SuperbeeLimiter,
         UnlimitedLimiter,
         VanLeerLimiter,
+    )
+    from ._remap_evidence import (
+        MappedNestedRemapEvidence,
+        MappedSurfaceChartRemapEvidence,
+        RemapPreparationFailure,
     )
     from ._riemann import (
         AbstractArbitraryNormalALENumericalFluxPlan,
@@ -1005,7 +1025,14 @@ __all__ = [
     "PreparedFiniteVolumeGeometry",
     "lower_static_unstructured_stage_metrics",
     "PreparedUnstructuredConservativeRemap",
+    "MappedNestedRemapEvidence",
+    "MappedSurfaceChartRemapEvidence",
     "prepare_unstructured_conservative_remap",
+    "OwnerLocalConservativeRemapEvidence",
+    "RemapPreparationFailure",
+    "OwnerLocalConservativeRemapResult",
+    "PreparedOwnerLocalConservativeRemap",
+    "prepare_owner_local_conservative_remap",
     "BalancedCapillaryOperator",
     "CapillaryFaceRateBlock",
     "CurvatureEvidence",
@@ -1097,6 +1124,7 @@ __all__ = [
     "StructuredFiniteVolumeFieldReconstructionKernel",
     "UnstructuredFiniteVolumeFieldReconstructionKernel",
     "prepare_finite_volume_field_reconstruction",
+    "prepare_owner_local_finite_volume_field_reconstruction",
     "PreparedNonlinearFaceTrace",
     "PreparedTriangleFiniteVolumeDynamics",
     "TriangleFiniteVolumeBoundarySet",

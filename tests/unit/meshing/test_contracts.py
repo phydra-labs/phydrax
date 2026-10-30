@@ -267,7 +267,6 @@ def test_provider_support_report_fails_before_execution() -> None:
 
 
 def test_layer_schedule_geometric_constructor_has_explicit_schedule_identity() -> None:
-    # ty: ignore[invalid-argument-type]
     explicit = phx.meshing.LayerSchedule((0.125, 0.25, 0.5))
     geometric = phx.meshing.LayerSchedule.geometric(
         3,
@@ -336,14 +335,12 @@ def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound() -> None:
     wall = _scope(2, (10,))
     cap = _scope(2, (20,))
     volume_scope = _scope(3, (30,))
-    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
     control = _exact_sweep(wall, cap, volume_scope, schedule)
     equivalent = _exact_sweep(
         wall,
         cap,
         volume_scope,
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1, 0.15, 0.2)),
     )
     target_spec = phx.meshing.CellMeshingTarget(
@@ -376,7 +373,6 @@ def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> 
     wall = _scope(2, (10,))
     cap = _scope(2, (20,))
     volume_scope = _scope(3, (30,))
-    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.2))
 
     with pytest.raises(ValueError, match="EXACT_SWEEP requires"):
@@ -423,7 +419,6 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
         _scope(2, (10,)),
         _scope(2, (20,)),
         _scope(3, (40,)),
-        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1,)),
     )
 
@@ -435,3 +430,51 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
             size_controls=(phx.meshing.UniformSizeControl(boundary_scope, 0.2),),
             layer_controls=(control,),
         )
+
+def test_meshing_failure_evidence_reaches_trace_diagnostic() -> None:
+    evidence = phx.meshing.MeshingFailureEvidence(
+        requested_quantities={"minimum_quality": 0.8, "maximum_skew": 0.2},
+        achieved_quantities={"minimum_quality": 0.63, "maximum_skew": 0.31},
+        checkpoint="quality-evaluation",
+        logical_findings=("minimum_quality_not_met", "skew_limit_exceeded"),
+    )
+    reordered = phx.meshing.MeshingFailureEvidence(
+        requested_quantities={"maximum_skew": 0.2, "minimum_quality": 0.8},
+        achieved_quantities={"maximum_skew": 0.31, "minimum_quality": 0.63},
+        checkpoint="quality-evaluation",
+        logical_findings=("minimum_quality_not_met", "skew_limit_exceeded"),
+    )
+    failure = phx.meshing.MeshingFailure(
+        phx.meshing.MeshingFailureCategory.QUALITY_REJECTED,
+        "The achieved mesh quality missed its requested target.",
+        stage="quality_evaluation",
+        evidence=evidence,
+    )
+    diagnostic = phx.meshing.MeshingDiagnostic.from_failure(failure)
+    trace = phx.meshing.MeshingTrace(
+        (
+            phx.meshing.MeshingStageReport(
+                phx.meshing.MeshingStageKind.QUALITY_EVALUATION,
+                phx.meshing.MeshingStageStatus.FAILED,
+                diagnostics=(diagnostic,),
+            ),
+        )
+    )
+
+    assert evidence.evidence_id == reordered.evidence_id
+    assert failure.evidence_id == evidence.evidence_id
+    assert diagnostic.evidence_id == evidence.evidence_id
+    assert diagnostic.requested_quantities == (
+        ("maximum_skew", 0.2),
+        ("minimum_quality", 0.8),
+    )
+    assert diagnostic.achieved_quantities == (
+        ("maximum_skew", 0.31),
+        ("minimum_quality", 0.63),
+    )
+    assert diagnostic.checkpoint == "quality-evaluation"
+    assert diagnostic.logical_findings == (
+        "minimum_quality_not_met",
+        "skew_limit_exceeded",
+    )
+    assert not trace.successful

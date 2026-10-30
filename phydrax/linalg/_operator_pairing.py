@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -19,6 +19,44 @@ from ._operators import AbstractLinearOperator
 from ._pairings import AbstractPairing
 from ._prepared import PreparedLinearSolve
 from ._problems import LinearSystem
+
+
+class OperatorPairingArchiveRecipe(NamedTuple):
+    operator: object
+    solve_policy: object
+    pairing_id: str
+    operator_id: str
+    solve_policy_fingerprint: str
+
+    def rebuild(
+        self,
+        operator: AbstractLinearOperator,
+        solve_policy: object,
+        /,
+    ) -> OperatorPairing:
+        from ._policies import LinearSolvePolicy
+        from ._runtime import prepare
+
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("Stored Riesz operator recipe lost its operator.")
+        if operator.operator_id != self.operator_id:
+            raise ValueError("Stored Riesz operator identity changed.")
+        if type(solve_policy) is not LinearSolvePolicy:
+            raise TypeError("Stored Riesz recipe requires LinearSolvePolicy.")
+        if (
+            canonical_fingerprint(array_tree_fingerprint(solve_policy))
+            != self.solve_policy_fingerprint
+        ):
+            raise ValueError("Stored Riesz solve policy identity changed.")
+        prepared = prepare(LinearSystem(operator), solve_policy)
+        pairing = OperatorPairing(
+            operator,
+            prepared_inverse=prepared,
+            pairing_id=self.pairing_id,
+        )
+        if pairing.pairing_id != self.pairing_id:
+            raise ValueError("Stored operator-pairing identity changed.")
+        return pairing
 
 
 class OperatorPairing(AbstractPairing):
@@ -127,6 +165,25 @@ class OperatorPairing(AbstractPairing):
         )
         return self.operator.source.validate(candidate)
 
+    def archive_recipe(self, /) -> OperatorPairingArchiveRecipe:
+        if type(self) is not OperatorPairing:
+            raise TypeError("Riesz archive requires the canonical OperatorPairing.")
+        if self.inverse_action is not None or self.prepared_inverse is None:
+            raise TypeError(
+                "Portable Riesz archives require a re-preparable solver policy."
+            )
+        if type(self.prepared_inverse.problem) is not LinearSystem:
+            raise TypeError("Portable Riesz archives require LinearSystem solves.")
+        return OperatorPairingArchiveRecipe(
+            self.operator,
+            self.prepared_inverse.template.plan.policy,
+            self.pairing_id,
+            self.operator.operator_id,
+            canonical_fingerprint(
+                array_tree_fingerprint(self.prepared_inverse.template.plan.policy)
+            ),
+        )
+
 
 def _nonempty(value: str, /) -> str:
     result = str(value)
@@ -135,4 +192,4 @@ def _nonempty(value: str, /) -> str:
     return result
 
 
-__all__ = ["OperatorPairing"]
+__all__ = ["OperatorPairing", "OperatorPairingArchiveRecipe"]

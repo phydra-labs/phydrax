@@ -16,21 +16,25 @@ a displacement term, and the squared distance of constrained nodes from the
 tangent space at their current foot points. Constrained nodes are re-projected
 between rounds, periodic target nodes follow their source nodes through the
 declared isometry, and a candidate is accepted only when the Bernstein
-certificate proves every cell valid, every constrained node lies within the
-residual tolerance, and its relaxation converged (or the policy explicitly
-accepts valid non-converged relaxations); otherwise the result rolls back.
+certificate proves every cell valid, global embedding is certified, every
+constrained node lies within the residual tolerance, and any supplied retained
+source certification passes; relaxations must also converge unless the policy
+explicitly accepts valid non-converged relaxations. Otherwise the result rolls back.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
+from fractions import Fraction
 from itertools import product
-from typing import final, NamedTuple
+from typing import cast, final, NamedTuple, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -44,9 +48,36 @@ from ..discretization import (
     certify_cell_geometry_validity,
     reference_cell_topology,
 )
-from ..discretization.fem import lagrange_element
+from ..discretization._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometryElement,
+    PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
+    ScalarCoordinateElement,
+)
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_payload,
+    ExactScalar,
+    RadicalElement,
+)
+from ..discretization.fem import (
+    canonical_nodal_entity_identity,
+    lagrange_element,
+    lagrange_reference_node_data,
+)
 from ..ein import contract
-from ..geometry.brep._projection import BRepProjectionStatus, PreparedBRepProjection
+from ..geometry._global_embedding import (
+    certify_global_embedding,
+    GlobalEmbeddingCertificate,
+)
+from ..geometry.brep._projection_contracts import (
+    AbstractBRepProjection,
+    BRepProjectionStatus,
+)
 from ..linalg import (
     determinant_small_linear,
     inverse_small_linear,
@@ -54,6 +85,14 @@ from ..linalg import (
 )
 from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
 from ..typing import checked
+from ._adaptation import (
+    _extend_prior_volume_material_chain,
+    _identity_lineage,
+    _identity_reference_maps_for_transition,
+    _renew_transition_certification_inputs,
+    _retarget_source_boundary_chart_witness,
+    _transition_geometry_record,
+)
 from ._association import (
     _entity_rows,
     _incidence_pairs,
@@ -61,11 +100,67 @@ from ._association import (
     _RESOLVED_STATUS,
     GeometryAssociation,
 )
+from ._canonical import certify_cell_mesh
+from ._certification import MeshCertificationReport
+from ._contracts import MeshingFailure
 from ._coupling import PeriodicCoupling
+from ._lineage import CellMeshTransition, MeshTransitionKind
+from ._native_construction import NativeMeshOrganization
 from ._optimization import optimize_cell_geometry_coordinates
+from ._result import CellMeshingResult
 
 
-_CURVED_KINDS = ("triangle", "tetrahedron", "quadrilateral", "hexahedron")
+@runtime_checkable
+class _NodalTabulatingGeometryElement(Protocol):
+    """Reference element carrying nodal ownership and point tabulation."""
+
+    reference_nodes: Array
+    entity_dofs: tuple[tuple[tuple[int, ...], ...], ...]
+
+    def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]: ...
+
+
+
+@runtime_checkable
+class _NodalReferenceElement(Protocol):
+    """Underlying nodal reference basis used to classify coordinate rows."""
+
+    reference_nodes: Array
+    cell_kind: str
+    entity_dofs: tuple[tuple[tuple[int, ...], ...], ...]
+
+
+def _nodal_reference_element(
+    element: CellGeometryElement, /
+) -> _NodalReferenceElement:
+    if not isinstance(element, ScalarCoordinateElement):
+        raise TypeError("Curving requires a canonical scalar coordinate element.")
+    while not isinstance(element, _NodalReferenceElement):
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            element = element.source_element
+        elif isinstance(element, BarycentricCellGeometryElement):
+            element = element.source_element
+        elif isinstance(element, RestrictedCellGeometryElement):
+            element = element.source_element
+        elif isinstance(element, PolynomialComposedCellGeometryElement):
+            element = element.source_element
+        elif isinstance(element, RationalComposedCellGeometryElement):
+            element = element.source_element
+        else:
+            raise ValueError(
+                f"Curving cannot classify non-nodal coordinate element {type(element).__name__}."
+            )
+    return element
+
+_CURVED_KINDS = (
+    "triangle",
+    "quadrilateral",
+    "tetrahedron",
+    "simplex:3",
+    "prism",
+    "pyramid",
+    "hexahedron",
+)
 
 
 class HighOrderCurvingStatus(StrEnum):
@@ -74,19 +169,20 @@ class HighOrderCurvingStatus(StrEnum):
     ``CURVED``: the returned geometry is certified valid with every constrained
     node within the residual tolerance, and came from the CAD projection or a
     converged (or explicitly admitted non-converged) relaxation.
-    ``ROLLED_BACK_INVALID``: no candidate was certified valid; the straight
-    geometry is returned. ``ROLLED_BACK_RESIDUAL``: valid candidates missed the
-    residual tolerance. ``ROLLED_BACK_NONCONVERGED``: the last candidate was valid
-    within the tolerance but its relaxation did not converge and the policy does
-    not accept valid non-converged relaxations. ``UNRESOLVED_ASSOCIATION``: some
-    geometry node has an ambiguous or unclassified B-Rep class, so no curving was
-    attempted.
+    ROLLED_BACK_INVALID: no candidate was certified valid; the straight
+    geometry is returned. ROLLED_BACK_RESIDUAL: valid candidates missed the
+    residual tolerance. ROLLED_BACK_EMBEDDING: cells are locally valid but
+    do not have a certified global embedding. ROLLED_BACK_SOURCE_ACCEPTANCE:
+    the source-bound acceptance of a candidate was not renewed. ROLLED_BACK_NONCONVERGED:
+    the last candidate was valid within the tolerance but its relaxation did not converge.
     """
 
     CURVED = "curved"
     ROLLED_BACK_INVALID = "rolled_back_invalid"
     ROLLED_BACK_RESIDUAL = "rolled_back_residual"
     ROLLED_BACK_NONCONVERGED = "rolled_back_nonconverged"
+    ROLLED_BACK_EMBEDDING = "rolled_back_embedding"
+    ROLLED_BACK_SOURCE_ACCEPTANCE = "rolled_back_source_acceptance"
     UNRESOLVED_ASSOCIATION = "unresolved_association"
 
 
@@ -214,11 +310,14 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     nodes on B-Rep entities of lower dimension than the ambient space, and
     ``node_residuals`` their distance to that entity (zero for free nodes).
     ``minimum_scaled_jacobian`` and ``maximum_distortion`` are sampled at the
-    Bernstein control-point lattice; ``accepted`` requires every cell certified
-    valid and every constrained residual within the tolerance.
+    the Bernstein control-point lattice; acceptance additionally requires a
+    certified global embedding and source fidelity when source claims are supplied.
+    An explicit material-bearing `prior_transition` also yields a fresh
+    source-to-curved `material_transition` in this evidence.
     """
 
     certificate: CellValidityCertificate
+    embedding: GlobalEmbeddingCertificate
     node_dimensions: Array
     node_indices: Array
     constrained: Array
@@ -228,12 +327,18 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     minimum_scaled_jacobian: float = eqx.field(static=True)
     maximum_distortion: float = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
+    source_certification: MeshCertificationReport | None
+    source_failure: str | None = eqx.field(static=True)
+    coordinate_transition: CellGeometryTransition | None
+    material_transition: CellMeshTransition | None
+    target_result: CellMeshingResult | None
     evidence_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
         certificate: CellValidityCertificate,
+        embedding: GlobalEmbeddingCertificate,
         node_dimensions: np.ndarray,
         node_indices: np.ndarray,
         constrained: np.ndarray,
@@ -242,6 +347,12 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         minimum_scaled_jacobian: float,
         maximum_distortion: float,
         /,
+        *,
+        source_certification: MeshCertificationReport | None = None,
+        source_failure: str | None = None,
+        target_result: CellMeshingResult | None = None,
+        coordinate_transition: CellGeometryTransition | None = None,
+        material_transition: CellMeshTransition | None = None,
     ) -> None:
         dims = np.asarray(node_dimensions, dtype=np.int8)
         indices = np.asarray(node_indices, dtype=np.int32)
@@ -254,7 +365,40 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
             or residuals.shape != dims.shape
         ):
             raise ValueError("Curved geometry evidence rows must align with nodes.")
-        maximum = float(np.max(residuals)) if residuals.size else 0.0
+        if np.any(~np.isfinite(residuals)) or np.any(residuals < 0.0):
+            raise ValueError("Curved geometry residuals must be finite and nonnegative.")
+        maximum = float(np.max(residuals, initial=0.0))
+        if target_result is not None and not isinstance(target_result, CellMeshingResult):
+            raise TypeError("target_result must be CellMeshingResult or None.")
+        if coordinate_transition is not None and not isinstance(
+            coordinate_transition, CellGeometryTransition
+        ):
+            raise TypeError("coordinate_transition must be CellGeometryTransition or None.")
+        if target_result is not None:
+            transition = coordinate_transition
+            if transition is None:
+                raise ValueError("A target curved result must retain its coordinate transition.")
+            target_mesh = target_result.mesh
+            if (
+                transition.target_mesh.mesh_id != target_mesh.mesh_id
+                or transition.target_topology_id != target_mesh.topology_id
+                or transition.target_geometry_id != cell_geometry_id(target_result.geometry)
+            ):
+                raise ValueError("Curving coordinate transition does not bind its target result.")
+        if material_transition is not None:
+            if not isinstance(material_transition, CellMeshTransition):
+                raise TypeError("material_transition must be CellMeshTransition or None.")
+            if (
+                target_result is None
+                or coordinate_transition is None
+                or material_transition.volume_material_chain is None
+                or material_transition.target.result_id != target_result.result_id
+                or material_transition.geometry_transition is None
+                or material_transition.geometry_transition.transition_id
+                != coordinate_transition.transition_id
+            ):
+                raise ValueError("Curving material transition does not bind its source/target endpoints.")
+        self.embedding = embedding
         self.certificate = certificate
         self.node_dimensions = jnp.asarray(dims)
         self.node_indices = jnp.asarray(indices)
@@ -264,11 +408,38 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         self.residual_tolerance = float(residual_tolerance)
         self.minimum_scaled_jacobian = float(minimum_scaled_jacobian)
         self.maximum_distortion = float(maximum_distortion)
-        self.accepted = bool(certificate.all_certified and maximum <= residual_tolerance)
+        self.source_certification = source_certification
+        self.source_failure = source_failure
+        self.target_result = target_result
+        self.coordinate_transition = coordinate_transition
+        self.material_transition = material_transition
+        self.accepted = bool(
+            certificate.all_certified
+            and embedding.status == "certified"
+            and maximum <= residual_tolerance
+            and (source_certification is None or source_certification.passed)
+            and source_failure is None
+        )
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "curved-geometry-evidence",
                 "certificate": certificate.certificate_id,
+                "source_certification": None
+                if source_certification is None
+                else source_certification.report_id,
+                "source_failure": source_failure,
+                "target_result": None
+                if target_result is None
+                else target_result.result_id,
+                "coordinate_transition": None
+                if coordinate_transition is None
+                else coordinate_transition.transition_id,
+                "material_transition": (
+                    None
+                    if material_transition is None
+                    else material_transition.transition_id
+                ),
+                "embedding": embedding.certificate_id,
                 "node_dimensions": array_tree_fingerprint(dims),
                 "node_indices": array_tree_fingerprint(indices),
                 "node_residuals": array_tree_fingerprint(residuals),
@@ -298,6 +469,7 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
     minimizations: tuple[MinimizationResult, ...]
     relaxation_statuses: tuple[OptimizationStatus, ...] = eqx.field(static=True)
     accepted_round: int | None = eqx.field(static=True)
+    cell_result: CellMeshingResult | None
     result_id: str = eqx.field(static=True)
 
     def __init__(
@@ -310,6 +482,8 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
         minimizations: tuple[MinimizationResult, ...],
         accepted_round: int | None,
         /,
+        *,
+        cell_result: CellMeshingResult | None = None,
     ) -> None:
         if not isinstance(status, HighOrderCurvingStatus):
             raise TypeError("status must be HighOrderCurvingStatus.")
@@ -319,6 +493,11 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
             raise ValueError("Exactly a curved result names its accepted round.")
         if accepted_round is not None and not 0 <= accepted_round <= len(minimizations):
             raise ValueError("accepted_round must name the projection or a round.")
+        if cell_result is not None:
+            if not isinstance(cell_result, CellMeshingResult):
+                raise TypeError("cell_result must be CellMeshingResult or None.")
+            if cell_result.geometry.geometry_layout_id != geometry.geometry_layout_id:
+                raise ValueError("cell_result geometry must match the returned curved geometry.")
         self.status = status
         self.geometry = geometry
         self.straight = straight
@@ -330,6 +509,7 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
             for value in self.minimizations
         )
         self.accepted_round = accepted_round
+        self.cell_result = cell_result
         self.result_id = canonical_fingerprint(
             {
                 "kind": "high-order-curving-result",
@@ -340,6 +520,7 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
                 "candidate": None if candidate is None else candidate.evidence_id,
                 "relaxation_statuses": [int(value) for value in self.relaxation_statuses],
                 "accepted_round": accepted_round,
+                "cell_result": None if cell_result is None else cell_result.result_id,
             }
         )
 
@@ -347,100 +528,426 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
 # -- geometry nodes ---------------------------------------------------------------
 
 
-_WEIGHT_QUANTUM = float(2**40)
+def _entity_key_table(mesh: CellMesh, dimension: int, /) -> dict[tuple[int, ...], int]:
+    """Map exact vertex-global-ID closures to entity rows; never inspect coordinates."""
+    pairs = np.asarray(_incidence_pairs(mesh, 0, dimension), dtype=np.int64)
+    members: list[list[int]] = [[] for _ in range(mesh.entity_set(dimension).count)]
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    for vertex, entity in pairs:
+        members[int(entity)].append(int(vertex_ids[int(vertex)]))
+    table: dict[tuple[int, ...], int] = {}
+    for row, identifiers in enumerate(members):
+        if not identifiers:
+            raise ValueError("Every mesh entity must have a vertex closure.")
+        key = tuple(sorted(identifiers))
+        if key in table:
+            raise ValueError(
+                "Curving cannot identify distinct periodic entities from vertex representatives alone."
+            )
+        table[key] = row
+    return table
+
+
+def _entity_rows_for_cells(
+    mesh: CellMesh,
+    dimension: int,
+    cells: np.ndarray,
+    local_vertices: tuple[int, ...],
+    table: dict[tuple[int, ...], int],
+    vertex_ids: np.ndarray,
+    /,
+) -> np.ndarray:
+    identifiers = vertex_ids[cells[:, list(local_vertices)]]
+    result = np.empty((cells.shape[0],), dtype=np.int64)
+    for row, corners in enumerate(identifiers):
+        key = tuple(sorted(int(value) for value in corners))
+        try:
+            result[row] = table[key]
+        except KeyError as error:
+            raise ValueError(
+                f"Curving has no topological source entity of dimension {dimension} for a cell closure."
+            ) from error
+    return result
+
+
+
+@final
+class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
+    """Exact coefficient bank with a separate target-mesh execution view."""
+
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    source_map_id: str = eqx.field(static=True)
+    rounded_vertices: np.ndarray
+    exact_coordinates: tuple[tuple[ExactScalar, ...], ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        source_id: str,
+        source_revision: str,
+        identity_context: tuple[str, ...],
+        exact_coordinates: tuple[tuple[ExactScalar, ...], ...],
+        execution_coordinates: np.ndarray,
+        /,
+    ) -> None:
+        exact_coordinates_ = tuple(tuple(row) for row in exact_coordinates)
+        execution = np.asarray(execution_coordinates, dtype=np.float64)
+        try:
+            rounded_exact = np.asarray(exact_coordinates_, dtype=np.float64)
+        except (OverflowError, TypeError, ValueError) as error:
+            raise ValueError(
+                "Exact coordinate-bank values require finite binary64 shadows."
+            ) from error
+        if (
+            not source_id
+            or not source_revision
+            or execution.ndim != 2
+            or rounded_exact.shape != execution.shape
+            or not np.all(np.isfinite(execution))
+            or not np.array_equal(rounded_exact, execution)
+            or any(
+                not isinstance(value, (Fraction, RadicalElement))
+                for row in exact_coordinates_
+                for value in row
+            )
+        ):
+            raise ValueError(
+                "Exact coordinate-bank rows must round to their execution coordinates."
+            )
+        vertices = np.array(mesh.coordinates, dtype=np.float64, copy=True)
+        vertices.setflags(write=False)
+        exact_payload = tuple(
+            tuple(coefficient_payload(value) for value in row)
+            for row in exact_coordinates_
+        )
+        self.source_id = str(source_id)
+        self.source_revision = str(source_revision)
+        self.source_map_id = canonical_fingerprint(
+            {
+                "kind": "exact-coordinate-bank-map",
+                "mesh_id": mesh.mesh_id,
+                "topology_id": mesh.topology_id,
+                "numeric_version": mesh.numeric_version,
+                "source_id": self.source_id,
+                "source_revision": self.source_revision,
+                "identity_context": identity_context,
+                "exact_coordinate_bank": exact_payload,
+            }
+        )
+        self.rounded_vertices = vertices
+        self.exact_coordinates = exact_coordinates_
+
+    def source_coordinates(
+        self, indices: ArrayLike | None = None, /
+    ) -> tuple[tuple[ExactScalar, ...], ...]:
+        if indices is None:
+            return self.exact_coordinates
+        selected = np.asarray(indices)
+        if selected.ndim != 1 or selected.dtype.kind not in "iu":
+            raise TypeError("Exact-coordinate-bank indices must be an integer vector.")
+        rows = selected.astype(np.int64)
+        if np.any(rows < 0) or np.any(rows >= len(self.exact_coordinates)):
+            raise IndexError("Exact-coordinate-bank index is out of range.")
+        return tuple(self.exact_coordinates[int(row)] for row in rows)
+
+
+def _exact_coordinate_bank_source_map(
+    mesh: CellMesh,
+    source_id: str,
+    source_revision: str,
+    identity_context: tuple[str, ...],
+    exact_coordinates: tuple[tuple[ExactScalar, ...], ...],
+    execution_coordinates: np.ndarray,
+    /,
+) -> _ExactCoordinateBankMap:
+    return _ExactCoordinateBankMap(
+        mesh,
+        source_id,
+        source_revision,
+        identity_context,
+        exact_coordinates,
+        execution_coordinates,
+    )
+
+
+def _geometry_with_exact_coordinate_bank(
+    mesh: CellMesh,
+    elements: dict[str, CellGeometryElement],
+    routes: Mapping[str, ArrayLike],
+    straight: CellGeometrySpec,
+    execution_coordinates: np.ndarray,
+    /,
+    *,
+    identity_context: tuple[str, ...],
+    exact_overrides: dict[int, tuple[ExactScalar, ...]] | None = None,
+) -> CellGeometrySpec:
+    execution = np.asarray(execution_coordinates, dtype=np.float64)
+    straight_bank = straight.exact_coordinate_bank
+    if (
+        straight_bank is None
+        or execution.shape != (len(straight_bank), mesh.ambient_dimension)
+        or not np.all(np.isfinite(execution))
+    ):
+        raise ValueError("A candidate exact bank must align with the straight nodal map.")
+    if exact_overrides is not None and any(
+        row < 0 or row >= len(straight_bank) for row in exact_overrides
+    ):
+        raise IndexError("Exact candidate-coordinate row is outside the geometry bank.")
+    candidate_bank: list[tuple[ExactScalar, ...]] = []
+    execution_rows = tuple(
+        tuple(float(execution[row, axis]) for axis in range(execution.shape[1]))
+        for row in range(execution.shape[0])
+    )
+    for row, point in enumerate(execution_rows):
+        exact = None if exact_overrides is None else exact_overrides.get(row)
+        if exact is None:
+            straight_row = straight_bank[row]
+            if np.array_equal(
+                np.asarray(tuple(float(value) for value in straight_row)),
+                np.asarray(point, dtype=np.float64),
+            ):
+                exact = straight_row
+            else:
+                exact = tuple(Fraction(value) for value in point)
+        if not np.array_equal(
+            np.asarray(tuple(float(value) for value in exact)),
+            np.asarray(point, dtype=np.float64),
+        ):
+            raise ValueError(
+                "Exact candidate coordinates do not round to their execution row."
+            )
+        candidate_bank.append(tuple(exact))
+    straight_map_id = straight.source_map_id
+    if not isinstance(straight_map_id, str) or not straight_map_id:
+        raise ValueError("Straight geometry has no current exact coordinate-map identity.")
+    source_map = _exact_coordinate_bank_source_map(
+        mesh,
+        mesh.mesh_id,
+        mesh.numeric_version,
+        ("curving-candidate", straight_map_id, *identity_context),
+        tuple(candidate_bank),
+        execution,
+    )
+    return CellGeometrySpec(
+        elements,
+        routes,
+        execution,
+        source_map=source_map,
+        source_mesh=mesh,
+    )
+
 
 
 def _straight_geometry(mesh: CellMesh, degree: int, /) -> CellGeometrySpec:
-    """Straight-sided Lagrange geometry with shared nodes in canonical order.
-
-    Local nodes follow the reference ordering of the discretization's Lagrange
-    element. A node is identified by its owning mesh entity (sorted vertex global
-    IDs) and its affine or multilinear weights on those vertices, so neighboring
-    cells share it independently of their local edge and face orientation. Vertex
-    nodes are the mesh vertex rows; the other nodes follow in (dimension, entity,
-    weights) order.
-    """
+    """Evaluate the exact piecewise-linear mesh map at canonical Lagrange nodes."""
     kinds = {block.cell_kind for block in mesh.blocks}
     if not kinds <= set(_CURVED_KINDS):
-        raise ValueError("Curving supports triangle, tetrahedron, quad, and hex blocks.")
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
+        raise ValueError(
+            "Curving supports triangle, quadrilateral, tetrahedron/simplex:3, prism, pyramid, and hexahedron blocks."
+        )
+    mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    elements, routes, keys, positions, owners = {}, {}, [], [], []
+    linear_geometry = CellGeometrySpec(
+        {
+            block.name: lagrange_element(block.cell_kind, 1)
+            for block in mesh.blocks
+        },
+        {
+            block.name: np.asarray(block.vertices, dtype=np.int32)
+            for block in mesh.blocks
+        },
+        mesh_coordinates,
+    )
+    elements: dict[str, CellGeometryElement] = {}
+    routes: dict[str, np.ndarray] = {}
+    local_keys: dict[str, tuple[tuple[tuple[object, ...], ...], ...]] = {}
+    exact_nodes: dict[tuple[object, ...], tuple[ExactScalar, ...]] = {}
+    vertex_node_rows: dict[tuple[object, ...], int] = {}
+    vertex_coordinates: list[tuple[ExactScalar, ...] | None] = [
+        None for _ in range(mesh_coordinates.shape[0])
+    ]
+    node_identity_payload: list[str] = []
+
     for block in mesh.blocks:
         element = lagrange_element(block.cell_kind, degree)
-        topology = reference_cell_topology(block.cell_kind)
-        cells = np.asarray(block.vertices, dtype=np.int64)
-        weights, _ = lagrange_element(block.cell_kind, 1).tabulate(
-            element.reference_nodes
+        nodal_data = lagrange_reference_node_data(element)
+        if len(nodal_data) != element.local_dof_count or any(
+            node.local_dof != local_dof
+            for local_dof, node in enumerate(nodal_data)
+        ):
+            raise ValueError("Exact nodal metadata does not align with local DOF order.")
+        execution_nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+        nodal_shadows = np.asarray(
+            tuple(node.execution_shadow for node in nodal_data), dtype=np.float64
         )
-        weights = np.asarray(weights, dtype=np.float64)
-        route = np.full((cells.shape[0], element.local_dof_count), -1, dtype=np.int64)
-        for dimension, entities in enumerate(element.entity_dofs):
-            for local, dofs in enumerate(entities):
-                if not dofs:
-                    continue
-                vertices = list(topology.entities[dimension][local])
-                if dimension == 0:
-                    route[:, dofs[0]] = cells[:, vertices[0]]
-                    continue
-                ids = vertex_ids[cells[:, vertices]]
-                order = np.argsort(ids, axis=1, kind="stable")
-                entity_weights = np.broadcast_to(
-                    weights[np.asarray(dofs)][:, vertices],
-                    (cells.shape[0], len(dofs), len(vertices)),
+        if not np.array_equal(execution_nodes, nodal_shadows):
+            raise ValueError("Exact nodal metadata shadows differ from the Lagrange element.")
+        if any(node.exact_point is None for node in nodal_data):
+            missing = tuple(
+                node.local_dof for node in nodal_data if node.exact_point is None
+            )
+            raise ValueError(
+                f"Exact straight-map evaluation lacks representable reference nodes {missing} "
+                f"for {block.cell_kind!r} degree {degree}."
+            )
+        reference_points = tuple(
+            cast(tuple[ExactScalar, ...], node.exact_point) for node in nodal_data
+        )
+        cells = np.asarray(block.vertices, dtype=np.int64)
+        cell_ids = np.asarray(block.global_ids, dtype=np.int64)
+        images = linear_geometry.evaluate_exact(
+            mesh,
+            cell_ids,
+            tuple(reference_points for _ in range(block.cell_count)),
+        )
+        route = np.full(
+            (block.cell_count, element.local_dof_count), -1, dtype=np.int32
+        )
+        rows_for_cells: list[tuple[tuple[object, ...], ...]] = []
+        for cell_row in range(block.cell_count):
+            cell_vertices = tuple(
+                int(cells[cell_row, local_vertex])
+                for local_vertex in range(cells.shape[1])
+            )
+            cell_images = images[cell_row]
+            cell_vertex_ids = tuple(
+                int(vertex_ids[int(index)]) for index in cell_vertices
+            )
+            identity_row: list[tuple[object, ...]] = []
+            for local_dof, (node, image) in enumerate(
+                zip(nodal_data, cell_images, strict=True)
+            ):
+                identity, orientation = canonical_nodal_entity_identity(
+                    node,
+                    cell_vertex_ids,
+                    cell_global_id=int(cell_ids[cell_row]),
                 )
-                sorted_weights = np.take_along_axis(
-                    entity_weights, order[:, None, :], axis=2
+                if len(orientation) != len(node.entity_vertices):
+                    raise ValueError(
+                        "Canonical nodal orientation does not match its owning entity."
+                    )
+                exact_image = tuple(image)
+                if any(
+                    not isinstance(value, (Fraction, RadicalElement))
+                    for value in exact_image
+                ):
+                    raise ValueError(
+                        "Straight source-map evaluation did not return exact scalar coordinates."
+                    )
+                previous = exact_nodes.setdefault(identity, exact_image)
+                if previous != exact_image:
+                    raise ValueError(
+                        "Adjacent cell maps disagree on an exact canonical nodal identity."
+                    )
+                if node.entity_dimension == 0:
+                    if len(node.entity_vertices) != 1:
+                        raise ValueError("A vertex nodal functional needs one local vertex.")
+                    vertex_row = int(cell_vertices[node.entity_vertices[0]])
+                    if int(vertex_ids[vertex_row]) != cell_vertex_ids[
+                        node.entity_vertices[0]
+                    ]:
+                        raise ValueError("Vertex nodal identity disagrees with mesh connectivity.")
+                    owner_row = vertex_node_rows.setdefault(identity, vertex_row)
+                    if owner_row != vertex_row:
+                        raise ValueError(
+                            "One canonical vertex identity resolves to multiple mesh rows."
+                        )
+                    vertex_image = vertex_coordinates[vertex_row]
+                    if vertex_image is not None and vertex_image != exact_image:
+                        raise ValueError(
+                            "Shared mesh vertices have different exact straight-map images."
+                        )
+                    vertex_coordinates[vertex_row] = exact_image
+                identity_row.append(identity)
+                node_identity_payload.append(
+                    canonical_fingerprint(
+                        {
+                            "block": block.name,
+                            "cell_id": int(cell_ids[cell_row]),
+                            "local_dof": local_dof,
+                            "identity": identity,
+                            "orientation": orientation,
+                        }
+                    )
                 )
-                key = np.full((cells.shape[0], len(dofs), 17), -1, dtype=np.int64)
-                key[..., 0] = dimension
-                key[..., 1 : 1 + len(vertices)] = np.take_along_axis(ids, order, axis=1)[
-                    :, None, :
-                ]
-                key[..., 9 : 9 + len(vertices)] = np.rint(
-                    sorted_weights * _WEIGHT_QUANTUM
-                )
-                keys.append(key.reshape(-1, 17))
-                positions.append(
-                    np.asarray(
-                        contract("dv,cva->cda", weights[np.asarray(dofs)], points[cells])
-                    ).reshape(-1, points.shape[1])
-                )
-                owners.append((block.name, dofs, cells.shape[0]))
+            rows_for_cells.append(tuple(identity_row))
         elements[block.name] = element
         routes[block.name] = route
-    table, inverse = np.unique(np.concatenate(keys), axis=0, return_inverse=True)
-    inverse = inverse.reshape(-1)
-    coordinates = np.empty((points.shape[0] + table.shape[0], points.shape[1]))
-    coordinates[: points.shape[0]] = points
-    coordinates[points.shape[0] + inverse] = np.concatenate(positions)
-    cursor = 0
-    for name, dofs, count in owners:
-        size = count * len(dofs)
-        routes[name][:, list(dofs)] = points.shape[0] + inverse[
-            cursor : cursor + size
-        ].reshape(count, len(dofs))
-        cursor += size
-    return CellGeometrySpec(elements, routes, coordinates)
+        local_keys[block.name] = tuple(rows_for_cells)
 
-
-def _entity_key_table(mesh: CellMesh, dimension: int, /) -> np.ndarray:
-    """Sorted vertex-global-ID key of every entity row of ``dimension``."""
-    pairs = _incidence_pairs(mesh, 0, dimension)
-    counts = np.bincount(pairs[:, 1], minlength=mesh.entity_set(dimension).count)
-    if np.unique(counts).size != 1:
-        raise ValueError("Geometry node ownership requires uniform entity arity.")
-    identifiers = np.asarray(mesh.vertex_global_ids, dtype=np.int64)[pairs[:, 0]]
-    order = np.lexsort((identifiers, pairs[:, 1]))
-    return identifiers[order].reshape(-1, int(counts[0]))
+    for row, exact_coordinate in enumerate(vertex_coordinates):
+        if exact_coordinate is None:
+            vertex_coordinates[row] = tuple(
+                Fraction(float(value)) for value in mesh_coordinates[row]
+            )
+            continue
+        shadow = np.asarray(tuple(float(value) for value in exact_coordinate))
+        if not np.array_equal(shadow, mesh_coordinates[row]):
+            raise ValueError(
+                "Exact straight-map vertex coordinates do not round to the mesh vertices."
+            )
+    exact_vertices = tuple(
+        cast(tuple[ExactScalar, ...], value) for value in vertex_coordinates
+    )
+    high_order_keys = tuple(
+        sorted(
+            (key for key in exact_nodes if key not in vertex_node_rows),
+            key=lambda key: canonical_fingerprint({"identity": key}),
+        )
+    )
+    geometry_row_by_key = {
+        **vertex_node_rows,
+        **{
+            key: len(exact_vertices) + index
+            for index, key in enumerate(high_order_keys)
+        },
+    }
+    exact_coordinates = (
+        *exact_vertices,
+        *(exact_nodes[key] for key in high_order_keys),
+    )
+    for block in mesh.blocks:
+        block_routes = routes[block.name]
+        for cell_row, identities in enumerate(local_keys[block.name]):
+            block_routes[cell_row] = np.asarray(
+                [geometry_row_by_key[identity] for identity in identities],
+                dtype=np.int32,
+            )
+    coordinates = np.asarray(
+        tuple(tuple(float(value) for value in row) for row in exact_coordinates),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(coordinates)) or not np.array_equal(
+        coordinates[: mesh_coordinates.shape[0]], mesh_coordinates
+    ):
+        raise ValueError("Exact straight-map coordinates need finite mesh-bound shadows.")
+    source_map = _exact_coordinate_bank_source_map(
+        mesh,
+        mesh.mesh_id,
+        mesh.numeric_version,
+        (
+            "straight-p1-mesh-map",
+            str(degree),
+            cell_geometry_id(linear_geometry),
+            *node_identity_payload,
+        ),
+        exact_coordinates,
+        coordinates,
+    )
+    return CellGeometrySpec(
+        elements,
+        routes,
+        coordinates,
+        source_map=source_map,
+        source_mesh=mesh,
+    )
 
 
 def _node_owners(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Owning mesh entity ``(dimension, row)`` of every geometry node."""
-    from ._topology_edit import key_rows
-
     elements, routes, coordinates = geometry.resolve(mesh)
     count = coordinates.shape[0]
     top = mesh.topological_dimension
@@ -451,23 +958,31 @@ def _node_owners(
     }
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        ownership_element = _nodal_reference_element(element)
+        if ownership_element.cell_kind != block.cell_kind:
+            raise ValueError("Curving nodal ownership requires target-local reference entities.")
         route_ = np.asarray(route, dtype=np.int64)
         cells = np.asarray(block.vertices, dtype=np.int64)
         topology = reference_cell_topology(block.cell_kind)
         cell_rows = _entity_rows(mesh, top, np.asarray(block.global_ids, dtype=np.int64))
-        # ty: ignore[unresolved-attribute]
-        for dimension, entities in enumerate(element.entity_dofs):
+        for dimension, entities in enumerate(ownership_element.entity_dofs):
             for local, dofs in enumerate(entities):
                 if not dofs:
                     continue
-                vertices = topology.entities[dimension][local]
+                vertices = tuple(topology.entities[dimension][local])
                 if dimension == 0:
                     owners = cells[:, vertices[0]]
                 elif dimension == top:
                     owners = cell_rows
                 else:
-                    keys = np.sort(vertex_ids[cells[:, list(vertices)]], axis=1)
-                    owners = key_rows(tables[dimension], keys)
+                    owners = _entity_rows_for_cells(
+                        mesh,
+                        dimension,
+                        cells,
+                        vertices,
+                        tables[dimension],
+                        vertex_ids,
+                    )
                 nodes = route_[:, list(dofs)]
                 previous = rows[nodes]
                 if np.any((previous >= 0) & (previous != owners[:, None])) or np.any(
@@ -493,7 +1008,7 @@ def _node_classes(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
 ) -> _NodeClasses:
     owner_dims, owner_rows = _node_owners(mesh, geometry)
@@ -524,24 +1039,35 @@ def _determinant_degree(kind: str, degree: int, embedded: bool, /) -> int:
     match kind:
         case "triangle":
             return (4 if embedded else 2) * (degree - 1)
-        case "tetrahedron":
+        case "tetrahedron" | "simplex:3":
             return 3 * (degree - 1)
         case "quadrilateral":
             return (2 if embedded else 1) * (2 * degree - 1)
-        case "hexahedron":
+        case "hexahedron" | "prism" | "pyramid":
             return 3 * degree - 1
         case _:
             raise ValueError(f"No curving sample lattice for {kind!r}.")
 
 
 def _control_lattice(kind: str, degree: int, embedded: bool, /) -> np.ndarray:
-    """Bernstein control-point (Greville) lattice of the Jacobian determinant."""
+    """Polynomial control lattice on the reference simplex, prism, or cube."""
     order = max(_determinant_degree(kind, degree, embedded), 1)
     dimension = reference_cell_topology(kind).dimension
     grid = np.asarray(tuple(product(range(order + 1), repeat=dimension)), np.float64)
-    if kind in ("triangle", "tetrahedron"):
-        grid = grid[np.sum(grid, axis=1) <= order]
-    return grid / order
+    grid = grid / order
+    if kind in ("triangle", "tetrahedron", "prism") or kind.startswith("simplex:"):
+        grid = grid[np.sum(grid[:, : 2 if kind == "prism" else dimension], axis=1) <= 1.0]
+    if kind == "pyramid":
+        scale = 1.0 - grid[:, 2]
+        grid = np.stack(
+            (
+                scale * grid[:, 0] + 0.5 * grid[:, 2],
+                scale * grid[:, 1] + 0.5 * grid[:, 2],
+                grid[:, 2],
+            ),
+            axis=1,
+        )
+    return grid
 
 
 class _BlockDistortion(StrictModule):
@@ -552,10 +1078,15 @@ class _BlockDistortion(StrictModule):
     target_inverses: Array
     plan: SmallLinearSolvePlan
     embedded: bool = eqx.field(static=True)
+    per_cell_gradients: bool = eqx.field(static=True)
 
     def ratios(self, coordinates: Array, /) -> tuple[Array, Array, Array]:
         """Target-normalized ``(frobenius, determinant, dimension)`` per sample."""
-        jacobian = contract("mnk,cna->cmak", self.gradients, coordinates[self.routes])
+        jacobian = (
+            contract("cmnk,cna->cmak", self.gradients, coordinates[self.routes])
+            if self.per_cell_gradients
+            else contract("mnk,cna->cmak", self.gradients, coordinates[self.routes])
+        )
         if self.embedded:
             gram = jnp.swapaxes(jacobian, -1, -2) @ jacobian
             normalized = gram @ self.target_inverses
@@ -615,11 +1146,25 @@ def _distortion_blocks(
     ambient = mesh.ambient_dimension
     blocks = []
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if not isinstance(element, ScalarCoordinateElement):
+            raise TypeError("Curving requires a canonical scalar cell-geometry element.")
         dimension = reference_cell_topology(block.cell_kind).dimension
         embedded = ambient > dimension
         samples = _control_lattice(block.cell_kind, degree, embedded)
-        # ty: ignore[unresolved-attribute]
-        _, gradients = element.tabulate(samples)
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            gradients = np.stack(
+                tuple(
+                    np.asarray(element.tabulate_cell(cell_row, samples)[1])
+                    for cell_row in range(block.cell_count)
+                ),
+                axis=0,
+            )
+            per_cell_gradients = True
+        else:
+            if not isinstance(element, _NodalTabulatingGeometryElement):
+                raise TypeError("Curving requires a tabulating nodal coordinate element.")
+            _, gradients = element.tabulate(samples)
+            per_cell_gradients = False
         _, linear = lagrange_element(block.cell_kind, 1).tabulate(samples)
         straight = contract(
             "mnk,cna->cmak",
@@ -642,6 +1187,7 @@ def _distortion_blocks(
                 target_inverses=inverse.value,
                 plan=plan,
                 embedded=embedded,
+                per_cell_gradients=per_cell_gradients,
             )
         )
     return tuple(blocks)
@@ -678,7 +1224,7 @@ def _sampled_quality(
 
 
 def _node_residuals(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     coordinates: np.ndarray,
     classes: _NodeClasses,
     /,
@@ -707,21 +1253,167 @@ def _node_residuals(
     feet = np.where(np.isfinite(feet), feet, coordinates[rows])
     return rows, feet, residuals, projectors
 
+def _curving_target_result(
+    source_result: CellMeshingResult | None,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    projection: AbstractBRepProjection,
+    /,
+    *,
+    prior_transition: CellMeshTransition | None = None,
+) -> tuple[
+    CellMeshingResult | None,
+    MeshCertificationReport | None,
+    str | None,
+    CellGeometryTransition | None,
+    CellMeshTransition | None,
+]:
+    if source_result is None:
+        return None, None, None, None, None
+    inputs = None
+    audit_policy = None
+    layer_curving_evidence = None
+    coordinate_transition = None
+    material_transition = None
+    organization = NativeMeshOrganization(
+        boundary=source_result.boundary,
+        patches=source_result.patches,
+        zones=source_result.zones,
+        labels=source_result.labels,
+        attributes=source_result.attributes,
+        associations=source_result.associations,
+        surface_source=source_result.surface_source,
+        region_boundary_evidence=source_result.region_boundary_evidence,
+    )
+    try:
+        if (
+            source_result.mesh.mesh_id != mesh.mesh_id
+            or source_result.mesh.topology_id != mesh.topology_id
+        ):
+            raise ValueError("source_result must retain the exact mesh being curved.")
+        lineage = _identity_lineage(mesh, mesh)
+        identity_maps = _identity_reference_maps_for_transition(mesh, mesh)
+        coordinate_transition = _transition_geometry_record(
+            source_result, mesh, geometry, reference_maps=identity_maps
+        )
+        if source_result.layer_curving_evidence is not None:
+            from ._layer_curving import renew_layer_curving_source_evidence
+
+            source_layer_evidence = source_result.layer_curving_evidence
+            target_chart_witness = _retarget_source_boundary_chart_witness(
+                source_result,
+                mesh,
+                geometry,
+                lineage,
+                source_layer_evidence.chart_witness,
+                reference_maps=identity_maps,
+            )
+            layer_curving_evidence = renew_layer_curving_source_evidence(
+                source_layer_evidence,
+                source_result.mesh,
+                source_result.geometry,
+                mesh,
+                geometry,
+                target_chart_witness,
+                lineage,
+                identity_maps,
+            )
+        if source_result.certification is not None:
+            original = source_result.certification.inputs
+            if original.source is not None and (
+                original.source_id != projection.source_id
+                or original.source_revision != projection.source_revision
+            ):
+                raise ValueError("Curving projection and retained source revision disagree.")
+            inputs = _renew_transition_certification_inputs(
+                source_result,
+                mesh,
+                geometry,
+                lineage,
+                reference_maps=identity_maps,
+                transition=coordinate_transition,
+            )
+            audit_policy = source_result.certification.audit_policy
+        result = certify_cell_mesh(
+            mesh,
+            source_result.coordinate_contract,
+            geometry=geometry,
+            audit_policy=audit_policy,
+            certification_inputs=inputs,
+            boundary=source_result.boundary,
+            patches=source_result.patches,
+            zones=source_result.zones,
+            labels=source_result.labels,
+            attributes=source_result.attributes,
+            associations=source_result.associations,
+            surface_source=source_result.surface_source,
+            region_boundary_evidence=source_result.region_boundary_evidence,
+            planar_embedding=source_result.planar_embedding,
+            layer_curving_evidence=layer_curving_evidence,
+        )
+        if prior_transition is not None:
+            material_chain = _extend_prior_volume_material_chain(
+                prior_transition,
+                source_result,
+                result,
+                lineage,
+                reference_maps=identity_maps,
+                coordinate_transition=coordinate_transition,
+            )
+            if material_chain is not None:
+                material_transition = CellMeshTransition(
+                    source_result.mesh.mesh_id,
+                    source_result.mesh.topology_id,
+                    result,
+                    lineage,
+                    MeshTransitionKind.REPAIR,
+                    geometry_transition=coordinate_transition,
+                    volume_material_chain=material_chain,
+                )
+    except (MeshingFailure, ValueError) as error:
+        report = None
+        if inputs is not None:
+            try:
+                report = MeshCertificationReport(
+                    inputs,
+                    audit_policy=audit_policy,
+                    organization=organization,
+                )
+            except (MeshingFailure, ValueError):
+                pass
+        return None, report, str(error), coordinate_transition, None
+    return result, result.certification, None, coordinate_transition, material_transition
+
 
 def _evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     classes: _NodeClasses,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     blocks: tuple[_BlockDistortion, ...],
     policy: HighOrderCurvingPolicy,
     /,
+    *,
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
 ) -> CurvedGeometryEvidence:
     coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
     _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
     scaled, distortion = _sampled_quality(blocks, coordinates)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
+    embedding = certify_global_embedding(mesh, geometry, validity)
+    (
+        target_result,
+        source_certification,
+        source_failure,
+        coordinate_transition,
+        material_transition,
+    ) = _curving_target_result(
+        source_result, mesh, geometry, projection, prior_transition=prior_transition
+    )
     return CurvedGeometryEvidence(
-        certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity),
+        validity,
+        embedding,
         classes.dimensions,
         classes.indices,
         classes.constrained,
@@ -729,13 +1421,18 @@ def _evidence(
         policy.residual_tolerance,
         scaled,
         distortion,
+        source_certification=source_certification,
+        source_failure=source_failure,
+        target_result=target_result,
+        coordinate_transition=coordinate_transition,
+        material_transition=material_transition,
     )
 
 
 def _require_inputs(
     mesh: CellMesh,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     policy: HighOrderCurvingPolicy,
     /,
 ) -> None:
@@ -743,35 +1440,64 @@ def _require_inputs(
         raise TypeError("mesh must be CellMesh.")
     if not isinstance(association, GeometryAssociation):
         raise TypeError("association must be GeometryAssociation.")
-    if not isinstance(projection, PreparedBRepProjection):
-        raise TypeError("projection must be PreparedBRepProjection.")
+    if not isinstance(projection, AbstractBRepProjection):
+        raise TypeError("projection must be AbstractBRepProjection.")
     if not isinstance(policy, HighOrderCurvingPolicy):
         raise TypeError("policy must be HighOrderCurvingPolicy.")
+def _curving_source_result(
+    mesh: CellMesh,
+    source_result: CellMeshingResult | None,
+    prior_transition: CellMeshTransition | None,
+    /,
+) -> CellMeshingResult | None:
+    if prior_transition is None:
+        return source_result
+    if not isinstance(prior_transition, CellMeshTransition):
+        raise TypeError("prior_transition must be CellMeshTransition or None.")
+    source = prior_transition.target if source_result is None else source_result
+    if not isinstance(source, CellMeshingResult):
+        raise TypeError("source_result must be CellMeshingResult or None.")
+    if (
+        prior_transition.target.result_id != source.result_id
+        or source.mesh.mesh_id != mesh.mesh_id
+        or source.mesh.topology_id != mesh.topology_id
+    ):
+        raise ValueError("prior_transition must target the exact mesh/result being curved.")
+    return source
+
 
 
 def verify_curved_geometry(
     geometry: CellGeometrySpec,
     mesh: CellMesh,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
     *,
     policy: HighOrderCurvingPolicy,
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
 ) -> CurvedGeometryEvidence:
-    """Certify an existing high-order geometry (e.g. a Gmsh high-order output).
+    """Certify an existing high-order map and retained source/material claims.
 
-    Nodes are classified through their owning mesh entities and the vertex
-    ``association``; the evidence carries the Bernstein validity certificate and
-    the CAD residual of every constrained node. Nothing is moved.
+    Nodes are classified through their owning mesh entities and vertex association.
+    ``source_result`` renews its target-bound acceptance; ``prior_transition`` must
+    target that exact result and may carry explicit material-reference authority.
+    Nothing is moved.
     """
     _require_inputs(mesh, association, projection, policy)
+    source_result = _curving_source_result(mesh, source_result, prior_transition)
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec.")
     classes = _node_classes(mesh, geometry, association, projection)
     # ty: ignore[unresolved-attribute]
     degree = max(int(element.degree) for element in geometry.elements)
     blocks = _distortion_blocks(mesh, geometry, degree)
-    return _evidence(mesh, geometry, classes, projection, blocks, policy)
+    return _evidence(
+        mesh, geometry, classes, projection, blocks, policy,
+        source_result=source_result,
+        prior_transition=prior_transition,
+    )
 
 
 # -- curving ----------------------------------------------------------------------
@@ -869,7 +1595,7 @@ def _apply_periodic(coordinates: np.ndarray, periodic: _PeriodicNodes, /) -> np.
 
 
 def _project_constrained(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     coordinates: np.ndarray,
     classes: _NodeClasses,
     periodic: _PeriodicNodes,
@@ -886,23 +1612,30 @@ def _project_constrained(
 def curve_cell_mesh(
     mesh: CellMesh,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
     *,
     policy: HighOrderCurvingPolicy,
     periodic: tuple[PeriodicCoupling, ...] = (),
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
 ) -> HighOrderCurvingResult:
-    """Curve an affine mesh to its B-Rep geometry with certified high-order nodes.
+    """Curve a mesh with local, global, source, and optional material acceptance.
 
-    ``association`` is the complete B-Rep vertex association of ``mesh``;
-    ``periodic`` couplings pair vertices of ``mesh`` so the target-side high-order
-    nodes are the declared isometry of the source-side nodes.
+    ``source_result`` retains target-bound certification. ``prior_transition`` must
+    target that exact source result and is required to continue any material
+    declaration/chain; a bare result never authors material identity.
     """
     _require_inputs(mesh, association, projection, policy)
+    source_result = _curving_source_result(mesh, source_result, prior_transition)
     straight = _straight_geometry(mesh, policy.degree)
     classes = _node_classes(mesh, straight, association, projection)
     blocks = _distortion_blocks(mesh, straight, policy.degree)
-    straight_evidence = _evidence(mesh, straight, classes, projection, blocks, policy)
+    straight_evidence = _evidence(
+        mesh, straight, classes, projection, blocks, policy,
+        source_result=source_result,
+        prior_transition=prior_transition,
+    )
     if not np.all(classes.resolved):
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.UNRESOLVED_ASSOCIATION,
@@ -938,7 +1671,21 @@ def curve_cell_mesh(
         projection, np.asarray(straight.coordinates, dtype=np.float64), classes, pairs
     )
     candidate = _evidence(
-        mesh, CellGeometrySpec(*layout, coordinates), classes, projection, blocks, policy
+        mesh,
+        _geometry_with_exact_coordinate_bank(
+            mesh,
+            layout[0],
+            layout[1],
+            straight,
+            coordinates,
+            identity_context=("curving-candidate",),
+        ),
+        classes,
+        projection,
+        blocks,
+        policy,
+        source_result=source_result,
+        prior_transition=prior_transition,
     )
     # The CAD projection needs no relaxation; it is accepted on its own when valid.
     accepted = (coordinates, candidate, 0) if candidate.accepted else None
@@ -961,7 +1708,14 @@ def curve_cell_mesh(
             regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
         )
         relaxed = optimize_cell_geometry_coordinates(
-            CellGeometrySpec(*layout, coordinates),
+            _geometry_with_exact_coordinate_bank(
+                mesh,
+                layout[0],
+                layout[1],
+                straight,
+                coordinates,
+                identity_context=("curving-candidate",),
+            ),
             energy,
             fixed_coordinates=fixed,
             termination=policy.termination,
@@ -975,11 +1729,20 @@ def curve_cell_mesh(
         )
         candidate = _evidence(
             mesh,
-            CellGeometrySpec(*layout, coordinates),
+            _geometry_with_exact_coordinate_bank(
+                mesh,
+                layout[0],
+                layout[1],
+                straight,
+                coordinates,
+                identity_context=("curving-candidate",),
+            ),
             classes,
             projection,
             blocks,
             policy,
+            source_result=source_result,
+            prior_transition=prior_transition,
         )
         if candidate.accepted and (
             relaxed.converged or policy.accept_valid_nonconverged_relaxation
@@ -988,17 +1751,36 @@ def curve_cell_mesh(
     if accepted is not None:
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.CURVED,
-            CellGeometrySpec(*layout, accepted[0]),
+            _geometry_with_exact_coordinate_bank(
+                mesh,
+                layout[0],
+                layout[1],
+                straight,
+                accepted[0],
+                identity_context=("curving-candidate",),
+            ),
             straight,
             accepted[1],
             candidate,
             tuple(minimizations),
             accepted[2],
+            cell_result=accepted[1].target_result,
         )
     # Without an accepted geometry, a valid last candidate within the residual
     # tolerance was refused only because its relaxation did not converge.
-    if candidate.accepted:
+    if (
+        candidate.source_failure is not None
+        or (
+            candidate.source_certification is not None
+            and not candidate.source_certification.passed
+        )
+        or (source_result is not None and candidate.target_result is None)
+    ):
+        status = HighOrderCurvingStatus.ROLLED_BACK_SOURCE_ACCEPTANCE
+    elif candidate.accepted:
         status = HighOrderCurvingStatus.ROLLED_BACK_NONCONVERGED
+    elif candidate.embedding.status != "certified":
+        status = HighOrderCurvingStatus.ROLLED_BACK_EMBEDDING
     elif candidate.certificate.all_certified:
         status = HighOrderCurvingStatus.ROLLED_BACK_RESIDUAL
     else:

@@ -94,6 +94,13 @@ _DEFERRED_EXPORTS = {
     "knn_query_graph": "._geometry",
     "mesh_to_geometry_graph": "._geometry",
     "mesh_to_graph": "._geometry",
+    "GraphPartitionPlan": "._partition",
+    "GraphPartitionResult": "._partition",
+    "WeightedCSRGraph": "._partition",
+    "partition_graph": "._partition",
+    "DistributedGraphPartitionResult": "._distributed_partition",
+    "DistributedWeightedCSRGraph": "._distributed_partition",
+    "partition_graph_distributed": "._distributed_partition",
     "mollified_kernel_weight": "._geometry",
     "point_cloud_to_graph": "._geometry",
     "query_graph_from_edges": "._geometry",
@@ -312,6 +319,11 @@ if TYPE_CHECKING:
         graph_denoising_loss,
         GraphPayloadKind,
     )
+    from ._distributed_partition import (
+        DistributedGraphPartitionResult,
+        DistributedWeightedCSRGraph,
+        partition_graph_distributed,
+    )
     from ._effective_resistance import (
         EffectiveResistancePlan,
         EffectiveResistanceResult,
@@ -472,6 +484,12 @@ if TYPE_CHECKING:
         with_zero_out_padding_outputs,
         zero_out_padding,
     )
+    from ._partition import (
+        GraphPartitionPlan,
+        GraphPartitionResult,
+        partition_graph,
+        WeightedCSRGraph,
+    )
     from ._process import (
         AutoregressiveGraphRollout,
         euler_step,
@@ -573,6 +591,13 @@ __all__ = [
     "line_graph",
     "mesh_to_dual_graph",
     "FacetAdjacency",
+    "GraphPartitionPlan",
+    "GraphPartitionResult",
+    "WeightedCSRGraph",
+    "partition_graph",
+    "DistributedGraphPartitionResult",
+    "DistributedWeightedCSRGraph",
+    "partition_graph_distributed",
     "facet_adjacency",
     "EquivariantGraphConvolution",
     "euclidean_edge_features",

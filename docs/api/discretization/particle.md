@@ -84,10 +84,10 @@ in the prepared/container identity.
 
 `PeriodicCell` stores row lattice vectors `H`. Its nearest-image stencil serves
 classical pair-once relations (`ParticlePairRelation`), which keep their
-unique-image guards. `PeriodicCell.image_stencil(radius, maximum_image_count=...)`
-is a separate, complete enumeration: it returns a `PeriodicImageStencil` holding
-every integer translation `n` for which `d = x_receiver - x_source + n @ H` can
-satisfy `|d| < radius`. It bounds the extent on each periodic axis by
+unique-image guards. `PeriodicCell.image_stencil(radius, ...)` is a separate,
+complete enumeration: it returns a `PeriodicImageStencil` holding every integer
+translation `n` for which `d = x_receiver - x_source + n @ H` can satisfy
+`|d| < radius`. It bounds the extent on each periodic axis by
 `floor(fractional_excursion + radius * ||H^+[:, a]||)` using the host right
 inverse, with the axis reach scaled outward by a small relative roundoff headroom
 (64 float32 epsilons) for sizing only. Where that outward interval crosses an
@@ -95,11 +95,12 @@ integer the stencil holds the larger extent, so the reference lattice keeps a po
 completeness margin under the traced solve. `axis_reach` records the raw reach.
 The headroom is not an error certificate for arbitrary conditioning. The image
 route searches size their stencils with the same rule. Nonperiodic axes have zero
-extent. The cell's condition certificate
-applies, and a stencil larger than `maximum_image_count` is refused rather than
-truncated. `lattice_right_inverse_with_status` and `lattice_measure` are the
-traced, non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both return
-a status flag in place of a substitute value.
+extent. Enumeration retains the complete derived translation product; it is not
+truncated or refused by an arbitrary image-count allowance. The cell's condition
+certificate still applies, and genuine allocation or conditioning failures remain
+errors. `lattice_right_inverse_with_status` and `lattice_measure` are the traced,
+non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both return a status
+flag in place of a substitute value.
 
 `ParticleImageRelation` is directed and image-aware. Route `e` is identified by
 the stable tuple `(source id, receiver id, n, case)` and has displacement

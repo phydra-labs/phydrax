@@ -6,18 +6,32 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
-from dataclasses import dataclass
-from types import ModuleType
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
+from dataclasses import asdict, dataclass
+from fractions import Fraction
+from numbers import Integral
+from typing import (
+    assert_never,
+    Literal,
+    NoReturn,
+    Protocol,
+    runtime_checkable,
+    TYPE_CHECKING,
+    TypeAlias,
+)
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._mass import Mass
+from ..._meshcore import delaunay_2d
+from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float, positive_integer
 from ...measurement.lidar import LidarPointProduct
-from ...typing import checked, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -34,8 +48,9 @@ from .._contracts import (
     GeometrySource,
 )
 from .._cubature import CubatureAtlas, CubatureComponent
-from .._triangulation import DelaunayTriangulation
+from .._meshing_domain import MeshingDomain
 from .._validity import GeometryValidityEvidence, representation_validity
+from ..brep._patches import AbstractSurfacePatch, LineCurve
 from ..design._schema import _ParameterCollector, DesignState
 from ..simplicial._io import (
     _canonical_triangle_arrays,
@@ -43,6 +58,51 @@ from ..simplicial._io import (
 )
 from ..simplicial._regions import MeshRegion, PlanarMeshRegion
 from ..simplicial._topology import TriangleTopology
+from ._normals import (
+    estimate_point_normals,
+    NormalEstimationEvidence,
+    NormalOrientation,
+)
+from ._poisson import (
+    extract_indicator_surface,
+    PoissonDiscretization,
+    PoissonSolveEvidence,
+    sample_areas,
+    sampled_surface_deviation,
+    SampledSurfaceDeviation,
+    solve_regular_poisson,
+)
+from ._poisson_octree import solve_octree_poisson
+from ._robustness import (
+    component_fit,
+    ComponentFitEvidence,
+    OutlierRemovalEvidence,
+    ReconstructionRobustness,
+    remove_statistical_outliers,
+    sampling_coverage,
+    SamplingCoverageEvidence,
+    thin_features,
+    ThinFeatureEvidence,
+)
+
+
+_SPACING_PER_SAMPLE = 2.0
+_PADDING_CELLS = 4
+_RESOLUTION_CELLS = 2.0
+_DEFAULT_ROBUSTNESS = ReconstructionRobustness()
+RepairInterpretation: TypeAlias = Literal[
+    "sample_supported_poisson_fit",
+    "poisson_inferred_closure",
+    "incomplete_sampling_refused",
+    "authored_sheet_topology_repair",
+]
+"""Interpretation of closure beyond observed point-cloud coverage.
+
+``authored_sheet_topology_repair`` is a geometry-preserving topology repair of
+an authored open triangle sheet (exact vertex welding, exact duplicate removal,
+per-component orientation); its boundary stays open and any closure is an
+explicit derived wrap such as a surface envelope.
+"""
 
 
 if TYPE_CHECKING:
@@ -52,7 +112,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ReconstructionReport:
-    """Provenance, filtering, topology, and approximation facts for reconstruction."""
+    """Provenance, topology, fit, coverage, and approximation evidence.
+
+    ``repair_interpretation`` distinguishes a sample-supported fit from a
+    Poisson-implied completion of regions outside the measured coverage. It is
+    not a claim that the inferred patch was observed or physically repaired.
+    """
 
     source_kind: str
     algorithm: str
@@ -68,6 +133,15 @@ class ReconstructionReport:
     parameters: tuple[tuple[str, str], ...]
     warnings: tuple[str, ...] = ()
     source_product_id: str | None = None
+    euler_characteristic: int | None = None
+    normal_evidence: NormalEstimationEvidence | None = None
+    poisson_evidence: PoissonSolveEvidence | None = None
+    deviation_evidence: SampledSurfaceDeviation | None = None
+    outlier_evidence: OutlierRemovalEvidence | None = None
+    thin_feature_evidence: ThinFeatureEvidence | None = None
+    component_evidence: ComponentFitEvidence | None = None
+    coverage_evidence: SamplingCoverageEvidence | None = None
+    repair_interpretation: RepairInterpretation | None = None
 
 
 @runtime_checkable
@@ -85,16 +159,645 @@ class ReconstructionFailure(ValueError):
         self.report = report
 
 
+@dataclass(frozen=True, slots=True)
+class ReconstructedGeometrySourceArchiveRecipe:
+    """Portable source inputs and persistent topology IDs for a reconstruction."""
+
+    source: GeometrySource
+    report: ReconstructionReport
+    persistent_vertex_ids: np.ndarray
+    persistent_edge_ids: np.ndarray
+    persistent_facet_ids: np.ndarray
+    persistent_region_id: int | None
+    expected_source_id: str
+    expected_source_revision: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, GeometrySource) or not isinstance(
+            self.report, ReconstructionReport
+        ):
+            raise TypeError(
+                "A reconstruction archive recipe requires its source and report."
+            )
+        for name in (
+            "persistent_vertex_ids",
+            "persistent_edge_ids",
+            "persistent_facet_ids",
+        ):
+            raw = np.asarray(getattr(self, name))
+            if raw.ndim != 1 or raw.dtype.kind not in "iu":
+                raise TypeError(f"{name} must be a one-dimensional integer vector.")
+            if raw.dtype.kind == "u" and np.any(raw > np.iinfo(np.int64).max):
+                raise ValueError(f"{name} contains an ID outside signed int64.")
+            values = np.array(raw, dtype=np.int64, copy=True)
+            if np.any(values < 0) or np.unique(values).size != values.size:
+                raise ValueError(f"{name} must contain unique nonnegative IDs.")
+            values.setflags(write=False)
+            object.__setattr__(self, name, values)
+        if self.persistent_region_id is not None and (
+            isinstance(self.persistent_region_id, (bool, np.bool_))
+            or not isinstance(self.persistent_region_id, (int, np.integer))
+            or int(self.persistent_region_id) < 0
+            or int(self.persistent_region_id) > np.iinfo(np.int64).max
+        ):
+            raise ValueError(
+                "persistent_region_id must be a nonnegative signed int64 ID."
+            )
+        if not self.expected_source_id or not self.expected_source_revision:
+            raise ValueError(
+                "A reconstruction archive recipe requires its source identity."
+            )
+
+
+def _persistent_int64_id(payload: object, /) -> int:
+    return int(canonical_fingerprint(payload)[:16], 16) & np.iinfo(np.int64).max
+
+
+def _persistent_id_vector(
+    values: ArrayLike | None,
+    count: int,
+    source_id: str,
+    kind: str,
+    /,
+) -> np.ndarray:
+    if values is None:
+        result = np.asarray(
+            [
+                _persistent_int64_id(
+                    {
+                        "kind": "reconstructed-source-entity",
+                        "source_id": source_id,
+                        "entity_kind": kind,
+                        "creation_ordinal": ordinal,
+                    }
+                )
+                for ordinal in range(count)
+            ],
+            dtype=np.int64,
+        )
+    else:
+        raw = np.asarray(values)
+        if raw.shape != (count,) or raw.dtype.kind not in "iu":
+            raise ValueError(f"{kind} persistent IDs must be an aligned integer vector.")
+        if raw.dtype.kind == "u" and np.any(raw > np.iinfo(np.int64).max):
+            raise ValueError(f"{kind} persistent IDs must fit signed int64.")
+        result = np.array(raw, dtype=np.int64, copy=True)
+    if np.any(result < 0) or np.unique(result).size != count:
+        raise ValueError(f"{kind} persistent IDs must be unique non-negative integers.")
+    result.setflags(write=False)
+    return result
+
+
+def _reconstructed_mesh_identity_records(
+    source: GeometrySource,
+    source_id: str,
+    /,
+    *,
+    vertex_ids: ArrayLike | None,
+    edge_ids: ArrayLike | None,
+    facet_ids: ArrayLike | None,
+    region_id: int | None,
+) -> tuple[tuple[np.ndarray, ...], int | None, np.ndarray | None]:
+    if not isinstance(source, MeshRegion):
+        if any(
+            value is not None for value in (vertex_ids, edge_ids, facet_ids, region_id)
+        ):
+            raise ValueError(
+                "Persistent mesh entity IDs require a reconstructed MeshRegion."
+            )
+        empty = np.empty((0,), dtype=np.int64)
+        empty.setflags(write=False)
+        return (empty, empty, empty), None, None
+
+    faces = np.asarray(source.faces, dtype=np.int64)
+    vertex_count = int(np.asarray(source.vertices).shape[0])
+    edges = np.asarray(source.triangle_mesh.topology.edges, dtype=np.int64)
+    vertices_ = _persistent_id_vector(
+        vertex_ids, vertex_count, source_id, "reconstructed_vertex"
+    )
+    if edge_ids is None:
+        edge_values = np.asarray(
+            [
+                _persistent_int64_id(
+                    {
+                        "kind": "reconstructed-edge-entity",
+                        "source_id": source_id,
+                        "vertices": tuple(
+                            sorted((int(vertices_[first]), int(vertices_[last])))
+                        ),
+                    }
+                )
+                for first, last in edges.tolist()
+            ],
+            dtype=np.int64,
+        )
+        edge_values.setflags(write=False)
+    else:
+        edge_values = _persistent_id_vector(
+            edge_ids, int(edges.shape[0]), source_id, "reconstructed_edge"
+        )
+    if np.unique(edge_values).size != edge_values.size:
+        raise ValueError("Reconstructed edge persistent IDs collide.")
+    if facet_ids is None:
+        facet_values = np.asarray(
+            [
+                _persistent_int64_id(
+                    {
+                        "kind": "reconstructed-facet-entity",
+                        "source_id": source_id,
+                        "vertices": tuple(
+                            sorted(int(vertices_[int(vertex)]) for vertex in face)
+                        ),
+                    }
+                )
+                for face in faces.tolist()
+            ],
+            dtype=np.int64,
+        )
+        facet_values.setflags(write=False)
+    else:
+        facet_values = _persistent_id_vector(
+            facet_ids, int(faces.shape[0]), source_id, "reconstructed_facet"
+        )
+    if np.unique(facet_values).size != facet_values.size:
+        raise ValueError("Reconstructed facet persistent IDs collide.")
+    if region_id is None:
+        region_id_ = _persistent_int64_id(
+            {"kind": "reconstructed-region-entity", "source_id": source_id}
+        )
+    else:
+        if isinstance(region_id, (bool, np.bool_)) or not isinstance(
+            region_id, (int, np.integer)
+        ):
+            raise TypeError("region_id must be one persistent integer ID.")
+        region_id_ = int(region_id)
+        if region_id_ < 0 or region_id_ > np.iinfo(np.int64).max:
+            raise ValueError("region_id must fit a non-negative signed int64.")
+    return (vertices_, edge_values, facet_values), region_id_, edges
+
+
+def _canonical_oriented_cycle(values: tuple[int, int, int], /) -> tuple[int, int, int]:
+    rotations = (values, values[1:] + values[:1], values[2:] + values[:2])
+    return min(rotations)
+
+
+def _reconstructed_source_geometry_payload(
+    source: GeometrySource,
+    entity_ids: tuple[np.ndarray, ...],
+    region_id: int | None,
+    /,
+) -> object:
+    if not isinstance(source, MeshRegion) or region_id is None:
+        return array_tree_fingerprint(source)
+    vertices = np.asarray(source.vertices, dtype=np.float64)
+    faces = np.asarray(source.faces, dtype=np.int64)
+    edges = np.asarray(source.triangle_mesh.topology.edges, dtype=np.int64)
+    vertex_ids, edge_ids, facet_ids = entity_ids
+    vertex_records = tuple(
+        sorted(
+            (
+                int(vertex_ids[row]),
+                tuple(float(value) for value in vertices[row]),
+            )
+            for row in range(vertices.shape[0])
+        )
+    )
+    edge_records = tuple(
+        sorted(
+            (
+                int(edge_ids[row]),
+                tuple(sorted((int(vertex_ids[first]), int(vertex_ids[last])))),
+            )
+            for row, (first, last) in enumerate(edges.tolist())
+        )
+    )
+    facet_records = tuple(
+        sorted(
+            (
+                int(facet_ids[row]),
+                _canonical_oriented_cycle(
+                    (
+                        int(vertex_ids[int(face[0])]),
+                        int(vertex_ids[int(face[1])]),
+                        int(vertex_ids[int(face[2])]),
+                    )
+                ),
+            )
+            for row, face in enumerate(faces.tolist())
+        )
+    )
+    return {
+        "kind": "reconstructed-mesh-region-persistent-topology",
+        "vertices": vertex_records,
+        "edges": edge_records,
+        "facets": facet_records,
+        "region_id": region_id,
+    }
+
+
+type _ReconstructedTrianglePoint = tuple[Fraction, Fraction, Fraction]
+type _ReconstructedTriangleCorners = tuple[
+    _ReconstructedTrianglePoint,
+    _ReconstructedTrianglePoint,
+    _ReconstructedTrianglePoint,
+]
+
+
+def _reconstructed_triangle_point(values: np.ndarray, /) -> _ReconstructedTrianglePoint:
+    return (
+        Fraction.from_float(float(values[0])),
+        Fraction.from_float(float(values[1])),
+        Fraction.from_float(float(values[2])),
+    )
+
+
+class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
+    """Affine unit-square chart trimmed to one retained source triangle."""
+
+    origin: Array
+    first: Array
+    second: Array
+    exact_corners: _ReconstructedTriangleCorners = eqx.field(static=True)
+
+    def __init__(self, corners: np.ndarray, /) -> None:
+        points = np.asarray(corners, dtype=np.float64)
+        if points.shape != (3, 3) or not np.all(np.isfinite(points)):
+            raise ValueError(
+                "Reconstructed triangle chart corners must be finite 3-vectors."
+            )
+        self.exact_corners = (
+            _reconstructed_triangle_point(points[0]),
+            _reconstructed_triangle_point(points[1]),
+            _reconstructed_triangle_point(points[2]),
+        )
+        self.origin = jnp.asarray(points[0], dtype=jnp.float64)
+        self.first = jnp.asarray(points[1] - points[0], dtype=jnp.float64)
+        self.second = jnp.asarray(points[2] - points[0], dtype=jnp.float64)
+
+    @property
+    def parameter_domain(self, /) -> tuple[tuple[float, float], tuple[float, float]]:
+        return ((0.0, 0.0), (1.0, 1.0))
+
+    def evaluate(self, parameters: Array, /) -> Array:
+        values = jnp.asarray(parameters, dtype=jnp.float64)
+        return (
+            self.origin
+            + values[..., 0, None] * self.first
+            + values[..., 1, None] * self.second
+        )
+
+
+def _reconstructed_meshing_domain(
+    source: GeometrySource,
+    source_id: str,
+    source_revision: str,
+    binding_id: str,
+    entity_ids: tuple[np.ndarray, ...],
+    region_id: int | None,
+    edges: np.ndarray | None,
+    /,
+) -> MeshingDomain | None:
+    if not isinstance(source, MeshRegion) or region_id is None or edges is None:
+        return None
+    return _triangle_complex_meshing_domain(
+        np.asarray(source.vertices, dtype=np.float64),
+        np.asarray(source.faces, dtype=np.int64),
+        edges,
+        source_id,
+        source_revision,
+        binding_id,
+        entity_ids,
+        region_id,
+        ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
+    )
+
+
+def _triangle_complex_meshing_domain(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    edges: np.ndarray,
+    source_id: str,
+    source_revision: str,
+    binding_id: str,
+    entity_ids: tuple[np.ndarray, ...],
+    region_id: int | None,
+    source_kinds: tuple[str, str, str],
+    /,
+) -> MeshingDomain:
+    """Exact affine-chart domain of a triangle complex; open sheets own no region."""
+    from .._meshing_domain import (
+        MeshingDomain,
+        MeshingDomainCurve,
+        MeshingDomainRegion,
+        MeshingSurfacePatch,
+        PatchCurveUse,
+    )
+
+    edge_rows = {
+        tuple(sorted((int(first), int(last)))): row
+        for row, (first, last) in enumerate(edges.tolist())
+    }
+    curves = tuple(
+        MeshingDomainCurve(int(first), int(last)) for first, last in edges.tolist()
+    )
+    chart_corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    patches = []
+    for face in faces.tolist():
+        uses = []
+        for local in range(3):
+            first_vertex = int(face[local])
+            last_vertex = int(face[(local + 1) % 3])
+            edge_row = edge_rows[tuple(sorted((first_vertex, last_vertex)))]
+            curve_first, curve_last = (int(value) for value in edges[edge_row])
+            uv_first = chart_corners[face.index(curve_first)]
+            uv_last = chart_corners[face.index(curve_last)]
+            pcurve = LineCurve(uv_first, uv_last - uv_first)
+            sense = 1 if (first_vertex, last_vertex) == (curve_first, curve_last) else -1
+            uses.append(PatchCurveUse(edge_row, pcurve, 0.0, 1.0, sense=sense))
+        patches.append(
+            MeshingSurfacePatch(
+                _ReconstructedTrianglePatch(vertices[face]), (tuple(uses),)
+            )
+        )
+    return MeshingDomain(
+        tuple(patches),
+        curves,
+        vertices.shape[0],
+        source_id=source_id,
+        source_revision=source_revision,
+        regions=()
+        if region_id is None
+        else (
+            MeshingDomainRegion(
+                "reconstructed_region",
+                tuple((row, 1) for row in range(faces.shape[0])),
+            ),
+        ),
+        source_indices=tuple(
+            tuple(int(value) for value in identifiers.tolist())
+            for identifiers in entity_ids
+        ),
+        region_source_indices=() if region_id is None else (region_id,),
+        source_kinds=source_kinds,
+        authority_id=binding_id,
+        accuracy="exact_represented",
+        corner_points=vertices,
+    )
+
+
+def _reconstructed_scope_banks(
+    domain: MeshingDomain | None,
+    source_id: str,
+    source_revision: str,
+    /,
+) -> tuple[
+    tuple[np.ndarray, ...],
+    tuple[tuple[tuple[str, tuple[str, ...]], ...], ...],
+    tuple[str, ...],
+]:
+    if domain is not None:
+        return (
+            domain.scope_entity_id_banks,
+            domain.scope_entity_key_banks,
+            domain.scope_entity_set_ids,
+        )
+    identifiers = tuple(np.empty((0,), dtype=np.int64) for _ in range(4))
+    for values in identifiers:
+        values.setflags(write=False)
+    keys: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...] = ((), (), (), ())
+    set_ids = tuple(
+        canonical_fingerprint(
+            {
+                "kind": "reconstructed-source-entity-set",
+                "source_id": source_id,
+                "source_revision": source_revision,
+                "dimension": dimension,
+                "entities": (),
+            }
+        )
+        for dimension in range(4)
+    )
+    return identifiers, keys, set_ids
+
+
+def _scope_entity_ids_by_mesh_row(
+    domain: MeshingDomain | None, /
+) -> tuple[np.ndarray, ...]:
+    if domain is None:
+        rows = tuple(np.empty((0,), dtype=np.int64) for _ in range(4))
+        for values in rows:
+            values.setflags(write=False)
+        return rows
+    counts = (
+        len(domain.source_indices[0]),
+        len(domain.source_indices[1]),
+        len(domain.source_indices[2]),
+        len(domain.region_source_indices),
+    )
+    row_banks: list[np.ndarray] = []
+    for dimension, count in enumerate(counts):
+        id_by_key = {
+            key: int(identifier)
+            for identifier, key in zip(
+                domain.scope_entity_ids(dimension),
+                domain.scope_entity_key_banks[dimension],
+                strict=True,
+            )
+        }
+        row_ids = np.asarray(
+            [id_by_key[(domain.entity_id(dimension, row), ())] for row in range(count)],
+            dtype=np.int64,
+        )
+        row_ids.setflags(write=False)
+        row_banks.append(row_ids)
+    return tuple(row_banks)
+
+
 class ReconstructedGeometrySource(GeometrySource):
-    """Geometry source carrying an immutable reconstruction report."""
+    """Geometry, persistent topology identity, and provenance of a reconstruction."""
 
     source: GeometrySource
     report: ReconstructionReport = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    binding_id: str = eqx.field(static=True)
+    persistent_vertex_ids: np.ndarray
+    persistent_edge_ids: np.ndarray
+    persistent_facet_ids: np.ndarray
+    persistent_region_id: int | None = eqx.field(static=True)
+    meshing_domain: MeshingDomain | None
+    scope_entity_id_banks: tuple[np.ndarray, ...]
+    scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
+    scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
+    scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
 
     @checked
-    def __init__(self, source: GeometrySource, report: ReconstructionReport) -> None:
+    def __init__(
+        self,
+        source: GeometrySource,
+        report: ReconstructionReport,
+        *,
+        persistent_vertex_ids: ArrayLike | None = None,
+        persistent_edge_ids: ArrayLike | None = None,
+        persistent_facet_ids: ArrayLike | None = None,
+        persistent_region_id: int | None = None,
+    ) -> None:
+        if not isinstance(source, GeometrySource):
+            raise TypeError("source must be a GeometrySource.")
+        if not isinstance(report, ReconstructionReport):
+            raise TypeError("report must be a ReconstructionReport.")
+        feature = getattr(source, "feature_id", None)
+        if not isinstance(feature, str) or not feature.strip():
+            feature = f"{type(source).__module__}.{type(source).__qualname__}"
+        source_id = f"reconstructed:{feature.strip()}"
+        entity_ids, region_id, edges = _reconstructed_mesh_identity_records(
+            source,
+            source_id,
+            vertex_ids=persistent_vertex_ids,
+            edge_ids=persistent_edge_ids,
+            facet_ids=persistent_facet_ids,
+            region_id=persistent_region_id,
+        )
+        source_representation = (
+            None if isinstance(source, (MeshRegion, PlanarMeshRegion)) else repr(source)
+        )
+        source_revision = canonical_fingerprint(
+            {
+                "kind": "reconstructed-geometry-source-revision",
+                "source_id": source_id,
+                "source_feature_id": feature,
+                "source_type": (f"{type(source).__module__}.{type(source).__qualname__}"),
+                "source_geometry": _reconstructed_source_geometry_payload(
+                    source, entity_ids, region_id
+                ),
+                "source_representation": source_representation,
+                "reconstruction_report": asdict(report),
+                "persistent_entity_ids": tuple(
+                    tuple(sorted(int(value) for value in values.tolist()))
+                    for values in entity_ids
+                ),
+                "persistent_region_id": region_id,
+            }
+        )
+        binding_id = canonical_fingerprint(
+            {
+                "kind": "reconstructed-geometry-binding",
+                "source_id": source_id,
+                "source_revision": source_revision,
+            }
+        )
+        domain = _reconstructed_meshing_domain(
+            source,
+            source_id,
+            source_revision,
+            binding_id,
+            entity_ids,
+            region_id,
+            edges,
+        )
+        id_banks, key_banks, set_ids = _reconstructed_scope_banks(
+            domain, source_id, source_revision
+        )
+        row_scope_ids = _scope_entity_ids_by_mesh_row(domain)
         self.source = source
         self.report = report
+        self.source_id = source_id
+        self.source_revision = source_revision
+        self.binding_id = binding_id
+        self.persistent_vertex_ids = entity_ids[0]
+        self.persistent_edge_ids = entity_ids[1]
+        self.persistent_facet_ids = entity_ids[2]
+        self.persistent_region_id = region_id
+        self.meshing_domain = domain
+        self.scope_entity_id_banks = id_banks
+        self.scope_entity_key_banks = key_banks
+        self.scope_entity_ids_by_mesh_row = row_scope_ids
+        self.scope_entity_set_ids = set_ids
+
+    def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Integral)
+            or int(dimension) not in (0, 1, 2, 3)
+        ):
+            raise ValueError("Reconstructed source dimension must be in 0..3.")
+        return self.scope_entity_id_banks[int(dimension)]
+
+    def scope_entity_set_id(self, dimension: int, /) -> str:
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Integral)
+            or int(dimension) not in (0, 1, 2, 3)
+        ):
+            raise ValueError("Reconstructed source dimension must be in 0..3.")
+        return self.scope_entity_set_ids[int(dimension)]
+
+    def source_entity_key_for_scope(
+        self, dimension: int, entity_id: int, /
+    ) -> tuple[str, tuple[str, ...]]:
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Integral)
+            or int(dimension) not in (0, 1, 2, 3)
+        ):
+            raise ValueError("Reconstructed source dimension must be in 0..3.")
+        if isinstance(entity_id, bool) or not isinstance(entity_id, Integral):
+            raise TypeError("entity_id must be one stable integer scope ID.")
+        dimension_ = int(dimension)
+        entity_id_ = int(entity_id)
+        identifiers = self.scope_entity_id_banks[dimension_]
+        position = int(np.searchsorted(identifiers, entity_id_))
+        if position >= identifiers.size or int(identifiers[position]) != entity_id_:
+            raise ValueError(
+                "entity_id is absent from this reconstructed source dimension."
+            )
+        return self.scope_entity_key_banks[dimension_][position]
+
+    def scope_entity_id_for_mesh_row(self, dimension: int, row: int, /) -> int:
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Integral)
+            or int(dimension) not in (0, 1, 2, 3)
+        ):
+            raise ValueError("Reconstructed source dimension must be in 0..3.")
+        if isinstance(row, bool) or not isinstance(row, Integral):
+            raise TypeError("row must be one source mesh row index.")
+        bank = self.scope_entity_ids_by_mesh_row[int(dimension)]
+        row_ = int(row)
+        if row_ < 0 or row_ >= bank.size:
+            raise ValueError("row is outside the reconstructed source stratum.")
+        return int(bank[row_])
+
+    def source_entity_key_for_mesh_row(
+        self, dimension: int, row: int, /
+    ) -> tuple[str, tuple[str, ...]]:
+        """Resolve a source row through its stored persistent entity mapping."""
+        entity_id = self.scope_entity_id_for_mesh_row(dimension, row)
+        return self.source_entity_key_for_scope(dimension, entity_id)
+
+    def source_row_for_scope(self, dimension: int, entity_id: int, /) -> int:
+        if self.meshing_domain is None:
+            raise ValueError("This reconstructed source has no triangle MeshingDomain.")
+        entity_key, occurrence_path = self.source_entity_key_for_scope(
+            dimension, entity_id
+        )
+        return self.meshing_domain.resolve_entity_id(
+            dimension, entity_key, occurrence_path=occurrence_path
+        )
+
+    @property
+    def archive_recipe(self) -> ReconstructedGeometrySourceArchiveRecipe:
+        """Return source inputs and persistent IDs, excluding derived chart banks."""
+        return ReconstructedGeometrySourceArchiveRecipe(
+            self.source,
+            self.report,
+            self.persistent_vertex_ids,
+            self.persistent_edge_ids,
+            self.persistent_facet_ids,
+            self.persistent_region_id,
+            self.source_id,
+            self.source_revision,
+        )
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         return _ReconstructedGeometryKernel(self.source._compile(context), self.report)
@@ -239,17 +942,6 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     return points - offset, offset
 
 
-def _require_pyvista() -> ModuleType:
-    try:
-        import pyvista
-    except ImportError as error:
-        raise ImportError(
-            "Implicit point-cloud reconstruction requires the optional "
-            "'geometry-pyvista' dependency group."
-        ) from error
-    return pyvista
-
-
 def _planar_triangulation(
     points: np.ndarray,
     /,
@@ -267,9 +959,8 @@ def _planar_triangulation(
     vertices = points[retained]
     if vertices.shape[0] < 3:
         raise ValueError("Planar reconstruction retained fewer than three points.")
-    # Canonical owner, Qhull provider: positively oriented, canonically ordered.
-    triangulation = DelaunayTriangulation(vertices, provider="qhull")
-    faces = np.array(triangulation.simplices, dtype=np.int32)
+    # Direct native entry avoids importing the optional Qhull provider.
+    faces, _ = delaunay_2d(vertices)
     triangles = vertices[faces]
     doubled_area = np.abs(
         (triangles[:, 1, 0] - triangles[:, 0, 0])
@@ -286,18 +977,6 @@ def _planar_triangulation(
     if faces.shape[0] == 0:
         raise ValueError("Planar reconstruction produced no retained triangles.")
     return vertices, faces, retained
-
-
-def _polydata_triangles(polydata: Any) -> tuple[np.ndarray, np.ndarray]:
-    surface = polydata.triangulate()
-    vertices = np.asarray(surface.points, dtype=np.float64)
-    packed = np.asarray(surface.faces, dtype=np.int64)
-    if packed.size == 0 or packed.size % 4 != 0:
-        raise ValueError("Reconstruction produced no triangular cells.")
-    records = packed.reshape((-1, 4))
-    if np.any(records[:, 0] != 3):
-        raise ValueError("Triangulated PolyData contains a non-triangle cell.")
-    return vertices, records[:, 1:].astype(np.int32)
 
 
 def _clean_surface_mesh(
@@ -349,7 +1028,7 @@ def reconstruct_planar_region(
         for index in range(offsets.shape[0] - 1)
     )
     source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
-    algorithm = "scipy_delaunay_2d_native_boundary"
+    algorithm = "meshcore_delaunay_2d_native_boundary"
     parameters = _parameter_records(
         alpha=float(alpha),
         tolerance=float(tolerance),
@@ -375,7 +1054,7 @@ def reconstruct_planar_region(
 
 def _surface_source(
     points: np.ndarray,
-    surface: Any,
+    surface: tuple[np.ndarray, np.ndarray],
     *,
     source_kind: str,
     algorithm: str,
@@ -385,10 +1064,18 @@ def _surface_source(
     warnings: Sequence[str] = (),
     feature_id: str | None = None,
     source_product_id: str | None = None,
+    input_digest: str | None = None,
+    normal_evidence: NormalEstimationEvidence | None = None,
+    poisson_evidence: PoissonSolveEvidence | None = None,
+    outlier_evidence: OutlierRemovalEvidence | None = None,
+    thin_feature_evidence: ThinFeatureEvidence | None = None,
+    component_evidence: ComponentFitEvidence | None = None,
+    coverage_evidence: SamplingCoverageEvidence | None = None,
+    repair_interpretation: RepairInterpretation | None = None,
+    measure_deviation: bool = False,
 ) -> ReconstructedGeometrySource:
-    vertices, faces = (
-        surface if isinstance(surface, tuple) else _polydata_triangles(surface)
-    )
+    vertices, faces = surface
+    digest = _point_digest(points) if input_digest is None else input_digest
     try:
         vertices_clean, faces_clean, topology = _clean_surface_mesh(vertices, faces)
         winding_consistent = True
@@ -396,7 +1083,7 @@ def _surface_source(
         report = ReconstructionReport(
             source_kind=source_kind,
             algorithm=algorithm,
-            input_digest=_point_digest(points),
+            input_digest=digest,
             input_points=input_points,
             retained_points=points.shape[0],
             output_vertices=vertices.shape[0],
@@ -408,15 +1095,27 @@ def _surface_source(
             parameters=parameters,
             warnings=(*warnings, str(error)),
             source_product_id=source_product_id,
+            normal_evidence=normal_evidence,
+            poisson_evidence=poisson_evidence,
+            outlier_evidence=outlier_evidence,
+            thin_feature_evidence=thin_feature_evidence,
+            component_evidence=component_evidence,
+            coverage_evidence=coverage_evidence,
+            repair_interpretation=repair_interpretation,
         )
         raise ReconstructionFailure(
             "Surface reconstruction produced invalid triangle topology.", report
         ) from error
+    deviation = (
+        sampled_surface_deviation(points, vertices_clean, faces_clean)
+        if measure_deviation and topology.watertight
+        else None
+    )
     vertices_clean, center = _recenter(vertices_clean, recenter)
     report = ReconstructionReport(
         source_kind=source_kind,
         algorithm=algorithm,
-        input_digest=_point_digest(points),
+        input_digest=digest,
         input_points=input_points,
         retained_points=points.shape[0],
         output_vertices=vertices_clean.shape[0],
@@ -428,6 +1127,15 @@ def _surface_source(
         parameters=parameters,
         warnings=tuple(warnings),
         source_product_id=source_product_id,
+        euler_characteristic=topology.euler_characteristic,
+        normal_evidence=normal_evidence,
+        poisson_evidence=poisson_evidence,
+        deviation_evidence=deviation,
+        outlier_evidence=outlier_evidence,
+        thin_feature_evidence=thin_feature_evidence,
+        component_evidence=component_evidence,
+        coverage_evidence=coverage_evidence,
+        repair_interpretation=repair_interpretation,
     )
     if not report.watertight or not report.winding_consistent:
         raise ReconstructionFailure(
@@ -439,39 +1147,312 @@ def _surface_source(
     return ReconstructedGeometrySource(source, report)
 
 
+def _normal_warnings(evidence: NormalEstimationEvidence, /) -> tuple[str, ...]:
+    warnings: list[str] = []
+    if evidence.ambiguous_direction_count:
+        warnings.append(
+            f"{evidence.ambiguous_direction_count} neighborhoods have ambiguous PCA normals."
+        )
+    if evidence.ambiguous_orientation_edges:
+        warnings.append(
+            f"{evidence.ambiguous_orientation_edges} orientation edges join nearly perpendicular normals."
+        )
+    if evidence.conflicting_neighbor_edges:
+        warnings.append(
+            f"{evidence.conflicting_neighbor_edges} neighbor pairs remain oppositely oriented."
+        )
+    return tuple(warnings)
+
+
+def _poisson_surface_source(
+    points: np.ndarray,
+    *,
+    source_kind: str,
+    input_points: int,
+    input_digest: str,
+    recenter: bool,
+    normals: ArrayLike | None,
+    normal_orientation: NormalOrientation,
+    neighborhood_size: int,
+    sample_spacing: float | None,
+    screening: float,
+    discretization: PoissonDiscretization,
+    robustness: ReconstructionRobustness,
+    initial_warnings: Sequence[str] = (),
+    base_parameters: dict[str, object] | None = None,
+    feature_id: str | None = None,
+    source_product_id: str | None = None,
+) -> ReconstructedGeometrySource:
+    if not isinstance(robustness, ReconstructionRobustness):
+        raise TypeError("robustness must be a ReconstructionRobustness.")
+    size = positive_integer(neighborhood_size, "neighborhood_size")
+    spacing = (
+        None
+        if sample_spacing is None
+        else positive_finite_float(sample_spacing, "sample_spacing")
+    )
+    screening_ = positive_finite_float(screening, "screening")
+    orientation = parse(normal_orientation, NormalOrientation, "normal_orientation")
+    discretization_ = parse(discretization, PoissonDiscretization, "discretization")
+    parameter_values = dict(base_parameters or {})
+    parameter_values.update(
+        normals="supplied" if normals is not None else "estimated",
+        normal_orientation=orientation,
+        neighborhood_size=size,
+        sample_spacing=spacing,
+        screening=screening_,
+        discretization=discretization_,
+        outlier_std_ratio=robustness.outlier_std_ratio,
+        coverage_distance=robustness.coverage_distance,
+        incomplete_sampling=robustness.incomplete_sampling,
+        thin_feature_distance=robustness.thin_feature_distance,
+        component_fit_tolerance=robustness.component_fit_tolerance,
+    )
+    parameters = _parameter_records(**parameter_values)
+    warnings = tuple(initial_warnings)
+    retained_points = points
+    retained_normals = None if normals is None else np.asarray(normals, dtype=np.float64)
+    outlier_evidence: OutlierRemovalEvidence | None = None
+    normal_evidence: NormalEstimationEvidence | None = None
+    poisson_evidence: PoissonSolveEvidence | None = None
+    thin_evidence: ThinFeatureEvidence | None = None
+    fit_evidence: ComponentFitEvidence | None = None
+    coverage_evidence: SamplingCoverageEvidence | None = None
+    repair_interpretation: RepairInterpretation = "sample_supported_poisson_fit"
+
+    def fail(reason: str, *, vertices: int = 0, cells: int = 0) -> NoReturn:
+        report = ReconstructionReport(
+            source_kind=source_kind,
+            algorithm="native_screened_poisson",
+            input_digest=input_digest,
+            input_points=input_points,
+            retained_points=retained_points.shape[0],
+            output_vertices=vertices,
+            output_cells=cells,
+            connected_components=0,
+            watertight=False,
+            winding_consistent=False,
+            recenter_offset=(0.0, 0.0, 0.0),
+            parameters=parameters,
+            warnings=(*warnings, reason),
+            source_product_id=source_product_id,
+            normal_evidence=normal_evidence,
+            poisson_evidence=poisson_evidence,
+            outlier_evidence=outlier_evidence,
+            thin_feature_evidence=thin_evidence,
+            component_evidence=fit_evidence,
+            coverage_evidence=coverage_evidence,
+            repair_interpretation=repair_interpretation,
+        )
+        raise ReconstructionFailure(reason, report)
+
+    def fail_allocation(stage: str, error: MemoryError, /) -> NoReturn:
+        detail = str(error) or "allocator supplied no detail"
+        fail(
+            f"Native reconstruction allocation failed during {stage} "
+            f"({type(error).__name__}): {detail}"
+        )
+
+    if robustness.outlier_std_ratio is not None:
+        try:
+            retained_mask, outliers = remove_statistical_outliers(
+                retained_points, size, robustness.outlier_std_ratio
+            )
+        except MemoryError as error:
+            fail_allocation("outlier removal", error)
+        outlier_evidence = outliers
+        retained_points = retained_points[retained_mask]
+        if retained_normals is not None:
+            if retained_normals.shape != points.shape:
+                raise ValueError(
+                    f"normals must have shape {points.shape}; got {retained_normals.shape}."
+                )
+            retained_normals = retained_normals[retained_mask]
+        if outliers.removed_indices:
+            warnings = (
+                *warnings,
+                f"Statistical outlier removal dropped {len(outliers.removed_indices)} samples.",
+            )
+        if retained_points.shape[0] <= size:
+            fail(
+                "Outlier removal retained too few points for the requested neighborhood."
+            )
+
+    try:
+        oriented = estimate_point_normals(
+            retained_points,
+            normals=retained_normals,
+            orientation=orientation,
+            neighborhood_size=size,
+        )
+    except MemoryError as error:
+        fail_allocation("normal estimation", error)
+    normal_evidence = oriented.evidence
+    try:
+        areas = sample_areas(oriented.neighbor_distances)
+    except MemoryError as error:
+        fail_allocation("sample-area estimation", error)
+    spacing_ = (
+        _SPACING_PER_SAMPLE * float(np.sqrt(np.median(areas)))
+        if spacing is None
+        else spacing
+    )
+    try:
+        thin = thin_features(
+            retained_points,
+            oriented.normals,
+            size,
+            _RESOLUTION_CELLS * spacing_
+            if robustness.thin_feature_distance is None
+            else robustness.thin_feature_distance,
+        )
+    except MemoryError as error:
+        fail_allocation("thin-feature analysis", error)
+    thin_evidence = thin
+    warnings = (*warnings, *_normal_warnings(normal_evidence))
+    if thin.thin_samples:
+        warnings = (
+            *warnings,
+            f"{thin.thin_samples} samples have a stacked sheet closer than "
+            f"{thin.thin_feature_distance:.6g}; Poisson smoothing cannot separate it.",
+        )
+    match discretization_:
+        case "octree":
+            solver = solve_octree_poisson
+        case "regular":
+            solver = solve_regular_poisson
+        case _:
+            assert_never(discretization_)
+    try:
+        indicator = solver(
+            retained_points,
+            oriented.normals,
+            areas,
+            spacing=spacing_,
+            screening=screening_,
+            padding_cells=_PADDING_CELLS,
+        )
+    except MemoryError as error:
+        fail_allocation("Poisson grid and solver", error)
+    except (ValueError, OverflowError) as error:
+        fail(str(error))
+    poisson = indicator.evidence
+    poisson_evidence = poisson
+    try:
+        fit = component_fit(
+            indicator.sample_values,
+            areas,
+            oriented.components,
+            robustness.component_fit_tolerance,
+        )
+    except MemoryError as error:
+        fail_allocation("component fitting", error)
+    fit_evidence = fit
+    if not poisson.solver_converged:
+        fail(f"Screened Poisson solve did not converge: {poisson.solver_message}")
+    if fit.unresolved_components:
+        fail(
+            f"Screened Poisson level set does not fit sample components {fit.unresolved_components!r}."
+        )
+    try:
+        vertices, faces = extract_indicator_surface(indicator)
+    except MemoryError as error:
+        fail_allocation("level-set extraction", error)
+    try:
+        _, coverage = sampling_coverage(
+            retained_points,
+            vertices,
+            faces,
+            _RESOLUTION_CELLS * spacing_
+            if robustness.coverage_distance is None
+            else robustness.coverage_distance,
+        )
+    except MemoryError as error:
+        fail_allocation("surface coverage analysis", error)
+    coverage_evidence = coverage
+    if coverage.unsupported_triangles:
+        repair_interpretation = "poisson_inferred_closure"
+        warnings = (
+            *warnings,
+            f"{coverage.unsupported_patches} output patches covering "
+            f"{coverage.unsupported_area:.6g} area exceed sample coverage; "
+            "these are Poisson-inferred closures, not observed surface.",
+        )
+    match robustness.incomplete_sampling:
+        case "close":
+            pass
+        case "refuse":
+            if coverage.unsupported_triangles:
+                repair_interpretation = "incomplete_sampling_refused"
+                fail(
+                    f"Coverage policy refused {coverage.unsupported_triangles} unsupported triangles."
+                )
+        case _:
+            assert_never(robustness.incomplete_sampling)
+    try:
+        return _surface_source(
+            retained_points,
+            (vertices, faces),
+            source_kind=source_kind,
+            algorithm="native_screened_poisson",
+            recenter=recenter,
+            parameters=parameters,
+            input_points=input_points,
+            warnings=warnings,
+            feature_id=feature_id,
+            source_product_id=source_product_id,
+            input_digest=input_digest,
+            normal_evidence=normal_evidence,
+            poisson_evidence=poisson_evidence,
+            outlier_evidence=outlier_evidence,
+            thin_feature_evidence=thin_evidence,
+            component_evidence=fit_evidence,
+            coverage_evidence=coverage_evidence,
+            repair_interpretation=repair_interpretation,
+            measure_deviation=True,
+        )
+    except MemoryError as error:
+        fail_allocation("source geometry construction", error)
+
+
 def reconstruct_surface_region(
     points: ArrayLike,
     *,
+    normals: ArrayLike | None = None,
+    normal_orientation: NormalOrientation = "propagate",
     recenter: bool = True,
     neighborhood_size: int | None = None,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Reconstruct a watertight surface point cloud through a reported implicit fit."""
+    """Reconstruct a closed surface by native screened Poisson.
+
+    Missing normals are estimated from bounded k-neighborhood PCA and oriented
+    over a minimum-spanning forest. The adaptive octree is the default solve.
+    Features below the finest grid width are smoothed; unsupported closed
+    patches are reported as Poisson-inferred completion, not measured surface.
+    """
 
     points_ = _validated_points(points, 3)
-    if neighborhood_size is not None and neighborhood_size <= 0:
-        raise ValueError("neighborhood_size must be positive when provided.")
-    if sample_spacing is not None and sample_spacing <= 0.0:
-        raise ValueError("sample_spacing must be positive when provided.")
-    pyvista = _require_pyvista()
-    surface = pyvista.PolyData(points_).reconstruct_surface(
-        nbr_sz=neighborhood_size,
-        sample_spacing=sample_spacing,
-        progress_bar=bool(progress_bar),
+    neighborhood = (
+        min(16, points_.shape[0] - 1) if neighborhood_size is None else neighborhood_size
     )
-    return _surface_source(
+    return _poisson_surface_source(
         points_,
-        surface,
         source_kind="surface_point_cloud",
-        algorithm="pyvista_implicit_surface",
-        recenter=recenter,
-        parameters=_parameter_records(
-            neighborhood_size=neighborhood_size,
-            sample_spacing=sample_spacing,
-        ),
         input_points=points_.shape[0],
+        input_digest=_point_digest(points_),
+        recenter=recenter,
+        normals=normals,
+        normal_orientation=normal_orientation,
+        neighborhood_size=neighborhood,
+        sample_spacing=sample_spacing,
+        screening=screening,
+        discretization=discretization,
+        robustness=robustness,
         feature_id=feature_id,
     )
 
@@ -573,22 +1554,40 @@ def reconstruct_dem_region(
 def reconstruct_point_region(
     points: ArrayLike,
     *,
+    normals: ArrayLike | None = None,
+    normal_orientation: NormalOrientation = "propagate",
     recenter: bool = True,
     roi: tuple[float, float, float, float, float, float] | None = None,
     voxel_size: float | None = None,
     neighborhood_size: int | None = None,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
     source_product_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Crop/downsample Cartesian points, then run a reported implicit surface fit."""
+    """Filter Cartesian samples and fit a native screened-Poisson solid.
+
+    Unsupported portions of the closed level set are model-implied completion,
+    not observed surface. Their coverage and repair interpretation are reported.
+    """
 
     original = _validated_points(points, 3)
     retained = original
+    retained_normals = None if normals is None else np.asarray(normals, dtype=np.float64)
+    if retained_normals is not None and retained_normals.shape != original.shape:
+        raise ValueError(
+            f"normals must have shape {original.shape}; got {retained_normals.shape}."
+        )
+    if retained_normals is not None and not np.all(np.isfinite(retained_normals)):
+        raise ValueError("normals must all be finite.")
     warnings: list[str] = []
     if roi is not None:
-        x_min, x_max, y_min, y_max, z_min, z_max = map(float, roi)
+        bounds = np.asarray(roi, dtype=np.float64)
+        if bounds.shape != (6,) or not np.all(np.isfinite(bounds)):
+            raise ValueError("roi must contain six finite bounds.")
+        x_min, x_max, y_min, y_max, z_min, z_max = bounds
         if not (x_min < x_max and y_min < y_max and z_min < z_max):
             raise ValueError("roi minima must be strictly below maxima.")
         mask = (
@@ -600,40 +1599,38 @@ def reconstruct_point_region(
             & (retained[:, 2] <= z_max)
         )
         retained = retained[mask]
+        if retained_normals is not None:
+            retained_normals = retained_normals[mask]
     if voxel_size is not None:
-        if voxel_size <= 0.0:
-            raise ValueError("voxel_size must be positive when provided.")
-        voxel = np.floor(retained / float(voxel_size)).astype(np.int64)
+        voxel_width = positive_finite_float(voxel_size, "voxel_size")
+        voxel = np.floor(retained / voxel_width).astype(np.int64)
         _, indices = np.unique(voxel, axis=0, return_index=True)
-        retained = retained[np.sort(indices)]
+        indices = np.sort(indices)
+        retained = retained[indices]
+        if retained_normals is not None:
+            retained_normals = retained_normals[indices]
     if retained.shape[0] < 4:
-        raise ValueError("LiDAR filtering retained too few points for reconstruction.")
+        raise ValueError("Filtering retained too few points for reconstruction.")
     if retained.shape[0] < original.shape[0] / 10:
         warnings.append("Filtering retained fewer than ten percent of input points.")
-    if neighborhood_size is not None and neighborhood_size <= 0:
-        raise ValueError("neighborhood_size must be positive when provided.")
-    if sample_spacing is not None and sample_spacing <= 0.0:
-        raise ValueError("sample_spacing must be positive when provided.")
-    pyvista = _require_pyvista()
-    surface = pyvista.PolyData(retained).reconstruct_surface(
-        nbr_sz=neighborhood_size,
-        sample_spacing=sample_spacing,
-        progress_bar=bool(progress_bar),
+    neighborhood = (
+        min(16, retained.shape[0] - 1) if neighborhood_size is None else neighborhood_size
     )
-    return _surface_source(
+    return _poisson_surface_source(
         retained,
-        surface,
         source_kind="point_cloud",
-        algorithm="voxel_filter_then_pyvista_implicit_surface",
-        recenter=recenter,
-        parameters=_parameter_records(
-            roi=roi,
-            voxel_size=voxel_size,
-            neighborhood_size=neighborhood_size,
-            sample_spacing=sample_spacing,
-        ),
         input_points=original.shape[0],
-        warnings=warnings,
+        input_digest=_point_digest(original),
+        recenter=recenter,
+        normals=retained_normals,
+        normal_orientation=normal_orientation,
+        neighborhood_size=neighborhood,
+        sample_spacing=sample_spacing,
+        screening=screening,
+        discretization=discretization,
+        robustness=robustness,
+        initial_warnings=warnings,
+        base_parameters={"roi": roi, "voxel_size": voxel_size},
         feature_id=feature_id,
         source_product_id=source_product_id,
     )
@@ -647,10 +1644,13 @@ def reconstruct_lidar_region(
     voxel_size: float | None = None,
     neighborhood_size: int | None = None,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Reconstruct valid derived LiDAR points while retaining acquisition lineage."""
+    """Reconstruct active LiDAR points while retaining acquisition lineage."""
+
     if not isinstance(product, LidarPointProduct):
         raise TypeError("product must be LidarPointProduct.")
     active = np.asarray(product.support.active_mask, dtype=np.bool_)
@@ -661,7 +1661,9 @@ def reconstruct_lidar_region(
         voxel_size=voxel_size,
         neighborhood_size=neighborhood_size,
         sample_spacing=sample_spacing,
-        progress_bar=progress_bar,
+        screening=screening,
+        discretization=discretization,
+        robustness=robustness,
         feature_id=feature_id,
         source_product_id=product.point_product_id,
     )
@@ -669,6 +1671,7 @@ def reconstruct_lidar_region(
 
 __all__ = [
     "ReconstructedGeometrySource",
+    "ReconstructedGeometrySourceArchiveRecipe",
     "ReconstructionReportProvider",
     "ReconstructionFailure",
     "ReconstructionReport",

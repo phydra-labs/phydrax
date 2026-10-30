@@ -57,7 +57,6 @@ from ..._validation import (
     canonical_identifier,
     nonnegative_integer,
     positive_finite_float,
-    positive_integer,
 )
 from ...typing import checked
 from ._edits import (
@@ -96,7 +95,6 @@ class _DiameterCertificate(IntEnum):
 
     BELOW = 0
     NOT_BELOW = 1
-    CAPACITY_EXCEEDED = 2
 
 
 _LEAF_SIZE = 4
@@ -139,7 +137,7 @@ def _box_tree(
 
 
 def _certify_diameter(
-    points: np.ndarray, limit: float, capacity: int, /
+    points: np.ndarray, limit: float, /
 ) -> tuple[_DiameterCertificate, int]:
     """Certify ``max |p_i - p_j| < limit`` by branch and bound over box-node pairs.
 
@@ -147,8 +145,7 @@ def _certify_diameter(
     closer than ``limit`` and rejects the film when two of its actual points
     are at least ``limit`` apart; otherwise the larger node is split. Leaf
     pairs (at most ``4 x 4`` points) are decided exactly. Decisions within the
-    roundoff guard fail closed (not below). More than ``capacity`` examined
-    node pairs refuse the certificate. Returns the outcome and the work.
+    roundoff guard fail closed (not below). Returns the outcome and work.
     """
     order, starts, ends, lows, highs, children = _box_tree(points)
     bound = limit * limit
@@ -157,8 +154,6 @@ def _certify_diameter(
     while pairs:
         first, second = pairs.pop()
         examined += 1
-        if examined > capacity:
-            return _DiameterCertificate.CAPACITY_EXCEEDED, examined
         far = np.maximum(
             np.abs(highs[first] - lows[second]), np.abs(highs[second] - lows[first])
         )
@@ -201,16 +196,14 @@ class T1PopProposal(StrictModule, NonTrainableState):
     """Collapse the film ``region_ids`` spanned by ``film_vertex_ids`` and pop it.
 
     The pop executes only after the film's diameter is certified below
-    ``maximum_film_diameter`` by a branch-and-bound over at most
-    ``certificate_capacity`` box-node pairs. ``pop_length_fraction`` sets the
-    half length of the new Plateau border as a fraction of the shortest spoke
-    at the collapsed vertex.
+    ``maximum_film_diameter`` by a complete branch-and-bound over the prepared
+    film vertices. ``pop_length_fraction`` sets the half length of the new
+    Plateau border as a fraction of the shortest spoke at the collapsed vertex.
     """
 
     region_ids: tuple[str, str] = eqx.field(static=True)
     film_vertex_ids: tuple[int, ...] = eqx.field(static=True)
     maximum_film_diameter: float = eqx.field(static=True)
-    certificate_capacity: int = eqx.field(static=True)
     pop_length_fraction: float = eqx.field(static=True)
     priority: float = eqx.field(static=True)
 
@@ -221,7 +214,6 @@ class T1PopProposal(StrictModule, NonTrainableState):
         /,
         *,
         maximum_film_diameter: float,
-        certificate_capacity: int = 4096,
         pop_length_fraction: float = 0.25,
         priority: float = 0.0,
     ) -> None:
@@ -236,9 +228,6 @@ class T1PopProposal(StrictModule, NonTrainableState):
         self.film_vertex_ids = _ids(film_vertex_ids, "film_vertex_ids", 3)
         self.maximum_film_diameter = positive_finite_float(
             maximum_film_diameter, "maximum_film_diameter"
-        )
-        self.certificate_capacity = positive_integer(
-            certificate_capacity, "certificate_capacity"
         )
         self.pop_length_fraction = _fraction(pop_length_fraction, "pop_length_fraction")
         self.priority = float(priority)
@@ -415,38 +404,12 @@ def _sheet_components(
 
 @final
 class SurfaceEventSearch(StrictModule, NonTrainableState):
-    """Proposals of one bounded detection search with its resource evidence.
-
-    ``candidate_count`` counts the broad-phase candidates the search examined
-    (films passing the bounding-box filter for T1 pops, face pairs with
-    overlapping inflated bounds for merges). When it exceeds
-    ``candidate_capacity`` the search is refused (``capacity_exceeded``) and
-    ``proposals`` is empty rather than a silently partial set.
-    ``rejected_count`` candidates failed the exact criterion,
-    ``uncertified_count`` candidates were refused because their certificate
-    exceeded its work capacity, and ``certificate_work`` totals the certificate
-    node pairs examined.
-    """
+    """Complete proposals and observations of one physical transition search."""
 
     proposals: tuple[T1PopProposal | MergeProposal, ...]
     candidate_count: int = eqx.field(static=True)
-    candidate_capacity: int = eqx.field(static=True)
-    capacity_exceeded: bool = eqx.field(static=True)
     rejected_count: int = eqx.field(static=True)
-    uncertified_count: int = eqx.field(static=True)
     certificate_work: int = eqx.field(static=True)
-
-
-def _refused_search(count: int, capacity: int, /) -> SurfaceEventSearch:
-    return SurfaceEventSearch(
-        proposals=(),
-        candidate_count=count,
-        candidate_capacity=capacity,
-        capacity_exceeded=True,
-        rejected_count=0,
-        uncertified_count=0,
-        certificate_work=0,
-    )
 
 
 def propose_t1_pops(
@@ -456,25 +419,15 @@ def propose_t1_pops(
     *,
     maximum_film_diameter: float,
     pop_length_fraction: float = 0.25,
-    candidate_capacity: int = 10_000,
-    certificate_capacity: int = 4096,
 ) -> SurfaceEventSearch:
-    """Films bounded only by Plateau borders certified smaller than the threshold.
+    """Propose every non-border film whose diameter is below its threshold.
 
-    A film is a connected component of one region-pair sheet and its diameter
-    is the largest distance between two of its vertices. The bounding-box
-    filter (every side shorter than ``maximum_film_diameter``) is only the
-    candidate test: it keeps every qualifying film (the diameter bounds each
-    side) but admits diagonal films up to ``sqrt(3)`` times too large. Each
-    candidate is then certified by a branch-and-bound over box-node pairs
-    (at most ``certificate_capacity`` pairs per film); films certified at or
-    above the threshold are rejected and films whose certificate overflows are
-    refused, both with evidence. Only certified films are proposed, smallest
-    bounding-box diagonal first. Films touching a wire border never pop.
+    The bounding-box filter keeps every qualifying film; each remaining
+    candidate is certified by complete branch-and-bound over its film vertices.
     """
-    diameter_limit = positive_finite_float(maximum_film_diameter, "maximum_film_diameter")
-    capacity = positive_integer(candidate_capacity, "candidate_capacity")
-    node_capacity = positive_integer(certificate_capacity, "certificate_capacity")
+    diameter_limit = positive_finite_float(
+        maximum_film_diameter, "maximum_film_diameter"
+    )
     topology = prepared.topology
     state.require_topology(topology)
     faces = topology.host_faces()
@@ -493,19 +446,15 @@ def propose_t1_pops(
     np.logical_or.at(bordered, component, ~np.all(admissible[face_edges], axis=1))
     extent = high - low
     small = np.flatnonzero((np.max(extent, axis=1) < diameter_limit) & ~bordered)
-    if small.size > capacity:
-        return _refused_search(small.size, capacity)
     ids = np.asarray(topology.vertex_global_ids[: topology.vertex_count], dtype=np.int64)
     order = np.argsort(component, kind="stable")
     starts = np.searchsorted(component[order], np.arange(films + 1))
     proposals = []
-    rejected = uncertified = work = 0
+    rejected = work = 0
     for film in small.tolist():
         members = order[starts[film] : starts[film + 1]]
         vertices = np.unique(faces[members])
-        certificate, examined = _certify_diameter(
-            points[vertices], diameter_limit, node_capacity
-        )
+        certificate, examined = _certify_diameter(points[vertices], diameter_limit)
         work += examined
         match certificate:
             case _DiameterCertificate.BELOW:
@@ -518,24 +467,18 @@ def propose_t1_pops(
                         ),
                         ids[vertices].tolist(),
                         maximum_film_diameter=diameter_limit,
-                        certificate_capacity=node_capacity,
                         pop_length_fraction=pop_length_fraction,
                         priority=float(np.linalg.norm(extent[film])),
                     )
                 )
             case _DiameterCertificate.NOT_BELOW:
                 rejected += 1
-            case _DiameterCertificate.CAPACITY_EXCEEDED:
-                uncertified += 1
             case _:
                 assert_never(certificate)
     return SurfaceEventSearch(
         proposals=tuple(sorted(proposals, key=lambda p: (p.priority, p.film_vertex_ids))),
         candidate_count=small.size,
-        candidate_capacity=capacity,
-        capacity_exceeded=False,
         rejected_count=rejected,
-        uncertified_count=uncertified,
         certificate_work=work,
     )
 
@@ -637,10 +580,9 @@ def _merge_candidates(
     prepared: PreparedMultiRegionSurface,
     corners: np.ndarray,
     margin: float,
-    capacity: int,
     /,
-) -> tuple[np.ndarray, np.ndarray, int, bool]:
-    """Face pairs with overlapping inflated bounds, stopped at ``capacity``."""
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Stream every face pair with overlapping inflated BVH bounds."""
     bvh = refit_packed_bvh_bounds(
         prepared.face_bvh,
         np.min(corners, axis=1) - margin,
@@ -651,11 +593,9 @@ def _merge_candidates(
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         count += int(np.count_nonzero(keep))
-        if count > capacity:
-            return firsts[0], seconds[0], count, True
         firsts.append(first[keep].astype(np.int64))
         seconds.append(second[keep].astype(np.int64))
-    return np.concatenate(firsts), np.concatenate(seconds), count, False
+    return np.concatenate(firsts), np.concatenate(seconds), count
 
 
 def propose_merges(
@@ -663,33 +603,24 @@ def propose_merges(
     state: MultiRegionSurfaceState,
     policy: SurfaceMergePolicy,
     /,
-    *,
-    candidate_capacity: int = 100_000,
 ) -> SurfaceEventSearch:
-    """Facing face pairs across a declared gap label within the merge distance.
+    """Enumerate every facing gap-label pair that meets the merge law.
 
-    Broad phase: the prepared face BVH refitted to the current face bounds
-    inflated by half the merge distance, enumerated in bounded blocks. Narrow
-    phase on the candidates only: a shared gap label, distinct outer labels,
-    no shared vertex, antiparallel normals into the gap and a certified
-    triangle-triangle minimum distance below the merge distance (pairs within
-    the roundoff bound of the threshold are kept, so no qualifying pair is
-    missed). Closest pairs come first.
+    The prepared face BVH is streamed over all overlapping inflated bounds.
+    Every candidate then receives the shared gap-label, orientation and
+    roundoff-aware triangle-distance checks.
     """
     if not isinstance(policy, SurfaceMergePolicy):
         raise TypeError("policy must be a SurfaceMergePolicy.")
-    capacity = positive_integer(candidate_capacity, "candidate_capacity")
     topology = prepared.topology
     state.require_topology(topology)
     faces = topology.host_faces()
     labels = topology.host_face_labels()
     points = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
     corners = points[faces]
-    first, second, count, exceeded = _merge_candidates(
-        prepared, corners, 0.5 * policy.merge_distance, capacity
+    first, second, count = _merge_candidates(
+        prepared, corners, 0.5 * policy.merge_distance
     )
-    if exceeded:
-        return _refused_search(count, capacity)
     face_ids = np.asarray(topology.face_global_ids[: topology.face_count], dtype=np.int64)
     normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
     normals /= np.linalg.norm(normals, axis=1)[:, None]
@@ -735,10 +666,7 @@ def propose_merges(
     return SurfaceEventSearch(
         proposals=tuple(sorted(proposals, key=lambda p: (p.priority, p.face_ids))),
         candidate_count=count,
-        candidate_capacity=capacity,
-        capacity_exceeded=False,
         rejected_count=count - len(proposals),
-        uncertified_count=0,
         certificate_work=0,
     )
 
@@ -889,17 +817,13 @@ def _t1_edit(
     if np.any(mesh.fixed[list(film)]):
         return SurfaceEventStatus.FEATURE_NOT_PRESERVED
     certificate, _ = _certify_diameter(
-        mesh.positions[list(film)],
-        proposal.maximum_film_diameter,
-        proposal.certificate_capacity,
+        mesh.positions[list(film)], proposal.maximum_film_diameter
     )
     match certificate:
         case _DiameterCertificate.BELOW:
             pass
         case _DiameterCertificate.NOT_BELOW:
             return SurfaceEventStatus.NOT_TRIGGERED
-        case _DiameterCertificate.CAPACITY_EXCEEDED:
-            return SurfaceEventStatus.CERTIFICATE_CAPACITY_EXCEEDED
         case _:
             assert_never(certificate)
     corner = np.mean(mesh.positions[list(film)], axis=0)

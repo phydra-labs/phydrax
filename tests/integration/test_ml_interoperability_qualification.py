@@ -1235,7 +1235,10 @@ def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_matc
     reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
         finite_element, "state", value_port=_euler_state_port()
     )
-    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    support_geometry = reconstruction.support_geometry
+    if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
+        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+    domain = phx.domain.GeometryDomain(support_geometry, label="x")
     cell_dofs = finite_element.dof_maps[0].cell_dofs[0][:, 0]
     view = phx.discretization.DiscreteFieldFunctionView(
         reconstruction,
@@ -1279,7 +1282,7 @@ def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_matc
         phx.discretization.finite_volume.prepare_finite_volume_field_reconstruction(
             finite_volume,
             phx.discretization.PiecewiseConstantReconstruction(),
-            support_geometry=reconstruction.support_geometry,
+            support_geometry=support_geometry,
             value_port=_euler_state_port(),
         ),
         state,
@@ -1294,7 +1297,10 @@ def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_matc
     # A field declared in another frame is refused before anything evaluates.
     rotated = phx.discretization.DiscreteFieldFunctionView(
         phx.discretization.fem.prepare_finite_element_field_reconstruction(
-            finite_element, "state", value_port=_euler_state_port("face-normal")
+            finite_element,
+            "state",
+            support_geometry=support_geometry,
+            value_port=_euler_state_port("face-normal"),
         ),
         view.coefficients,
         domain,
@@ -2056,7 +2062,10 @@ def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views() 
     reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
         discretization, "u", value_port=_G5_FIELD_PORT
     )
-    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    support_geometry = reconstruction.support_geometry
+    if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
+        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+    domain = phx.domain.GeometryDomain(support_geometry, label="x")
 
     def field(coefficients: Any, name: Any) -> Any:
         return phx.discretization.DiscreteFieldFunctionView(
@@ -3264,7 +3273,10 @@ def _kinked_finite_element_view() -> Any:
     )
     nodes = discretization.dof_maps[0].dof_coordinates
     coefficients = jnp.maximum(nodes[:, 0] - nodes[:, 1], 0.0)
-    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    support_geometry = reconstruction.support_geometry
+    if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
+        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+    domain = phx.domain.GeometryDomain(support_geometry, label="x")
     return phx.discretization.DiscreteFieldFunctionView(
         reconstruction, coefficients, domain, variable="x", field_name="u"
     )

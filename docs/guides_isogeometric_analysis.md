@@ -40,8 +40,10 @@ compiler with a matrix-free, sum-factorized local kernel.
 `BSplineGrid` is the canonical fixed grid also used by spline interpolation; the
 IGA namespace directly re-exports that class rather than defining a second knot
 convention. Knots are static topology. Control points and strictly positive
-weights are runtime values, and `NURBSGeometryState` fixes the otherwise
-nonunique common weight scale by normalizing weights to mean one.
+weights are runtime values, and `NURBSGeometryState` retains the authored
+strictly-positive bank without imposing a projective gauge normalization. A
+common positive scaling leaves the rational map unchanged; its weight-space null
+direction remains visible to design derivatives.
 
 ```python
 import jax.numpy as jnp
@@ -205,6 +207,123 @@ shell/surface mechanics, vector or mixed fields, H(div)/H(curl) mappings, contac
 or public sparse assembly. It does not infer quadrature order. A positive weight
 vector alone does not certify a valid map; preparation must also pass sampled
 rank and orientation checks.
+
+## Rectilinear ASTS2D T-spline surfaces
+
+The T-spline candidate path shares one source-parametric carrier between native CAD
+and scalar surface H1 IGA. Its admitted profile is a rectilinear bicubic
+analysis-suitable T-mesh with simple interior knot intervals, topology-derived local
+knot windows, open boundaries, and no extraordinary vertices. Arbitrary T-meshes,
+repeated interior knots, shell mechanics, and vendor-specific T-spline variants are
+not implied.
+
+`TMesh2D` owns exact parameter topology, persistent anchor IDs, and T-junction
+extensions. `TSplineSurfacePatch` owns the raw control-point/positive-weight leaves
+and the exact source bank; the same patch can be supplied directly to
+`TSplineGeometryState` and `TSplineIsogeometricPlan`. Exact rational coefficients
+such as `1/3` and nonzero small coefficients remain in the source/prolongation data;
+the fixed-route JAX realization is binary64 and carries its coefficient and
+homogeneous-realization error bounds. Geometry prolongation applies the nested
+operator to homogeneous `(wX, w)` controls. A rational field with independent weights
+uses `q' = P(aq) / P(a)`, not polynomial coefficient transfer.
+
+An anchor's topological parameter is not a control-point sample. For polynomial
+reproduction, derive control values from each basis's Greville parameter rather
+than treating `anchor.parameter` as an interpolation node.
+
+```python
+from fractions import Fraction
+
+import numpy as np
+import phydrax as phx
+from phydrax.geometry.brep import TSplineSurfacePatch
+
+iga = phx.discretization.iga
+breaks = tuple(Fraction(index, 4) for index in range(5))
+mesh = iga.TMesh2D.tensor_product(breaks, breaks)
+greville = tuple(anchor.local_knots.greville_parameter for anchor in mesh.anchors)
+exact_controls = tuple((u, v, u * v) for u, v in greville)
+surface = TSplineSurfacePatch(
+    mesh,
+    np.asarray([[float(value) for value in row] for row in exact_controls]),
+    np.ones((mesh.coefficient_count,)),
+    exact_control_points=exact_controls,
+    exact_weights=tuple(Fraction(1) for _ in mesh.anchors),
+)
+geometry = iga.TSplineGeometryState(surface)
+trim = iga.UVTrimmedSurface(
+    iga.UVTrimLoop(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+)
+plan = iga.TSplineIsogeometricPlan(
+    geometry,
+    iga.TSplineH1FieldSpec(
+        "u", weights_from_geometry=True, anchor_count=mesh.coefficient_count
+    ),
+    trim=trim,
+    quadrature_policy=iga.IsogeometricQuadraturePolicy(6),
+)
+refinement = plan.refine((mesh.cells[5].cell_id,))
+prepared = refinement.target_plan.prepare(numeric_version="local-refinement-0")
+```
+
+`TMesh2D.certify()` proves the selected ASTS basis premises, exact Bernstein
+partition/nonnegativity identities, and declared cross-cell trace continuity.
+`TSplineGeometryCertificate` is a separate, numeric-bank-bound proof of positive
+rational denominator, physical regularity, and global embedding. Thus a valid
+parameter partition does not make a folded or collapsed physical map admissible.
+CAD `is_c1_along` queries reuse the retained immutable basis certificate; they do
+not claim physical-map regularity. Fixed-topology derivatives hold incidence, knots,
+active trim/query routes, and the certified map branch fixed. Refinement is discrete
+and creates new topology and source-to-target lineage.
+The Scott local-refinement closure inserts only selected extension-graph skeleton
+segments and verifies complete source-basis inclusion on shared local polynomial
+pieces. It adds only coordinates from the finite source-and-marked skeleton and
+resolves extension-graph conflicts. Its exact extraction partition is virtual:
+active local knot lines subdivide control T-cells into Bernstein pieces without
+changing the control-cell topology or removing T-junctions.
+
+`source_authority_id` identifies the exact root mesh, control points, and raw
+weights; `source_definition_id` also identifies the current target and its
+refinement/transfer chain. They are not interchangeable. Explicit
+`realize_parameter_bank(..., source_authority_id=...)` calls bind differentiable
+numeric leaves to that root authority, including after refinement. A foreign
+root or a concrete reauthored bank refuses; tracing does not bypass source
+validation or detach control-point and weight derivatives.
+
+`SurfaceSourceCharts` and descendant restrictions keep three identities distinct:
+the mesh root cell ID, canonical source-root atlas ID, and T-spline source-piece
+key `(patch, control_cell_id, extraction_piece_id)`. The control-cell ID names
+the owning T-mesh cell; the extraction-piece ID selects a local Bernstein piece.
+Patch resolution uses source entity key plus occurrence path, never row order.
+`SurfaceChartWitness` also retains an explicit per-row `SurfaceRootMeshCellBinding`
+(`root_geometry_id`, `root_topology_id`, `root_cell_global_id`) when the chart has
+an actual root `CellMesh`; analytic source charts without a root mesh retain `None`.
+Restriction proofs require and validate the binding against the root owner rather
+than inferring root-cell identity from atlas IDs, row order, or piece keys.
+The source-root atlas binds exact spline control coordinates and positive weights
+to the rounded root mesh; exact `Fraction`/`RadicalElement` source leaves are not
+re-authored from their binary64 execution shadows. `SplineCellGeometryElement`
+retains exact weights alongside the numeric tabulation bank. B-spline source
+control IDs are required; missing identities are refused rather than inferred from
+coefficient positions. Geometry prolongation acts on homogeneous coordinates and
+weights together, and rational fields use their own weight bank. CAD and IGA consume
+the same raw authored weights and retained source-to-target chain.
+
+The direct curved-surface manufactured Poisson solve is runnable as
+`python -m examples.iga_tspline_surface_poisson`. The end-to-end CAD-to-mesh-to-IGA
+example in `examples/native_tspline_cad_analysis.py` plans and executes accepted
+native parametric-surface meshing through `NativeMeshingProvider`, independently
+renews the source-chart witness/fidelity proof, then solves a T-spline Poisson
+problem:
+`python -m examples.native_tspline_cad_analysis`.
+The closure qualification adds a positive T-junction/locality case with exact-source
+and numeric map certificates: `python tools/iga_closure_qualification.py`. Actual
+closure and preparation timings are record-only:
+`python tools/iga_tspline_benchmarks.py --smoke` or
+`python tools/iga_tspline_benchmarks.py`.
+
+This path is outside the separately allow-listed `iga.tensor` R1 release profile;
+availability and these candidate qualification tools do not publish a release tuple.
 
 ## Public compatible spline complexes
 

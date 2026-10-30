@@ -15,14 +15,10 @@ import phydrax as phx
 
 
 def _interval_topology() -> Any:
-    # ty: ignore[invalid-argument-type]
     vertices = phx.discretization.EntitySet("vertices", 0, [0, 1, 2])
-    # ty: ignore[invalid-argument-type]
     edges = phx.discretization.EntitySet("edges", 1, [0, 1])
     relation = phx.sparse.EdgeRelation(
-        # ty: ignore[invalid-argument-type]
         [0, 1, 1, 2],
-        # ty: ignore[invalid-argument-type]
         [0, 0, 1, 1],
         source_size=3,
         target_size=2,
@@ -39,24 +35,17 @@ def _interval_topology() -> Any:
 
 
 def _triangle_topology() -> Any:
-    # ty: ignore[invalid-argument-type]
     vertices = phx.discretization.EntitySet("vertices", 0, [0, 1, 2])
-    # ty: ignore[invalid-argument-type]
     edges = phx.discretization.EntitySet("edges", 1, [0, 1, 2])
-    # ty: ignore[invalid-argument-type]
     faces = phx.discretization.EntitySet("faces", 2, [0])
     edge_relation = phx.sparse.EdgeRelation(
-        # ty: ignore[invalid-argument-type]
         [0, 1, 1, 2, 2, 0],
-        # ty: ignore[invalid-argument-type]
         [0, 0, 1, 1, 2, 2],
         source_size=3,
         target_size=3,
     )
     face_relation = phx.sparse.EdgeRelation(
-        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
-        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
         source_size=3,
         target_size=1,
@@ -132,21 +121,20 @@ def test_core_scenario_1() -> None:
         topology.entity_sets[1],
         topology.entity_sets[2],
         topology.incidences[1].relation,
-        # ty: ignore[invalid-argument-type]
-        [1.0, -1.0, 1.0],
+        np.asarray((1.0, -1.0, 1.0), dtype=np.float64),
     )
     with pytest.raises(ValueError, match="boundary-of-boundary"):
         phx.discretization.CellComplexTopology(
             topology.entity_sets,
             (topology.incidences[0], bad),
         )
-    # ty: ignore[invalid-argument-type]
-    subset = phx.discretization.EntitySubset("boundary", [True, False, True])
+    subset = phx.discretization.EntitySubset(
+        "boundary", np.asarray([True, False, True], dtype=np.bool_)
+    )
     with pytest.raises(ValueError, match="inactive"):
         phx.discretization.EntitySet(
             "vertices",
             0,
-            # ty: ignore[invalid-argument-type]
             [0, 1, -1],
             # ty: ignore[invalid-argument-type]
             active_mask=[True, True, False],
@@ -159,7 +147,6 @@ def test_core_scenario_2() -> None:
         phx.discretization.EntitySet(
             "points",
             0,
-            # ty: ignore[invalid-argument-type]
             [0, 1, -1],
             # ty: ignore[invalid-argument-type]
             active_mask=[True, True, False],

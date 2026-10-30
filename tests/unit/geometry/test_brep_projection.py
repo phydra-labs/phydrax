@@ -6,22 +6,41 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.BRep import BRep_Builder
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakePolygon,
     BRepBuilderAPI_MakeWire,
+    BRepBuilderAPI_Transform,
 )
 from OCP.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCylinder,
     BRepPrimAPI_MakeSphere,
 )
-from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
+from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
+from OCP.TopoDS import TopoDS_Compound
 
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint
+from phydrax.geometry._source_identity import source_entity_id
+from phydrax.geometry.brep._assembly import (
+    BRepAffinePlacement,
+    BRepAssemblyDefinition,
+    BRepAssemblyGraph,
+    BRepAssemblyUse,
+)
+from phydrax.geometry.brep._constructors import (
+    brep_box,
+    brep_planar_face,
+    BRepTessellationPolicy,
+    PlanarProfile,
+    ProfileLoop,
+    ProfilePlane,
+)
+from phydrax.geometry.brep._model import BRepGeometry, BRepModel
+from phydrax.interchange import model_from_occt_shape, prepare_occt_projection
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -31,13 +50,15 @@ _EDGE = phx.geometry.BRepEntityDimension.EDGE
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
-    return model, phx.geometry.prepare_brep_projection(model, shape, embedding=embedding)
+    return model, phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
 def _project(projection: Any, points: Any, dimension: Any, index: Any) -> Any:
@@ -76,7 +97,13 @@ def test_brep_projection_scenario_1() -> None:
         np.einsum("nka,na->nk", tangents, result.normals), 0.0, atol=1e-12
     )
     np.testing.assert_allclose(np.linalg.norm(tangents, axis=-1), 1.0)
-    assert result.entity_ids()[0] == f"{projection.source_revision}:face:0"
+    assert result.entity_ids()[0] == source_entity_id(
+        projection.source_id,
+        projection.source_revision,
+        "face",
+        0,
+        occurrence_path=result.occurrence_paths[0],
+    )
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     _, projection = _bound(shape)
     face = _project(projection, [[2.0, 0.0, 0.5], [0.0, 0.0, 1.0]], _FACE, 0)
@@ -87,12 +114,12 @@ def test_brep_projection_scenario_1() -> None:
 
     # A point projecting onto the periodic seam, and a point on the axis whose
     # closest points form a whole circle.
-    assert np.asarray(face.status).tolist() == [_STATUS.SEAM, _STATUS.AMBIGUOUS]
+    assert np.asarray(face.status).tolist() == [_STATUS.SEAM, _STATUS.NON_ISOLATED]
     np.testing.assert_allclose(face.residuals, [1.0, 1.0])
     assert np.asarray(edge.status).tolist() == [
         _STATUS.UNIQUE,
         _STATUS.SEAM,
-        _STATUS.AMBIGUOUS,
+        _STATUS.NON_ISOLATED,
     ]
     np.testing.assert_allclose(np.asarray(edge.parameters)[0, 0], np.pi / 2)
     np.testing.assert_allclose(edge.residuals, [1.0, 2.0, 1.0])
@@ -114,7 +141,7 @@ def test_brep_projection_scenario_1() -> None:
     assert np.asarray(result.status).tolist() == [
         _STATUS.UNIQUE,
         _STATUS.SEAM,
-        _STATUS.AMBIGUOUS,
+        _STATUS.NON_ISOLATED,
     ]
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     _, projection = _bound(shape)
@@ -142,25 +169,25 @@ def test_brep_projection_scenario_1() -> None:
 
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
-    remodeled = phx.geometry.model_from_occt_shape(
+    remodeled = model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.05,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.3,
+        ),
     )
 
     # Tessellating the shape does not change its exact-geometry revision.
     assert remodeled.source_revision == model.source_revision
-    with pytest.raises(ValueError, match="revision digest"):
-        phx.geometry.prepare_brep_projection(
-            model, BRepPrimAPI_MakeCylinder(1.0, 3.0).Shape()
-        )
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in ((-2, -2), (2, -2), (2, 2), (-2, 2)):
         polygon.Add(gp_Pnt(x, y, 0))
@@ -170,7 +197,8 @@ def test_brep_projection_scenario_2() -> None:
         gp_Circ(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 1.0)
     ).Edge()
     disk = BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(circle).Wire()).Face()
-    plate = BRepAlgoAPI_Cut(square, disk).Shape()
+    BRepAlgoAPI = pytest.importorskip("OCP.BRepAlgoAPI")
+    plate = BRepAlgoAPI.BRepAlgoAPI_Cut(square, disk).Shape()
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
     _, projection = _bound(plate, embedding)
     hole = _circle_edge(projection, 0.0)
@@ -228,11 +256,13 @@ def _mesh_reference(
 
 @pytest.fixture
 def query_box_model() -> Any:
-    return phx.geometry.model_from_occt_shape(
+    return model_from_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
 
 
@@ -380,11 +410,13 @@ def test_brep_memory_candidate_nearest_preserves_second_face_and_refit(
 
 
 def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> None:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         BRepPrimAPI_MakeSphere(1.0).Shape(),
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.2,
-        angular_deflection=0.4,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.2,
+            angular_deflection=0.4,
+        ),
     )
     geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
     kernel: Any = geometry.kernel
@@ -446,3 +478,250 @@ def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) ->
     np.testing.assert_array_equal(actual.margin, expected.margin)
     assert actual.physical_geometry_id == query_box_model.source_revision
     assert actual.represented_geometry_id == expected.represented_geometry_id
+
+
+def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> None:
+    definition = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=_CONTRACT,
+        source_id="projection-instance-definition",
+    )
+    source = definition.geometry
+    translated = BRepAffinePlacement.from_matrix(
+        (
+            (1, 0, 0, 10),
+            (0, 1, 0, 0),
+            (0, 0, 1, 0),
+            (0, 0, 0, 1),
+        )
+    )
+    graph = BRepAssemblyGraph(
+        roots=(BRepAssemblyUse("pair", definition_id="two-copies"),),
+        definitions=(
+            BRepAssemblyDefinition(
+                "two-copies",
+                (
+                    BRepAssemblyUse("left", solid_index=0),
+                    BRepAssemblyUse("right", placement=translated, solid_index=0),
+                ),
+            ),
+        ),
+        solid_count=1,
+    )
+    geometry = BRepGeometry(
+        vertex_points=source.vertex_points,
+        vertex_exact_points=source.vertex_exact_points,
+        vertex_roots=source.vertex_roots,
+        edge_endpoint_roots=source.edge_endpoint_roots,
+        coedge_endpoint_roots=source.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=source.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=source.edge_face_gap_bounds,
+        curves=source.curves,
+        edge_curves=source.edge_curves,
+        edge_ranges=source.edge_ranges,
+        edge_vertices=source.edge_vertices,
+        pcurves=source.pcurves,
+        coedge_edges=source.coedge_edges,
+        coedge_senses=source.coedge_senses,
+        face_loops=source.face_loops,
+        shell_faces=source.shell_faces,
+        shell_orientations=source.shell_orientations,
+        solid_shells=source.solid_shells,
+        assembly_graph=graph,
+    )
+    model = BRepModel(
+        geometry=geometry,
+        patches=definition.patches,
+        parameter_bounds=definition.parameter_bounds,
+        orientation=definition.orientation,
+        physical_tags=definition.physical_tags,
+        coordinate_contract=definition.coordinate_contract,
+        report=definition.report,
+        trim_domains=definition.trim_domains,
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    vertex = int(
+        np.flatnonzero(np.all(vertices == np.asarray((0.0, 0.0, 0.0)), axis=1))[0]
+    )
+    point = vertices[vertex][None, :]
+
+    def classify(path: tuple[str, ...]) -> Any:
+        return projection.classify(
+            point,
+            tolerance=1e-9,
+            maximum_dimension=0,
+            groups=np.asarray((7,), dtype=np.int64),
+            allowed_groups=np.asarray((7,), dtype=np.int64),
+            allowed_dimensions=np.asarray((0,), dtype=np.int64),
+            allowed_indices=np.asarray((vertex,), dtype=np.int64),
+            allowed_occurrence_paths=(path,),
+        )
+
+    left = classify(("pair", "left"))
+    right = classify(("pair", "right"))
+    assert np.asarray(left.status).tolist() == [_STATUS.UNIQUE]
+    assert left.occurrence_paths == (("pair", "left"),)
+    assert np.asarray(right.status).tolist() == [_STATUS.FAILED]
+    projected = projection.project(
+        point,
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((vertex,), dtype=np.int64),
+        occurrence_paths=(("pair", "left"),),
+    )
+    assert projected.occurrence_paths == (("pair", "left"),)
+    located = projection.locate_solids(np.asarray(((0.5, 0.5, 0.5),)))
+    assert located.occurrence_paths == (("pair", "left"),)
+
+
+def test_native_projection_exposes_reflexive_topology_incidence() -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=_CONTRACT,
+        source_id="projection-incidence",
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    topology = model.geometry.topology
+
+    owners, member_dims, member_indices = projection.members(
+        np.asarray((3,), dtype=np.int64), np.asarray((0,), dtype=np.int64)
+    )
+    np.testing.assert_array_equal(owners, np.zeros((27,), dtype=np.int64))
+    np.testing.assert_array_equal(np.bincount(member_dims, minlength=4), (8, 12, 6, 1))
+    np.testing.assert_array_equal(
+        projection.entity_codes(member_dims, member_indices),
+        np.unique(projection.entity_codes(member_dims, member_indices)),
+    )
+
+    edge = int(topology.face_edges[0][0])
+    vertex = int(model.geometry.edge_vertices[edge][0])
+    containers, container_dims, container_indices = projection.containers(
+        np.asarray((0,), dtype=np.int64), np.asarray((vertex,), dtype=np.int64)
+    )
+    assert containers.shape == container_dims.shape == container_indices.shape
+    assert set(container_dims.tolist()) == {0, 1, 2, 3}
+    assert np.all(
+        projection.contains(
+            container_dims,
+            container_indices,
+            np.full(container_dims.shape, 0, dtype=np.int64),
+            np.full(container_dims.shape, vertex, dtype=np.int64),
+        )
+    )
+    unrelated_edge = next(
+        candidate
+        for candidate in range(model.geometry.topology.num_edges)
+        if candidate not in topology.face_edges[0]
+    )
+    assert not bool(
+        projection.contains(
+            np.asarray((2,), dtype=np.int64),
+            np.asarray((0,), dtype=np.int64),
+            np.asarray((1,), dtype=np.int64),
+            np.asarray((unrelated_edge,), dtype=np.int64),
+        )[0]
+    )
+
+
+def test_definition_projection_returns_explicit_empty_occurrence_paths() -> None:
+    source = brep_planar_face(
+        PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        ),
+        coordinate_contract=_CONTRACT,
+        source_id="projection-definition-only",
+    )
+    projection = phx.geometry.prepare_brep_projection(source)
+    result = projection.classify(
+        np.asarray(((0.0, 0.0, 0.0),)), tolerance=1e-9, maximum_dimension=0
+    )
+    assert np.asarray(result.status).tolist() == [_STATUS.UNIQUE]
+    assert result.occurrence_paths == ((),)
+
+
+def test_optional_occt_projection_binds_physical_source_revision() -> None:
+    shape = BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape()
+    model = model_from_occt_shape(shape, coordinate_contract=_CONTRACT)
+    projection = prepare_occt_projection(model, shape)
+    assert projection.source_revision == model.source_revision
+    source_vertex = np.asarray(model.geometry.vertex_points)[0]
+    observed = projection.project(
+        source_vertex[None, :],
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+    )
+    occurrence = next(model.geometry.iter_occurrences()).path
+    assert observed.occurrence_paths == (occurrence,)
+    assert np.asarray(observed.status).tolist() == [_STATUS.UNRESOLVED]
+    np.testing.assert_allclose(observed.points, source_vertex[None, :])
+    np.testing.assert_array_equal(observed.distance_lower_bounds, (0.0,))
+    assert np.isinf(np.asarray(observed.residuals)[0])
+    assert observed.frame_id == model.coordinate_contract.spatial_id
+
+    different = model_from_occt_shape(
+        BRepPrimAPI_MakeBox(2.0, 2.0, 3.0).Shape(),
+        coordinate_contract=_CONTRACT,
+        source_digest=model.report.source_digest,
+    )
+    with pytest.raises(ValueError, match="physical source_revision"):
+        prepare_occt_projection(different, shape)
+
+
+def test_optional_occt_projection_maps_assembly_entities_to_occurrence_paths() -> None:
+    source = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
+    transform = gp_Trsf()
+    transform.SetTranslation(gp_Vec(10.0, 0.0, 0.0))
+    placed = BRepBuilderAPI_Transform(source, transform, False).Shape()
+    compound = TopoDS_Compound()
+    builder = BRep_Builder()
+    builder.MakeCompound(compound)
+    builder.Add(compound, source)
+    builder.Add(compound, placed)
+    model = model_from_occt_shape(compound, coordinate_contract=_CONTRACT)
+    projection = prepare_occt_projection(model, compound)
+    occurrences = tuple(model.geometry.iter_occurrences())
+    assert len(occurrences) == 2
+    query = None
+    source_vertex = None
+    for occurrence in occurrences:
+        face = model.topology.solid_faces[occurrence.solid_index][0]
+        edge = model.topology.face_edges[face][0]
+        vertex = model.geometry.edge_vertices[edge][0]
+        point = np.asarray(model.geometry.vertex_points, dtype=np.float64)[vertex]
+        placed_point = np.asarray(
+            occurrence.placement.apply(tuple(float(value) for value in point)),
+            dtype=np.float64,
+        )
+        result = projection.project(
+            placed_point[None, :],
+            np.asarray((0,), dtype=np.int64),
+            np.asarray((vertex,), dtype=np.int64),
+            occurrence_paths=(occurrence.path,),
+        )
+        assert result.occurrence_paths == (occurrence.path,)
+        assert np.asarray(result.status).tolist() == [_STATUS.UNRESOLVED]
+        np.testing.assert_allclose(result.points, placed_point[None, :])
+        assert result.entity_ids()[0] == source_entity_id(
+            projection.source_id,
+            projection.source_revision,
+            "vertex",
+            int(vertex),
+            occurrence_path=occurrence.path,
+        )
+        assert np.isinf(np.asarray(result.residuals)[0])
+        query = placed_point
+        source_vertex = vertex
+    assert query is not None and source_vertex is not None
+    if occurrences[0].solid_index == occurrences[1].solid_index:
+        ambiguous = projection.project(
+            query[None, :],
+            np.asarray((0,), dtype=np.int64),
+            np.asarray((source_vertex,), dtype=np.int64),
+        )
+        assert np.asarray(ambiguous.dimensions).tolist() == [-1]
+        assert np.asarray(ambiguous.indices).tolist() == [-1]
+        assert ambiguous.occurrence_paths == ((),)
+        assert np.asarray(ambiguous.status).tolist() == [_STATUS.UNRESOLVED]

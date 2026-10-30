@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import combinations
-from typing import final, NoReturn
+from typing import final, NoReturn, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -24,6 +24,19 @@ from .._certificate import exact_signed_distance_certificate, FieldCertificate
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from .._sampling import RejectionSamplingPlan
 from ..design._schema import _ParameterCollector, DesignState
+
+
+@runtime_checkable
+class _SupportCoordinateElement(Protocol):
+    cell_kind: str
+
+
+@runtime_checkable
+class _SimplicialSupportCellMap(Protocol):
+    reference_dimension: int
+    ambient_dimension: int
+    coordinate_dofs: Array
+    coordinate_element: _SupportCoordinateElement
 
 
 class _SupportFaceDim(Dim):
@@ -271,9 +284,6 @@ def compile_simplicial_support(
     locator: AbstractCellLocator,
     support_id: str,
     /,
-    *,
-    maximum_face_entries: int = 1 << 20,
-    maximum_retained_bytes: int = 256 << 20,
 ) -> CompiledGeometry:
     """Compile exact containment and exterior-distance queries in any dimension."""
     if not isinstance(locator, AbstractCellLocator):
@@ -282,33 +292,25 @@ def compile_simplicial_support(
         raise TypeError("Simplicial support identity must be a string.")
     if not support_id:
         raise ValueError("Simplicial support identity must be nonempty.")
-    for budget in (maximum_face_entries, maximum_retained_bytes):
-        if not isinstance(budget, int) or isinstance(budget, bool):
-            raise TypeError("Support preparation budgets must be integers.")
-        if budget < 1:
-            raise ValueError("Support preparation budgets must be positive.")
-    dimension = locator.cell_map.reference_dimension
-    if locator.cell_map.ambient_dimension != dimension:
+    cell_map = locator.cell_map
+    if not isinstance(cell_map, _SimplicialSupportCellMap) or not isinstance(
+        cell_map.coordinate_element, _SupportCoordinateElement
+    ):
+        raise ValueError(
+            "Simplicial support requires retained coordinate element and dof routes."
+        )
+    dimension = cell_map.reference_dimension
+    if cell_map.ambient_dimension != dimension:
         raise ValueError(
             "A region support must be full-dimensional, not an embedded manifold."
         )
-    cells = np.asarray(locator.cell_map.coordinate_dofs, dtype=np.int32)
+    cells = np.asarray(cell_map.coordinate_dofs, dtype=np.int32)
     coordinates = np.asarray(locator.coordinates, dtype=np.float64)
     if cells.shape[1:] != (dimension + 1,):
         raise ValueError(
             "Simplicial support geometry requires affine simplex vertex coordinates."
         )
-    faces = _boundary_faces(cells, locator.cell_map.coordinate_element.cell_kind)
-    if maximum_face_entries < 1 or dimension > maximum_face_entries.bit_length():
-        raise ValueError("Simplicial support face entries exceed the preparation budget.")
-    if faces.shape[0] * (2**dimension - 1) > maximum_face_entries:
-        raise ValueError("Simplicial support face entries exceed the preparation budget.")
-    # Admission bounds host/device retained projection maps before preparation.
-    face_entries = faces.shape[0] * (2**dimension - 1)
-    if face_entries * (2 * dimension**2 + dimension) * 8 > maximum_retained_bytes:
-        raise ValueError(
-            "Simplicial support projection maps exceed maximum_retained_bytes."
-        )
+    faces = _boundary_faces(cells, cell_map.coordinate_element.cell_kind)
     used = coordinates[np.unique(cells)]
     kernel = _SimplicialSupportKernel(
         locator,

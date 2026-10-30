@@ -2,9 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from functools import partial
 from typing import Literal
 
-import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -14,6 +15,98 @@ from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from ..typing import checked, PRNGKey
 from ._atlas import BoundaryAtlas
+
+
+_ATLAS_QUADRATURE_CHUNK_SIZE = 16_384
+
+
+@partial(jax.jit, static_argnums=(3, 4))
+def _integrate_atlas_quadrature(
+    atlas: BoundaryAtlas,
+    nodes: Array,
+    weights: Array,
+    order: int,
+    dimension: int,
+    /,
+) -> tuple[Array, Array]:
+    """Integrate complete chart rules in bounded, lexicographic JAX chunks."""
+    point_count = order**dimension
+    chunk_size = min(_ATLAS_QUADRATURE_CHUNK_SIZE, point_count)
+    chunk_count = (point_count + chunk_size - 1) // chunk_size
+    offsets = jnp.arange(chunk_size, dtype=jnp.int32)
+
+    def integrate_chart(chart: Array) -> tuple[Array, Array]:
+        def integrate_chunk(
+            state: tuple[Array, ...],
+            scan_input: None,
+        ) -> tuple[tuple[Array, ...], None]:
+            del scan_input
+            start_digits, measure, peak_density, seed_reference = state
+            indices = jnp.broadcast_to(start_digits[None, :], (chunk_size, dimension))
+            carry = offsets
+            for axis in range(dimension - 1, -1, -1):
+                value = indices[:, axis] + carry
+                indices = indices.at[:, axis].set(value % order)
+                carry = value // order
+            valid = carry == 0
+            reference = nodes[indices]
+            reference_weights = jnp.prod(weights[indices], axis=-1)
+            chart_indices = jnp.full((chunk_size,), chart, dtype=jnp.int32)
+            density = atlas.jacobian(chart_indices, reference)
+            active = atlas.reference_mask(chart_indices, reference)
+            density = jnp.where(
+                active & atlas.seam_owner[chart],
+                density,
+                0.0,
+            )
+            # JAX reduces each contiguous chunk with its native tree; chunk
+            # totals accumulate in lexicographic order. This changes the
+            # reduction grouping, but not the complete chart/point sequence.
+            measure = measure + jnp.sum(
+                jnp.where(valid, density, 0.0) * reference_weights
+            )
+            seed_density = jnp.where(valid, density, -jnp.inf)
+            local_seed_index = jnp.argmax(seed_density)
+            local_peak = seed_density[local_seed_index]
+            replace_seed = local_peak > peak_density
+            peak_density = jnp.where(replace_seed, local_peak, peak_density)
+            seed_reference = jnp.where(
+                replace_seed,
+                reference[local_seed_index],
+                seed_reference,
+            )
+            next_digits = start_digits
+            next_carry = jnp.asarray(chunk_size, dtype=jnp.int32)
+            for axis in range(dimension - 1, -1, -1):
+                value = next_digits[axis] + next_carry
+                next_digits = next_digits.at[axis].set(value % order)
+                next_carry = value // order
+            return (
+                next_digits,
+                measure,
+                peak_density,
+                seed_reference,
+            ), None
+
+        initial = (
+            jnp.zeros((dimension,), dtype=jnp.int32),
+            jnp.asarray(0.0, dtype=jnp.float64),
+            jnp.asarray(-jnp.inf, dtype=jnp.float64),
+            jnp.zeros((dimension,), dtype=nodes.dtype),
+        )
+        final_state = jax.lax.scan(
+            integrate_chunk,
+            initial,
+            xs=None,
+            length=chunk_count,
+        )[0]
+        return final_state[1], final_state[3]
+
+    chart_results = jax.lax.map(
+        integrate_chart,
+        jnp.arange(atlas.num_charts, dtype=jnp.int32),
+    )
+    return chart_results[0], chart_results[1]
 
 
 class GeometryMeasurePartition(StrictModule):
@@ -148,7 +241,6 @@ class BoundaryAtlasPartition(StrictModule):
     measures: Array
     seed_reference: Array
     candidate_count: int
-    maximum_quadrature_points: int = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -157,70 +249,31 @@ class BoundaryAtlasPartition(StrictModule):
         *,
         quadrature_order: int = 12,
         candidate_count: int = 64,
-        maximum_quadrature_points: int = 1_000_000,
     ) -> None:
         if quadrature_order < 2 or candidate_count < 2:
             raise ValueError("quadrature_order and candidate_count must be at least two.")
-        if maximum_quadrature_points <= 0:
-            raise ValueError("maximum_quadrature_points must be positive.")
         reference_dimension = atlas.reference_dimension
         if reference_dimension <= 0:
             raise ValueError("Boundary atlas reference dimension must be positive.")
-        points_per_chart = quadrature_order**reference_dimension
-        total_points = atlas.num_charts * points_per_chart
-        if total_points > maximum_quadrature_points:
-            raise ValueError(
-                "Boundary-atlas quadrature exceeds maximum_quadrature_points: "
-                f"required {total_points}, allowed {maximum_quadrature_points}."
-            )
         rule = gauss_legendre_data(quadrature_order)
-        nodes_host = 0.5 * (np.asarray(rule.nodes) + 1.0)
-        weights_host = 0.5 * np.asarray(rule.weights)
-        coordinate_meshes = np.meshgrid(
-            *([nodes_host] * reference_dimension),
-            indexing="ij",
+        nodes = 0.5 * (jnp.asarray(rule.nodes, dtype=jnp.float64) + 1.0)
+        weights = 0.5 * jnp.asarray(rule.weights, dtype=jnp.float64)
+        measures, seed_reference = _integrate_atlas_quadrature(
+            atlas,
+            nodes,
+            weights,
+            int(quadrature_order),
+            int(reference_dimension),
         )
-        weight_meshes = np.meshgrid(
-            *([weights_host] * reference_dimension),
-            indexing="ij",
-        )
-        reference_host = np.stack(
-            tuple(coordinate.ravel() for coordinate in coordinate_meshes),
-            axis=-1,
-        )
-        reference_weights_host = np.prod(
-            np.stack(weight_meshes, axis=-1),
-            axis=-1,
-        ).ravel()
-        reference = jnp.asarray(reference_host, dtype=jnp.float64)
-        reference_weights = jnp.asarray(reference_weights_host, dtype=jnp.float64)
-        chart_indices = jnp.broadcast_to(
-            jnp.arange(atlas.num_charts, dtype=jnp.int32)[:, None],
-            (atlas.num_charts, reference.shape[0]),
-        )
-        chart_reference = jnp.broadcast_to(
-            reference[None, ...],
-            (atlas.num_charts, *reference.shape),
-        )
-        density = atlas.jacobian(chart_indices, chart_reference)
-        active = atlas.reference_mask(chart_indices, chart_reference)
-        density = jnp.where(
-            active & atlas.seam_owner[:, None],
-            density,
-            0.0,
-        )
-        measures = jnp.sum(density * reference_weights[None, :], axis=1)
         measures_host = np.asarray(measures)
         if np.any(~np.isfinite(measures_host)) or np.any(measures_host <= 0.0):
             raise ValueError(
                 "Every selected atlas chart must have positive finite measure."
             )
-        seed_indices = np.asarray(jnp.argmax(density, axis=1), dtype=np.int32)
         self.atlas = atlas
         self.measures = measures
-        self.seed_reference = reference[jnp.asarray(seed_indices)]
+        self.seed_reference = seed_reference
         self.candidate_count = int(candidate_count)
-        self.maximum_quadrature_points = maximum_quadrature_points
 
     @property
     def num_strata(self) -> int:

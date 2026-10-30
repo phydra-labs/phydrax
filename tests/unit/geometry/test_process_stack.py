@@ -4,15 +4,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
 
 from phydrax import SpatialCoordinateContract
-from phydrax.geometry.brep import read_occt_shape
+from phydrax.geometry.brep import brep_mass_properties
 from phydrax.geometry.process import (
     lower_process_stack,
     ProcessStack,
@@ -45,13 +41,6 @@ def _rectangle(
     )
 
 
-def _volume(path: Path) -> float:
-    shape, _, _ = read_occt_shape(path)
-    properties = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, properties)
-    return float(properties.Mass())
-
-
 def test_process_stack_requires_total_precedence_and_explicit_void_targets() -> None:
     contract = SpatialCoordinateContract(MILLIMETER)
     footprint = _rectangle(0, 0, 1, 1, "footprint")
@@ -80,9 +69,7 @@ def test_process_stack_requires_total_precedence_and_explicit_void_targets() -> 
         )
 
 
-def test_vertical_stack_lowers_to_persisted_exact_partition_history(
-    tmp_path: Path,
-) -> None:
+def test_vertical_stack_lowers_to_in_memory_exact_partition_history() -> None:
     contract = SpatialCoordinateContract(MILLIMETER)
     stack = ProcessStack(
         contract,
@@ -109,19 +96,21 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
             ),
         ),
     )
-    destination = tmp_path / "final-stack.brep"
 
     result = lower_process_stack(
         stack,
-        destination,
         linear_deflection=0.1,
         angular_deflection=0.2,
         trim_samples_per_edge=9,
     )
+    mass = brep_mass_properties(result.model, subdivisions=8)
+    volume_enclosures = np.asarray(mass.volume_enclosures)
 
     assert stack.region_precedence == ("high", "low")
-    assert destination.is_file()
-    assert _volume(destination) == pytest.approx(5.5)
+    assert mass.status == ("certified", "certified")
+    ordered_volumes = volume_enclosures[np.argsort(volume_enclosures[:, 0])]
+    assert ordered_volumes[0, 0] <= 2.0 <= ordered_volumes[0, 1]
+    assert ordered_volumes[1, 0] <= 3.5 <= ordered_volumes[1, 1]
     assert result.model.report.num_solids == 2
     assert result.model.coordinate_contract.spatial_id == contract.spatial_id
     assert result.revision.revision_id == result.model.source_revision
@@ -153,7 +142,7 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
         "opening",
     )
     assert all(
-        Path(model.source_id).is_file()
+        model.source_id == f"process-stack:{stack.stack_id}:{name}"
         and model.coordinate_contract.spatial_id == contract.spatial_id
-        for _, model in result.operand_models
+        for name, model in result.operand_models
     )

@@ -22,6 +22,7 @@ from ...linalg import (
     AbstractPreconditioner,
     AbstractPreconditionerBuilder,
     AdditiveSubspaceCorrectionBuilder,
+    ArraySpace,
     DiagonalLinearOperator,
     PreconditionerProperties,
     SubspaceCorrectionTerm,
@@ -29,42 +30,61 @@ from ...linalg import (
 from ...linalg._complexes import coordinate_operator, coordinate_space
 from ...linalg._operators import adjoint, AdjointLinearOperator, IdentityLinearOperator
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import ConvertibleToArray
 
 
 if TYPE_CHECKING:
-    from ._de_rham import FiniteElementDeRhamComplex
+    from ._de_rham import FiniteElementDeRhamComplex, FiniteElementTransferResult
 
 
 @final
 class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
+    transfer_result: FiniteElementTransferResult
     interpolation: AbstractLinearOperator
     anterpolation: AbstractLinearOperator
-    multiplicity_weight: object
+    multiplicity_weight: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
+        transfer_result: FiniteElementTransferResult,
         interpolation: AbstractLinearOperator,
         anterpolation: AbstractLinearOperator,
-        multiplicity_weight: object,
+        multiplicity_weight: ConvertibleToArray,
         /,
     ) -> None:
+        from ._de_rham import FiniteElementTransferResult
+
+        if not isinstance(transfer_result, FiniteElementTransferResult):
+            raise TypeError("transfer_result must be a FiniteElementTransferResult.")
         if not isinstance(interpolation, AbstractLinearOperator) or not isinstance(
             anterpolation, AbstractLinearOperator
         ):
             raise TypeError("Auxiliary transfers must be linear operators.")
-        if not interpolation.source.compatible(
-            anterpolation.target
-        ) or not interpolation.target.compatible(anterpolation.source):
+        source_space = interpolation.source
+        target_space = interpolation.target
+        adjoint_source = anterpolation.source
+        adjoint_target = anterpolation.target
+        if (
+            not isinstance(source_space, ArraySpace)
+            or not isinstance(target_space, ArraySpace)
+            or not isinstance(adjoint_source, ArraySpace)
+            or not isinstance(adjoint_target, ArraySpace)
+        ):
+            raise TypeError("FE auxiliary transfers require array coefficient spaces.")
+        if not source_space.compatible(adjoint_target) or not target_space.compatible(
+            adjoint_source
+        ):
             raise ValueError(
                 "Auxiliary interpolation/anterpolation spaces are incompatible."
             )
-        weight = interpolation.source.validate(multiplicity_weight)
+        weight = source_space.validate(multiplicity_weight)
         leaves = jax.tree.leaves(weight)
         if any(bool(jnp.any(~jnp.isfinite(value) | (value <= 0.0))) for value in leaves):
             raise ValueError(
                 "Auxiliary multiplicity weights must be positive and finite."
             )
+        self.transfer_result = transfer_result
         self.interpolation = interpolation
         self.anterpolation = anterpolation
         self.multiplicity_weight = weight
@@ -74,6 +94,7 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
                 "interpolation": interpolation.operator_id,
                 "anterpolation": anterpolation.operator_id,
                 "multiplicity_weight": array_tree_fingerprint(weight),
+                "transfer_evidence": transfer_result.evidence_id,
                 "high_space": interpolation.source.space_id,
                 "low_space": interpolation.target.space_id,
             }
@@ -126,9 +147,13 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
                 operator_id=f"{realization.realization_id}:auxiliary-restriction:{degree}:{boundary}",
             )
 
-        inclusion = coordinate_operator(low.transfer(complex).maps[degree])
+        transfer_result = low.transfer(complex)
+        inclusion = coordinate_operator(
+            transfer_result.complex_map.maps[degree]
+        )
         prolongation = restriction(complex) @ inclusion @ adjoint(restriction(low))
         return cls(
+            transfer_result,
             adjoint(prolongation),
             prolongation,
             jnp.ones((prolongation.target.size,), dtype=jnp.float64),

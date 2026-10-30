@@ -316,10 +316,12 @@ class CompositionTransport(StrictModule):
 
     `source_entry_ids` are consumed from the source composition and must have the
     structure identities `source_structure_ids` the owner route was prepared from;
-    `targets` are the staged entries the route produced. A conservative transport
-    reports the conserved content per component before and after with the owner's
-    tolerance; ownership migration must always report it, since moving rows
-    between owners may neither create nor destroy content.
+    `targets` are the staged entries the route produced. A physical remap reports
+    numerical source/target content and its tolerance when it makes a conservation
+    claim. Ownership migration must report either that numerical evidence or paired
+    exact content roots from its owner-verified semantic-key/value banks. Exact roots
+    are compared as identifiers; they do not establish geometric or route validity,
+    which the owner must verify independently.
     """
 
     targets: tuple[CompositionEntry, ...]
@@ -327,6 +329,8 @@ class CompositionTransport(StrictModule):
     source_content: Array | None
     target_content: Array | None
     content_tolerance: Array | None
+    source_content_root: str | None = eqx.field(static=True)
+    target_content_root: str | None = eqx.field(static=True)
     kind: CompositionTransportKind = eqx.field(static=True)
     source_entry_ids: tuple[str, ...] = eqx.field(static=True)
     source_structure_ids: tuple[str, ...] = eqx.field(static=True)
@@ -346,6 +350,8 @@ class CompositionTransport(StrictModule):
         source_content: ArrayLike | None = None,
         target_content: ArrayLike | None = None,
         content_tolerance: ArrayLike | None = None,
+        source_content_root: str | None = None,
+        target_content_root: str | None = None,
     ) -> None:
         kind_ = parse(kind, CompositionTransportKind, "kind")
         sources = unique_identifiers(source_entry_ids, "Transport source entry IDs")
@@ -368,28 +374,59 @@ class CompositionTransport(StrictModule):
             _content(content_tolerance, "content_tolerance"),
         )
         present = tuple(item is not None for item in contents)
+        roots = (
+            None
+            if source_content_root is None
+            else canonical_identifier(source_content_root, "source_content_root"),
+            None
+            if target_content_root is None
+            else canonical_identifier(target_content_root, "target_content_root"),
+        )
+        roots_present = tuple(item is not None for item in roots)
+        if any(present) and any(roots_present):
+            raise ValueError(
+                "Numeric content evidence and exact content roots are mutually exclusive."
+            )
         if any(present) and not all(present):
             raise ValueError(
                 "Conserved content needs source, target, and tolerance together."
             )
+        if any(roots_present) and not all(roots_present):
+            raise ValueError("Exact content roots need source and target together.")
         if (
             all(present)
             and len({item.shape for item in contents if item is not None}) != 1
         ):
             raise ValueError("Conserved content arrays must share one component shape.")
-        if kind_ == "ownership-migration" and not all(present):
+        if kind_ == "ownership-migration" and not (all(present) or all(roots_present)):
             raise ValueError(
                 "Ownership migration must report the content it moves; created rows "
                 "are never physical content."
+            )
+        if kind_ == "physical-remap" and any(roots_present):
+            raise ValueError(
+                "Exact content roots are only valid for ownership migration."
             )
         route = canonical_identifier(route_id, "route_id")
         self.targets = staged
         self.successful = accepted
         self.source_content, self.target_content, self.content_tolerance = contents
+        self.source_content_root, self.target_content_root = roots
         self.kind = kind_
         self.source_entry_ids = sources
         self.source_structure_ids = structures
         self.route_id = route
+        content_evidence = (
+            {
+                "strength": "owner-verified-exact-content-roots",
+                "source_root": roots[0],
+                "target_root": roots[1],
+            }
+            if all(roots_present)
+            else {"strength": "numeric-conserved-content"}
+            if all(present)
+            else None
+        )
         self.transport_id = canonical_fingerprint(
             {
                 "kind": "composition-transport",
@@ -397,13 +434,14 @@ class CompositionTransport(StrictModule):
                 "route": route,
                 "sources": list(zip(sources, structures, strict=True)),
                 "targets": [item.record_id for item in staged],
-                "conservative": all(present),
+                "conservative": content_evidence is not None,
+                "content_evidence": content_evidence,
             }
         )
 
     @property
     def conservative(self) -> bool:
-        return self.source_content is not None
+        return self.source_content is not None or self.source_content_root is not None
 
 
 def _same_layout(source: Any, proposed: Any, /) -> bool:
@@ -722,6 +760,10 @@ def _transport_accepted(transport: CompositionTransport, /) -> bool:
     """Host decision on one transport's owner status and conservation claim."""
     if not bool(np.asarray(transport.successful)):
         return False
+    if transport.source_content_root is not None:
+        # This compares owner-verified content identities only. The owner route
+        # remains responsible for validating values and explicit row correspondence.
+        return transport.source_content_root == transport.target_content_root
     if not transport.conservative:
         return True
     source = np.asarray(transport.source_content)

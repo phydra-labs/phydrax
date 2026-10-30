@@ -8,6 +8,8 @@ from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCP.gp import gp_Pnt
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import persist_occt_shape
 
 
 gmsh = pytest.importorskip("gmsh")
@@ -24,7 +26,7 @@ def _planar_face(points: Any) -> Any:
 
 def _source(path: Any, shape: Any = None) -> Any:
     persisted = path.with_suffix(".brep")
-    model = phx.geometry.persist_occt_shape(
+    model = persist_occt_shape(
         (
             BRepPrimAPI_MakeBox(gp_Pnt(-0.5, -0.5, -0.5), 1.0, 1.0, 1.0).Shape()
             if shape is None
@@ -32,8 +34,10 @@ def _source(path: Any, shape: Any = None) -> Any:
         ),
         persisted,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
     return phx.geometry.BRepSource(model) if shape is None else model
 
@@ -45,7 +49,7 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
 ) -> None:
     source = _source(tmp_path / "cube.step")
     provider = phx.meshing.GmshProvider()
-    scope = provider.whole_scope(source, 3)
+    scope = phx.meshing.MeshingScope.whole(source, 3)
     size = phx.meshing.UniformSizeControl(
         scope,
         0.3,
@@ -88,14 +92,15 @@ def _provider() -> Any:
     return phx.meshing.GmshProvider()
 
 
-def _scope(source: Any, dimension: Any, identifiers: Any) -> Any:
-    return phx.meshing.MeshingScope(
-        source.report.source_id,
-        source.report.source_revision,
-        phx.meshing.MeshingEntityKind.GEOMETRY,
-        dimension,
-        f"{source.report.source_revision}:brep:{dimension}",
-        np.asarray(identifiers, dtype=np.int64),
+def _scope(model: Any, dimension: Any, identifiers: Any) -> Any:
+    entity_sets = {
+        1: model.edge_ids,
+        2: model.face_ids,
+        3: model.solid_ids,
+    }
+    return phx.meshing.MeshingScope.from_geometry(
+        model,
+        tuple(entity_sets[dimension][int(index)] for index in identifiers),
     )
 
 
@@ -107,33 +112,28 @@ def _face_scope(source: Any, axis: Any, coordinate: Any) -> Any:
         face_ids[np.all(np.isclose(triangles[:, :, axis], coordinate), axis=1)]
     )
     assert selected.size == 1
-    return _scope(source, 2, selected)
+    return _scope(source.model, 2, selected)
 
 
 def _edge_scope(source: Any, axis: Any, coordinate: Any) -> Any:
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopoDS import TopoDS
-
-    from phydrax.geometry.brep._occt import _explore_unique, read_occt_shape
-
-    shape, _, _ = read_occt_shape(source.report.source_id)
+    model = source.model if isinstance(source, phx.geometry.BRepSource) else source
+    geometry = model.geometry
+    ranges = np.asarray(geometry.edge_ranges)
     selected = []
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
-        curve = BRepAdaptor_Curve(edge)
-        values = [
-            curve.Value(float(value))
-            for value in np.linspace(curve.FirstParameter(), curve.LastParameter(), 3)
-        ]
-        points = np.asarray([(point.X(), point.Y(), point.Z()) for point in values])
-        if np.allclose(points[:, axis], coordinate):
+    for index, curve_index in enumerate(geometry.edge_curves):
+        if curve_index < 0:
+            continue
+        parameters = np.linspace(ranges[index, 0], ranges[index, 1], 3)
+        coordinates = np.asarray(
+            geometry.curves[curve_index].evaluate(parameters), dtype=np.float64
+        )
+        if np.allclose(coordinates[:, axis], coordinate):
             selected.append(index)
     assert len(selected) == 1
-    return _scope(source, 1, selected)
+    return _scope(model, 1, selected)
 
 
 def _specification(
-    provider: Any,
     source: Any,
     dimension: Any,
     policy: Any,
@@ -142,7 +142,7 @@ def _specification(
     layers: Any = (),
     periodic: Any = (),
 ) -> Any:
-    scope = provider.whole_scope(source, dimension)
+    scope = phx.meshing.MeshingScope.whole(source, dimension)
     target = phx.meshing.CellMeshingTarget(dimension, 3, policy, geometry_order=order)
     size = phx.meshing.UniformSizeControl(
         scope, 0.25, minimum_size=0.05, maximum_size=0.5, maximum_growth_rate=10.0
@@ -207,7 +207,6 @@ def test_real_periodic_planar_and_volume_meshes_match_all_quadratic_nodes(
     )
     kind = "triangle" if dimension == 2 else "tetrahedron"
     spec = _specification(
-        provider,
         source,
         dimension,
         phx.meshing.CellFamilyPolicy(required=(kind,)),
@@ -254,7 +253,7 @@ def test_real_planar_quadrilateral_and_mixed_output_keeps_quadratic_maps(
         if mixed
         else phx.meshing.CellFamilyPolicy(required=("quadrilateral",))
     )
-    result = provider.plan(source, _specification(provider, source, 2, policy)).execute()
+    result = provider.plan(source, _specification(source, 2, policy)).execute()
 
     assert {block.cell_kind for block in result.mesh.blocks} == set(policy.required)
     assert (
@@ -280,13 +279,12 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
         _face_scope(source, 2, -0.5),
         schedule,
         route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
-        volume_scope=provider.whole_scope(source, 3),
+        volume_scope=phx.meshing.MeshingScope.whole(source, 3),
         cap_scope=_face_scope(source, 2, 0.5),
     )
     result = provider.plan(
         source,
         _specification(
-            provider,
             source,
             3,
             phx.meshing.CellFamilyPolicy(required=("prism",)),
@@ -357,7 +355,7 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
         tmp_path / "open-sheet.brep",
         _planar_face(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
     )
-    scope = _scope(model, 3, (0,))
+    scope = phx.meshing.MeshingScope.whole(model, 2)
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -389,8 +387,8 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
 def test_gmsh_preflight_rejects_unlowered_local_curvature(tmp_path: Any) -> None:
     source = _source(tmp_path / "local-sizing.step")
     provider = _provider()
-    whole = provider.whole_scope(source, 2)
-    first = provider.entity_scope(source, source.model.face_ids[0])
+    whole = phx.meshing.MeshingScope.whole(source, 2)
+    first = phx.meshing.MeshingScope.from_geometry(source, source.model.face_ids[0])
     target = phx.meshing.CellMeshingTarget(
         2,
         3,
@@ -415,7 +413,7 @@ def test_real_gmsh_hard_size_compliance_has_no_factor_two_allowance(
 ) -> None:
     source = _source(tmp_path / "hard-size.step")
     provider = _provider()
-    scope = provider.whole_scope(source, 3)
+    scope = phx.meshing.MeshingScope.whole(source, 3)
     control = phx.meshing.UniformSizeControl(
         scope,
         1.2,
@@ -466,12 +464,14 @@ def _two_box_shape(*, conformal: Any) -> Any:
 
 
 def _semantic_source(path: Any, *, conformal: Any = True) -> Any:
-    model = phx.geometry.persist_occt_shape(
+    model = persist_occt_shape(
         _two_box_shape(conformal=conformal),
         path,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
     assert model.report.num_solids == 2
     return model
@@ -485,9 +485,9 @@ def _semantic_specification(
     size_controls: Any = None,
     interface_required: Any = True,
 ) -> Any:
-    whole = provider.whole_scope(source, 3)
-    left_scope = provider.entity_scope(source, source.solid_ids[0])
-    right_scope = provider.entity_scope(source, source.solid_ids[1])
+    whole = phx.meshing.MeshingScope.whole(source, 3)
+    left_scope = phx.meshing.MeshingScope.from_geometry(source, source.solid_ids[0])
+    right_scope = phx.meshing.MeshingScope.from_geometry(source, source.solid_ids[1])
     controls = (
         (
             phx.meshing.UniformSizeControl(
@@ -528,7 +528,7 @@ def _semantic_specification(
         else (
             phx.meshing.PatchControl(
                 "left-right",
-                provider.entity_scope(source, interface_faces),
+                phx.meshing.MeshingScope.from_geometry(source, interface_faces),
                 ("left", "right"),
                 required=interface_required,
             ),
@@ -615,7 +615,7 @@ def test_real_persisted_semantic_source_replays_with_stable_identity(
     assert first.mesh.mesh_id == second.mesh.mesh_id
     assert first.provenance.semantic_id == second.provenance.semantic_id
 
-    phx.geometry.persist_occt_shape(
+    persist_occt_shape(
         bd.Box(3.0, 1.0, 1.0).wrapped,
         path,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
@@ -629,10 +629,9 @@ def test_real_persisted_semantic_source_replays_with_stable_identity(
 def test_semantic_region_ownership_conflict_is_rejected_by_contract(
     tmp_path: Any,
 ) -> None:
-    provider = _provider()
     source = _semantic_source(tmp_path / "ownership-conflict.brep")
-    whole = provider.whole_scope(source, 3)
-    left = provider.entity_scope(source, source.solid_ids[0])
+    whole = phx.meshing.MeshingScope.whole(source, 3)
+    left = phx.meshing.MeshingScope.from_geometry(source, source.solid_ids[0])
     size = phx.meshing.UniformSizeControl(
         whole,
         0.3,
@@ -681,8 +680,8 @@ def test_real_solid_scoped_uniform_size_refines_only_selected_region(
 ) -> None:
     provider = _provider()
     source = _semantic_source(tmp_path / "scoped-size-partition.brep")
-    whole = provider.whole_scope(source, 3)
-    right = provider.entity_scope(source, source.solid_ids[1])
+    whole = phx.meshing.MeshingScope.whole(source, 3)
+    right = phx.meshing.MeshingScope.from_geometry(source, source.solid_ids[1])
     baseline = phx.meshing.UniformSizeControl(
         whole,
         0.38,

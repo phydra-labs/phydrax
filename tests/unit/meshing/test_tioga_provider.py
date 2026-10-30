@@ -11,11 +11,7 @@ from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 from phydrax.meshing._canonical import certify_cell_mesh
-from phydrax.meshing._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-)
+from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing.providers._tioga import TiogaOptions, TiogaProvider
 
 
@@ -301,13 +297,10 @@ def test_tioga_contracts() -> None:
     first = _grid("first", 0.0, 1.0, 2)
     second = _grid("second", 2.0, 3.0, 2)
     assembly = MeshAssembly((first, second))
-
     with pytest.raises(MeshingFailure) as failure:
         TiogaProvider(
-            TiogaOptions(executable="nonexistent-tioga-for-resource-refusal")
-        ).execute(
-            assembly,
-            limits=MeshingLimits(maximum_vertices=1),
-        )
+            TiogaOptions(executable="nonexistent-tioga-for-unavailable")
+        ).execute(assembly)
 
-    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
+

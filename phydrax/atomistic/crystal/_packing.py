@@ -488,7 +488,6 @@ class CrystalContactResources(StrictModule, NonTrainableState):
     search_capacities: tuple[ParticleImageCapacity, ...]
     role_capacities: tuple[AtomisticRoleCapacity, ...]
     skin: float = eqx.field(static=True)
-    maximum_image_count: int = eqx.field(static=True)
     resources_id: str = eqx.field(static=True)
 
     def __init__(
@@ -499,7 +498,6 @@ class CrystalContactResources(StrictModule, NonTrainableState):
         search_capacities: Sequence[ParticleImageCapacity],
         role_capacities: Sequence[AtomisticRoleCapacity],
         skin: float,
-        maximum_image_count: int = 4096,
     ) -> None:
         if not isinstance(search, AbstractAtomisticImageSearchPolicy):
             raise TypeError("search must be a native atomistic image search policy.")
@@ -511,7 +509,6 @@ class CrystalContactResources(StrictModule, NonTrainableState):
         self.search_capacities = sources
         self.role_capacities = roles
         self.skin = _positive(skin, "skin")
-        self.maximum_image_count = _count(maximum_image_count, "maximum_image_count")
         self.resources_id = canonical_fingerprint(
             {
                 "kind": "crystal-contact-resources",
@@ -519,7 +516,6 @@ class CrystalContactResources(StrictModule, NonTrainableState):
                 "search_capacities": [item.capacity_id for item in sources],
                 "role_capacities": [item.capacity_id for item in roles],
                 "skin": self.skin,
-                "maximum_image_count": self.maximum_image_count,
             }
         )
 
@@ -831,10 +827,7 @@ class PreparedCrystalGroupPacker(AbstractPreparedAtomisticSampler):
                 bonds.append((int(atoms[left]), int(atoms[right])))
         # Searched on a cubic reference at the height floor, the prepared image
         # stencil covers every admitted cell (all heights >= the floor).
-        reference = PeriodicCell(
-            plan.cell.minimum_height_floor * np.eye(3),
-            maximum_image_count=resources.maximum_image_count,
-        )
+        reference = PeriodicCell(plan.cell.minimum_height_floor * np.eye(3))
         system = AtomisticSystemPlan(
             np.arange(1, count + 1, dtype=np.int64),
             np.asarray(species, dtype=np.int32),

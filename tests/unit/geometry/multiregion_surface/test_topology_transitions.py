@@ -53,7 +53,7 @@ def test_t1_pop_restores_region_graph_completeness_and_conserves_volumes() -> No
         raise AssertionError("Expected one typed T1 proposal.")
     proposal = proposals[0]
     assert proposal.region_ids == ("D", "E")
-    assert not search.capacity_exceeded and search.uncertified_count == 0
+    assert search.candidate_count == 1 and search.rejected_count == 0
     result = apply_surface_events(
         topology, state, [proposal], policy=SurfaceEventPolicy(validation=DRY_FOAM)
     )
@@ -101,7 +101,7 @@ def test_catenoid_past_the_stability_limit_pinches_into_two_disks() -> None:
     ratio = 0.7
     assert ratio > critical
     seed = seed_catenoid(1.0, ratio, ring_points=12, rows=8, neck_radius=0.04)
-    plan = seed.capacity_plan(resource_id="pinch", headroom=2.0, event_capacity=32)
+    plan = seed.capacity_plan(resource_id="pinch", headroom=2.0)
     topology = seed.topology(plan)
     base = seed.state(topology)
     prepared = PreparedMultiRegionSurface(topology, base)
@@ -202,10 +202,8 @@ def test_merge_zips_facing_films_into_a_shared_wall() -> None:
     if not proposals or not isinstance(proposals[0], MergeProposal):
         raise AssertionError("Expected a typed merge proposal.")
     proposal = proposals[0]
-    assert not search.capacity_exceeded
-    overflow = propose_merges(prepared, state, policy, candidate_capacity=1)
-    assert overflow.capacity_exceeded and overflow.proposals == ()
-    assert overflow.candidate_count > overflow.candidate_capacity
+    assert search.candidate_count >= len(proposals)
+    assert search.rejected_count == search.candidate_count - len(proposals)
     far = SurfaceMergePolicy(("ambient",), merge_distance=0.01)
     refused = apply_surface_events(
         topology, state, [MergeProposal(proposal.face_ids, far)]
@@ -241,7 +239,7 @@ def test_merge_zips_facing_films_into_a_shared_wall() -> None:
 
 def test_explicit_region_split_and_unknown_region() -> None:
     seed = seed_catenoid(1.0, 0.5, ring_points=12, rows=6)
-    plan = seed.capacity_plan(resource_id="split-region", headroom=2.0, event_capacity=4)
+    plan = seed.capacity_plan(resource_id="split-region", headroom=2.0)
     topology = seed.topology(plan)
     state = seed.state(topology)
     result = apply_surface_events(
@@ -284,7 +282,7 @@ def test_t1_certificate_refuses_a_diagonal_film_whose_box_passes() -> None:
     assert popped.committed
 
 
-def test_t1_certificate_stays_bounded_on_a_refined_film() -> None:
+def test_t1_certificate_completes_on_a_refined_film() -> None:
     seed = t1_cluster().subdivided(2)
     topology = seed.topology(dry_foam_capacity_plan(seed, "t1-refined"))
     state = seed.state(topology)
@@ -299,10 +297,6 @@ def test_t1_certificate_stays_bounded_on_a_refined_film() -> None:
     points = seed.positions[seed.vertex_indices(film)]
     assert float(np.max(np.linalg.norm(points[:, None] - points[None], axis=2))) < 0.09
     assert 1 < films.certificate_work <= 200
-    starved = propose_t1_pops(
-        prepared, state, maximum_film_diameter=0.09, certificate_capacity=1
-    )
-    assert starved.proposals == () and starved.uncertified_count == 1
 
 
 def _tetrahedron(base: np.ndarray, apex: np.ndarray, offset: int, /) -> np.ndarray:

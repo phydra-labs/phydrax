@@ -3,18 +3,11 @@
 #
 
 
-from pathlib import Path
+from fractions import Fraction
 from typing import Any
 
+import numpy as np
 import pytest
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-from OCP.BRepGProp import BRepGProp
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.gp import gp_Pnt
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_SOLID
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._cad_revision import (
@@ -24,11 +17,10 @@ from phydrax.geometry._cad_revision import (
     CADSelectionSet,
     CADSelector,
 )
-from phydrax.geometry.brep import _partition as partition_module
+from phydrax.geometry.brep._constructors import brep_box, brep_cylinder
+from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._model import BRepEntityId
-from phydrax.geometry.brep._occt import persist_occt_shape, read_occt_shape
 from phydrax.geometry.brep._partition import (
-    BRepPartitionHistoryError,
     BRepPartitionOperand,
     BRepPartitionPlan,
     BRepPartitionPolicy,
@@ -36,7 +28,8 @@ from phydrax.geometry.brep._partition import (
     cad_revision_from_brep_model,
     partition_brep,
 )
-from phydrax.meshing.providers._gmsh import GmshProvider
+from phydrax.geometry.brep._patches import ExactLineCurve, RevolutionSurface
+from phydrax.meshing import MeshingScope
 from phydrax.units import MILLIMETER
 
 
@@ -44,16 +37,10 @@ _COORDINATES = SpatialCoordinateContract(MILLIMETER)
 
 
 def _box(x: float, length: float = 1.0) -> Any:
-    return BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), length, 1.0, 1.0).Shape()
-
-
-def _persist(tmp_path: Path, name: str, shape: Any) -> Any:
-    return persist_occt_shape(
-        shape,
-        tmp_path / f"{name}.brep",
+    return brep_box(
+        (x, 0.0, 0.0),
+        (x + length, 1.0, 1.0),
         coordinate_contract=_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
     )
 
 
@@ -73,61 +60,45 @@ def _operand(
             if occurrence.kind == "solid"
         ),
     )
-    return BRepPartitionOperand(
-        operand_id,
-        model,
-        role,
-        selection,
-        targets,
-    )
+    return BRepPartitionOperand(operand_id, model, role, selection, targets)
 
 
-def _plan(
-    operands: Any,
-    precedence: tuple[str, ...],
-    *,
-    overwrite: bool = False,
-) -> Any:
+def _plan(operands: Any, precedence: tuple[str, ...]) -> Any:
     return BRepPartitionPlan(
         _COORDINATES,
         tuple(operands),
-        BRepPartitionPolicy(precedence, overwrite=overwrite),
+        BRepPartitionPolicy(precedence),
     )
 
 
-def _execute(plan: Any, destination: Path) -> Any:
-    return partition_brep(
-        plan,
-        destination=destination,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
-    )
+def _execute(plan: Any) -> Any:
+    return partition_brep(plan)
 
 
 def _solid_volumes(result: Any) -> dict[BRepEntityId, float]:
-    shape, source_format, source_digest = read_occt_shape(result.model.source_id)
-    assert source_format == "brep"
-    assert source_digest == result.model.source_digest
-    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
-    solids = []
-    while explorer.More():
-        candidate = TopoDS.Solid(explorer.Current())
-        if not any(value.IsSame(candidate) for value in solids):
-            solids.append(candidate)
-        explorer.Next()
-    volumes = {}
-    for entity_id, solid in zip(result.model.solid_ids, solids, strict=True):
-        properties = GProp_GProps()
-        BRepGProp.VolumeProperties_s(solid, properties)
-        volumes[entity_id] = float(properties.Mass())
+    geometry = result.model.geometry
+    vertices = np.asarray(geometry.vertex_points, dtype=np.float64)
+    volumes: dict[BRepEntityId, float] = {}
+    for entity_id, faces in zip(
+        result.model.solid_ids,
+        result.model.topology.solid_faces,
+        strict=True,
+    ):
+        vertex_ids = {
+            vertex
+            for face in faces
+            for loop in geometry.face_loops[face]
+            for coedge in loop
+            for vertex in geometry.edge_vertices[geometry.coedge_edges[coedge]]
+        }
+        extents = np.ptp(vertices[np.asarray(sorted(vertex_ids), dtype=np.intp)], axis=0)
+        volumes[entity_id] = float(np.prod(extents))
     return volumes
 
 
-def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
-    tmp_path: Any,
-) -> None:
-    left = _persist(tmp_path, "left", _box(0.0))
-    right = _persist(tmp_path, "right", _box(1.0))
+def test_touching_regions_publish_exact_interface_and_meshing_entity_sets() -> None:
+    left = _box(0.0)
+    right = _box(1.0)
     result = _execute(
         _plan(
             (
@@ -135,8 +106,7 @@ def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
                 _operand("right", right),
             ),
             ("left", "right"),
-        ),
-        tmp_path / "touching-result.brep",
+        )
     )
 
     interfaces = [
@@ -147,6 +117,53 @@ def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
     assert len(interfaces) == 1
     assert interfaces[0].adjacent_region_ids == ("left", "right")
     assert len(interfaces[0].entity_ids) == 1
+    transaction = result.association_graph.transaction
+    assert transaction.coverage.source_exhaustive
+    assert transaction.coverage.target_exhaustive
+    assert transaction.unresolved_source_ids == frozenset()
+    assert transaction.unresolved_target_ids == frozenset()
+    assert {
+        value.occurrence_id
+        for value in result.association_graph.target_revision.occurrences
+    } == {value.target_occurrence_id for value in transaction.correspondences}
+    source_assemblies = tuple(
+        occurrence
+        for occurrence in result.association_graph.source_revision.occurrences
+        if occurrence.kind == "assembly"
+    )
+    target_assemblies = {
+        occurrence.occurrence_id
+        for occurrence in result.association_graph.target_revision.occurrences
+        if occurrence.kind == "assembly"
+    }
+    assert source_assemblies
+    assert target_assemblies
+    for occurrence in source_assemblies:
+        resolution = result.association_graph.resolve_target(
+            result.association_graph.source_revision.select(occurrence.occurrence_id)
+        )
+        assert resolution.status in (
+            AssociationStatus.UNIQUE,
+            AssociationStatus.MULTIPLE,
+        )
+        assert all(
+            selector.occurrence_id in target_assemblies
+            for selector in resolution.candidate_selectors
+        )
+    geometry = result.model.geometry
+    assert all(isinstance(curve, ExactLineCurve) for curve in geometry.curves)
+    assert all(point is not None for point in geometry.vertex_exact_points)
+    for edge, curve_index in enumerate(geometry.edge_curves):
+        curve = geometry.curves[curve_index]
+        assert isinstance(curve, ExactLineCurve)
+        first_vertex, last_vertex = geometry.edge_vertices[edge]
+        assert (
+            curve.evaluate_exact(Fraction(0))
+            == geometry.vertex_exact_points[first_vertex]
+        )
+        assert (
+            curve.evaluate_exact(Fraction(1)) == geometry.vertex_exact_points[last_vertex]
+        )
     assert set(
         entity for _, values in result.named_solid_entity_ids for entity in values
     ) == set(result.model.solid_ids)
@@ -175,22 +192,22 @@ def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
     assert result.report.topological_dimension == 3
     assert {region.topological_dimension for region in result.regions} == {3}
     assert {patch.topological_dimension for patch in result.patches} == {3}
-    provider = GmshProvider()
-    left_scope = provider.entity_scope(result.model, result.region("left").entity_ids)
-    interface_scope = provider.entity_scope(result.model, interfaces[0].entity_ids)
+    left_scope = MeshingScope.from_geometry(
+        result.model, result.region("left").entity_ids
+    )
+    interface_scope = MeshingScope.from_geometry(result.model, interfaces[0].entity_ids)
     assert left_scope.entity_dimension == 3
     assert interface_scope.entity_dimension == 2
 
 
-def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path: Any) -> None:
-    first = _persist(tmp_path, "first", _box(0.0))
-    second = _persist(tmp_path, "second", _box(2.0))
+def test_disjoint_regions_have_only_one_sided_boundary_patches() -> None:
+    first = _box(0.0)
+    second = _box(2.0)
     result = _execute(
         _plan(
             (_operand("first", first), _operand("second", second)),
             ("first", "second"),
-        ),
-        tmp_path / "disjoint-result.brep",
+        )
     )
 
     assert result.model.topology.num_solids == 2
@@ -201,22 +218,20 @@ def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path: Any) ->
     assert all(len(indices) == 1 for indices in result.model.topology.face_solids)
 
 
-def test_explicit_precedence_is_independent_of_operand_order(tmp_path: Any) -> None:
-    high = _persist(tmp_path, "high", _box(0.0, 2.0))
-    low = _persist(tmp_path, "low", _box(1.0, 2.0))
+def test_explicit_precedence_is_independent_of_operand_order() -> None:
+    high = _box(0.0, 2.0)
+    low = _box(1.0, 2.0)
     forward = _execute(
         _plan(
             (_operand("low", low), _operand("high", high)),
             ("high", "low"),
-        ),
-        tmp_path / "forward.brep",
+        )
     )
     reverse = _execute(
         _plan(
             (_operand("high", high), _operand("low", low)),
             ("high", "low"),
-        ),
-        tmp_path / "reverse.brep",
+        )
     )
 
     assert forward.model.source_revision == reverse.model.source_revision
@@ -230,10 +245,10 @@ def test_explicit_precedence_is_independent_of_operand_order(tmp_path: Any) -> N
     ) == pytest.approx(1.0)
 
 
-def test_void_subtracts_only_its_declared_target_region(tmp_path: Any) -> None:
-    left = _persist(tmp_path, "void-left", _box(0.0, 2.0))
-    right = _persist(tmp_path, "void-right", _box(3.0, 2.0))
-    cutting = _persist(tmp_path, "cutting", _box(1.0, 3.0))
+def test_void_subtracts_only_its_declared_target_region() -> None:
+    left = _box(0.0, 2.0)
+    right = _box(3.0, 2.0)
+    cutting = _box(1.0, 3.0)
     result = _execute(
         _plan(
             (
@@ -247,8 +262,7 @@ def test_void_subtracts_only_its_declared_target_region(tmp_path: Any) -> None:
                 _operand("left", left),
             ),
             ("left", "right"),
-        ),
-        tmp_path / "targeted-void.brep",
+        )
     )
 
     volumes = _solid_volumes(result)
@@ -260,9 +274,9 @@ def test_void_subtracts_only_its_declared_target_region(tmp_path: Any) -> None:
     ) == pytest.approx(2.0)
 
 
-def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path: Any) -> None:
-    region = _persist(tmp_path, "split-region", _box(0.0, 3.0))
-    cutting = _persist(tmp_path, "split-cut", _box(1.0, 1.0))
+def test_split_and_deleted_histories_map_exact_selection_sets() -> None:
+    region = _box(0.0, 3.0)
+    cutting = _box(1.0, 1.0)
     result = _execute(
         _plan(
             (
@@ -275,8 +289,7 @@ def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path: Any) -> 
                 ),
             ),
             ("region",),
-        ),
-        tmp_path / "split-result.brep",
+        )
     )
 
     graph = result.association_graph
@@ -303,78 +316,57 @@ def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path: Any) -> 
     assert result.report.deleted_source_occurrences > 0
 
 
-def test_missing_binding_history_is_unresolved_and_publishes_nothing(
-    tmp_path: Any,
-    monkeypatch: Any,
-) -> None:
-    class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self) -> bool:
-            return False
-
-    region = _persist(tmp_path, "unresolved-region", _box(0.0))
-    disjoint_void = _persist(tmp_path, "unresolved-void", _box(2.0))
-    destination = tmp_path / "unresolved-result.brep"
-    monkeypatch.setattr(
-        partition_module,
-        "BOPAlgo_CellsBuilder",
-        NoHistoryCellsBuilder,
+def test_curved_cylinder_partition_publishes_exact_notch_and_preserves_sources() -> None:
+    cylinder = brep_cylinder(
+        1.0,
+        2.0,
+        coordinate_contract=_COORDINATES,
+        source_id="partition-cylinder",
+    )
+    notch = brep_box(
+        (0.75, -0.25, 0.5),
+        (1.25, 0.25, 1.5),
+        coordinate_contract=_COORDINATES,
+        source_id="partition-notch",
+    )
+    cylinder_revision = cylinder.source_revision
+    cylinder_geometry = cylinder.geometry.geometry_id
+    cylinder_operand = _operand("cylinder", cylinder)
+    result = partition_brep(
+        _plan(
+            (
+                cylinder_operand,
+                _operand(
+                    "notch",
+                    notch,
+                    BRepPartitionRole.VOID,
+                    targets=("cylinder",),
+                ),
+            ),
+            ("cylinder",),
+        )
     )
 
-    with pytest.raises(BRepPartitionHistoryError, match="live Boolean history"):
-        _execute(
-            _plan(
-                (
-                    _operand("region", region),
-                    _operand(
-                        "void",
-                        disjoint_void,
-                        BRepPartitionRole.VOID,
-                        targets=("region",),
-                    ),
-                ),
-                ("region",),
-            ),
-            destination,
-        )
-    assert not destination.exists()
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
-
-
-def test_staging_failure_does_not_clobber_existing_destination(
-    tmp_path: Any, monkeypatch: Any
-) -> None:
-    region = _persist(tmp_path, "failure-region", _box(0.0))
-    disjoint_void = _persist(tmp_path, "failure-void", _box(2.0))
-    destination = tmp_path / "existing.brep"
-    destination.write_bytes(b"existing-artifact")
-
-    def fail_persistence(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("staged persistence failed")
-
-    monkeypatch.setattr(
-        partition_module,
-        "persist_occt_shape",
-        fail_persistence,
+    source_selector = cylinder_operand.selection.selectors[0]
+    source_occurrence = next(
+        occurrence
+        for occurrence in result.association_graph.source_revision.occurrences
+        if occurrence.kind == "solid"
+        and occurrence.entity_id == source_selector.entity_id
     )
-    with pytest.raises(RuntimeError, match="staged persistence failed"):
-        _execute(
-            _plan(
-                (
-                    _operand("region", region),
-                    _operand(
-                        "void",
-                        disjoint_void,
-                        BRepPartitionRole.VOID,
-                        targets=("region",),
-                    ),
-                ),
-                ("region",),
-                overwrite=True,
-            ),
-            destination,
-        )
-    assert destination.read_bytes() == b"existing-artifact"
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
+    mapped = result.association_graph.resolve_target(
+        result.association_graph.source_revision.select(source_occurrence.occurrence_id)
+    )
+    assert mapped.status is AssociationStatus.UNIQUE
+    assert mapped.selector is not None and mapped.selector.kind == "solid"
+    assert result.model.topology.num_solids == 1
+    assert any(isinstance(patch, RevolutionSurface) for patch in result.model.patches)
+    assert any(
+        isinstance(curve, IntersectionCurve) for curve in result.model.geometry.curves
+    )
+    assert result.report.deleted_source_occurrences > 0
+    assert cylinder.source_revision == cylinder_revision
+    assert cylinder.geometry.geometry_id == cylinder_geometry
 
 
 def test_revision_children_rejects_a_forged_parent_selector() -> None:

@@ -1,12 +1,20 @@
-from typing import Any
+from fractions import Fraction
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from jax import Array
 
 import phydrax as phx
+from phydrax.meshing._adaptation import _finalize_native
+from phydrax.meshing._topology_edit import (
+    CellTopologyEdit,
+    EntityRelations,
+    TopologyEditBlock,
+)
 
 
-def _source() -> Any:
+def _source() -> phx.meshing.CellMeshingResult:
     return phx.meshing.certify_cell_mesh(
         phx.discretization.CellMesh.from_triangles(
             np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
@@ -31,27 +39,51 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
         )
     )
     transition = adaptation.transition
-    # ty: ignore[unresolved-attribute]
+    assert transition is not None
     stencil = transition.vertex_stencil
     assert stencil is not None
     constant = stencil.apply(mesh.vertex_global_ids, jnp.ones((5,)))
     linear = stencil.apply(mesh.vertex_global_ids, mesh.coordinates[:, 0])
-    # ty: ignore[unresolved-attribute]
     cells = transition.lineage.entity_lineage(2)
     refined = np.asarray(cells.relation_kinds) == int(
         phx.meshing.EntityLineageKind.REFINED_FROM
     )
 
     assert jnp.allclose(constant, 1.0)
-    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(linear, transition.target.mesh.coordinates[:, 0])
-    # ty: ignore[unresolved-attribute]
     assert transition.lineage.source_topology_id == mesh.topology_id
-    # ty: ignore[unresolved-attribute]
     assert transition.lineage.target_topology_id == transition.target.mesh.topology_id
+
+    geometry_transition = transition.geometry_transition
+    assert geometry_transition is not None
+    assert geometry_transition.reference_map is not None
+    reference_groups = (
+        geometry_transition.reference_map
+        if isinstance(geometry_transition.reference_map, tuple)
+        else (geometry_transition.reference_map,)
+    )
+    mapped_cell_ids = np.concatenate(
+        tuple(
+            np.asarray(group.target_cell_ids, dtype=np.int64)
+            for group in reference_groups
+        )
+    )
+    target_cell_ids = np.concatenate(
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64)
+            for block in transition.target.mesh.blocks
+        )
+    )
+    np.testing.assert_array_equal(np.sort(mapped_cell_ids), np.sort(target_cell_ids))
     np.testing.assert_array_equal(np.asarray(cells.source_global_ids)[refined], (10, 10))
     np.testing.assert_array_equal(np.asarray(cells.deleted_source_ids), ())
 
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
     accepted = phx.solver.FiniteElementAcceptedState(
         (mesh.coordinates[:, 0],),
         0.0,
@@ -59,6 +91,7 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
         mesh.topology_id,
         "prepared",
         "compiled",
+        field_layouts=(layout,),
     )
     transaction = phx.solver.FiniteElementTopologyTransaction(
         lambda candidate, fields, materials, lineage, args: (
@@ -70,7 +103,300 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
 
     assert bool(result.committed)
     assert result.adaptation is adaptation
-    # ty: ignore[unresolved-attribute]
     assert result.mesh.topology_id == transition.target.mesh.topology_id
-    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(result.state.fields[0], transition.target.mesh.coordinates[:, 0])
+
+
+
+def test_non_dyadic_stencil_weights_remain_exact_and_unique() -> None:
+    exact = ((Fraction(1, 3), Fraction(2, 3)),)
+    sources = np.asarray(((5, 7),), dtype=np.int64)
+    weights = np.asarray(
+        ((float(exact[0][0]), float(exact[0][1])),), dtype=np.float64
+    )
+    valid = np.ones(sources.shape, dtype=np.bool_)
+    stencil = phx.meshing.VertexInterpolationStencil(
+        "source-vertices",
+        "target-vertices",
+        np.asarray((11,), dtype=np.int64),
+        sources,
+        weights,
+        valid,
+        exact_weights=exact,
+    )
+
+    assert stencil.preserves_constants
+    assert stencil.exact_weights == exact
+    assert sum(
+        (Fraction.from_float(float(weight)) for weight in weights[0]), Fraction(0)
+    ) != 1
+    assert len(set(np.asarray(stencil.source_global_ids)[0])) == 2
+    expected = float(exact[0][0] * 2 + exact[0][1] * 4)
+    value = np.asarray(stencil.apply((5, 7), np.asarray((2.0, 4.0))))
+    np.testing.assert_allclose(value, (expected,), rtol=0.0, atol=1e-15)
+
+    transfer = stencil.as_transfer(
+        (5, 7),
+        source_topology_id="source-topology",
+        target_topology_id="target-topology",
+    )
+    assert transfer.preserves_constants
+    np.testing.assert_allclose(transfer.apply(np.ones((2,))), np.ones((1,)))
+
+    with pytest.raises(ValueError, match="one exact coefficient per source ID"):
+        phx.meshing.VertexInterpolationStencil(
+            "source-vertices",
+            "target-vertices",
+            np.asarray((12,), dtype=np.int64),
+            np.asarray(((5, 5),), dtype=np.int64),
+            np.asarray(((0.25, 0.75),), dtype=np.float64),
+            np.ones((1, 2), dtype=np.bool_),
+            exact_weights=((Fraction(1, 4), Fraction(3, 4)),),
+        )
+
+def test_conservative_cell_average_uses_overlap_and_rolls_back() -> None:
+    source = _source()
+    mesh = source.mesh
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "mass", phx.discretization.fem.discontinuous_element("triangle", 0)
+        ),
+        transfer_semantics=(
+            phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
+        ),
+    )
+    restored_layout = phx.solver.FiniteElementAcceptedFieldLayout.from_recipe(
+        layout.recipe()
+    )
+    assert restored_layout.layout_id == layout.layout_id
+    assert (
+        restored_layout.transfer_semantics
+        is phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
+    )
+    with pytest.raises(ValueError, match="conservative_cell_average"):
+        phx.solver.FiniteElementAcceptedFieldLayout(
+            phx.discretization.FiniteElementFieldSpec(
+                "not-cell-average", phx.discretization.lagrange_element("triangle", 1)
+            ),
+            transfer_semantics=(
+                phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
+            ),
+        )
+    dof_map = phx.discretization.fem.FiniteElementPlan(
+        mesh,
+        (layout.field_spec,),
+        coordinate_spec=source.geometry,
+    ).prepare().dof_maps[0]
+    field = np.arange(1, dof_map.global_dof_count + 1, dtype=np.float64)
+    accepted = phx.solver.FiniteElementAcceptedState(
+        (field,),
+        0.0,
+        0,
+        mesh.topology_id,
+        "prepared-conservative",
+        "compiled-conservative",
+        field_layouts=(layout,),
+    )
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    certify = lambda candidate, fields, materials, lineage, args: (
+        candidate.topology_id == lineage.target_topology_id
+        and bool(jnp.all(jnp.isfinite(fields[0])))
+    )
+    result = phx.solver.FiniteElementTopologyTransaction(certify).execute(
+        accepted, mesh, adaptation
+    )
+    assert bool(result.committed)
+    (evidence,) = result.conservative_transfers
+    assert evidence.transfer.conservative
+    assert evidence.coverage_complete
+    assert np.all(
+        np.abs(np.asarray(evidence.conservation_defect))
+        <= evidence.conservation_bound
+    )
+    np.testing.assert_allclose(evidence.source_integral, evidence.target_integral)
+    np.testing.assert_array_equal(
+        result.state.fields[0], evidence.transfer.apply(accepted.fields[0])
+    )
+
+    refused = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate, fields, materials, lineage, args: False
+    ).execute(accepted, mesh, adaptation)
+    assert not bool(refused.committed)
+    assert refused.state is accepted
+    assert refused.adaptation is None
+    assert refused.conservative_transfers[0].transfer.transfer_id == (
+        evidence.transfer.transfer_id
+    )
+
+
+def test_parentless_retriangulation_withholds_vertex_transfer() -> None:
+    source = _source()
+    mesh = source.mesh
+    prepared = phx.meshing.prepare_mesh_adaptation(
+        source,
+        phx.meshing.MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64)),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+        ),
+    )
+    vertex_ids = np.asarray(mesh.vertex_global_ids[:4], dtype=np.int64)
+    target_cells = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    empty_relations = tuple(
+        EntityRelations(
+            dimension,
+            np.zeros((0, width), dtype=np.int64),
+            np.zeros((0, width), dtype=np.int64),
+            np.zeros((0,), dtype=np.int32),
+        )
+        for dimension, width in ((0, 1), (1, 2), (2, 1))
+    )
+    edit = CellTopologyEdit(
+        coordinates=np.asarray(mesh.coordinates[:4], dtype=np.float64),
+        vertex_global_ids=vertex_ids,
+        blocks=(
+            TopologyEditBlock(
+                mesh.blocks[0].name,
+                "triangle",
+                "triangle",
+                target_cells,
+                np.asarray((101, 102), dtype=np.int64),
+            ),
+        ),
+        stencil_sources=vertex_ids[:, None],
+        stencil_weights=np.ones((4, 1), dtype=np.float64),
+        stencil_valid=np.ones((4, 1), dtype=np.bool_),
+        relations=empty_relations,
+    )
+
+    target = _finalize_native(
+        prepared,
+        edit,
+        phx.meshing.MeshTransitionKind.REMESH,
+        conservative=False,
+    )
+
+    assert target.stencil.preserves_constants
+    assert target.transfer is None
+    cell_lineage = target.lineage.entity_lineage(2)
+    np.testing.assert_array_equal(
+        np.asarray(cell_lineage.created_target_ids), (101, 102)
+    )
+
+
+def test_material_field_requires_its_declared_chain_action() -> None:
+    source = _source()
+    mesh = source.mesh
+    with pytest.raises(ValueError, match="explicitly declare transfer_semantics"):
+        phx.solver.FiniteElementAcceptedFieldLayout(
+            phx.discretization.FiniteElementFieldSpec(
+                "ambiguous", phx.discretization.lagrange_element("triangle", 1)
+            )
+        )
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "material_content", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.MATERIAL_FOLLOWING_CONTENT,
+    )
+    accepted = phx.solver.FiniteElementAcceptedState(
+        (mesh.coordinates[:, 0],),
+        0.0,
+        0,
+        mesh.topology_id,
+        "prepared-material",
+        "compiled-material",
+        field_layouts=(layout,),
+    )
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    result = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate, fields, materials, lineage, args: True
+    ).execute(accepted, mesh, adaptation)
+
+    assert not bool(result.committed)
+    assert result.state is accepted
+    assert result.adaptation is None
+    assert result.diagnostics == "material-following-field-requires-validated-material-chain"
+
+
+@pytest.mark.parametrize("commit", (True, False), ids=("commit", "rollback"))
+def test_declared_form_transfer_preserves_linear_state_and_evidence(commit: bool) -> None:
+    source = _source()
+    mesh = source.mesh
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "potential",
+            phx.discretization.fem.form_element(
+                "triangle", 0, 1, family="trimmed", twist="untwisted"
+            ),
+        ),
+        periodic_quotient=False,
+    )
+    accepted = phx.solver.FiniteElementAcceptedState(
+        (mesh.coordinates[:, 0] + 2.0 * mesh.coordinates[:, 1],),
+        0.0,
+        0,
+        mesh.topology_id,
+        "prepared-form",
+        "compiled-form",
+        field_layouts=(layout,),
+    )
+
+    def certify(
+        candidate_mesh: phx.discretization.CellMesh,
+        fields: tuple[Array, ...],
+        materials: phx.equations.MaterialTransaction | None,
+        lineage: phx.meshing.MeshLineage,
+        args: object,
+    ) -> bool:
+        return commit
+
+    result = phx.solver.FiniteElementTopologyTransaction(certify).execute(
+        accepted, mesh, adaptation
+    )
+    assert bool(result.committed) is commit
+    expected_mesh = adaptation.target.mesh if commit else mesh
+    np.testing.assert_allclose(
+        result.state.fields[0],
+        expected_mesh.coordinates[:, 0] + 2.0 * expected_mesh.coordinates[:, 1],
+        rtol=1.0e-13,
+        atol=1.0e-13,
+    )
+    assert result.mesh.topology_id == expected_mesh.topology_id
+    if not commit:
+        assert result.state.accepted_id == accepted.accepted_id
+    (transfer,) = result.field_transfers
+    assert transfer.complex_map.source.space(0).size == mesh.coordinates.shape[0]
+    assert (
+        transfer.complex_map.target.space(0).size
+        == adaptation.target.mesh.coordinates.shape[0]
+    )
+    assert np.all(
+        np.asarray(transfer.commuting_defects)
+        <= np.asarray(transfer.commuting_error_bounds)
+    )
+    assert transfer.enclosed_integral_count == 0

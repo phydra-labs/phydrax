@@ -93,7 +93,6 @@ def run() -> Any:
     surface_plan = phx.geometry.discover_implicit_surface(
         sphere,
         grid,
-        policy=phx.geometry.ImplicitSurfacePolicy(maximum_intersection_pairs=500_000),
         source_id="display-sphere-surface",
     )
     surface = surface_plan.realize(sphere.state)

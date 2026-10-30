@@ -20,6 +20,22 @@ _DEFERRED_EXPORTS = {
     "ReconstructionFailure": "._core",
     "ReconstructionReport": "._core",
     "ReconstructionReportProvider": "._core",
+    "RepairInterpretation": "._core",
+    "estimate_point_normals": "._normals",
+    "NormalEstimationEvidence": "._normals",
+    "NormalOrientation": "._normals",
+    "PointNormals": "._normals",
+    "PoissonDiscretization": "._poisson",
+    "PoissonSolveEvidence": "._poisson",
+    "SampledSurfaceDeviation": "._poisson",
+    "ComponentFitEvidence": "._robustness",
+    "IncompleteSamplingPolicy": "._robustness",
+    "OutlierRemovalEvidence": "._robustness",
+    "ReconstructionRobustness": "._robustness",
+    "SamplingCoverageEvidence": "._robustness",
+    "ThinFeatureEvidence": "._robustness",
+    "AuthoredTriangleSheet": "._sheet",
+    "TriangleSheetRepairEvidence": "._sheet",
 }
 
 
@@ -35,9 +51,29 @@ if TYPE_CHECKING:
         reconstruct_surface_region,
         ReconstructedGeometrySource,
         ReconstructionFailure,
-        ReconstructionReport,
         ReconstructionReportProvider,
+        RepairInterpretation,
     )
+    from ._normals import (
+        estimate_point_normals,
+        NormalEstimationEvidence,
+        NormalOrientation,
+        PointNormals,
+    )
+    from ._poisson import (
+        PoissonDiscretization,
+        PoissonSolveEvidence,
+        SampledSurfaceDeviation,
+    )
+    from ._robustness import (
+        ComponentFitEvidence,
+        IncompleteSamplingPolicy,
+        OutlierRemovalEvidence,
+        ReconstructionRobustness,
+        SamplingCoverageEvidence,
+        ThinFeatureEvidence,
+    )
+    from ._sheet import AuthoredTriangleSheet, TriangleSheetRepairEvidence
 
 
 __all__ = [
@@ -45,6 +81,22 @@ __all__ = [
     "ReconstructionFailure",
     "ReconstructionReport",
     "ReconstructionReportProvider",
+    "RepairInterpretation",
+    "NormalEstimationEvidence",
+    "NormalOrientation",
+    "PointNormals",
+    "PoissonDiscretization",
+    "PoissonSolveEvidence",
+    "SampledSurfaceDeviation",
+    "ComponentFitEvidence",
+    "IncompleteSamplingPolicy",
+    "OutlierRemovalEvidence",
+    "ReconstructionRobustness",
+    "SamplingCoverageEvidence",
+    "ThinFeatureEvidence",
+    "AuthoredTriangleSheet",
+    "TriangleSheetRepairEvidence",
+    "estimate_point_normals",
     "reconstruct_dem_region",
     "reconstruct_lidar_region",
     "reconstruct_point_region",

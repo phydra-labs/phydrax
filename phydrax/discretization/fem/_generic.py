@@ -49,7 +49,13 @@ from .._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from .._cell_geometry import CellGeometryElement, CellGeometrySpec
+from .._cell_geometry import (
+    CellGeometryElement,
+    CellGeometrySpec,
+    coordinate_tabulation,
+    PerCellRestrictedCellGeometryElement,
+    ScalarCoordinateElement,
+)
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
 from .._core import (
     DiscretizationCapability,
@@ -453,6 +459,53 @@ def _record_form_entity_widths(
                 widths[dimension][entity] = len(dofs)
 
 
+def _form_cell_orientation_sign(
+    mesh: CellMesh,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    cell: np.ndarray,
+    global_vertices: tuple[int, ...],
+    /,
+) -> int:
+    """Return the cell-chart and physical coorientation character."""
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("Canonical form routing requires form-basis metadata.")
+    sign = 1
+    if basis.form_degree == mesh.topological_dimension:
+        permutation = basis.canonical_permutation(global_vertices)
+        if basis.family == "tensor-trimmed":
+            chart = _linear_reference_element(block.cell_kind)
+            reference_vertices = np.asarray(chart.reference_nodes)
+            affine = np.linalg.lstsq(
+                np.c_[
+                    reference_vertices,
+                    np.ones((len(cell),), dtype=np.float64),
+                ],
+                reference_vertices[list(permutation)],
+                rcond=None,
+            )[0]
+            sign = int(np.sign(np.linalg.det(affine[:-1].T)))
+        else:
+            sign = (-1) ** sum(
+                permutation[i] > permutation[j]
+                for i in range(len(permutation))
+                for j in range(i + 1, len(permutation))
+            )
+    if element.value_spec.form_type.twist == "twisted":
+        chart = _linear_reference_element(block.cell_kind)
+        gradients = np.asarray(
+            chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
+        )
+        jacobian = np.asarray(mesh.coordinates)[cell].T @ gradients
+        if jacobian.shape[0] != jacobian.shape[1]:
+            raise ValueError(
+                "Twisted embedded FE moments require explicit ambient coorientation."
+            )
+        sign *= int(np.sign(np.linalg.det(jacobian)))
+    return sign
+
+
 def _orient_form_cell_matrix(
     matrix: np.ndarray,
     mesh: CellMesh,
@@ -464,35 +517,13 @@ def _orient_form_cell_matrix(
     basis = element.form_basis
     if basis is None:
         raise ValueError("Canonical form routing requires form-basis metadata.")
-    matrix[:] = np.asarray(basis.entity_permutation_matrix(tuple(cell.tolist())))
-    if basis.form_degree == mesh.topological_dimension:
-        permutation = basis.canonical_permutation(tuple(cell.tolist()))
-        sign = (-1) ** sum(
-            permutation[i] > permutation[j]
-            for i in range(len(permutation))
-            for j in range(i + 1, len(permutation))
-        )
-        if basis.family == "tensor-trimmed":
-            chart = _linear_reference_element(block.cell_kind)
-            reference_vertices = np.asarray(chart.reference_nodes)
-            affine = np.linalg.lstsq(
-                np.c_[reference_vertices, np.ones((len(cell),), dtype=np.float64)],
-                reference_vertices[list(permutation)],
-                rcond=None,
-            )[0]
-            sign = np.sign(np.linalg.det(affine[:-1].T))
-        matrix *= sign
-    if element.value_spec.form_type.twist == "twisted":
-        chart = _linear_reference_element(block.cell_kind)
-        gradients = np.asarray(
-            chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
-        )
-        jacobian = np.asarray(mesh.coordinates)[cell].T @ gradients
-        if jacobian.shape[0] != jacobian.shape[1]:
-            raise ValueError(
-                "Twisted embedded FE moments require explicit ambient coorientation."
-            )
-        matrix *= np.sign(np.linalg.det(jacobian))
+    global_vertices = tuple(
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64)[cell].tolist()
+    )
+    matrix[:] = np.asarray(
+        basis.exact_entity_permutation_matrix(global_vertices), dtype=np.float64
+    )
+    matrix *= _form_cell_orientation_sign(mesh, block, element, cell, global_vertices)
 
 
 def _canonical_form_dof_layout(
@@ -2780,7 +2811,7 @@ def _degree_aware_reference_rule(
 
 
 def _evaluate_coordinate_map(
-    coordinate_element: FiniteElementSpec,
+    coordinate_element: ScalarCoordinateElement,
     coordinate_routes: ArrayLike,
     coordinates: ArrayLike,
     reference_points: ArrayLike,
@@ -2788,16 +2819,48 @@ def _evaluate_coordinate_map(
     *,
     precision_policy: FiniteElementPrecisionPolicy,
     paired: bool,
+    cell_rows: ArrayLike | None = None,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
-    """Evaluate the canonical FE coordinate map without changing topology."""
+    """Evaluate a shared or exact cellwise coordinate map."""
 
     points = precision_policy.geometry(reference_points)
-    geometry_values, geometry_gradients = coordinate_element.tabulate(points)
-    geometry_values = precision_policy.geometry(geometry_values)
-    geometry_gradients = precision_policy.geometry(geometry_gradients)
     coordinate_values = precision_policy.geometry(coordinates)
     routes = jnp.asarray(coordinate_routes)
     cell_coordinates = coordinate_values[routes]
+    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        if paired:
+            raise ValueError(
+                "Per-cell coordinate maps require a prepared cell-row workset."
+            )
+        if cell_rows is None:
+            raise ValueError(
+                "Per-cell coordinate tabulation requires explicit block rows."
+            )
+        rows = np.asarray(cell_rows)
+        if (
+            rows.ndim != 1
+            or rows.dtype.kind not in "iu"
+            or rows.shape[0] != cell_coordinates.shape[0]
+        ):
+            raise ValueError("Per-cell coordinate rows must align with the cell workset.")
+        tabulations = tuple(
+            coordinate_tabulation(coordinate_element, points, cell_row=row)
+            for row in rows.tolist()
+        )
+        geometry_values = precision_policy.geometry(
+            jnp.stack(tuple(value for value, _ in tabulations), axis=0)
+        )
+        geometry_gradients = precision_policy.geometry(
+            jnp.stack(tuple(gradient for _, gradient in tabulations), axis=0)
+        )
+    else:
+        if cell_rows is not None:
+            raise ValueError(
+                "Shared coordinate charts do not accept per-cell row indices."
+            )
+        values, gradients = coordinate_element.tabulate(points)
+        geometry_values = precision_policy.geometry(values)
+        geometry_gradients = precision_policy.geometry(gradients)
     if paired:
         if cell_coordinates.shape[0] != points.shape[0]:
             raise ValueError(
@@ -2805,6 +2868,9 @@ def _evaluate_coordinate_map(
             )
         physical_points = ein.contract("qi,qid->qd", geometry_values, cell_coordinates)
         jacobian = ein.contract("qir,qid->qdr", geometry_gradients, cell_coordinates)
+    elif isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        physical_points = ein.contract("cqi,cid->cqd", geometry_values, cell_coordinates)
+        jacobian = ein.contract("cqir,cid->cqdr", geometry_gradients, cell_coordinates)
     else:
         physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
         jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
@@ -2880,11 +2946,9 @@ def _prepare_block_geometry(
     if not isinstance(block, CellBlock):
         raise TypeError("Finite-element block geometry requires a fixed-cell block.")
     if coordinate_element is not None and not isinstance(
-        coordinate_element, FiniteElementSpec
+        coordinate_element, ScalarCoordinateElement
     ):
-        raise TypeError(
-            "Finite-element coordinate geometry requires FiniteElementSpec elements."
-        )
+        raise TypeError("Finite-element coordinate geometry requires a scalar chart.")
     geometry_element = (
         _linear_reference_element(block.cell_kind)
         if coordinate_element is None
@@ -2922,6 +2986,11 @@ def _prepare_block_geometry(
         reference_points,
         precision_policy=precision_policy,
         paired=False,
+        cell_rows=(
+            np.arange(block.cell_count, dtype=np.int32)
+            if isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
+            else None
+        ),
     )
     basis_values, reference_gradients = element.tabulate(reference_points)
     basis_values = precision_policy.evaluation(basis_values)
@@ -2947,28 +3016,40 @@ def _prepare_block_geometry(
             basis_values[None], element.value_spec, jacobian[:, :, None]
         )
 
-        def mapped_reference(reference: Array, cell_coordinates: Array, /) -> Array:
-            gradients = geometry_element.tabulate(reference[None])[1][0]
-            jacobian_ = cell_coordinates.T @ gradients
-            values_ = element.tabulate(reference[None])[0][0]
-            return map_reference_values(values_, element.value_spec, jacobian_[None])
-
         routes_ = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
         coordinates_ = (
             mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
         )
-        mapped_gradient = jax.vmap(
-            jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
-            in_axes=(None, 0),
-        )(reference_points, coordinates_[routes_])
-        if element.value_shape:
-            physical_gradients = ein.contract(
-                "cqivr,cqrd->cqivd", mapped_gradient, inverse_jacobian
-            )
+        if isinstance(geometry_element, PerCellRestrictedCellGeometryElement):
+            mapped_gradients = []
+            for cell_row in range(block.cell_count):
+                cell_coordinates = coordinates_[routes_[cell_row]]
+
+                def mapped_reference(reference: Array, /) -> Array:
+                    _, geometry_gradients = coordinate_tabulation(
+                        geometry_element, reference[None], cell_row=cell_row
+                    )
+                    jacobian_ = cell_coordinates.T @ geometry_gradients[0]
+                    values_ = element.tabulate(reference[None])[0][0]
+                    return map_reference_values(values_, element.value_spec, jacobian_)
+
+                mapped_gradients.append(
+                    jax.vmap(jax.jacfwd(mapped_reference))(reference_points)
+                )
+            mapped_gradient = jnp.stack(mapped_gradients, axis=0)
         else:
-            physical_gradients = ein.contract(
-                "cqir,cqrd->cqid", mapped_gradient, inverse_jacobian
-            )
+
+            def mapped_reference(reference: Array, cell_coordinates: Array, /) -> Array:
+                gradients = geometry_element.tabulate(reference[None])[1][0]
+                jacobian_ = cell_coordinates.T @ gradients
+                values_ = element.tabulate(reference[None])[0][0]
+                return map_reference_values(values_, element.value_spec, jacobian_)
+
+            mapped_gradient = jax.vmap(
+                jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
+                in_axes=(None, 0),
+            )(reference_points, coordinates_[routes_])
+        physical_gradients = mapped_gradient
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]
     )

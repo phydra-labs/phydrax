@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_complex import TetrahedralConnectivity
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.meshing._quality import _measure_rule
 
 
@@ -22,6 +24,33 @@ def _mesh(cell_kind: Any) -> Any:
             ),
         ),
     )
+
+
+def test_qualified_simplex_quality_preserves_volume_and_face_orthogonality() -> None:
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (1.0 / 3.0, 1.0 / 3.0, 1.0),
+            (1.0 / 3.0, 1.0 / 3.0, -1.0),
+        ),
+        dtype=np.float64,
+    )
+    mesh = phx.discretization.CellMesh.from_simplices(
+        points,
+        np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32),
+        dimension=3,
+    )
+    identity = mesh.mesh_id
+    quality = phx.meshing.evaluate_cell_quality(mesh)
+    faces = phx.meshing.evaluate_finite_volume_quality(mesh)
+    np.testing.assert_allclose(quality.measures, (1.0 / 6.0, 1.0 / 6.0), atol=1e-14)
+    np.testing.assert_allclose(faces.non_orthogonality, (0.0,), atol=1e-14)
+    np.testing.assert_allclose(faces.skewness, (0.0,), atol=1e-14)
+    assert np.all(np.asarray(quality.sampled_valid))
+    assert mesh.blocks[0].cell_kind == "simplex:3"
+    assert mesh.mesh_id == identity
 
 
 def test_audit_quality_scenario_1() -> None:
@@ -226,29 +255,40 @@ def test_audit_quality_scenario_2() -> None:
     mesh = _single_triangle()
     # Valid everywhere, but one Bernstein edge coefficient is negative.
     geometry = _p2_triangle(((0.86, -0.17), (0.54, 0.29), (-0.06, 0.51)))
-    tiny = phx.discretization.CellValidityPolicy(maximum_subdivision_depth=0)
-    unresolved = phx.discretization.certify_cell_geometry_validity(
-        geometry, mesh=mesh, policy=tiny
-    )
     certified = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
 
-    assert int(unresolved.status[0]) == phx.discretization.CellValidityStatus.UNRESOLVED
-    assert float(unresolved.determinant_lower[0]) < 0.0
     assert (
         int(certified.status[0]) == phx.discretization.CellValidityStatus.CERTIFIED_VALID
     )
     assert float(certified.determinant_lower[0]) > 0.0
 
+    equality_mesh = phx.discretization.CellMesh(
+        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0))),
+        (phx.discretization.CellBlock("cells", "triangle", np.asarray(((0, 1, 2),))),),
+    )
+    equality_geometry = phx.discretization.CellGeometrySpec.affine(equality_mesh)
+    equality_policy = phx.discretization.CellValidityPolicy(
+        relative_determinant_floor=0.5
+    )
+    unresolved = phx.discretization.certify_cell_geometry_validity(
+        equality_geometry, mesh=equality_mesh, policy=equality_policy
+    )
+
+    assert int(unresolved.status[0]) == phx.discretization.CellValidityStatus.UNRESOLVED
+    assert int(unresolved.depth[0]) > 0
     rejected = phx.meshing.audit_cell_mesh(
-        mesh, geometry, policy=phx.meshing.CellMeshAuditPolicy(validity_policy=tiny)
+        equality_mesh,
+        equality_geometry,
+        policy=phx.meshing.CellMeshAuditPolicy(validity_policy=equality_policy),
     )
     assert "unresolved_geometry_validity" in rejected.issues
     assert "unresolved_geometry_validity" in rejected.evaluated_checks
     recorded = phx.meshing.audit_cell_mesh(
-        mesh,
-        geometry,
+        equality_mesh,
+        equality_geometry,
         policy=phx.meshing.CellMeshAuditPolicy(
-            validity_policy=tiny, unresolved=phx.meshing.CellMeshAuditDisposition.RECORD
+            validity_policy=equality_policy,
+            unresolved=phx.meshing.CellMeshAuditDisposition.RECORD,
         ),
     )
     assert recorded.passed
@@ -474,14 +514,6 @@ def test_audit_quality_scenario_5() -> None:
 
     assert audit.passed
     assert dict(audit.check_counts)["self_intersection"] == 0
-    bounded = phx.meshing.audit_cell_mesh(
-        mesh,
-        phx.discretization.CellGeometrySpec.affine(mesh),
-        policy=phx.meshing.CellMeshAuditPolicy(maximum_intersection_candidates=1),
-    )
-    assert not bounded.passed
-    assert "self_intersection_capacity" in bounded.unresolved
-    assert "unresolved_self_intersection_capacity" in bounded.issues
     for bad_set in (False, True):
         mesh = _mesh("triangle")
         association = _association(
@@ -778,13 +810,20 @@ def _rebuild_result(result: Any, **changes: Any) -> Any:
     )
 
 
-def test_result_boundary_must_cover_the_actual_mesh_faces_and_coordinates() -> None:
+@pytest.mark.parametrize("kind", ("tetrahedron", "simplex:3"))
+def test_result_boundary_must_cover_the_actual_mesh_faces_and_coordinates(
+    kind: str,
+) -> None:
     result = phx.meshing.certify_cell_mesh(
-        _mesh("tetrahedron"), phx.SpatialCoordinateContract.si()
+        _mesh(kind), phx.SpatialCoordinateContract.si()
     )
     mesh = result.mesh
-    # ty: ignore[unresolved-attribute]
-    faces = np.asarray(mesh.connectivity.faces)
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        faces = np.asarray(connectivity.entities[2])
+    else:
+        assert isinstance(connectivity, TetrahedralConnectivity)
+        faces = np.asarray(connectivity.faces)
     metadata = phx.geometry.surface.SurfaceMetadata(
         source_id="boundary",
         source_revision="r1",

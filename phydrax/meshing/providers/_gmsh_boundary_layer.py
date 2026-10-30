@@ -26,6 +26,7 @@ from ..._identity import SemanticProvenance
 from ...discretization import CellBlock, CellGeometrySpec, CellMesh
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...geometry.surface._model import _repair_orientations
+from .._association import GeometryAssociation
 from .._audit import audit_cell_mesh
 from .._boundary_layer import (
     _analyze_wall,
@@ -74,7 +75,7 @@ from ._gmsh_evidence import (
     _patch_is_connected,
 )
 from ._gmsh_execute import _prepare_generation
-from ._gmsh_import import _brep_model, _entity_scope, _resolve_entities
+from ._gmsh_import import _brep_model, _entity_scope, _resolve_entities, _scope_indices
 
 
 _VOLUME_ORDER = (
@@ -106,13 +107,14 @@ def _layered_volume(plan: Any, /) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _Boundary:
-    """Closed boundary surface oriented along the growth direction (into the domain)."""
+    """Gmsh boundary facets, source owner rows, and exact layer input mesh."""
 
     points: np.ndarray
     triangles: np.ndarray
     source_faces: np.ndarray
     wall: np.ndarray
-
+    source_wall: CellMesh
+    wall_association: GeometryAssociation | None
 
 def _domain_inward(
     points: np.ndarray, triangles: np.ndarray, /
@@ -143,11 +145,14 @@ def _surface_boundary(
     triangle_type = gmsh.model.mesh.getElementType("Triangle", 1)
     rows = []
     owners = []
+    element_ids = []
     for face in range(source.report.num_faces):
         surface = _resolve_entities(
-            gmsh, source, generation.shape, _entity_scope(source, 2, (face,))
+            source,
+            _entity_scope(source, 2, (face,)),
+            cad_entities=generation.cad_entities,
         )[0]
-        element_types, _, node_blocks = gmsh.model.mesh.getElements(2, surface)
+        element_types, element_tags, node_blocks = gmsh.model.mesh.getElements(2, surface)
         if tuple(int(value) for value in element_types) != (triangle_type,):
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
@@ -155,10 +160,29 @@ def _surface_boundary(
                 stage=MeshingStageKind.SURFACE_MESHING.value,
             )
         nodes = np.asarray(node_blocks[0], dtype=np.int64).reshape(-1, 3)
+        tags = np.asarray(element_tags[0], dtype=np.int64)
+        if tags.shape != (nodes.shape[0],):
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "Gmsh triangle tags do not align with boundary elements.",
+                stage=MeshingStageKind.SURFACE_MESHING.value,
+            )
         rows.append(np.searchsorted(node_tags, nodes))
         owners.append(np.full((nodes.shape[0],), face, dtype=np.int64))
+        element_ids.append(tags)
     triangles = np.concatenate(rows)
     source_faces = np.concatenate(owners)
+    element_tags = np.concatenate(element_ids)
+    if np.unique(element_tags).size != element_tags.size:
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            "Gmsh boundary element tags must be globally unique.",
+            stage=MeshingStageKind.SURFACE_MESHING.value,
+        )
+    element_order = np.argsort(element_tags, kind="stable")
+    triangles = triangles[element_order]
+    source_faces = source_faces[element_order]
+    element_tags = element_tags[element_order]
     used = np.unique(triangles)
     remap = np.full((points.shape[0],), -1, dtype=np.int64)
     remap[used] = np.arange(used.size)
@@ -173,8 +197,34 @@ def _surface_boundary(
             "The discrete boundary does not enclose the CAD volume with one exterior shell.",
             stage=MeshingStageKind.SURFACE_MESHING.value,
         )
-    wall_faces = np.asarray(control.wall_scope.entity_ids, dtype=np.int64)
-    return _Boundary(points, oriented, source_faces, np.isin(source_faces, wall_faces))
+    wall_faces = _scope_indices(source, control.wall_scope, 2)
+    if wall_faces is None:
+        raise MeshingFailure(
+            MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+            "Boundary-layer wall scope does not belong to the supplied BRep owner and revision.",
+            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        )
+    source_wall = CellMesh(
+        points,
+        (
+            CellBlock(
+                "source-wall",
+                "triangle",
+                oriented,
+                global_ids=element_tags,
+            ),
+        ),
+        vertex_global_ids=node_tags[used],
+        numeric_version=source.source_revision,
+    )
+    return _Boundary(
+        points,
+        oriented,
+        source_faces,
+        np.isin(source_faces, wall_faces),
+        source_wall,
+        None,
+    )
 
 
 # ---------------------------------------------------------------- core fill
@@ -370,7 +420,57 @@ class _Layered:
     thicknesses: np.ndarray
     minimum_scale: float
     counts: tuple[tuple[str, float], ...]
+    layer_index_by_kind: dict[str, np.ndarray] | None = None
+    column_index_by_kind: dict[str, np.ndarray] | None = None
+    boundary_layer: BoundaryLayerMesh | None = None
 
+
+def _layer_cell_banks(
+    layers: BoundaryLayerMesh, /
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Partition direct layer fields by their stable global-cell IDs."""
+    blocks = layers.mesh.blocks
+    global_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in blocks)
+    )
+    layer_index = np.asarray(layers.layer_index, dtype=np.int32)
+    column_index = np.asarray(layers.column_index, dtype=np.int64)
+    if (
+        not np.array_equal(global_ids, np.sort(global_ids))
+        or np.unique(global_ids).size != global_ids.size
+        or layer_index.shape != global_ids.shape
+        or column_index.shape != global_ids.shape
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            "BoundaryLayerMesh cell fields do not follow unique global-cell-ID order.",
+            stage=_LAYER_STAGE,
+        )
+    cell_rows: dict[str, list[np.ndarray]] = {}
+    layer_rows: dict[str, list[np.ndarray]] = {}
+    column_rows: dict[str, list[np.ndarray]] = {}
+    for block in blocks:
+        identifiers = np.asarray(block.global_ids, dtype=np.int64)
+        rows = np.searchsorted(global_ids, identifiers)
+        if rows.size and (
+            np.any(rows >= global_ids.size)
+            or not np.array_equal(global_ids[rows], identifiers)
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "BoundaryLayerMesh block IDs are absent from its canonical cell bank.",
+                stage=_LAYER_STAGE,
+            )
+        cell_rows.setdefault(block.cell_kind, []).append(
+            np.asarray(block.vertices, dtype=np.int64)
+        )
+        layer_rows.setdefault(block.cell_kind, []).append(layer_index[rows])
+        column_rows.setdefault(block.cell_kind, []).append(column_index[rows])
+    return (
+        {kind: np.concatenate(values) for kind, values in cell_rows.items()},
+        {kind: np.concatenate(values) for kind, values in layer_rows.items()},
+        {kind: np.concatenate(values) for kind, values in column_rows.items()},
+    )
 
 def _padded(triangles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return (
@@ -394,6 +494,8 @@ def _advancing_layers(
         empty_triangles,
         control,
         BoundaryLayerPolicy(),
+        boundary.source_wall,
+        boundary.wall_association,
     )
     return _merge_advancing(gmsh, layers, boundary, options, maximum_size)
 
@@ -417,10 +519,7 @@ def _merge_advancing(
     fixed = np.concatenate((cap, mapping[outer]))
     interior, core = _fill_core(gmsh, points, fixed, options, maximum_size)
     evidence = layers.evidence
-    cells = {
-        block.cell_kind: np.asarray(block.vertices, dtype=np.int64)
-        for block in layers.mesh.blocks
-    }
+    cells, layer_index_by_kind, column_index_by_kind = _layer_cell_banks(layers)
     return _Layered(
         np.concatenate((points, interior)),
         cells,
@@ -439,6 +538,9 @@ def _merge_advancing(
             ("detected_collision_count", float(evidence.detected_collision_count)),
             ("certified_valid_layer_cells", float(evidence.certified_valid_count)),
         ),
+        layer_index_by_kind=layer_index_by_kind,
+        column_index_by_kind=column_index_by_kind,
+        boundary_layer=layers,
     )
 
 
@@ -595,9 +697,10 @@ def _level_thicknesses(
 # ---------------------------------------------------------------- merged mesh
 
 
-def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
-    """Merged cells in canonical (block-name) order with zone mask and layer indices."""
-    # ``layer_index`` follows the layer mesh's kind order (_VOLUME_ORDER).
+def _merged_mesh(
+    layered: _Layered, numeric_version: str, /
+) -> tuple[CellMesh, np.ndarray, np.ndarray, np.ndarray | None]:
+    """Merge layer/core cells while retaining the layer record's direct fields."""
     offsets = {}
     start = 0
     for kind, _ in _VOLUME_ORDER:
@@ -607,6 +710,7 @@ def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
     blocks = []
     zone_of = []
     layer_values = []
+    column_values = []
     cursor = 0
     for kind, name in sorted(_VOLUME_ORDER, key=lambda value: value[1]):
         empty = np.empty((0, _ARITY[kind]), dtype=np.int64)
@@ -626,22 +730,56 @@ def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
         zone_of.append(
             np.concatenate(
                 (
-                    np.zeros(layer_rows.shape[0], dtype=np.bool_),
-                    np.ones(core_rows.shape[0], dtype=np.bool_),
+                    np.zeros((layer_rows.shape[0],), dtype=np.bool_),
+                    np.ones((core_rows.shape[0],), dtype=np.bool_),
                 )
             )
         )
         lower, upper = offsets[kind]
-        layer_values.append(layered.layer_index[lower:upper])
+        layer_kind_values = (
+            layered.layer_index_by_kind.get(
+                kind, np.empty((0,), dtype=np.int32)
+            )
+            if layered.layer_index_by_kind is not None
+            else layered.layer_index[lower:upper]
+        )
+        if layer_kind_values.shape != (layer_rows.shape[0],):
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "Layer-index rows do not align with their source cell block.",
+                stage=MeshingStageKind.CANONICALIZATION.value,
+            )
+        layer_values.append(layer_kind_values)
+        if layered.column_index_by_kind is not None:
+            column_kind_values = layered.column_index_by_kind.get(
+                kind, np.empty((0,), dtype=np.int64)
+            )
+            if column_kind_values.shape != (layer_rows.shape[0],):
+                raise MeshingFailure(
+                    MeshingFailureCategory.CONVERSION_FAILED,
+                    "Column-index rows do not align with their source cell block.",
+                    stage=MeshingStageKind.CANONICALIZATION.value,
+                )
+            column_values.append(column_kind_values)
         cursor += rows.shape[0]
     mesh = canonicalize_cell_mesh(
         CellMesh(layered.points, tuple(blocks), numeric_version=numeric_version)
     )
-    return mesh, np.concatenate(zone_of), np.concatenate(layer_values)
+    columns = (
+        None
+        if layered.column_index_by_kind is None
+        else np.concatenate(column_values)
+    )
+    return mesh, np.concatenate(zone_of), np.concatenate(layer_values), columns
 
 
 def _organization(
-    mesh: CellMesh, core: np.ndarray, layer_values: np.ndarray, layered: _Layered, /
+    mesh: CellMesh,
+    core: np.ndarray,
+    layer_values: np.ndarray,
+    column_values: np.ndarray | None,
+    layered: _Layered,
+    /,
 ) -> Any:
     cells = mesh.entity_set(3)
     cell_ids = np.asarray(cells.entity_ids, dtype=np.int64)
@@ -658,12 +796,30 @@ def _organization(
 
     layer_zone = MeshZone("boundary-layer", MeshZoneRole.REGION, cell_scope(~core))
     core_zone = MeshZone("core", MeshZoneRole.REGION, cell_scope(core))
-    attribute = MeshAttribute(
-        "layer_index",
-        MeshAttributeRole.MARKER,
-        cell_scope(~core),
-        layer_values.astype(np.int32),
-    )
+    layer_scope = cell_scope(~core)
+    attributes = [
+        MeshAttribute(
+            "layer_index",
+            MeshAttributeRole.MARKER,
+            layer_scope,
+            layer_values.astype(np.int32),
+        )
+    ]
+    if column_values is not None:
+        if column_values.shape != layer_values.shape:
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "Boundary-layer column IDs do not align with the layer-cell scope.",
+                stage=MeshingStageKind.CANONICALIZATION.value,
+            )
+        attributes.append(
+            MeshAttribute(
+                "column_index",
+                MeshAttributeRole.MARKER,
+                layer_scope,
+                column_values.astype(np.int64),
+            )
+        )
     connectivity = mesh.connectivity
     # ty: ignore[invalid-argument-type]
     rows = _connectivity_face_rows(connectivity)
@@ -723,7 +879,7 @@ def _organization(
                 adjacent_zone_ids=tuple(zone.zone_id for zone in zones),
             )
         )
-    return (layer_zone, core_zone), tuple(patches), attribute
+    return (layer_zone, core_zone), tuple(patches), tuple(attributes)
 
 
 def _layer_compliance(control: BoundaryLayerControl, layered: _Layered, /) -> Any:
@@ -819,12 +975,16 @@ def _layered_result(
     source = plan.source
     specification = plan.specification
     report = source.report
-    mesh, core, layer_values = _merged_mesh(layered, report.source_revision)
-    zones, patches, attribute = _organization(mesh, core, layer_values, layered)
+    mesh, core, layer_values, column_values = _merged_mesh(
+        layered, source.source_revision
+    )
+    zones, patches, attributes = _organization(
+        mesh, core, layer_values, column_values, layered
+    )
     boundary_triangles = np.concatenate((layered.wall, layered.outer))
     metadata = SurfaceMetadata(
         source_id=report.source_id,
-        source_revision=report.source_revision,
+        source_revision=source.source_revision,
         coordinate_contract=source.coordinate_contract,
         provenance=("gmsh-layered-volume", plan.plan_id),
         cell_tags=("gmsh-occ-surface",) * boundary_triangles.shape[0],
@@ -833,7 +993,7 @@ def _layered_result(
         np.asarray(mesh.coordinates),
         boundary_triangles,
         metadata,
-        numeric_version=report.source_revision,
+        numeric_version=source.source_revision,
         repair_orientation=True,
         orient_closed_outward=True,
     )
@@ -842,7 +1002,7 @@ def _layered_result(
     )
     del boundary_zones
     geometry = CellGeometrySpec.affine(mesh)
-    attributes = (provider_attribute, attribute)
+    attributes = (provider_attribute, *attributes)
     audit = audit_cell_mesh(
         mesh,
         geometry,
@@ -898,18 +1058,21 @@ def _layered_result(
         version,
         MeshingExecutionMode.IN_PROCESS,
         deterministic=plan.options.num_threads == 1,
-        enforced_limits=("cells",),
-        unenforced_limits=("provider_workspace", "converted_arrays", "wall_time"),
     )
     provenance = SemanticProvenance(
         {
             "kind": "gmsh-layered-volume-result",
-            "source_revision": report.source_revision,
+            "source_revision": source.source_revision,
             "plan": plan.plan_id,
             "mesh": mesh.mesh_id,
             "control": control.control_id,
             "zones": tuple(zone.zone_id for zone in zones),
             "patches": tuple(patch.patch_id for patch in patches),
+            "boundary_layer": (
+                None
+                if layered.boundary_layer is None
+                else layered.boundary_layer.result_id
+            ),
         },
         resource_ids={"source": report.source_id},
     )
@@ -947,7 +1110,7 @@ def _layered_stages(
     stages = (
         (
             MeshingStageKind.SOURCE_INSPECTION,
-            (plan.source.report.source_revision,),
+            (plan.source.source_revision,),
             (plan.support.source_descriptor_id,),
         ),
         (
@@ -1045,12 +1208,10 @@ def _fill_boundary_layer_core(
     interior, core = _fill_core(gmsh, points, fixed, options, maximum_size)
     wall = _wall_triangles(layers)
     evidence = layers.evidence
+    cells, layer_index_by_kind, column_index_by_kind = _layer_cell_banks(layers)
     layered = _Layered(
         np.concatenate((points, interior)),
-        {
-            block.cell_kind: np.asarray(block.vertices, dtype=np.int64)
-            for block in layers.mesh.blocks
-        },
+        cells,
         np.asarray(layers.layer_index, dtype=np.int32),
         core,
         wall,
@@ -1061,6 +1222,9 @@ def _fill_boundary_layer_core(
         np.asarray(evidence.achieved_thicknesses, dtype=np.float64),
         evidence.minimum_scale,
         (),
+        layer_index_by_kind=layer_index_by_kind,
+        column_index_by_kind=column_index_by_kind,
+        boundary_layer=layers,
     )
     request_id = canonical_fingerprint(
         {
@@ -1071,15 +1235,19 @@ def _fill_boundary_layer_core(
             "options": options.options_id,
         }
     )
-    mesh, core_mask, layer_values = _merged_mesh(layered, boundary.mesh.numeric_version)
-    zones, patches, attribute = _organization(mesh, core_mask, layer_values, layered)
+    mesh, core_mask, layer_values, column_values = _merged_mesh(
+        layered, boundary.mesh.numeric_version
+    )
+    zones, patches, attributes = _organization(
+        mesh, core_mask, layer_values, column_values, layered
+    )
     geometry = CellGeometrySpec.affine(mesh)
     audit = audit_cell_mesh(
         mesh,
         geometry,
         evaluate_cell_quality(mesh, mesh.coordinates),
         patches=patches,
-        attributes=(attribute,),
+        attributes=attributes,
         zones=zones,
     )
     if not audit.passed:
@@ -1133,7 +1301,6 @@ def _fill_boundary_layer_core(
         version,
         MeshingExecutionMode.IN_PROCESS,
         deterministic=options.num_threads == 1,
-        unenforced_limits=("provider_workspace", "converted_arrays", "wall_time"),
     )
     provenance = SemanticProvenance(
         {
@@ -1159,7 +1326,7 @@ def _fill_boundary_layer_core(
         provenance,
         patches=patches,
         zones=zones,
-        attributes=(attribute,),
+        attributes=attributes,
     )
 
 

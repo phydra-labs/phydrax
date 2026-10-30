@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule
 from ..typing import PRNGKey
@@ -531,6 +532,45 @@ class CompiledGeometry(StrictModule):
                 strict=True,
             )
         )
+
+
+def compiled_geometry_identity(query: CompiledGeometry, /) -> str:
+    """Fingerprint the complete compiled geometry query and its evidence."""
+    if not isinstance(query, CompiledGeometry):
+        raise TypeError("Original mapped source queries must be CompiledGeometry values.")
+    kernel = query.kernel
+    certificate = query.field_certificate
+    model = getattr(kernel, "model", None)
+    source_id = getattr(model, "source_id", getattr(kernel, "source_id", None))
+    source_revision = getattr(
+        model, "source_revision", getattr(kernel, "source_revision", None)
+    )
+    return canonical_fingerprint(
+        {
+            "kind": "mapped-support-original-source-query",
+            "kernel": type(kernel).__qualname__,
+            "kernel_kind": kernel.kind.value,
+            "kernel_dimensions": (kernel.ambient_dimension, kernel.intrinsic_dimension),
+            "kernel_arrays": array_tree_fingerprint(kernel),
+            "schema": query.schema.schema_id,
+            "state": array_tree_fingerprint(query.state),
+            "source": (source_id, source_revision),
+            "field_certificate": (
+                certificate.zero_set_accuracy.value,
+                certificate.sign_reliability.value,
+                certificate.distance_semantics.value,
+                certificate.regularity.value,
+                certificate.safe_step_factor,
+                certificate.validity_region,
+                certificate.parameter_differentiable,
+                certificate.provenance,
+                certificate.lipschitz_upper_bound,
+                certificate.evaluation_error,
+                certificate.topology_identity,
+            ),
+            "tolerance": (query.tolerance.absolute, query.tolerance.relative),
+        }
+    )
 
 
 class AbstractGeometrySource(StrictModule):

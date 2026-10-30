@@ -13,7 +13,6 @@ certification, and topology-transition contracts.
         - SurfaceMeshingSpec
         - SurfaceRemeshingSpec
         - VolumeMeshingSpec
-        - MeshingLimits
         - MeshPatch
         - MeshZoneRole
         - RegionRole
@@ -84,7 +83,9 @@ certification, and topology-transition contracts.
         - rederive_association
         - MeshingComplianceReport
         - MeshingTrace
+        - MeshingDiagnostic
         - MeshingFailure
+        - MeshingFailureEvidence
         - certify_cell_mesh
         - evaluate_cell_quality
         - FiniteVolumeQualityEvaluation
@@ -154,7 +155,12 @@ certification, and topology-transition contracts.
         - GmshMeshingPlan
         - GmshRemeshingPlan
         - GmshSession
-        - NativeImplicitProvider
+        - NativeMeshingProvider
+        - NativeMeshingPlan
+        - NativeMeshingOptions
+        - NativeMeshingRoute
+        - NativeMeshingSource
+        - SurfaceEnvelopeSource
         - ManifoldProvider
         - SurfaceBooleanOperation
         - MmgProvider
@@ -211,6 +217,16 @@ certification, and topology-transition contracts.
         - CouplingSearchStatus
         - CouplingSearchEvidence
         - CouplingSearchError
+        - MeshProposalFeatures
+        - AdaptationAction
+        - ErrorQuantity
+        - PhysicalErrorEvidence
+        - MeasuredAdaptationCost
+        - RouteFeasibility
+        - MeshAdaptationCandidate
+        - MeshAdaptationDecision
+        - MeshAdaptationObjective
+        - FixedEpochDerivativeEvidence
         - MeshMarkingProposal
         - MeshSizeProposal
         - MeshMetricProposal

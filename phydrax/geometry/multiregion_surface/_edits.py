@@ -19,12 +19,22 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+
+if TYPE_CHECKING:
+    from ...discretization.contact._search import ContactCandidateEpoch
+    from ...discretization.contact._surface import PreparedCollisionScene
+
 from ..._geometry_predicates import PredicateMode, resolve_host_predicate_mode
 from ...linalg import ArraySpace
-from ._contracts import DRY_FOAM_EDGE_VALENCE, DRY_FOAM_VERTEX_REGIONS
+from ._contracts import (
+    DRY_FOAM_EDGE_VALENCE,
+    DRY_FOAM_VERTEX_REGIONS,
+    MultiRegionSurfaceCapacityPlan,
+)
 from ._events import SurfaceEventKind, SurfaceEventPolicy, SurfaceEventStatus
 from ._state import MultiRegionSurfaceState
 from ._topology import _host_incidence, MultiRegionSurfaceTopology
@@ -36,6 +46,7 @@ class _WorkingMesh:
     """Mutable capacity-sized host copy of one surface during one pass."""
 
     topology: MultiRegionSurfaceTopology
+    capacity_plan: MultiRegionSurfaceCapacityPlan
     positions: np.ndarray
     vertex_ids: np.ndarray
     vertex_alive: np.ndarray
@@ -80,6 +91,7 @@ def _working_mesh(
         labels[:faces_count].reshape(-1), minlength=topology.region_capacity
     )
     return _WorkingMesh(
+        capacity_plan=topology.plan,
         topology=topology,
         positions=positions,
         vertex_ids=vertex_ids,
@@ -98,6 +110,109 @@ def _working_mesh(
         vertex_faces=vertex_faces,
         mode=resolve_host_predicate_mode(PredicateMode.EXACT),
     )
+
+
+def _grown_capacity(current: int, required: int, /) -> int:
+    return current if required <= current else max(required, 2 * current)
+
+
+def _grow_surface_capacity(
+    plan: MultiRegionSurfaceCapacityPlan,
+    /,
+    *,
+    vertex_capacity: int | None = None,
+    edge_capacity: int | None = None,
+    face_capacity: int | None = None,
+    region_capacity: int | None = None,
+    region_pair_capacity: int | None = None,
+    maximum_edge_valence: int | None = None,
+    maximum_vertex_region_pairs: int | None = None,
+) -> MultiRegionSurfaceCapacityPlan:
+    required = (
+        plan.vertex_capacity if vertex_capacity is None else vertex_capacity,
+        plan.edge_capacity if edge_capacity is None else edge_capacity,
+        plan.face_capacity if face_capacity is None else face_capacity,
+        plan.region_capacity if region_capacity is None else region_capacity,
+        plan.region_pair_capacity
+        if region_pair_capacity is None
+        else region_pair_capacity,
+        plan.maximum_edge_valence
+        if maximum_edge_valence is None
+        else maximum_edge_valence,
+        plan.maximum_vertex_region_pairs
+        if maximum_vertex_region_pairs is None
+        else maximum_vertex_region_pairs,
+    )
+    current = (
+        plan.vertex_capacity,
+        plan.edge_capacity,
+        plan.face_capacity,
+        plan.region_capacity,
+        plan.region_pair_capacity,
+        plan.maximum_edge_valence,
+        plan.maximum_vertex_region_pairs,
+    )
+    grown = tuple(
+        _grown_capacity(before, after)
+        for before, after in zip(current, required, strict=True)
+    )
+    if grown == current:
+        return plan
+    index_dtype = plan.index_dtype
+    if index_dtype == "int32" and max(grown[:3]) * max(grown[5], 3) >= 2**31:
+        index_dtype = "int64"
+    return MultiRegionSurfaceCapacityPlan(
+        vertex_capacity=grown[0],
+        edge_capacity=grown[1],
+        face_capacity=grown[2],
+        region_capacity=grown[3],
+        region_pair_capacity=grown[4],
+        maximum_edge_valence=grown[5],
+        maximum_vertex_region_pairs=grown[6],
+        resource_id=plan.resource_id,
+        coordinate_dtype=plan.coordinate_dtype,
+        index_dtype=index_dtype,
+    )
+
+
+def _ensure_edit_workspace(mesh: _WorkingMesh, edit: _Edit, /) -> None:
+    """Grow private array shapes before preparing an edit."""
+    plan = _grow_surface_capacity(
+        mesh.capacity_plan,
+        vertex_capacity=mesh.vertex_count + edit.new_positions.shape[0],
+        face_capacity=mesh.face_count + edit.new_faces.shape[0],
+    )
+    mesh.capacity_plan = plan
+    vertex_capacity, face_capacity = plan.vertex_capacity, plan.face_capacity
+    if vertex_capacity > mesh.positions.shape[0]:
+        old_capacity = mesh.positions.shape[0]
+        positions = np.zeros((vertex_capacity, 3), dtype=mesh.positions.dtype)
+        positions[:old_capacity] = mesh.positions
+        vertex_ids = np.full((vertex_capacity,), -1, dtype=mesh.vertex_ids.dtype)
+        vertex_ids[:old_capacity] = mesh.vertex_ids
+        vertex_alive = np.zeros((vertex_capacity,), dtype=np.bool_)
+        vertex_alive[:old_capacity] = mesh.vertex_alive
+        fixed = np.zeros((vertex_capacity,), dtype=np.bool_)
+        fixed[:old_capacity] = mesh.fixed
+        mesh.positions = positions
+        mesh.vertex_ids = vertex_ids
+        mesh.vertex_alive = vertex_alive
+        mesh.fixed = fixed
+        mesh.vertex_faces.extend(set() for _ in range(vertex_capacity - old_capacity))
+    if face_capacity > mesh.faces.shape[0]:
+        old_capacity = mesh.faces.shape[0]
+        faces = np.full((face_capacity, 3), -1, dtype=mesh.faces.dtype)
+        faces[:old_capacity] = mesh.faces
+        labels = np.full((face_capacity, 2), -1, dtype=mesh.labels.dtype)
+        labels[:old_capacity] = mesh.labels
+        face_ids = np.full((face_capacity,), -1, dtype=mesh.face_ids.dtype)
+        face_ids[:old_capacity] = mesh.face_ids
+        face_alive = np.zeros((face_capacity,), dtype=np.bool_)
+        face_alive[:old_capacity] = mesh.face_alive
+        mesh.faces = faces
+        mesh.labels = labels
+        mesh.face_ids = face_ids
+        mesh.face_alive = face_alive
 
 
 # ------------------------------------------------------------------ adjacency
@@ -392,14 +507,14 @@ def _volume_jacobian(
 def _restore_volumes(
     mesh: _WorkingMesh, edit: _Edit, policy: SurfaceEventPolicy, /
 ) -> tuple[_Edit, float, bool]:
-    """Minimum-norm restoration of the finite-region volumes an event changes.
+    """Restore affected finite-region volumes until tolerance or nonprogress.
 
-    Host-only candidate preparation: the few affected region rows are solved
-    with a rank-revealing minimum-norm least-squares step per Newton
-    iteration over the event's free moving vertices, widened to their free
-    one-ring when the event's own vertices cannot span the constraints.
-    Returns the restored edit, the final relative residual and success.
+    The minimum-norm Newton solve starts on the event movers and widens to
+    their free touched one-ring only when the core cannot span every affected
+    volume constraint. A monotone residual line search prevents oscillation;
+    failure reports the best finite residual reached, never a capped iterate.
     """
+    maximum_residual = float(np.finfo(np.float64).max)
     patch = _patch(mesh, edit)
     points = _edit_positions(mesh, edit)
     reference = np.mean(points[patch.touched], axis=0)
@@ -409,7 +524,19 @@ def _restore_volumes(
     )
     corners = points[patch.new_faces]
     scale = float(np.mean(np.linalg.norm(corners[:, (1, 2, 0)] - corners, axis=2)))
-    tolerance = policy.volume_tolerance * scale**3
+    volume_scale = scale * scale * scale
+    if (
+        not math.isfinite(scale)
+        or scale <= 0.0
+        or not math.isfinite(volume_scale)
+        or volume_scale <= 0.0
+    ):
+        return edit, maximum_residual, False
+    tolerance = policy.volume_tolerance * volume_scale
+
+    def relative_residual(size: float, /) -> float:
+        value = size / volume_scale
+        return value if math.isfinite(value) else maximum_residual
 
     def defect(values: np.ndarray, /) -> np.ndarray:
         change = _signed_contributions(
@@ -417,9 +544,17 @@ def _restore_volumes(
         )
         return np.where(mesh.region_finite, change - base, 0.0)
 
-    residual = defect(points)
-    if not policy.restore_region_volumes or np.max(np.abs(residual)) <= tolerance:
-        return edit, float(np.max(np.abs(residual))) / scale**3, True
+    def residual_size(values: np.ndarray, /) -> float:
+        current = defect(values)
+        if not np.all(np.isfinite(current)):
+            return math.inf
+        return float(np.max(np.abs(current)))
+
+    initial_size = residual_size(points)
+    if not math.isfinite(initial_size):
+        return edit, maximum_residual, False
+    if not policy.restore_region_volumes or initial_size <= tolerance:
+        return edit, relative_residual(initial_size), True
     regions = np.flatnonzero(
         mesh.region_finite & np.isin(np.arange(rows), patch.new_labels.reshape(-1))
     )
@@ -442,30 +577,55 @@ def _restore_volumes(
         ),
         dtype=np.int64,
     )
+    best_values = points.copy()
+    best_size = initial_size
     for free in (core, ring):
         if free.size == 0:
             continue
-        values = points.copy()
-        for _ in range(policy.maximum_restoration_iterations):
-            current = defect(values)
-            if np.max(np.abs(current)) <= tolerance:
-                break
+        values = best_values.copy()
+        while True:
+            current_size = residual_size(values)
+            if current_size <= tolerance:
+                moved = {slot: position for slot, position in edit.moved}
+                for slot in free.tolist():
+                    if slot < mesh.vertex_count:
+                        moved[slot] = values[slot]
+                restored = _with_positions(edit, values[mesh.vertex_count :], moved)
+                return restored, relative_residual(current_size), True
             jacobian = _volume_jacobian(
                 values, patch.new_faces, patch.new_labels, reference, regions, free
             )
-            step, _, rank, _ = np.linalg.lstsq(jacobian, -current[regions], rcond=None)
-            if rank < regions.size:
+            step, _, rank, _ = np.linalg.lstsq(
+                jacobian, -defect(values)[regions], rcond=None
+            )
+            if rank < regions.size or not np.all(np.isfinite(step)):
                 break
-            values[free] += step.reshape((-1, 3))
-        final = defect(values)
-        if np.max(np.abs(final)) <= tolerance:
-            moved = {slot: position for slot, position in edit.moved}
-            for slot in free.tolist():
-                if slot < mesh.vertex_count:
-                    moved[slot] = values[slot]
-            restored = _with_positions(edit, values[mesh.vertex_count :], moved)
-            return restored, float(np.max(np.abs(final))) / scale**3, True
-    return edit, float(np.max(np.abs(residual))) / scale**3, False
+            delta = step.reshape((-1, 3))
+            if not np.any(delta):
+                break
+            fraction = 1.0
+            improved = False
+            while True:
+                moved_values = values[free] + fraction * delta
+                if np.array_equal(moved_values, values[free]):
+                    break
+                if np.all(np.isfinite(moved_values)):
+                    trial = values.copy()
+                    trial[free] = moved_values
+                    trial_size = residual_size(trial)
+                    if trial_size < current_size:
+                        values = trial
+                        improved = True
+                        if trial_size < best_size:
+                            best_values = trial.copy()
+                            best_size = trial_size
+                        break
+                fraction *= 0.5
+                if fraction == 0.0:
+                    break
+            if not improved:
+                break
+    return edit, relative_residual(best_size), False
 
 
 # ------------------------------------------------------------ local guards
@@ -514,7 +674,6 @@ def _local_guards(
     points = _edit_positions(mesh, edit)
     faces = patch.new_faces
     labels = patch.new_labels
-    plan = mesh.topology.plan
     if _duplicate_faces(mesh, edit):
         return SurfaceEventStatus.DUPLICATE_FACE
     removed_regions = (
@@ -545,13 +704,13 @@ def _local_guards(
     edges = incidence.edges[rows]
     edge_faces = incidence.edge_faces[rows]
     valence = np.sum(edge_faces >= 0, axis=1)
-    if np.max(valence, initial=0) > plan.maximum_edge_valence:
-        return SurfaceEventStatus.CAPACITY_EXCEEDED
-    if (
-        np.max(incidence.vertex_slot_count[touched], initial=0)
-        > plan.maximum_vertex_region_pairs
-    ):
-        return SurfaceEventStatus.CAPACITY_EXCEEDED
+    mesh.capacity_plan = _grow_surface_capacity(
+        mesh.capacity_plan,
+        maximum_edge_valence=int(np.max(valence, initial=1)),
+        maximum_vertex_region_pairs=int(
+            np.max(incidence.vertex_slot_count[touched], initial=1)
+        ),
+    )
     remaining = set(faces.reshape(-1).tolist())
     if (
         remaining & set(edit.removed_vertices)
@@ -617,10 +776,16 @@ def _local_guards(
             return SurfaceEventStatus.NONPHYSICAL_VALENCE
     if _normal_rotation_exceeded(mesh, edit, patch, points, policy):
         return SurfaceEventStatus.NORMAL_INVERSION
-    environment = _environment_faces(mesh, patch, edit, points, faces[changed])
-    all_faces = np.concatenate((faces, mesh.faces[environment]))
-    others = np.arange(all_faces.shape[0])
-    if _local_intersections(points, all_faces, changed, others):
+    checked_environment = False
+    for environment in _environment_faces(mesh, patch, edit, points, faces[changed]):
+        checked_environment = True
+        all_faces = np.concatenate((faces, mesh.faces[environment]))
+        others = np.arange(all_faces.shape[0])
+        if _local_intersections(points, all_faces, changed, others):
+            return SurfaceEventStatus.LOCAL_INTERSECTION
+    if not checked_environment and _local_intersections(
+        points, faces, changed, np.arange(faces.shape[0])
+    ):
         return SurfaceEventStatus.LOCAL_INTERSECTION
     return SurfaceEventStatus.ACCEPTED
 
@@ -653,6 +818,46 @@ def _normal_rotation_exceeded(
     return bool(np.any((norms <= 0.0) | (cosine < limit)))
 
 
+_CCD_FACE_SCAN_CHUNK = 8192
+
+
+def _face_aabb_chunks(
+    mesh: _WorkingMesh,
+    low: np.ndarray,
+    high: np.ndarray,
+    excluded_faces: Iterable[int],
+    /,
+) -> Iterable[np.ndarray]:
+    """Stream every alive face whose outward-rounded AABB meets the sweep."""
+    lower = np.nextafter(np.asarray(low, dtype=np.float64), -np.inf)
+    upper = np.nextafter(np.asarray(high, dtype=np.float64), np.inf)
+    excluded = np.asarray(
+        sorted({int(value) for value in excluded_faces}), dtype=np.int64
+    )
+    alive = np.asarray(mesh.face_alive[: mesh.face_count], dtype=np.bool_)
+    finite_sweep = np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
+    for start in range(0, mesh.face_count, _CCD_FACE_SCAN_CHUNK):
+        stop = min(start + _CCD_FACE_SCAN_CHUNK, mesh.face_count)
+        rows = np.arange(start, stop, dtype=np.int64)
+        rows = rows[alive[start:stop]]
+        if not rows.size:
+            continue
+        corners = mesh.positions[mesh.faces[rows]]
+        finite_faces = np.all(np.isfinite(corners), axis=(1, 2))
+        face_lower = np.nextafter(np.min(corners, axis=1), -np.inf)
+        face_upper = np.nextafter(np.max(corners, axis=1), np.inf)
+        overlap = (
+            (~finite_faces)
+            | (~finite_sweep)
+            | np.all((face_lower <= upper) & (face_upper >= lower), axis=1)
+        )
+        rows = rows[overlap]
+        if excluded.size and rows.size:
+            rows = rows[~np.isin(rows, excluded)]
+        if rows.size:
+            yield rows
+
+
 def _environment_faces(
     mesh: _WorkingMesh,
     patch: _Patch,
@@ -660,62 +865,76 @@ def _environment_faces(
     points: np.ndarray,
     moving: np.ndarray,
     /,
-) -> np.ndarray:
-    """Alive faces outside the patch whose bounds meet the bounds of ``moving`` triangles."""
+) -> Iterable[np.ndarray]:
+    """Stream alive environment faces overlapping moved-face sweep bounds."""
     if moving.size == 0:
-        return np.zeros((0,), dtype=np.int64)
-    low = np.min(points[moving].reshape((-1, 3)), axis=0)
-    high = np.max(points[moving].reshape((-1, 3)), axis=0)
-    margin = 1.0e-9 * max(1.0, float(np.max(high - low)))
-    candidates = np.flatnonzero(mesh.face_alive[: mesh.face_count])
-    corners = mesh.positions[mesh.faces[candidates]]
-    overlap = np.all(
-        (np.min(corners, axis=1) <= high + margin)
-        & (np.max(corners, axis=1) >= low - margin),
-        axis=1,
-    )
+        return
+    swept = points[moving].reshape((-1, 3))
+    low = np.min(swept, axis=0)
+    high = np.max(swept, axis=0)
     excluded = set(edit.removed_faces) | set(patch.kept_slots.tolist())
-    return np.asarray(
-        [face for face in candidates[overlap].tolist() if face not in excluded],
-        dtype=np.int64,
-    )
+    yield from _face_aabb_chunks(mesh, low, high, excluded)
 
 
 # --------------------------------------------------------------------- CCD
 
 
-def _leg_environment(mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, /) -> np.ndarray:
-    """Static alive faces near the swept bounds of one leg.
-
-    Faces the edit removes and faces incident to existing vertices moving in
-    this leg are represented by the leg itself and excluded.
-    """
+def _leg_environment(
+    mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, /
+) -> Iterable[np.ndarray]:
+    """Stream static faces in an outward-rounded swept box for one CCD leg."""
     swept = np.concatenate((leg.start, leg.end))
     low, high = np.min(swept, axis=0), np.max(swept, axis=0)
-    margin = 1.0e-9 * max(1.0, float(np.max(high - low)))
-    candidates = np.flatnonzero(mesh.face_alive[: mesh.face_count])
-    corners = mesh.positions[mesh.faces[candidates]]
-    overlap = np.all(
-        (np.min(corners, axis=1) <= high + margin)
-        & (np.max(corners, axis=1) >= low - margin),
-        axis=1,
-    )
     moving_keys = leg.keys[np.any(leg.start != leg.end, axis=1)]
     moving = {int(key) for key in moving_keys.tolist() if 0 <= key < mesh.vertex_count}
     moving |= set(edit.removed_vertices)
     excluded = set(edit.removed_faces) | set(_star(mesh, moving).tolist())
-    return np.asarray(
-        [face for face in candidates[overlap].tolist() if face not in excluded],
-        dtype=np.int64,
-    )
+    yield from _face_aabb_chunks(mesh, low, high, excluded)
 
 
-def _certify_leg(
-    mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, policy: SurfaceEventPolicy, /
+_CCD_INITIAL_CANDIDATE_CAPACITY = 64
+
+
+def _complete_ccd_epoch(
+    scene: PreparedCollisionScene,
+    start: np.ndarray,
+    end: np.ndarray,
+    activation_distance: float,
+    /,
+) -> ContactCandidateEpoch:
+    """Reprepare a private route bucket until the full sweep is searchable."""
+    from ...discretization.contact import SweepAndPruneContactSearchPlan
+    from ...discretization.contact._search import ContactSearchStatus
+
+    capacity = _CCD_INITIAL_CANDIDATE_CAPACITY
+    while True:
+        search = SweepAndPruneContactSearchPlan(
+            edge_vertex_capacity=0,
+            edge_edge_capacity=capacity,
+            face_vertex_capacity=capacity,
+            activation_distance=activation_distance,
+        )
+        epoch = search.build(scene, start, end_positions=end)
+        if bool(epoch.successful):
+            return epoch
+        if int(epoch.status) != int(ContactSearchStatus.CANDIDATE_OVERFLOW):
+            return epoch
+        required = max(
+            int(epoch.edge_edge.actual_count), int(epoch.face_vertex.actual_count)
+        )
+        if required <= capacity:
+            return epoch
+        capacity = required
+
+
+def _certify_leg_environment(
+    mesh: _WorkingMesh,
+    leg: _CCDLeg,
+    environment: np.ndarray,
+    policy: SurfaceEventPolicy,
+    /,
 ) -> tuple[bool, float]:
-    """Inclusion-CCD certification of one leg against its static environment."""
-    # The contact package imports geometry; resolving it lazily keeps the
-    # geometry package importable while contact is initializing.
+    """Certify one complete leg against one streamed static-face block."""
     from ...discretization.contact import (
         collision_free_step_limit,
         CollisionSurfacePlan,
@@ -723,25 +942,26 @@ def _certify_leg(
         PreparedCollisionScene,
         PreparedCollisionSurface,
         selection_collision_operator,
-        SweepAndPruneContactSearchPlan,
     )
 
-    environment = _leg_environment(mesh, edit, leg)
     static_leg = np.all(leg.start == leg.end, axis=1)
     shared = {
         int(key): index
         for index, key in enumerate(leg.keys.tolist())
         if 0 <= key < mesh.vertex_count and static_leg[index]
     }
-    env_vertices = sorted(set(mesh.faces[environment].reshape(-1).tolist()) - set(shared))
+    env_faces_global = np.asarray(environment, dtype=np.int64)
+    env_vertices = sorted(
+        set(mesh.faces[env_faces_global].reshape(-1).tolist()) - set(shared)
+    )
     local = dict(shared)
     for offset, slot in enumerate(env_vertices):
         local[slot] = leg.keys.size + offset
     start = np.concatenate((leg.start, mesh.positions[env_vertices].reshape((-1, 3))))
     end = np.concatenate((leg.end, mesh.positions[env_vertices].reshape((-1, 3))))
     env_faces = (
-        np.vectorize(local.__getitem__, otypes=[np.int64])(mesh.faces[environment])
-        if (environment.size)
+        np.vectorize(local.__getitem__, otypes=[np.int64])(mesh.faces[env_faces_global])
+        if env_faces_global.size
         else np.zeros((0, 3), dtype=np.int64)
     )
     faces = np.concatenate((leg.faces, env_faces.reshape((-1, 3))))
@@ -771,19 +991,14 @@ def _certify_leg(
         ),
     )
     scene = PreparedCollisionScene((surface,))
-    span = float(
-        np.max(
-            np.max(np.concatenate((start, end)), axis=0)
-            - np.min(np.concatenate((start, end)), axis=0)
-        )
+    swept = np.concatenate((leg.start, leg.end))
+    span = float(np.max(np.max(swept, axis=0) - np.min(swept, axis=0)))
+    epoch = _complete_ccd_epoch(
+        scene,
+        start,
+        end,
+        max(1.0e-12 * max(span, 1.0), 1.0e-300),
     )
-    search = SweepAndPruneContactSearchPlan(
-        edge_vertex_capacity=0,
-        edge_edge_capacity=policy.ccd_candidate_capacity,
-        face_vertex_capacity=policy.ccd_candidate_capacity,
-        activation_distance=max(1.0e-12 * max(span, 1.0), 1.0e-300),
-    )
-    epoch = search.build(scene, start, end_positions=end)
     safety = collision_free_step_limit(policy.ccd, scene, epoch, start, end)
     certified = (
         bool(epoch.successful)
@@ -791,6 +1006,26 @@ def _certify_leg(
         and float(safety.step_size) >= 1.0
     )
     return certified, float(safety.minimum_time_of_impact)
+
+
+def _certify_leg(
+    mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, policy: SurfaceEventPolicy, /
+) -> tuple[bool, float]:
+    """Stream all swept-environment blocks and certify the complete motion leg."""
+    impact = 1.0
+    saw_environment = False
+    for environment in _leg_environment(mesh, edit, leg):
+        saw_environment = True
+        certified, time = _certify_leg_environment(mesh, leg, environment, policy)
+        if np.isfinite(time):
+            impact = min(impact, float(time))
+        elif not certified:
+            return False, 0.0
+        if not certified:
+            return False, impact
+    if not saw_environment:
+        return _certify_leg_environment(mesh, leg, np.zeros((0,), dtype=np.int64), policy)
+    return True, impact
 
 
 def _restoration_leg(
@@ -875,11 +1110,3 @@ def _apply_edit(
     for vertex in edit.removed_vertices:
         mesh.vertex_alive[vertex] = False
     return created_vertices, created_faces, created_slots
-
-
-def _capacity_admits(mesh: _WorkingMesh, edit: _Edit, /) -> bool:
-    plan = mesh.topology.plan
-    return (
-        mesh.vertex_count + edit.new_positions.shape[0] <= plan.vertex_capacity
-        and mesh.face_count + edit.new_faces.shape[0] <= plan.face_capacity
-    )

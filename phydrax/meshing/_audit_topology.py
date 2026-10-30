@@ -36,10 +36,6 @@ from .._geometry_predicates import (
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
-from ..discretization.spatial._morton import morton_encode_integer
-
-
-_MORTON_BITS = {1: 62, 2: 31, 3: 21}
 
 
 @dataclass(frozen=True)
@@ -62,65 +58,39 @@ class WeldedTopologyEvidence:
 
 
 def _coincident_representatives(
-    points: np.ndarray, tolerance: float, capacity: int, /
-) -> tuple[np.ndarray, int, bool]:
-    """Weld vertices closer than ``tolerance`` through a Morton-sorted grid.
+    points: np.ndarray, tolerance: float, /
+) -> tuple[np.ndarray, int]:
+    """Stream geometric coincidences into a diagnostic, deterministic partition.
 
-    Grid cells are at least ``tolerance`` wide, so every close pair lies in the
-    same or an adjacent cell; candidates come from binary searches of the
-    neighbor codes in the sorted code array. Returns the smallest vertex index of
-    every welded class, the welded-vertex count, and whether the candidate
-    capacity was exceeded (then no welding is applied).
+    The union-find stores only vertex connectivity, not the potentially
+    quadratic candidate graph. It does not change the mesh or its entity IDs.
     """
+    count = points.shape[0]
+    parents = np.arange(count, dtype=np.int64)
+    if count < 2:
+        return parents, 0
 
-    count, dimension = points.shape
-    identity = np.arange(count)
-    lower = np.min(points, axis=0)
-    extent = float(np.max(np.max(points, axis=0) - lower))
-    bits = _MORTON_BITS[dimension]
-    width = max(tolerance, extent / float(1 << bits), np.finfo(np.float64).tiny)
-    cells = np.minimum(
-        np.floor((points - lower) / width).astype(np.int64), (1 << bits) - 2
-    )
-    codes = np.asarray(morton_encode_integer(cells, bits)).astype(np.uint64)
-    order = np.argsort(codes, kind="stable")
-    sorted_codes = codes[order]
-    firsts = []
-    seconds = []
-    total = 0
-    for offset in np.ndindex(*(3,) * dimension):
-        neighbor = cells + np.asarray(offset) - 1
-        inside = np.all(neighbor >= 0, axis=1)
-        neighbor_codes = np.asarray(
-            morton_encode_integer(np.maximum(neighbor, 0), bits)
-        ).astype(np.uint64)
-        start = np.searchsorted(sorted_codes, neighbor_codes, side="left")
-        stop = np.searchsorted(sorted_codes, neighbor_codes, side="right")
-        spans = np.where(inside, stop - start, 0)
-        total += int(np.sum(spans))
-        if total > capacity:
-            return identity, 0, True
-        source = np.repeat(identity, spans)
-        rank = np.arange(source.size) - np.repeat(np.cumsum(spans) - spans, spans)
-        target = order[np.repeat(start, spans) + rank]
-        keep = source < target
-        firsts.append(source[keep])
-        seconds.append(target[keep])
-    first = np.concatenate(firsts)
-    second = np.concatenate(seconds)
-    close = np.linalg.norm(points[first] - points[second], axis=1) <= tolerance
-    first = first[close]
-    second = second[close]
-    if first.size == 0:
-        return identity, 0, False
-    graph = coo_matrix(
-        (np.ones(first.size, dtype=np.int8), (first, second)), shape=(count, count)
-    )
-    _, labels = connected_components(graph, directed=False)
-    representative = np.full(labels.max() + 1, count, dtype=np.int64)
-    np.minimum.at(representative, labels, identity)
-    welded = representative[labels]
-    return welded, int(np.count_nonzero(np.bincount(labels)[labels] > 1)), False
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = int(parents[index])
+        return index
+
+    bvh = prepare_bvh(points, points, dtype=np.float64)
+    for first, second in bvh_overlap_pair_blocks(
+        bvh, bvh, include_touching=True, absolute_tolerance=tolerance
+    ):
+        unique = first < second
+        first, second = first[unique], second[unique]
+        close = np.linalg.norm(points[first] - points[second], axis=1) <= tolerance
+        for first_id, second_id in zip(first[close], second[close], strict=True):
+            first_root, second_root = root(int(first_id)), root(int(second_id))
+            if first_root != second_root:
+                parents[max(first_root, second_root)] = min(first_root, second_root)
+    for index in range(count):
+        parents[index] = root(index)
+    sizes = np.bincount(parents, minlength=count)
+    return parents, int(np.count_nonzero(sizes[parents] > 1))
 
 
 # Welded cells and facets -----------------------------------------------------------
@@ -768,9 +738,9 @@ def _ear_clip(
 
 
 def _polygon_loop_triangles(
-    points: np.ndarray, loops: np.ndarray, candidate_capacity: int, /
-) -> tuple[np.ndarray, int, int, int, bool]:
-    """Exact triangles and bounded simplicity evidence of polygon loops."""
+    points: np.ndarray, loops: np.ndarray, /
+) -> tuple[np.ndarray, int, int]:
+    """Exact triangles and complete simplicity findings for polygon loops."""
 
     corner_count = loops.shape[1]
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
@@ -779,9 +749,7 @@ def _polygon_loop_triangles(
     normal = np.sum(np.cross(centered, np.roll(centered, -1, axis=1)), axis=1)
     axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(normal), axis=1)]
     planar = np.take_along_axis(corners, axes[:, None, :], axis=2)
-    simplicity = polygon_simplicity_2d(
-        planar, mode=mode, maximum_candidate_pairs=candidate_capacity
-    )
+    simplicity = polygon_simplicity_2d(planar, mode=mode)
     status = np.asarray(simplicity.status)
     orientation = np.asarray(simplicity.orientation)
     ready = orientation != PredicateSign.UNCERTAIN
@@ -806,8 +774,6 @@ def _polygon_loop_triangles(
         np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
         intersecting,
         undecided,
-        simplicity.candidate_pair_count,
-        simplicity.candidate_capacity_exceeded,
     )
 
 
@@ -815,36 +781,25 @@ def _surface_triangles(
     points: np.ndarray,
     complex_: _Complex,
     boundary: np.ndarray | None,
-    candidate_capacity: int,
     /,
-) -> tuple[np.ndarray, int, int, int, bool]:
-    """Triangles of the tested surface under one polygon-candidate budget."""
+) -> tuple[np.ndarray, int, int]:
+    """Triangulate every tested polygon without truncating candidate work."""
 
     loops = complex_.facets[boundary] if boundary is not None else complex_.cells
     lengths = np.sum(loops >= 0, axis=1)
     triangles = []
     intersecting = 0
     undecided = 0
-    candidate_count = 0
-    exceeded = False
     for length in np.unique(lengths):
         rows = loops[lengths == length][:, :length]
         if length >= 5:
             collapsed = _collapsed(rows)
             polygon_rows = rows[~collapsed]
-            remaining = candidate_capacity - candidate_count
-            if polygon_rows.size and remaining > 0:
-                clipped, crossing, unknown, used, exhausted = _polygon_loop_triangles(
-                    points, polygon_rows, remaining
-                )
+            if polygon_rows.size:
+                clipped, crossing, unknown = _polygon_loop_triangles(points, polygon_rows)
                 triangles.append(clipped)
                 intersecting += crossing
                 undecided += unknown
-                candidate_count += used
-                exceeded |= exhausted
-            elif polygon_rows.size:
-                undecided += polygon_rows.shape[0]
-                exceeded = True
             rows = rows[collapsed]
         for index in range(1, length - 1):
             triangles.append(rows[:, (0, index, index + 1)])
@@ -852,8 +807,6 @@ def _surface_triangles(
         np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
         intersecting,
         undecided,
-        candidate_count,
-        exceeded,
     )
 
 
@@ -862,50 +815,36 @@ def _self_intersections(
     complex_: _Complex,
     boundary: np.ndarray,
     dimension: int,
-    candidate_capacity: int,
     /,
-) -> tuple[int, int, bool]:
-    """Return bounded intersection count, unresolved count, and capacity status."""
+) -> tuple[int, int]:
+    """Return complete intersection and unresolved-predicate counts."""
 
     if points.shape[1] == 2:
         points = np.pad(points, ((0, 0), (0, 1)))
     match (points.shape[1], dimension):
         case (3, 2):
-            triangles, loops, undecided, used, exceeded = _surface_triangles(
-                points, complex_, None, candidate_capacity
-            )
+            triangles, loops, undecided = _surface_triangles(points, complex_, None)
         case (3, 3):
-            triangles, loops, undecided, used, exceeded = _surface_triangles(
-                points, complex_, boundary, candidate_capacity
-            )
+            triangles, loops, undecided = _surface_triangles(points, complex_, boundary)
         case _:
-            return 0, 0, False
+            return 0, 0
     triangles = triangles[~_collapsed(triangles)]
     if triangles.shape[0] < 2:
-        return loops, undecided, exceeded
+        return loops, undecided
     corners = points[triangles]
     bvh = prepare_bvh(np.min(corners, axis=1), np.max(corners, axis=1), dtype=np.float64)
     intersections = loops
-    remaining = candidate_capacity - used
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         first = first[keep]
         second = second[keep]
-        if first.size > remaining:
-            first = first[:remaining]
-            second = second[:remaining]
-            exceeded = True
-        remaining -= first.size
         if first.size:
             hit, certain = _triangle_pairs_intersect(
                 points, triangles[first], triangles[second]
             )
             intersections += int(np.count_nonzero(hit & certain))
             undecided += int(np.count_nonzero(~certain))
-        if exceeded:
-            undecided += 1
-            break
-    return intersections, undecided, exceeded
+    return intersections, undecided
 
 
 # Entry point ---------------------------------------------------------------------
@@ -917,8 +856,6 @@ def audit_welded_topology(
     /,
     *,
     coincident_tolerance: float | None,
-    candidate_capacity: int,
-    intersection_candidate_capacity: int,
     check_manifold: bool,
     check_watertight: bool,
     check_self_intersection: bool,
@@ -928,17 +865,15 @@ def audit_welded_topology(
     ``coincident_tolerance`` is relative to the bounding-box diagonal; ``None``
     disables welding.
     """
-    if candidate_capacity <= 0 or intersection_candidate_capacity <= 0:
-        raise ValueError("Topology-audit candidate capacities must be positive.")
 
     if coincident_tolerance is None:
-        welded, coincident, exceeded = np.arange(points.shape[0]), 0, False
+        welded, coincident = np.arange(points.shape[0]), 0
     else:
         diagonal = float(np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0)))
-        welded, coincident, exceeded = _coincident_representatives(
-            points, coincident_tolerance * diagonal, candidate_capacity
+        welded, coincident = _coincident_representatives(
+            points, coincident_tolerance * diagonal
         )
-    unresolved = ["coincident_vertex_capacity"] if exceeded else []
+    unresolved: list[str] = []
     complex_ = _welded_complex(mesh, welded)
     keys = _sorted_keys(complex_.facets)
     _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
@@ -983,15 +918,12 @@ def audit_welded_topology(
     intersections = 0
     if check_self_intersection:
         boundary = counts[inverse] == 1
-        intersections, uncertain, intersection_exceeded = _self_intersections(
+        intersections, uncertain = _self_intersections(
             points[welded],
             complex_,
             boundary,
             mesh.topological_dimension,
-            intersection_candidate_capacity,
         )
-        if intersection_exceeded:
-            unresolved.append("self_intersection_capacity")
         if uncertain:
             unresolved.append("self_intersection_predicates")
     return WeldedTopologyEvidence(

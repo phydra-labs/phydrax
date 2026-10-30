@@ -26,9 +26,9 @@ from ._guarantee import ContactCapability, ContactGuaranteeLevel
 from ._implicit_geometry import PlaneContactGeometry
 from ._surface import (
     CollisionSurfacePlan,
+    contact_routing_identity,
     ContactFeatureCatalogue,
     ContactPairPolicy,
-    contact_routing_identity,
     PreparedCollisionSurface,
     scene_feature_catalogue,
 )

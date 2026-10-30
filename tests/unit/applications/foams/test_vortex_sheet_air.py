@@ -34,7 +34,6 @@ def _prepared_seed(
     *,
     resource_id: str,
     headroom: float = 1.0,
-    event_capacity: int = 0,
     region_capacity: int | None = None,
     surface_tension_scale: float = 1.0,
     time_step: float = 1.0e-5,
@@ -43,7 +42,6 @@ def _prepared_seed(
     base = seed.capacity_plan(
         resource_id=resource_id,
         headroom=headroom,
-        event_capacity=event_capacity,
     )
     capacity = (
         base
@@ -57,7 +55,6 @@ def _prepared_seed(
             maximum_edge_valence=base.maximum_edge_valence,
             maximum_vertex_region_pairs=base.maximum_vertex_region_pairs,
             resource_id=resource_id,
-            event_capacity=base.event_capacity,
             coordinate_dtype=base.coordinate_dtype,
             index_dtype=base.index_dtype,
         )
@@ -98,7 +95,6 @@ def _problem(
     *,
     subdivisions: int = 0,
     headroom: float = 1.0,
-    event_capacity: int = 0,
     region_capacity: int | None = None,
     surface_tension_scale: float = 1.0,
     time_step: float = 1.0e-5,
@@ -108,7 +104,6 @@ def _problem(
         seed_sphere(1.0, subdivisions=subdivisions),
         resource_id="vortex-sheet-air-test",
         headroom=headroom,
-        event_capacity=event_capacity,
         region_capacity=region_capacity,
         surface_tension_scale=surface_tension_scale,
         time_step=time_step,
@@ -425,7 +420,6 @@ def test_curvature_source_jit_matches_bounded_dense_reference() -> None:
 def test_topology_epoch_transfer_conserves_circulation_content() -> None:
     prepared, dynamics = _problem(
         headroom=2.0,
-        event_capacity=8,
         surface_tension_scale=0.0,
         time_step=1.0e-12,
     )

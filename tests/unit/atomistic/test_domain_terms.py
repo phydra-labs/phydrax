@@ -146,7 +146,7 @@ def _role(term: Any, cell: np.ndarray, *, skin: float = SKIN) -> AtomisticDomain
     return AtomisticDomainRolePlan(
         requirement,
         PeriodicCell(cell).image_stencil(
-            requirement.bounded_cutoff() + skin, maximum_image_count=4096
+            requirement.bounded_cutoff() + skin
         ),
         streaming=StreamedRelationPlan(),
         skin=skin,

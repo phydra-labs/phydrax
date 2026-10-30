@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from math import prod
-from typing import Any
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -72,6 +72,30 @@ def _validate_pairing(
     inner = jax.eval_shape(pairing.inner, structure, structure)
     if not isinstance(inner, jax.ShapeDtypeStruct) or inner.shape != ():
         raise TypeError("Pairing inner products must return one scalar array.")
+
+
+class ArraySpaceArchiveRecipe(NamedTuple):
+    shape: tuple[int, ...]
+    dtype: str
+    pairing: object
+    space_id: str
+
+    def rebuild(self, pairing: AbstractPairing, /) -> ArraySpace:
+        if not isinstance(pairing, AbstractPairing):
+            raise TypeError("Stored array-space recipe lost its canonical pairing.")
+        space = ArraySpace(
+            self.shape,
+            dtype=np.dtype(self.dtype),
+            pairing=pairing,
+            space_id=self.space_id,
+        )
+        if (
+            space.shape != self.shape
+            or space.dtype.str != self.dtype
+            or space.space_id != self.space_id
+        ):
+            raise ValueError("Stored array-space identity changed.")
+        return space
 
 
 class AbstractVectorSpace(StrictModule):
@@ -158,6 +182,16 @@ class ArraySpace(AbstractVectorSpace):
                 "dtype": dtype_.str,
                 "pairing": pairing_.pairing_id,
             },
+        )
+
+    def archive_recipe(self, /) -> ArraySpaceArchiveRecipe:
+        if type(self) is not ArraySpace:
+            raise TypeError("FE space archive requires the canonical ArraySpace.")
+        return ArraySpaceArchiveRecipe(
+            self.shape,
+            self.dtype.str,
+            self.pairing,
+            self.space_id,
         )
 
     def structure(self, /) -> jax.ShapeDtypeStruct:
@@ -576,6 +610,7 @@ class RHSLayout(StrictModule):
 __all__ = [
     "AbstractVectorSpace",
     "ArraySpace",
+    "ArraySpaceArchiveRecipe",
     "BlockSpace",
     "DualSpace",
     "PyTreeSpace",

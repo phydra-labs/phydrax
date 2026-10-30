@@ -31,8 +31,8 @@ def _source(scale: Any = 1.0, *, triangle_soup: Any = False) -> Any:
     )
 
 
-def _specification(provider: Any, source: Any, size: Any, *, hard: Any = False) -> Any:
-    scope = provider.whole_scope(source)
+def _specification(source: Any, size: Any, *, hard: Any = False) -> Any:
+    scope = phx.meshing.MeshingScope.whole(source, 2)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -66,7 +66,7 @@ def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams() 
             )
         )
         result = provider.plan(
-            source, _specification(provider, source, 0.3 * scale)
+            source, _specification(source, 0.3 * scale)
         ).execute()
         points = np.asarray(result.mesh.coordinates)
         cells = points[np.asarray(result.mesh.blocks[0].vertices)]
@@ -100,7 +100,7 @@ def test_ftetwild_contracts() -> None:
     source = _source()
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:
-        provider.plan(source, _specification(provider, source, 0.3, hard=True))
+        provider.plan(source, _specification(source, 0.3, hard=True))
     assert (
         caught.value.category
         is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
@@ -108,7 +108,7 @@ def test_ftetwild_contracts() -> None:
     source, other = _source(), _source(2.0)
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:
-        provider.plan(other, _specification(provider, source, 0.3))
+        provider.plan(other, _specification(source, 0.3))
     assert (
         caught.value.category
         is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION

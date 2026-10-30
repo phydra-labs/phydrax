@@ -206,18 +206,13 @@ class SurfaceInterface(StrictModule, NonTrainableState):
 
 
 class SurfaceAuditPolicy(StrictModule, NonTrainableState):
-    """Scale-aware metric, orientation, and host-capacity audit policy."""
+    """Scale-aware metric and orientation requirements for surface audits."""
 
     minimum_face_area: float = eqx.field(static=True)
     relative_degeneracy_tolerance: float = eqx.field(static=True)
     minimum_closed_volume: float = eqx.field(static=True)
     require_closed: bool = eqx.field(static=True)
     require_outward_orientation: bool = eqx.field(static=True)
-    maximum_vertices: int | None = eqx.field(static=True)
-    maximum_cells: int | None = eqx.field(static=True)
-    maximum_edges: int | None = eqx.field(static=True)
-    maximum_components: int | None = eqx.field(static=True)
-    maximum_boundary_edges: int | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -228,11 +223,6 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
         minimum_closed_volume: float = 0.0,
         require_closed: bool = False,
         require_outward_orientation: bool = False,
-        maximum_vertices: int | None = None,
-        maximum_cells: int | None = None,
-        maximum_edges: int | None = None,
-        maximum_components: int | None = None,
-        maximum_boundary_edges: int | None = None,
     ) -> None:
         minimum_area = float(minimum_face_area)
         relative = float(relative_degeneracy_tolerance)
@@ -246,28 +236,11 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
             or minimum_volume < 0.0
         ):
             raise ValueError("Surface metric tolerances must be finite and non-negative.")
-        capacities = (
-            maximum_vertices,
-            maximum_cells,
-            maximum_edges,
-            maximum_components,
-            maximum_boundary_edges,
-        )
-        if any(limit is not None and int(limit) <= 0 for limit in capacities):
-            raise ValueError("Surface audit capacities must be positive when supplied.")
-        normalized = tuple(None if limit is None else int(limit) for limit in capacities)
         self.minimum_face_area = minimum_area
         self.relative_degeneracy_tolerance = relative
         self.minimum_closed_volume = minimum_volume
         self.require_closed = bool(require_closed)
         self.require_outward_orientation = bool(require_outward_orientation)
-        (
-            self.maximum_vertices,
-            self.maximum_cells,
-            self.maximum_edges,
-            self.maximum_components,
-            self.maximum_boundary_edges,
-        ) = normalized
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "surface-audit-policy",
@@ -276,7 +249,6 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
                 "minimum_closed_volume": minimum_volume,
                 "require_closed": bool(require_closed),
                 "require_outward_orientation": bool(require_outward_orientation),
-                "capacities": normalized,
             }
         )
 
@@ -385,7 +357,6 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
     manifold: Array
     metric_valid: Array
     orientation_consistent: Array
-    capacity_valid: Array
     outward_orientation_valid: Array
     valid: Array
     face_areas: Array
@@ -416,7 +387,6 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
         manifold: bool,
         metric_valid: bool,
         orientation_consistent: bool,
-        capacity_valid: bool,
         outward_orientation_valid: bool,
         face_areas: ArrayLike,
         component_ids: ArrayLike,
@@ -471,7 +441,6 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
             and manifold
             and metric_valid
             and orientation_consistent
-            and capacity_valid
             and outward_orientation_valid
             and (policy_accepts_open or bool(np.all(closed)))
         )
@@ -481,7 +450,6 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
         self.manifold = jnp.asarray(manifold, dtype=jnp.bool_)
         self.metric_valid = jnp.asarray(metric_valid, dtype=jnp.bool_)
         self.orientation_consistent = jnp.asarray(orientation_consistent, dtype=jnp.bool_)
-        self.capacity_valid = jnp.asarray(capacity_valid, dtype=jnp.bool_)
         self.outward_orientation_valid = jnp.asarray(
             outward_orientation_valid, dtype=jnp.bool_
         )
@@ -520,7 +488,6 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
                     bool(manifold),
                     bool(metric_valid),
                     bool(orientation_consistent),
-                    bool(capacity_valid),
                     bool(outward_orientation_valid),
                     accepted,
                 ),

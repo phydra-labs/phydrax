@@ -137,15 +137,23 @@ def test_fem_libparanumal_absorption_scenario_3() -> None:
     value = jnp.arange(1.0, 5.0)
 
     assert jnp.allclose(preconditioner.apply(value), value)
-    high = phx.linalg.ArraySpace((3,))
-    low = phx.linalg.ArraySpace((3,))
-    identity = phx.linalg.IdentityLinearOperator(high)
-    plan = phx.discretization.fem.LowOrderAuxiliaryOperatorPlan(
-        identity, identity, jnp.ones((3,))
+    complex_ = phx.discretization.fem.FiniteElementDeRhamComplex(
+        _mesh(), family="trimmed", order=1
+    )
+    transfer_result = complex_.transfer(complex_)
+    interpolation = phx.linalg.coordinate_operator(
+        transfer_result.complex_map.maps[0]
+    )
+    anterpolation = phx.linalg.adjoint(interpolation)
+    auxiliary_plan = phx.discretization.fem.LowOrderAuxiliaryOperatorPlan(
+        transfer_result,
+        interpolation,
+        anterpolation,
+        jnp.ones((interpolation.source.size,)),
     )
     preconditioner = phx.discretization.fem.LowOrderAuxiliaryPreconditioner(
-        plan, phx.linalg.IdentityPreconditioner(low)
+        auxiliary_plan, phx.linalg.IdentityPreconditioner(interpolation.target)
     )
-    value = jnp.arange(1.0, 4.0)
+    value = jnp.arange(1.0, interpolation.source.size + 1.0)
 
     assert jnp.allclose(preconditioner.apply(value), value)

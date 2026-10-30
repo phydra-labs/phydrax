@@ -793,9 +793,7 @@ def domain_plan(
     roles = tuple(
         AtomisticDomainRolePlan(
             requirement,
-            cell.image_stencil(
-                requirement.bounded_cutoff() + SKIN + margin, maximum_image_count=4096
-            ),
+            cell.image_stencil(requirement.bounded_cutoff() + SKIN + margin),
             streaming=streaming,
             skin=SKIN,
             edge_capacity=EDGE_CAPACITY,

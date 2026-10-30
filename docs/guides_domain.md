@@ -67,7 +67,7 @@ retained. The canonical replacements are:
 | Previous API | Canonical API |
 | --- | --- |
 | `phx.domain.Square(...)` and other 2D/3D constructors | `phx.domain.GeometryDomain(phx.geometry.Square(...).compile())` |
-| `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRep(...)`, then `GeometryDomain(source.compile())` |
+| `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRepSource(model)`, then `GeometryDomain(source.compile())` |
 | Point-cloud, DEM, or LiDAR geometry constructors | Use `reconstruct_point_region(...)` for generic Cartesian points, `reconstruct_lidar_region(...)` for a lineage-bearing `LidarPointProduct`, or `reconstruct_dem_region(...)` for terrain |
 | `ProductStructure(...)` | `SampleLayout(...)` |
 | `component.sample(n, structure=layout, sampler=design)` | `component.sample(PointSampling(n, layout=layout, design=design))` |
@@ -700,6 +700,9 @@ physical-measure stratum for each chart and supports fixed-size stratified
 sampling. `phx.geometry.GeometryMeasurePartition` is the lower-level explicit
 partition for segment or triangle arrays. Interior volume cells are never
 invented from a boundary-only surface mesh.
+The selected `quadrature_order` controls the tensor Gauss–Legendre rule.
+Complete per-chart quadrature is reduced in bounded chunks; there is no
+separate chart-by-point refusal cap.
 
 Fixed boundary integration lowers every chart through the unified integration
 API. Reference nodes are mapped to physical edges or surface patches and

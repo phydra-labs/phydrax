@@ -33,16 +33,10 @@ vertex three and a tetrahedral vertex six.
 
 ## Capacities, topology and state
 
-`MultiRegionSurfaceCapacityPlan` declares vertex, edge, face, region,
-region-pair and event capacities, the maximum edge valence, the maximum number
-of region pairs per vertex, and coordinate/index dtypes. These are parameters,
-not hard-coded limits: a dry foam needs valence three and six slots, a general
-complex may declare more. A surface that does not fit is refused with
-`MultiRegionSurfaceCapacityError`, whose evidence names the exceeded capacity;
-`MultiRegionSurfaceCapacityPlan.capacity_evidence` performs the same host
-admission ahead of construction; event passes use it before committing a
-candidate. `event_capacity` bounds the events accepted per pass (zero refuses
-every event).
+`MultiRegionSurfaceCapacityPlan` defines the padded array shapes and dtypes for
+one topology. Its admission evidence checks whether a specific seed fits those
+declared storage slots; the plan carries no event-count allowance.
+
 
 `MultiRegionSurfaceTopology` pads active entities into fixed capacities and
 builds the lexicographic edge table, edge-to-face incidence with traversal
@@ -143,8 +137,8 @@ event set `SurfaceEventKind` (`SPLIT`, `COLLAPSE`, `FLIP`, `T1_POP`, `PINCH`,
 1. proposals are ordered canonically (physical transitions, then collapses,
    splits and flips, each by priority and stable ids) independently of the
    input order;
-2. a proposal whose vertex 2-ring meets an accepted one is `CONFLICT`; at most
-   `event_capacity` events of the capacity plan are accepted per pass;
+2. a proposal whose vertex 2-ring meets an accepted one is `CONFLICT`; other
+   proposals are evaluated without a per-pass event-count allowance;
 3. the proposal's own builder drafts the local edit (removed and new faces with
    parent faces, new vertices with parent vertices) with stable global ids;
 4. finite-region volumes changed by the edit are restored by a minimum-norm
@@ -289,54 +283,59 @@ so junction edges remain junction edges. Named vertex sets (`"junction"`,
 
 ### Hard-label extraction
 
-`LabelFieldSurfaceExtractionPlan` converts a three-dimensional uniform-grid or
-sparse-coordinate `threshold_dynamics.LabelFieldState` into an explicit seed.
-`plan.prepare(grid_shape)` binds a dense row-major grid;
-`plan.prepare(grid_shape, site_coordinates=...)` binds the sparse state's
-lexicographic integer coordinates and materializes only their occupied
-coordinate bounding box, not the full declared grid. Grid points are physical
-cell centers: `origin + (i, j, k) * spacing`. Missing sparse sites inside that
-box and a one-site outer collar carry `boundary_region_id`. The boundary ID may
-name a source label or a new synthetic ambient label.
+`LabelFieldSurfaceExtractionPlan(label_ids, index_to_world=...)` converts a
+categorical three-dimensional `threshold_dynamics.LabelFieldState` into an
+explicit seed. `index_to_world` is a homogeneous 4 x 4 affine from integer
+image indices to physical sample locations. The complete linear transform is
+retained: anisotropic scale, shear and reflection affect source identity,
+vertices, interface areas and volumes.
+
+`plan.prepare(grid_shape)` binds a complete row-major image;
+`plan.prepare(grid_shape, site_coordinates=...)` binds sites in a sparse state.
+Sparse coordinates must cover every index in one rectangular subimage. An
+omitted sample is unknown, never implicit background; incomplete sparse
+subimages are rejected rather than interpreted as material loss. The boundary
+ID may name a source label or a new synthetic ambient label.
 
 Every cube receives the same globally conforming Freudenthal six-tetrahedron
 split. Junction-conforming multi-label marching tetrahedra place interface
-vertices at label-transition edge midpoints, at transition centroids on primal
-faces and at the corresponding pair/triple/quadruple material point inside each
+vertices at label-transition edge midpoints, transition centroids on primal
+faces and the corresponding pair/triple/quadruple material point inside each
 tetrahedron. Every flag `edge < face < tetrahedron` whose primal edge endpoints
-have different labels gives one oriented triangle. A three-label primal face
-therefore gives one shared valence-three junction edge; four labels in a
-tetrahedron give six pair sheets and the complete four-region graph. The
-tetrahedral split resolves multi-label and checkerboard cube ambiguity
-deterministically. Evidence reports the number of ambiguous cubes and
-multi-label tetrahedra, and `maximum_ambiguous_cells` is a fail-closed ambiguity
-admission bound.
+have different categorical labels gives one oriented triangle. A three-label
+primal face therefore gives one shared valence-three junction edge; four
+labels in a tetrahedron give six pair sheets and the complete four-region
+graph. The tetrahedral split resolves multi-label and checkerboard cube
+ambiguity deterministically. Evidence reports ambiguous cubes and multi-label
+tetrahedra; these are diagnostics, not count-based admission limits.
 
 Source label IDs must exactly match the state's stable ordered label identity
-and map unchanged to explicit region IDs. Inactive, empty labels are omitted;
-the region-source map, source epoch/time, and source binding, route,
-preparation, and site identities are recorded in `LabelFieldSurfaceLineage`.
-The complete source state is fingerprinted but is not retained or synchronized.
-Threshold dynamics remains label authority before extraction.
-After an accepted extraction, the returned topology/state/prepared surface is
-the independent geometry authority. A rejected result may expose only a
-diagnostic `candidate_seed`, never an accepted E state.
+and map unchanged to explicit region IDs. Every nonempty material is retained,
+including one-site regions; inactive, empty labels are omitted. The
+region-source map, source epoch/time, and source binding, route, preparation,
+and site identities are recorded in `LabelFieldSurfaceLineage`. The complete
+source state and affine are fingerprinted but are not retained or synchronized.
+Threshold dynamics remains label authority before extraction. After accepted
+extraction, the returned topology/state/prepared surface is the independent
+geometry authority. A rejected result may expose only a diagnostic
+`candidate_seed`, never an accepted E state.
 
-Before authority is returned, the candidate must fit
-`MultiRegionSurfaceCapacityPlan`, pass the selected validation profile and pass
-the exact collision certificate. Refusals distinguish ambiguity capacity,
-surface capacity, unsupported dry-foam valence and other validation failures.
-Evidence compares finite-region volume and pair area against the independent
-voxel estimator, names every region pair, and carries the complete E validation
-and capacity certificates. Periodic wrapping is never inferred: sparse periodic
-C states are clipped into a free-space seed, so a region crossing the periodic
-seam can be refused as disconnected. A future unwrapped-periodic E
-representation is required for a true periodic conversion.
+Topology array shapes are derived from the complete extracted seed, not a
+caller-supplied entity or ambiguity allowance. Before authority is returned,
+the candidate must pass the selected physical profile and an exhaustive
+collision validation whose BVH pairs are streamed through exact predicates.
+Refusals distinguish unsupported dry-foam valence from other geometric or
+predicate failures. Evidence compares finite-region volume and pair area
+against the independent affine-aware voxel estimator and names every region
+pair. Periodic wrapping is never inferred: sparse periodic C states cannot be
+used as a periodic E volume, so a material crossing the seam may be refused as
+disconnected.
 
-`tools/threshold_surface_seeding_qualification.py` measures two-phase sphere
-volume/area convergence, certifies a three-cell junction and foam-equilibrium
-preparation, repeats extraction to prove deterministic lineage, and exercises
-ambiguity and topology-capacity refusals.
+`tools/threshold_surface_seeding_qualification.py` measures two-phase
+sphere volume/area convergence, certifies oblique three-cell junctions and
+foam-equilibrium preparation, verifies reflected/sheared affine covariance and
+single-site material preservation, repeats extraction to prove deterministic
+lineage, and rejects sparse layouts with unknown holes.
 
 For the radius-0.3 sphere at 5, 7 and 9 sites per axis, analytic volume errors
 are 20.3%, 21.4% and 5.4%, and area errors are 50.5%, 13.7% and 17.4%.

@@ -106,20 +106,24 @@ def test_geometry_nd_closure_scenario_2() -> None:
     frame = atlas.frame(jnp.asarray((0,), dtype=jnp.int32), reference)
     partition = phx.geometry.BoundaryAtlasPartition(
         atlas,
-        quadrature_order=3,
-        maximum_quadrature_points=27,
+        quadrature_order=26,
     )
 
     assert bool(frame.regular[0])
     assert frame.tangents.shape == (1, 3, 4)
     assert jnp.allclose(frame.normal, jnp.asarray(((0.0, 0.0, 0.0, 1.0),)))
     assert jnp.allclose(partition.total_measure, 1.0)
-    with pytest.raises(ValueError, match="maximum_quadrature_points"):
-        phx.geometry.BoundaryAtlasPartition(
-            atlas,
-            quadrature_order=4,
-            maximum_quadrature_points=63,
-        )
+    first_node = 0.5 * (phx.integration.GaussLegendreRule(26).data().nodes[0] + 1.0)
+    assert jnp.allclose(partition.seed_reference, jnp.full((3,), first_node))
+    sampled_points, sampled_strata, represented = partition.sample(
+        16,
+        key=jr.key(91),
+        minimum_per_stratum=2,
+    )
+    assert sampled_points.shape == (16, 4)
+    assert jnp.all((sampled_points >= 0.0) & (sampled_points <= 1.0))
+    assert jnp.all(sampled_strata == 0)
+    assert jnp.allclose(jnp.sum(represented), 1.0)
     wall = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 0.0, 0.0, 0.0)),

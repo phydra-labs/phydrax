@@ -382,10 +382,11 @@ class MultiRegionSurfaceTopology(StrictModule, NonTrainableState):
         self.region_kinds = kinds
         self.domain = domain_
         self.epoch = epoch_
+        # Storage capacities change execution shapes; resource identity does not.
         self.topology_id = canonical_fingerprint(
             {
                 "kind": "multiregion-surface-topology",
-                "plan": plan.plan_id,
+                "resource": plan.resource_id,
                 "faces": array_tree_fingerprint(rows),
                 "face_labels": array_tree_fingerprint(labels),
                 "region_ids": list(ids),

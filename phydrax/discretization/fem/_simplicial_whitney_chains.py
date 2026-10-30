@@ -24,12 +24,8 @@ from ...exterior._chains import (
 from ...linalg import compound_matrix
 from ...typing import AnyDim, checked, Dim, Float, Int32, Size
 from .._cell_de_rham import AbstractCellDeRhamComplex
-from .._simplicial_locator import (
-    CellLocationResult,
-    CellLocationStatus,
-    PreparedSimplicialCellLocator,
-    SegmentLocationResult,
-)
+from .._cell_locator import CellLocationResult, CellLocationStatus
+from .._simplicial_locator import PreparedSimplicialCellLocator, SegmentLocationResult
 from .._topology import CellComplexTopology
 
 

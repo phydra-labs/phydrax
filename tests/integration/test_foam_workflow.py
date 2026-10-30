@@ -173,7 +173,7 @@ def test_curved_double_bubble_relaxes_through_remeshing_to_equal_pressures() -> 
     targets = jnp.asarray((reference.volume_first, reference.volume_second))
     seed = seed_double_bubble(1.1, 0.9, ring_points=12)
     topology = seed.topology(
-        seed.capacity_plan(resource_id="curved", headroom=2.0, event_capacity=32)
+        seed.capacity_plan(resource_id="curved", headroom=2.0)
     )
     base = seed.state(topology)
     gas = np.zeros((topology.region_capacity, 1))

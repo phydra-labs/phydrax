@@ -38,7 +38,6 @@ def _sphere_problem(
     time_step: float = 1.0e-3,
     projection_iterations: int = 6,
     headroom: float = 1.0,
-    event_capacity: int = 0,
 ) -> tuple[
     MultiRegionSurfaceTopology,
     PreparedMultiRegionSurface,
@@ -50,7 +49,6 @@ def _sphere_problem(
         seed.capacity_plan(
             resource_id="foam-dynamics-test",
             headroom=headroom,
-            event_capacity=event_capacity,
         )
     )
     surface_state = seed.state(topology)
@@ -321,7 +319,6 @@ def test_accepted_fixed_topology_step_executes_proposed_events() -> None:
         air,
         time_step=1.0e-5,
         headroom=2.0,
-        event_capacity=4,
     )
 
     result = prepared.advance(state, events=(_edge_split(topology),))
@@ -494,7 +491,6 @@ def test_failed_fixed_topology_step_does_not_execute_proposed_events() -> None:
         time_step=1.0e-3,
         projection_iterations=1,
         headroom=2.0,
-        event_capacity=4,
     )
 
     result = prepared.advance(state, events=(_edge_split(topology),))
@@ -522,7 +518,6 @@ def test_ccd_rejected_fixed_topology_step_does_not_execute_proposed_events(
         air,
         time_step=1.0e-5,
         headroom=2.0,
-        event_capacity=4,
     )
 
     def reject_motion(

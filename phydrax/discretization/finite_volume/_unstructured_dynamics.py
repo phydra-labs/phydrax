@@ -1004,6 +1004,12 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 jnp.zeros((), dtype=reduction_dtype),
                 jnp.zeros((0,), dtype=reduction_dtype),
             )
+        if template.owner_cells.size == 0:
+            return (
+                template,
+                jnp.zeros((), dtype=reduction_dtype),
+                jnp.zeros((0,), dtype=reduction_dtype),
+            )
         face_ids = overset.receptor_face_ids
         face_cells = overset.receptor_face_cells
         if face_ids is None or face_cells is None or overset.face_artifact_id is None:
@@ -1389,6 +1395,23 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         if not np.isfinite(cfl_) or cfl_ <= 0.0:
             raise ValueError("cfl must be positive and finite.")
         average = self._validated_stage_average(content_state, metrics)
+        if self.discretization.cell_count == 0:
+            ledger = self.zero_stage_ledger(metrics, redistribution=redistribution)
+            zero_rate = jnp.empty(
+                (0,), dtype=jnp.dtype(self.precision.reduction_dtype)
+            )
+            return UnstructuredFiniteVolumeStageEvaluation(
+                ledger=ledger,
+                relative_signal_speeds=(),
+                cell_relative_rate=zero_rate,
+                maximum_relative_rate=jnp.asarray(
+                    0.0, dtype=jnp.dtype(self.precision.reduction_dtype)
+                ),
+                relative_cfl_step=jnp.asarray(
+                    jnp.inf, dtype=jnp.dtype(self.precision.reduction_dtype)
+                ),
+                precision_evidence=self.precision.evidence(),
+            )
         vof_plan = self.coupling.vof
         stage_plic = None
         primitive = None
@@ -1793,6 +1816,20 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 density,
                 interface_active=stage_plic.interface_active,
             )
+        owner_local_view = (
+            self.discretization.owner_local_view
+            if isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
+            else None
+        )
+        if owner_local_view is not None:
+            owned_active = (
+                jnp.asarray(owner_local_view.owned, dtype=jnp.bool_)
+                & metrics.active_cell_mask
+                & self.overset_active_cell_mask
+            )
+            source_rate = jnp.where(
+                owned_active[:, None], source_rate, jnp.zeros_like(source_rate)
+            )
         ledger = ConservationStageLedger(
             tuple(blocks),
             source_rate,
@@ -1806,6 +1843,11 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         ledger = self._append_overset_block(ledger, overset_block)
         ledger = self._append_redistribution_block(ledger, redistribution)
+        cfl_active = (
+            metrics.active_cell_mask
+            if owner_local_view is None
+            else owned_active
+        )
 
         cfl_volumes = self.precision.reduction(metrics.effective_cell_volumes)
         if self.coupling.embedded_metrics is not None:
@@ -1820,13 +1862,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 * stabilization.minimum_volume_fraction,
             )
         safe_cfl_volumes = jnp.where(
-            metrics.active_cell_mask,
+            cfl_active,
             cfl_volumes,
             jnp.ones_like(cfl_volumes),
         )
         cell_relative_rate = self.precision.decision(
             jnp.where(
-                metrics.active_cell_mask,
+                cfl_active,
                 cell_rate / safe_cfl_volumes,
                 jnp.zeros_like(cell_rate),
             )
@@ -1954,6 +1996,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 f"Unstructured FV state must have shape {self.discretization.state_shape}."
             )
         self.precision.validate_state(value)
+        if self.discretization.cell_count == 0:
+            return (
+                jnp.empty(
+                    (0, self.discretization.component_count),
+                    dtype=jnp.dtype(self.precision.flux_dtype),
+                ),
+                jnp.empty((0,), dtype=jnp.dtype(self.precision.reduction_dtype)),
+            )
         if isinstance(
             self.method.reconstruction,
             (
@@ -2015,6 +2065,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         return self.precision.storage(value)
 
     def __call__(self, time: Array, state: Array, args: Any = None) -> Array:
+        if self.discretization.cell_count == 0:
+            value = jnp.asarray(state)
+            if value.shape != self.discretization.state_shape:
+                raise ValueError(
+                    f"Unstructured FV state must have shape {self.discretization.state_shape}."
+                )
+            self.precision.validate_state(value)
+            return self.precision.storage(jnp.zeros_like(value))
         flux, _ = self.face_fluxes(time, state, args)
         return self.precision.storage(
             self.precision.reduction(self.residual_from_fluxes(flux))
@@ -2047,6 +2105,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         cfl: float = 0.45,
     ) -> Array:
         self.precision.validate_state(state)
+        if self.discretization.cell_count == 0:
+            return jnp.asarray(jnp.inf, dtype=self.precision.reduction_dtype)
         _, speed = self.face_fluxes(jnp.asarray(0.0), state, args)
         maximum = jnp.max(self._cell_rate(speed))
         return self.precision.decision(
@@ -2072,25 +2132,93 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def residual_with_diagnostics(
         self, time: Array, state: Array, args: Any = None, /
     ) -> tuple[Array, UnstructuredFiniteVolumeDiagnostics]:
+        if self.discretization.cell_count == 0:
+            value = jnp.asarray(state)
+            if value.shape != self.discretization.state_shape:
+                raise ValueError(
+                    f"Unstructured FV state must have shape {self.discretization.state_shape}."
+                )
+            self.precision.validate_state(value)
+            return self.precision.storage(jnp.zeros_like(value)), UnstructuredFiniteVolumeDiagnostics(
+                normal_flux=jnp.empty(
+                    (0, self.discretization.component_count),
+                    dtype=jnp.dtype(self.precision.flux_dtype),
+                ),
+                signal_speed=jnp.empty(
+                    (0,), dtype=jnp.dtype(self.precision.reduction_dtype)
+                ),
+                boundary_outward_flux=jnp.zeros(
+                    (self.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
+                ),
+                source_integral=jnp.zeros(
+                    (self.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
+                ),
+                conservation_defect=jnp.zeros(
+                    (self.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
+                ),
+                maximum_rate=jnp.asarray(0.0, dtype=self.precision.reduction_dtype),
+                precision_evidence=self.precision.evidence(),
+            )
         flux, speed = self.face_fluxes(time, state, args)
         source = self.source_value(time, state, args)
         residual = self(time, state, args)
-        boundary = self.discretization.neighbor_cells < 0
+        owner_local_view = (
+            self.discretization.owner_local_view
+            if isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
+            else None
+        )
         integrated = self.precision.reduction(flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
         )
-        boundary_terms = jnp.where(boundary[:, None], integrated, 0.0)
-        source_terms = self.precision.reduction(
-            self.discretization.cell_volumes[:, None] * source
-        )
-        change_terms = self.precision.reduction(
-            self.discretization.cell_volumes[:, None] * residual
-        )
+        if owner_local_view is None:
+            boundary_terms = jnp.where(
+                (self.discretization.neighbor_cells < 0)[:, None],
+                integrated,
+                0.0,
+            )
+            source_terms = self.precision.reduction(
+                self.discretization.cell_volumes[:, None] * source
+            )
+            change_terms = self.precision.reduction(
+                self.discretization.cell_volumes[:, None] * residual
+            )
+            diagnostic_active = self.overset_active_cell_mask
+        else:
+            owned = jnp.asarray(owner_local_view.owned, dtype=jnp.bool_)
+            owner_cells = self.discretization.owner_cells
+            neighbor_cells = self.discretization.neighbor_cells
+            safe_neighbor = jnp.maximum(neighbor_cells, 0)
+            owner_boundary_sign = owned[owner_cells].astype(integrated.dtype) - (
+                (neighbor_cells >= 0) & owned[safe_neighbor]
+            ).astype(integrated.dtype)
+            boundary_terms = owner_boundary_sign[:, None] * integrated
+            diagnostic_active = owned & self.overset_active_cell_mask
+            source_terms = jnp.where(
+                diagnostic_active[:, None],
+                self.precision.reduction(
+                    self.discretization.cell_volumes[:, None] * source
+                ),
+                0.0,
+            )
+            change_terms = jnp.where(
+                diagnostic_active[:, None],
+                self.precision.reduction(
+                    self.discretization.cell_volumes[:, None] * residual
+                ),
+                0.0,
+            )
         boundary_flux = compensated_sum(boundary_terms, axis=0)
         source_integral = compensated_sum(source_terms, axis=0)
         defect = compensated_sum_chunks(
             (change_terms, -source_terms, boundary_terms),
             output_ndim=1,
+        )
+        cell_relative_rate = self._cell_rate(speed)
+        maximum_rate = jnp.max(
+            jnp.where(diagnostic_active, cell_relative_rate, 0.0)
         )
         return self.precision.storage(residual), UnstructuredFiniteVolumeDiagnostics(
             normal_flux=flux,
@@ -2098,7 +2226,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             boundary_outward_flux=boundary_flux,
             source_integral=source_integral,
             conservation_defect=defect,
-            maximum_rate=jnp.max(self._cell_rate(speed)),
+            maximum_rate=maximum_rate,
             precision_evidence=self.precision.evidence(),
         )
 

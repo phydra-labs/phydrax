@@ -22,6 +22,9 @@ struct phx_mc_mesh {
   std::vector<int32_t> cells;          // cell_count x (dimension + 1)
   std::vector<int32_t> vertex_map;     // input_point_count
   std::vector<int32_t> cell_segments;  // cell_count x 3 (CDT) or empty
+  std::vector<int32_t> constraint_sources;  // input segment per constrained Steiner point
+  std::vector<int32_t> constraint_parents;  // two endpoints of the split parent edge per point
+  std::vector<double> constraint_ratios;    // split parameter from constraint_parents[2 * i]
 
   int64_t point_count() const { return static_cast<int64_t>(points.size()) / dimension; }
   int64_t cell_count() const { return static_cast<int64_t>(cells.size()) / (dimension + 1); }

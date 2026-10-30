@@ -9,8 +9,8 @@ intersection is a small, topology-changing geometry operation and is therefore
 prepared on the host before a remap is committed.  The intersection polytope is
 formed by enumerating vertices of the eight half-spaces (four from each input
 cell).  Every numerical decision is conservative: malformed cells, uncertain
-predicates, and exhausted limits return a typed non-success result rather than a
-plausible but unverifiable volume.  Orientation and plane-triple singularity
+predicates, and unresolved constructions return a typed non-success result,
+never a plausible but unverifiable volume. Orientation and plane-triple singularity
 decisions are certified by the geometric predicates of the precision policy
 (exact with meshcore; otherwise filtered, with unresolved signs reported as
 ``UNCERTAIN_PREDICATE``).
@@ -43,7 +43,6 @@ class TetraIntersectionStatus(str, Enum):
     DEGENERATE_TETRAHEDRON = "degenerate_tetrahedron"
     UNCERTAIN_PREDICATE = "uncertain_predicate"
     UNSUPPORTED = "unsupported"
-    CANDIDATE_LIMIT = "candidate_limit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,36 +69,12 @@ class TetraIntersectionTolerance:
         object.__setattr__(self, "relative", relative)
 
 
-@dataclass(frozen=True, slots=True)
-class TetraIntersectionLimits:
-    """Hard bounds on temporary and returned intersection topology."""
-
-    max_candidates: int = 64
-    max_vertices: int = 64
-    max_faces: int = 16
-
-    def __post_init__(self) -> None:
-        values = (self.max_candidates, self.max_vertices, self.max_faces)
-        if any(isinstance(value, bool) for value in values):
-            raise ValueError("Intersection limits must be integer counts.")
-        if any(int(value) != value or int(value) <= 0 for value in values):
-            raise ValueError("Intersection limits must be positive integers.")
-        object.__setattr__(self, "max_candidates", int(self.max_candidates))
-        object.__setattr__(self, "max_vertices", int(self.max_vertices))
-        object.__setattr__(self, "max_faces", int(self.max_faces))
-
-    @property
-    def max_candidate_vertices(self) -> int:
-        """Explicit spelling for the candidate-vertex allocation bound."""
-
-        return self.max_candidates
 
 
 @dataclass(frozen=True, slots=True)
 class TetraIntersectionEvidence:
     """Evidence produced while certifying an intersection result."""
 
-    candidate_count: int = 0
     vertex_count: int = 0
     face_count: int = 0
     predicate_uncertain: bool = False
@@ -224,26 +199,6 @@ def _resolve_tolerance(tolerance: Any) -> TetraIntersectionTolerance:
     raise TypeError("tolerance must be a scalar, mapping, or TetraIntersectionTolerance.")
 
 
-def _resolve_limits(limits: Any) -> TetraIntersectionLimits:
-    if limits is None:
-        return TetraIntersectionLimits()
-    if isinstance(limits, TetraIntersectionLimits):
-        return limits
-    if isinstance(limits, Mapping):
-        candidate = limits.get(
-            "max_candidates",
-            limits.get(
-                "max_candidate_vertices",
-                limits.get("max_candidate_points", limits.get("candidate_limit", 64)),
-            ),
-        )
-        vertices = limits.get("max_vertices", limits.get("max_output_vertices", 64))
-        faces = limits.get("max_faces", limits.get("max_output_faces", 16))
-        return TetraIntersectionLimits(int(candidate), int(vertices), int(faces))
-    if np.isscalar(limits) and not isinstance(limits, bool):
-        value = int(cast(int, limits))
-        return TetraIntersectionLimits(value, value, 16)
-    raise TypeError("limits must be an integer, mapping, or TetraIntersectionLimits.")
 
 
 def _empty_result(
@@ -256,7 +211,6 @@ def _empty_result(
     target_volume: float = 0.0,
     predicate_uncertain: bool = False,
     volume_only: bool = False,
-    candidate_count: int = 0,
     predicate_mode: PredicateMode | None = None,
 ) -> TetraIntersectionResult:
     return TetraIntersectionResult(
@@ -268,7 +222,6 @@ def _empty_result(
         target_id=target_id,
         pair_id=pair_id,
         evidence=TetraIntersectionEvidence(
-            candidate_count=candidate_count,
             predicate_uncertain=predicate_uncertain,
             source_volume=source_volume,
             target_volume=target_volume,
@@ -417,22 +370,16 @@ def _triple_intersection(
 
 
 def _append_unique(
-    candidates: list[np.ndarray],
-    point: np.ndarray,
-    point_tolerance: float,
-    maximum: int,
-) -> bool:
+    candidates: list[np.ndarray], point: np.ndarray, point_tolerance: float, /
+) -> None:
     for index, existing in enumerate(candidates):
         if float(np.linalg.norm(point - existing)) <= point_tolerance:
             if tuple(float(item) for item in point) < tuple(
                 float(item) for item in existing
             ):
                 candidates[index] = point
-            return True
-    if len(candidates) >= maximum:
-        return False
+            return
     candidates.append(point)
-    return True
 
 
 def _face_order(
@@ -508,7 +455,7 @@ def _build_faces(
     planes: tuple[_Plane, ...],
     tolerance: TetraIntersectionTolerance,
     scale: float,
-    maximum: int,
+    /,
 ) -> tuple[tuple[tuple[int, ...], ...], bool]:
     area_tolerance = max(tolerance.absolute, tolerance.relative * max(scale**2, 1.0e-300))
     faces_by_key: dict[tuple[int, ...], tuple[int, ...]] = {}
@@ -539,8 +486,6 @@ def _build_faces(
             continue
         key = tuple(sorted(ordered))
         faces_by_key.setdefault(key, ordered)
-        if len(faces_by_key) > maximum:
-            return (), True
     faces = tuple(faces_by_key[key] for key in sorted(faces_by_key))
     return faces, False
 
@@ -552,18 +497,14 @@ def intersect_tetrahedra(
     source_id: Any = 0,
     target_id: Any = 0,
     tolerance: Any = None,
-    limits: Any = None,
     volume_only: bool = False,
     precision: GeometryPrecisionPolicy | None = None,
 ) -> TetraIntersectionResult:
-    """Intersect two positively oriented affine tetrahedra on the host.
+    """Intersect two affine tetrahedra with complete finite candidate enumeration.
 
-    The operation is deterministic under vertex permutation.  It returns
-    ``DISJOINT`` for separated cells and ``ZERO_MEASURE_CONTACT`` for a face,
-    edge, or vertex contact.  No tolerance-based volume or row normalization is
-    performed.  ``precision.predicate_mode`` certifies orientation and
-    plane-triple decisions (``EXACT`` uses meshcore when installed; otherwise
-    unresolved filtered signs return ``UNCERTAIN_PREDICATE``).
+    ``DISJOINT`` and ``ZERO_MEASURE_CONTACT`` are resolved outcomes. Filtered
+    orientation uncertainty or an unorderable constructed face returns
+    ``UNCERTAIN_PREDICATE``; no candidate-count or topology cap truncates work.
     """
 
     policy = GeometryPrecisionPolicy() if precision is None else precision
@@ -573,7 +514,6 @@ def intersect_tetrahedra(
     pair_id = stable_tetra_pair_id(source_id, target_id)
     try:
         tolerance_ = _resolve_tolerance(tolerance)
-        limits_ = _resolve_limits(limits)
     except (TypeError, ValueError, OverflowError):
         return _empty_result(
             TetraIntersectionStatus.UNSUPPORTED,
@@ -585,14 +525,11 @@ def intersect_tetrahedra(
     source, source_status = _coerce_tetrahedron(source_vertices)
     target, target_status = _coerce_tetrahedron(target_vertices)
     if source_status is not None:
-        return _empty_result(
-            source_status, source_id, target_id, pair_id, predicate_mode=mode
-        )
+        return _empty_result(source_status, source_id, target_id, pair_id, predicate_mode=mode)
     if target_status is not None:
-        return _empty_result(
-            target_status, source_id, target_id, pair_id, predicate_mode=mode
-        )
-    assert source is not None and target is not None
+        return _empty_result(target_status, source_id, target_id, pair_id, predicate_mode=mode)
+    if source is None or target is None:
+        raise RuntimeError("tetrahedron coercion lost a validated input")
     source_failure, source_volume, source_scale, source_uncertain = _validate_tetrahedron(
         source, tolerance_, mode
     )
@@ -621,35 +558,18 @@ def intersect_tetrahedra(
             predicate_mode=mode,
         )
     scale = max(source_scale, target_scale)
-    source_planes = _tetra_planes(source)
-    target_planes = _tetra_planes(target)
-    planes = source_planes + target_planes
+    planes = _tetra_planes(source) + _tetra_planes(target)
     candidates: list[np.ndarray] = []
-    candidate_attempts = 0
     point_tolerance = tolerance_.absolute + tolerance_.relative * max(scale, 1.0e-300)
     for point in tuple(source) + tuple(target):
         if _inside(point, planes, tolerance_, scale):
-            candidate_attempts += 1
-            if not _append_unique(
-                candidates, point, point_tolerance, limits_.max_candidates
-            ):
-                return _empty_result(
-                    TetraIntersectionStatus.CANDIDATE_LIMIT,
-                    source_id,
-                    target_id,
-                    pair_id,
-                    source_volume=source_volume,
-                    target_volume=target_volume,
-                    candidate_count=candidate_attempts,
-                    predicate_mode=mode,
-                )
+            _append_unique(candidates, point, point_tolerance)
     uncertain = False
     triples = tuple(combinations(range(len(planes)), 3))
     triple_normals = np.asarray(
         [[planes[index].normal for index in indices] for indices in triples],
         dtype=np.float64,
     )
-    # det[n_i; n_j; n_k] is orient3d(0, n_i, n_j, n_k) on the constructed normals.
     triple_orientation = orient3d(
         np.zeros(3, dtype=np.float64),
         triple_normals[:, 0],
@@ -665,24 +585,8 @@ def intersect_tetrahedra(
             bool(triple_orientation.certain[triple_index]),
         )
         uncertain = uncertain or point_uncertain
-        if point is None:
-            continue
-        if _inside(point, planes, tolerance_, scale):
-            candidate_attempts += 1
-            if not _append_unique(
-                candidates, point, point_tolerance, limits_.max_candidates
-            ):
-                return _empty_result(
-                    TetraIntersectionStatus.CANDIDATE_LIMIT,
-                    source_id,
-                    target_id,
-                    pair_id,
-                    source_volume=source_volume,
-                    target_volume=target_volume,
-                    predicate_uncertain=uncertain,
-                    candidate_count=candidate_attempts,
-                    predicate_mode=mode,
-                )
+        if point is not None and _inside(point, planes, tolerance_, scale):
+            _append_unique(candidates, point, point_tolerance)
     if uncertain:
         return _empty_result(
             TetraIntersectionStatus.UNCERTAIN_PREDICATE,
@@ -692,7 +596,6 @@ def intersect_tetrahedra(
             source_volume=source_volume,
             target_volume=target_volume,
             predicate_uncertain=True,
-            candidate_count=candidate_attempts,
             predicate_mode=mode,
         )
     if not candidates:
@@ -703,36 +606,21 @@ def intersect_tetrahedra(
             pair_id,
             source_volume=source_volume,
             target_volume=target_volume,
-            candidate_count=candidate_attempts,
             predicate_mode=mode,
         )
     candidates.sort(key=lambda point: tuple(float(value) for value in point))
-    if len(candidates) > limits_.max_vertices:
-        return _empty_result(
-            TetraIntersectionStatus.CANDIDATE_LIMIT,
-            source_id,
-            target_id,
-            pair_id,
-            source_volume=source_volume,
-            target_volume=target_volume,
-            candidate_count=candidate_attempts,
-            predicate_mode=mode,
-        )
     vertices = np.asarray(candidates, dtype=np.float64)
     vertices.setflags(write=False)
-    faces, face_failure = _build_faces(
-        vertices, planes, tolerance_, scale, limits_.max_faces
-    )
+    faces, face_failure = _build_faces(vertices, planes, tolerance_, scale)
     if face_failure:
         return _empty_result(
-            TetraIntersectionStatus.CANDIDATE_LIMIT,
+            TetraIntersectionStatus.UNCERTAIN_PREDICATE,
             source_id,
             target_id,
             pair_id,
             source_volume=source_volume,
             target_volume=target_volume,
-            predicate_uncertain=False,
-            candidate_count=candidate_attempts,
+            predicate_uncertain=True,
             predicate_mode=mode,
         )
     volume, volume_error = _compensated_volume(vertices, faces)
@@ -755,7 +643,6 @@ def intersect_tetrahedra(
         target_id=target_id,
         pair_id=pair_id,
         evidence=TetraIntersectionEvidence(
-            candidate_count=candidate_attempts,
             vertex_count=len(vertices),
             face_count=len(faces),
             predicate_uncertain=False,
@@ -770,7 +657,6 @@ def intersect_tetrahedra(
 
 __all__ = [
     "TetraIntersectionEvidence",
-    "TetraIntersectionLimits",
     "TetraIntersectionResult",
     "TetraIntersectionStatus",
     "TetraIntersectionTolerance",

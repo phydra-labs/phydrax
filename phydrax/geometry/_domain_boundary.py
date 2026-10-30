@@ -1,0 +1,1216 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+"""Source-bound boundary queries and continuous chart coverage for MeshingDomain."""
+
+from __future__ import annotations
+
+import math
+from collections import Counter
+from fractions import Fraction
+from typing import final
+
+import equinox as eqx
+import jax.numpy as jnp
+import numpy as np
+from jax.typing import ArrayLike
+
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from .._validation import finite_real_scalar, positive_integer
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_payload,
+    coefficient_rounding_error,
+)
+from ..linalg._exact import determinant_exact
+from ..linalg._hermitian_spectral import fraction_sqrt_interval
+from ..typing import checked
+from ._embedding_state import MeshCertificateFinding
+from ._interval_enclosure import prepare_interval_function, PreparedIntervalFunction
+from ._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse
+from ._rational import fraction_down, fraction_endpoint, fraction_up, rational_vector
+from ._source_boundary_records import (
+    SourceBoundaryChartCover,
+    SourceBoundaryDistance,
+    SourceBoundarySamples,
+)
+from ._triangulation import ConstrainedDelaunayTriangulation
+from .brep._patches import AbstractSurfacePatch, ExactLineCurve, LineCurve
+
+
+_Point2 = tuple[Fraction, Fraction]
+_Triangle2 = tuple[_Point2, _Point2, _Point2]
+_Point3 = tuple[Fraction, Fraction, Fraction]
+_Triangle3 = tuple[_Point3, _Point3, _Point3]
+
+
+def _point2(values: tuple[object, ...], /) -> _Point2:
+    if len(values) != 2:
+        raise ValueError("An exact p-curve point must have two coordinates.")
+    first, second = values
+    if not isinstance(first, Fraction) or not isinstance(second, Fraction):
+        raise ValueError("An exact p-curve endpoint must be rational.")
+    return first, second
+
+
+def _point3(values: tuple[object, ...], /) -> _Point3:
+    if len(values) != 3:
+        raise ValueError("An exact boundary point must have three coordinates.")
+    first, second, third = values
+    if (
+        not isinstance(first, Fraction)
+        or not isinstance(second, Fraction)
+        or not isinstance(third, Fraction)
+    ):
+        raise ValueError("An exact boundary point must be rational.")
+    return first, second, third
+
+
+def _triangle3(values: tuple[tuple[object, ...], ...], /) -> _Triangle3:
+    if len(values) != 3:
+        raise ValueError("A source facet must be triangular.")
+    return (_point3(values[0]), _point3(values[1]), _point3(values[2]))
+
+
+def _has_exact_rational_surface_span_source(surface: AbstractSurfacePatch, /) -> bool:
+    from ._meshing_domain import _exact_rational_surface_spans
+
+    return _exact_rational_surface_spans(surface) is not None
+
+
+def _source_box_point_gap_upper(
+    surface: AbstractSurfacePatch,
+    parameters: _Point2,
+    realized: np.ndarray,
+    /,
+) -> Fraction:
+    domain = surface.parameter_domain
+    lower_values: list[float] = []
+    upper_values: list[float] = []
+    for axis, parameter in enumerate(parameters):
+        lower = fraction_down(parameter)
+        upper = fraction_up(parameter)
+        if lower == upper:
+            lower = float(np.nextafter(lower, -np.inf))
+            upper = float(np.nextafter(upper, np.inf))
+        if domain is not None:
+            domain_lower, domain_upper = domain[0][axis], domain[1][axis]
+            if np.isfinite(domain_lower):
+                exact_lower = Fraction.from_float(float(domain_lower))
+                if parameter < exact_lower:
+                    raise ValueError(
+                        "An exact source point lies below its source domain."
+                    )
+                lower = max(lower, float(domain_lower))
+            if np.isfinite(domain_upper):
+                exact_upper = Fraction.from_float(float(domain_upper))
+                if parameter > exact_upper:
+                    raise ValueError(
+                        "An exact source point lies above its source domain."
+                    )
+                upper = min(upper, float(domain_upper))
+        if (
+            not lower < upper
+            or Fraction.from_float(lower) > parameter
+            or Fraction.from_float(upper) < parameter
+        ):
+            raise ValueError("An exact source point has no finite parameter enclosure.")
+        lower_values.append(lower)
+        upper_values.append(upper)
+    parameter_box = np.asarray((lower_values, upper_values), dtype=np.float64)
+    source_box = np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
+    target = np.asarray(realized, dtype=np.float64)
+    if (
+        source_box.shape != (2, 3)
+        or not np.all(np.isfinite(source_box))
+        or np.any(source_box[0] > source_box[1])
+        or target.shape != (3,)
+        or not np.all(np.isfinite(target))
+    ):
+        raise ValueError(
+            "An exact surface source point has no finite ordered source box."
+        )
+    squared = Fraction(0)
+    for axis in range(3):
+        lower = Fraction.from_float(float(source_box[0, axis]))
+        upper = Fraction.from_float(float(source_box[1, axis]))
+        represented = Fraction.from_float(float(target[axis]))
+        coordinate_error = max(abs(lower - represented), abs(upper - represented))
+        squared += coordinate_error * coordinate_error
+    return fraction_sqrt_interval(squared)[1]
+
+
+def _cross2(
+    first: tuple[Fraction, Fraction],
+    second: tuple[Fraction, Fraction],
+    third: tuple[Fraction, Fraction],
+    /,
+) -> Fraction:
+    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+        third[0] - first[0]
+    )
+
+
+def _signed_area2(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
+    return sum(
+        (
+            first[0] * second[1] - second[0] * first[1]
+            for first, second in zip(points, (*points[1:], points[0]), strict=True)
+        ),
+        Fraction(0),
+    )
+
+
+def _inside_polygon(
+    point: tuple[Fraction, Fraction],
+    polygon: tuple[tuple[Fraction, Fraction], ...],
+    /,
+) -> bool:
+    inside = False
+    x, y = point
+    for first, second in zip(polygon, (*polygon[1:], polygon[0]), strict=True):
+        if (first[1] > y) != (second[1] > y):
+            crossing = first[0] + (y - first[1]) * (second[0] - first[0]) / (
+                second[1] - first[1]
+            )
+            if x < crossing:
+                inside = not inside
+    return inside
+
+
+def _inside_triangle(
+    point: tuple[Fraction, Fraction],
+    triangle: tuple[tuple[Fraction, Fraction], ...],
+    orientation: int,
+    /,
+) -> bool:
+    return all(
+        orientation * _cross2(first, second, point) >= 0
+        for first, second in zip(triangle, (*triangle[1:], triangle[0]), strict=True)
+    )
+
+
+def _hole_seed(
+    polygon: tuple[tuple[Fraction, Fraction], ...], /
+) -> tuple[Fraction, Fraction]:
+    signed = _signed_area2(polygon)
+    if signed == 0:
+        raise ValueError("A source trim hole has zero exact chart area.")
+    orientation = 1 if signed > 0 else -1
+    count = len(polygon)
+    for index in range(count):
+        triangle = (
+            polygon[(index - 1) % count],
+            polygon[index],
+            polygon[(index + 1) % count],
+        )
+        if orientation * _cross2(*triangle) <= 0:
+            continue
+        if any(
+            _inside_triangle(point, triangle, orientation)
+            for candidate, point in enumerate(polygon)
+            if candidate not in ((index - 1) % count, index, (index + 1) % count)
+        ):
+            continue
+        center = (
+            sum((point[0] for point in triangle), Fraction(0)) / 3,
+            sum((point[1] for point in triangle), Fraction(0)) / 3,
+        )
+        if _inside_polygon(center, polygon):
+            return center
+    raise ValueError("No exact interior point was found for a source trim hole.")
+
+
+def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Point2]:
+    if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
+        first_exact = _point2(
+            tuple(use.pcurve.evaluate_exact(Fraction.from_float(float(use.first))))
+        )
+        last_exact = _point2(
+            tuple(use.pcurve.evaluate_exact(Fraction.from_float(float(use.last))))
+        )
+        points: tuple[_Point2, _Point2] = (
+            (
+                Fraction.from_float(float(first_exact[0])),
+                Fraction.from_float(float(first_exact[1])),
+            ),
+            (
+                Fraction.from_float(float(last_exact[0])),
+                Fraction.from_float(float(last_exact[1])),
+            ),
+        )
+        if any(
+            represented != exact
+            for point, exact_point in zip(points, (first_exact, last_exact), strict=True)
+            for represented, exact in zip(point, exact_point, strict=True)
+        ):
+            raise ValueError(
+                "Source p-curve endpoints are not exactly represented in binary64."
+            )
+    else:
+        values = np.asarray(
+            use.pcurve.evaluate(jnp.asarray((use.first, use.last), dtype=jnp.float64)),
+            dtype=np.float64,
+        )
+        if values.shape != (2, 2) or np.any(~np.isfinite(values)):
+            raise ValueError("Source p-curve endpoints must be finite UV points.")
+        points = (
+            (
+                Fraction.from_float(float(values[0, 0])),
+                Fraction.from_float(float(values[0, 1])),
+            ),
+            (
+                Fraction.from_float(float(values[1, 0])),
+                Fraction.from_float(float(values[1, 1])),
+            ),
+        )
+    if use.sense < 0:
+        points = (points[1], points[0])
+    return points[0], points[1]
+
+
+def _patch_chart_polygon(
+    domain: MeshingDomain, patch: int, /
+) -> (
+    tuple[
+        tuple[_Point2, ...],
+        tuple[tuple[int, int], ...],
+        tuple[tuple[_Point2, ...], ...],
+    ]
+    | None
+):
+    points: list[tuple[Fraction, Fraction]] = []
+    segments: list[tuple[int, int]] = []
+    loops: list[tuple[tuple[Fraction, Fraction], ...]] = []
+    for loop in domain.patches[patch].loops:
+        if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
+            return None
+        loop_points: list[tuple[Fraction, Fraction]] = []
+        loop_start: tuple[Fraction, Fraction] | None = None
+        previous_end: tuple[Fraction, Fraction] | None = None
+        for use in loop:
+            first, last = _line_endpoints(use)
+            if loop_start is None:
+                loop_start = first
+            if previous_end is not None and previous_end != first:
+                raise ValueError(
+                    "Source trim loop is not an exact connected chart chain."
+                )
+            loop_points.append(first)
+            previous_end = last
+        if not loop_points or loop_start is None or previous_end != loop_start:
+            raise ValueError("Source trim loop does not close in its exact chart.")
+        offset = len(points)
+        segments.extend(
+            (offset + index, offset + (index + 1) % len(loop_points))
+            for index in range(len(loop_points))
+        )
+        points.extend(loop_points)
+        loops.append(tuple(loop_points))
+    if not loops:
+        return None
+    return tuple(points), tuple(segments), tuple(loops)
+
+
+def _trim_enclosure_triangles(
+    domain: MeshingDomain,
+    patch: int,
+    /,
+) -> tuple[_Triangle2, ...]:
+    """Triangulate continuous chart boxes enclosing curved trim-to-chord gaps."""
+    triangles: list[_Triangle2] = []
+    for loop in domain.patches[patch].loops:
+        for use in loop:
+            if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
+                continue
+            bounds = np.asarray(
+                use.pcurve.bounding_box(
+                    min(use.first, use.last), max(use.first, use.last)
+                ),
+                dtype=np.float64,
+            )
+            if (
+                bounds.shape != (2, 2)
+                or np.any(~np.isfinite(bounds))
+                or np.any(bounds[0] > bounds[1])
+            ):
+                raise ValueError(
+                    "Curved trim p-curve has no finite ordered interval enclosure."
+                )
+            lower = tuple(Fraction.from_float(float(value)) for value in bounds[0])
+            upper = tuple(Fraction.from_float(float(value)) for value in bounds[1])
+            if lower[0] == upper[0] or lower[1] == upper[1]:
+                continue
+            first = (lower[0], lower[1])
+            second = (upper[0], lower[1])
+            third = (upper[0], upper[1])
+            fourth = (lower[0], upper[1])
+            triangles.extend(((first, second, third), (first, third, fourth)))
+    return tuple(triangles)
+
+
+def _point_segment_squared(
+    point: tuple[Fraction, ...],
+    first: tuple[Fraction, ...],
+    second: tuple[Fraction, ...],
+    /,
+) -> Fraction:
+    direction = tuple(b - a for a, b in zip(first, second, strict=True))
+    length_squared = sum((value * value for value in direction), Fraction(0))
+    if not length_squared:
+        return sum(
+            ((value - a) ** 2 for value, a in zip(point, first, strict=True)), Fraction(0)
+        )
+    parameter = (
+        sum(
+            (
+                (value - a) * delta
+                for value, a, delta in zip(point, first, direction, strict=True)
+            ),
+            Fraction(0),
+        )
+        / length_squared
+    )
+    parameter = min(max(parameter, Fraction(0)), Fraction(1))
+    return sum(
+        (
+            (value - a - parameter * delta) ** 2
+            for value, a, delta in zip(point, first, direction, strict=True)
+        ),
+        Fraction(0),
+    )
+
+
+def _point_triangle_squared(
+    point: _Point3,
+    triangle: _Triangle3,
+    /,
+) -> Fraction:
+    origin = triangle[0]
+    first = (
+        triangle[1][0] - origin[0],
+        triangle[1][1] - origin[1],
+        triangle[1][2] - origin[2],
+    )
+    second = (
+        triangle[2][0] - origin[0],
+        triangle[2][1] - origin[1],
+        triangle[2][2] - origin[2],
+    )
+    relative = (
+        point[0] - origin[0],
+        point[1] - origin[1],
+        point[2] - origin[2],
+    )
+    gram = (
+        (
+            sum((a * a for a in first), Fraction(0)),
+            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0)),
+        ),
+        (
+            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0)),
+            sum((a * a for a in second), Fraction(0)),
+        ),
+    )
+    right = (
+        (sum((a * b for a, b in zip(first, relative, strict=True)), Fraction(0)),),
+        (sum((a * b for a, b in zip(second, relative, strict=True)), Fraction(0)),),
+    )
+    determinant = determinant_exact(gram)
+    if determinant:
+        from ..linalg._exact import solve_exact
+
+        solution = solve_exact(gram, right)
+        u, v = solution[0][0], solution[1][0]
+        if u >= 0 and v >= 0 and u + v <= 1:
+            residual = tuple(
+                relative[axis] - u * first[axis] - v * second[axis] for axis in range(3)
+            )
+            return sum((value * value for value in residual), Fraction(0))
+    return min(
+        _point_segment_squared(point, triangle[index], triangle[(index + 1) % 3])
+        for index in range(3)
+    )
+
+
+@final
+class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
+    """Bounded boundary queries over selected source patches and trims."""
+
+    domain: MeshingDomain
+    patches: tuple[int, ...] = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    source_scope_id: str = eqx.field(static=True)
+    resolution: int = eqx.field(static=True)
+    boundary_cell_ids: np.ndarray | None
+    boundary_patch_ids: np.ndarray | None
+    boundary_occurrences: np.ndarray | None
+
+    @checked
+    def __init__(
+        self,
+        domain: MeshingDomain,
+        patches: tuple[int, ...],
+        /,
+        *,
+        resolution: int = 48,
+        boundary_occurrences: ArrayLike | None = None,
+        boundary_cell_ids: ArrayLike | None = None,
+        boundary_patch_ids: ArrayLike | None = None,
+    ) -> None:
+        selected = tuple(sorted(set(int(value) for value in patches)))
+        if not selected or any(
+            value < 0 or value >= len(domain.patches) for value in selected
+        ):
+            raise ValueError(
+                "MeshingDomainBoundarySource.patches must select existing source patches."
+            )
+        resolution_ = positive_integer(resolution, "resolution")
+        supplied = (
+            boundary_occurrences is not None,
+            boundary_cell_ids is not None,
+            boundary_patch_ids is not None,
+        )
+        if any(supplied) and not all(supplied):
+            raise ValueError(
+                "Boundary occurrence ownership requires all three aligned arrays."
+            )
+        occurrences = cells = owners = None
+        if all(supplied):
+            cells = np.asarray(boundary_cell_ids, dtype=np.int64)
+            owners = np.asarray(boundary_patch_ids, dtype=np.int32)
+            occurrences = np.asarray(boundary_occurrences, dtype=np.int32)
+            if (
+                cells.ndim != 1
+                or owners.shape != cells.shape
+                or occurrences.shape != (cells.size, 3, 3)
+                or np.any(cells < 0)
+                or np.unique(cells).size != cells.size
+                or not np.all(np.isin(owners, selected))
+                or np.any(occurrences < 0)
+            ):
+                raise ValueError(
+                    "Boundary occurrence arrays must be aligned and source-owned."
+                )
+            cells = np.array(cells, copy=True)
+            owners = np.array(owners, copy=True)
+            occurrences = np.array(occurrences, copy=True)
+            for array in (cells, owners, occurrences):
+                array.setflags(write=False)
+        domain.require_current()
+        self.domain = domain
+        self.patches = selected
+        self.source_id = domain.source_id
+        self.source_revision = domain.source_revision
+        selected_entities = []
+        for entity_id in domain.scope_entity_ids(2):
+            stable_id = int(entity_id)
+            entity_key, occurrence_path = domain.source_entity_key_for_scope(2, stable_id)
+            row = domain.resolve_entity_id(2, entity_key, occurrence_path=occurrence_path)
+            if row in selected:
+                selected_entities.append((stable_id, entity_key, occurrence_path))
+        self.source_scope_id = canonical_fingerprint(
+            {
+                "kind": "meshing-domain-boundary-scope",
+                "domain": domain.domain_id,
+                "entity_set": domain.scope_entity_set_id(2),
+                "selected_entities": tuple(sorted(selected_entities)),
+            }
+        )
+        self.resolution = resolution_
+        self.boundary_occurrences = occurrences
+        self.boundary_cell_ids = cells
+        self.boundary_patch_ids = owners
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    def require_current(self) -> None:
+        self.domain.require_current(self.source_id, self.source_revision)
+
+    def boundary_parameter_triangles(
+        self, /
+    ) -> tuple[tuple[int, tuple[_Triangle2, ...]], ...]:
+        """Return the exact parameter triangles of the complete source trim cover."""
+        self.require_current()
+        result: list[tuple[int, tuple[_Triangle2, ...]]] = []
+        for patch in self.patches:
+            chart = _patch_chart_polygon(self.domain, patch)
+            if chart is None:
+                raise ValueError(
+                    "Source trim has no supported exact parameter triangulation."
+                )
+            uv_points, segments, loops = chart
+            if _signed_area2(loops[0]) <= 0 or any(
+                _signed_area2(loop) >= 0 for loop in loops[1:]
+            ):
+                raise ValueError(
+                    "Source trim loops do not have the required orientation."
+                )
+            hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
+            points = np.asarray(
+                [[float(value) for value in point] for point in uv_points],
+                dtype=np.float64,
+            )
+            segments_array = np.asarray(segments, dtype=np.int64)
+            holes = (
+                None
+                if not hole_seeds
+                else np.asarray(
+                    [[float(value) for value in point] for point in hole_seeds],
+                    dtype=np.float64,
+                )
+            )
+            triangulation = ConstrainedDelaunayTriangulation(
+                points,
+                segments_array,
+                holes=holes,
+                keep_convex_hull=False,
+            )
+            triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
+            if triangulation_points.shape != points.shape or not np.array_equal(
+                triangulation_points, points
+            ):
+                raise ValueError(
+                    "Exact source trim triangulation changed its parameter vertices."
+                )
+            triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
+            if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
+                raise ValueError("Source trim triangulation must return triangle rows.")
+            edge_counts: Counter[tuple[int, int]] = Counter()
+            triangle_area = Fraction(0)
+            exact_triangles: list[_Triangle2] = []
+            for triangle_row in range(triangle_rows.shape[0]):
+                indices = (
+                    int(triangle_rows[triangle_row, 0]),
+                    int(triangle_rows[triangle_row, 1]),
+                    int(triangle_rows[triangle_row, 2]),
+                )
+                values = (
+                    uv_points[indices[0]],
+                    uv_points[indices[1]],
+                    uv_points[indices[2]],
+                )
+                area = _cross2(values[0], values[1], values[2])
+                if area <= 0:
+                    raise ValueError(
+                        "Source parameter triangles must be positively oriented."
+                    )
+                triangle_area += area
+                exact_triangles.append(values)
+                for first, second in (
+                    (indices[0], indices[1]),
+                    (indices[1], indices[2]),
+                    (indices[2], indices[0]),
+                ):
+                    edge_counts[(min(first, second), max(first, second))] += 1
+            boundary = {edge for edge, count in edge_counts.items() if count == 1}
+            expected = {
+                (min(int(first), int(second)), max(int(first), int(second)))
+                for first, second in segments_array
+            }
+            source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
+            if boundary != expected or triangle_area != source_area:
+                raise ValueError(
+                    "Source parameter triangles do not cover the oriented trim chain."
+                )
+            result.append((patch, tuple(exact_triangles)))
+        return tuple(result)
+
+    def boundary_chart_cover(self, /) -> SourceBoundaryChartCover:
+        images: list[np.ndarray] = []
+        deviations: list[np.ndarray] = []
+        findings: list[MeshCertificateFinding] = []
+        restrictions: list[str] = []
+        complete = True
+        from ._source_interpolation import (
+            _exact_rational_span_interpolation_bounds,
+            _exact_surface_interpolation_bound,
+            _has_unexpanded_exact_surface_carrier,
+            exact_surface_coordinate_expressions,
+        )
+        from .brep._root_bindings import _source_coefficients_are_binary
+
+        for patch in self.patches:
+            surface = self.domain.patches[patch].surface
+            try:
+                exact_surface = exact_surface_coordinate_expressions(surface)
+            except (ArithmeticError, FloatingPointError, TypeError, ValueError):
+                exact_surface = None
+                exact_surface_failed = True
+            else:
+                exact_surface_failed = False
+
+            exact_span_source = False
+            if exact_surface is None and not exact_surface_failed:
+                try:
+                    exact_span_source = _has_exact_rational_surface_span_source(surface)
+                except (ArithmeticError, FloatingPointError, TypeError, ValueError):
+                    exact_span_source = False
+            if exact_surface is None and (
+                exact_surface_failed
+                or (
+                    not exact_span_source
+                    and (
+                        not _source_coefficients_are_binary(surface)
+                        or _has_unexpanded_exact_surface_carrier(surface)
+                    )
+                )
+            ):
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_surface_coefficients",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Exact surface coefficients require a registered source-bound continuous map.",
+                    )
+                )
+                continue
+            chart = _patch_chart_polygon(self.domain, patch)
+            if chart is None:
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_trim_coverage",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Nonlinear or collapsed trim chart requires a source-specific continuous cover.",
+                    )
+                )
+                continue
+            uv_points, segments, loops = chart
+            outer_sign = 1 if _signed_area2(loops[0]) > 0 else -1
+            if outer_sign < 0 or any(_signed_area2(loop) >= 0 for loop in loops[1:]):
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_trim_orientation",
+                        "violated",
+                        "source_facet",
+                        (patch,),
+                        detail="Source trim loops must be outer counterclockwise and holes clockwise.",
+                    )
+                )
+                complete = False
+                continue
+            hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
+            points = np.asarray(
+                [[float(value) for value in point] for point in uv_points],
+                dtype=np.float64,
+            )
+            segments_array = np.asarray(segments, dtype=np.int64)
+            holes = (
+                None
+                if not hole_seeds
+                else np.asarray(
+                    [[float(value) for value in point] for point in hole_seeds],
+                    dtype=np.float64,
+                )
+            )
+            triangulation = ConstrainedDelaunayTriangulation(
+                points,
+                segments_array,
+                holes=holes,
+                keep_convex_hull=False,
+            )
+            triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
+            if triangulation_points.shape != points.shape or not np.array_equal(
+                triangulation_points, points
+            ):
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_trim_triangulation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Triangulation introduced or moved a chart vertex outside the exact trim vertex table.",
+                    )
+                )
+                continue
+            triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
+            if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_trim_triangulation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Constrained source triangulation did not return triangular rows.",
+                    )
+                )
+                continue
+            edge_counts: Counter[tuple[int, int]] = Counter()
+            for triangle_row in range(triangle_rows.shape[0]):
+                indices = (
+                    int(triangle_rows[triangle_row, 0]),
+                    int(triangle_rows[triangle_row, 1]),
+                    int(triangle_rows[triangle_row, 2]),
+                )
+                for first, second in (
+                    (indices[0], indices[1]),
+                    (indices[1], indices[2]),
+                    (indices[2], indices[0]),
+                ):
+                    edge_counts[(min(first, second), max(first, second))] += 1
+            boundary = {edge for edge, count in edge_counts.items() if count == 1}
+            expected = {
+                (min(int(first), int(second)), max(int(first), int(second)))
+                for first, second in segments_array
+            }
+            triangle_area = Fraction(0)
+            for triangle_row in range(triangle_rows.shape[0]):
+                values = (
+                    uv_points[int(triangle_rows[triangle_row, 0])],
+                    uv_points[int(triangle_rows[triangle_row, 1])],
+                    uv_points[int(triangle_rows[triangle_row, 2])],
+                )
+                area = _cross2(values[0], values[1], values[2])
+                if area <= 0:
+                    raise ValueError(
+                        "Constrained source chart triangles must have positive orientation."
+                    )
+                triangle_area += area
+            source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
+            if boundary != expected or triangle_area != source_area:
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_trim_coverage",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Constrained triangulation did not reproduce the complete oriented trim chain and measure.",
+                    )
+                )
+                continue
+            exact_charts = tuple(
+                (
+                    uv_points[int(triangle_rows[row, 0])],
+                    uv_points[int(triangle_rows[row, 1])],
+                    uv_points[int(triangle_rows[row, 2])],
+                )
+                for row in range(triangle_rows.shape[0])
+            ) + _trim_enclosure_triangles(self.domain, patch)
+            uv_triangles = np.asarray(
+                [
+                    [[float(value) for value in point] for point in triangle]
+                    for triangle in exact_charts
+                ],
+                dtype=np.float64,
+            )
+            patch_rows = np.full((len(exact_charts) * 3,), patch, dtype=np.int64)
+            physical = self.domain.evaluate(
+                patch_rows, uv_triangles.reshape((-1, 2))
+            ).reshape((-1, 3, 3))
+            if exact_surface is None:
+                try:
+                    if exact_span_source:
+                        interpolation = _exact_rational_span_interpolation_bounds(
+                            surface, exact_charts
+                        )
+                    else:
+                        interpolation = self.domain.interpolation_bounds(
+                            patch, uv_triangles
+                        )
+                    if exact_span_source:
+                        if interpolation.shape != (len(exact_charts),) or not np.all(
+                            np.isfinite(interpolation)
+                        ):
+                            raise NotImplementedError(
+                                "Exact rational spans did not provide finite interpolation bounds."
+                            )
+                        for row, exact_chart in enumerate(exact_charts):
+                            endpoint_error = max(
+                                _source_box_point_gap_upper(
+                                    surface, exact_point, physical[row, corner]
+                                )
+                                for corner, exact_point in enumerate(exact_chart)
+                            )
+                            interpolation[row] = fraction_endpoint(
+                                Fraction.from_float(float(interpolation[row]))
+                                + endpoint_error,
+                                upper=True,
+                                saturate=True,
+                            )
+                except (
+                    ArithmeticError,
+                    FloatingPointError,
+                    NotImplementedError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    complete = False
+                    findings.append(
+                        MeshCertificateFinding(
+                            "source_surface_interpolation",
+                            "unresolved",
+                            "source_facet",
+                            (patch,),
+                            detail=f"Exact source chart interpolation is unavailable: {error}",
+                        )
+                    )
+                    continue
+            else:
+                from ..discretization._coordinate_enclosure import evaluate_expression
+
+                interpolation = np.empty((len(exact_charts),), dtype=np.float64)
+                try:
+                    for row, exact_chart in enumerate(exact_charts):
+                        exact_corners = tuple(
+                            tuple(
+                                evaluate_expression(expression, point)
+                                for expression in exact_surface
+                            )
+                            for point in exact_chart
+                        )
+                        endpoint_error = Fraction(0)
+                        for exact_corner, realized_corner in zip(
+                            exact_corners, physical[row], strict=True
+                        ):
+                            component_errors = tuple(
+                                coefficient_rounding_error(
+                                    exact_value, float(realized_value)
+                                )
+                                for exact_value, realized_value in zip(
+                                    exact_corner, realized_corner, strict=True
+                                )
+                            )
+                            endpoint_error = max(
+                                endpoint_error,
+                                fraction_sqrt_interval(
+                                    sum(
+                                        (value * value for value in component_errors),
+                                        Fraction(0),
+                                    )
+                                )[1],
+                            )
+                        interpolation_bound = _exact_surface_interpolation_bound(
+                            exact_surface, exact_chart
+                        )
+                        interpolation[row] = (
+                            math.inf
+                            if not math.isfinite(interpolation_bound)
+                            else fraction_endpoint(
+                                Fraction.from_float(interpolation_bound) + endpoint_error,
+                                upper=True,
+                                saturate=True,
+                            )
+                        )
+                except (
+                    ArithmeticError,
+                    FloatingPointError,
+                    NotImplementedError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    complete = False
+                    findings.append(
+                        MeshCertificateFinding(
+                            "source_surface_interpolation",
+                            "unresolved",
+                            "source_facet",
+                            (patch,),
+                            detail=f"Exact source chart interpolation is unavailable: {error}",
+                        )
+                    )
+                    continue
+            images.append(physical)
+            deviations.append(interpolation)
+            restrictions.append(
+                canonical_fingerprint(
+                    {
+                        "source_revision": self.source_revision,
+                        "patch": self.domain.entity_id(2, patch),
+                        "uv_vertices": tuple(
+                            tuple(coefficient_payload(value) for value in point)
+                            for point in uv_points
+                        ),
+                        "uv_triangles": array_tree_fingerprint(uv_triangles),
+                    }
+                )
+            )
+        simplices = (
+            np.concatenate(images) if images else np.empty((0, 3, 3), dtype=np.float64)
+        )
+        bounds = (
+            np.concatenate(deviations) if deviations else np.empty((0,), dtype=np.float64)
+        )
+        semantics = (
+            "certified"
+            if complete
+            and self.domain.accuracy in ("exact_represented", "certified_enclosure")
+            else "sampled"
+        )
+        return SourceBoundaryChartCover(
+            simplices,
+            bounds,
+            semantics,
+            complete,
+            self.source_id,
+            self.source_revision,
+            findings=tuple(findings),
+            restriction_ids=tuple(restrictions),
+        )
+
+    def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
+        """Return a complete physical-radius cover of the selected source patches."""
+        if isinstance(maximum_radius, (bool, np.bool_)):
+            raise TypeError(
+                "maximum_radius must be a finite nonnegative physical distance."
+            )
+        requested = finite_real_scalar(maximum_radius, "maximum_radius")
+        if requested < 0.0:
+            raise ValueError("maximum_radius must be nonnegative.")
+        requested_exact = Fraction.from_float(requested)
+        self.require_current()
+        try:
+            parameter_patches = self.boundary_parameter_triangles()
+        except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+            return SourceBoundarySamples(
+                np.empty((0, 3), dtype=np.float64),
+                np.empty((0,), dtype=np.float64),
+                np.empty((0,), dtype=np.float64),
+                "sampled",
+                complete=False,
+            )
+
+        points: list[np.ndarray] = []
+        covering_radii: list[float] = []
+        point_errors: list[float] = []
+        complete = True
+        semantics = (
+            "certified"
+            if self.domain.accuracy in ("exact_represented", "certified_enclosure")
+            else "sampled"
+        )
+
+        def sample_point(
+            patch: int,
+            evaluator: PreparedIntervalFunction,
+            parameter: _Point2,
+            /,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Fraction]:
+            chart = np.asarray([[float(value) for value in parameter]], dtype=np.float64)
+            sample = np.asarray(
+                self.domain.evaluate(np.asarray([patch], dtype=np.int64), chart)[0],
+                dtype=np.float64,
+            )
+            lower_chart = np.asarray(
+                [[fraction_down(value) for value in parameter]], dtype=np.float64
+            )
+            upper_chart = np.asarray(
+                [[fraction_up(value) for value in parameter]], dtype=np.float64
+            )
+            lower, upper = evaluator.evaluate(lower_chart, upper_chart)
+            low = np.asarray(lower[0], dtype=np.float64)
+            high = np.asarray(upper[0], dtype=np.float64)
+            if (
+                sample.shape != (3,)
+                or low.shape != (3,)
+                or high.shape != (3,)
+                or not np.all(np.isfinite(sample))
+                or not np.all(np.isfinite(low))
+                or not np.all(np.isfinite(high))
+                or np.any(low > sample)
+                or np.any(sample > high)
+            ):
+                raise ArithmeticError(
+                    "Source point has no finite enclosing representative."
+                )
+            squared = sum(
+                (
+                    max(
+                        abs(
+                            Fraction.from_float(float(sample[axis]))
+                            - Fraction.from_float(float(low[axis]))
+                        ),
+                        abs(
+                            Fraction.from_float(float(high[axis]))
+                            - Fraction.from_float(float(sample[axis]))
+                        ),
+                    )
+                    ** 2
+                    for axis in range(3)
+                ),
+                Fraction(0),
+            )
+            error = fraction_sqrt_interval(squared)[1]
+            return sample, low, high, error
+
+        def split_triangle(
+            triangle: _Triangle2, /
+        ) -> tuple[_Triangle2, _Triangle2, _Triangle2, _Triangle2]:
+            first, second, third = triangle
+            middle_first_second = (
+                (first[0] + second[0]) / 2,
+                (first[1] + second[1]) / 2,
+            )
+            middle_second_third = (
+                (second[0] + third[0]) / 2,
+                (second[1] + third[1]) / 2,
+            )
+            middle_third_first = (
+                (third[0] + first[0]) / 2,
+                (third[1] + first[1]) / 2,
+            )
+            return (
+                (first, middle_first_second, middle_third_first),
+                (middle_first_second, second, middle_second_third),
+                (middle_third_first, middle_second_third, third),
+                (middle_first_second, middle_second_third, middle_third_first),
+            )
+
+        from .brep._root_bindings import _source_coefficients_are_binary
+
+        for patch, source_triangles in parameter_patches:
+            surface = self.domain.patches[patch].surface
+            if not _source_coefficients_are_binary(surface):
+                complete = False
+                continue
+            try:
+                evaluator = prepare_interval_function(surface.evaluate, 2)
+            except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+                complete = False
+                continue
+            pending = list(reversed(source_triangles))
+            while pending:
+                triangle = pending.pop()
+                try:
+                    vertex_data = tuple(
+                        sample_point(patch, evaluator, parameter)
+                        for parameter in triangle
+                    )
+                    center_parameter = (
+                        sum((point[0] for point in triangle), Fraction(0)) / 3,
+                        sum((point[1] for point in triangle), Fraction(0)) / 3,
+                    )
+                    center, center_lower, center_upper, point_error = sample_point(
+                        patch, evaluator, center_parameter
+                    )
+                    chart_lower = tuple(
+                        fraction_down(min(point[axis] for point in triangle))
+                        for axis in range(2)
+                    )
+                    chart_upper = tuple(
+                        fraction_up(max(point[axis] for point in triangle))
+                        for axis in range(2)
+                    )
+                    interval_cell = np.asarray(
+                        [
+                            [
+                                chart_lower,
+                                (chart_upper[0], chart_lower[1]),
+                                chart_upper,
+                                (chart_lower[0], chart_upper[1]),
+                            ]
+                        ],
+                        dtype=np.float64,
+                    )
+                    deviation_value = float(
+                        self.domain.interpolation_bounds(patch, interval_cell)[0]
+                    )
+                except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+                    complete = False
+                    continue
+                if not math.isfinite(deviation_value) or deviation_value < 0.0:
+                    complete = False
+                    continue
+                deviation = Fraction.from_float(deviation_value)
+                maximum_corner_error = max(data[3] for data in vertex_data)
+                corner_distances = []
+                for sample, _lower, _upper, _error in vertex_data:
+                    squared = Fraction(0)
+                    for axis in range(3):
+                        value = Fraction.from_float(float(sample[axis]))
+                        lower = Fraction.from_float(float(center_lower[axis]))
+                        upper = Fraction.from_float(float(center_upper[axis]))
+                        gap = max(lower - value, Fraction(0), value - upper)
+                        squared += gap * gap
+                    corner_distances.append(fraction_sqrt_interval(squared)[1])
+                radius = max(corner_distances) + maximum_corner_error + deviation
+                if radius <= requested_exact:
+                    points.append(center)
+                    covering_radii.append(fraction_up(radius))
+                    point_errors.append(fraction_up(point_error))
+                    continue
+                children = split_triangle(triangle)
+                midpoints = tuple(
+                    tuple(float(value) for value in point)
+                    for point in (
+                        tuple(
+                            (triangle[0][axis] + triangle[1][axis]) / 2
+                            for axis in range(2)
+                        ),
+                        tuple(
+                            (triangle[1][axis] + triangle[2][axis]) / 2
+                            for axis in range(2)
+                        ),
+                        tuple(
+                            (triangle[2][axis] + triangle[0][axis]) / 2
+                            for axis in range(2)
+                        ),
+                    )
+                )
+                vertices = tuple(
+                    tuple(float(value) for value in point) for point in triangle
+                )
+                if (
+                    any(
+                        midpoint == vertex
+                        for midpoint in midpoints
+                        for vertex in vertices
+                    )
+                    or len(set(midpoints)) != 3
+                ):
+                    complete = False
+                    continue
+                pending.extend(reversed(children))
+
+        return SourceBoundarySamples(
+            np.asarray(points, dtype=np.float64).reshape((-1, 3)),
+            np.asarray(covering_radii, dtype=np.float64),
+            np.asarray(point_errors, dtype=np.float64),
+            semantics if complete else "sampled",
+            complete=complete,
+        )
+
+    def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
+        queries = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+        if not np.all(np.isfinite(queries)):
+            raise ValueError("boundary_distance points must be finite.")
+        cover = self.boundary_chart_cover()
+        if not cover.complete or cover.simplices.shape[0] == 0:
+            return SourceBoundaryDistance(
+                np.zeros((queries.shape[0],), dtype=np.float64),
+                np.full((queries.shape[0],), np.inf, dtype=np.float64),
+                "sampled",
+            )
+        lower = np.empty((queries.shape[0],), dtype=np.float64)
+        upper = np.empty_like(lower)
+        exact_triangles: tuple[_Triangle3, ...] = tuple(
+            _triangle3(tuple(rational_vector(row) for row in triangle))
+            for triangle in cover.simplices
+        )
+        deviations = tuple(Fraction(float(value)) for value in cover.deviation_bounds)
+        for row, query in enumerate(queries):
+            exact_query = _point3(rational_vector(query))
+            low_bounds: list[Fraction] = []
+            high_bounds = []
+            for triangle, deviation in zip(exact_triangles, deviations, strict=True):
+                squared = _point_triangle_squared(exact_query, triangle)
+                root = fraction_sqrt_interval(squared)
+                low_bounds.append(max(Fraction(0), root[0] - deviation))
+                high_bounds.append(root[1] + deviation)
+            lower[row] = fraction_endpoint(min(low_bounds), upper=False, saturate=True)
+            upper[row] = fraction_endpoint(min(high_bounds), upper=True, saturate=True)
+        return SourceBoundaryDistance(lower, upper, cover.semantics)
+
+
+__all__ = ["MeshingDomainBoundarySource"]

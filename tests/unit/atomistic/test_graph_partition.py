@@ -135,7 +135,7 @@ def _role(
     return AtomisticDomainRolePlan(
         required,
         PeriodicCell(cell).image_stencil(
-            required.bounded_cutoff() + SKIN + stencil_margin, maximum_image_count=4096
+            required.bounded_cutoff() + SKIN + stencil_margin
         ),
         streaming=StreamedRelationPlan(
             receiver_tile=4, edge_tile=32, channel_capacity=channel_capacity

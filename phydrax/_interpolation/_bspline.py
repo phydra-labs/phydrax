@@ -17,6 +17,21 @@ from jax.typing import ArrayLike
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ..typing import parse
+from ._bspline_extraction import (
+    bezier_refinement,
+    exact_bezier_refinement,
+    rational_bspline_curve_continuity,
+    rational_bspline_curve_spans,
+    rational_bspline_surface_spans,
+    RationalBSplineCurveContinuity,
+    RationalBSplineCurveContinuityReport,
+    RationalBSplineCurveFloatEnclosure,
+    RationalBSplineCurveSpan,
+    RationalBSplineCurveSpanEnclosure,
+    RationalBSplineSurfaceSpan,
+    RationalBSplineSurfaceSpanEnclosure,
+    tensor_bspline_span_extraction,
+)
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import BoundsMode, InterpolationResult
 
@@ -506,8 +521,21 @@ def bspline_batched_evaluate(
 
 __all__ = [
     "BSplineJetStencil",
+    "bezier_refinement",
     "bspline_batched_evaluate",
     "bspline_evaluate",
     "bspline_jet_stencil",
     "bspline_stencil",
+    "exact_bezier_refinement",
+    "rational_bspline_curve_continuity",
+    "rational_bspline_curve_spans",
+    "rational_bspline_surface_spans",
+    "RationalBSplineSurfaceSpan",
+    "RationalBSplineSurfaceSpanEnclosure",
+    "RationalBSplineCurveContinuity",
+    "RationalBSplineCurveContinuityReport",
+    "RationalBSplineCurveFloatEnclosure",
+    "RationalBSplineCurveSpan",
+    "RationalBSplineCurveSpanEnclosure",
+    "tensor_bspline_span_extraction",
 ]

@@ -2,41 +2,30 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Compiled fixed-capacity planar metric adaptation (``DEVICE_METRIC_2D``).
+"""Compiled planar metric adaptation (``DEVICE_METRIC_2D``).
 
-`prepare_device_metric_adaptation` binds one certified planar triangle source and
-its vertex metric to a fixed-capacity device state: vertex and cell slots of the
-`AdaptiveSimplexPolicy` capacity bucket in global-ID order, the organization
-classification of the host route (per-half-edge feature classes, protection,
-fixed vertices, cell regions), and the lineage the host edit assembly consumes
-(vertex collapse targets and relocation marks, edge-lineage records, and the
-cell-to-source-cell ancestry pairs).
+The compiled route performs true SPD-metric edge splits, admissible collapses,
+quality-improving flips, and relocation with filtered device predicates and
+deterministic cavity-independent batches. It continues passes until the unit
+mesh is reached, a full pass makes no change, or a real geometry/status failure
+occurs. Static slot and vertex-star workspaces grow at host barriers and retry
+the unchanged operation; they never truncate scientific candidates.
 
-`adapt_device_metric` is one module-level compiled entry point per layout. It
-runs up to ``maximum_passes`` of the host metric passes (edge splits, collapses,
-flips, then vertex relocation) without leaving the device: every candidate is
-evaluated at once with FILTERED_DEVICE predicates, a deterministic maximal set
-of operations with disjoint cavities is selected by unique static priorities in
-bounded rounds of local minima, and the selection is applied in one vectorized
-scatter with prefix-sum slot allocation. IDs and vertex slots are never reused
-inside the epoch; replaced cell slots are packed in order before each topology
-round, so slot order stays (provisional) ID order. An operation whose predicate
-is uncertain is not applied and the call reports NEEDS_HOST_RESOLUTION; an
-operation whose vertex ball exceeds the static cavity width is not evaluated and
-is counted. Capacity overflow or a certified invalid cell fails the whole call:
-every array is rolled back, but the terminal flag is recorded in the state's
-cumulative status, and every later call on that state is refused on device.
+`prepare_device_metric_adaptation` binds a certified planar source, its metric,
+protected strata, organization, and lineage workspace. Target construction,
+accepted geometry, lineage, transfer, and certification remain with the
+canonical host acceptance owner.
 
-`commit_device_metric_adaptation` performs one device-to-host transfer,
-reconstructs the host working state, and assembles the target through the host
-edit assembly, so target IDs, lineage relations, the vertex stencil, and the P1
-transfer follow the conventions of ``NATIVE_METRIC_2D``.
+`commit_device_metric_adaptation` performs one device-to-host transfer and
+assembles through the canonical host acceptance path.
 """
 
 from __future__ import annotations
 
 import math
 import time
+from collections import defaultdict
+from fractions import Fraction
 from typing import Any, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
@@ -87,11 +76,9 @@ from ._local_metric import (
     _lookup,
     _LOWER,
     _measured,
-    _PHASE_ROUNDS,
+    _periodic_state_context,
     _REFINED,
     _RELOCATED,
-    _RELOCATION_STEPS,
-    _SELECTION_ROUNDS,
     _Source,
     _State,
     _SWAPPED,
@@ -115,9 +102,6 @@ if TYPE_CHECKING:
     from ._result import CellMeshingResult
 
 
-# Static cavity width: incident cells of one vertex ball evaluated by a collapse
-# or relocation. Larger balls are not evaluated (``rejected_cavity``).
-_BALL_WIDTH = 16
 # Edge-lineage records per (vertex + cell) slot: a planar triangulation has at
 # most V + C edges; merged collapse records rarely exceed that bound.
 _RECORDS_PER_SLOT = 2
@@ -132,10 +116,17 @@ _RANK_SENTINEL = np.iinfo(np.int32).max
 _NEXT = np.asarray((1, 2, 0), dtype=np.int32)
 _PREVIOUS = np.asarray((2, 0, 1), dtype=np.int32)
 
-# cursors: allocated vertex/cell slots, live records/pairs, next provisional IDs.
-_VERTICES, _CELLS, _RECORDS, _PAIRS, _NEXT_VERTEX, _NEXT_CELL = range(6)
-# controls: pass bound and the enabled phases.
-_MAXIMUM_PASSES, _TOPOLOGY, _RELOCATION = range(3)
+# cursors: allocated slots, live records/pairs, and next lifted/quotient IDs.
+(
+    _VERTICES,
+    _CELLS,
+    _RECORDS,
+    _PAIRS,
+    _NEXT_VERTEX,
+    _NEXT_CELL,
+    _NEXT_QUOTIENT_VERTEX,
+) = range(7)
+_TOPOLOGY, _RELOCATION = range(2)
 # counters: totals since preparation.
 (
     _PASSES,
@@ -156,13 +147,10 @@ _STATUS, _CONVERGED, _STALLED = range(3)
 
 @final
 class DeviceMetricLayout(StrictModule, NonTrainableState):
-    """Static compile identity of one device metric adaptation capacity bucket.
+    """Static workspace identity, including the exact current orbit width.
 
-    Vertex and cell capacities come from `AdaptiveSimplexPolicy.capacities`; the
-    edge-lineage records hold ``2 (V + C)`` entries, the cell ancestry
-    ``8 C`` (cell, source cell) pairs, and every vertex cavity at most
-    ``ball_width`` cells. Every field is static: `adapt_device_metric` compiles
-    once per layout, never per source topology, pass, or adaptation cycle.
+    Slot and orbit workspaces are host-prepared from represented topology and
+    grow only when an actual finite workset requires more storage.
     """
 
     vertex_capacity: int = eqx.field(static=True)
@@ -170,17 +158,28 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
     record_capacity: int = eqx.field(static=True)
     ancestry_capacity: int = eqx.field(static=True)
     ball_width: int = eqx.field(static=True)
+    periodic_orbit_width: int = eqx.field(static=True)
     mesh_signature_id: str = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
-    def __init__(self, *, vertex_capacity: int, cell_capacity: int) -> None:
+    def __init__(
+        self,
+        *,
+        vertex_capacity: int,
+        cell_capacity: int,
+        ball_width: int,
+        periodic_orbit_width: int = 1,
+    ) -> None:
         vertices = _count(vertex_capacity, "vertex_capacity")
         cells = _count(cell_capacity, "cell_capacity")
         records = _RECORDS_PER_SLOT * (vertices + cells)
         pairs = _PAIRS_PER_CELL * cells
-        steps = 1 + _RELOCATION_STEPS.size
-        if max(vertices * steps, 6 * cells, 2 * records, 2 * pairs) > _INDEX_LIMIT:
+        if max(2 * vertices, 6 * cells, 2 * records, 2 * pairs) > _INDEX_LIMIT:
             raise ValueError("Device metric capacities must address int32 slots.")
+        width = _count(ball_width, "ball_width")
+        if width > cells:
+            raise ValueError("ball_width cannot exceed the cell capacity.")
+        orbit_width = _count(periodic_orbit_width, "periodic_orbit_width")
         mesh_signature = masked_simplex_signature(
             "triangle", 2, vertices, cells, np.dtype(np.float64)
         )
@@ -188,7 +187,8 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
         self.cell_capacity = cells
         self.record_capacity = records
         self.ancestry_capacity = pairs
-        self.ball_width = _BALL_WIDTH
+        self.ball_width = width
+        self.periodic_orbit_width = orbit_width
         self.mesh_signature_id = mesh_signature
         self.signature_id = canonical_fingerprint(
             {
@@ -196,34 +196,25 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
                 "mesh": mesh_signature,
                 "record_capacity": records,
                 "ancestry_capacity": pairs,
-                "ball_width": _BALL_WIDTH,
+                "ball_width": width,
+                "periodic_orbit_width": orbit_width,
             }
         )
 
 
 @final
 class DeviceMetricState(StrictModule, NonTrainableState):
-    """Dynamic arrays of one fixed-capacity device metric adaptation epoch.
-
-    ``mesh`` is the solver-visible masked layout (vertex and cell slot order is
-    global-ID order; vertices and cells created on device carry provisional IDs
-    that the commit reissues). Per vertex slot: the SPD ``metric``, the source
-    vertex row (``-1`` when created), the host ``fixed`` classification, whether
-    it was relocated, and the surviving slot it collapsed into (``-1`` while
-    alive). Per cell slot: region, source block, lineage rank (refined <
-    relocated < swapped < collapsed), and the feature class and protection of
-    the edge opposite each local vertex (equal on both halves of an edge).
-    ``record_*`` are the live edge-lineage records
-    (vertex-slot key, source edge row, rank), ``ancestry`` the sorted
-    (cell slot, source cell row) pairs padded by ``(C, 0)``. ``cursors`` hold the
-    allocated vertex/cell slots, live record/pair counts and the next provisional
-    vertex/cell IDs; ``controls`` the pass bound and enabled phases; ``counters``
-    the operation and rejection totals since preparation; ``flags`` the
-    cumulative status flags (`status_flags`) and the convergence and stall of
-    the last call.
-    """
+    """Device epoch arrays plus exact source-bound periodic orbit worksets."""
 
     mesh: MaskedSimplexMesh
+    layout_signature_id: str = eqx.field(static=True)
+    ball_width: int = eqx.field(static=True)
+    periodic_enabled: bool = eqx.field(static=True)
+    periodic_mesh_id: str = eqx.field(static=True)
+    periodic_source_mesh_id: str = eqx.field(static=True)
+    periodic_source_topology_id: str = eqx.field(static=True)
+    periodic_source_lifted_topology_id: str = eqx.field(static=True)
+    periodic_source_topology_id_binding: str = eqx.field(static=True)
     metric: Array
     source_rows: Array
     vertex_fixed: Array
@@ -238,6 +229,15 @@ class DeviceMetricState(StrictModule, NonTrainableState):
     record_sources: Array
     record_ranks: Array
     ancestry: Array
+    periodic_vertex_orbits: Array
+    periodic_vertex_representative: Array
+    periodic_vertex_members: Array
+    periodic_edge_orbits: Array
+    periodic_edge_representative: Array
+    periodic_edge_start: Array
+    periodic_edge_end: Array
+    periodic_edge_members: Array
+    periodic_cell_orbits: Array
     cursors: Array
     controls: Array
     counters: Array
@@ -249,6 +249,8 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         mesh: MaskedSimplexMesh,
         /,
         *,
+        layout_signature_id: str,
+        ball_width: int,
         metric: ArrayLike,
         source_rows: ArrayLike,
         vertex_fixed: ArrayLike,
@@ -263,14 +265,52 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         record_sources: ArrayLike,
         record_ranks: ArrayLike,
         ancestry: ArrayLike,
+        periodic_vertex_orbits: ArrayLike,
+        periodic_vertex_representative: ArrayLike,
+        periodic_vertex_members: ArrayLike,
+        periodic_edge_orbits: ArrayLike,
+        periodic_edge_representative: ArrayLike,
+        periodic_edge_start: ArrayLike,
+        periodic_edge_end: ArrayLike,
+        periodic_edge_members: ArrayLike,
+        periodic_cell_orbits: ArrayLike,
         cursors: ArrayLike,
         controls: ArrayLike,
         counters: ArrayLike,
         flags: ArrayLike,
+        periodic_enabled: bool = False,
+        periodic_mesh_id: str = "",
+        periodic_source_mesh_id: str = "",
+        periodic_source_topology_id: str = "",
+        periodic_source_lifted_topology_id: str = "",
+        periodic_source_topology_id_binding: str = "",
     ) -> None:
         if mesh.cell_kind != "triangle" or mesh.ambient_dimension != 2:
             raise ValueError("Device metric adaptation holds planar triangle meshes.")
+        if not isinstance(layout_signature_id, str) or not layout_signature_id:
+            raise ValueError("layout_signature_id must be nonempty.")
+        if not isinstance(periodic_enabled, bool):
+            raise TypeError("periodic_enabled must be bool.")
+        identity = (
+            periodic_source_mesh_id,
+            periodic_source_topology_id,
+            periodic_source_lifted_topology_id,
+            periodic_source_topology_id_binding,
+        )
+        if any(not isinstance(value, str) for value in identity):
+            raise TypeError("Periodic source bindings must be strings.")
+        if periodic_enabled != all(identity):
+            raise ValueError(
+                "Periodic device source identity is incomplete or unexpected."
+            )
+        width = _count(ball_width, "ball_width")
         vertices, cells = mesh.vertex_capacity, mesh.cell_capacity
+        if width > cells:
+            raise ValueError("ball_width cannot exceed the cell capacity.")
+        orbit_width = _count(
+            int(jnp.asarray(periodic_vertex_members).shape[1]),
+            "periodic_orbit_width",
+        )
         records = jnp.asarray(record_keys).shape[0]
         pairs = jnp.asarray(ancestry).shape[0]
         specification = {
@@ -288,8 +328,53 @@ class DeviceMetricState(StrictModule, NonTrainableState):
             "record_sources": (record_sources, (records,), jnp.int32),
             "record_ranks": (record_ranks, (records,), jnp.int32),
             "ancestry": (ancestry, (pairs, 2), jnp.int32),
-            "cursors": (cursors, (6,), jnp.int64),
-            "controls": (controls, (3,), jnp.int32),
+            "periodic_vertex_orbits": (
+                periodic_vertex_orbits,
+                (vertices,),
+                jnp.int64,
+            ),
+            "periodic_vertex_representative": (
+                periodic_vertex_representative,
+                (vertices,),
+                jnp.int32,
+            ),
+            "periodic_vertex_members": (
+                periodic_vertex_members,
+                (vertices, orbit_width),
+                jnp.int32,
+            ),
+            "periodic_edge_orbits": (
+                periodic_edge_orbits,
+                (3 * cells,),
+                jnp.int64,
+            ),
+            "periodic_edge_representative": (
+                periodic_edge_representative,
+                (3 * cells,),
+                jnp.int32,
+            ),
+            "periodic_edge_start": (
+                periodic_edge_start,
+                (3 * cells,),
+                jnp.int32,
+            ),
+            "periodic_edge_end": (
+                periodic_edge_end,
+                (3 * cells,),
+                jnp.int32,
+            ),
+            "periodic_edge_members": (
+                periodic_edge_members,
+                (3 * cells, orbit_width),
+                jnp.int32,
+            ),
+            "periodic_cell_orbits": (
+                periodic_cell_orbits,
+                (cells,),
+                jnp.int64,
+            ),
+            "cursors": (cursors, (7,), jnp.int64),
+            "controls": (controls, (2,), jnp.int32),
             "counters": (counters, (8,), jnp.int64),
             "flags": (flags, (3,), jnp.int32),
         }
@@ -302,33 +387,20 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         if records < 1 or pairs < 1:
             raise ValueError("Record and ancestry capacities must be positive.")
         self.mesh = mesh
-        self.metric = arrays["metric"]
-        self.source_rows = arrays["source_rows"]
-        self.vertex_fixed = arrays["vertex_fixed"]
-        self.vertex_moved = arrays["vertex_moved"]
-        self.collapse_to = arrays["collapse_to"]
-        self.cell_regions = arrays["cell_regions"]
-        self.cell_blocks = arrays["cell_blocks"]
-        self.cell_ranks = arrays["cell_ranks"]
-        self.edge_classes = arrays["edge_classes"]
-        self.edge_protected = arrays["edge_protected"]
-        self.record_keys = arrays["record_keys"]
-        self.record_sources = arrays["record_sources"]
-        self.record_ranks = arrays["record_ranks"]
-        self.ancestry = arrays["ancestry"]
-        self.cursors = arrays["cursors"]
-        self.controls = arrays["controls"]
-        self.counters = arrays["counters"]
-        self.flags = arrays["flags"]
+        self.layout_signature_id = layout_signature_id
+        self.ball_width = width
+        self.periodic_enabled = periodic_enabled
+        self.periodic_mesh_id = periodic_mesh_id
+        self.periodic_source_mesh_id = periodic_source_mesh_id
+        self.periodic_source_topology_id = periodic_source_topology_id
+        self.periodic_source_lifted_topology_id = periodic_source_lifted_topology_id
+        self.periodic_source_topology_id_binding = periodic_source_topology_id_binding
+        for name, array in arrays.items():
+            setattr(self, name, array)
 
     @property
     def status_flags(self) -> Array:
-        """Cumulative `AdaptiveSimplexStatus` flags of the epoch (traceable).
-
-        A failed call rolls back every other array but still records its
-        terminal flags, after which every call on the state is refused.
-        """
-
+        """Cumulative terminal status flags carried by this device epoch."""
         return self.flags[..., _STATUS]
 
 
@@ -336,18 +408,15 @@ class DeviceMetricState(StrictModule, NonTrainableState):
 class DeviceMetricReport(StrictModule):
     """Traceable evidence of one `adapt_device_metric` call.
 
-    ``status`` holds `AdaptiveSimplexStatus` flags: CAPACITY_EXCEEDED and
-    INVALID_GEOMETRY fail the call (every array of the returned state is the
-    input's, the operation counts are zero, and the flag is recorded in the
-    state's cumulative status), PASS_LIMIT marks a call stopped at
-    ``maximum_passes`` before the unit mesh, NEEDS_HOST_RESOLUTION an uncertain
-    FILTERED_DEVICE predicate (the operation was not applied). A call on a
-    state that already recorded a terminal flag is refused: the state is
-    returned unchanged and ``status`` holds those terminal flags. Operation and
-    rejection counts cover this call; rejections tally candidate evaluations
-    (``rejected_cavity``: vertex balls wider than the static cavity width).
-    Measurements cover the unprotected edges (all edges when every edge is
-    protected) and active cells of the returned state.
+    ``status`` distinguishes actual capacity overflow, invalid geometry, and
+    predicates requiring host resolution. The host wrapper grows/reprepares
+    static slots or cavity workspace and retries the same operation before
+    returning. A terminal mathematical or numerical failure rolls back the
+    candidate arrays; a state already carrying such a flag is refused.
+    Operation and rejection counts cover the returned compiled call, and
+    ``rejected_cavity`` is zero after successful workspace growth.
+    Measurements cover all unprotected edges, or every edge when all are
+    protected, and the active cells of the returned state.
     """
 
     status: Array
@@ -381,6 +450,7 @@ class DeviceMetricUpdate(StrictModule):
 
     state: DeviceMetricState
     report: DeviceMetricReport
+    layout: DeviceMetricLayout = eqx.field(static=True)
 
 
 @final
@@ -510,7 +580,6 @@ class DeviceMetricEvidence(StrictModule, NonTrainableState):
                 **flags,
                 **measures,
                 "status": int(status),
-                "layout": layout_id,
             }
         )
 
@@ -524,18 +593,19 @@ class _Anchor(NamedTuple):
 
 @final
 class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
-    """One certified planar source bound to a device metric capacity bucket.
+    """Prepared source context for one device metric workspace.
 
-    ``adaptation`` is the prepared transaction (source, request, policy,
-    resolved protection and organization), ``layout`` the static compile
-    identity, and ``state`` the initial device state; `adapt_device_metric` may
-    run on it any number of times before `commit_device_metric_adaptation`.
+    The returned update carries the new layout and state. Periodic callers
+    also pass this source context to ``adapt_device_metric`` so host topology
+    barriers can rebuild exact quotient maps; all numerical edits remain in
+    the compiled device kernels.
     """
 
     adaptation: PreparedMeshAdaptation
     layout: DeviceMetricLayout
     state: DeviceMetricState
     anchor: _Anchor
+    periodic_mesh_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -545,16 +615,43 @@ class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
         state: DeviceMetricState,
         anchor: _Anchor,
         /,
+        *,
+        periodic_mesh_id: str | None = None,
     ) -> None:
         self.adaptation = adaptation
         self.layout = layout
         self.state = state
         self.anchor = anchor
+        bound_mesh_id = (
+            state.periodic_mesh_id if periodic_mesh_id is None else periodic_mesh_id
+        )
+        if bound_mesh_id != state.periodic_mesh_id:
+            raise ValueError("Prepared periodic mesh identity disagrees with its state.")
+        if not isinstance(bound_mesh_id, str):
+            raise TypeError("periodic_mesh_id must be a string.")
+        self.periodic_mesh_id = bound_mesh_id
+        source_mesh = adaptation.source.mesh
+        source_identity = (
+            (
+                source_mesh.mesh_id,
+                source_mesh.topology_id,
+                source_mesh.lifted_topology_id,
+                source_mesh.periodic_topology.periodic_topology_id,
+            )
+            if source_mesh.periodic_topology is not None
+            else ("", "", "", "")
+        )
+        if (
+            state.periodic_enabled != (source_mesh.periodic_topology is not None)
+            or _periodic_source_identity(state) != source_identity
+        ):
+            raise ValueError("Prepared adaptation and device source identities differ.")
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-device-metric-adaptation",
                 "adaptation": adaptation.prepared_id,
                 "layout": layout.signature_id,
+                "periodic_mesh": bound_mesh_id,
             }
         )
 
@@ -571,6 +668,7 @@ class _Work(NamedTuple):
     cells: Array
     cell_ids: Array
     cell_active: Array
+    periodic_enabled: Array
     metric: Array
     source_rows: Array
     vertex_fixed: Array
@@ -585,6 +683,15 @@ class _Work(NamedTuple):
     record_sources: Array
     record_ranks: Array
     ancestry: Array
+    periodic_vertex_orbits: Array
+    periodic_vertex_representative: Array
+    periodic_vertex_members: Array
+    periodic_edge_orbits: Array
+    periodic_edge_representative: Array
+    periodic_edge_start: Array
+    periodic_edge_end: Array
+    periodic_edge_members: Array
+    periodic_cell_orbits: Array
     cursors: Array
     controls: Array
     counters: Array
@@ -600,6 +707,7 @@ def _work(state: DeviceMetricState, /) -> _Work:
         mesh.cells,
         mesh.cell_ids,
         mesh.cell_active,
+        jnp.asarray(state.periodic_enabled, dtype=jnp.bool_),
         state.metric,
         state.source_rows,
         state.vertex_fixed,
@@ -614,6 +722,15 @@ def _work(state: DeviceMetricState, /) -> _Work:
         state.record_sources,
         state.record_ranks,
         state.ancestry,
+        state.periodic_vertex_orbits,
+        state.periodic_vertex_representative,
+        state.periodic_vertex_members,
+        state.periodic_edge_orbits,
+        state.periodic_edge_representative,
+        state.periodic_edge_start,
+        state.periodic_edge_end,
+        state.periodic_edge_members,
+        state.periodic_cell_orbits,
         state.cursors,
         state.controls,
         state.counters,
@@ -621,9 +738,15 @@ def _work(state: DeviceMetricState, /) -> _Work:
     )
 
 
-def _state(work: _Work, /) -> DeviceMetricState:
-    """Rebuild the public state; half-facet adjacency is recomputed from the cells."""
-
+def _state(
+    work: _Work,
+    layout: DeviceMetricLayout,
+    periodic_enabled: bool,
+    periodic_mesh_id: str = "",
+    periodic_source_identity: tuple[str, str, str, str] = ("", "", "", ""),
+    /,
+) -> DeviceMetricState:
+    """Rebuild public state; half-facet adjacency follows current cells."""
     mesh = MaskedSimplexMesh(
         work.coordinates,
         work.vertex_ids,
@@ -635,6 +758,14 @@ def _state(work: _Work, /) -> DeviceMetricState:
     )
     return DeviceMetricState(
         mesh,
+        layout_signature_id=layout.signature_id,
+        ball_width=layout.ball_width,
+        periodic_enabled=periodic_enabled,
+        periodic_mesh_id=periodic_mesh_id,
+        periodic_source_mesh_id=periodic_source_identity[0],
+        periodic_source_topology_id=periodic_source_identity[1],
+        periodic_source_lifted_topology_id=periodic_source_identity[2],
+        periodic_source_topology_id_binding=periodic_source_identity[3],
         metric=work.metric,
         source_rows=work.source_rows,
         vertex_fixed=work.vertex_fixed,
@@ -649,10 +780,28 @@ def _state(work: _Work, /) -> DeviceMetricState:
         record_sources=work.record_sources,
         record_ranks=work.record_ranks,
         ancestry=work.ancestry,
+        periodic_vertex_orbits=work.periodic_vertex_orbits,
+        periodic_vertex_representative=work.periodic_vertex_representative,
+        periodic_vertex_members=work.periodic_vertex_members,
+        periodic_edge_orbits=work.periodic_edge_orbits,
+        periodic_edge_representative=work.periodic_edge_representative,
+        periodic_edge_start=work.periodic_edge_start,
+        periodic_edge_end=work.periodic_edge_end,
+        periodic_edge_members=work.periodic_edge_members,
+        periodic_cell_orbits=work.periodic_cell_orbits,
         cursors=work.cursors,
         controls=work.controls,
         counters=work.counters,
         flags=work.flags,
+    )
+
+
+def _periodic_source_identity(state: DeviceMetricState, /) -> tuple[str, str, str, str]:
+    return (
+        state.periodic_source_mesh_id,
+        state.periodic_source_topology_id,
+        state.periodic_source_lifted_topology_id,
+        state.periodic_source_topology_id_binding,
     )
 
 
@@ -804,24 +953,17 @@ def _ranks(valid: Array, *keys: Array) -> Array:
 
 
 def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /) -> Any:
-    """Greedy maximal set of valid operations with pairwise disjoint cell cavities.
-
-    Each round selects every undecided operation whose rank is the minimum over
-    all of its cells, then discards undecided operations touching selected
-    cells. Unique ranks make simultaneous winners disjoint and the result equals
-    the sequential greedy selection in rank order; operations left undecided
-    after the round bound return in the next sub-round.
-    """
+    """Greedy maximal set of valid operations with pairwise disjoint cavities."""
     present = items >= 0
     gather = jnp.where(present, items, 0)
     own = jnp.broadcast_to(rank[:, None], items.shape)
 
     def undecided_remain(carry: Any) -> Any:
-        undecided, _, rounds = carry
-        return jnp.any(undecided) & (rounds < _SELECTION_ROUNDS)
+        undecided, _ = carry
+        return jnp.any(undecided)
 
     def select_round(carry: Any) -> Any:
-        undecided, selected, rounds = carry
+        undecided, selected = carry
         live = undecided[:, None] & present
         best = (
             jnp.full((cell_capacity + 1,), _RANK_SENTINEL, dtype=jnp.int32)
@@ -836,14 +978,66 @@ def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /)
             .set(True)
         )
         blocked = jnp.any(present & taken[gather], axis=1)
-        return undecided & ~winners & ~blocked, selected | winners, rounds + 1
+        return undecided & ~winners & ~blocked, selected | winners
 
-    _, selected, _ = jax.lax.while_loop(
+    _, selected = jax.lax.while_loop(
         undecided_remain,
         select_round,
-        (valid, jnp.zeros(valid.shape, dtype=jnp.bool_), jnp.int32(0)),
+        (valid, jnp.zeros(valid.shape, dtype=jnp.bool_)),
     )
     return selected
+
+
+def _periodic_edge_batch(
+    work: _Work,
+    topology: _Topology,
+    valid: Array,
+    items: Array,
+    rank: Array,
+    layout: DeviceMetricLayout,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Select complete edge orbits with disjoint lifted cavities."""
+    half_count = 3 * layout.cell_capacity
+    halves = jnp.arange(half_count, dtype=jnp.int32)
+    representative = work.periodic_edge_representative
+    group_rep = topology.canonical & (representative == halves)
+    members = work.periodic_edge_members
+    present = members >= 0
+    member_valid = valid[jnp.maximum(members, 0)]
+    group_valid = (
+        group_rep & jnp.any(present, axis=1) & jnp.all(~present | member_valid, axis=1)
+    )
+    member_items = items[jnp.maximum(members, 0)]
+    member_columns = jnp.broadcast_to(
+        jnp.arange(members.shape[1], dtype=jnp.int32)[None, :], members.shape
+    )
+    group_items = jnp.where(present[..., None], member_items, -1).reshape(
+        (half_count, -1)
+    )
+    group_members = jnp.broadcast_to(member_columns[..., None], member_items.shape)
+    group_members = jnp.where(present[..., None], group_members, -1).reshape(
+        (half_count, -1)
+    )
+    safe_items = jnp.where(group_items >= 0, group_items, layout.cell_capacity)
+    order = jnp.argsort(safe_items, axis=1)
+    sorted_items = jnp.take_along_axis(safe_items, order, axis=1)
+    sorted_members = jnp.take_along_axis(group_members, order, axis=1)
+    overlap = group_valid & jnp.any(
+        (sorted_items[:, 1:] == sorted_items[:, :-1])
+        & (sorted_items[:, :-1] < layout.cell_capacity)
+        & (sorted_members[:, 1:] != sorted_members[:, :-1]),
+        axis=1,
+    )
+    selected_representatives = _independent(
+        rank, group_valid & ~overlap, group_items, layout.cell_capacity
+    )
+    selected_members = (
+        (representative >= 0)
+        & topology.canonical
+        & selected_representatives[jnp.maximum(representative, 0)]
+    )
+    return selected_representatives, selected_members, group_valid & overlap
 
 
 def _tally(counters: Array, status: Any, mask: Array, /) -> tuple[Array, Array]:
@@ -1232,6 +1426,32 @@ def _compact_cells(work: _Work, layout: DeviceMetricLayout, /) -> _Work:
     moved = jnp.where(
         pair_cells < capacity, target[jnp.minimum(pair_cells, capacity - 1)], capacity
     )
+    half = jnp.arange(3 * capacity, dtype=jnp.int32)
+    half_cell, half_local = half // 3, half % 3
+    half_target = jnp.where(
+        active[half_cell],
+        3 * target[half_cell] + half_local,
+        3 * capacity,
+    )
+
+    def packed_halves(values: Any, fill: Any) -> Any:
+        return jnp.full_like(values, fill).at[half_target].set(values, mode="drop")
+
+    old_representative = work.periodic_edge_representative
+    representative = jnp.where(
+        old_representative >= 0,
+        half_target[jnp.maximum(old_representative, 0)],
+        -1,
+    )
+    old_members = work.periodic_edge_members
+    members = jnp.where(
+        old_members >= 0,
+        half_target[jnp.maximum(old_members, 0)],
+        -1,
+    )
+    packed_members = (
+        jnp.full_like(old_members, -1).at[half_target].set(members, mode="drop")
+    )
     return work._replace(
         cells=packed(work.cells, 0),
         cell_ids=packed(work.cell_ids, -1),
@@ -1242,6 +1462,12 @@ def _compact_cells(work: _Work, layout: DeviceMetricLayout, /) -> _Work:
         edge_classes=packed(work.edge_classes, 0),
         edge_protected=packed(work.edge_protected, False),
         ancestry=work.ancestry.at[:, 0].set(moved),
+        periodic_edge_orbits=packed_halves(work.periodic_edge_orbits, -1),
+        periodic_edge_representative=packed_halves(representative, -1),
+        periodic_edge_start=packed_halves(work.periodic_edge_start, -1),
+        periodic_edge_end=packed_halves(work.periodic_edge_end, -1),
+        periodic_edge_members=packed_members,
+        periodic_cell_orbits=packed(work.periodic_cell_orbits, -1),
         cursors=work.cursors.at[_CELLS].set(jnp.sum(active, dtype=jnp.int64)),
     )
 
@@ -1329,7 +1555,9 @@ def _split_children(
     return children, removed
 
 
-def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+def _split_round_nonperiodic(
+    work: _Work, done: Array, layout: DeviceMetricLayout, /
+) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1394,6 +1622,146 @@ def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any
     )
     bits = bits | _overflow(vertex_overflow | cell_overflow | record_overflow)
     return work, done, bits, count
+
+
+def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    """Split complete lifted edge orbits in one atomic device batch."""
+    work = _compact_cells(work, layout)
+    topology = _topology(work, layout)
+    vertex_capacity = layout.vertex_capacity
+    halves = jnp.arange(3 * layout.cell_capacity, dtype=jnp.int32)
+    representative = work.periodic_edge_representative
+    representative_mask = (
+        topology.canonical & (representative == halves) & (representative >= 0)
+    )
+    candidate = topology.canonical & (topology.lengths > _UPPER) & ~topology.protected
+    first = jnp.maximum(work.periodic_edge_start, 0)
+    second = jnp.maximum(work.periodic_edge_end, 0)
+    points = work.coordinates
+    raw_t = _metric_midpoint(work.metric, points, first, second)
+    t = jnp.where(
+        candidate,
+        raw_t[jnp.maximum(representative, 0)],
+        0.5,
+    )
+    middle = points[first] + t[:, None] * (points[second] - points[first])
+    sides = _split_sides(work, topology)
+    point = middle[:, None, :]
+    checks = jnp.maximum(
+        _orientation(points[sides.u], point, points[sides.apex]),
+        _orientation(point, points[sides.v], points[sides.apex]),
+    )
+    status = jnp.max(jnp.where(sides.valid, checks, _OK), axis=1)
+    counters, bits = _tally(work.counters, status, candidate)
+    valid = candidate & (status == _OK)
+    rank = _ranks(
+        representative_mask & valid,
+        -topology.lengths,
+        work.periodic_edge_orbits,
+    )
+    items = jnp.where(sides.valid, sides.cell, -1)
+    selected_representatives, selected, overlap = _periodic_edge_batch(
+        work, topology, valid, items, rank, layout
+    )
+    overlap_stop = jnp.any(overlap)
+    bits = bits | jnp.where(
+        overlap_stop,
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
+    count = jnp.sum(selected, dtype=jnp.int32)
+    group_count = jnp.sum(selected_representatives, dtype=jnp.int32)
+    order = jnp.cumsum(selected, dtype=jnp.int32) - 1
+    group_order = jnp.cumsum(selected_representatives, dtype=jnp.int32) - 1
+    cursors = work.cursors
+    vertex_slot = jnp.where(
+        selected, cursors[_VERTICES].astype(jnp.int32) + order, vertex_capacity
+    )
+    tensors = _log_euclidean(
+        jnp.stack((work.metric[first], work.metric[second]), axis=1),
+        jnp.stack((1.0 - t, t), axis=1),
+    )
+    vertex_overflow = cursors[_VERTICES] + count > vertex_capacity
+    work = work._replace(
+        coordinates=work.coordinates.at[vertex_slot].set(middle, mode="drop"),
+        metric=work.metric.at[vertex_slot].set(tensors, mode="drop"),
+        vertex_ids=work.vertex_ids.at[vertex_slot].set(
+            cursors[_NEXT_VERTEX] + order, mode="drop"
+        ),
+        vertex_active=work.vertex_active.at[vertex_slot].set(True, mode="drop"),
+        cursors=cursors.at[_VERTICES]
+        .add(count)
+        .at[_NEXT_VERTEX]
+        .add(count)
+        .at[_NEXT_QUOTIENT_VERTEX]
+        .add(group_count),
+        counters=counters.at[_SPLITS].add(count),
+    )
+    children, removed = _split_children(
+        work, sides, selected, vertex_slot, layout.cell_capacity
+    )
+    work, cell_overflow = _replace_cells(work, removed, children, layout)
+
+    group_rep = jnp.maximum(representative, 0)
+    member_edges = work.periodic_edge_members[group_rep]
+    member_live = selected_representatives[:, None] & (member_edges >= 0)
+    member_slots = vertex_slot[jnp.maximum(member_edges, 0)]
+    representative_slots = vertex_slot[group_rep]
+    quotient_order = group_order[group_rep]
+    quotient_ids = cursors[_NEXT_QUOTIENT_VERTEX] + quotient_order
+    vertex_orbits = work.periodic_vertex_orbits.at[
+        jnp.where(member_live, member_slots, vertex_capacity)
+    ].set(jnp.broadcast_to(quotient_ids[:, None], member_slots.shape), mode="drop")
+    vertex_representatives = work.periodic_vertex_representative.at[
+        jnp.where(member_live, member_slots, vertex_capacity)
+    ].set(
+        jnp.broadcast_to(representative_slots[:, None], member_slots.shape), mode="drop"
+    )
+    vertex_members = work.periodic_vertex_members.at[
+        jnp.where(selected_representatives, representative_slots, vertex_capacity)
+    ].set(jnp.where(member_edges >= 0, member_slots, -1), mode="drop")
+    work = work._replace(
+        periodic_vertex_orbits=vertex_orbits,
+        periodic_vertex_representative=vertex_representatives,
+        periodic_vertex_members=vertex_members,
+    )
+
+    keys = work.record_keys
+    half = _edge_half(topology, keys[:, 0], keys[:, 1], vertex_capacity)
+    hit = _live_records(work) & (half >= 0) & selected[jnp.maximum(half, 0)]
+    midpoint_slot = vertex_slot[jnp.maximum(half, 0)]
+    ranks = jnp.where(hit, jnp.maximum(work.record_ranks, _REFINED), work.record_ranks)
+    work, record_overflow = _store_records(
+        work,
+        _live_records(work),
+        jnp.where(hit[:, None], _sorted_pair(keys[:, 0], midpoint_slot), keys),
+        work.record_sources,
+        ranks,
+        layout,
+        appended=(
+            hit,
+            _sorted_pair(keys[:, 1], midpoint_slot),
+            work.record_sources,
+            ranks,
+        ),
+    )
+    bits = bits | _overflow(vertex_overflow | cell_overflow | record_overflow)
+    return work, done, bits, count
+
+
+def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    def periodic(operands: Any) -> Any:
+        return _split_round_periodic(operands[0], operands[1], layout)
+
+    def ordinary(operands: Any) -> Any:
+        return _split_round_nonperiodic(operands[0], operands[1], layout)
+
+    return jax.lax.cond(
+        work.periodic_enabled,
+        periodic,
+        ordinary,
+        (work, done),
+    )
 
 
 # ------------------------------------------------------------------ collapse
@@ -1472,7 +1840,19 @@ def _collapse_candidates(
     longest = jnp.max(jnp.where(fresh, created, 0.0), axis=1)
     geometric = jnp.maximum(
         jnp.maximum(orientation, straight),
-        jnp.where(linked & (longest <= _COLLAPSE_LIMIT), _OK, _INVALID),
+        jnp.where(
+            linked
+            & (
+                longest
+                <= jnp.where(
+                    (work.source_rows[removed] < 0) | (work.source_rows[kept] < 0),
+                    _UPPER,
+                    _COLLAPSE_LIMIT,
+                )
+            ),
+            _OK,
+            _INVALID,
+        ),
     )
     status = jnp.where(
         interior | curve, jnp.where(cavity, _CAVITY, geometric), _INADMISSIBLE
@@ -1555,7 +1935,9 @@ def _collapse_children(
     return children, replaced
 
 
-def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+def _collapse_round_nonperiodic(
+    work: _Work, done: Array, layout: DeviceMetricLayout, /
+) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1606,6 +1988,153 @@ def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> 
     )
     bits = bits | _overflow(cell_overflow | record_overflow)
     return work, done, bits, count
+
+
+def _collapse_round_periodic(
+    work: _Work, done: Array, layout: DeviceMetricLayout, /
+) -> Any:
+    """Collapse only when every lifted member of one quotient edge is valid."""
+    work = _compact_cells(work, layout)
+    topology = _topology(work, layout)
+    vertex_capacity = layout.vertex_capacity
+    edge_count = 3 * layout.cell_capacity
+    halves = jnp.arange(edge_count, dtype=jnp.int32)
+    found = _collapse_candidates(work, topology, layout)
+    short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
+    counters, bits = _tally(
+        work.counters,
+        jnp.minimum(found.status[:edge_count], found.status[edge_count:]),
+        short,
+    )
+    start_is_first = topology.ends[:, 0] == work.periodic_edge_start
+    start_direction = jnp.where(start_is_first, halves, halves + edge_count)
+    end_direction = jnp.where(start_is_first, halves + edge_count, halves)
+    start_valid = short & (found.status[start_direction] == _OK)
+    end_valid = short & (found.status[end_direction] == _OK)
+    representative = work.periodic_edge_representative
+    group_representative = (
+        topology.canonical & (representative == halves) & (representative >= 0)
+    )
+    members = work.periodic_edge_members
+    present = members >= 0
+    safe_members = jnp.maximum(members, 0)
+    start_all = (
+        group_representative
+        & jnp.any(present, axis=1)
+        & jnp.all(~present | start_valid[safe_members], axis=1)
+    )
+    end_all = (
+        group_representative
+        & jnp.any(present, axis=1)
+        & jnp.all(~present | end_valid[safe_members], axis=1)
+    )
+    start_longest = jnp.max(
+        jnp.where(present, found.longest[start_direction[safe_members]], 0.0),
+        axis=1,
+    )
+    end_longest = jnp.max(
+        jnp.where(present, found.longest[end_direction[safe_members]], 0.0),
+        axis=1,
+    )
+    start_vertex = work.periodic_edge_start
+    end_vertex = work.periodic_edge_end
+    start_orbit = work.periodic_vertex_orbits[jnp.maximum(start_vertex, 0)]
+    end_orbit = work.periodic_vertex_orbits[jnp.maximum(end_vertex, 0)]
+    stable_start = (start_orbit < end_orbit) | (
+        (start_orbit == end_orbit)
+        & (
+            work.vertex_ids[jnp.maximum(start_vertex, 0)]
+            <= work.vertex_ids[jnp.maximum(end_vertex, 0)]
+        )
+    )
+    choose_start = start_all & (
+        ~end_all
+        | (start_longest < end_longest)
+        | ((start_longest == end_longest) & stable_start)
+    )
+    group_valid = start_all | end_all
+    choose_member_start = choose_start[jnp.maximum(representative, 0)]
+    chosen_direction = jnp.where(choose_member_start, start_direction, end_direction)
+    chosen_valid = jnp.where(choose_member_start, start_valid, end_valid)
+    start_items = jnp.concatenate(
+        (
+            found.ball[start_direction],
+            topology.ball[found.kept[start_direction]],
+        ),
+        axis=1,
+    )
+    end_items = jnp.concatenate(
+        (
+            found.ball[end_direction],
+            topology.ball[found.kept[end_direction]],
+        ),
+        axis=1,
+    )
+    items = jnp.where(choose_member_start[:, None], start_items, end_items)
+    chosen_longest = jnp.where(choose_start, start_longest, end_longest)
+    rank = _ranks(
+        group_representative & group_valid,
+        topology.lengths,
+        chosen_longest,
+        start_orbit,
+        end_orbit,
+        work.periodic_edge_orbits,
+    )
+    selected_representatives, selected_edges, overlap = _periodic_edge_batch(
+        work, topology, chosen_valid, items, rank, layout
+    )
+    bits = bits | jnp.where(
+        jnp.any(overlap),
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
+    selected = (
+        jnp.zeros((2 * edge_count + 1,), dtype=jnp.bool_)
+        .at[jnp.where(selected_edges, chosen_direction, 2 * edge_count)]
+        .set(True, mode="drop")[: 2 * edge_count]
+    )
+    count = jnp.sum(selected, dtype=jnp.int32)
+    work = work._replace(counters=counters.at[_COLLAPSES].add(count))
+    children, replaced = _collapse_children(work, topology, found, selected, layout)
+    work, cell_overflow = _replace_cells(work, replaced, children, layout)
+    removed, kept = found.removed, found.kept
+    target = jnp.where(selected, removed, vertex_capacity)
+    work = work._replace(
+        vertex_active=work.vertex_active.at[target].set(False, mode="drop"),
+        collapse_to=work.collapse_to.at[target].set(kept, mode="drop"),
+    )
+    remap = jnp.arange(vertex_capacity, dtype=jnp.int32).at[target].set(kept, mode="drop")
+    gone = (
+        jnp.zeros((vertex_capacity,), dtype=jnp.bool_).at[target].set(True, mode="drop")
+    )
+    keys = work.record_keys
+    remapped = jnp.sort(remap[keys], axis=1)
+    touched = jnp.any(gone[keys], axis=1)
+    work, record_overflow = _store_records(
+        work,
+        _live_records(work) & (remapped[:, 0] != remapped[:, 1]),
+        remapped,
+        work.record_sources,
+        jnp.where(touched, jnp.maximum(work.record_ranks, _COLLAPSED), work.record_ranks),
+        layout,
+    )
+    bits = bits | _overflow(cell_overflow | record_overflow)
+    return work, done, bits, count
+
+
+def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    def periodic(operands: Any) -> Any:
+        return _collapse_round_periodic(operands[0], operands[1], layout)
+
+    def ordinary(operands: Any) -> Any:
+        return _collapse_round_nonperiodic(operands[0], operands[1], layout)
+
+    return jax.lax.cond(
+        work.periodic_enabled,
+        periodic,
+        ordinary,
+        (work, done),
+    )
 
 
 # ------------------------------------------------------------------ flip
@@ -1675,7 +2204,9 @@ def _flip_children(
     return children, replaced
 
 
-def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+def _flip_round_nonperiodic(
+    work: _Work, done: Array, layout: DeviceMetricLayout, /
+) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1715,7 +2246,11 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     )
     duplicate = _edge_half(topology, x0, x1, vertex_capacity) >= 0
     status = jnp.where(duplicate, _INVALID, status)
-    improving = candidate & (after > before + _IMPROVEMENT)
+    diagonal_low = jnp.minimum(lengths[:, 0, 1], lengths[:, 1, 1])
+    diagonal_high = jnp.maximum(lengths[:, 0, 1], lengths[:, 1, 1])
+    metric_admissible = (diagonal_low >= _LOWER) & (diagonal_high <= _UPPER)
+    # Exclude a flip that the next metric pass would immediately refine/coarsen.
+    improving = candidate & (after > before + _IMPROVEMENT) & metric_admissible
     counters, bits = _tally(work.counters, status, improving)
     valid = improving & (status == _OK)
     ids = work.vertex_ids
@@ -1744,6 +2279,110 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     )
     bits = bits | _overflow(cell_overflow | record_overflow)
     return work, done, bits, count
+
+
+def _flip_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    """Flip a quotient edge only after validating every lifted cavity."""
+    work = _compact_cells(work, layout)
+    topology = _topology(work, layout)
+    vertex_capacity = layout.vertex_capacity
+    cell_capacity = layout.cell_capacity
+    halves = jnp.arange(3 * cell_capacity, dtype=jnp.int32)
+    other = topology.neighbors.reshape((-1,))
+    safe_other = jnp.maximum(other, 0)
+    first_cell, first_local = halves // 3, halves % 3
+    second_cell, second_local = safe_other // 3, safe_other % 3
+    regions = work.cell_regions
+    candidate = (
+        topology.canonical
+        & (other >= 0)
+        & (topology.classes == 0)
+        & ~topology.protected
+        & (regions[first_cell] == regions[second_cell])
+    )
+    first_rows = work.cells[first_cell]
+    u = _take(first_rows, (first_local + 1) % 3)
+    v = _take(first_rows, (first_local + 2) % 3)
+    x0 = _take(first_rows, first_local)
+    x1 = _take(work.cells[second_cell], second_local)
+    triangles = jnp.stack(
+        (jnp.stack((u, x1, x0), axis=-1), jnp.stack((v, x0, x1), axis=-1)),
+        axis=1,
+    )
+    lengths = _lengths(
+        work,
+        _sorted_pair(triangles[..., _NEXT], triangles[..., _PREVIOUS]).reshape((-1, 2)),
+    ).reshape(triangles.shape)
+    quality = _quality(lengths)
+    after = jnp.minimum(quality[:, 0], quality[:, 1])
+    before = jnp.minimum(topology.quality[first_cell], topology.quality[second_cell])
+    points = work.coordinates
+    status = jnp.maximum(
+        _orientation(points[u], points[x1], points[x0]),
+        _orientation(points[v], points[x0], points[x1]),
+    )
+    duplicate = _edge_half(topology, x0, x1, vertex_capacity) >= 0
+    status = jnp.where(duplicate, _INVALID, status)
+    diagonal_low = jnp.minimum(lengths[:, 0, 1], lengths[:, 1, 1])
+    diagonal_high = jnp.maximum(lengths[:, 0, 1], lengths[:, 1, 1])
+    metric_admissible = (diagonal_low >= _LOWER) & (diagonal_high <= _UPPER)
+    improving = candidate & (after > before + _IMPROVEMENT) & metric_admissible
+    counters, bits = _tally(work.counters, status, improving)
+    valid = improving & (status == _OK)
+    representative = work.periodic_edge_representative
+    group_representative = (
+        topology.canonical & (representative == halves) & (representative >= 0)
+    )
+    rank = _ranks(
+        group_representative & valid,
+        before - after,
+        work.periodic_edge_orbits,
+        work.vertex_ids[topology.ends[:, 0]],
+        work.vertex_ids[topology.ends[:, 1]],
+    )
+    items = jnp.stack((first_cell, second_cell), axis=1)
+    selected_representatives, selected, overlap = _periodic_edge_batch(
+        work, topology, valid, items, rank, layout
+    )
+    bits = bits | jnp.where(
+        jnp.any(overlap),
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
+    count = jnp.sum(selected, dtype=jnp.int32)
+    work = work._replace(counters=counters.at[_FLIPS].add(count))
+    children, replaced = _flip_children(
+        work, halves, safe_other, triangles, selected, cell_capacity
+    )
+    work, cell_overflow = _replace_cells(work, replaced, children, layout)
+    keys = work.record_keys
+    half = _edge_half(topology, keys[:, 0], keys[:, 1], vertex_capacity)
+    flipped = (half >= 0) & selected[jnp.maximum(half, 0)]
+    work, record_overflow = _store_records(
+        work,
+        _live_records(work) & ~flipped,
+        keys,
+        work.record_sources,
+        work.record_ranks,
+        layout,
+    )
+    bits = bits | _overflow(cell_overflow | record_overflow)
+    return work, done, bits, count
+
+
+def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    def periodic(operands: Any) -> Any:
+        return _flip_round_periodic(operands[0], operands[1], layout)
+
+    def ordinary(operands: Any) -> Any:
+        return _flip_round_nonperiodic(operands[0], operands[1], layout)
+
+    return jax.lax.cond(
+        work.periodic_enabled,
+        periodic,
+        ordinary,
+        (work, done),
+    )
 
 
 # ------------------------------------------------------------------ relocation
@@ -1775,11 +2414,67 @@ def _relocation_targets(work: _Work, topology: _Topology, /) -> Any:
     return displacement, badness
 
 
+def _periodic_vertex_selection(
+    work: _Work,
+    topology: _Topology,
+    active: Array,
+    success: Array,
+    best_scale: Array,
+    badness: Array,
+    layout: DeviceMetricLayout,
+    /,
+) -> tuple[Array, Array]:
+    """Select complete vertex orbits with one common representable step."""
+    vertices = layout.vertex_capacity
+    slots = jnp.arange(vertices, dtype=jnp.int32)
+    representative = work.periodic_vertex_representative
+    group_representative = (
+        work.vertex_active & (representative == slots) & (representative >= 0)
+    )
+    members = work.periodic_vertex_members
+    present = members >= 0
+    safe_members = jnp.maximum(members, 0)
+    member_success = success[safe_members]
+    member_active = active[safe_members]
+    attempted = group_representative & jnp.any(present & member_active, axis=1)
+    all_success = (
+        group_representative
+        & jnp.any(present, axis=1)
+        & jnp.all(~present | member_success, axis=1)
+    )
+    member_scale = best_scale[safe_members]
+    scale_agrees = jnp.all(~present | (member_scale == best_scale[:, None]), axis=1)
+    partial = attempted & jnp.any(present & member_success, axis=1) & ~all_success
+    scale_mismatch = all_success & ~scale_agrees
+    balls = topology.ball[safe_members]
+    cavity_present = present[..., None] & (balls >= 0)
+    cavity = jnp.where(cavity_present, balls, -1).reshape((vertices, -1))
+    ordered = jnp.sort(jnp.where(cavity >= 0, cavity, layout.cell_capacity), axis=1)
+    overlap = jnp.any(
+        (ordered[:, 1:] == ordered[:, :-1]) & (ordered[:, :-1] < layout.cell_capacity),
+        axis=1,
+    )
+    eligible = all_success & scale_agrees & ~overlap
+    rank = _ranks(eligible, -badness, work.periodic_vertex_orbits)
+    selected_representatives = _independent(rank, eligible, cavity, layout.cell_capacity)
+    selected = (
+        (representative >= 0)
+        & work.vertex_active
+        & selected_representatives[jnp.maximum(representative, 0)]
+    )
+    unresolved = jnp.any(partial | scale_mismatch | (attempted & overlap))
+    bits = jnp.where(
+        unresolved,
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
+    return selected, bits
+
+
 def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     cell_capacity = layout.cell_capacity
-    steps = _RELOCATION_STEPS.size
     points = work.coordinates
     kind = topology.kind
     curve = kind == _CURVE
@@ -1791,90 +2486,150 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
     cavity = topology.valence > layout.ball_width
     displacement, badness = _relocation_targets(work, topology)
     active = movable & ~cavity & jnp.any(displacement != 0.0, axis=1)
-    target = points[:, None, :] + (
-        jnp.asarray(_RELOCATION_STEPS)[None, :, None] * displacement[:, None, :]
-    )
     ball = topology.ball
     present = ball >= 0
     rows = work.cells[jnp.maximum(ball, 0)]
-    # Log-Euclidean P1 metric at each proposal in the ball cell containing it
-    # best (largest minimum barycentric weight, lowest slot on ties).
-    weights = _barycentric(points[rows][:, None], target[:, :, None, :])
-    score = jnp.where(present[:, None, :], jnp.min(weights, axis=-1), -jnp.inf)
-    best = jnp.argmax(score, axis=2)
-    host_rows = jnp.take_along_axis(
-        jnp.broadcast_to(rows[:, None], (*score.shape, 3)), best[..., None, None], axis=2
-    )[:, :, 0]
-    host_weights = jnp.take_along_axis(weights, best[..., None, None], axis=2)[:, :, 0]
-    clipped = jnp.maximum(host_weights, 0.0)
-    normalized = jnp.where(
-        active[:, None, None],
-        clipped / jnp.sum(clipped, axis=-1, keepdims=True),
-        1.0 / 3.0,
-    )
-    proposal = _log_euclidean(work.metric[host_rows], normalized)
-    # Proposal rows: the moved vertex takes row V + steps * v + s.
-    image = (
-        vertex_capacity
-        + steps * jnp.arange(vertex_capacity, dtype=jnp.int32)[:, None]
-        + jnp.arange(steps, dtype=jnp.int32)[None, :]
-    )
-    extended_points = jnp.concatenate((points, target.reshape((-1, 2))))
-    extended_metric = jnp.concatenate((work.metric, proposal.reshape((-1, 2, 2))))
-    vertex = jnp.arange(vertex_capacity, dtype=jnp.int32)[:, None, None, None]
-    moved = jnp.where(rows[:, None] == vertex, image[:, :, None, None], rows[:, None])
-    orientation = _orientation(
-        extended_points[moved[..., 0]],
-        extended_points[moved[..., 1]],
-        extended_points[moved[..., 2]],
-    )
-    status = jnp.max(jnp.where(present[:, None, :], orientation, _OK), axis=2)
-    neighbors = jnp.maximum(topology.curve_neighbors, 0)
-    status = jnp.where(
-        curve[:, None],
-        jnp.maximum(
-            status,
-            _collinear(points[neighbors[:, :1]], target, points[neighbors[:, 1:]]),
-        ),
-        status,
-    )
-    lengths = metric_edge_lengths(
-        extended_metric,
-        extended_points,
-        _sorted_pair(moved[..., _NEXT], moved[..., _PREVIOUS]).reshape((-1, 2)),
-    ).reshape(moved.shape)
-    after = jnp.min(
-        jnp.where(
-            present[:, None, :],
-            _quality(jnp.where(present[:, None, :, None], lengths, 1.0)),
-            jnp.inf,
-        ),
-        axis=2,
-    )
     before = jnp.min(
-        jnp.where(present, topology.quality[jnp.maximum(ball, 0)], jnp.inf), axis=1
+        jnp.where(present, topology.quality[jnp.maximum(ball, 0)], jnp.inf),
+        axis=1,
     )
-    improving = active[:, None] & (after > before[:, None] + _IMPROVEMENT)
-    accepted = improving & (status == _OK)
-    success = jnp.any(accepted, axis=1)
+    initial_point = points
+    initial_metric = work.metric
+    initial_scale = jnp.asarray(1.0, dtype=points.dtype)
+    initial_success = jnp.zeros((vertex_capacity,), dtype=jnp.bool_)
+    initial_invalid = jnp.zeros((vertex_capacity,), dtype=jnp.bool_)
+    initial_uncertain = jnp.zeros((vertex_capacity,), dtype=jnp.bool_)
+    initial_pending = active
+
+    def continue_search(carry: Any) -> Array:
+        _, pending, _, _, _, _, _, _ = carry
+        return jnp.any(pending)
+
+    def search_step(carry: Any) -> Any:
+        (
+            scale,
+            pending,
+            success,
+            best_point,
+            best_metric,
+            best_scale,
+            had_invalid,
+            had_uncertain,
+        ) = carry
+        target = points + scale * displacement
+        weights = _barycentric(points[rows], target[:, None, :])
+        score = jnp.where(present, jnp.min(weights, axis=-1), -jnp.inf)
+        best_cell = jnp.argmax(score, axis=1)
+        cell_index = jnp.broadcast_to(best_cell[:, None, None], (vertex_capacity, 1, 3))
+        host_rows = jnp.take_along_axis(rows, cell_index, axis=1)[:, 0]
+        host_weights = jnp.take_along_axis(weights, cell_index, axis=1)[:, 0]
+        clipped = jnp.maximum(host_weights, 0.0)
+        normalized = jnp.where(
+            active[:, None],
+            clipped / jnp.sum(clipped, axis=-1, keepdims=True),
+            1.0 / 3.0,
+        )
+        proposal = _log_euclidean(work.metric[host_rows], normalized)
+        image = vertex_capacity + jnp.arange(vertex_capacity, dtype=jnp.int32)
+        extended_points = jnp.concatenate((points, target), axis=0)
+        extended_metric = jnp.concatenate((work.metric, proposal), axis=0)
+        vertex = jnp.arange(vertex_capacity, dtype=jnp.int32)[:, None, None]
+        moved_rows = jnp.where(rows == vertex, image[:, None, None], rows)
+        orientation = _orientation(
+            extended_points[moved_rows[..., 0]],
+            extended_points[moved_rows[..., 1]],
+            extended_points[moved_rows[..., 2]],
+        )
+        status = jnp.max(jnp.where(present, orientation, _OK), axis=1)
+        neighbors = jnp.maximum(topology.curve_neighbors, 0)
+        status = jnp.where(
+            curve,
+            jnp.maximum(
+                status,
+                _collinear(points[neighbors[:, 0]], target, points[neighbors[:, 1]]),
+            ),
+            status,
+        )
+        lengths = metric_edge_lengths(
+            extended_metric,
+            extended_points,
+            _sorted_pair(moved_rows[..., _NEXT], moved_rows[..., _PREVIOUS]).reshape(
+                (-1, 2)
+            ),
+        ).reshape(moved_rows.shape)
+        after = jnp.min(
+            jnp.where(
+                present,
+                _quality(jnp.where(present[..., None], lengths, 1.0)),
+                jnp.inf,
+            ),
+            axis=1,
+        )
+        improving = pending & (after > before + _IMPROVEMENT)
+        accepted = improving & (status == _OK)
+        best_point = jnp.where(accepted[:, None], target, best_point)
+        best_metric = jnp.where(accepted[:, None, None], proposal, best_metric)
+        best_scale = jnp.where(accepted, scale, best_scale)
+        had_invalid = had_invalid | (improving & (status >= _INVALID))
+        had_uncertain = had_uncertain | (improving & (status == _UNCERTAIN))
+        pending = pending & ~accepted
+        next_scale = scale * jnp.asarray(0.5, dtype=points.dtype)
+        next_target = points + next_scale * displacement
+        pending = pending & jnp.any(next_target != points, axis=1)
+        return (
+            next_scale,
+            pending,
+            success | accepted,
+            best_point,
+            best_metric,
+            best_scale,
+            had_invalid,
+            had_uncertain,
+        )
+
+    (
+        _,
+        _,
+        success,
+        best_point,
+        best_metric,
+        best_scale,
+        had_invalid,
+        had_uncertain,
+    ) = jax.lax.while_loop(
+        continue_search,
+        search_step,
+        (
+            initial_scale,
+            initial_pending,
+            initial_success,
+            initial_point,
+            initial_metric,
+            jnp.zeros((vertex_capacity,), dtype=points.dtype),
+            initial_invalid,
+            initial_uncertain,
+        ),
+    )
     rejected = jnp.where(
-        jnp.any(improving & (status >= _INVALID), axis=1),
+        had_invalid,
         _INVALID,
-        jnp.where(jnp.any(improving & (status == _UNCERTAIN), axis=1), _UNCERTAIN, _OK),
+        jnp.where(had_uncertain, _UNCERTAIN, _OK),
     )
-    counters, bits = _tally(work.counters, rejected, ~success)
+    counters, bits = _tally(work.counters, rejected, active & ~success)
     counters, _ = _tally(counters, _CAVITY, movable & cavity)
     rank = _ranks(success, -badness, work.vertex_ids)
-    selected = _independent(rank, success, ball, cell_capacity)
-    step = jnp.argmax(accepted, axis=1)
-    chosen_point = jnp.take_along_axis(target, step[:, None, None], axis=1)[:, 0]
-    chosen_metric = jnp.take_along_axis(proposal, step[:, None, None, None], axis=1)[:, 0]
+    ordinary = _independent(rank, success, ball, cell_capacity)
+    periodic, periodic_bits = _periodic_vertex_selection(
+        work, topology, active, success, best_scale, badness, layout
+    )
+    selected = jnp.where(work.periodic_enabled, periodic, ordinary)
+    bits = bits | jnp.where(work.periodic_enabled, periodic_bits, 0)
     count = jnp.sum(selected, dtype=jnp.int32)
     touched_cells = jnp.any(selected[work.cells], axis=1)
     touched_records = _live_records(work) & jnp.any(selected[work.record_keys], axis=1)
     work = work._replace(
-        coordinates=jnp.where(selected[:, None], chosen_point, points),
-        metric=jnp.where(selected[:, None, None], chosen_metric, work.metric),
+        coordinates=jnp.where(selected[:, None], best_point, points),
+        metric=jnp.where(selected[:, None, None], best_metric, work.metric),
         vertex_moved=work.vertex_moved | selected,
         cell_ranks=jnp.where(
             touched_cells, jnp.maximum(work.cell_ranks, _RELOCATED), work.cell_ranks
@@ -1903,21 +2658,21 @@ def _unit(work: _Work, /) -> Array:
 
 
 def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> Any:
-    """Sub-rounds of one phase until a round applies nothing (bounded)."""
+    """Exhaust a finite phase batch until no operation applies or status stops it."""
 
     def proceed(carry: Any) -> Any:
-        _, _, bits, count, rounds, _ = carry
-        return (rounds < _PHASE_ROUNDS) & (count > 0) & ((bits & _FAILURES) == 0)
+        _, _, bits, count, _ = carry
+        return (count > 0) & ((bits & _FAILURES) == 0)
 
     def sub_round(carry: Any) -> Any:
-        work, done, bits, _, rounds, total = carry
+        work, done, bits, _, total = carry
         work, done, round_bits, count = step(work, done, layout)
-        return work, done, bits | round_bits, count, rounds + 1, total + count
+        return work, done, bits | round_bits, count, total + count
 
-    work, done, bits, _, _, total = jax.lax.while_loop(
+    work, done, bits, _, total = jax.lax.while_loop(
         proceed,
         sub_round,
-        (work, done, bits, jnp.int32(1), jnp.int32(0), jnp.int32(0)),
+        (work, done, bits, jnp.int32(1), jnp.int32(0)),
     )
     return work, done, bits, total
 
@@ -2016,6 +2771,80 @@ def _report(
     )
 
 
+class _DeviceMetricRound(NamedTuple):
+    work: _Work
+    report: DeviceMetricReport
+
+
+def _periodic_round(
+    layout: DeviceMetricLayout, source: _Work, operation: Array, /
+) -> _DeviceMetricRound:
+    """Execute one source-bound orbit transaction without host synchronization."""
+    done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
+
+    def split(operand: Any) -> Any:
+        work, done = operand
+        work, _, bits, count = _split_round(work, done, layout)
+        return work, bits, count
+
+    def collapse(operand: Any) -> Any:
+        work, done = operand
+        work, _, bits, count = _collapse_round(work, done, layout)
+        return work, bits, count
+
+    def flip(operand: Any) -> Any:
+        work, done = operand
+        work, _, bits, count = _flip_round(work, done, layout)
+        return work, bits, count
+
+    def relocate(operand: Any) -> Any:
+        work, done = operand
+        work, _, bits, count = _phase(_relocation_round, work, done, jnp.int32(0), layout)
+        return work, bits, count
+
+    work, bits, _ = jax.lax.switch(
+        operation,
+        (split, collapse, flip, relocate),
+        (source, done),
+    )
+    uncertain, invalid = _geometry(work)
+    bits = (
+        bits
+        | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
+        | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
+    ).astype(jnp.int32)
+    failed = (bits & _FAILURES) != 0
+    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    rollback = failed | ((bits & capacity) != 0)
+    result = _select(rollback, source, work)
+    result = result._replace(
+        flags=result.flags.at[_STATUS]
+        .set(source.flags[_STATUS] | bits)
+        .at[_CONVERGED]
+        .set(jnp.int32(0))
+        .at[_STALLED]
+        .set(jnp.int32(0))
+    )
+    geometry = jax.lax.cond(
+        rollback,
+        lambda: _geometry(source),
+        lambda: (uncertain, invalid),
+    )
+    report = _report(source, result, bits, jnp.bool_(False), geometry, layout)
+    cavity_growth = (
+        work.counters[_REJECTED_CAVITY] - source.counters[_REJECTED_CAVITY]
+    ).astype(jnp.int32)
+    report = eqx.tree_at(
+        lambda value: value.rejected_cavity,
+        report,
+        jnp.where((bits & capacity) != 0, cavity_growth, report.rejected_cavity),
+    )
+    return _DeviceMetricRound(result, report)
+
+
+_compiled_periodic_round = eqx.filter_jit(_periodic_round)
+
+
 def _adapt(layout: DeviceMetricLayout, state: DeviceMetricState, /) -> DeviceMetricUpdate:
     source = _work(state)
     return jax.lax.cond(
@@ -2032,43 +2861,37 @@ def _refused_call(
 
     status = (source.flags[_STATUS] & _FAILURES).astype(jnp.int32)
     report = _report(source, source, status, jnp.bool_(False), _geometry(source), layout)
-    return DeviceMetricUpdate(state, report)
+    return DeviceMetricUpdate(state, report, layout)
 
 
 def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate:
-    """Bounded metric passes, rolled back (flags kept) when the call fails."""
-
-    maximum = source.controls[_MAXIMUM_PASSES]
+    """Run complete metric phases, rolling back only on actual terminal status."""
 
     def proceed(carry: Any) -> Any:
-        work, bits, passes, stalled = carry
-        return (passes < maximum) & ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
+        work, bits, stalled = carry
+        return ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
-        work, bits, passes, _ = carry
+        work, bits, _ = carry
         work, bits, applied = _pass(work, bits, layout)
-        return work, bits, passes + 1, applied == 0
+        return work, bits, applied == 0
 
-    work, bits, passes, stalled = jax.lax.while_loop(
+    work, bits, stalled = jax.lax.while_loop(
         proceed,
         adaptation_pass,
-        (source, jnp.int32(0), jnp.int32(0), jnp.bool_(False)),
+        (source, jnp.int32(0), jnp.bool_(False)),
     )
     converged = _unit(work)
     stalled = stalled & ~converged
-    refused = (bits & _FAILURES) != 0
     uncertain, invalid = _geometry(work)
     bits = (
         bits
-        | jnp.where(
-            (passes >= maximum) & ~converged & ~stalled & ~refused,
-            int(AdaptiveSimplexStatus.PASS_LIMIT),
-            0,
-        )
         | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
         | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
     ).astype(jnp.int32)
     failed = (bits & _FAILURES) != 0
+    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    rollback = failed | ((bits & capacity) != 0)
     work = work._replace(
         flags=work.flags.at[_STATUS]
         .set(work.flags[_STATUS] | bits)
@@ -2077,26 +2900,32 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         .at[_STALLED]
         .set(stalled.astype(jnp.int32))
     )
-    result = _select(failed, source, work)
-    # A failed call rolls back numerical/topological arrays but keeps all
-    # attempted-call status, convergence, and stall evidence.
+    result = _select(rollback, source, work)
     result = result._replace(
         flags=result.flags.at[_STATUS]
         .set(work.flags[_STATUS])
         .at[_CONVERGED]
-        .set(work.flags[_CONVERGED])
+        .set(jnp.where(rollback, jnp.int32(0), work.flags[_CONVERGED]))
         .at[_STALLED]
-        .set(work.flags[_STALLED])
+        .set(jnp.where(rollback, jnp.int32(0), work.flags[_STALLED]))
     )
     report = _report(
         source,
         result,
         bits,
-        stalled & ~failed,
-        _select(failed, _geometry(source), (uncertain, invalid)),
+        stalled & ~rollback,
+        _select(rollback, _geometry(source), (uncertain, invalid)),
         layout,
     )
-    return DeviceMetricUpdate(_state(result), report)
+    cavity_growth = (
+        work.counters[_REJECTED_CAVITY] - source.counters[_REJECTED_CAVITY]
+    ).astype(jnp.int32)
+    report = eqx.tree_at(
+        lambda value: value.rejected_cavity,
+        report,
+        jnp.where((bits & capacity) != 0, cavity_growth, report.rejected_cavity),
+    )
+    return DeviceMetricUpdate(_state(result, layout, False, ""), report, layout)
 
 
 _compiled_adapt = eqx.filter_jit(_adapt)
@@ -2109,25 +2938,489 @@ def _check_state(layout: DeviceMetricLayout, state: DeviceMetricState, /) -> Non
         raise TypeError("state must be DeviceMetricState.")
     if (
         state.mesh.signature_id != layout.mesh_signature_id
+        or state.layout_signature_id != layout.signature_id
+        or state.ball_width != layout.ball_width
         or state.record_keys.shape[0] != layout.record_capacity
+        or state.periodic_vertex_members.shape[1] != layout.periodic_orbit_width
+        or state.periodic_edge_members.shape[1] != layout.periodic_orbit_width
         or state.ancestry.shape[0] != layout.ancestry_capacity
     ):
         raise ValueError("The state does not belong to this device metric layout.")
 
 
-def adapt_device_metric(
-    layout: DeviceMetricLayout, state: DeviceMetricState, /
+def _grow_metric_layout(
+    layout: DeviceMetricLayout,
+    state: DeviceMetricState,
+    *,
+    grow_slots: bool,
+    grow_ball: bool,
+) -> DeviceMetricLayout:
+    vertices = layout.vertex_capacity
+    cells = layout.cell_capacity
+    if grow_slots:
+        vertices = max(vertices + 1, 2 * vertices)
+        cells = max(cells + 1, 2 * cells)
+    width = layout.ball_width
+    if grow_ball:
+        work = _work(state)
+        active = np.asarray(jax.device_get(work.cell_active))
+        rows = np.asarray(jax.device_get(work.cells))[active]
+        valence = np.bincount(rows.reshape((-1,)), minlength=layout.vertex_capacity)
+        required = int(np.max(valence, initial=0))
+        width = max(width + 1, required)
+        if grow_slots:
+            width = max(width, min(cells, 2 * layout.ball_width))
+    return DeviceMetricLayout(
+        vertex_capacity=vertices,
+        cell_capacity=cells,
+        ball_width=min(width, cells),
+        periodic_orbit_width=layout.periodic_orbit_width,
+    )
+
+
+def _resize_device_state(
+    state: DeviceMetricState,
+    layout: DeviceMetricLayout,
+    /,
+    *,
+    clear_capacity: bool,
+    clear_cavity: bool = False,
+) -> DeviceMetricState:
+    work = _work(state)
+    vertices, cells = layout.vertex_capacity, layout.cell_capacity
+
+    def padded(values: Array, capacity: int, fill: Any, /) -> Array:
+        if values.shape[0] == capacity:
+            return values
+        current = np.asarray(jax.device_get(values))
+        result = np.full((capacity, *current.shape[1:]), fill, dtype=current.dtype)
+        result[: current.shape[0]] = current
+        return jnp.asarray(result)
+
+    def padded_members(values: Array, rows: int, width: int, /) -> Array:
+        if values.shape == (rows, width):
+            return values
+        current = np.asarray(jax.device_get(values))
+        result = np.full((rows, width), -1, dtype=current.dtype)
+        result[: min(rows, current.shape[0]), : min(width, current.shape[1])] = current[
+            :rows, :width
+        ]
+        return jnp.asarray(result)
+
+    metric = work.metric
+    if metric.shape[0] != vertices:
+        current = np.asarray(jax.device_get(metric))
+        result = np.broadcast_to(np.eye(2), (vertices, 2, 2)).copy()
+        result[: current.shape[0]] = current
+        metric = jnp.asarray(result)
+
+    ancestry = work.ancestry
+    if ancestry.shape[0] != layout.ancestry_capacity:
+        pairs = int(np.asarray(jax.device_get(work.cursors))[_PAIRS])
+        result = np.zeros((layout.ancestry_capacity, 2), dtype=np.int32)
+        result[:, 0] = cells
+        result[:pairs] = np.asarray(jax.device_get(ancestry))[:pairs]
+        ancestry = jnp.asarray(result)
+
+    resized = _Work(
+        coordinates=padded(work.coordinates, vertices, 0.0),
+        vertex_ids=padded(work.vertex_ids, vertices, -1),
+        vertex_active=padded(work.vertex_active, vertices, False),
+        cells=padded(work.cells, cells, 0),
+        cell_ids=padded(work.cell_ids, cells, -1),
+        cell_active=padded(work.cell_active, cells, False),
+        periodic_enabled=work.periodic_enabled,
+        metric=metric,
+        source_rows=padded(work.source_rows, vertices, -1),
+        vertex_fixed=padded(work.vertex_fixed, vertices, False),
+        vertex_moved=padded(work.vertex_moved, vertices, False),
+        collapse_to=padded(work.collapse_to, vertices, -1),
+        cell_regions=padded(work.cell_regions, cells, 0),
+        cell_blocks=padded(work.cell_blocks, cells, 0),
+        cell_ranks=padded(work.cell_ranks, cells, 0),
+        edge_classes=padded(work.edge_classes, cells, 0),
+        edge_protected=padded(work.edge_protected, cells, False),
+        record_keys=padded(work.record_keys, layout.record_capacity, 0),
+        record_sources=padded(work.record_sources, layout.record_capacity, -1),
+        record_ranks=padded(work.record_ranks, layout.record_capacity, 0),
+        ancestry=ancestry,
+        periodic_vertex_orbits=padded(work.periodic_vertex_orbits, vertices, -1),
+        periodic_vertex_representative=padded(
+            work.periodic_vertex_representative, vertices, -1
+        ),
+        periodic_vertex_members=padded_members(
+            work.periodic_vertex_members, vertices, layout.periodic_orbit_width
+        ),
+        periodic_edge_orbits=padded(work.periodic_edge_orbits, 3 * cells, -1),
+        periodic_edge_representative=padded(
+            work.periodic_edge_representative, 3 * cells, -1
+        ),
+        periodic_edge_start=padded(work.periodic_edge_start, 3 * cells, -1),
+        periodic_edge_end=padded(work.periodic_edge_end, 3 * cells, -1),
+        periodic_edge_members=padded_members(
+            work.periodic_edge_members,
+            3 * cells,
+            layout.periodic_orbit_width,
+        ),
+        periodic_cell_orbits=padded(work.periodic_cell_orbits, cells, -1),
+        cursors=work.cursors,
+        controls=work.controls,
+        counters=work.counters,
+        flags=work.flags,
+    )
+    if clear_capacity:
+        flags = resized.flags.at[_STATUS].set(
+            resized.flags[_STATUS]
+            & jnp.asarray(~int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED), dtype=jnp.int32)
+        )
+        resized = resized._replace(flags=flags)
+    if clear_cavity:
+        resized = resized._replace(
+            counters=resized.counters.at[_REJECTED_CAVITY].set(
+                jnp.zeros_like(resized.counters[_REJECTED_CAVITY])
+            )
+        )
+    return _state(
+        resized,
+        layout,
+        state.periodic_enabled,
+        state.periodic_mesh_id,
+        _periodic_source_identity(state),
+    )
+
+
+def _layout_from_state(state: DeviceMetricState, /) -> DeviceMetricLayout:
+    if not isinstance(state, DeviceMetricState):
+        raise TypeError("state must be DeviceMetricState.")
+    layout = DeviceMetricLayout(
+        vertex_capacity=state.mesh.vertex_capacity,
+        cell_capacity=state.mesh.cell_capacity,
+        ball_width=state.ball_width,
+        periodic_orbit_width=state.periodic_vertex_members.shape[1],
+    )
+    if layout.signature_id != state.layout_signature_id:
+        raise ValueError("The device metric state carries an invalid layout binding.")
+    return layout
+
+
+def _periodic_device_adaptation(
+    prepared: PreparedDeviceMetricAdaptation,
+    layout: DeviceMetricLayout,
+    state: DeviceMetricState,
+    /,
 ) -> DeviceMetricUpdate:
-    """Run up to ``maximum_passes`` device metric passes in one compiled call.
+    if not state.periodic_enabled:
+        raise ValueError("Periodic device execution requires periodic device state.")
+    source_mesh = prepared.adaptation.source.mesh
+    periodic_topology = source_mesh.periodic_topology
+    if periodic_topology is None:
+        raise ValueError("Periodic device state is bound to a nonperiodic source.")
+    expected_identity = (
+        source_mesh.mesh_id,
+        source_mesh.topology_id,
+        source_mesh.lifted_topology_id,
+        periodic_topology.periodic_topology_id,
+    )
+    if _periodic_source_identity(state) != expected_identity:
+        raise ValueError("Prepared source and periodic device state identities differ.")
+    if int(np.asarray(jax.device_get(state.status_flags))) & _FAILURES:
+        return _compiled_adapt(layout, state)
 
-    Each pass runs the split, collapse, and flip phases (metric requests) and
-    then relocation (when enabled), each in bounded sub-rounds, and stops at the
-    unit mesh or a pass that applied nothing. One executable serves every call
-    with the same layout; counters in the state accumulate across calls.
+    initial_layout = layout
+    initial_state = state
+    initial_work = _work(state)
+    current_layout = layout
+    current_state = state
+    current_prepared = PreparedDeviceMetricAdaptation(
+        prepared.adaptation,
+        layout,
+        state,
+        prepared.anchor,
+        periodic_mesh_id=state.periodic_mesh_id,
+    )
+    mode = _host_mode()
+    capacity_status = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+
+    def rollback(status: int, /) -> DeviceMetricUpdate:
+        flags = initial_work.flags.at[_STATUS].set(
+            initial_work.flags[_STATUS] | jnp.asarray(status, dtype=jnp.int32)
+        )
+        failed = initial_work._replace(
+            flags=flags.at[_CONVERGED].set(jnp.int32(0)).at[_STALLED].set(jnp.int32(0))
+        )
+        report = _report(
+            initial_work,
+            failed,
+            jnp.asarray(status, dtype=jnp.int32),
+            jnp.bool_(False),
+            _geometry(failed),
+            initial_layout,
+        )
+        result = _state(
+            failed,
+            initial_layout,
+            True,
+            initial_state.periodic_mesh_id,
+            _periodic_source_identity(initial_state),
+        )
+        return DeviceMetricUpdate(result, report, initial_layout)
+
+    def ensure_ball_workspace() -> None:
+        nonlocal current_layout, current_state, current_prepared
+        work = _work(current_state)
+        active = np.asarray(jax.device_get(work.cell_active), dtype=np.bool_)
+        cells = np.asarray(jax.device_get(work.cells), dtype=np.int64)[active]
+        valence = np.bincount(
+            cells.reshape((-1,)), minlength=current_layout.vertex_capacity
+        )
+        required = max(1, int(np.max(valence, initial=0)))
+        if required <= current_layout.ball_width:
+            return
+        current_layout = DeviceMetricLayout(
+            vertex_capacity=current_layout.vertex_capacity,
+            cell_capacity=current_layout.cell_capacity,
+            ball_width=required,
+            periodic_orbit_width=current_layout.periodic_orbit_width,
+        )
+        current_state = _resize_device_state(
+            current_state,
+            current_layout,
+            clear_capacity=False,
+            clear_cavity=True,
+        )
+        current_prepared = PreparedDeviceMetricAdaptation(
+            current_prepared.adaptation,
+            current_layout,
+            current_state,
+            current_prepared.anchor,
+        )
+
+    def run_phase(phase: int, /) -> tuple[int, int]:
+        nonlocal current_layout, current_state, current_prepared
+        phase_applied = 0
+        while True:
+            update = _compiled_periodic_round(
+                current_layout,
+                _work(current_state),
+                jnp.asarray(phase, dtype=jnp.int32),
+            )
+            report = update.report
+            status, rejected_cavity, applied = jax.device_get(
+                (
+                    report.status,
+                    report.rejected_cavity,
+                    report.splits + report.collapses + report.flips + report.relocations,
+                )
+            )
+            status = int(np.asarray(status))
+            rejected_cavity = int(np.asarray(rejected_cavity))
+            applied = int(np.asarray(applied))
+            grow_slots = bool(status & capacity_status)
+            other_failure = status & _FAILURES & ~capacity_status
+            if other_failure:
+                return phase_applied, other_failure
+            if grow_slots:
+                failed_epoch = _state(
+                    update.work,
+                    current_layout,
+                    True,
+                    current_state.periodic_mesh_id,
+                    _periodic_source_identity(current_state),
+                )
+                try:
+                    grown = _grow_metric_layout(
+                        current_layout,
+                        failed_epoch,
+                        grow_slots=True,
+                        grow_ball=rejected_cavity > 0,
+                    )
+                except ValueError:
+                    return phase_applied, capacity_status
+                if grown.signature_id == current_layout.signature_id:
+                    return phase_applied, capacity_status
+                current_layout = grown
+                current_state = _resize_device_state(
+                    failed_epoch,
+                    grown,
+                    clear_capacity=True,
+                    clear_cavity=rejected_cavity > 0,
+                )
+                current_prepared = PreparedDeviceMetricAdaptation(
+                    current_prepared.adaptation,
+                    grown,
+                    current_state,
+                    current_prepared.anchor,
+                )
+                continue
+
+            candidate = _state(
+                update.work,
+                current_layout,
+                True,
+                current_state.periodic_mesh_id,
+                _periodic_source_identity(current_state),
+            )
+            if phase == 3 and rejected_cavity:
+                return phase_applied, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+            if applied:
+                current_state = candidate
+                current_layout, current_state = _refresh_periodic_device_state(
+                    current_prepared, current_layout, current_state, mode=mode
+                )
+                current_prepared = PreparedDeviceMetricAdaptation(
+                    current_prepared.adaptation,
+                    current_layout,
+                    current_state,
+                    current_prepared.anchor,
+                )
+                phase_applied += applied
+            else:
+                current_state = candidate
+
+            if rejected_cavity:
+                try:
+                    grown = _grow_metric_layout(
+                        current_layout,
+                        current_state,
+                        grow_slots=False,
+                        grow_ball=True,
+                    )
+                except ValueError:
+                    return phase_applied, capacity_status
+                if grown.signature_id == current_layout.signature_id:
+                    return phase_applied, capacity_status
+                current_layout = grown
+                current_state = _resize_device_state(
+                    current_state, grown, clear_capacity=False, clear_cavity=True
+                )
+                current_prepared = PreparedDeviceMetricAdaptation(
+                    current_prepared.adaptation,
+                    grown,
+                    current_state,
+                    current_prepared.anchor,
+                )
+                continue
+            if phase == 3 or not applied:
+                return phase_applied, 0
+
+    controls = np.asarray(jax.device_get(current_state.controls), dtype=np.int32)
+    stalled = False
+    while True:
+        if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
+            break
+        work = _work(current_state)
+        work = work._replace(counters=work.counters.at[_PASSES].add(jnp.int64(1)))
+        current_state = _state(
+            work,
+            current_layout,
+            True,
+            current_state.periodic_mesh_id,
+            _periodic_source_identity(current_state),
+        )
+        pass_applied = 0
+        phases = (tuple(range(3)) if controls[_TOPOLOGY] else ()) + (
+            (3,) if controls[_RELOCATION] else ()
+        )
+        for phase in phases:
+            if phase == 3:
+                ensure_ball_workspace()
+            applied, failure = run_phase(phase)
+            if failure:
+                return rollback(failure)
+            pass_applied += applied
+        if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
+            break
+        if pass_applied == 0:
+            stalled = True
+            break
+    converged = bool(np.asarray(jax.device_get(_unit(_work(current_state)))))
+    stalled = stalled and not converged
+    result_work = _work(current_state)
+    flags = (
+        result_work.flags.at[_STATUS]
+        .set(initial_work.flags[_STATUS])
+        .at[_CONVERGED]
+        .set(jnp.asarray(converged, dtype=jnp.int32))
+        .at[_STALLED]
+        .set(jnp.asarray(stalled, dtype=jnp.int32))
+    )
+    result_work = result_work._replace(flags=flags)
+    result = _state(
+        result_work,
+        current_layout,
+        True,
+        current_state.periodic_mesh_id,
+        _periodic_source_identity(current_state),
+    )
+    report = _report(
+        initial_work,
+        result_work,
+        jnp.int32(0),
+        jnp.asarray(stalled),
+        _geometry(result_work),
+        current_layout,
+    )
+    return DeviceMetricUpdate(result, report, current_layout)
+
+
+def adapt_device_metric(
+    layout: DeviceMetricLayout,
+    state: DeviceMetricState,
+    /,
+    *,
+    prepared: PreparedDeviceMetricAdaptation | None = None,
+) -> DeviceMetricUpdate:
+    """Run metric epochs to convergence or a true stall.
+
+    Periodic states require their prepared source context so every compiled
+    operation batch can be rebound through the exact source-bound quotient.
+    Device numeric edits remain compiled; host barriers rebuild topology maps
+    only and never execute a numerical fallback.
     """
-
     _check_state(layout, state)
-    return _compiled_adapt(layout, state)
+    if state.periodic_enabled:
+        if not isinstance(prepared, PreparedDeviceMetricAdaptation):
+            raise ValueError(
+                "Periodic device adaptation requires its prepared source context."
+            )
+        return _periodic_device_adaptation(prepared, layout, state)
+    if prepared is not None and not isinstance(prepared, PreparedDeviceMetricAdaptation):
+        raise TypeError("prepared must be PreparedDeviceMetricAdaptation or None.")
+    initial_status = int(np.asarray(jax.device_get(state.status_flags)))
+    if initial_status & _FAILURES:
+        return _compiled_adapt(layout, state)
+    current_layout, current_state = layout, state
+    capacity_status = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    while True:
+        update = _compiled_adapt(current_layout, current_state)
+        status, rejected_cavity = jax.device_get(
+            (update.report.status, update.report.rejected_cavity)
+        )
+        status = int(np.asarray(status))
+        rejected_cavity = int(np.asarray(rejected_cavity))
+        grow_slots = bool(status & capacity_status)
+        grow_ball = rejected_cavity > 0
+        other_failure = status & _FAILURES & ~capacity_status
+        if other_failure or not (grow_slots or grow_ball):
+            return update
+        try:
+            grown = _grow_metric_layout(
+                current_layout,
+                update.state,
+                grow_slots=grow_slots,
+                grow_ball=grow_ball,
+            )
+        except ValueError:
+            return update
+        if grown.signature_id == current_layout.signature_id:
+            return update
+        current_layout = grown
+        current_state = _resize_device_state(
+            update.state,
+            grown,
+            clear_capacity=grow_slots,
+            clear_cavity=grow_ball,
+        )
 
 
 # ------------------------------------------------------------------ preparation
@@ -2150,11 +3443,278 @@ def _edge_features(topology: Any, host_cells: np.ndarray, /) -> Any:
     )
 
 
-def _device_state(
-    layout: DeviceMetricLayout, state: _State, topology: Any, controls: np.ndarray, /
-) -> DeviceMetricState:
-    """Pad the host working state into global-ID-ordered slots of the bucket."""
+class _PeriodicDeviceTables(NamedTuple):
+    vertex_orbits: np.ndarray
+    vertex_representative: np.ndarray
+    vertex_members: np.ndarray
+    edge_orbits: np.ndarray
+    edge_representative: np.ndarray
+    edge_start: np.ndarray
+    edge_end: np.ndarray
+    edge_members: np.ndarray
+    cell_orbits: np.ndarray
+    orbit_width: int
+    target_mesh_id: str
+    next_quotient_vertex: int
 
+
+def _periodic_device_tables(
+    mesh: Any,
+    source: _Source,
+    host: _State,
+    topology: Any,
+    device: DeviceMetricState,
+    mode: PredicateMode,
+    /,
+) -> _PeriodicDeviceTables:
+    """Bind exact current quotient orbits to device slots between compiled batches."""
+    context = _periodic_state_context(mesh, source, host, topology, mode)
+    device_mesh = device.mesh
+    vertex_capacity = device_mesh.vertex_capacity
+    cell_capacity = device_mesh.cell_capacity
+    half_capacity = 3 * cell_capacity
+    vertex_ids = np.asarray(device_mesh.vertex_ids, dtype=np.int64)
+    vertex_active = np.asarray(device_mesh.vertex_active, dtype=np.bool_)
+    cell_active = np.asarray(device_mesh.cell_active, dtype=np.bool_)
+    cells = np.asarray(device_mesh.cells, dtype=np.int64)
+    neighbors = np.asarray(device_mesh.facet_neighbors, dtype=np.int64)
+    active_vertices = np.flatnonzero(vertex_active)
+    active_cells = np.flatnonzero(cell_active)
+    host_vertex_ids = np.asarray(host.vertex_ids, dtype=np.int64)
+    host_vertex_rows = {
+        int(identifier): row for row, identifier in enumerate(host_vertex_ids.tolist())
+    }
+    if context is None:
+        host_vertex_orbits = host_vertex_ids.copy()
+        edge_keys = np.sort(
+            host_vertex_ids[np.asarray(topology.edges, dtype=np.int64)], axis=1
+        )
+        host_edge_orbits = np.arange(edge_keys.shape[0], dtype=np.int64)
+        edge_start_ids, edge_end_ids = edge_keys[:, 0], edge_keys[:, 1]
+        host_cell_orbits = np.arange(host.cells.shape[0], dtype=np.int64)
+    else:
+        vertex_orbits = np.asarray(context.vertex_orbits, dtype=np.int64)
+        host_vertex_orbits = np.full(host.vertex_ids.shape, -1, dtype=np.int64)
+        live = vertex_orbits >= 0
+        host_vertex_orbits[live] = np.asarray(
+            context.vertex_quotient_ids, dtype=np.int64
+        )[vertex_orbits[live]]
+        edge_keys = np.sort(
+            host_vertex_ids[np.asarray(topology.edges, dtype=np.int64)], axis=1
+        )
+        edge_rows = np.asarray(context.edge_orbits, dtype=np.int64)
+        host_edge_orbits = np.asarray(context.edge_quotient_ids, dtype=np.int64)[
+            edge_rows
+        ]
+        canonical_rows = np.asarray(context.edge_canonical_vertices, dtype=np.int64)
+        edge_start_ids = host_vertex_ids[canonical_rows[:, 0]]
+        edge_end_ids = host_vertex_ids[canonical_rows[:, 1]]
+        host_cell_orbits = np.asarray(context.cell_quotient_ids, dtype=np.int64)[
+            np.asarray(context.cell_orbits, dtype=np.int64)
+        ]
+    edge_data: dict[tuple[int, int], tuple[int, int, int]] = {}
+    for key, orbit, start, end in zip(
+        edge_keys.tolist(),
+        host_edge_orbits.tolist(),
+        edge_start_ids.tolist(),
+        edge_end_ids.tolist(),
+        strict=True,
+    ):
+        normalized = (int(key[0]), int(key[1]))
+        edge_data[normalized] = (int(orbit), int(start), int(end))
+    device_slot_by_id = {
+        int(identifier): slot for slot, identifier in enumerate(vertex_ids.tolist())
+    }
+    vertex_orbits = np.full((vertex_capacity,), -1, dtype=np.int64)
+    for slot in active_vertices.tolist():
+        row = host_vertex_rows.get(int(vertex_ids[slot]))
+        if row is None or host_vertex_orbits[row] < 0:
+            raise ValueError("A live device vertex lost its exact periodic source orbit.")
+        vertex_orbits[slot] = host_vertex_orbits[row]
+    vertex_groups: dict[int, list[int]] = defaultdict(list)
+    for slot in active_vertices.tolist():
+        vertex_groups[int(vertex_orbits[slot])].append(slot)
+    vertex_representative = np.full((vertex_capacity,), -1, dtype=np.int32)
+    vertex_members = np.full(
+        (vertex_capacity, max(1, max(map(len, vertex_groups.values()), default=0))),
+        -1,
+        dtype=np.int32,
+    )
+    for members in vertex_groups.values():
+        members.sort(key=lambda slot: (int(vertex_ids[slot]), slot))
+        representative = members[0]
+        vertex_representative[members] = representative
+        vertex_members[representative, : len(members)] = members
+
+    edge_orbits = np.full((half_capacity,), -1, dtype=np.int64)
+    edge_representative = np.full((half_capacity,), -1, dtype=np.int32)
+    edge_start = np.full((half_capacity,), -1, dtype=np.int32)
+    edge_end = np.full((half_capacity,), -1, dtype=np.int32)
+    canonical = np.zeros((half_capacity,), dtype=np.bool_)
+    for cell in active_cells.tolist():
+        for local in range(3):
+            half = 3 * cell + local
+            other = int(neighbors[cell, local])
+            canonical[half] = other < 0 or half < other
+            first = int(cells[cell, _NEXT[local]])
+            second = int(cells[cell, _PREVIOUS[local]])
+            key = tuple(sorted((int(vertex_ids[first]), int(vertex_ids[second]))))
+            data = edge_data.get(key)
+            if data is None:
+                raise ValueError(
+                    "A live device edge lost its exact periodic source orbit."
+                )
+            orbit, start_id, end_id = data
+            start_slot = device_slot_by_id.get(start_id)
+            end_slot = device_slot_by_id.get(end_id)
+            if start_slot is None or end_slot is None:
+                raise ValueError(
+                    "A periodic edge representative names an absent device vertex."
+                )
+            edge_orbits[half] = orbit
+            edge_start[half] = start_slot
+            edge_end[half] = end_slot
+    edge_groups: dict[int, list[int]] = defaultdict(list)
+    for half in np.flatnonzero(canonical).tolist():
+        edge_groups[int(edge_orbits[half])].append(half)
+    edge_members = np.full(
+        (half_capacity, max(1, max(map(len, edge_groups.values()), default=0))),
+        -1,
+        dtype=np.int32,
+    )
+    for members in edge_groups.values():
+        members.sort()
+        representative = members[0]
+        edge_representative[members] = representative
+        edge_members[representative, : len(members)] = members
+    for half in np.flatnonzero(edge_orbits >= 0).tolist():
+        representative = edge_representative[half]
+        if representative < 0:
+            neighbor = int(neighbors[half // 3, half % 3])
+            canonical_half = half if canonical[half] else neighbor
+            representative = edge_representative[canonical_half]
+            edge_representative[half] = representative
+
+    cell_orbits = np.full((cell_capacity,), -1, dtype=np.int64)
+    if active_cells.size != host_cell_orbits.size:
+        raise ValueError(
+            "Device cells do not match the source-bound quotient cell table."
+        )
+    cell_orbits[active_cells] = host_cell_orbits
+    orbit_width = max(
+        1,
+        vertex_members.shape[1],
+        edge_members.shape[1],
+    )
+    if context is None:
+        target_mesh_id = ""
+        next_quotient_vertex = -1
+    else:
+        target_mesh_id = context.target_mesh_id
+        next_quotient_vertex = int(context.vertex_allocator_next_id)
+    return _PeriodicDeviceTables(
+        vertex_orbits,
+        vertex_representative,
+        vertex_members,
+        edge_orbits,
+        edge_representative,
+        edge_start,
+        edge_end,
+        edge_members,
+        cell_orbits,
+        orbit_width,
+        target_mesh_id,
+        next_quotient_vertex,
+    )
+
+
+def _install_periodic_tables(
+    layout: DeviceMetricLayout,
+    state: DeviceMetricState,
+    tables: _PeriodicDeviceTables,
+    /,
+) -> tuple[DeviceMetricLayout, DeviceMetricState]:
+    if tables.orbit_width > layout.periodic_orbit_width:
+        layout = DeviceMetricLayout(
+            vertex_capacity=layout.vertex_capacity,
+            cell_capacity=layout.cell_capacity,
+            ball_width=layout.ball_width,
+            periodic_orbit_width=tables.orbit_width,
+        )
+        state = _resize_device_state(state, layout, clear_capacity=False)
+    width = layout.periodic_orbit_width
+
+    def members(values: np.ndarray, rows: int, /) -> Array:
+        source = np.asarray(values, dtype=np.int32)
+        result = np.full((rows, width), -1, dtype=np.int32)
+        result[: source.shape[0], : source.shape[1]] = source
+        return jnp.asarray(result)
+
+    work = _work(state)._replace(
+        periodic_vertex_orbits=jnp.asarray(tables.vertex_orbits, dtype=jnp.int64),
+        periodic_vertex_representative=jnp.asarray(
+            tables.vertex_representative, dtype=jnp.int32
+        ),
+        periodic_vertex_members=members(tables.vertex_members, layout.vertex_capacity),
+        periodic_edge_orbits=jnp.asarray(tables.edge_orbits, dtype=jnp.int64),
+        periodic_edge_representative=jnp.asarray(
+            tables.edge_representative, dtype=jnp.int32
+        ),
+        periodic_edge_start=jnp.asarray(tables.edge_start, dtype=jnp.int32),
+        periodic_edge_end=jnp.asarray(tables.edge_end, dtype=jnp.int32),
+        periodic_edge_members=members(tables.edge_members, 3 * layout.cell_capacity),
+        periodic_cell_orbits=jnp.asarray(tables.cell_orbits, dtype=jnp.int64),
+    )
+    cursors = work.cursors
+    if tables.next_quotient_vertex >= 0:
+        cursors = cursors.at[_NEXT_QUOTIENT_VERTEX].set(tables.next_quotient_vertex)
+    work = work._replace(cursors=cursors)
+    return layout, _state(
+        work,
+        layout,
+        state.periodic_enabled,
+        tables.target_mesh_id,
+        _periodic_source_identity(state),
+    )
+
+
+def _refresh_periodic_device_state(
+    prepared: PreparedDeviceMetricAdaptation,
+    layout: DeviceMetricLayout,
+    state: DeviceMetricState,
+    /,
+    *,
+    mode: PredicateMode,
+) -> tuple[DeviceMetricLayout, DeviceMetricState]:
+    if prepared.periodic_mesh_id != state.periodic_mesh_id:
+        raise ValueError("Device periodic state is bound to a different target mesh.")
+    host = jax.device_get(state)
+    adapted = _host_state(prepared, host)
+    topology = _host_topology(adapted, mode)
+    tables = _periodic_device_tables(
+        prepared.adaptation.source.mesh,
+        prepared.anchor.source,
+        adapted,
+        topology,
+        host,
+        mode,
+    )
+    return _install_periodic_tables(layout, host, tables)
+
+
+def _device_state(
+    layout: DeviceMetricLayout,
+    state: _State,
+    topology: Any,
+    controls: np.ndarray,
+    /,
+    *,
+    periodic_enabled: bool,
+    next_quotient_vertex: int,
+    periodic_mesh_id: str,
+    periodic_source_identity: tuple[str, str, str, str],
+) -> DeviceMetricState:
+    """Pad source state and initialize exact periodic-workspace rows."""
     vertex_capacity = layout.vertex_capacity
     cell_capacity = layout.cell_capacity
     vertex_order = np.argsort(state.vertex_ids, kind="stable")
@@ -2181,6 +3741,7 @@ def _device_state(
     ancestry[:cell_count, 0] = np.arange(cell_count)
     ancestry[:cell_count, 1] = cell_order
     records = layout.record_capacity
+    orbit_width = layout.periodic_orbit_width
     work = _Work(
         coordinates=padded(state.points[vertex_order], vertex_capacity, 0.0, np.float64),
         vertex_ids=padded(state.vertex_ids[vertex_order], vertex_capacity, -1, np.int64),
@@ -2188,6 +3749,7 @@ def _device_state(
         cells=padded(slot_of[host_cells], cell_capacity, 0, np.int32),
         cell_ids=padded(state.cell_ids[cell_order], cell_capacity, -1, np.int64),
         cell_active=padded(np.ones(cell_count), cell_capacity, False, np.bool_),
+        periodic_enabled=jnp.asarray(periodic_enabled, dtype=jnp.bool_),
         metric=jnp.asarray(metric),
         source_rows=padded(vertex_order, vertex_capacity, -1, np.int32),
         vertex_fixed=padded(state.fixed[vertex_order], vertex_capacity, False, np.bool_),
@@ -2204,6 +3766,19 @@ def _device_state(
         record_sources=padded(state.lineage_sources, records, -1, np.int32),
         record_ranks=jnp.zeros((records,), dtype=jnp.int32),
         ancestry=jnp.asarray(ancestry),
+        periodic_vertex_orbits=jnp.full((vertex_capacity,), -1, dtype=jnp.int64),
+        periodic_vertex_representative=jnp.full((vertex_capacity,), -1, dtype=jnp.int32),
+        periodic_vertex_members=jnp.full(
+            (vertex_capacity, orbit_width), -1, dtype=jnp.int32
+        ),
+        periodic_edge_orbits=jnp.full((3 * cell_capacity,), -1, dtype=jnp.int64),
+        periodic_edge_representative=jnp.full((3 * cell_capacity,), -1, dtype=jnp.int32),
+        periodic_edge_start=jnp.full((3 * cell_capacity,), -1, dtype=jnp.int32),
+        periodic_edge_end=jnp.full((3 * cell_capacity,), -1, dtype=jnp.int32),
+        periodic_edge_members=jnp.full(
+            (3 * cell_capacity, orbit_width), -1, dtype=jnp.int32
+        ),
+        periodic_cell_orbits=jnp.full((cell_capacity,), -1, dtype=jnp.int64),
         cursors=jnp.asarray(
             np.asarray(
                 (
@@ -2213,6 +3788,7 @@ def _device_state(
                     cell_count,
                     state.next_vertex_id,
                     int(np.max(state.cell_ids)) + 1,
+                    next_quotient_vertex,
                 ),
                 dtype=np.int64,
             )
@@ -2221,7 +3797,30 @@ def _device_state(
         counters=jnp.zeros((8,), dtype=jnp.int64),
         flags=jnp.zeros((3,), dtype=jnp.int32),
     )
-    return _state(work)
+    return _state(
+        work,
+        layout,
+        periodic_enabled,
+        periodic_mesh_id,
+        periodic_source_identity,
+    )
+
+
+def _periodic_orbit_width(mesh: Any, /) -> int:
+    if mesh.periodic_topology is None:
+        return 1
+    from ._periodic import periodic_entity_orbit_map
+
+    width = 1
+    for degree in (0, 1):
+        orbit_map = periodic_entity_orbit_map(mesh, degree)
+        orbit_map.require_source(mesh)
+        counts = np.bincount(
+            np.asarray(orbit_map.lifted_to_quotient, dtype=np.int64),
+            minlength=orbit_map.quotient_entity_ids.shape[0],
+        )
+        width = max(width, int(np.max(counts, initial=0)))
+    return width
 
 
 def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
@@ -2251,21 +3850,57 @@ def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
     vertex_capacity, cell_capacity = policy.device_policy.capacities(
         vertex_count, cell_count
     )
+    ball_width = max(1, int(np.max(np.diff(topology.ball_offsets), initial=0)))
+    periodic_enabled = mesh.periodic_topology is not None
+    periodic_source_identity = (
+        (
+            mesh.mesh_id,
+            mesh.topology_id,
+            mesh.lifted_topology_id,
+            mesh.periodic_topology.periodic_topology_id,
+        )
+        if periodic_enabled
+        else ("", "", "", "")
+    )
+    orbit_width = _periodic_orbit_width(mesh)
+    if periodic_enabled:
+        next_quotient_vertex = int(mesh.periodic_topology.allocator_next_ids[0])
+        if next_quotient_vertex < 0:
+            quotient_vertex_ids = np.asarray(
+                mesh.periodic_topology.quotient.entity_sets[0].entity_ids,
+                dtype=np.int64,
+            )
+            next_quotient_vertex = int(np.max(quotient_vertex_ids)) + 1
+    else:
+        next_quotient_vertex = state.next_vertex_id
     layout = DeviceMetricLayout(
-        vertex_capacity=vertex_capacity, cell_capacity=cell_capacity
+        vertex_capacity=vertex_capacity,
+        cell_capacity=cell_capacity,
+        ball_width=ball_width,
+        periodic_orbit_width=orbit_width,
     )
     controls = np.asarray(
         (
-            policy.maximum_passes,
             isinstance(adaptation.request, MetricMeshAdaptation),
             policy.relocation,
         ),
         dtype=np.int32,
     )
-    device = _device_state(layout, state, topology, controls)
-    return PreparedDeviceMetricAdaptation(
-        adaptation, layout, device, _Anchor(source, int(np.max(state.cell_ids)) + 1)
+    device = _device_state(
+        layout,
+        state,
+        topology,
+        controls,
+        periodic_enabled=periodic_enabled,
+        next_quotient_vertex=next_quotient_vertex,
+        periodic_mesh_id=mesh.mesh_id if periodic_enabled else "",
+        periodic_source_identity=periodic_source_identity,
     )
+    anchor = _Anchor(source, int(np.max(state.cell_ids)) + 1)
+    prepared = PreparedDeviceMetricAdaptation(adaptation, layout, device, anchor)
+    layout, device = _refresh_periodic_device_state(prepared, layout, device, mode=mode)
+    prepared = PreparedDeviceMetricAdaptation(adaptation, layout, device, anchor)
+    return prepared
 
 
 def prepare_device_metric_adaptation(
@@ -2277,10 +3912,11 @@ def prepare_device_metric_adaptation(
 ) -> PreparedDeviceMetricAdaptation:
     """Validate, classify, and pad one certified planar source into a device state.
 
-    ``policy.route`` must be DEVICE_METRIC_2D; ``policy.device_policy`` fixes the
-    capacity bucket. Protection, organization classes, and the metric are
-    resolved exactly as for the host NATIVE_METRIC_2D route; metric requests
-    enable the topology phases, ``policy.relocation`` the relocation phase.
+    ``policy.route`` must be DEVICE_METRIC_2D; ``policy.device_policy`` supplies
+    the initial compile bucket, which grows and retries on actual slot overflow.
+    Protection, organization classes, and the SPD metric are resolved as for the
+    host route; metric requests enable topology phases and ``policy.relocation``
+    enables relocation.
     """
 
     from ._adaptation import (
@@ -2325,14 +3961,35 @@ def _host_state(
     # and share every later operation; the host deduplicates them eagerly.
     distinct = _distinct(_codes(keys), sources, -ranks)
     pairs = np.asarray(host.ancestry, dtype=np.int64)[: int(cursors[_PAIRS])]
+    vertex_source_rows = np.asarray(host.source_rows, dtype=np.int64)[:count]
+    vertex_moved = np.asarray(host.vertex_moved, dtype=np.bool_)[:count]
+    source_stencil_sources = np.full((count, 3), -1, dtype=np.int64)
+    source_stencil_weights = np.zeros((count, 3), dtype=np.float64)
+    source_stencil_valid = np.zeros((count, 3), dtype=np.bool_)
+    preserved = (vertex_source_rows >= 0) & ~vertex_moved
+    source_stencil_sources[preserved, 0] = np.asarray(
+        prepared.anchor.source.vertex_ids, dtype=np.int64
+    )[vertex_source_rows[preserved]]
+    source_stencil_weights[preserved, 0] = 1.0
+    source_stencil_valid[preserved, 0] = True
+    source_ids = np.asarray(prepared.anchor.source.vertex_ids, dtype=np.int64)
+    source_stencil_exact: list[tuple[tuple[int, Fraction], ...]] = [()] * count
+    for row in np.flatnonzero(preserved):
+        source_stencil_exact[int(row)] = (
+            (int(source_ids[vertex_source_rows[row]]), Fraction(1)),
+        )
     cell_ids = np.asarray(mesh.cell_ids, dtype=np.int64)[active]
     return _State(
         points=np.asarray(mesh.coordinates, dtype=np.float64)[:count],
         metric=np.asarray(host.metric, dtype=np.float64)[:count],
         vertex_ids=np.asarray(mesh.vertex_ids, dtype=np.int64)[:count],
-        source_rows=np.asarray(host.source_rows, dtype=np.int64)[:count],
+        source_stencil_sources=source_stencil_sources,
+        source_stencil_weights=source_stencil_weights,
+        source_stencil_valid=source_stencil_valid,
+        source_stencil_exact=tuple(source_stencil_exact),
+        source_rows=vertex_source_rows,
         fixed=np.asarray(host.vertex_fixed)[:count],
-        moved=np.asarray(host.vertex_moved)[:count],
+        moved=vertex_moved,
         alive=np.asarray(mesh.vertex_active)[:count],
         collapse_to=np.asarray(host.collapse_to, dtype=np.int64)[:count],
         cells=cells,
@@ -2411,8 +4068,8 @@ def _outcome(
     applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
     status = _metric_status(evidence, evidence.topology_operations)
     if applied == 0:
-        # Preserve the source while exposing an unmet criterion as STALLED or
-        # PASS_LIMIT rather than the converged UNCHANGED status.
+        # Preserve the exact source while exposing an unmet criterion as STALLED
+        # rather than the converged UNCHANGED status.
         return _unchanged(adaptation, evidence, None, status=status)
     edit, metric = _assemble(state, prepared.anchor.source, mode)
     native = _finalize_native(
@@ -2435,35 +4092,35 @@ def _outcome(
 def commit_device_metric_adaptation(
     prepared: PreparedDeviceMetricAdaptation, state: DeviceMetricState, /
 ) -> MeshAdaptationResult:
-    """Commit one device epoch: one transfer, canonical target, lineage, evidence.
-
-    The device slots are rebuilt into the host working state and assembled by
-    the host edit assembly: surviving source vertices keep their IDs, new
-    vertices and cells receive IDs in the host order, and the lineage
-    (SPLIT_FROM, COLLAPSED_INTO, RELOCATED, REFINED_FROM, SWAPPED_FROM), the
-    vertex stencil, organization inheritance, certification, and the P1
-    transfer are exactly those of NATIVE_METRIC_2D. A terminal flag in the
-    epoch's cumulative status raises its `MeshingFailure`, and
-    NEEDS_HOST_RESOLUTION requires every committed cell to be certified
-    positively oriented by exact host predicates (else QUALITY_REJECTED).
-    """
+    """Commit one device epoch through the common canonical edit boundary."""
 
     from ._adaptation import _adaptation_result
 
     if not isinstance(prepared, PreparedDeviceMetricAdaptation):
         raise TypeError("prepared must be PreparedDeviceMetricAdaptation.")
-    _check_state(prepared.layout, state)
+    layout = _layout_from_state(state)
+    _check_state(layout, state)
+    committed = PreparedDeviceMetricAdaptation(
+        prepared.adaptation, layout, state, prepared.anchor
+    )
     started = time.monotonic()
     host = jax.device_get(state)
-    return _adaptation_result(prepared.adaptation, _outcome(prepared, host), started)
+    return _adaptation_result(prepared.adaptation, _outcome(committed, host), started)
 
 
 def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    """Prepare the device epoch, run the compiled passes once, and commit."""
+    """Run compiled metric epochs, growing static workspaces before retry."""
 
     metric = _prepared_metric(prepared)
-    update = adapt_device_metric(metric.layout, metric.state)
-    return _outcome(metric, jax.device_get(update.state))
+    update = adapt_device_metric(metric.layout, metric.state, prepared=metric)
+    committed = PreparedDeviceMetricAdaptation(
+        metric.adaptation,
+        update.layout,
+        update.state,
+        metric.anchor,
+        periodic_mesh_id=update.state.periodic_mesh_id,
+    )
+    return _outcome(committed, jax.device_get(update.state))
 
 
 __all__ = [

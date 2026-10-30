@@ -31,7 +31,8 @@ transfer and projection (:func:`rederive_association`).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, final, NamedTuple, TYPE_CHECKING
+from fractions import Fraction
+from typing import Any, final, NamedTuple, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -44,18 +45,20 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
-from ..geometry.brep._projection import (
+from ..discretization._exact_algebraic_geometry import coefficient_payload
+from ..geometry._source_identity import source_entity_id
+from ..geometry.brep._projection_contracts import (
+    AbstractBRepProjection,
     brep_entity_id,
     BRepProjectionResult,
     BRepProjectionStatus,
-    PreparedBRepProjection,
 )
 from ..typing import checked
 from ._scope import resolve_mesh_scope
 
 
 if TYPE_CHECKING:
-    from ._lineage import MeshLineage
+    from ._lineage import MeshLineage, VertexInterpolationStencil
     from ._result import CellMeshingResult
 
 
@@ -63,6 +66,18 @@ class GeometryAssociationKind(StrEnum):
     BREP = "brep"
     SURFACE = "surface"
     IMPLICIT = "implicit"
+    PIECEWISE_LINEAR = "piecewise_linear"
+    MAPPED_REFERENCE = "mapped_reference"
+    CURVE = "curve"
+
+
+class GeometrySourceEntityRole(StrEnum):
+    """Source stratum role; not inferred from ambient dimension or row position."""
+
+    VERTEX = "vertex"
+    EDGE = "edge"
+    FACET = "facet"
+    REGION = "region"
 
 
 class GeometryAssociationProvenance(StrEnum):
@@ -79,8 +94,51 @@ class GeometryAssociationProvenance(StrEnum):
     CLASSIFICATION = "classification"
 
 
-def _unclassified_id(source_revision: str, /) -> str:
-    return f"{source_revision}:unclassified"
+class AssociationEntityClasses(NamedTuple):
+    """Source stratum labels consumed by topology-adaptation constraints."""
+
+    dimensions: np.ndarray
+    indices: np.ndarray
+    resolved: np.ndarray
+    codes: np.ndarray
+
+
+class AssociationTransfer(Protocol):
+    """Common adaptation contract for revision-bound source association routes."""
+
+    @property
+    def transfer_id(self) -> str: ...
+
+    @property
+    def source_namespaces(self) -> tuple[tuple[str, str], ...]: ...
+
+    def validate_source(self, source: CellMeshingResult, /) -> None: ...
+
+    def classes(
+        self, source: CellMeshingResult, /
+    ) -> tuple[AssociationEntityClasses, ...]: ...
+
+    def propagate(
+        self,
+        source: CellMeshingResult,
+        lineage: MeshLineage,
+        target: CellMesh,
+        /,
+        *,
+        vertex_stencil: VertexInterpolationStencil | None,
+    ) -> tuple[GeometryAssociation, ...]: ...
+
+
+def _unclassified_id(
+    source_id: str, source_revision: str, occurrence_path: tuple[str, ...], /
+) -> str:
+    return source_entity_id(
+        source_id,
+        source_revision,
+        "unclassified",
+        "unclassified",
+        occurrence_path=occurrence_path,
+    )
 
 
 def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> np.ndarray:
@@ -92,12 +150,12 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
 class GeometryAssociation(StrictModule, NonTrainableState):
     """Audited map from exact mesh entities to authoritative geometry entities.
 
-    B-Rep rows carry ``source_dimensions``/``source_indices`` (the ``BRepEntityId``
-    of ``source_revision``); ``-1`` marks an unresolved row without a candidate
-    (``<revision>:unclassified``). ``parameters`` hold face ``(u, v)`` or edge
-    ``(t, nan)`` closest-point parameters (NaN otherwise). ``orientations`` relate
-    the mesh entity's canonical vertex order to the B-Rep edge tangent or oriented
-    face normal (``+1``/``-1``; ``0`` when undefined). ``parent_dimensions`` and
+    Source rows may carry explicit ``source_dimensions``/``source_indices``;
+    B-Rep rows require them and bind the occurrence-qualified source entity.
+    ``-1`` marks an unresolved row without a candidate. ``parameters`` hold
+    face ``(u, v)`` or edge ``(t, nan)`` coordinates (NaN otherwise).
+    ``orientations`` relate canonical mesh order to the source tangent or
+    oriented normal (``+1``/``-1``; ``0`` when undefined). ``parent_dimensions`` and
     ``parent_ids`` name the parent mesh entity whose class a row inherited
     (``-1`` for geometric classification). Infinite residuals are allowed only on
     unresolved rows (no closest point).
@@ -109,6 +167,15 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     target_entity_set_id: str = eqx.field(static=True)
     target_global_ids: Array
     source_entity_ids: tuple[str, ...] = eqx.field(static=True)
+    source_roles: tuple[GeometrySourceEntityRole | None, ...] = eqx.field(static=True)
+    source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    source_region_sides: tuple[tuple[str | None, str | None], ...] = eqx.field(
+        static=True
+    )
+    source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...] = eqx.field(
+        static=True
+    )
+    source_parameter_points: tuple[Fraction | None, ...] = eqx.field(static=True)
     residuals: Array
     resolved: Array
     ambiguous: Array
@@ -139,6 +206,12 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         exact: bool = False,
         source_dimensions: ArrayLike | None = None,
         source_indices: ArrayLike | None = None,
+        source_roles: tuple[GeometrySourceEntityRole | None, ...] | None = None,
+        source_occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        source_region_sides: tuple[tuple[str | None, str | None], ...] | None = None,
+        source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
+        | None = None,
+        source_parameter_points: tuple[Fraction | None, ...] | None = None,
         parameters: ArrayLike | None = None,
         orientations: ArrayLike | None = None,
         parent_dimensions: ArrayLike | None = None,
@@ -196,13 +269,128 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Exact geometry associations require zero-residual unique coverage."
             )
-        dimensions, indices = _source_entities(
-            association_kind, revision, sources, source_dimensions, source_indices
+        roles = (
+            tuple(None for _ in range(count))
+            if source_roles is None
+            else tuple(source_roles)
         )
-        if association_kind is GeometryAssociationKind.BREP and np.any(
-            (dimensions < 0) & resolved_
+        occurrences = (
+            tuple(() for _ in range(count))
+            if source_occurrence_paths is None
+            else tuple(source_occurrence_paths)
+        )
+        region_sides = (
+            tuple((None, None) for _ in range(count))
+            if source_region_sides is None
+            else tuple(source_region_sides)
+        )
+        parameter_intervals = (
+            tuple(None for _ in range(count))
+            if source_parameter_intervals is None
+            else tuple(source_parameter_intervals)
+        )
+        parameter_points = (
+            tuple(None for _ in range(count))
+            if source_parameter_points is None
+            else tuple(source_parameter_points)
+        )
+        if len(roles) != count or any(
+            role is not None and not isinstance(role, GeometrySourceEntityRole)
+            for role in roles
         ):
-            raise ValueError("Resolved B-Rep association rows must name an entity.")
+            raise ValueError("Source roles must align with target association rows.")
+        if len(occurrences) != count or any(
+            not isinstance(path, tuple)
+            or any(
+                not isinstance(part, str) or not part or part != part.strip()
+                for part in path
+            )
+            for path in occurrences
+        ):
+            raise ValueError("Source occurrence paths must be aligned immutable tuples.")
+        dimensions, indices = _source_entities(
+            association_kind,
+            source,
+            revision,
+            sources,
+            source_dimensions,
+            source_indices,
+            occurrences,
+        )
+        if len(region_sides) != count or any(
+            not isinstance(pair, tuple)
+            or len(pair) != 2
+            or any(
+                value is not None
+                and (not isinstance(value, str) or not value or value != value.strip())
+                for value in pair
+            )
+            for pair in region_sides
+        ):
+            raise ValueError(
+                "Source region sides must be aligned (minus, plus) ID pairs."
+            )
+        if len(parameter_intervals) != count or any(
+            interval is not None
+            and (
+                not isinstance(interval, tuple)
+                or len(interval) != 2
+                or any(not isinstance(value, Fraction) for value in interval)
+                or interval[0] >= interval[1]
+            )
+            for interval in parameter_intervals
+        ):
+            raise ValueError(
+                "Source parameter intervals must be exact increasing Fraction pairs."
+            )
+        if len(parameter_points) != count or any(
+            value is not None and not isinstance(value, Fraction)
+            for value in parameter_points
+        ):
+            raise ValueError("Source parameter points must be exact Fraction scalars.")
+        for row, (interval, point) in enumerate(
+            zip(parameter_intervals, parameter_points, strict=True)
+        ):
+            curve_edge = (
+                association_kind is GeometryAssociationKind.CURVE
+                and roles[row] is GeometrySourceEntityRole.EDGE
+            )
+            if ((interval is not None or point is not None) and not curve_edge) or (
+                interval is not None and point is not None
+            ):
+                raise ValueError(
+                    "Exact curve parameters belong to one curve-edge interval or point per row."
+                )
+            if not resolved_[row] and (interval is not None or point is not None):
+                raise ValueError("Unresolved curve rows cannot claim exact parameters.")
+            if resolved_[row] and curve_edge and (interval is None) == (point is None):
+                raise ValueError(
+                    "Resolved curve-edge rows require exactly one interval or point parameter."
+                )
+        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and any(
+            resolved_[row]
+            and roles[row] is GeometrySourceEntityRole.FACET
+            and region_sides[row] == (None, None)
+            for row in range(count)
+        ):
+            raise ValueError(
+                "Resolved piecewise-linear facets need at least one incident source region."
+            )
+        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and any(
+            resolved_[row] and roles[row] is None for row in range(count)
+        ):
+            raise ValueError("Resolved piecewise-linear associations need source roles.")
+        if any(
+            not resolved_[row] and region_sides[row] != (None, None)
+            for row in range(count)
+        ):
+            raise ValueError("Unresolved rows cannot claim source region sides.")
+        if (
+            association_kind is GeometryAssociationKind.BREP
+            or source_dimensions is not None
+            or source_indices is not None
+        ) and np.any((dimensions < 0) & resolved_):
+            raise ValueError("Resolved source-stratum rows must name a source entity.")
         parameters_, orientations_, parent_dimensions_, parent_ids_ = _row_metadata(
             count, parameters, orientations, parent_dimensions, parent_ids
         )
@@ -229,6 +417,11 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.exact = bool(exact)
         self.provenance = provenance
         self.parent_association_id = parent
+        self.source_roles = roles
+        self.source_occurrence_paths = occurrences
+        self.source_region_sides = region_sides
+        self.source_parameter_intervals = parameter_intervals
+        self.source_parameter_points = parameter_points
         self.association_id = canonical_fingerprint(
             {
                 "kind": "geometry-association",
@@ -242,6 +435,21 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "resolved": array_tree_fingerprint(resolved_),
                 "ambiguous": array_tree_fingerprint(ambiguous_),
                 "parameters": array_tree_fingerprint(parameters_),
+                "source_roles": tuple(
+                    None if role is None else role.value for role in roles
+                ),
+                "source_occurrence_paths": occurrences,
+                "source_region_sides": region_sides,
+                "source_parameter_intervals": tuple(
+                    None
+                    if interval is None
+                    else tuple(coefficient_payload(value) for value in interval)
+                    for interval in parameter_intervals
+                ),
+                "source_parameter_points": tuple(
+                    None if point is None else coefficient_payload(point)
+                    for point in parameter_points
+                ),
                 "orientations": array_tree_fingerprint(orientations_),
                 "parent_dimensions": array_tree_fingerprint(parent_dimensions_),
                 "parent_ids": array_tree_fingerprint(parent_ids_),
@@ -288,6 +496,117 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         return rows
 
 
+def inherit_association_rows(
+    parent: GeometryAssociation,
+    target_entity_set: EntitySet,
+    target_global_ids: ArrayLike,
+    parent_rows: ArrayLike,
+    /,
+    *,
+    residuals: ArrayLike,
+    orientations: ArrayLike | None = None,
+    source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
+    | None = None,
+    source_parameter_points: tuple[Fraction | None, ...] | None = None,
+    source_region_sides: tuple[tuple[str | None, str | None], ...] | None = None,
+    resolved: ArrayLike | None = None,
+    ambiguous: ArrayLike | None = None,
+) -> GeometryAssociation:
+    """Compose stable source classes through explicit parent-association rows."""
+    if not isinstance(parent, GeometryAssociation) or not isinstance(
+        target_entity_set, EntitySet
+    ):
+        raise TypeError(
+            "Parent association and target entity set must be canonical owners."
+        )
+    targets = np.asarray(target_global_ids, dtype=np.int64)
+    rows = np.asarray(parent_rows)
+    count = targets.size
+    if (
+        targets.ndim != 1
+        or rows.ndim != 1
+        or rows.dtype.kind not in "iu"
+        or rows.shape != targets.shape
+        or np.any(rows < 0)
+        or np.any(rows >= parent.target_global_ids.shape[0])
+        or targets.shape != (target_entity_set.count,)
+        or not np.array_equal(targets, np.asarray(target_entity_set.entity_ids))
+    ):
+        raise ValueError("Association parent rows and target IDs must align exactly.")
+    residual = np.asarray(residuals, dtype=np.float64)
+    if residual.shape != (count,):
+        raise ValueError("Association child residuals must align with target rows.")
+    source_ids = tuple(parent.source_entity_ids[int(row)] for row in rows)
+    roles = tuple(parent.source_roles[int(row)] for row in rows)
+    occurrences = tuple(parent.source_occurrence_paths[int(row)] for row in rows)
+    region_sides = (
+        tuple(parent.source_region_sides[int(row)] for row in rows)
+        if source_region_sides is None
+        else source_region_sides
+    )
+    intervals = (
+        tuple(parent.source_parameter_intervals[int(row)] for row in rows)
+        if source_parameter_intervals is None
+        else source_parameter_intervals
+    )
+    parameter_points = (
+        tuple(parent.source_parameter_points[int(row)] for row in rows)
+        if source_parameter_points is None
+        else source_parameter_points
+    )
+    resolved_ = (
+        np.asarray(parent.resolved, dtype=np.bool_)[rows]
+        if resolved is None
+        else np.asarray(resolved, dtype=np.bool_)
+    )
+    ambiguous_ = (
+        np.asarray(parent.ambiguous, dtype=np.bool_)[rows]
+        if ambiguous is None
+        else np.asarray(ambiguous, dtype=np.bool_)
+    )
+    orientation = (
+        np.asarray(parent.orientations, dtype=np.int8)[rows]
+        if orientations is None
+        else np.asarray(orientations, dtype=np.int8)
+    )
+    source_dimensions = (
+        np.asarray(parent.source_dimensions, dtype=np.int8)[rows]
+        if parent.association_kind is GeometryAssociationKind.BREP
+        else None
+    )
+    source_indices = (
+        np.asarray(parent.source_indices, dtype=np.int32)[rows]
+        if parent.association_kind is GeometryAssociationKind.BREP
+        else None
+    )
+    return GeometryAssociation(
+        parent.association_kind,
+        parent.source_id,
+        parent.source_revision,
+        target_entity_set.entity_set_id,
+        targets,
+        source_ids,
+        residual,
+        resolved=resolved_,
+        ambiguous=ambiguous_,
+        exact=parent.exact
+        and bool(np.all(resolved_))
+        and not bool(np.any(ambiguous_))
+        and bool(np.all(residual == 0.0)),
+        source_dimensions=source_dimensions,
+        source_indices=source_indices,
+        source_roles=roles,
+        source_occurrence_paths=occurrences,
+        source_region_sides=region_sides,
+        source_parameter_intervals=intervals,
+        source_parameter_points=parameter_points,
+        parameters=np.asarray(parent.parameters)[rows],
+        orientations=orientation,
+        parent_association_id=parent.association_id,
+        provenance=GeometryAssociationProvenance.LINEAGE,
+    )
+
+
 def _row_metadata(
     count: int,
     parameters: ArrayLike | None,
@@ -324,42 +643,50 @@ def _row_metadata(
 
 def _source_entities(
     kind: GeometryAssociationKind,
+    source: str,
     revision: str,
     sources: tuple[str, ...],
     dimensions: ArrayLike | None,
     indices: ArrayLike | None,
+    occurrence_paths: tuple[tuple[str, ...], ...],
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     count = len(sources)
-    if kind is not GeometryAssociationKind.BREP:
-        if dimensions is not None or indices is not None:
-            raise ValueError("Only B-Rep associations carry B-Rep entity dimensions.")
-        return np.full((count,), -1, np.int8), np.full((count,), -1, np.int32)
+    if dimensions is None and indices is None:
+        if kind is GeometryAssociationKind.BREP:
+            raise ValueError("B-Rep associations require source dimensions and indices.")
+        return np.full((count,), -1, np.int8), np.full((count,), -1, np.int64)
     if dimensions is None or indices is None:
-        raise ValueError("B-Rep associations require source dimensions and indices.")
+        raise ValueError("Source dimensions and indices must be supplied together.")
     dimensions_ = np.asarray(dimensions)
     indices_ = np.asarray(indices)
     if not np.issubdtype(dimensions_.dtype, np.integer) or not np.issubdtype(
         indices_.dtype, np.integer
     ):
-        raise TypeError("B-Rep source dimensions and indices must be integers.")
+        raise TypeError("Source dimensions and indices must be integers.")
     if dimensions_.shape != (count,) or indices_.shape != (count,):
-        raise ValueError("B-Rep source dimensions and indices must align with rows.")
-    if np.any((dimensions_ < -1) | (dimensions_ > 3)) or np.any(
-        (dimensions_ >= 0) != (indices_ >= 0)
+        raise ValueError("Source dimensions and indices must align with rows.")
+    if (
+        np.any((dimensions_ < -1) | (dimensions_ > 3))
+        or np.any(indices_ < -1)
+        or np.any(indices_ > np.iinfo(np.int64).max)
+        or np.any((dimensions_ >= 0) != (indices_ >= 0))
     ):
-        raise ValueError("B-Rep source entities must pair a dimension with an index.")
-    expected = tuple(
-        brep_entity_id(revision, dimension, index)
-        if dimension >= 0
-        else _unclassified_id(revision)
-        for dimension, index in zip(dimensions_.tolist(), indices_.tolist(), strict=True)
-    )
-    if expected != sources:
-        raise ValueError(
-            "B-Rep source entity IDs must be <revision>:<kind>:<index> of their rows."
+        raise ValueError("Source entities must pair a dimension with an int64 index.")
+    if kind is GeometryAssociationKind.BREP:
+        expected = tuple(
+            brep_entity_id(source, revision, dimension, index, occurrence_path=path)
+            if dimension >= 0
+            else _unclassified_id(source, revision, path)
+            for dimension, index, path in zip(
+                dimensions_.tolist(), indices_.tolist(), occurrence_paths, strict=True
+            )
         )
-    return dimensions_.astype(np.int8), indices_.astype(np.int32)
+        if expected != sources:
+            raise ValueError(
+                "B-Rep source entity keys must match their revision, definition and occurrence."
+            )
+    return dimensions_.astype(np.int8), indices_.astype(np.int64)
 
 
 # -- policy and errors ---------------------------------------------------------
@@ -523,10 +850,44 @@ class _Classes(NamedTuple):
     dimensions: np.ndarray
     indices: np.ndarray
     status: np.ndarray
+    occurrence_paths: tuple[tuple[str, ...], ...]
 
     @property
     def resolved(self) -> np.ndarray:
         return np.isin(self.status, _RESOLVED_STATUS)
+
+
+class _ClassificationGroups(NamedTuple):
+    vertex_groups: np.ndarray
+    allowed_groups: np.ndarray
+    allowed_dimensions: np.ndarray
+    allowed_indices: np.ndarray
+    allowed_occurrence_paths: tuple[tuple[str, ...], ...]
+
+
+def _common_occurrences(
+    members: np.ndarray,
+    member_paths: tuple[tuple[str, ...], ...],
+    count: int,
+    /,
+) -> tuple[tuple[tuple[str, ...], ...], np.ndarray]:
+    """A definition-level incidence inference must stay in one physical occurrence."""
+    paths: list[tuple[str, ...] | None] = [None] * count
+    conflicts = np.zeros(count, dtype=np.bool_)
+    for owner, member in members:
+        row = int(owner)
+        path = member_paths[int(member)]
+        if paths[row] is None:
+            paths[row] = path
+        elif paths[row] != path:
+            conflicts[row] = True
+    return (
+        tuple(
+            () if path is None or conflicts[row] else path
+            for row, path in enumerate(paths)
+        ),
+        conflicts,
+    )
 
 
 def _vertex_classes(mesh: CellMesh, association: GeometryAssociation, /) -> _Classes:
@@ -549,7 +910,10 @@ def _vertex_classes(mesh: CellMesh, association: GeometryAssociation, /) -> _Cla
             BRepProjectionStatus.FAILED,
         ),
     )
-    return _Classes(dims, indices, status)
+    paths: list[tuple[str, ...]] = [()] * count
+    for row, path in zip(rows.tolist(), association.source_occurrence_paths, strict=True):
+        paths[row] = path
+    return _Classes(dims, indices, status, tuple(paths))
 
 
 def _centroids(mesh: CellMesh, members: np.ndarray, count: int, /) -> np.ndarray:
@@ -560,21 +924,27 @@ def _centroids(mesh: CellMesh, members: np.ndarray, count: int, /) -> np.ndarray
 
 
 def _candidate_residuals(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     points: np.ndarray,
     dimensions: np.ndarray,
     indices: np.ndarray,
+    occurrence_paths: tuple[tuple[str, ...], ...],
     /,
 ) -> np.ndarray:
     """Distance of each point to its candidate entity (solids: 0 inside, else inf)."""
     residuals = np.full((points.shape[0],), np.inf)
     lower = np.flatnonzero(dimensions <= 2)
     if lower.size:
-        result = projection.project(points[lower], dimensions[lower], indices[lower])
+        result = projection.project(
+            points[lower],
+            dimensions[lower],
+            indices[lower],
+            occurrence_paths=tuple(occurrence_paths[row] for row in lower.tolist()),
+        )
         residuals[lower] = np.where(
-            np.asarray(result.status) == BRepProjectionStatus.FAILED,
-            np.inf,
+            np.isin(np.asarray(result.status), _RESOLVED_STATUS),
             np.asarray(result.residuals),
+            np.inf,
         )
     solid = np.flatnonzero(dimensions == 3)
     if solid.size:
@@ -582,12 +952,22 @@ def _candidate_residuals(
         inside = (np.asarray(located.dimensions) == 3) & (
             np.asarray(located.indices) == indices[solid]
         )
+        inside &= np.isin(np.asarray(located.status), _RESOLVED_STATUS)
+        inside &= np.asarray(
+            [
+                actual == occurrence_paths[row]
+                for row, actual in zip(
+                    solid.tolist(), located.occurrence_paths, strict=True
+                )
+            ],
+            dtype=np.bool_,
+        )
         residuals[solid] = np.where(inside, 0.0, np.inf)
     return residuals
 
 
 def _lowest_containers(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     members: np.ndarray,
     member_classes: _Classes,
     count: int,
@@ -607,10 +987,25 @@ def _lowest_containers(
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
     status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
+    paths, occurrence_conflicts = _common_occurrences(
+        members, member_classes.occurrence_paths, count
+    )
     member_dims = member_classes.dimensions[members[:, 1]]
-    classified = member_dims >= 0
+    classified = (member_dims >= 0) & member_classes.resolved[members[:, 1]]
     failed = np.bincount(members[~classified, 0], minlength=count) > 0
     failed |= np.bincount(members[:, 0], minlength=count) == 0
+    failed |= occurrence_conflicts
+    ambiguous_members = (
+        np.bincount(
+            members[
+                member_classes.status[members[:, 1]] == BRepProjectionStatus.AMBIGUOUS, 0
+            ],
+            minlength=count,
+        )
+        > 0
+    )
+    status[occurrence_conflicts | ambiguous_members] = BRepProjectionStatus.AMBIGUOUS
+    classified &= ~failed[members[:, 0]]
     codes = projection.entity_codes(
         member_dims[classified], member_classes.indices[members[classified, 1]]
     )
@@ -618,7 +1013,7 @@ def _lowest_containers(
         np.stack((members[classified, 0], codes), axis=1), axis=0
     ).reshape(-1, 2)
     if owner_class.shape[0] == 0:
-        return _Classes(dims, indices, status)
+        return _Classes(dims, indices, status, paths)
     class_count = np.bincount(owner_class[:, 0], minlength=count)
     distinct, inverse = np.unique(owner_class[:, 1], return_inverse=True)
     row, container_dims, container_indices = projection.containers(
@@ -670,7 +1065,11 @@ def _lowest_containers(
         tied = ties[owners] > 1
         if np.any(tied):
             residual[tied] = _candidate_residuals(
-                projection, centroids[owners[tied]], at_dims[tied], at_indices[tied]
+                projection,
+                centroids[owners[tied]],
+                at_dims[tied],
+                at_indices[tied],
+                tuple(paths[row] for row in owners[tied].tolist()),
             )
         order = np.lexsort((at_indices, residual, owners))
         owners, at_dims, at_indices, residual = (
@@ -694,13 +1093,14 @@ def _lowest_containers(
     dims[failed] = -1
     indices[failed] = -1
     status[failed] = BRepProjectionStatus.FAILED
-    return _Classes(dims, indices, status)
+    status[occurrence_conflicts | ambiguous_members] = BRepProjectionStatus.AMBIGUOUS
+    return _Classes(dims, indices, status, paths)
 
 
 def _classify_mesh(
     mesh: CellMesh,
     vertex_classes: _Classes,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
 ) -> tuple[_Classes, ...]:
     """B-Rep classes of every mesh entity dimension ``0..D`` (module rules)."""
@@ -727,7 +1127,7 @@ def _classify_mesh(
 
 def _classify_level(
     mesh: CellMesh,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     vertex_classes: _Classes,
     upper: _Classes,
     dimension: int,
@@ -746,6 +1146,10 @@ def _classify_level(
     good = np.isin(upper.status[pairs[:, 1]], _RESOLVED_STATUS)
     unresolved = np.bincount(pairs[~good, 0], minlength=count) > 0
     pairs = pairs[good]
+    coface_paths, occurrence_conflicts = _common_occurrences(
+        pairs, upper.occurrence_paths, count
+    )
+    unresolved |= occurrence_conflicts
     upper_dims = upper.dimensions[pairs[:, 1]]
     lowest = np.full((count,), 4, dtype=np.int64)
     np.minimum.at(lowest, pairs[:, 0], upper_dims)
@@ -789,14 +1193,19 @@ def _classify_level(
         BRepProjectionStatus.AMBIGUOUS,
         status,
     ).astype(np.int8)
-    return _Classes(dims.astype(np.int64), indices.astype(np.int64), status)
+    paths = tuple(
+        coface_paths[row] if inherited[row] else bounded.occurrence_paths[row]
+        for row in range(count)
+    )
+    return _Classes(dims.astype(np.int64), indices.astype(np.int64), status, paths)
 
 
 def _orientations(
     mesh: CellMesh,
     dimension: int,
     classes: _Classes,
-    projected: BRepProjectionResult,
+    normals: np.ndarray,
+    tangents: np.ndarray,
     /,
 ) -> np.ndarray:
     """Relation of each entity's canonical vertex order to its B-Rep orientation."""
@@ -807,12 +1216,12 @@ def _orientations(
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     if dimension == 1:
         rows = np.flatnonzero(classes.dimensions == 1)
-        tangent = np.asarray(projected.tangents)[rows, 0]
+        tangent = tangents[rows, 0]
         direction = points[ordered[rows, 1]] - points[ordered[rows, 0]]
         sign = np.sign(np.sum(direction * tangent, axis=1))
     elif dimension == 2 and mesh.ambient_dimension == 3:
         rows = np.flatnonzero(classes.dimensions == 2)
-        normal = np.asarray(projected.normals)[rows]
+        normal = normals[rows]
         corners = points[ordered[rows]]
         facet = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
         sign = np.sign(np.sum(facet * normal, axis=1))
@@ -823,7 +1232,7 @@ def _orientations(
 
 
 def _brep_association(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     mesh: CellMesh,
     dimension: int,
     classes: _Classes,
@@ -841,29 +1250,27 @@ def _brep_association(
     entity_set = mesh.entity_set(dimension)
     # Solid rows inherit region membership; only vertices, edges, and faces project.
     lower = np.flatnonzero((classes.dimensions >= 0) & (classes.dimensions <= 2))
-    projected = projection.project(
-        points[lower], classes.dimensions[lower], classes.indices[lower]
-    )
-    residuals = np.where(classes.dimensions == 3, 0.0, np.inf)
-    parameters = np.full((count, 2), np.nan)
-    projection_status = np.where(
-        classes.dimensions == 3, BRepProjectionStatus.UNIQUE, BRepProjectionStatus.FAILED
-    ).astype(np.int8)
-    residuals[lower] = np.asarray(projected.residuals)
-    parameters[lower] = np.asarray(projected.parameters)
-    projection_status[lower] = np.asarray(projected.status)
-    full = BRepProjectionResult(
-        projection.source_revision,
-        classes.dimensions,
-        classes.indices,
-        points,
-        np.full(points.shape, np.nan),
-        parameters,
-        residuals,
-        projection_status,
-        _scatter(lower, np.asarray(projected.normals), (count, points.shape[1])),
-        _scatter(lower, np.asarray(projected.tangents), (count, 2, points.shape[1])),
-    )
+    residuals = np.full(count, np.inf, dtype=np.float64)
+    residuals[classes.dimensions == 3] = 0.0
+    parameters = np.full((count, 2), np.nan, dtype=np.float64)
+    normals = np.full(points.shape, np.nan, dtype=np.float64)
+    tangents = np.full((count, 2, points.shape[1]), np.nan, dtype=np.float64)
+    projection_status = np.full(count, BRepProjectionStatus.FAILED, dtype=np.int8)
+    projection_status[classes.dimensions == 3] = BRepProjectionStatus.UNIQUE
+    if lower.size:
+        projected = projection.project(
+            points[lower],
+            classes.dimensions[lower],
+            classes.indices[lower],
+            occurrence_paths=tuple(
+                classes.occurrence_paths[row] for row in lower.tolist()
+            ),
+        )
+        residuals[lower] = np.asarray(projected.residuals)
+        parameters[lower] = np.asarray(projected.parameters)
+        projection_status[lower] = np.asarray(projected.status)
+        normals[lower] = np.asarray(projected.normals)
+        tangents[lower] = np.asarray(projected.tangents)
     ambiguous = (classes.status == BRepProjectionStatus.AMBIGUOUS) | (
         projection_status == BRepProjectionStatus.AMBIGUOUS
     )
@@ -883,11 +1290,20 @@ def _brep_association(
         entity_set.entity_set_id,
         np.asarray(entity_set.entity_ids, dtype=np.int64),
         tuple(
-            brep_entity_id(projection.source_revision, entity, index)
+            brep_entity_id(
+                projection.source_id,
+                projection.source_revision,
+                entity,
+                index,
+                occurrence_path=path,
+            )
             if entity >= 0
-            else _unclassified_id(projection.source_revision)
-            for entity, index in zip(
-                classes.dimensions.tolist(), classes.indices.tolist(), strict=True
+            else _unclassified_id(projection.source_id, projection.source_revision, path)
+            for entity, index, path in zip(
+                classes.dimensions.tolist(),
+                classes.indices.tolist(),
+                classes.occurrence_paths,
+                strict=True,
             )
         ),
         residuals,
@@ -895,8 +1311,9 @@ def _brep_association(
         ambiguous=ambiguous & ~resolved,
         source_dimensions=classes.dimensions,
         source_indices=classes.indices,
+        source_occurrence_paths=classes.occurrence_paths,
         parameters=parameters,
-        orientations=_orientations(mesh, dimension, classes, full),
+        orientations=_orientations(mesh, dimension, classes, normals, tangents),
         parent_dimensions=parent_dimensions,
         parent_ids=parent_ids,
         parent_association_id=parent_association_id,
@@ -904,23 +1321,17 @@ def _brep_association(
     )
 
 
-def _scatter(rows: np.ndarray, values: np.ndarray, shape: tuple[int, ...], /) -> Any:
-    output = np.full(shape, np.nan)
-    output[rows] = values
-    return output
-
-
 def _require_brep(
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     mesh: CellMesh,
     dimension: int,
     /,
 ) -> None:
     if not isinstance(association, GeometryAssociation):
         raise TypeError("association must be GeometryAssociation.")
-    if not isinstance(projection, PreparedBRepProjection):
-        raise TypeError("projection must be PreparedBRepProjection.")
+    if not isinstance(projection, AbstractBRepProjection):
+        raise TypeError("projection must be AbstractBRepProjection.")
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
     if association.association_kind is not GeometryAssociationKind.BREP:
@@ -945,7 +1356,7 @@ def _policy(policy: AssociationPropagationPolicy, /) -> AssociationPropagationPo
 def _mesh_entity_classes(
     mesh: CellMesh,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
 ) -> tuple[_Classes, ...]:
     """Host B-Rep classes ``(dimensions, indices, status)`` of mesh dimensions ``0..D``.
@@ -961,7 +1372,7 @@ def _mesh_entity_classes(
 def associate_mesh_entities(
     mesh: CellMesh,
     association: GeometryAssociation,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     dimension: int,
     /,
     *,
@@ -994,9 +1405,9 @@ def associate_mesh_entities(
 
 def _geometric_vertex_classes(
     mesh: CellMesh,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     tolerance: float,
-    groups: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None,
+    groups: _ClassificationGroups | None,
     /,
 ) -> _Classes:
     """Lowest-dimensional B-Rep entity within ``tolerance`` of every mesh vertex.
@@ -1014,31 +1425,30 @@ def _geometric_vertex_classes(
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
     status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
+    paths: list[tuple[str, ...]] = [()] * count
 
     def assign(rows: np.ndarray, result: BRepProjectionResult, /) -> None:
         dims[rows] = np.asarray(result.dimensions, dtype=np.int64)
         indices[rows] = np.asarray(result.indices, dtype=np.int64)
         status[rows] = np.asarray(result.status)
+        for row, path in zip(rows.tolist(), result.occurrence_paths, strict=True):
+            paths[row] = path
 
     rows = np.flatnonzero(boundary)
     if rows.size:
-        if groups is None:
-            options = {}
-        else:
-            vertex_groups, allowed_groups, allowed_dims, allowed_indices = groups
-            options = {
-                "groups": vertex_groups[rows],
-                "allowed_groups": allowed_groups,
-                "allowed_dimensions": allowed_dims,
-                "allowed_indices": allowed_indices,
-            }
         assign(
             rows,
             projection.classify(
                 points[rows],
                 tolerance=tolerance,
                 maximum_dimension=min(top - 1, 2),
-                **options,
+                groups=None if groups is None else groups.vertex_groups[rows],
+                allowed_groups=None if groups is None else groups.allowed_groups,
+                allowed_dimensions=None if groups is None else groups.allowed_dimensions,
+                allowed_indices=None if groups is None else groups.allowed_indices,
+                allowed_occurrence_paths=(
+                    None if groups is None else groups.allowed_occurrence_paths
+                ),
             ),
         )
     rows = np.flatnonzero(~boundary)
@@ -1048,12 +1458,12 @@ def _geometric_vertex_classes(
             inside = rows[dims[rows] < 0]
             if inside.size:
                 assign(inside, projection.locate_solids(points[inside]))
-    return _Classes(dims, indices, status)
+    return _Classes(dims, indices, status, tuple(paths))
 
 
 def associate_mesh_vertices(
     mesh: CellMesh,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
     *,
     policy: AssociationPropagationPolicy,
@@ -1062,8 +1472,8 @@ def associate_mesh_vertices(
     policy_ = _policy(policy)
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
-    if not isinstance(projection, PreparedBRepProjection):
-        raise TypeError("projection must be PreparedBRepProjection.")
+    if not isinstance(projection, AbstractBRepProjection):
+        raise TypeError("projection must be AbstractBRepProjection.")
     if mesh.ambient_dimension != projection.ambient_dimension:
         raise ValueError("Mesh and projection ambient dimensions differ.")
     classes = _geometric_vertex_classes(
@@ -1089,21 +1499,21 @@ def _child_sources(
     source_mesh: CellMesh,
     target_mesh: CellMesh,
     created: np.ndarray,
+    vertex_stencil: VertexInterpolationStencil | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Lowest-dimensional source entity ``(dimension, row)`` each created vertex lies in.
-
-    A vertex on a target edge (face) refined from a source edge (face) lies in
-    that source entity; otherwise its split parents span the source simplex.
-    """
-    from ._lineage import EntityLineageKind
+    """Lowest-dimensional source entity containing each created vertex stencil."""
+    from ._lineage import EntityLineageKind, VertexInterpolationStencil
     from ._topology_edit import entity_keys, key_rows
 
     top = source_mesh.topological_dimension
     dims = np.full((created.size,), -1, dtype=np.int64)
     rows = np.full((created.size,), -1, dtype=np.int64)
     target_ids = np.asarray(target_mesh.vertex_global_ids, dtype=np.int64)
-    refined = (int(EntityLineageKind.REFINED_FROM), int(EntityLineageKind.SPLIT_FROM))
+    refined = (
+        int(EntityLineageKind.REFINED_FROM),
+        int(EntityLineageKind.SPLIT_FROM),
+    )
     for dimension in range(1, top):
         record = lineage.entity_lineage(dimension)
         kinds = np.asarray(record.relation_kinds)
@@ -1127,57 +1537,66 @@ def _child_sources(
         chosen = position[hit][open_]
         dims[chosen] = dimension
         rows[chosen] = source_rows[entity_vertices[hit, 0][open_]]
-    record = lineage.entity_lineage(0)
-    split = np.asarray(record.relation_kinds) == EntityLineageKind.SPLIT_FROM
-    parents = np.stack(
-        (
-            np.asarray(record.target_global_ids)[split],
-            np.asarray(record.source_global_ids)[split],
-        ),
-        axis=1,
-    )
+
     open_rows = np.flatnonzero(dims < 0)
-    if open_rows.size and parents.size:
-        parents = parents[np.isin(parents[:, 0], created[open_rows])]
-        parents = parents[np.lexsort((parents[:, 1], parents[:, 0]))]
-        owners, starts, sizes = np.unique(
-            parents[:, 0], return_index=True, return_counts=True
+    if not open_rows.size or vertex_stencil is None:
+        return dims, rows
+    if not isinstance(vertex_stencil, VertexInterpolationStencil):
+        raise TypeError("vertex_stencil must be VertexInterpolationStencil or None.")
+    if (
+        vertex_stencil.source_entity_set_id != source_mesh.entity_set(0).entity_set_id
+        or vertex_stencil.target_entity_set_id != target_mesh.entity_set(0).entity_set_id
+    ):
+        raise ValueError(
+            "Vertex interpolation stencil endpoints do not match association meshes."
         )
-        for size in np.unique(sizes).tolist():
-            if size - 1 > top or size < 2:
-                continue
-            selected = sizes == size
-            keys = np.stack(
-                [parents[starts[selected] + offset, 1] for offset in range(size)], axis=1
+    stencil_ids = np.asarray(vertex_stencil.target_global_ids, dtype=np.int64)
+    stencil_order = np.argsort(stencil_ids, kind="stable")
+    stencil_sorted = stencil_ids[stencil_order]
+    positions = np.searchsorted(stencil_sorted, created[open_rows])
+    if np.any(positions >= stencil_sorted.size) or not np.array_equal(
+        stencil_sorted[positions], created[open_rows]
+    ):
+        raise ValueError(
+            "Vertex interpolation stencil omits created association targets."
+        )
+    stencil_rows = stencil_order[positions]
+    stencil_sources = np.asarray(vertex_stencil.source_global_ids, dtype=np.int64)
+    stencil_weights = np.asarray(vertex_stencil.weights, dtype=np.float64)
+    stencil_valid = np.asarray(vertex_stencil.valid, dtype=np.bool_)
+    source_cell_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in source_mesh.blocks]
+    )
+    source_cell_vertices = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in source_mesh.blocks]
+    )
+    source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    cell_keys = np.sort(source_vertex_ids[source_cell_vertices], axis=1)
+    for created_row, stencil_row in zip(open_rows, stencil_rows, strict=True):
+        support = np.sort(
+            np.unique(
+                stencil_sources[
+                    stencil_row,
+                    stencil_valid[stencil_row] & (stencil_weights[stencil_row] != 0.0),
+                ]
             )
-            if size - 1 == top:
-                cells = np.concatenate(
-                    [
-                        np.asarray(block.vertices, dtype=np.int64)
-                        for block in source_mesh.blocks
-                    ]
-                )
-                identifiers = np.concatenate(
-                    [
-                        np.asarray(block.global_ids, dtype=np.int64)
-                        for block in source_mesh.blocks
-                    ]
-                )
-                table = np.sort(
-                    np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)[cells],
-                    axis=1,
-                )
-                found = key_rows(table, keys)
-                entity = np.where(
-                    found >= 0,
-                    _entity_rows(source_mesh, top, identifiers[np.maximum(found, 0)]),
-                    -1,
-                )
-            else:
-                entity = key_rows(entity_keys(source_mesh, size - 1), keys)
-            position = np.searchsorted(created, owners[selected])
-            dims[position] = np.where(entity >= 0, size - 1, -1)
-            rows[position] = entity
+        )
+        if support.size < 2 or support.size > top + 1:
+            continue
+        dimension = int(support.size - 1)
+        query = support.reshape((1, -1))
+        if dimension == top:
+            cell_row = int(key_rows(cell_keys, query)[0])
+            entity_row = (
+                int(_entity_rows(source_mesh, top, source_cell_ids[[cell_row]])[0])
+                if cell_row >= 0
+                else -1
+            )
+        else:
+            entity_row = int(key_rows(entity_keys(source_mesh, dimension), query)[0])
+        if entity_row >= 0:
+            dims[created_row] = dimension
+            rows[created_row] = entity_row
     return dims, rows
 
 
@@ -1186,20 +1605,26 @@ def propagate_association(
     lineage: MeshLineage,
     source_mesh: CellMesh,
     target_mesh: CellMesh,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
     *,
     policy: AssociationPropagationPolicy,
+    vertex_stencil: VertexInterpolationStencil | None,
 ) -> GeometryAssociation:
-    """Carry a complete B-Rep vertex association through one exact topology lineage.
+    """Carry B-Rep classes through lineage and exact interpolation support.
 
-    Preserved vertices keep their class and projection; relocated vertices keep
-    their class and are re-projected; created vertices inherit the class of the
-    source entity they lie in and are projected; vertices without any parent are
-    classified geometrically. Raises :class:`AssociationPropagationError` for a
-    collapse whose kept vertex class is not in the closure of the removed class.
+    Preserved vertices keep their class, relocated vertices are re-projected,
+    and created vertices inherit a source entity class from their explicit
+    interpolation stencil or lower-dimensional entity lineage. The
+    ``VertexInterpolationStencil`` is the source of interpolation support;
+    ``SPLIT_FROM`` vertex relations are not used as a substitute.
     """
-    from ._lineage import EntityLineageKind, MeshLineage
+    from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
+
+    if vertex_stencil is not None and not isinstance(
+        vertex_stencil, VertexInterpolationStencil
+    ):
+        raise TypeError("vertex_stencil must be VertexInterpolationStencil or None.")
 
     policy_ = _policy(policy)
     _require_brep(association, projection, source_mesh, 0)
@@ -1229,6 +1654,7 @@ def propagate_association(
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
     status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
+    paths: list[tuple[str, ...]] = [()] * count
     parent_dims = np.full((count,), -1, dtype=np.int8)
     parent_ids = np.full((count,), -1, dtype=np.int64)
     kept = np.flatnonzero(_entity_rows(source_mesh, 0, target_ids) >= 0)
@@ -1236,6 +1662,8 @@ def propagate_association(
     dims[kept] = source_classes.dimensions[kept_source]
     indices[kept] = source_classes.indices[kept_source]
     status[kept] = source_classes.status[kept_source]
+    for row, parent in zip(kept.tolist(), kept_source.tolist(), strict=True):
+        paths[row] = source_classes.occurrence_paths[parent]
     parent_dims[kept] = 0
     parent_ids[kept] = target_ids[kept]
     created_rows = np.flatnonzero(_entity_rows(source_mesh, 0, target_ids) < 0)
@@ -1244,7 +1672,7 @@ def propagate_association(
     created_rows, created = created_rows[order], created[order]
     if created.size:
         entity_dims, entity_rows = _child_sources(
-            lineage, source_mesh, target_mesh, created
+            lineage, source_mesh, target_mesh, created, vertex_stencil
         )
         found = entity_dims >= 0
         if np.any(found):
@@ -1257,24 +1685,25 @@ def propagate_association(
                 dims[target_rows] = level_classes.dimensions[rows]
                 indices[target_rows] = level_classes.indices[rows]
                 status[target_rows] = level_classes.status[rows]
+                for target_row, source_row in zip(
+                    target_rows.tolist(), rows.tolist(), strict=True
+                ):
+                    paths[target_row] = level_classes.occurrence_paths[source_row]
                 parent_dims[target_rows] = level
                 parent_ids[target_rows] = np.asarray(
                     source_mesh.entity_set(level).entity_ids, dtype=np.int64
                 )[rows]
         orphans = created_rows[~found]
         if orphans.size:
-            geometric = projection.classify(
-                np.asarray(target_mesh.coordinates, dtype=np.float64)[orphans],
-                tolerance=policy_.classification_tolerance,
+            raise AssociationPropagationError(
+                "Created B-Rep association vertices require exact source interpolation support or entity lineage.",
+                target_ids[orphans],
             )
-            dims[orphans] = np.asarray(geometric.dimensions, dtype=np.int64)
-            indices[orphans] = np.asarray(geometric.indices, dtype=np.int64)
-            status[orphans] = np.asarray(geometric.status)
     return _brep_association(
         projection,
         target_mesh,
         0,
-        _Classes(dims, indices, status),
+        _Classes(dims, indices, status, tuple(paths)),
         np.asarray(target_mesh.coordinates, dtype=np.float64),
         policy_,
         provenance=GeometryAssociationProvenance.LINEAGE,
@@ -1285,7 +1714,7 @@ def propagate_association(
 
 
 def _check_collapses(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     classes: _Classes,
     removed: np.ndarray,
     kept: np.ndarray,
@@ -1300,6 +1729,14 @@ def _check_collapses(
     removed_dims = classes.dimensions[removed]
     kept_dims = classes.dimensions[kept]
     known = (removed_dims >= 0) & (kept_dims >= 0)
+    known &= classes.resolved[removed] & classes.resolved[kept]
+    known &= np.asarray(
+        [
+            classes.occurrence_paths[first] == classes.occurrence_paths[second]
+            for first, second in zip(removed.tolist(), kept.tolist(), strict=True)
+        ],
+        dtype=np.bool_,
+    )
     legal = np.zeros(removed.shape, dtype=np.bool_)
     legal[known] = projection.contains(
         removed_dims[known],
@@ -1341,9 +1778,9 @@ def _transfer_groups(
     source: CellMeshingResult,
     target: CellMeshingResult,
     source_classes: tuple[_Classes, ...],
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> _ClassificationGroups:
     """Admissible B-Rep entities per target boundary vertex from facet classes.
 
     Source boundary facets carrying one organization signature admit the B-Rep
@@ -1378,12 +1815,13 @@ def _transfer_groups(
     source_signature = signature[:facet_count]
     target_signature = signature[facet_count:]
     facet_classes = source_classes[top - 1]
-    rows = np.flatnonzero(boundary & (facet_classes.dimensions >= 0))
-    allowed = _members_closure(
+    rows = np.flatnonzero(boundary & facet_classes.resolved)
+    allowed, qualified_codes, qualified_paths = _members_closure(
         projection,
         source_signature[rows],
         facet_classes.dimensions[rows],
         facet_classes.indices[rows],
+        tuple(facet_classes.occurrence_paths[row] for row in rows.tolist()),
     )
     target_boundary = _boundary_mask(target.mesh, top - 1)
     vertex_facets = _incidence_pairs(target.mesh, 0, top - 1)
@@ -1404,33 +1842,53 @@ def _transfer_groups(
     group_signature = np.argwhere(combinations >= 0)
     group_signature[:, 1] = combinations[group_signature[:, 0], group_signature[:, 1]]
     group_codes = _compose(group_signature, allowed)
-    dims, indices = projection.code_entities(group_codes[:, 1])
-    return groups.reshape(-1), group_codes[:, 0], dims, indices
+    dims, indices = projection.code_entities(qualified_codes[group_codes[:, 1]])
+    return _ClassificationGroups(
+        groups.reshape(-1),
+        group_codes[:, 0],
+        dims,
+        indices,
+        tuple(qualified_paths[row] for row in group_codes[:, 1].tolist()),
+    )
 
 
 def _members_closure(
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     signatures: np.ndarray,
     dimensions: np.ndarray,
     indices: np.ndarray,
+    occurrence_paths: tuple[tuple[str, ...], ...],
     /,
-) -> np.ndarray:
-    """Unique ``(signature, entity_code)`` of every classified facet and its closure."""
+) -> tuple[np.ndarray, np.ndarray, tuple[tuple[str, ...], ...]]:
+    """Retain qualified source identity while grouping definition closures."""
     owner, member_dims, member_indices = projection.members(dimensions, indices)
-    return np.unique(
-        np.stack(
-            (signatures[owner], projection.entity_codes(member_dims, member_indices)),
-            axis=1,
-        ),
-        axis=0,
+    codes = projection.entity_codes(member_dims, member_indices)
+    records = tuple(
+        sorted(
+            {
+                (int(signatures[row]), int(code), occurrence_paths[row])
+                for row, code in zip(owner.tolist(), codes.tolist(), strict=True)
+            }
+        )
+    )
+    keys = tuple(sorted({(code, path) for _, code, path in records}))
+    key_rows = {key: row for row, key in enumerate(keys)}
+    allowed = np.asarray(
+        [(signature, key_rows[(code, path)]) for signature, code, path in records],
+        dtype=np.int64,
     ).reshape(-1, 2)
+    return (
+        allowed,
+        np.asarray([code for code, _ in keys], dtype=np.int64),
+        tuple(path for _, path in keys),
+    )
 
 
 def rederive_association(
     association: GeometryAssociation,
     source: CellMeshingResult,
     target: CellMeshingResult,
-    projection: PreparedBRepProjection,
+    projection: AbstractBRepProjection,
     /,
     *,
     policy: AssociationPropagationPolicy,
@@ -1495,14 +1953,14 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
     associations of the same higher dimensions derived from it.
     """
 
-    projection: PreparedBRepProjection
+    projection: AbstractBRepProjection
     policy: AssociationPropagationPolicy
     transfer_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        projection: PreparedBRepProjection,
+        projection: AbstractBRepProjection,
         /,
         *,
         policy: AssociationPropagationPolicy | None = None,
@@ -1518,6 +1976,13 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def source_namespaces(self) -> tuple[tuple[str, str], ...]:
+        return ((self.projection.source_id, self.projection.source_revision),)
+
+    def validate_source(self, source: CellMeshingResult, /) -> None:
+        self.source_associations(source)
+
     def source_associations(
         self, source: CellMeshingResult, /
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
@@ -1530,12 +1995,12 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         vertex = None
         for association in source.associations:
             if (
-                association.association_kind is not GeometryAssociationKind.BREP
-                or association.source_revision != self.projection.source_revision
-            ):
-                raise ValueError(
-                    "B-Rep association transfer carries associations of its revision only."
-                )
+                association.source_id,
+                association.source_revision,
+            ) != self.source_namespaces[0]:
+                continue
+            if association.association_kind is not GeometryAssociationKind.BREP:
+                raise ValueError("A B-Rep source namespace cannot mix association kinds.")
             dimension = _target_dimension(source.mesh, association)
             if dimension == 0:
                 if vertex is not None:
@@ -1550,10 +2015,29 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         _vertex_classes(source.mesh, vertex)
         return vertex, tuple(sorted(dimensions))
 
-    def classes(self, source: CellMeshingResult, /) -> tuple[_Classes, ...]:
+    def classes(
+        self, source: CellMeshingResult, /
+    ) -> tuple[AssociationEntityClasses, ...]:
         """B-Rep classes of every source mesh dimension (adaptation constraints)."""
         vertex, _ = self.source_associations(source)
-        return _mesh_entity_classes(source.mesh, vertex, self.projection)
+        levels = _mesh_entity_classes(source.mesh, vertex, self.projection)
+        output = []
+        for level in levels:
+            valid = level.dimensions >= 0
+            codes = np.full(level.dimensions.shape, -1, dtype=np.int64)
+            if np.any(valid):
+                codes[valid] = self.projection.entity_codes(
+                    level.dimensions[valid], level.indices[valid]
+                )
+            output.append(
+                AssociationEntityClasses(
+                    level.dimensions,
+                    level.indices,
+                    level.resolved,
+                    codes,
+                )
+            )
+        return tuple(output)
 
     def _derived(
         self,
@@ -1570,12 +2054,24 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         )
 
     def propagate(
-        self, source: CellMeshingResult, lineage: MeshLineage, target: CellMesh, /
+        self,
+        source: CellMeshingResult,
+        lineage: MeshLineage,
+        target: CellMesh,
+        /,
+        *,
+        vertex_stencil: VertexInterpolationStencil | None,
     ) -> tuple[GeometryAssociation, ...]:
-        """Target associations through one exact topology lineage."""
+        """Propagate B-Rep associations with the accepted vertex stencil."""
         vertex, dimensions = self.source_associations(source)
         propagated = propagate_association(
-            vertex, lineage, source.mesh, target, self.projection, policy=self.policy
+            vertex,
+            lineage,
+            source.mesh,
+            target,
+            self.projection,
+            policy=self.policy,
+            vertex_stencil=vertex_stencil,
         )
         return self._derived(propagated, dimensions, target)
 
@@ -1591,12 +2087,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AssociationEntityClasses",
     "AssociationPropagationError",
     "AssociationPropagationPolicy",
+    "AssociationTransfer",
     "BRepAssociationTransfer",
     "GeometryAssociation",
     "GeometryAssociationKind",
     "GeometryAssociationProvenance",
+    "GeometrySourceEntityRole",
+    "inherit_association_rows",
     "associate_mesh_entities",
     "associate_mesh_vertices",
     "propagate_association",

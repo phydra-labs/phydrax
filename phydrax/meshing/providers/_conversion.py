@@ -9,8 +9,7 @@ import numpy as np
 
 from ...discretization import CellMesh
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
-from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
-from .._result import CellMeshingResult
+from .._contracts import MeshingFailure, MeshingFailureCategory
 
 
 def _fresh_ids(source_ids: np.ndarray, count: int) -> np.ndarray:
@@ -23,7 +22,7 @@ def _fresh_ids(source_ids: np.ndarray, count: int) -> np.ndarray:
     return np.arange(start, start + count, dtype=np.int64)
 
 
-def _check_arrays(points: np.ndarray, cells: np.ndarray, limits: MeshingLimits) -> None:
+def _check_arrays(points: np.ndarray, cells: np.ndarray) -> None:
     if (
         points.ndim != 2
         or points.shape[0] == 0
@@ -37,29 +36,6 @@ def _check_arrays(points: np.ndarray, cells: np.ndarray, limits: MeshingLimits) 
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
             "Backend returned invalid vertices or connectivity.",
-        )
-    if (
-        len(points) > limits.maximum_vertices
-        or len(cells) > limits.maximum_cells
-        or cells.size > limits.maximum_connectivity_entries
-        or points.nbytes + cells.nbytes > limits.maximum_data_bytes
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Backend arrays exceed the requested meshing limits.",
-        )
-
-
-def _check_result_limits(result: CellMeshingResult, limits: MeshingLimits) -> None:
-    counts = result.audit.entity_counts
-    if (
-        counts[1] > limits.maximum_edges
-        or (len(counts) > 2 and counts[2] > limits.maximum_faces)
-        or result.audit.connectivity_entries > limits.maximum_connectivity_entries
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Canonical mesh incidence exceeds the requested meshing limits.",
         )
 
 

@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -12,10 +15,13 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..geometry.brep import PlanarEmbedding
-from ..typing import checked
+from .._validation import finite_real_scalar, nonnegative_integer, normalized_identifier
+from ..geometry._planar_embedding import PlanarEmbedding
+from ..typing import checked, parse
 from ._controls import (
+    BackgroundMetricControl,
     BoundaryLayerControl,
+    FeatureKind,
     HoleSeed,
     PatchControl,
     PeriodicConstraint,
@@ -25,15 +31,18 @@ from ._controls import (
 )
 from ._scope import MeshingScope
 from ._sizing import (
+    CurvatureSizeControl,
     ProximitySizeControl,
     SizeCombinationPolicy,
     SizeCompliancePolicy,
     SizeControl,
+    UniformSizeControl,
 )
 
 
 class MeshingOperation(StrEnum):
     FACET_GEOMETRY = "facet_geometry"
+    MESH_CURVE = "mesh_curve"
     MESH_SURFACE = "mesh_surface"
     REMESH_SURFACE = "remesh_surface"
     REMESH_SURFACE_LOCALLY = "remesh_surface_locally"
@@ -58,6 +67,9 @@ class MeshingSourceKind(StrEnum):
     IMAGE = "image"
     TENSOR_GRID = "tensor_grid"
     MESH_ASSEMBLY = "mesh_assembly"
+    PIECEWISE_LINEAR = "piecewise_linear"
+    MAPPED_REFERENCE = "mapped_reference"
+    CURVE = "curve"
 
 
 class MeshingCapability(StrEnum):
@@ -101,6 +113,82 @@ class VolumeFillStrategy(StrEnum):
     MULTIZONE = "multizone"
 
 
+@dataclass(frozen=True, slots=True)
+class MeshingFailureEvidence:
+    """Requested and achieved values retained with one failed meshing operation."""
+
+    requested_quantities: tuple[tuple[str, float], ...]
+    achieved_quantities: tuple[tuple[str, float], ...]
+    checkpoint: str
+    logical_findings: tuple[str, ...]
+    evidence_id: str = field(init=False)
+
+    def __init__(
+        self,
+        *,
+        requested_quantities: Mapping[str, float]
+        | Sequence[tuple[str, float]] = (),
+        achieved_quantities: Mapping[str, float]
+        | Sequence[tuple[str, float]] = (),
+        checkpoint: str = "",
+        logical_findings: Sequence[str] = (),
+    ) -> None:
+        def quantities(
+            values: Mapping[str, float] | Sequence[tuple[str, float]],
+            name: str,
+        ) -> tuple[tuple[str, float], ...]:
+            entries = values.items() if isinstance(values, Mapping) else values
+            records: list[tuple[str, float]] = []
+            names: set[str] = set()
+            for entry in entries:
+                if not isinstance(entry, tuple) or len(entry) != 2:
+                    raise ValueError(
+                        f"MeshingFailureEvidence.{name} must contain name/value pairs."
+                    )
+                key = normalized_identifier(entry[0], f"{name}.name")
+                if key in names:
+                    raise ValueError(
+                        f"MeshingFailureEvidence.{name} quantity names must be unique."
+                    )
+                names.add(key)
+                value = finite_real_scalar(entry[1], f"{name}.{key}")
+                records.append((key, value))
+            return tuple(sorted(records))
+
+        if not isinstance(checkpoint, str):
+            raise TypeError("MeshingFailureEvidence.checkpoint must be a string.")
+        if not isinstance(logical_findings, Sequence) or isinstance(
+            logical_findings, (str, bytes)
+        ):
+            raise TypeError(
+                "MeshingFailureEvidence.logical_findings must be a sequence of strings."
+            )
+        findings = tuple(
+            normalized_identifier(value, "logical finding")
+            for value in logical_findings
+        )
+        requested = quantities(requested_quantities, "requested_quantities")
+        achieved = quantities(achieved_quantities, "achieved_quantities")
+        checkpoint_ = checkpoint.strip()
+        object.__setattr__(self, "requested_quantities", requested)
+        object.__setattr__(self, "achieved_quantities", achieved)
+        object.__setattr__(self, "checkpoint", checkpoint_)
+        object.__setattr__(self, "logical_findings", findings)
+        object.__setattr__(
+            self,
+            "evidence_id",
+            canonical_fingerprint(
+                {
+                    "kind": "meshing-failure-evidence",
+                    "requested_quantities": requested,
+                    "achieved_quantities": achieved,
+                    "checkpoint": checkpoint_,
+                    "logical_findings": findings,
+                }
+            ),
+        )
+
+
 class MeshingFailureCategory(StrEnum):
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     INVALID_SPECIFICATION = "invalid_specification"
@@ -122,58 +210,6 @@ class MeshingFailureCategory(StrEnum):
     COMPLIANCE_FAILED = "compliance_failed"
     LINEAGE_FAILED = "lineage_failed"
     TRANSFER_FAILED = "transfer_failed"
-
-
-class MeshingLimits(StrictModule, NonTrainableState):
-    maximum_vertices: int = eqx.field(static=True)
-    maximum_edges: int = eqx.field(static=True)
-    maximum_faces: int = eqx.field(static=True)
-    maximum_cells: int = eqx.field(static=True)
-    maximum_connectivity_entries: int = eqx.field(static=True)
-    maximum_data_bytes: int = eqx.field(static=True)
-    maximum_wall_seconds: float = eqx.field(static=True)
-    limits_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        maximum_vertices: int = 10_000_000,
-        maximum_edges: int = 50_000_000,
-        maximum_faces: int = 50_000_000,
-        maximum_cells: int = 20_000_000,
-        maximum_connectivity_entries: int = 500_000_000,
-        maximum_data_bytes: int = 4_000_000_000,
-        maximum_wall_seconds: float = 3600.0,
-    ) -> None:
-        counts = (
-            int(maximum_vertices),
-            int(maximum_edges),
-            int(maximum_faces),
-            int(maximum_cells),
-            int(maximum_connectivity_entries),
-            int(maximum_data_bytes),
-        )
-        seconds = float(maximum_wall_seconds)
-        if any(value <= 0 for value in counts):
-            raise ValueError("Meshing entity and data limits must be positive.")
-        if not np.isfinite(seconds) or seconds <= 0.0:
-            raise ValueError("maximum_wall_seconds must be positive and finite.")
-        (
-            self.maximum_vertices,
-            self.maximum_edges,
-            self.maximum_faces,
-            self.maximum_cells,
-            self.maximum_connectivity_entries,
-            self.maximum_data_bytes,
-        ) = counts
-        self.maximum_wall_seconds = seconds
-        self.limits_id = canonical_fingerprint(
-            {
-                "kind": "meshing-limits",
-                "counts": counts,
-                "maximum_wall_seconds": seconds,
-            }
-        )
 
 
 class CellFamilyPolicy(StrictModule, NonTrainableState):
@@ -232,6 +268,33 @@ class CellFamilyPolicy(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[CellFamilyPolicy], value: CellFamilyPolicy, /
+    ) -> CellFamilyPolicy:
+        if type(value) is not cls:
+            raise TypeError("value must be CellFamilyPolicy.")
+        if type(value.allow_mixed) is not bool:
+            raise TypeError("Stored cell-family policy allow_mixed must be bool.")
+        rebuilt = cls(
+            required=value.required,
+            preferred=value.preferred,
+            allowed_transitions=value.allowed_transitions,
+            allow_mixed=value.allow_mixed,
+        )
+        if (
+            rebuilt.policy_id != value.policy_id
+            or rebuilt.required != value.required
+            or rebuilt.preferred != value.preferred
+            or rebuilt.allowed_transitions != value.allowed_transitions
+            or rebuilt.allow_mixed != value.allow_mixed
+        ):
+            raise ValueError(
+                "Stored cell-family policy differs from its canonical fields."
+            )
+        return rebuilt
+
 
 class CellMeshingTarget(StrictModule, NonTrainableState):
     topological_dimension: int = eqx.field(static=True)
@@ -275,6 +338,46 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
                 "require_conforming": bool(require_conforming),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[CellMeshingTarget], value: CellMeshingTarget, /
+    ) -> CellMeshingTarget:
+        if type(value) is not cls:
+            raise TypeError("value must be CellMeshingTarget.")
+        if any(
+            type(field) is not int
+            for field in (
+                value.topological_dimension,
+                value.ambient_dimension,
+                value.geometry_order,
+            )
+        ):
+            raise TypeError(
+                "Stored cell-meshing target dimensions and order must be ints."
+            )
+        if type(value.require_conforming) is not bool:
+            raise TypeError("Stored cell-meshing target require_conforming must be bool.")
+        cell_families = CellFamilyPolicy.from_stored_fields(value.cell_families)
+        rebuilt = cls(
+            value.topological_dimension,
+            value.ambient_dimension,
+            cell_families,
+            geometry_order=value.geometry_order,
+            require_conforming=value.require_conforming,
+        )
+        if (
+            rebuilt.target_id != value.target_id
+            or rebuilt.topological_dimension != value.topological_dimension
+            or rebuilt.ambient_dimension != value.ambient_dimension
+            or rebuilt.geometry_order != value.geometry_order
+            or rebuilt.require_conforming != value.require_conforming
+        ):
+            raise ValueError(
+                "Stored cell-meshing target differs from its canonical fields."
+            )
+        return rebuilt
 
 
 def _size_control_scopes(control: SizeControl, /) -> tuple[MeshingScope, ...]:
@@ -320,8 +423,6 @@ def _validated_semantic_controls(
     regions = tuple(region_controls)
     patches = tuple(patch_controls)
     periodic = tuple(periodic_constraints)
-    if not sizes:
-        raise ValueError("Meshing requires at least one size control.")
     if not all(isinstance(control, SizeControl) for control in sizes):
         raise TypeError("size_controls must contain SizeControl values.")
     if not all(isinstance(feature, ProtectedFeature) for feature in features):
@@ -357,12 +458,21 @@ def _validated_semantic_controls(
     ):
         raise ValueError("Meshing controls must share the top-level source binding.")
     dimension = target.topological_dimension
-    if regions and scope.entity_dimension != dimension:
+    if any(control.scope.entity_dimension != dimension for control in regions):
         raise ValueError("Region controls require a top-dimensional source scope.")
+    region_entity_set = (
+        scope.entity_set_id
+        if scope.entity_dimension == dimension
+        else regions[0].scope.entity_set_id
+        if regions
+        else None
+    )
     if any(
-        control.scope.entity_dimension != dimension
-        or control.scope.entity_set_id != scope.entity_set_id
-        or np.setdiff1d(control.scope.entity_ids, scope.entity_ids).size
+        control.scope.entity_set_id != region_entity_set
+        or (
+            scope.entity_dimension == dimension
+            and np.setdiff1d(control.scope.entity_ids, scope.entity_ids).size
+        )
         for control in regions
     ):
         raise ValueError(
@@ -393,6 +503,92 @@ def _validated_semantic_controls(
     return sizes, features, regions, patches, periodic, compliance
 
 
+def _source_deviation(value: float | None, /) -> float | None:
+    """Keep unspecified, exact, and bounded source accuracy distinct."""
+    if value is None:
+        return None
+    deviation = finite_real_scalar(value, "maximum_deviation")
+    if deviation < 0.0:
+        raise ValueError("maximum_deviation must be non-negative.")
+    return deviation
+
+
+class MeshQualityTarget(StrictModule, NonTrainableState):
+    """Requested simplex corner angle in radians, with explicit hard/soft semantics."""
+
+    minimum_angle: float = eqx.field(static=True)
+    hard: bool = eqx.field(static=True)
+    target_id: str = eqx.field(static=True)
+
+    def __init__(self, *, minimum_angle: float, hard: bool = True) -> None:
+        angle = finite_real_scalar(minimum_angle, "minimum_angle")
+        if not 0.0 < angle < np.pi / 3.0:
+            raise ValueError("minimum_angle must lie strictly between zero and pi/3.")
+        if not isinstance(hard, (bool, np.bool_)):
+            raise TypeError("hard must be a boolean.")
+        self.minimum_angle = angle
+        self.hard = bool(hard)
+        self.target_id = canonical_fingerprint(
+            {"kind": "mesh-quality-target", "minimum_angle": angle, "hard": self.hard}
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshQualityTarget], value: MeshQualityTarget, /
+    ) -> MeshQualityTarget:
+        if type(value) is not cls:
+            raise TypeError("value must be MeshQualityTarget.")
+        if type(value.minimum_angle) is not float or type(value.hard) is not bool:
+            raise TypeError("Stored mesh-quality target fields are not canonical.")
+        rebuilt = cls(minimum_angle=value.minimum_angle, hard=value.hard)
+        if (
+            rebuilt.target_id != value.target_id
+            or rebuilt.minimum_angle != value.minimum_angle
+            or rebuilt.hard != value.hard
+        ):
+            raise ValueError("Stored mesh-quality target differs from its fields.")
+        return rebuilt
+
+
+def _stored_tuple(value: object, name: str, /) -> tuple[Any, ...]:
+    if not isinstance(value, tuple) or type(value) is not tuple:
+        raise TypeError(f"Stored {name} must be a tuple.")
+    return value
+
+
+def _restore_size_controls(values: object, /) -> tuple[SizeControl, ...]:
+    stored = _stored_tuple(values, "size_controls")
+    rebuilt: list[SizeControl] = []
+    for control in stored:
+        if type(control) is UniformSizeControl:
+            rebuilt.append(UniformSizeControl.from_stored_fields(control))
+        elif type(control) is CurvatureSizeControl:
+            rebuilt.append(CurvatureSizeControl.from_stored_fields(control))
+        elif type(control) is ProximitySizeControl:
+            rebuilt.append(ProximitySizeControl.from_stored_fields(control))
+        else:
+            raise TypeError("Stored size controls contain an unsupported exact type.")
+    return tuple(rebuilt)
+
+
+def _restore_planar_embedding(value: PlanarEmbedding | None, /) -> PlanarEmbedding | None:
+    if value is None:
+        return None
+    if type(value) is not PlanarEmbedding:
+        raise TypeError("Stored planar embedding must be PlanarEmbedding or None.")
+    rebuilt = PlanarEmbedding(value.origin, value.x_axis, value.y_axis, value.normal)
+    if (
+        rebuilt.embedding_id != value.embedding_id
+        or rebuilt.origin != value.origin
+        or rebuilt.x_axis != value.x_axis
+        or rebuilt.y_axis != value.y_axis
+        or rebuilt.normal != value.normal
+    ):
+        raise ValueError("Stored planar embedding differs from its canonical frame.")
+    return rebuilt
+
+
 class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     target: CellMeshingTarget
     planar_embedding: PlanarEmbedding | None = eqx.field(static=True)
@@ -405,7 +601,10 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     layer_controls: tuple[BoundaryLayerControl, ...]
     size_combination: SizeCombinationPolicy = eqx.field(static=True)
     size_compliance: SizeCompliancePolicy
-    limits: MeshingLimits
+    maximum_deviation: float | None = eqx.field(static=True)
+    maximum_normal_deviation: float | None = eqx.field(static=True)
+    quality_target: MeshQualityTarget | None
+    background_metric: BackgroundMetricControl | None
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
@@ -424,7 +623,10 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         layer_controls: tuple[BoundaryLayerControl, ...] = (),
         size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
         size_compliance: SizeCompliancePolicy | None = None,
-        limits: MeshingLimits | None = None,
+        maximum_deviation: float | None = None,
+        maximum_normal_deviation: float | None = None,
+        quality_target: MeshQualityTarget | None = None,
+        background_metric: BackgroundMetricControl | None = None,
         deterministic: bool = True,
     ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 2:
@@ -435,9 +637,9 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             planar_embedding, PlanarEmbedding
         ):
             raise TypeError("planar_embedding must be a PlanarEmbedding or None.")
-        if (target.ambient_dimension == 2) != (planar_embedding is not None):
+        if planar_embedding is not None and target.ambient_dimension != 2:
             raise ValueError(
-                "A PlanarEmbedding is required exactly for ambient-dimension-two surface targets."
+                "PlanarEmbedding applies only to an intrinsic two-dimensional output."
             )
         (
             sizes,
@@ -475,9 +677,31 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Surface boundary layers grow from wall curves of the meshed source."
             )
-        limit = MeshingLimits() if limits is None else limits
-        if not isinstance(limit, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits or None.")
+        deviation = _source_deviation(maximum_deviation)
+        normal_deviation = (
+            None
+            if maximum_normal_deviation is None
+            else finite_real_scalar(maximum_normal_deviation, "maximum_normal_deviation")
+        )
+        if normal_deviation is not None and not 0.0 <= normal_deviation <= np.pi:
+            raise ValueError("maximum_normal_deviation must lie in [0, pi] radians.")
+        if quality_target is not None and not isinstance(
+            quality_target, MeshQualityTarget
+        ):
+            raise TypeError("quality_target must be MeshQualityTarget or None.")
+        if background_metric is not None:
+            if not isinstance(background_metric, BackgroundMetricControl):
+                raise TypeError(
+                    "background_metric must be BackgroundMetricControl or None."
+                )
+            if (
+                background_metric.mesh.ambient_dimension != target.ambient_dimension
+                or background_metric.metric.values.shape[1:]
+                != (target.ambient_dimension, target.ambient_dimension)
+            ):
+                raise ValueError(
+                    "The background metric must use the target ambient space."
+                )
         self.target = target
         self.planar_embedding = planar_embedding
         self.scope = scope
@@ -489,7 +713,10 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         self.layer_controls = layers
         self.size_combination = size_combination
         self.size_compliance = compliance
-        self.limits = limit
+        self.maximum_deviation = deviation
+        self.maximum_normal_deviation = normal_deviation
+        self.quality_target = quality_target
+        self.background_metric = background_metric
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
             {
@@ -507,10 +734,136 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 "patches": [value.control_id for value in patches],
                 "periodic": [value.constraint_id for value in periodic],
                 "layers": [value.control_id for value in layers],
-                "limits": limit.limits_id,
+                "maximum_deviation": deviation,
+                "maximum_normal_deviation": normal_deviation,
+                "quality_target": None
+                if quality_target is None
+                else quality_target.target_id,
+                "background_metric": (
+                    None if background_metric is None else background_metric.control_id
+                ),
                 "deterministic": bool(deterministic),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SurfaceMeshingSpec], value: SurfaceMeshingSpec, /
+    ) -> SurfaceMeshingSpec:
+        if type(value) is not cls:
+            raise TypeError("value must be SurfaceMeshingSpec.")
+        if type(value.deterministic) is not bool:
+            raise TypeError("Stored SurfaceMeshingSpec deterministic must be bool.")
+        target = CellMeshingTarget.from_stored_fields(value.target)
+        planar_embedding = _restore_planar_embedding(value.planar_embedding)
+        scope = MeshingScope.from_stored_fields(value.scope)
+        size_controls = _restore_size_controls(value.size_controls)
+        protected_features = tuple(
+            ProtectedFeature.from_stored_fields(item)
+            for item in _stored_tuple(value.protected_features, "protected_features")
+        )
+        region_controls = tuple(
+            RegionControl.from_stored_fields(item)
+            for item in _stored_tuple(value.region_controls, "region_controls")
+        )
+        patch_controls = tuple(
+            PatchControl.from_stored_fields(item)
+            for item in _stored_tuple(value.patch_controls, "patch_controls")
+        )
+        periodic_constraints = tuple(
+            PeriodicConstraint.from_stored_fields(item)
+            for item in _stored_tuple(value.periodic_constraints, "periodic_constraints")
+        )
+        layer_controls = tuple(
+            BoundaryLayerControl.from_stored_fields(item)
+            for item in _stored_tuple(value.layer_controls, "layer_controls")
+        )
+        size_compliance = SizeCompliancePolicy.from_stored_fields(value.size_compliance)
+        quality_target = (
+            None
+            if value.quality_target is None
+            else MeshQualityTarget.from_stored_fields(value.quality_target)
+        )
+        background_metric = (
+            None
+            if value.background_metric is None
+            else BackgroundMetricControl.from_stored_fields(value.background_metric)
+        )
+        rebuilt = cls(
+            target,
+            scope,
+            planar_embedding=planar_embedding,
+            size_controls=size_controls,
+            protected_features=protected_features,
+            region_controls=region_controls,
+            patch_controls=patch_controls,
+            periodic_constraints=periodic_constraints,
+            layer_controls=layer_controls,
+            size_combination=value.size_combination,
+            size_compliance=size_compliance,
+            maximum_deviation=value.maximum_deviation,
+            maximum_normal_deviation=value.maximum_normal_deviation,
+            quality_target=quality_target,
+            background_metric=background_metric,
+            deterministic=value.deterministic,
+        )
+        if (
+            rebuilt.specification_id != value.specification_id
+            or rebuilt.target.target_id != value.target.target_id
+            or (
+                None
+                if rebuilt.planar_embedding is None
+                else rebuilt.planar_embedding.embedding_id
+            )
+            != (
+                None
+                if value.planar_embedding is None
+                else value.planar_embedding.embedding_id
+            )
+            or rebuilt.scope.scope_id != value.scope.scope_id
+            or tuple(control.control_id for control in rebuilt.size_controls)
+            != tuple(control.control_id for control in value.size_controls)
+            or rebuilt.size_combination is not value.size_combination
+            or rebuilt.size_compliance.policy_id != value.size_compliance.policy_id
+            or tuple(feature.feature_id for feature in rebuilt.protected_features)
+            != tuple(feature.feature_id for feature in value.protected_features)
+            or tuple(control.control_id for control in rebuilt.region_controls)
+            != tuple(control.control_id for control in value.region_controls)
+            or tuple(control.control_id for control in rebuilt.patch_controls)
+            != tuple(control.control_id for control in value.patch_controls)
+            or tuple(
+                constraint.constraint_id for constraint in rebuilt.periodic_constraints
+            )
+            != tuple(
+                constraint.constraint_id for constraint in value.periodic_constraints
+            )
+            or tuple(control.control_id for control in rebuilt.layer_controls)
+            != tuple(control.control_id for control in value.layer_controls)
+            or rebuilt.maximum_deviation != value.maximum_deviation
+            or rebuilt.maximum_normal_deviation != value.maximum_normal_deviation
+            or (
+                None
+                if rebuilt.quality_target is None
+                else rebuilt.quality_target.target_id
+            )
+            != (None if value.quality_target is None else value.quality_target.target_id)
+            or (
+                None
+                if rebuilt.background_metric is None
+                else rebuilt.background_metric.control_id
+            )
+            != (
+                None
+                if value.background_metric is None
+                else value.background_metric.control_id
+            )
+            or rebuilt.deterministic is not value.deterministic
+        ):
+            raise ValueError(
+                "Stored SurfaceMeshingSpec differs from its canonical fields."
+            )
+        return rebuilt
 
 
 class SurfaceRemeshingSpec(StrictModule, NonTrainableState):
@@ -550,7 +903,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
     periodic_constraints: tuple[PeriodicConstraint, ...]
     size_combination: SizeCombinationPolicy = eqx.field(static=True)
     size_compliance: SizeCompliancePolicy
-    limits: MeshingLimits
+    maximum_deviation: float | None = eqx.field(static=True)
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
@@ -571,7 +924,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         periodic_constraints: tuple[PeriodicConstraint, ...] = (),
         size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
         size_compliance: SizeCompliancePolicy | None = None,
-        limits: MeshingLimits | None = None,
+        maximum_deviation: float | None = None,
         deterministic: bool = True,
     ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 3:
@@ -643,9 +996,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             for scope in additional_scopes
         ):
             raise ValueError("Volume meshing controls must share one source binding.")
-        limit = MeshingLimits() if limits is None else limits
-        if not isinstance(limit, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits or None.")
+        deviation = _source_deviation(maximum_deviation)
         self.target = target
         self.boundary_scope = boundary_scope
         self.fill_strategy = fill_strategy
@@ -659,7 +1010,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         self.periodic_constraints = periodic
         self.size_combination = size_combination
         self.size_compliance = compliance
-        self.limits = limit
+        self.maximum_deviation = deviation
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
             {
@@ -677,13 +1028,229 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
                 "hole_seeds": [value.seed_id for value in hole_seeds_],
                 "layers": [value.control_id for value in layer_controls_],
                 "periodic": [value.constraint_id for value in periodic],
-                "limits": limit.limits_id,
+                "maximum_deviation": deviation,
+                "deterministic": bool(deterministic),
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[VolumeMeshingSpec], value: VolumeMeshingSpec, /
+    ) -> VolumeMeshingSpec:
+        if type(value) is not cls:
+            raise TypeError("value must be VolumeMeshingSpec.")
+        if type(value.deterministic) is not bool:
+            raise TypeError("Stored VolumeMeshingSpec deterministic must be bool.")
+        target = CellMeshingTarget.from_stored_fields(value.target)
+        boundary_scope = MeshingScope.from_stored_fields(value.boundary_scope)
+        size_controls = _restore_size_controls(value.size_controls)
+        protected_features = tuple(
+            ProtectedFeature.from_stored_fields(item)
+            for item in _stored_tuple(value.protected_features, "protected_features")
+        )
+        region_controls = tuple(
+            RegionControl.from_stored_fields(item)
+            for item in _stored_tuple(value.region_controls, "region_controls")
+        )
+        patch_controls = tuple(
+            PatchControl.from_stored_fields(item)
+            for item in _stored_tuple(value.patch_controls, "patch_controls")
+        )
+        region_seeds = tuple(
+            RegionSeed.from_stored_fields(item)
+            for item in _stored_tuple(value.region_seeds, "region_seeds")
+        )
+        hole_seeds = tuple(
+            HoleSeed.from_stored_fields(item)
+            for item in _stored_tuple(value.hole_seeds, "hole_seeds")
+        )
+        layer_controls = tuple(
+            BoundaryLayerControl.from_stored_fields(item)
+            for item in _stored_tuple(value.layer_controls, "layer_controls")
+        )
+        periodic_constraints = tuple(
+            PeriodicConstraint.from_stored_fields(item)
+            for item in _stored_tuple(value.periodic_constraints, "periodic_constraints")
+        )
+        size_compliance = SizeCompliancePolicy.from_stored_fields(value.size_compliance)
+        rebuilt = cls(
+            target,
+            boundary_scope,
+            value.fill_strategy,
+            size_controls=size_controls,
+            protected_features=protected_features,
+            region_controls=region_controls,
+            patch_controls=patch_controls,
+            region_seeds=region_seeds,
+            hole_seeds=hole_seeds,
+            layer_controls=layer_controls,
+            periodic_constraints=periodic_constraints,
+            size_combination=value.size_combination,
+            size_compliance=size_compliance,
+            maximum_deviation=value.maximum_deviation,
+            deterministic=value.deterministic,
+        )
+        if (
+            rebuilt.specification_id != value.specification_id
+            or rebuilt.target.target_id != value.target.target_id
+            or rebuilt.boundary_scope.scope_id != value.boundary_scope.scope_id
+            or rebuilt.fill_strategy is not value.fill_strategy
+            or tuple(control.control_id for control in rebuilt.size_controls)
+            != tuple(control.control_id for control in value.size_controls)
+            or rebuilt.size_combination is not value.size_combination
+            or rebuilt.size_compliance.policy_id != value.size_compliance.policy_id
+            or tuple(feature.feature_id for feature in rebuilt.protected_features)
+            != tuple(feature.feature_id for feature in value.protected_features)
+            or tuple(control.control_id for control in rebuilt.region_controls)
+            != tuple(control.control_id for control in value.region_controls)
+            or tuple(control.control_id for control in rebuilt.patch_controls)
+            != tuple(control.control_id for control in value.patch_controls)
+            or tuple(seed.seed_id for seed in rebuilt.region_seeds)
+            != tuple(seed.seed_id for seed in value.region_seeds)
+            or tuple(seed.seed_id for seed in rebuilt.hole_seeds)
+            != tuple(seed.seed_id for seed in value.hole_seeds)
+            or tuple(control.control_id for control in rebuilt.layer_controls)
+            != tuple(control.control_id for control in value.layer_controls)
+            or tuple(
+                constraint.constraint_id for constraint in rebuilt.periodic_constraints
+            )
+            != tuple(
+                constraint.constraint_id for constraint in value.periodic_constraints
+            )
+            or rebuilt.maximum_deviation != value.maximum_deviation
+            or rebuilt.deterministic is not value.deterministic
+        ):
+            raise ValueError(
+                "Stored VolumeMeshingSpec differs from its canonical fields."
+            )
+        return rebuilt
+
+
+CurveEnd: TypeAlias = Literal["start", "end"]
+
+
+class CurveJunction(StrictModule, NonTrainableState):
+    """Declared source endpoints sharing one vertex, never a proximity weld."""
+
+    name: str = eqx.field(static=True)
+    endpoints: tuple[tuple[int, CurveEnd], ...] = eqx.field(static=True)
+    junction_id: str = eqx.field(static=True)
+
+    def __init__(self, name: str, endpoints: tuple[tuple[int, CurveEnd], ...], /) -> None:
+        name_ = normalized_identifier(name, "name")
+        entries = tuple(endpoints)
+        if len(entries) < 2:
+            raise ValueError("A curve junction must join at least two endpoints.")
+        normalized: list[tuple[int, CurveEnd]] = []
+        for curve, end in entries:
+            normalized.append(
+                (nonnegative_integer(curve, "curve"), parse(end, CurveEnd, "end"))
+            )
+        ordered = tuple(sorted(normalized))
+        if len(set(ordered)) != len(ordered):
+            raise ValueError("Curve junction endpoints must be unique.")
+        self.name = name_
+        self.endpoints = ordered
+        self.junction_id = canonical_fingerprint(
+            {"kind": "curve-junction", "name": name_, "endpoints": ordered}
+        )
+
+
+class CurveMeshingSpec(StrictModule, NonTrainableState):
+    """Physical interval sizing and source accuracy for an explicit curve network."""
+
+    target: CellMeshingTarget
+    scope: MeshingScope
+    size_controls: tuple[SizeControl, ...]
+    protected_features: tuple[ProtectedFeature, ...]
+    junctions: tuple[CurveJunction, ...]
+    size_combination: SizeCombinationPolicy = eqx.field(static=True)
+    size_compliance: SizeCompliancePolicy
+    maximum_deviation: float | None = eqx.field(static=True)
+    deterministic: bool = eqx.field(static=True)
+    specification_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        target: CellMeshingTarget,
+        scope: MeshingScope,
+        /,
+        *,
+        size_controls: tuple[SizeControl, ...],
+        protected_features: tuple[ProtectedFeature, ...] = (),
+        junctions: tuple[CurveJunction, ...] = (),
+        size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
+        size_compliance: SizeCompliancePolicy | None = None,
+        maximum_deviation: float | None = None,
+        deterministic: bool = True,
+    ) -> None:
+        if target.topological_dimension != 1:
+            raise ValueError("Curve meshing requires a dimension-one target.")
+        families = target.cell_families
+        selected = set(
+            (*families.required, *families.preferred, *families.allowed_transitions)
+        )
+        if selected != {"interval"}:
+            raise ValueError("Curve meshing requires only interval cells.")
+        sizes, features, _, _, _, compliance = _validated_semantic_controls(
+            target,
+            scope,
+            size_controls,
+            protected_features,
+            (),
+            (),
+            (),
+            size_combination,
+            size_compliance,
+        )
+        if any(feature.feature_kind is FeatureKind.SURFACE for feature in features):
+            raise ValueError("Curve meshing cannot protect a surface feature.")
+        junctions_ = tuple(junctions)
+        if not all(isinstance(junction, CurveJunction) for junction in junctions_):
+            raise TypeError("junctions must contain CurveJunction values.")
+        names = tuple(junction.name for junction in junctions_)
+        if len(set(names)) != len(names):
+            raise ValueError("Curve junction names must be unique.")
+        endpoints = tuple(
+            endpoint for junction in junctions_ for endpoint in junction.endpoints
+        )
+        if len(set(endpoints)) != len(endpoints):
+            raise ValueError("A curve endpoint can belong to only one junction.")
+        curves = np.asarray(tuple(curve for curve, _ in endpoints), dtype=np.int64)
+        if not np.all(np.isin(curves, np.asarray(scope.entity_ids))):
+            raise ValueError("Junction curves must belong to the selected source scope.")
+        ordered = tuple(sorted(junctions_, key=lambda junction: junction.endpoints))
+        deviation = _source_deviation(maximum_deviation)
+        self.target = target
+        self.scope = scope
+        self.size_controls = sizes
+        self.protected_features = features
+        self.junctions = ordered
+        self.size_combination = size_combination
+        self.size_compliance = compliance
+        self.maximum_deviation = deviation
+        self.deterministic = bool(deterministic)
+        self.specification_id = canonical_fingerprint(
+            {
+                "kind": "curve-meshing-spec",
+                "target": target.target_id,
+                "scope": scope.scope_id,
+                "size_controls": [control.control_id for control in sizes],
+                "size_combination": size_combination.value,
+                "size_compliance": compliance.policy_id,
+                "protected_features": [feature.feature_id for feature in features],
+                "junctions": [junction.junction_id for junction in ordered],
+                "maximum_deviation": deviation,
                 "deterministic": bool(deterministic),
             }
         )
 
 
-MeshingSpecification = SurfaceMeshingSpec | SurfaceRemeshingSpec | VolumeMeshingSpec
+MeshingSpecification = (
+    CurveMeshingSpec | SurfaceMeshingSpec | SurfaceRemeshingSpec | VolumeMeshingSpec
+)
 
 
 class MeshingProviderInfo(StrictModule, NonTrainableState):
@@ -816,11 +1383,6 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
         unsupported: tuple[str, ...] = (),
         weakened_guarantees: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(
-            specification,
-            (SurfaceMeshingSpec, SurfaceRemeshingSpec, VolumeMeshingSpec),
-        ):
-            raise TypeError("specification must be a meshing specification.")
         unsupported_ = tuple(str(value) for value in unsupported)
         weakened = tuple(str(value) for value in weakened_guarantees)
         self.provider_id = provider.provider_id
@@ -860,12 +1422,15 @@ class MeshingFailure(RuntimeError):
         stage: str = "",
         entity_ids: tuple[int, ...] = (),
         locations: tuple[tuple[float, ...], ...] = (),
+        evidence: MeshingFailureEvidence | None = None,
     ) -> None:
         if not isinstance(category, MeshingFailureCategory):
             raise TypeError("category must be MeshingFailureCategory.")
         text = str(message).strip()
         if not text:
             raise ValueError("Meshing failures require a message.")
+        if evidence is not None and not isinstance(evidence, MeshingFailureEvidence):
+            raise TypeError("evidence must be MeshingFailureEvidence or None.")
         self.category = category
         self.provider_code = str(provider_code)
         self.stage = str(stage)
@@ -873,18 +1438,24 @@ class MeshingFailure(RuntimeError):
         self.locations = tuple(
             tuple(float(component) for component in point) for point in locations
         )
+        self.evidence = MeshingFailureEvidence() if evidence is None else evidence
+        self.evidence_id = self.evidence.evidence_id
         super().__init__(text)
 
 
 __all__ = [
     "CellFamilyPolicy",
     "CellMeshingTarget",
+    "CurveEnd",
+    "CurveJunction",
+    "CurveMeshingSpec",
+    "MeshQualityTarget",
     "MeshingCapability",
     "MeshingDerivativeMode",
     "MeshingExecutionMode",
     "MeshingFailure",
+    "MeshingFailureEvidence",
     "MeshingFailureCategory",
-    "MeshingLimits",
     "MeshingOperation",
     "MeshingProviderInfo",
     "MeshingSourceDescriptor",

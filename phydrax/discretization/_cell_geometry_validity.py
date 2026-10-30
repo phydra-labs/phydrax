@@ -8,30 +8,36 @@ The Jacobian determinant of a polynomial geometry map is itself a polynomial of
 known degree on the reference cell. Converting it to Bernstein form gives
 coefficients whose minimum and maximum enclose the determinant over the whole
 cell (convex-hull property), while every corner coefficient equals the value at
-that corner. Adaptive subdivision tightens the enclosure until the determinant
-is proven to stay above the policy floor (CERTIFIED_VALID), a corner value of a
-sub-piece proves it falls below the floor (INVALID), or the resource budget is
-exhausted (UNRESOLVED).
+that corner. Adaptive depth-first subdivision tightens the enclosure until the
+determinant is proven strictly above the declared floor, an exact contact or
+corner value decides the result, or no distinct binary64 interior vertex
+remains. The last case remains UNRESOLVED.
 
 Rational pyramids are certified through the collapsed coordinates
 ``(u, v, w) -> (u (1 - w) + w / 2, v (1 - w) + w / 2, w)``: the physical
 determinant pulled back to the unit cube is the numerator of the rational
 determinant divided by ``(1 - w)^2`` and is a tensor polynomial of degree
 ``(3k - 1, 3k - 1, 3k - 3)`` whose homogeneous Bernstein coefficients are bounded.
+Certification also requires unique exact apex continuations for every mapped
+coordinate and normalized Jacobian entry, matching coordinate tabulation.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum
+from fractions import Fraction
+from functools import cache
 from itertools import product
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from numpy.typing import NDArray
 
 import phydrax.ein as ein
 
@@ -43,12 +49,50 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
-from .._host_table_cache import host_table_cache, logical_table_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._interval_enclosure import interval_divide
+from ..linalg._exact import determinant_exact, determinant_small_algebra
+from ..typing import ConvertibleToArray
 from ._cell_complex import PolyhedralConnectivity
-from ._cell_geometry import CellGeometrySpec, CellVertexGeometryElement
+from ._cell_geometry import (
+    CellGeometrySpec,
+    CellVertexGeometryElement,
+    ScalarCoordinateElement,
+)
 from ._cell_mesh import CellMesh
+from ._coordinate_enclosure import (
+    add,
+    affine_map,
+    axes,
+    bernstein_coefficients,
+    BernsteinDomain,
+    compose,
+    constant,
+    coordinate_execution_basis,
+    coordinate_execution_map_expressions,
+    coordinate_map_expressions,
+    coordinate_point_rounding_error,
+    coordinate_source_basis,
+    CoordinateSourceBank,
+    derivative,
+    evaluate_polynomial,
+    ExactScalar,
+    Expression,
+    linear_combinations,
+    multiply,
+    normalize_pyramid_reference_derivative,
+    normalize_pyramid_reference_expression,
+    Polynomial,
+    polynomial_bounds,
+    RationalPolynomial,
+    scale,
+    subtract,
+    sum_polynomials,
+)
+from ._exact_algebraic_geometry import coefficient_endpoint, coefficient_payload
+from ._reference_cell import reference_cell_topology
+from .fem._reference import FiniteElementSpec
 
 
 class CellValidityStatus(IntEnum):
@@ -57,22 +101,41 @@ class CellValidityStatus(IntEnum):
     UNRESOLVED = 2
 
 
+def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
+    """Bind the complete coordinate map and its source/restriction ancestry."""
+    restriction = geometry.restriction_source
+    return canonical_fingerprint(
+        {
+            "kind": "cell-geometry",
+            "layout": geometry.geometry_layout_id,
+            "source_mesh": geometry.source_mesh_id,
+            "source_topology": geometry.source_topology_id,
+            "source_map": geometry.source_map_id,
+            "restriction_source": (
+                None if restriction is None else restriction.restriction_source_id
+            ),
+            "exact_coordinate_bank": (
+                None
+                if geometry.exact_coordinate_bank is None
+                else tuple(
+                    tuple(coefficient_payload(value) for value in row)
+                    for row in geometry.exact_coordinate_bank
+                )
+            ),
+            "content": array_tree_fingerprint(geometry),
+        }
+    )
+
+
 class CellValidityPolicy(StrictModule, NonTrainableState):
-    """Resource and degeneracy controls for Bernstein validity certification.
+    """Degeneracy thresholds for Bernstein validity certification.
 
     ``relative_determinant_floor`` scales each cell's Hadamard bound of the
-    evaluated determinant; a determinant below the scaled floor is degenerate and
-    therefore INVALID. For polygons it also sets the minimum edge length relative
-    to the polygon diameter, preventing a numerically collapsed edge from being
-    certified solely because the total area remains large. ``maximum_piece_count``
-    bounds the active sub-pieces of one block at one subdivision level; exhausting
-    it or the depth leaves the undecided cells UNRESOLVED.
-    ``relative_planarity_tolerance`` bounds the distance of embedded polygon
-    vertices from their Newell plane relative to the polygon diameter.
+    evaluated determinant. A determinant must be strictly above this floor to
+    be certified. ``relative_planarity_tolerance`` bounds embedded polygon
+    vertices' distance from their Newell plane relative to the polygon diameter.
     """
 
-    maximum_subdivision_depth: int = eqx.field(static=True)
-    maximum_piece_count: int = eqx.field(static=True)
     relative_determinant_floor: float = eqx.field(static=True)
     relative_planarity_tolerance: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -80,32 +143,20 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        maximum_subdivision_depth: int = 8,
-        maximum_piece_count: int = 1_000_000,
         relative_determinant_floor: float = 1.0e-12,
         relative_planarity_tolerance: float = 1.0e-10,
     ) -> None:
-        depth = int(maximum_subdivision_depth)
-        pieces = int(maximum_piece_count)
         floor = float(relative_determinant_floor)
         planarity = float(relative_planarity_tolerance)
-        if depth < 0:
-            raise ValueError("maximum_subdivision_depth must be non-negative.")
-        if pieces <= 0:
-            raise ValueError("maximum_piece_count must be positive.")
         if not math.isfinite(floor) or floor < 0.0 or floor >= 1.0:
             raise ValueError("relative_determinant_floor must lie in [0, 1).")
         if not math.isfinite(planarity) or planarity < 0.0 or planarity >= 1.0:
             raise ValueError("relative_planarity_tolerance must lie in [0, 1).")
-        self.maximum_subdivision_depth = depth
-        self.maximum_piece_count = pieces
         self.relative_determinant_floor = floor
         self.relative_planarity_tolerance = planarity
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "cell-validity-policy",
-                "maximum_subdivision_depth": depth,
-                "maximum_piece_count": pieces,
                 "relative_determinant_floor": floor,
                 "relative_planarity_tolerance": planarity,
             }
@@ -113,39 +164,57 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
 
 
 class CellValidityCertificate(StrictModule, NonTrainableState):
-    """Per-cell validity status with determinant enclosures.
+    """Independent exact-source and execution-map proofs of one geometry.
 
-    ``determinant_lower``/``determinant_upper`` enclose the determinant (signed
-    Jacobian determinant for full-dimensional cells, Gram determinant for
-    embedded cells, twice the signed area of planar polygons, the squared vector
-    area of embedded polygons, star-simplex determinants for polyhedra) over the
-    final subdivision; ``depth`` is the deepest subdivision level evaluated.
-    Cells of ``unsupported_block_names`` are UNRESOLVED with NaN bounds because
-    their coordinate element has no polynomial degree contract.
+    ``status`` combines both proofs; determinant bounds and ``depth`` describe
+    execution coefficients. Source bounds/depth remain separately inspectable.
+    ``maximum_coefficient_rounding_error`` is scoped to the coordinate bank and
+    has physical-coordinate units. ``maximum_element_coefficient_rounding_error``
+    is dimensionless and describes element-basis coefficient shadows. Neither
+    quantity estimates whole-map or Jacobian error.
     """
 
     status: Array
     determinant_lower: Array
     determinant_upper: Array
     depth: Array
+    execution_status: Array
+    source_status: Array
+    source_determinant_lower: Array
+    source_determinant_upper: Array
+    source_depth: Array
+    maximum_coefficient_rounding_error: Array
+    maximum_element_coefficient_rounding_error: Array
+    geometry: CellGeometrySpec
+    mesh: CellMesh | None
+    policy: CellValidityPolicy
     block_names: tuple[str, ...] = eqx.field(static=True)
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     unsupported_block_names: tuple[str, ...] = eqx.field(static=True)
     certified_valid_count: int = eqx.field(static=True)
     invalid_count: int = eqx.field(static=True)
     unresolved_count: int = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
+    mesh_id: str | None = eqx.field(static=True)
+    topology_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        status: Any,
-        determinant_lower: Any,
-        determinant_upper: Any,
-        depth: Any,
+        status: ConvertibleToArray,
+        determinant_lower: ConvertibleToArray,
+        determinant_upper: ConvertibleToArray,
+        depth: ConvertibleToArray,
         /,
         *,
+        source_proof: _BlockCertificate,
+        maximum_coefficient_rounding_error: float,
+        maximum_element_coefficient_rounding_error: float,
+        geometry: CellGeometrySpec,
+        mesh: CellMesh | None,
+        policy: CellValidityPolicy,
         block_names: tuple[str, ...],
         block_offsets: tuple[int, ...],
         unsupported_block_names: tuple[str, ...],
@@ -153,34 +222,113 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_layout_id: str,
         policy_id: str,
     ) -> None:
-        status_ = np.asarray(status, dtype=np.int32)
-        lower = np.asarray(determinant_lower, dtype=np.float64)
-        upper = np.asarray(determinant_upper, dtype=np.float64)
-        depth_ = np.asarray(depth, dtype=np.int32)
+        execution = _normalize_proof_arrays(
+            status, determinant_lower, determinant_upper, depth
+        )
+        if not isinstance(source_proof, _BlockCertificate):
+            raise TypeError("Source validity requires the canonical block proof.")
+        source = _normalize_proof_arrays(
+            source_proof.status,
+            source_proof.lower,
+            source_proof.upper,
+            source_proof.depth,
+        )
+        if source.status.shape != execution.status.shape:
+            raise ValueError("Source and execution proofs must cover the same cells.")
+        if source.status is execution.status:
+            status_ = execution.status
+        else:
+            status_ = np.where(
+                (source.status == CellValidityStatus.INVALID)
+                | (execution.status == CellValidityStatus.INVALID),
+                int(CellValidityStatus.INVALID),
+                np.where(
+                    (source.status == CellValidityStatus.UNRESOLVED)
+                    | (execution.status == CellValidityStatus.UNRESOLVED),
+                    int(CellValidityStatus.UNRESOLVED),
+                    int(CellValidityStatus.CERTIFIED_VALID),
+                ),
+            ).astype(np.int32)
+        lower, upper, depth_ = execution.lower, execution.upper, execution.depth
+        rounding_error = float(maximum_coefficient_rounding_error)
+        if not math.isfinite(rounding_error) or rounding_error < 0.0:
+            raise ValueError(
+                "Coordinate coefficient rounding error must be finite and nonnegative."
+            )
+        element_rounding_error = float(maximum_element_coefficient_rounding_error)
+        if not math.isfinite(element_rounding_error) or element_rounding_error < 0.0:
+            raise ValueError(
+                "Element coefficient rounding error must be finite and nonnegative."
+            )
         names = tuple(str(value) for value in block_names)
         offsets = tuple(int(value) for value in block_offsets)
         unsupported = tuple(str(value) for value in unsupported_block_names)
-        if status_.ndim != 1 or any(
-            value.shape != status_.shape for value in (lower, upper, depth_)
+        if not isinstance(geometry, CellGeometrySpec) or not isinstance(
+            policy, CellValidityPolicy
         ):
-            raise ValueError("Validity certificate arrays must be aligned vectors.")
-        if not np.all(
-            np.isin(status_, tuple(int(value) for value in CellValidityStatus))
-        ):
-            raise ValueError("Validity status values must be CellValidityStatus codes.")
+            raise TypeError(
+                "Validity certificates retain CellGeometrySpec and CellValidityPolicy inputs."
+            )
+        if mesh is not None and not isinstance(mesh, CellMesh):
+            raise TypeError("Validity certificate mesh must be CellMesh or None.")
         if (
             len(offsets) != len(names) + 1
+            or not offsets
             or offsets[0] != 0
             or offsets[-1] != status_.size
             or any(stop < start for start, stop in zip(offsets[:-1], offsets[1:]))
+            or len(set(names)) != len(names)
         ):
-            raise ValueError("Validity block offsets must partition the cells.")
+            raise ValueError(
+                "Validity block offsets must partition cells in unique block order."
+            )
         if not set(unsupported) <= set(names):
             raise ValueError("Unsupported validity blocks must be certificate blocks.")
-        self.status = jnp.asarray(status_)
+        geometry_id_ = cell_geometry_id(geometry)
+        if (
+            geometry_id_ != geometry_id
+            or geometry.geometry_layout_id != geometry_layout_id
+            or policy.policy_id != policy_id
+        ):
+            raise ValueError(
+                "Validity certificate identity fields must match retained geometry and policy."
+            )
+        mesh_id_ = None if mesh is None else mesh.mesh_id
+        topology_id_ = None if mesh is None else mesh.topology_id
+        if mesh is not None and tuple(block.name for block in mesh.blocks) != names:
+            raise ValueError(
+                "Validity block names must follow the bound mesh block order."
+            )
+        self.execution_status = jnp.asarray(execution.status)
+        self.status = (
+            self.execution_status if status_ is execution.status else jnp.asarray(status_)
+        )
         self.determinant_lower = jnp.asarray(lower)
         self.determinant_upper = jnp.asarray(upper)
         self.depth = jnp.asarray(depth_)
+        self.source_status = (
+            self.execution_status
+            if source.status is execution.status
+            else jnp.asarray(source.status)
+        )
+        self.source_determinant_lower = (
+            self.determinant_lower if source.lower is lower else jnp.asarray(source.lower)
+        )
+        self.source_determinant_upper = (
+            self.determinant_upper if source.upper is upper else jnp.asarray(source.upper)
+        )
+        self.source_depth = (
+            self.depth if source.depth is depth_ else jnp.asarray(source.depth)
+        )
+        self.maximum_coefficient_rounding_error = jnp.asarray(
+            rounding_error, dtype=jnp.float64
+        )
+        self.maximum_element_coefficient_rounding_error = jnp.asarray(
+            element_rounding_error, dtype=jnp.float64
+        )
+        self.geometry = geometry
+        self.mesh = mesh
+        self.policy = policy
         self.block_names = names
         self.block_offsets = offsets
         self.unsupported_block_names = unsupported
@@ -191,31 +339,110 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.unresolved_count = int(
             np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
         )
-        self.geometry_layout_id = str(geometry_layout_id)
-        self.policy_id = str(policy_id)
+        self.geometry_id = geometry_id_
+        self.geometry_layout_id = geometry_layout_id
+        self.mesh_id = mesh_id_
+        self.topology_id = topology_id_
+        self.policy_id = policy_id
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "cell-validity-certificate",
-                "geometry": str(geometry_id),
+                "geometry": geometry_id_,
                 "geometry_layout": self.geometry_layout_id,
+                "mesh": mesh_id_,
+                "topology": topology_id_,
                 "policy": self.policy_id,
                 "blocks": names,
                 "block_offsets": offsets,
                 "unsupported": unsupported,
+                "determinant_lower": array_tree_fingerprint(lower),
+                "determinant_upper": array_tree_fingerprint(upper),
                 "status": array_tree_fingerprint(status_),
                 "depth": array_tree_fingerprint(depth_),
+                "execution_status": array_tree_fingerprint(execution.status),
+                "source_status": array_tree_fingerprint(source.status),
+                "source_determinant_lower": array_tree_fingerprint(source.lower),
+                "source_determinant_upper": array_tree_fingerprint(source.upper),
+                "source_depth": array_tree_fingerprint(source.depth),
+                "maximum_coefficient_rounding_error": rounding_error,
+                "maximum_element_coefficient_rounding_error": element_rounding_error,
             }
         )
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: CellValidityCertificate,
+        mesh: CellMesh | None,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        policy: CellValidityPolicy,
+    ) -> CellValidityCertificate:
+        """Recompute both proofs instead of trusting stored statuses or digests."""
+        if type(value) is not cls:
+            raise TypeError("value must be CellValidityCertificate.")
+        if not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("geometry must be the renewed CellGeometrySpec.")
+        if mesh is not None and not isinstance(mesh, CellMesh):
+            raise TypeError("mesh must be CellMesh or None.")
+        if not isinstance(policy, CellValidityPolicy):
+            raise TypeError("policy must be CellValidityPolicy.")
+        rebuilt = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        if not _same_tree_content(value, rebuilt):
+            raise ValueError(
+                "Stored cell validity differs from recomputed source and execution proofs."
+            )
+        return rebuilt
 
     @property
     def all_certified(self) -> bool:
         return self.certified_valid_count == self.status.shape[0]
 
+    def require_bound(
+        self,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+    ) -> None:
+        from ..geometry._mesh_certificates import _same_tree_content
 
-_POLYNOMIAL_FAMILIES = frozenset(
-    ("Lagrange", "SimplexLagrange", "TensorProductLagrange", "HybridLagrange")
-)
-_EVALUATION_ENTRY_BUDGET = 1 << 23
+        if (
+            not _same_tree_content(geometry, self.geometry)
+            or cell_geometry_id(geometry) != self.geometry_id
+            or geometry.geometry_layout_id != self.geometry_layout_id
+            or (mesh is None) != (self.mesh is None)
+            or (
+                mesh is not None
+                and (
+                    not _same_tree_content(mesh, self.mesh)
+                    or mesh.mesh_id != self.mesh_id
+                    or mesh.topology_id != self.topology_id
+                )
+            )
+        ):
+            raise ValueError(
+                "Validity certificate must be bound to these exact scientific inputs."
+            )
+
+    def require_current(
+        self,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+    ) -> None:
+        self.require_bound(geometry, mesh=mesh)
+        fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
+        if fresh.certificate_id != self.certificate_id:
+            raise ValueError(
+                "Validity certificate does not reproduce the current mathematical proof."
+            )
+
+
 _EPSILON = float(np.finfo(np.float64).eps)
 
 
@@ -350,44 +577,97 @@ def _prism_child_maps() -> tuple[np.ndarray, np.ndarray]:
     origins = []
     matrices = []
     for origin, matrix in zip(triangle_origins, triangle_matrices, strict=True):
-        for start, scale in _INTERVAL_CHILDREN:
+        for start, axial_scale in _INTERVAL_CHILDREN:
             origins.append(np.concatenate((origin, (start,))))
             block = np.zeros((3, 3))
             block[:2, :2] = matrix
-            block[2, 2] = scale
+            block[2, 2] = axial_scale
             matrices.append(block)
     return np.asarray(origins), np.asarray(matrices)
+
+
+@dataclass(frozen=True)
+class _ReferenceSubdivision:
+    """Immutable reference-cell subdivisions, independent of polynomial degree."""
+
+    vertices: tuple[tuple[Fraction, ...], ...]
+    origins: NDArray[np.float64]
+    matrices: NDArray[np.float64]
+    exact_origins: tuple[tuple[Fraction, ...], ...]
+    exact_matrices: tuple[tuple[tuple[Fraction, ...], ...], ...]
 
 
 @dataclass(frozen=True)
 class _BernsteinPlan:
     """Host-only interpolation and subdivision tables of one parameter domain."""
 
-    domain: str
+    domain: BernsteinDomain
     nodes: np.ndarray
     coefficients_from_values: np.ndarray
     conversion_norm: float
     vertex_indices: np.ndarray
-    child_origins: np.ndarray
-    child_matrices: np.ndarray
+    subdivision: _ReferenceSubdivision
 
 
-@host_table_cache(
-    max_entries=256,
-    max_bytes=1048576,
-    weight=lambda value: logical_table_bytes(
-        (
-            value.domain,
-            value.nodes,
-            value.coefficients_from_values,
-            value.conversion_norm,
-            value.vertex_indices,
-            value.child_origins,
-            value.child_matrices,
-        )
-    ),
-)
-def _bernstein_plan(domain: str, degrees: tuple[int, ...], /) -> _BernsteinPlan:
+def _exact_domain_vertices(
+    domain: BernsteinDomain, dimension: int, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    match domain:
+        case "box":
+            return tuple(
+                tuple(Fraction(value) for value in point)
+                for point in product((0, 1), repeat=dimension)
+            )
+        case "simplex":
+            return (
+                tuple(Fraction(0) for _ in range(dimension)),
+                *(
+                    tuple(Fraction(int(axis == vertex)) for axis in range(dimension))
+                    for vertex in range(dimension)
+                ),
+            )
+        case "prism":
+            return tuple(
+                (Fraction(u), Fraction(v), Fraction(w))
+                for u, v in ((0, 0), (1, 0), (0, 1))
+                for w in (0, 1)
+            )
+        case _:
+            raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
+
+
+@cache
+def _reference_subdivision(
+    domain: BernsteinDomain, dimension: int, /
+) -> _ReferenceSubdivision:
+    match domain:
+        case "box":
+            origins, matrices = _box_child_maps(dimension)
+        case "simplex":
+            origins, matrices = _simplex_child_maps(dimension)
+        case "prism":
+            if dimension != 3:
+                raise ValueError("Prism subdivisions require three reference dimensions.")
+            origins, matrices = _prism_child_maps()
+        case _:
+            assert_never(domain)
+    origins.setflags(write=False)
+    matrices.setflags(write=False)
+    return _ReferenceSubdivision(
+        _exact_domain_vertices(domain, dimension),
+        origins,
+        matrices,
+        tuple(tuple(Fraction(float(value)) for value in row) for row in origins),
+        tuple(
+            tuple(tuple(Fraction(float(value)) for value in row) for row in child)
+            for child in matrices
+        ),
+    )
+
+
+def _bernstein_plan(
+    domain: BernsteinDomain, degrees: tuple[int, ...], /
+) -> _BernsteinPlan:
     match domain:
         case "box":
             axes = tuple(_chebyshev_nodes(degree) for degree in degrees)
@@ -405,14 +685,12 @@ def _bernstein_plan(domain: str, degrees: tuple[int, ...], /) -> _BernsteinPlan:
                 ),
                 tuple(degree + 1 for degree in degrees),
             )
-            origins, matrices = _box_child_maps(len(degrees))
         case "simplex":
             degree, dimension = degrees
             nodes = _simplex_nodes(degree, dimension)
             basis = _bernstein_simplex(degree, dimension, nodes)
             indices = _simplex_indices(degree, dimension)
             vertex_indices = np.flatnonzero(np.max(indices, axis=1) == degree)
-            origins, matrices = _simplex_child_maps(dimension)
         case "prism":
             triangle_degree, axial_degree = degrees
             triangle_nodes = _simplex_nodes(triangle_degree, 2)
@@ -437,26 +715,25 @@ def _bernstein_plan(domain: str, degrees: tuple[int, ...], /) -> _BernsteinPlan:
             vertex_indices = (
                 triangle_vertices[:, None] * (axial_degree + 1) + axial_vertices[None, :]
             ).reshape(-1)
-            origins, matrices = _prism_child_maps()
         case _:
             raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
     # The conversion operator is applied to every piece of every level; it is
     # prepared once per (domain, degree) like other reference-element tables.
     conversion = np.linalg.solve(basis, np.eye(basis.shape[0]))
+    vertex_indices = np.unique(vertex_indices)
     return _BernsteinPlan(
         domain,
         nodes,
         conversion,
         float(np.max(np.sum(np.abs(conversion), axis=1))),
-        np.unique(vertex_indices),
-        origins,
-        matrices,
+        vertex_indices,
+        _reference_subdivision(domain, nodes.shape[1]),
     )
 
 
 def _determinant_route(
     cell_kind: str, degree: int, embedded: bool, /
-) -> tuple[str, tuple[int, ...]]:
+) -> tuple[BernsteinDomain, tuple[int, ...]]:
     """Return the Bernstein domain and exact degree bound of the determinant."""
 
     scale = 2 if embedded else 1
@@ -537,6 +814,28 @@ class _BlockCertificate:
     depth: np.ndarray
 
 
+def _normalize_proof_arrays(
+    status: ConvertibleToArray,
+    lower: ConvertibleToArray,
+    upper: ConvertibleToArray,
+    depth: ConvertibleToArray,
+    /,
+) -> _BlockCertificate:
+    statuses = np.asarray(status, dtype=np.int32)
+    lowers = np.asarray(lower, dtype=np.float64)
+    uppers = np.asarray(upper, dtype=np.float64)
+    depths = np.asarray(depth, dtype=np.int64)
+    if statuses.ndim != 1 or any(
+        value.shape != statuses.shape for value in (lowers, uppers, depths)
+    ):
+        raise ValueError("Validity certificate arrays must be aligned vectors.")
+    if np.any(depths < 0):
+        raise ValueError("Validity subdivision depths must be nonnegative.")
+    if not np.all(np.isin(statuses, tuple(int(value) for value in CellValidityStatus))):
+        raise ValueError("Validity status values must be CellValidityStatus codes.")
+    return _BlockCertificate(statuses, lowers, uppers, depths)
+
+
 def _evaluate_pieces(
     element: Any,
     cell_kind: str,
@@ -551,40 +850,32 @@ def _evaluate_pieces(
 
     node_count = plan.nodes.shape[0]
     dof_count = local.shape[1]
-    entries_per_piece = node_count * dof_count * local.shape[2] * plan.nodes.shape[1]
-    # Pieces are processed in bounded chunks so the tabulated gradients respect a
-    # fixed host-memory budget independent of the subdivision state.
-    chunk = max(1, _EVALUATION_ENTRY_BUDGET // max(entries_per_piece, 1))
-    coefficients = []
-    margins = []
-    for start in range(0, cells.size, chunk):
-        stop = min(start + chunk, cells.size)
-        parameters = origins[start:stop, None, :] + ein.contract(
-            "pij,mj->pmi", matrices[start:stop], plan.nodes
+    if cells.size == 0:
+        return (
+            np.empty((0, plan.coefficients_from_values.shape[0]), dtype=np.float64),
+            np.empty((0,), dtype=np.float64),
         )
-        reference = _reference_points(cell_kind, parameters)
-        _, gradients = element.tabulate(reference.reshape(-1, reference.shape[-1]))
-        gradients = np.asarray(gradients, dtype=np.float64).reshape(
-            (stop - start, node_count, dof_count, reference.shape[-1])
+    parameters = origins[:, None, :] + ein.contract("pij,mj->pmi", matrices, plan.nodes)
+    reference = _reference_points(cell_kind, parameters)
+    _, gradients = element.tabulate(reference.reshape(-1, reference.shape[-1]))
+    gradients = np.asarray(gradients, dtype=np.float64).reshape(
+        (cells.size, node_count, dof_count, reference.shape[-1])
+    )
+    points = local[cells]
+    jacobian = ein.contract("pmnk,pna->pmak", gradients, points)
+    magnitude = ein.contract("pmnk,pna->pmak", np.abs(gradients), np.abs(points))
+    values, scale = _jacobian_determinant(jacobian, magnitude)
+    coefficient = ein.contract("rm,pm->pr", plan.coefficients_from_values, values)
+    evaluation_error = 8.0 * (dof_count + reference.shape[-1] + 1) * _EPSILON
+    margin = (
+        2.0
+        * plan.conversion_norm
+        * (
+            evaluation_error * np.max(scale, axis=1)
+            + node_count * _EPSILON * np.max(np.abs(values), axis=1)
         )
-        points = local[cells[start:stop]]
-        jacobian = ein.contract("pmnk,pna->pmak", gradients, points)
-        magnitude = ein.contract("pmnk,pna->pmak", np.abs(gradients), np.abs(points))
-        values, scale = _jacobian_determinant(jacobian, magnitude)
-        coefficient = ein.contract("rm,pm->pr", plan.coefficients_from_values, values)
-        # Forward error of the determinant evaluation plus the conversion rounding.
-        evaluation_error = 8.0 * (dof_count + reference.shape[-1] + 1) * _EPSILON
-        margin = (
-            2.0
-            * plan.conversion_norm
-            * (
-                evaluation_error * np.max(scale, axis=1)
-                + node_count * _EPSILON * np.max(np.abs(values), axis=1)
-            )
-        )
-        coefficients.append(coefficient)
-        margins.append(margin)
-    return np.concatenate(coefficients), np.concatenate(margins)
+    )
+    return coefficient, margin
 
 
 def _root_scale(
@@ -599,75 +890,896 @@ def _root_scale(
     return np.max(column_scale * column_scale if embedded else column_scale, axis=1)
 
 
-def _certify_polynomial_block(
-    element: Any,
-    cell_kind: str,
-    local: np.ndarray,
+def _child_vertices(
+    origins: np.ndarray,
+    matrices: np.ndarray,
+    vertices: np.ndarray,
+    /,
+) -> np.ndarray:
+    return origins[:, None, :] + ein.contract("cij,vj->cvi", matrices, vertices)
+
+
+def _affine_determinant(
+    jacobian: tuple[tuple[ExactScalar, ...], ...], dimension: int, /
+) -> ExactScalar:
+    ambient = len(jacobian)
+    if ambient < dimension:
+        raise ValueError(
+            "Coordinate maps require at least as many physical as reference axes."
+        )
+    if ambient == dimension:
+        return determinant_exact(jacobian)
+    gram = tuple(
+        tuple(
+            sum(
+                (jacobian[axis][left] * jacobian[axis][right] for axis in range(ambient)),
+                Fraction(0),
+            )
+            for right in range(dimension)
+        )
+        for left in range(dimension)
+    )
+    return determinant_exact(gram)
+
+
+def _affine_quality(
+    jacobian: tuple[tuple[ExactScalar, ...], ...],
+    dimension: int,
     policy: CellValidityPolicy,
     /,
+) -> tuple[CellValidityStatus, ExactScalar]:
+    determinant = _affine_determinant(jacobian, dimension)
+    squared_scale: ExactScalar = Fraction(1)
+    for column in range(dimension):
+        squared_scale *= sum(
+            (values[column] * values[column] for values in jacobian), Fraction(0)
+        )
+    floor = Fraction(policy.relative_determinant_floor)
+    margin = (
+        determinant - floor * squared_scale
+        if len(jacobian) != dimension
+        else determinant * determinant - floor * floor * squared_scale
+    )
+    status = (
+        CellValidityStatus.INVALID
+        if determinant <= 0 or margin <= 0
+        else CellValidityStatus.CERTIFIED_VALID
+    )
+    return status, determinant
+
+
+def _exact_affine_root(
+    element: FiniteElementSpec,
+    original: NDArray[np.float64],
+    policy: CellValidityPolicy,
+    /,
+) -> tuple[CellValidityStatus, float, float] | None:
+    affine = affine_map(
+        coordinate_map_expressions(element, original), element.topological_dimension
+    )
+    if affine is None:
+        return None
+    status, determinant = _affine_quality(
+        affine[1], element.topological_dimension, policy
+    )
+    return (
+        status,
+        coefficient_endpoint(determinant, upper=False, saturate=True),
+        coefficient_endpoint(determinant, upper=True, saturate=True),
+    )
+
+
+def _exact_map_jacobian(
+    expressions: tuple[Expression, ...], dimension: int, /
+) -> tuple[tuple[Expression, ...], ...]:
+    return tuple(
+        tuple(derivative(expression, axis) for axis in range(dimension))
+        for expression in expressions
+    )
+
+
+def _exact_map_determinant(
+    jacobian: tuple[tuple[Expression, ...], ...], dimension: int, /
+) -> Expression:
+    if len(jacobian) < dimension:
+        raise ValueError(
+            "Coordinate maps require at least as many physical as reference axes."
+        )
+    if len(jacobian) == dimension:
+        return determinant_small_algebra(
+            jacobian, add=add, subtract=subtract, multiply=multiply
+        )
+    gram = tuple(
+        tuple(
+            sum_polynomials(
+                tuple(multiply(row[left], row[right]) for row in jacobian),
+                dimension,
+            )
+            for right in range(dimension)
+        )
+        for left in range(dimension)
+    )
+    return determinant_small_algebra(gram, add=add, subtract=subtract, multiply=multiply)
+
+
+def _exact_hadamard_squared(
+    jacobian: tuple[tuple[Expression, ...], ...], dimension: int, /
+) -> Expression:
+    bound: Expression = constant(1, dimension)
+    for column in range(dimension):
+        squared_norm = sum_polynomials(
+            tuple(multiply(row[column], row[column]) for row in jacobian),
+            dimension,
+        )
+        bound = multiply(bound, squared_norm)
+    return bound
+
+
+def _hadamard_margin_from_bounds(
+    jacobian: tuple[tuple[Expression, ...], ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    determinant_lower: float,
+    floor: Fraction,
+    /,
+) -> bool:
+    """Prove a sufficient relative margin before expanding norm products."""
+    if not math.isfinite(determinant_lower) or determinant_lower <= 0.0:
+        return False
+    norm_product_upper = Fraction(1)
+    for column in range(dimension):
+        norm_squared_upper = Fraction(0)
+        for row in jacobian:
+            lower, upper = polynomial_bounds(row[column], domain, dimension)
+            if not math.isfinite(lower) or not math.isfinite(upper):
+                return False
+            magnitude = Fraction(max(abs(lower), abs(upper)))
+            norm_squared_upper += magnitude * magnitude
+        norm_product_upper *= norm_squared_upper
+    determinant_bound = Fraction(determinant_lower)
+    if len(jacobian) == dimension:
+        return determinant_bound * determinant_bound > (
+            floor * floor * norm_product_upper
+        )
+    return determinant_bound > floor * norm_product_upper
+
+
+def _exact_polynomial_data(
+    basis: tuple[Expression, ...],
+    local: NDArray[np.float64],
+    dimension: int,
+    /,
+) -> tuple[tuple[Expression, ...], Polynomial] | None:
+    coefficients = tuple(
+        tuple(Fraction(float(value)) for value in local[:, axis])
+        for axis in range(local.shape[1])
+    )
+    expressions = linear_combinations(basis, coefficients)
+    coordinates = tuple(
+        expression for expression in expressions if isinstance(expression, dict)
+    )
+    if len(coordinates) != len(expressions):
+        return None
+    determinant = _exact_map_determinant(
+        _exact_map_jacobian(expressions, dimension), dimension
+    )
+    if not isinstance(determinant, dict) or any(
+        not isinstance(value, Fraction) for value in determinant.values()
+    ):
+        return None
+    return expressions, determinant
+
+
+def _exact_affine_arguments(
+    origin: tuple[Fraction, ...],
+    matrix: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[Polynomial, ...]:
+    dimension = len(origin)
+    variables = axes(dimension)
+    return tuple(
+        add(
+            constant(origin[row], dimension),
+            sum_polynomials(
+                tuple(
+                    scale(variables[column], matrix[row][column])
+                    for column in range(dimension)
+                ),
+                dimension,
+            ),
+        )
+        for row in range(dimension)
+    )
+
+
+def _exact_affine_image(
+    origin: tuple[Fraction, ...],
+    matrix: tuple[tuple[Fraction, ...], ...],
+    point: tuple[Fraction, ...],
+    /,
+) -> tuple[Fraction, ...]:
+    return tuple(
+        origin[row]
+        + sum(
+            (matrix[row][column] * point[column] for column in range(len(point))),
+            Fraction(0),
+        )
+        for row in range(len(origin))
+    )
+
+
+def _exact_child_affine(
+    origin: tuple[Fraction, ...],
+    matrix: tuple[tuple[Fraction, ...], ...],
+    child_origin: tuple[Fraction, ...],
+    child_matrix: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[tuple[Fraction, ...], tuple[tuple[Fraction, ...], ...]]:
+    return (
+        _exact_affine_image(origin, matrix, child_origin),
+        tuple(
+            tuple(
+                sum(
+                    (
+                        matrix[row][inner] * child_matrix[inner][column]
+                        for inner in range(len(origin))
+                    ),
+                    Fraction(0),
+                )
+                for column in range(len(origin))
+            )
+            for row in range(len(origin))
+        ),
+    )
+
+
+def _bernstein_enclosure(controls: tuple[ExactScalar, ...], /) -> tuple[float, float]:
+    return (
+        coefficient_endpoint(min(controls), upper=False, saturate=True),
+        coefficient_endpoint(max(controls), upper=True, saturate=True),
+    )
+
+
+def _polynomial_support_projection(
+    polynomial: Polynomial,
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[Polynomial, BernsteinDomain, int]:
+    if dimension < 1 or any(len(exponent) != dimension for exponent in polynomial):
+        raise ValueError("Bernstein dimension must match polynomial monomial dimensions.")
+    active = tuple(
+        axis
+        for axis in range(dimension)
+        if any(exponent[axis] for exponent in polynomial)
+    )
+    match domain:
+        case "box":
+            projected_domain: BernsteinDomain = "box"
+        case "simplex":
+            projected_domain = "box" if len(active) == 1 else "simplex"
+        case "prism":
+            if dimension != 3:
+                raise ValueError("Prism Bernstein controls require three dimensions.")
+            projected_domain = (
+                "prism" if len(active) == 3 else "simplex" if active == (0, 1) else "box"
+            )
+        case _:
+            assert_never(domain)
+    if not active or len(active) == dimension:
+        return polynomial, projected_domain, len(active)
+    return (
+        {
+            tuple(exponent[axis] for axis in active): coefficient
+            for exponent, coefficient in polynomial.items()
+        },
+        projected_domain,
+        len(active),
+    )
+
+
+def _certify_exact_polynomial_cell(
+    determinant: Polynomial,
+    domain: BernsteinDomain,
+    dimension: int,
+    threshold: float,
+    /,
+) -> tuple[CellValidityStatus, float, float, int]:
+    determinant, domain, dimension = _polynomial_support_projection(
+        determinant, domain, dimension
+    )
+    threshold_exact = Fraction(threshold)
+    if dimension == 0:
+        value = next(iter(determinant.values()), Fraction(0))
+        lower, upper = _bernstein_enclosure((value,))
+        status = (
+            CellValidityStatus.INVALID
+            if value <= 0 or value < threshold_exact
+            else CellValidityStatus.UNRESOLVED
+            if value == threshold_exact
+            else CellValidityStatus.CERTIFIED_VALID
+        )
+        return status, lower, upper, 0
+    subdivision = _reference_subdivision(domain, dimension)
+    root_controls = bernstein_coefficients(determinant, domain, dimension)
+    root_lower, root_upper = _bernstein_enclosure(root_controls)
+    vertices = subdivision.vertices
+    child_origins = subdivision.exact_origins
+    child_matrices = subdivision.exact_matrices
+    zero = tuple(Fraction(0) for _ in range(dimension))
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(dimension))
+        for row in range(dimension)
+    )
+    stack = [(determinant, root_controls, zero, identity, 0)]
+    lower = np.inf
+    upper = -np.inf
+    unresolved = False
+    maximum_depth = 0
+
+    while stack:
+        piece, controls, origin, matrix, level = stack.pop()
+        maximum_depth = max(maximum_depth, level)
+        piece_lower, piece_upper = _bernstein_enclosure(controls)
+        corners = tuple(evaluate_polynomial(piece, point) for point in vertices)
+        if any(value <= 0 or value < threshold_exact for value in corners):
+            return CellValidityStatus.INVALID, root_lower, root_upper, maximum_depth
+        if any(value == threshold_exact for value in corners):
+            return CellValidityStatus.UNRESOLVED, root_lower, root_upper, maximum_depth
+        if min(controls) > threshold_exact:
+            lower = min(lower, piece_lower)
+            upper = max(upper, piece_upper)
+            continue
+
+        parent_points = tuple(
+            _exact_affine_image(origin, matrix, point) for point in vertices
+        )
+        parent_representations = {
+            tuple(float(value) for value in point) for point in parent_points
+        }
+        for child_origin, child_matrix in zip(child_origins, child_matrices, strict=True):
+            child_polynomial = compose(
+                piece,
+                _exact_affine_arguments(child_origin, child_matrix),
+                dimension=dimension,
+            )
+            child_controls_ = bernstein_coefficients(child_polynomial, domain, dimension)
+            maximum_depth = max(maximum_depth, level + 1)
+            samples = tuple(
+                evaluate_polynomial(child_polynomial, point) for point in vertices
+            )
+            if any(value <= 0 or value < threshold_exact for value in samples):
+                return CellValidityStatus.INVALID, root_lower, root_upper, maximum_depth
+            child_lower, child_upper = _bernstein_enclosure(child_controls_)
+            if any(value == threshold_exact for value in samples):
+                unresolved = True
+                lower = min(lower, child_lower)
+                upper = max(upper, child_upper)
+                continue
+            if min(child_controls_) > threshold_exact:
+                lower = min(lower, child_lower)
+                upper = max(upper, child_upper)
+                continue
+
+            child_global_origin, child_global_matrix = _exact_child_affine(
+                origin, matrix, child_origin, child_matrix
+            )
+            child_points = tuple(
+                _exact_affine_image(child_global_origin, child_global_matrix, point)
+                for point in vertices
+            )
+            has_new_vertex = any(
+                tuple(float(value) for value in point) not in parent_representations
+                for point in child_points
+            )
+            if not has_new_vertex:
+                unresolved = True
+                lower = min(lower, child_lower)
+                upper = max(upper, child_upper)
+                continue
+            stack.append(
+                (
+                    child_polynomial,
+                    child_controls_,
+                    child_global_origin,
+                    child_global_matrix,
+                    level + 1,
+                )
+            )
+
+    status = (
+        CellValidityStatus.UNRESOLVED
+        if unresolved
+        else CellValidityStatus.CERTIFIED_VALID
+    )
+    return status, float(lower), float(upper), maximum_depth
+
+
+def _certify_numerical_polynomial_cell(
+    element: FiniteElementSpec,
+    cell_kind: str,
+    local: NDArray[np.float64],
+    original_local: NDArray[np.float64],
+    policy: CellValidityPolicy,
+    plan: _BernsteinPlan,
+    threshold: float,
+    /,
+    *,
+    exact_affine_available: bool,
+) -> tuple[CellValidityStatus, float, float, int]:
+    dimension = plan.nodes.shape[1]
+    vertices = np.asarray(plan.subdivision.vertices, dtype=np.float64)
+    child_count = plan.subdivision.origins.shape[0]
+    lower = np.inf
+    upper = -np.inf
+    maximum_depth = 0
+    invalid = False
+    unresolved = False
+    stack = [(np.zeros((dimension,)), np.eye(dimension), 0)]
+
+    while stack:
+        origin, matrix, level = stack.pop()
+        coefficients, margins = _evaluate_pieces(
+            element,
+            cell_kind,
+            plan,
+            local[None, :, :],
+            np.zeros((1,), dtype=np.int64),
+            origin[None, :],
+            matrix[None, :, :],
+        )
+        values = coefficients[0]
+        margin = margins[0]
+        piece_lower = float(np.min(values) - margin)
+        piece_upper = float(np.max(values) + margin)
+        corner = float(np.min(values[plan.vertex_indices]))
+        maximum_depth = max(maximum_depth, level)
+
+        if invalid:
+            lower = min(lower, piece_lower)
+            upper = max(upper, piece_upper)
+            continue
+        if piece_lower > threshold:
+            lower = min(lower, piece_lower)
+            upper = max(upper, piece_upper)
+            continue
+        if corner + margin < threshold:
+            invalid = True
+            lower = min(lower, piece_lower)
+            upper = max(upper, piece_upper)
+            continue
+        if level == 0 and exact_affine_available:
+            exact = _exact_affine_root(element, original_local, policy)
+            if exact is not None:
+                decision, lower, upper = exact
+                invalid = decision == CellValidityStatus.INVALID
+                unresolved = decision == CellValidityStatus.UNRESOLVED
+                continue
+
+        child_origins = origin[None, :] + ein.contract(
+            "ij,cj->ci", matrix, plan.subdivision.origins
+        )
+        child_matrices = ein.contract("ij,cjk->cik", matrix, plan.subdivision.matrices)
+        child_points = _child_vertices(child_origins, child_matrices, vertices)
+        parent_points = origin[None, :] + ein.contract("ij,vj->vi", matrix, vertices)
+        child_has_new_vertex = ~np.all(
+            np.any(
+                np.all(
+                    child_points[:, :, None, :] == parent_points[None, None, :, :],
+                    axis=-1,
+                ),
+                axis=-1,
+            ),
+            axis=-1,
+        )
+        if not np.all(child_has_new_vertex):
+            unresolved = True
+            lower = min(lower, piece_lower)
+            upper = max(upper, piece_upper)
+        for child in reversed(range(child_count)):
+            if child_has_new_vertex[child]:
+                stack.append((child_origins[child], child_matrices[child], level + 1))
+
+    status = (
+        CellValidityStatus.INVALID
+        if invalid
+        else CellValidityStatus.UNRESOLVED
+        if unresolved
+        else CellValidityStatus.CERTIFIED_VALID
+    )
+    return status, float(lower), float(upper), maximum_depth
+
+
+def _certify_polynomial_cell(
+    element: FiniteElementSpec,
+    cell_kind: str,
+    local: NDArray[np.float64],
+    original_local: NDArray[np.float64],
+    policy: CellValidityPolicy,
+    plan: _BernsteinPlan,
+    threshold: float,
+    exact_basis: tuple[Expression, ...] | None,
+    /,
+) -> tuple[CellValidityStatus, float, float, int]:
+    dimension = element.topological_dimension
+    if exact_basis is not None and math.isfinite(threshold):
+        exact_data = _exact_polynomial_data(exact_basis, original_local, dimension)
+        if exact_data is not None:
+            expressions, determinant = exact_data
+            affine = affine_map(expressions, dimension)
+            if affine is not None:
+                status, exact_determinant = _affine_quality(affine[1], dimension, policy)
+                return (
+                    status,
+                    coefficient_endpoint(exact_determinant, upper=False, saturate=True),
+                    coefficient_endpoint(exact_determinant, upper=True, saturate=True),
+                    0,
+                )
+            return _certify_exact_polynomial_cell(
+                determinant, plan.domain, dimension, threshold
+            )
+    return _certify_numerical_polynomial_cell(
+        element,
+        cell_kind,
+        local,
+        original_local,
+        policy,
+        plan,
+        threshold,
+        exact_affine_available=exact_basis is not None,
+    )
+
+
+def _certify_polynomial_block(
+    element: FiniteElementSpec,
+    cell_kind: str,
+    local: NDArray[np.float64],
+    policy: CellValidityPolicy,
+    /,
+    *,
+    original_local: NDArray[np.float64],
 ) -> _BlockCertificate:
+    cell_kind = reference_cell_topology(cell_kind).family
     embedded = local.shape[-1] != element.topological_dimension
     if embedded and cell_kind not in ("interval", "triangle", "quadrilateral"):
         raise ValueError(f"Embedded {cell_kind} cells have no validity contract.")
     domain, degrees = _determinant_route(cell_kind, element.degree, embedded)
     plan = _bernstein_plan(domain, degrees)
-    cell_count = local.shape[0]
     threshold = policy.relative_determinant_floor * _root_scale(
         element, cell_kind, plan, local
     )
-    lower = np.full((cell_count,), np.inf)
-    upper = np.full((cell_count,), -np.inf)
-    depth = np.zeros((cell_count,), dtype=np.int32)
-    invalid = np.zeros((cell_count,), dtype=np.bool_)
-    unresolved = np.zeros((cell_count,), dtype=np.bool_)
-    dimension = plan.nodes.shape[1]
-    cells = np.arange(cell_count, dtype=np.int64)
-    origins = np.zeros((cell_count, dimension))
-    matrices = np.broadcast_to(np.eye(dimension), (cell_count, dimension, dimension))
-    child_count = plan.child_origins.shape[0]
-    for level in range(policy.maximum_subdivision_depth + 1):
-        coefficients, margins = _evaluate_pieces(
-            element, cell_kind, plan, local, cells, origins, matrices
+    exact_basis: tuple[Expression, ...] | None = None
+    if cell_kind != "pyramid":
+        try:
+            exact_basis = coordinate_source_basis(element)
+        except ValueError:
+            # Opaque and rational source bases use the outward numerical route.
+            exact_basis = None
+    status = np.empty((local.shape[0],), dtype=np.int32)
+    lower = np.empty((local.shape[0],), dtype=np.float64)
+    upper = np.empty((local.shape[0],), dtype=np.float64)
+    depth = np.empty((local.shape[0],), dtype=np.int64)
+    for cell in range(local.shape[0]):
+        (
+            status[cell],
+            lower[cell],
+            upper[cell],
+            depth[cell],
+        ) = _certify_polynomial_cell(
+            element,
+            cell_kind,
+            local[cell],
+            original_local[cell],
+            policy,
+            plan,
+            float(threshold[cell]),
+            exact_basis,
         )
-        piece_threshold = threshold[cells]
-        piece_lower = np.min(coefficients, axis=1) - margins
-        piece_upper = np.max(coefficients, axis=1) + margins
-        corner = np.min(coefficients[:, plan.vertex_indices], axis=1)
-        piece_valid = piece_lower > piece_threshold
-        piece_invalid = corner + margins < piece_threshold
-        np.logical_or.at(invalid, cells[piece_invalid], True)
-        np.maximum.at(depth, cells, level)
-        refine = ~piece_valid & ~piece_invalid & ~invalid[cells]
-        exhausted = (
-            level == policy.maximum_subdivision_depth
-            or np.count_nonzero(refine) * child_count > policy.maximum_piece_count
-        )
-        if exhausted:
-            unresolved[cells[refine]] = True
-            refine = np.zeros_like(refine)
-        leaf = ~refine
-        np.minimum.at(lower, cells[leaf], piece_lower[leaf])
-        np.maximum.at(upper, cells[leaf], piece_upper[leaf])
-        if not np.any(refine):
-            break
-        parent_origins = origins[refine]
-        parent_matrices = matrices[refine]
-        origins = (
-            parent_origins[:, None, :]
-            + ein.contract("pij,kj->pki", parent_matrices, plan.child_origins)
-        ).reshape(-1, dimension)
-        matrices = ein.contract(
-            "pij,kjl->pkil", parent_matrices, plan.child_matrices
-        ).reshape(-1, dimension, dimension)
-        cells = np.repeat(cells[refine], child_count)
-    status = np.where(
-        invalid,
-        CellValidityStatus.INVALID,
-        np.where(
-            unresolved, CellValidityStatus.UNRESOLVED, CellValidityStatus.CERTIFIED_VALID
-        ),
-    ).astype(np.int32)
     return _BlockCertificate(status, lower, upper, depth)
+
+
+type _ExactCellValidity = tuple[CellValidityStatus, float, float, int]
+
+
+def _source_proof_domain(cell_kind: str, /) -> BernsteinDomain | None:
+    match reference_cell_topology(cell_kind).family:
+        case "interval" | "quadrilateral" | "hexahedron" | "pyramid":
+            return "box"
+        case "triangle" | "tetrahedron":
+            return "simplex"
+        case "prism":
+            return "prism"
+        case _:
+            return None
+
+
+def _source_denominator_certificate(
+    denominator: Mapping[tuple[int, ...], ExactScalar],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[int, _ExactCellValidity]:
+    vertices = _reference_subdivision(domain, dimension).vertices
+    center = tuple(
+        sum((point[axis] for point in vertices), Fraction(0)) / len(vertices)
+        for axis in range(dimension)
+    )
+    center_value = evaluate_polynomial(denominator, center)
+    if center_value == 0:
+        return 0, (CellValidityStatus.UNRESOLVED, -math.inf, math.inf, 0)
+    sign = 1 if center_value > 0 else -1
+    certificate = _certify_exact_polynomial_cell(
+        scale(denominator, sign), domain, dimension, 0.0
+    )
+    return sign, certificate
+
+
+def _source_denominators_defined(
+    expressions: tuple[Expression, ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[bool, int]:
+    seen: list[Mapping[tuple[int, ...], ExactScalar]] = []
+    depth = 0
+    for expression in expressions:
+        if not isinstance(expression, RationalPolynomial):
+            continue
+        denominator = expression.denominator
+        if any(denominator == previous for previous in seen):
+            continue
+        seen.append(denominator)
+        _, certificate = _source_denominator_certificate(denominator, domain, dimension)
+        depth = max(depth, certificate[3])
+        if certificate[0] is not CellValidityStatus.CERTIFIED_VALID:
+            return False, depth
+    return True, depth
+
+
+def _certify_positive_source_expression(
+    expression: Expression,
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> _ExactCellValidity:
+    if not isinstance(expression, RationalPolynomial):
+        return _certify_exact_polynomial_cell(expression, domain, dimension, 0.0)
+    sign, denominator = _source_denominator_certificate(
+        expression.denominator, domain, dimension
+    )
+    if denominator[0] is not CellValidityStatus.CERTIFIED_VALID:
+        return CellValidityStatus.UNRESOLVED, -math.inf, math.inf, denominator[3]
+    numerator = _certify_exact_polynomial_cell(
+        scale(expression.numerator, sign), domain, dimension, 0.0
+    )
+    lower, upper = interval_divide(
+        (
+            np.asarray(numerator[1], dtype=np.float64),
+            np.asarray(numerator[2], dtype=np.float64),
+        ),
+        (
+            np.asarray(denominator[1], dtype=np.float64),
+            np.asarray(denominator[2], dtype=np.float64),
+        ),
+    )
+    return (
+        numerator[0],
+        float(lower),
+        float(upper),
+        max(numerator[3], denominator[3]),
+    )
+
+
+def _certify_nonlinear_source_map(
+    expressions: tuple[Expression, ...],
+    cell_kind: str,
+    domain: BernsteinDomain,
+    dimension: int,
+    policy: CellValidityPolicy,
+    /,
+) -> _ExactCellValidity:
+    """Prove the effective map and its pointwise relative Hadamard margin."""
+    if reference_cell_topology(cell_kind).family == "pyramid":
+        normalized = tuple(
+            normalize_pyramid_reference_expression(expression)
+            for expression in expressions
+        )
+        if any(value.apex_value is None for value in normalized):
+            return CellValidityStatus.UNRESOLVED, math.nan, math.nan, 0
+        normalized_derivatives = tuple(
+            tuple(
+                normalize_pyramid_reference_derivative(expression, axis)
+                for axis in range(dimension)
+            )
+            for expression in expressions
+        )
+        if any(
+            value.apex_value is None for row in normalized_derivatives for value in row
+        ):
+            return CellValidityStatus.UNRESOLVED, math.nan, math.nan, 0
+        jacobian = tuple(
+            tuple(value.expression for value in row) for row in normalized_derivatives
+        )
+        proof_coordinates = tuple(value.expression for value in normalized)
+    else:
+        proof_coordinates = expressions
+        jacobian = _exact_map_jacobian(expressions, dimension)
+    defined, denominator_depth = _source_denominators_defined(
+        proof_coordinates + tuple(value for row in jacobian for value in row),
+        domain,
+        dimension,
+    )
+    if not defined:
+        return CellValidityStatus.UNRESOLVED, math.nan, math.nan, denominator_depth
+    determinant = _exact_map_determinant(jacobian, dimension)
+    result = _certify_positive_source_expression(determinant, domain, dimension)
+    status, lower, upper, depth = result
+    depth = max(depth, denominator_depth)
+    if status is not CellValidityStatus.CERTIFIED_VALID:
+        return status, lower, upper, depth
+    floor = Fraction(policy.relative_determinant_floor)
+    if floor == 0:
+        return status, lower, upper, depth
+    if _hadamard_margin_from_bounds(jacobian, domain, dimension, lower, floor):
+        return status, lower, upper, depth
+    scale_squared = _exact_hadamard_squared(jacobian, dimension)
+    margin = (
+        subtract(
+            multiply(determinant, determinant),
+            scale(scale_squared, floor * floor),
+        )
+        if len(jacobian) == dimension
+        else subtract(determinant, scale(scale_squared, floor))
+    )
+    margin_certificate = _certify_positive_source_expression(margin, domain, dimension)
+    return margin_certificate[0], lower, upper, max(depth, margin_certificate[3])
+
+
+def _certify_source_block(
+    element: ScalarCoordinateElement,
+    cell_kind: str,
+    coordinates: CoordinateSourceBank,
+    routes: NDArray[np.int64],
+    policy: CellValidityPolicy,
+    /,
+    *,
+    execution_map: bool = False,
+) -> tuple[_BlockCertificate, bool]:
+    """Prove an exact-source or binary64-shadow coordinate map."""
+    count = routes.shape[0]
+    dimension = reference_cell_topology(cell_kind).dimension
+    status = np.full(count, CellValidityStatus.UNRESOLVED, dtype=np.int32)
+    lower = np.full(count, np.nan, dtype=np.float64)
+    upper = np.full(count, np.nan, dtype=np.float64)
+    depth = np.zeros(count, dtype=np.int64)
+    domain = _source_proof_domain(cell_kind)
+    has_unsupported_map = False
+    for row in range(routes.shape[0]):
+        local = tuple(
+            coordinates[int(routes[row, column])] for column in range(routes.shape[1])
+        )
+        expressions = (
+            coordinate_execution_map_expressions(element, local, cell_row=row)
+            if execution_map
+            else coordinate_map_expressions(element, local, cell_row=row)
+        )
+        affine = affine_map(expressions, dimension)
+        if affine is None:
+            if domain is None:
+                has_unsupported_map = True
+                continue
+            status[row], lower[row], upper[row], depth[row] = (
+                _certify_nonlinear_source_map(
+                    expressions, cell_kind, domain, dimension, policy
+                )
+            )
+            continue
+        _, jacobian = affine
+        status[row], determinant = _affine_quality(jacobian, dimension, policy)
+        lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
+        upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
+    return (
+        _BlockCertificate(status, lower, upper, depth),
+        has_unsupported_map,
+    )
+
+
+def _polynomial_coefficient_difference(
+    first: Mapping[tuple[int, ...], ExactScalar],
+    second: Mapping[tuple[int, ...], ExactScalar],
+    /,
+) -> ExactScalar:
+    return max(
+        (
+            abs(first.get(exponent, Fraction(0)) - second.get(exponent, Fraction(0)))
+            for exponent in first.keys() | second.keys()
+        ),
+        default=Fraction(0),
+    )
+
+
+def _expression_evidence_equal(first: Expression, second: Expression, /) -> bool:
+    """Compare exact coefficients and rational denominator-domain evidence."""
+    if isinstance(first, RationalPolynomial):
+        return (
+            isinstance(second, RationalPolynomial)
+            and dict(first.numerator) == dict(second.numerator)
+            and dict(first.denominator) == dict(second.denominator)
+        )
+    return not isinstance(second, RationalPolynomial) and dict(first) == dict(second)
+
+
+def _expression_sequence_evidence_equal(
+    first: tuple[Expression, ...], second: tuple[Expression, ...], /
+) -> bool:
+    return len(first) == len(second) and all(
+        _expression_evidence_equal(left, right)
+        for left, right in zip(first, second, strict=True)
+    )
+
+
+def _element_basis_rounding_error(
+    source: tuple[Expression, ...],
+    execution: tuple[Expression, ...],
+    dimension: int,
+    /,
+) -> ExactScalar:
+    """Return a dimensionless coefficient discrepancy between effective bases."""
+    if len(source) != len(execution):
+        return Fraction(1)
+    maximum: ExactScalar = Fraction(0)
+    unit = constant(1, dimension)
+    for source_value, execution_value in zip(source, execution, strict=True):
+        if isinstance(source_value, RationalPolynomial) and isinstance(
+            execution_value, RationalPolynomial
+        ):
+            error = max(
+                _polynomial_coefficient_difference(
+                    source_value.numerator, execution_value.numerator
+                ),
+                _polynomial_coefficient_difference(
+                    source_value.denominator, execution_value.denominator
+                ),
+            )
+        elif not isinstance(source_value, RationalPolynomial) and not isinstance(
+            execution_value, RationalPolynomial
+        ):
+            error = _polynomial_coefficient_difference(source_value, execution_value)
+        else:
+            source_numerator = (
+                source_value.numerator
+                if isinstance(source_value, RationalPolynomial)
+                else source_value
+            )
+            source_denominator = (
+                source_value.denominator
+                if isinstance(source_value, RationalPolynomial)
+                else unit
+            )
+            execution_numerator = (
+                execution_value.numerator
+                if isinstance(execution_value, RationalPolynomial)
+                else execution_value
+            )
+            execution_denominator = (
+                execution_value.denominator
+                if isinstance(execution_value, RationalPolynomial)
+                else unit
+            )
+            difference = subtract(
+                multiply(source_numerator, execution_denominator),
+                multiply(execution_numerator, source_denominator),
+            )
+            if isinstance(difference, RationalPolynomial):
+                raise RuntimeError(
+                    "Cross-multiplied basis difference must be polynomial."
+                )
+            error = max(
+                (abs(value) for value in difference.values()),
+                default=Fraction(0),
+            )
+        maximum = max(maximum, error)
+    return maximum
 
 
 # Star-decomposed variable-topology cells --------------------------------------------
@@ -799,7 +1911,7 @@ def _star_status(
             CellValidityStatus.UNRESOLVED,
         ),
     ).astype(np.int32)
-    return _BlockCertificate(status, lower, upper, np.zeros((count,), dtype=np.int32))
+    return _BlockCertificate(status, lower, upper, np.zeros((count,), dtype=np.int64))
 
 
 def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple:
@@ -921,7 +2033,7 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
         status,
         np.where(finite, lower, np.nan),
         np.where(finite, upper, np.nan),
-        np.zeros((cell_count,), dtype=np.int32),
+        np.zeros((cell_count,), dtype=np.int64),
     )
 
 
@@ -994,9 +2106,6 @@ def certify_cell_geometry_validity(
     (required for polyhedral blocks) and in its own sorted block order otherwise.
     """
 
-    # The FE reference owner imports this package; resolve it lazily.
-    from .fem._reference import FiniteElementSpec
-
     policy_ = CellValidityPolicy() if policy is None else policy
     if not isinstance(policy_, CellValidityPolicy):
         raise TypeError("policy must be CellValidityPolicy or None.")
@@ -1024,12 +2133,59 @@ def certify_cell_geometry_validity(
         names = tuple(block.name for block in mesh_.blocks)
         kinds = tuple(block.cell_kind for block in mesh_.blocks)
     values = np.asarray(spec.coordinates, dtype=np.float64)
+    execution_coordinates: CoordinateSourceBank = tuple(
+        tuple(Fraction(float(value)) for value in row) for row in values
+    )
+    source_coordinates = (
+        spec.source_coordinates() if spec.exact_coordinate_bank is not None else None
+    )
+    source_bank = (
+        execution_coordinates if source_coordinates is None else source_coordinates
+    )
+    distinct_source = (
+        source_coordinates is not None and source_coordinates != execution_coordinates
+    )
+    coefficient_rounding_error = (
+        max(
+            (
+                coordinate_point_rounding_error(point, values[row])
+                for row, point in enumerate(source_coordinates)
+            ),
+            default=Fraction(0),
+        )
+        if source_coordinates is not None
+        else Fraction(0)
+    )
+    element_rounding_error: ExactScalar = Fraction(0)
+    unsupported: set[str] = set()
+    for name, element, route in zip(names, elements, routes, strict=True):
+        if not isinstance(element, ScalarCoordinateElement):
+            continue
+        for row in range(route.shape[0]):
+            try:
+                source_basis = coordinate_source_basis(element, cell_row=row)
+                execution_basis = coordinate_execution_basis(element, cell_row=row)
+            except (OverflowError, TypeError, ValueError):
+                distinct_source = True
+                unsupported.add(name)
+                continue
+            distinct_source = distinct_source or not _expression_sequence_evidence_equal(
+                source_basis, execution_basis
+            )
+            element_rounding_error = max(
+                element_rounding_error,
+                _element_basis_rounding_error(
+                    source_basis,
+                    execution_basis,
+                    element.topological_dimension,
+                ),
+            )
     tables = None
     polyhedral_points = None
     cursor = 0
     offsets = [0]
-    unsupported = []
-    blocks = []
+    blocks: list[_BlockCertificate] = []
+    source_blocks: list[_BlockCertificate] = []
     for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
         if isinstance(element, CellVertexGeometryElement) and kind == "polygon":
@@ -1057,42 +2213,114 @@ def certify_cell_geometry_validity(
                     policy_,
                 )
             )
-        elif (
-            isinstance(element, FiniteElementSpec)
-            and element.family in _POLYNOMIAL_FAMILIES
-            and element.conformity == "H1"
-            and element.degree >= 1
-        ):
-            local = values[route]
-            blocks.append(
-                _certify_polynomial_block(element, kind, local - local[:, :1], policy_)
-            )
+        elif isinstance(element, ScalarCoordinateElement):
+            try:
+                certificate, has_unsupported_map = _certify_source_block(
+                    element,
+                    kind,
+                    execution_coordinates,
+                    route,
+                    policy_,
+                    execution_map=True,
+                )
+            except (OverflowError, TypeError, ValueError):
+                has_unsupported_map = True
+                certificate = _BlockCertificate(
+                    np.full((cell_count,), CellValidityStatus.UNRESOLVED, np.int32),
+                    np.full((cell_count,), np.nan),
+                    np.full((cell_count,), np.nan),
+                    np.zeros((cell_count,), dtype=np.int64),
+                )
+            blocks.append(certificate)
+            if has_unsupported_map:
+                unsupported.add(name)
         else:
-            unsupported.append(name)
+            unsupported.add(name)
             blocks.append(
                 _BlockCertificate(
                     np.full((cell_count,), CellValidityStatus.UNRESOLVED, np.int32),
                     np.full((cell_count,), np.nan),
                     np.full((cell_count,), np.nan),
-                    np.zeros((cell_count,), dtype=np.int32),
+                    np.zeros((cell_count,), dtype=np.int64),
                 )
             )
+        if distinct_source:
+            if isinstance(element, ScalarCoordinateElement):
+                try:
+                    source_certificate, source_unsupported = _certify_source_block(
+                        element, kind, source_bank, route, policy_
+                    )
+                except (OverflowError, TypeError, ValueError):
+                    source_unsupported = True
+                    source_certificate = _BlockCertificate(
+                        np.full((cell_count,), CellValidityStatus.UNRESOLVED, np.int32),
+                        np.full((cell_count,), np.nan),
+                        np.full((cell_count,), np.nan),
+                        np.zeros((cell_count,), dtype=np.int64),
+                    )
+                if source_unsupported:
+                    unsupported.add(name)
+            elif (
+                isinstance(element, CellVertexGeometryElement)
+                and source_coordinates is not None
+                and source_coordinates != execution_coordinates
+            ):
+                if mesh_ is None:
+                    raise ValueError(
+                        "Exact variable-topology source validity requires the bound mesh."
+                    )
+                from ._cell_geometry_source_validity import (
+                    certify_exact_variable_topology_block,
+                )
+
+                source_certificate = certify_exact_variable_topology_block(
+                    mesh_,
+                    dict(zip(names, routes, strict=True)),
+                    source_coordinates,
+                    policy_,
+                    block_name=name,
+                    cell_rows=np.arange(cell_count, dtype=np.int64),
+                )
+            else:
+                source_certificate = blocks[-1]
+            source_blocks.append(source_certificate)
         cursor += cell_count
         offsets.append(cursor)
-    return CellValidityCertificate(
+    execution_proof = _BlockCertificate(
         np.concatenate([block.status for block in blocks]),
         np.concatenate([block.lower for block in blocks]),
         np.concatenate([block.upper for block in blocks]),
         np.concatenate([block.depth for block in blocks]),
+    )
+    source_proof = (
+        _BlockCertificate(
+            np.concatenate([block.status for block in source_blocks]),
+            np.concatenate([block.lower for block in source_blocks]),
+            np.concatenate([block.upper for block in source_blocks]),
+            np.concatenate([block.depth for block in source_blocks]),
+        )
+        if distinct_source
+        else execution_proof
+    )
+    return CellValidityCertificate(
+        execution_proof.status,
+        execution_proof.lower,
+        execution_proof.upper,
+        execution_proof.depth,
+        source_proof=source_proof,
+        maximum_coefficient_rounding_error=coefficient_endpoint(
+            coefficient_rounding_error, upper=True, saturate=True
+        ),
+        maximum_element_coefficient_rounding_error=coefficient_endpoint(
+            element_rounding_error, upper=True, saturate=True
+        ),
+        geometry=spec,
+        mesh=mesh_,
+        policy=policy_,
         block_names=names,
         block_offsets=tuple(offsets),
-        unsupported_block_names=tuple(unsupported),
-        geometry_id=canonical_fingerprint(
-            {
-                "layout": spec.geometry_layout_id,
-                "coordinates": array_tree_fingerprint(values),
-            }
-        ),
+        unsupported_block_names=tuple(name for name in names if name in unsupported),
+        geometry_id=cell_geometry_id(spec),
         geometry_layout_id=spec.geometry_layout_id,
         policy_id=policy_.policy_id,
     )

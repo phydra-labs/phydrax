@@ -159,9 +159,7 @@ def _require_complete_stencil(
             "The image stencil must admit wrapped endpoints (fractional_excursion >= 1)."
         )
     try:
-        required = cell.image_stencil(
-            radius, maximum_image_count=stencil.image_count
-        ).extents
+        required = cell.image_stencil(radius).extents
     except ValueError as error:
         raise ValueError(
             "The image stencil does not cover cutoff + skin in its cell."

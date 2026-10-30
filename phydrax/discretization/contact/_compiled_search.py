@@ -19,28 +19,28 @@ from ..._trainable import NonTrainableState
 from ..spatial import morton_encode_integer
 from ._participant import ContactParticipantScene
 from ._search import (
-    contact_route_capacity_bounds,
-    contact_search_capacities,
     box_distance_squared,
     contact_epoch_identity,
+    contact_route_capacity_bounds,
     contact_route_families,
+    contact_search_capacities,
     ContactCandidateEpoch,
     ContactRouteFamily,
     ContactRouteLayouts,
     ContactSearchScene,
     ContactSearchStatus,
-    ROUTE_KIND_ORDER,
-    route_batch_tuple,
-    RouteBatches,
-    scene_route_geometry,
     DenseContactSearchPlan,
     enclosure_admits,
     enclosure_binding,
     feature_boxes,
     legal_route_pairs,
     plane_box_clearance,
+    route_batch_tuple,
+    ROUTE_KIND_ORDER,
     route_pair_radius,
+    RouteBatches,
     scene_excluded_vertex_pairs,
+    scene_route_geometry,
     SweepAndPruneContactSearchPlan,
     vertex_path_boxes,
 )
@@ -154,7 +154,10 @@ def route_activation_mask(
         )
         return clearance <= radius
     distance = box_distance_squared(
-        feature_lower[left], feature_upper[left], feature_lower[right], feature_upper[right]
+        feature_lower[left],
+        feature_upper[left],
+        feature_lower[right],
+        feature_upper[right],
     )
     return distance <= radius * radius
 
@@ -211,9 +214,7 @@ def _assemble_epoch(
     candidate_count = sum(
         (batch.actual_count for batch in batches), jnp.asarray(0, dtype=jnp.int32)
     )
-    vertex_vertex, edge_vertex, edge_edge, face_vertex, vertex_plane, edge_plane = (
-        batches
-    )
+    vertex_vertex, edge_vertex, edge_edge, face_vertex, vertex_plane, edge_plane = batches
     contact_extents, plane_normals, plane_offsets = geometry
     return ContactCandidateEpoch(
         vertex_vertex=vertex_vertex,
@@ -402,17 +403,13 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         admitted = geometry_valid & enclosure_admits(
             path_enclosure, start, end, lower, upper
         )
-        feature_lower, feature_upper = feature_boxes(
-            self.feature_endpoints, lower, upper
-        )
+        feature_lower, feature_upper = feature_boxes(self.feature_endpoints, lower, upper)
         geometry = (extents, normals, offsets)
         catalogue = scene.feature_catalogue
         batches: list[ContactStencilBatch] = []
         duplicates = jnp.asarray(0, dtype=jnp.int32)
         addresses = jnp.asarray(0, dtype=jnp.int32)
-        for layout, candidates in zip(
-            self.layouts.layouts, self.candidates, strict=True
-        ):
+        for layout, candidates in zip(self.layouts.layouts, self.candidates, strict=True):
             mask = admitted & route_activation_mask(
                 scene,
                 candidates,
@@ -678,9 +675,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 if feature_class_ == 0:
                     admitted[feature_set] = True
             tree_families.append(
-                _TreeFamily(
-                    index, layout.kind, left_class, right_class, family[3]
-                )
+                _TreeFamily(index, layout.kind, left_class, right_class, family[3])
             )
         left, right, leaf_count, root, hierarchy_depth = _balanced_morton_hierarchy(
             primitive_count
@@ -791,9 +786,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         admitted = geometry_valid & enclosure_admits(
             path_enclosure, start, end, lower, upper
         )
-        feature_lower, feature_upper = feature_boxes(
-            self.feature_endpoints, lower, upper
-        )
+        feature_lower, feature_upper = feature_boxes(self.feature_endpoints, lower, upper)
         geometry = (extents, normals, offsets)
         catalogue = scene.feature_catalogue
         ranks = catalogue.canonical_ranks
@@ -803,8 +796,10 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         inflation = (extents[:count] + self.envelope_radius)[:, None]
         primitive_min = raw_lower - inflation
         primitive_max = raw_upper + inflation
-        finite_bounds = admitted & jnp.all(jnp.isfinite(primitive_min)) & jnp.all(
-            jnp.isfinite(primitive_max)
+        finite_bounds = (
+            admitted
+            & jnp.all(jnp.isfinite(primitive_min))
+            & jnp.all(jnp.isfinite(primitive_max))
         )
         centroid = 0.5 * primitive_min + 0.5 * primitive_max
         global_min = jnp.min(primitive_min, axis=0)
@@ -829,14 +824,20 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         node_max = node_max.at[:count].set(primitive_max[order])
         buffers = tuple(
             (
-                jnp.full((self.layouts.layouts[family.layout_index].capacity, 4), -1,
-                         dtype=jnp.int32),
-                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
-                          dtype=jnp.int32),
-                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
-                          dtype=jnp.int32),
-                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
-                          dtype=jnp.int32),
+                jnp.full(
+                    (self.layouts.layouts[family.layout_index].capacity, 4),
+                    -1,
+                    dtype=jnp.int32,
+                ),
+                jnp.zeros(
+                    (self.layouts.layouts[family.layout_index].capacity,), dtype=jnp.int32
+                ),
+                jnp.zeros(
+                    (self.layouts.layouts[family.layout_index].capacity,), dtype=jnp.int32
+                ),
+                jnp.zeros(
+                    (self.layouts.layouts[family.layout_index].capacity,), dtype=jnp.int32
+                ),
                 jnp.asarray(0, dtype=jnp.int32),
             )
             for family in self.tree_families
@@ -1051,7 +1052,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 True,
             )
             near = (
-                plane_box_clearance(left_lower, left_upper, normals[plane], offsets[plane])
+                plane_box_clearance(
+                    left_lower, left_upper, normals[plane], offsets[plane]
+                )
                 <= radius
             )
             pair = jnp.stack(
@@ -1144,9 +1147,12 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 extents[right],
                 False,
             )
-            near = box_distance_squared(
-                raw_lower[left], raw_upper[left], raw_lower[right], raw_upper[right]
-            ) <= radius * radius
+            near = (
+                box_distance_squared(
+                    raw_lower[left], raw_upper[left], raw_lower[right], raw_upper[right]
+                )
+                <= radius * radius
+            )
             accepted = match & near & self._pair_legal(left, right)
             row = route_endpoints(
                 family.kind, self.feature_endpoints, left[None], right[None]
@@ -1196,11 +1202,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
 
         def continue_traversal(state: _TraversalState) -> Array:
             _, _, stack_size, visits, overflow, _ = state
-            return (
-                (stack_size > 0)
-                & (visits < self.maximum_traversal_visits)
-                & ~overflow
-            )
+            return (stack_size > 0) & (visits < self.maximum_traversal_visits) & ~overflow
 
         def traverse_one(state: _TraversalState) -> _TraversalState:
             first_stack, second_stack, stack_size, visits, overflow, outputs = state

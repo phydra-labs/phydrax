@@ -6,6 +6,7 @@
 
 from collections.abc import Sequence
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -414,6 +415,145 @@ def test_ownership_migration_must_report_moved_content() -> None:
             source_structure_ids=("g0",),
             route_id="repartition",
             successful=jnp.asarray(True),
+        )
+
+
+def _exact_ownership_transport(
+    source_value: object,
+    target_value: object,
+    /,
+    *,
+    role: lc.CompositionRole,
+    source_root: str,
+    target_root: str,
+) -> tuple[lc.Composition, lc.CompositionTransport]:
+    source_entry = _entry(source_value, "state/value", role, "owner-0")
+    source = lc.Composition((source_entry,), boundary_id="accepted-window-exact")
+    target = _entry(
+        target_value,
+        "state/value",
+        role,
+        "owner-1",
+        revision="r1",
+        semantics=source_entry.semantics_id,
+    )
+    transport = lc.CompositionTransport(
+        "ownership-migration",
+        (source_entry.entry_id,),
+        (target,),
+        source_structure_ids=(source_entry.structure_id,),
+        route_id="exact-owner-route",
+        successful=jnp.asarray(True),
+        source_content_root=source_root,
+        target_content_root=target_root,
+    )
+    return source, transport
+
+
+@pytest.mark.parametrize("state_kind", ("integer", "typed-rng-key"))
+def test_owner_verified_exact_roots_accept_integer_and_typed_key_state(
+    state_kind: str,
+) -> None:
+    if state_kind == "integer":
+        source_value = jnp.asarray((4, 9, 2), dtype=jnp.int32)
+        target_value = source_value[::-1]
+        role: lc.CompositionRole = "physical-state"
+    else:
+        source_value = jax.random.split(jax.random.key(41), 3)
+        target_value = source_value[::-1]
+        role = "rng"
+
+    source, transport = _exact_ownership_transport(
+        source_value,
+        target_value,
+        role=role,
+        source_root="semantic-content-bank-7",
+        target_root="semantic-content-bank-7",
+    )
+    receipt = lc.commit_composition_rebind(
+        lc.CompositionRebind(source, transports=(transport,)),
+        accepted_boundary=True,
+    )
+
+    assert transport.source_content is None
+    assert transport.target_content is None
+    assert transport.source_content_root == transport.target_content_root
+    assert transport.conservative
+    assert receipt.published and receipt.transport_accepted == (True,)
+    assert receipt.composition.value("state/value") is target_value
+    assert receipt.composition.value("state/value").dtype == source_value.dtype
+    if state_kind == "typed-rng-key":
+        assert str(receipt.composition.value("state/value").dtype).startswith("key<")
+
+
+def test_changed_exact_root_refuses_ownership_publication_and_changes_identity() -> None:
+    source_value = jnp.asarray((4, 9, 2), dtype=jnp.int32)
+    target_value = source_value[::-1]
+    source, changed = _exact_ownership_transport(
+        source_value,
+        target_value,
+        role="physical-state",
+        source_root="source-content-bank",
+        target_root="changed-target-content-bank",
+    )
+    _, matching = _exact_ownership_transport(
+        source_value,
+        target_value,
+        role="physical-state",
+        source_root="source-content-bank",
+        target_root="source-content-bank",
+    )
+    assert changed.transport_id != matching.transport_id
+    receipt = lc.commit_composition_rebind(
+        lc.CompositionRebind(source, transports=(changed,)),
+        accepted_boundary=True,
+    )
+
+    assert not receipt.published
+    assert receipt.transport_accepted == (False,)
+    assert receipt.composition is source
+
+
+def test_exact_content_evidence_requires_a_pair_and_excludes_numeric_evidence() -> None:
+    target = _entry(jnp.asarray((1,)), "fluid/T", "physical-state", "g1")
+    with pytest.raises(ValueError, match="Exact content roots need source and target"):
+        lc.CompositionTransport(
+            "ownership-migration",
+            ("fluid/T",),
+            (target,),
+            source_structure_ids=("g0",),
+            route_id="repartition",
+            successful=jnp.asarray(True),
+            source_content_root="source-bank",
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        lc.CompositionTransport(
+            "ownership-migration",
+            ("fluid/T",),
+            (target,),
+            source_structure_ids=("g0",),
+            route_id="repartition",
+            successful=jnp.asarray(True),
+            source_content=jnp.asarray((1.0,)),
+            target_content=jnp.asarray((1.0,)),
+            content_tolerance=jnp.asarray((0.0,)),
+            source_content_root="source-bank",
+            target_content_root="target-bank",
+        )
+
+
+def test_physical_remap_rejects_exact_content_roots() -> None:
+    target = _entry(jnp.asarray((1.0,)), "fluid/T", "physical-state", "g1")
+    with pytest.raises(ValueError, match="only valid for ownership migration"):
+        lc.CompositionTransport(
+            "physical-remap",
+            ("fluid/T",),
+            (target,),
+            source_structure_ids=("g0",),
+            route_id="physical-remap",
+            successful=jnp.asarray(True),
+            source_content_root="source-bank",
+            target_content_root="target-bank",
         )
 
 

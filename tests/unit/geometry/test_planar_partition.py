@@ -2,35 +2,25 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-
-from pathlib import Path
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 import pytest
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_FACE
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._cad_revision import AssociationStatus, CADSelectionSet
 from phydrax.geometry.brep import (
-    _planar as planar_module,
-    BRepPartitionHistoryError,
     BRepPartitionPolicy,
     BRepPartitionRole,
     partition_planar,
     PlanarEmbedding,
     PlanarPartitionOperand,
     PlanarPartitionPlan,
-    read_occt_shape,
 )
-from phydrax.geometry.brep._model import BRepEntityId
+from phydrax.geometry.brep._patches import ExactLineCurve
 from phydrax.geometry.simplicial import PlanarMeshRegion
-from phydrax.units import METER, MILLIMETER
+from phydrax.units import MILLIMETER
 
 
 _COORDINATES = SpatialCoordinateContract(MILLIMETER)
@@ -93,37 +83,98 @@ def _plan(
     )
 
 
-def _execute(plan: PlanarPartitionPlan, destination: Path) -> Any:
-    return partition_planar(
-        plan,
-        destination=destination,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+def _area(result: Any, name: str) -> float:
+    total = Fraction(0)
+    for entity in result.region(name).entity_ids:
+        face = entity.index
+        for loop in result.model.geometry.face_loops[face]:
+            points = tuple(
+                result.model.geometry.pcurves[coedge].evaluate_exact(Fraction(0))
+                for coedge in loop
+            )
+            total += (
+                sum(
+                    (first[0] * second[1] - first[1] * second[0])
+                    for first, second in zip(
+                        points, (*points[1:], points[0]), strict=True
+                    )
+                )
+                / 2
+            )
+    return float(total)
+
+
+def test_polygonal_hole_is_preserved_as_an_exact_curved_trim_loop() -> None:
+    source = PlanarMeshRegion(
+        np.asarray(
+            (
+                (0.0, 0.0),
+                (4.0, 0.0),
+                (4.0, 4.0),
+                (0.0, 4.0),
+                (1.0, 1.0),
+                (1.0, 3.0),
+                (3.0, 3.0),
+                (3.0, 1.0),
+            )
+        ),
+        ((0, 1, 2, 3), (4, 5, 6, 7)),
+        feature_id="holed-region",
+    )
+    vertices = np.asarray(source.vertices).copy()
+    result = partition_planar(_plan((_operand("region", source),), ("region",)))
+
+    assert _area(result, "region") == pytest.approx(12.0)
+    assert len(result.region("region").entity_ids) == 1
+    assert len(result.model.geometry.face_loops[0]) == 2
+    assert result.model.topology.num_edges == 8
+    assert result.report.created_target_occurrences > 0
+    np.testing.assert_array_equal(source.vertices, vertices)
+
+
+def test_triangle_partition_is_executable_and_preserves_source() -> None:
+    source = PlanarMeshRegion(
+        np.asarray(((0.0, 0.0), (2.0, 0.0), (0.0, 1.0))),
+        ((0, 1, 2),),
+        feature_id="triangle",
+    )
+    vertices = np.asarray(source.vertices).copy()
+    result = partition_planar(_plan((_operand("region", source),), ("region",)))
+
+    assert _area(result, "region") == pytest.approx(1.0)
+    assert result.model.topology.num_faces == 1
+    assert result.model.geometry.face_loops[0]
+    assert result.model.tessellation is None
+    np.testing.assert_array_equal(source.vertices, vertices)
+
+
+def test_crossing_triangle_sources_partition_with_exact_lineage() -> None:
+    first = PlanarMeshRegion(
+        np.asarray(((0.0, 0.0), (4.0, 0.0), (0.0, 4.0))),
+        ((0, 1, 2),),
+        feature_id="first-triangle",
+    )
+    second = PlanarMeshRegion(
+        np.asarray(((1.0, -1.0), (5.0, 3.0), (1.0, 3.0))),
+        ((0, 1, 2),),
+        feature_id="second-triangle",
+    )
+    first_vertices = np.asarray(first.vertices).copy()
+    second_vertices = np.asarray(second.vertices).copy()
+    result = partition_planar(
+        _plan(
+            (_operand("first", first), _operand("second", second)),
+            ("first", "second"),
+        )
     )
 
-
-def _face_areas(result: Any) -> dict[BRepEntityId, float]:
-    shape, source_format, source_digest = read_occt_shape(result.model.source_id)
-    assert source_format == "brep"
-    assert source_digest == result.model.source_digest
-    explorer = TopExp_Explorer(shape, TopAbs_FACE)
-    faces = []
-    while explorer.More():
-        candidate = TopoDS.Face(explorer.Current())
-        if not any(value.IsSame(candidate) for value in faces):
-            faces.append(candidate)
-        explorer.Next()
-    areas = {}
-    for entity_id, face in zip(result.model.face_ids, faces, strict=True):
-        properties = GProp_GProps()
-        BRepGProp.SurfaceProperties_s(face, properties)
-        areas[entity_id] = float(properties.Mass())
-    return areas
-
-
-def _region_area(result: Any, name: str) -> float:
-    areas = _face_areas(result)
-    return sum(areas[value] for value in result.region(name).entity_ids)
+    assert _area(result, "first") == pytest.approx(4.5)
+    assert _area(result, "second") == pytest.approx(4.5)
+    assert result.model.topology.num_faces > 2
+    assert result.association_graph.transaction.coverage.source_exhaustive
+    assert result.association_graph.transaction.coverage.target_exhaustive
+    np.testing.assert_array_equal(first.vertices, first_vertices)
+    np.testing.assert_array_equal(second.vertices, second_vertices)
 
 
 def test_embedding_roundtrip_and_signed_plane_residual() -> None:
@@ -149,18 +200,51 @@ def test_embedding_roundtrip_and_signed_plane_residual() -> None:
         )
 
 
-def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
-    tmp_path: Any,
-) -> None:
-    result = _execute(
+def test_oblique_partition_retains_exact_vertices_beside_rounded_coordinates() -> None:
+    root = float(np.sqrt(0.5))
+    embedding = PlanarEmbedding(
+        (0.1, -0.2, 0.3),
+        (root, root, 0.0),
+        (-root, root, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    result = partition_planar(
+        _plan(
+            (_operand("region", _rectangle(0.1, 0.3, 0.2, 0.4, feature_id="oblique")),),
+            ("region",),
+            embedding=embedding,
+        )
+    )
+    exact_points = result.model.geometry.vertex_exact_points
+    rounded_points = np.asarray(result.model.geometry.vertex_points)
+    assert all(point is not None for point in exact_points)
+    assert any(
+        value != Fraction.from_float(float(value))
+        for point in exact_points
+        if point is not None
+        for value in point
+    )
+    np.testing.assert_array_equal(
+        rounded_points,
+        np.asarray(
+            [
+                [float(value) for value in point]
+                for point in exact_points
+                if point is not None
+            ]
+        ),
+    )
+
+
+def test_adjacent_regions_publish_shared_edges_with_opposite_incidence() -> None:
+    result = partition_planar(
         _plan(
             (
                 _operand("left", _rectangle(0.0, 1.0, feature_id="left")),
                 _operand("right", _rectangle(1.0, 2.0, feature_id="right")),
             ),
             ("left", "right"),
-        ),
-        tmp_path / "adjacent.brep",
+        )
     )
 
     interfaces = [
@@ -170,6 +254,22 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
     ]
     assert result.topological_dimension == 2
     assert result.model.topology.num_solids == 0
+    assert result.model.tessellation is None
+    assert result.model.source_id.startswith("native-planar-partition:")
+    geometry = result.model.geometry
+    assert all(isinstance(curve, ExactLineCurve) for curve in geometry.curves)
+    assert all(point is not None for point in geometry.vertex_exact_points)
+    for edge, curve_index in enumerate(geometry.edge_curves):
+        curve = geometry.curves[curve_index]
+        assert isinstance(curve, ExactLineCurve)
+        first_vertex, last_vertex = geometry.edge_vertices[edge]
+        assert (
+            curve.evaluate_exact(Fraction(0))
+            == geometry.vertex_exact_points[first_vertex]
+        )
+        assert (
+            curve.evaluate_exact(Fraction(1)) == geometry.vertex_exact_points[last_vertex]
+        )
     assert len(interfaces) == 1
     assert len(interfaces[0].entity_ids) == 1
     edge_index = interfaces[0].entity_ids[0].index
@@ -177,10 +277,10 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
     assert len(face_indices) == 2
     signs = [
         next(
-            1 if signed_edge > 0 else -1
-            for wire in result.model.topology.face_wires[face_index]
-            for signed_edge in wire
-            if abs(signed_edge) - 1 == edge_index
+            result.model.geometry.coedge_senses[coedge]
+            for loop in result.model.geometry.face_loops[face_index]
+            for coedge in loop
+            if result.model.geometry.coedge_edges[coedge] == edge_index
         )
         for face_index in face_indices
     ]
@@ -196,70 +296,32 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
     }
     assert result.report.target_regions == result.model.topology.num_faces
     assert result.report.target_patches == result.model.topology.num_edges
-    assert result.region_entity_kind == "face"
-    assert result.patch_entity_kind == "edge"
-    assert {region.entity_kind for region in result.regions} == {"face"}
-    assert {patch.entity_kind for patch in result.patches} == {"edge"}
-    assert result.report.topological_dimension == 2
-    assert {region.topological_dimension for region in result.regions} == {2}
-    assert {patch.topological_dimension for patch in result.patches} == {2}
+    assert _area(result, "left") == pytest.approx(1.0)
+    assert _area(result, "right") == pytest.approx(1.0)
 
 
-def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Any) -> None:
-    region = PlanarMeshRegion(
-        np.asarray(
-            (
-                (0.0, 0.0),
-                (4.0, 0.0),
-                (4.0, 4.0),
-                (0.0, 4.0),
-                (1.0, 1.0),
-                (1.0, 3.0),
-                (3.0, 3.0),
-                (3.0, 1.0),
-            )
-        ),
-        ((0, 1, 2, 3), (4, 5, 6, 7)),
-        feature_id="holed-region",
-    )
-    result = _execute(
-        _plan((_operand("region", region),), ("region",)),
-        tmp_path / "hole.brep",
-    )
-
-    assert _region_area(result, "region") == pytest.approx(12.0)
-    assert len(result.region("region").entity_ids) == 1
-    face_index = result.region("region").entity_ids[0].index
-    assert len(result.model.topology.face_wires[face_index]) == 2
-    assert set(result.model.topology.edge_faces) == {(face_index,)}
-
-
-def test_precedence_is_independent_of_planar_operand_order(tmp_path: Any) -> None:
+def test_precedence_and_voids_partition_rectangles_in_memory() -> None:
     high = _rectangle(0.0, 2.0, feature_id="high")
     low = _rectangle(1.0, 3.0, feature_id="low")
-    forward = _execute(
+    forward = partition_planar(
         _plan(
             (_operand("low", low), _operand("high", high)),
             ("high", "low"),
-        ),
-        tmp_path / "precedence-forward.brep",
+        )
     )
-    reverse = _execute(
+    reverse = partition_planar(
         _plan(
             (_operand("high", high), _operand("low", low)),
             ("high", "low"),
-        ),
-        tmp_path / "precedence-reverse.brep",
+        )
     )
 
     assert forward.model.source_revision == reverse.model.source_revision
     assert forward.association_graph.graph_id == reverse.association_graph.graph_id
-    assert _region_area(forward, "high") == pytest.approx(2.0)
-    assert _region_area(forward, "low") == pytest.approx(1.0)
+    assert _area(forward, "high") == pytest.approx(2.0)
+    assert _area(forward, "low") == pytest.approx(1.0)
 
-
-def test_void_subtracts_only_its_declared_planar_target(tmp_path: Any) -> None:
-    result = _execute(
+    carved = partition_planar(
         _plan(
             (
                 _operand("right", _rectangle(3.0, 5.0, feature_id="right")),
@@ -272,18 +334,14 @@ def test_void_subtracts_only_its_declared_planar_target(tmp_path: Any) -> None:
                 _operand("left", _rectangle(0.0, 2.0, feature_id="left")),
             ),
             ("left", "right"),
-        ),
-        tmp_path / "targeted-void.brep",
+        )
     )
+    assert _area(carved, "left") == pytest.approx(1.0)
+    assert _area(carved, "right") == pytest.approx(2.0)
 
-    assert _region_area(result, "left") == pytest.approx(1.0)
-    assert _region_area(result, "right") == pytest.approx(2.0)
 
-
-def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
-    tmp_path: Any,
-) -> None:
-    result = _execute(
+def test_exact_face_and_edge_histories_cover_split_and_deleted_sources() -> None:
+    result = partition_planar(
         _plan(
             (
                 _operand("region", _rectangle(0.0, 3.0, feature_id="region")),
@@ -295,8 +353,7 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
                 ),
             ),
             ("region",),
-        ),
-        tmp_path / "history.brep",
+        )
     )
     graph = result.association_graph
     region_selector = graph.source_revision.select("operand:region:face:0")
@@ -334,117 +391,40 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
     )
 
 
-def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path: Any) -> None:
-    first = _execute(
+def test_exact_planar_brep_face_is_a_source_operand() -> None:
+    source_mesh = _rectangle(0.0, 1.0, feature_id="source-mesh")
+    source_model = partition_planar(
+        _plan((_operand("source", source_mesh),), ("source",))
+    ).model
+    from phydrax.geometry.brep._partition import cad_revision_from_brep_model
+
+    original_revision = cad_revision_from_brep_model(source_model)
+    original_face = next(
+        occurrence
+        for occurrence in original_revision.occurrences
+        if occurrence.kind == "face"
+    )
+    original_vertices = np.asarray(source_model.geometry.vertex_points).copy()
+    result = partition_planar(_plan((_operand("native", source_model),), ("native",)))
+
+    selected_face = next(
+        occurrence
+        for occurrence in result.association_graph.source_revision.occurrences
+        if occurrence.kind == "face"
+    )
+    lineage = result.association_graph.resolve_target(
+        result.association_graph.source_revision.select(selected_face.occurrence_id)
+    )
+    assert selected_face.entity_id == original_face.entity_id
+    assert lineage.status is AssociationStatus.UNIQUE
+    assert _area(result, "native") == pytest.approx(1.0)
+    assert result.model.tessellation is None
+    np.testing.assert_array_equal(source_model.geometry.vertex_points, original_vertices)
+
+
+def test_planar_plan_requires_total_region_precedence() -> None:
+    with pytest.raises(ValueError, match="region_precedence"):
         _plan(
-            (_operand("source", _rectangle(0.0, 2.0, feature_id="source")),),
-            ("source",),
-        ),
-        tmp_path / "first.brep",
-    )
-    second = _execute(
-        _plan((_operand("copy", first.model),), ("copy",)),
-        tmp_path / "second.brep",
-    )
-
-    assert second.model.topology.num_solids == 0
-    assert _region_area(second, "copy") == pytest.approx(2.0)
-    roots = tuple(
-        value
-        for value in second.association_graph.source_revision.occurrences
-        if value.parent_occurrence_id is None
-    )
-    assert roots
-    assert {value.kind for value in roots} == {"face"}
-    assert {
-        value.kind
-        for value in second.association_graph.source_revision.occurrences
-        if value.parent_occurrence_id is not None
-    } == {"edge"}
-    with pytest.raises(ValueError, match="coordinate contract"):
-        PlanarPartitionPlan(
-            SpatialCoordinateContract(METER),
-            _EMBEDDING,
-            (_operand("copy", first.model),),
-            BRepPartitionPolicy(("copy",)),
+            (_operand("region", _rectangle(0.0, 1.0, feature_id="region")),),
+            ("other",),
         )
-
-
-def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -> None:
-    first = _execute(
-        _plan(
-            (_operand("source", _rectangle(0.0, 1.0, feature_id="source")),),
-            ("source",),
-        ),
-        tmp_path / "plane-source.brep",
-    )
-    displaced = PlanarEmbedding(
-        (0.0, 0.0, 1.0),
-        (1.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (0.0, 0.0, 1.0),
-    )
-
-    with pytest.raises(ValueError, match="another plane"):
-        _execute(
-            _plan((_operand("source", first.model),), ("source",), embedding=displaced),
-            tmp_path / "wrong-plane.brep",
-        )
-    assert not (tmp_path / "wrong-plane.brep").exists()
-
-
-def test_missing_live_planar_history_publishes_nothing(
-    tmp_path: Any, monkeypatch: Any
-) -> None:
-    class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self) -> bool:
-            return False
-
-    destination = tmp_path / "unresolved-history.brep"
-    monkeypatch.setattr(planar_module, "BOPAlgo_CellsBuilder", NoHistoryCellsBuilder)
-
-    with pytest.raises(BRepPartitionHistoryError, match="live Boolean history"):
-        _execute(
-            _plan(
-                (
-                    _operand(
-                        "left",
-                        _rectangle(0.0, 2.0, feature_id="unresolved-left"),
-                    ),
-                    _operand(
-                        "right",
-                        _rectangle(1.0, 3.0, feature_id="unresolved-right"),
-                    ),
-                ),
-                ("left", "right"),
-            ),
-            destination,
-        )
-    assert not destination.exists()
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
-
-
-def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Any) -> None:
-    invalid = PlanarMeshRegion(
-        np.asarray(
-            (
-                (0.0, 0.0),
-                (2.0, 0.0),
-                (2.0, 2.0),
-                (0.0, 2.0),
-                (3.0, 0.0),
-                (3.0, 1.0),
-                (4.0, 1.0),
-                (4.0, 0.0),
-            )
-        ),
-        ((0, 1, 2, 3), (4, 5, 6, 7)),
-        feature_id="outside-hole",
-    )
-
-    with pytest.raises(ValueError, match="strictly inside"):
-        _execute(
-            _plan((_operand("region", invalid),), ("region",)),
-            tmp_path / "invalid-hole.brep",
-        )
-    assert not (tmp_path / "invalid-hole.brep").exists()

@@ -49,6 +49,45 @@ def _control(mesh: Any, **options: Any) -> Any:
     )
 
 
+def test_quad_layer_cap_resolves_narrow_clearance_without_retry_allowance() -> None:
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (64.0, 0.0, 0.0), (64.0, 64.0, 0.0), (0.0, 64.0, 0.0)),
+        dtype=np.float64,
+    )
+    wall = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "wall", "quadrilateral", np.asarray(((0, 1, 2, 3),), dtype=np.int64)
+            ),
+        ),
+    )
+    clearance = 0.1
+    obstacle = phx.discretization.CellMesh.from_triangles(
+        np.asarray(
+            (
+                (-64.0, -64.0, clearance),
+                (128.0, -64.0, clearance),
+                (128.0, 128.0, clearance),
+                (-64.0, 128.0, clearance),
+            ),
+            dtype=np.float64,
+        ),
+        np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64),
+    )
+
+    result = phx.meshing.prepare_boundary_layers(wall, _control(wall), obstacles=obstacle)
+
+    coordinates = np.asarray(result.mesh.coordinates)
+    np.testing.assert_array_equal(coordinates[:4], points)
+    np.testing.assert_allclose(
+        result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
+    )
+    assert SCHEDULE.total_thickness < np.max(coordinates[:, 2]) < clearance
+    assert _cell_counts(result) == {"hexahedron": 3, "pyramid": 1}
+    _assert_certified(result)
+
+
 def _plate(count: Any, height: Any = 0.0, *, flip: Any = False) -> Any:
     values = np.linspace(0.0, 1.0, count + 1)
     x, y = np.meshgrid(values, values, indexing="ij")
@@ -183,6 +222,100 @@ def _assert_certified(result: Any) -> None:
     cells = sum(block.cell_count for block in result.mesh.blocks)
     assert result.validity.certified_valid_count == cells
     assert result.evidence.certified_valid_count == cells
+
+
+def test_boundary_layer_retains_stable_source_column_ancestry() -> None:
+    points, triangles = _plate(2)
+    wall = _wall(points, triangles)
+
+    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
+
+    assert result.source_wall is wall
+    assert result.wall_association is None
+    column_index = np.asarray(result.column_index)
+    assert column_index.dtype == np.int64
+    cell_ids = np.concatenate(
+        [np.asarray(block.global_ids) for block in result.mesh.blocks]
+    )
+    np.testing.assert_array_equal(np.argsort(cell_ids), np.arange(cell_ids.size))
+    np.testing.assert_array_equal(column_index, column_index[np.argsort(cell_ids)])
+    row_ids = np.asarray(result.front_row_ids)
+    np.testing.assert_array_equal(np.sort(row_ids), np.arange(row_ids.size))
+    assert set(column_index) <= set(row_ids)
+    assert set(result.front_row_source_entity_kinds) == {"face"}
+    assert set(np.asarray(result.front_row_source_global_ids)) <= set(
+        np.asarray(wall.entity_set(2).entity_ids)
+    )
+    assert np.all(np.asarray(result.front_row_orientations) == 1)
+    assert len(result.front_row_identity) == row_ids.size
+    assert len(set(result.front_row_identity)) == row_ids.size
+    column_ids = np.asarray(result.column_vertex_ids)
+    np.testing.assert_array_equal(np.sort(column_ids), np.arange(column_ids.size))
+    assert len(set(result.column_vertex_identity)) == column_ids.size
+    assert set(np.asarray(result.column_vertex_sources)) <= set(
+        np.asarray(wall.vertex_global_ids)
+    )
+    face_ids = np.asarray(result.column_source_face_ids)
+    offsets = np.asarray(result.column_source_face_offsets)
+    assert offsets.shape == (column_ids.size + 1,)
+    np.testing.assert_array_equal(offsets[[0, -1]], (0, face_ids.size))
+    assert np.all(np.diff(offsets) > 0)
+    assert set(face_ids) <= set(np.asarray(wall.entity_set(2).entity_ids))
+    face_weights = np.asarray(result.column_source_face_weights)
+    face_orientations = np.asarray(result.column_source_face_orientations)
+    assert face_weights.shape == face_orientations.shape == face_ids.shape
+    assert np.all(face_weights >= 0.0)
+    np.testing.assert_allclose(
+        [
+            face_weights[start:end].sum()
+            for start, end in zip(offsets[:-1], offsets[1:], strict=True)
+        ],
+        1.0,
+    )
+    assert np.all(np.isin(face_orientations, (-1, 1)))
+    row_kinds = result.front_row_source_entity_kinds
+    row_global_ids = np.asarray(result.front_row_source_global_ids)
+    row_orientations = np.asarray(result.front_row_orientations)
+    assert row_global_ids.shape == row_orientations.shape == (row_ids.size,)
+    assert np.all(np.isin(row_orientations, (-1, 1)))
+    for kind, dimension in (("face", 2), ("edge", 1), ("vertex", 0)):
+        rows = np.asarray([value == kind for value in row_kinds], dtype=np.bool_)
+        assert set(row_global_ids[rows]) <= set(
+            np.asarray(wall.entity_set(dimension).entity_ids)
+        )
+    vertex_sources = np.asarray(result.vertex_source_vertex_ids)
+    vertex_columns = np.asarray(result.vertex_column_ids)
+    assert (
+        vertex_sources.shape
+        == vertex_columns.shape
+        == (result.mesh.coordinates.shape[0],)
+    )
+    assert set(vertex_sources[vertex_sources >= 0]) <= set(
+        np.asarray(wall.vertex_global_ids)
+    )
+    retained = np.flatnonzero(np.asarray(result.wall_vertices) >= 0)
+    retained_rows = np.asarray(result.wall_vertices)[retained]
+    assert np.all(vertex_columns[retained_rows] == -1)
+    assert np.array_equal(
+        np.asarray(result.mesh.coordinates)[retained_rows].view(np.uint64),
+        np.asarray(wall.coordinates)[retained].view(np.uint64),
+    )
+    np.testing.assert_array_equal(
+        np.diff(np.asarray(result.vertex_column_parent_offsets))[retained_rows], 0
+    )
+    generated = np.flatnonzero(vertex_columns >= 0)
+    assert generated.size > 0
+    parent_offsets = np.asarray(result.vertex_column_parent_offsets)
+    parent_weights = np.asarray(result.vertex_column_parent_weights)
+    parent_counts = np.diff(parent_offsets)
+    assert np.all(parent_counts[generated] > 0)
+    np.testing.assert_allclose(
+        [
+            parent_weights[parent_offsets[row] : parent_offsets[row + 1]].sum()
+            for row in generated
+        ],
+        1.0,
+    )
 
 
 def test_boundary_layer_scenario_1() -> None:

@@ -15,6 +15,11 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from ..._coordinate_measure import (
+    CoordinateFrame,
+    CoordinateMeasure,
+    CoordinateMeasurePlan,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._cubature import cubature_rule_data
 from ..._strict import StrictModule
@@ -55,6 +60,7 @@ from ._reference import FiniteElementSpec, lagrange_element
 
 if TYPE_CHECKING:
     from ...geometry import PreparedCommonRefinement
+    from .._distributed_field import DistributedSparseTransfer
 
 
 # Invariant claims are certified in the coefficient dtype up to this many ulps of
@@ -229,6 +235,29 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     @property
     def target_size(self) -> int:
         return self.primal.target.size
+
+    def distributed(
+        self,
+        source_owner: ArrayLike,
+        target_owner: ArrayLike,
+        part_count: int,
+        /,
+    ) -> DistributedSparseTransfer:
+        """Prepare owner-local primal/transpose routes when the map is sparse."""
+        from .._distributed_field import DistributedSparseTransfer
+
+        if not isinstance(self.primal, SparseLinearMap):
+            raise ValueError(
+                "Owner-local topology transfer requires an explicit sparse primal map."
+            )
+        return DistributedSparseTransfer(
+            self.primal.relation,
+            self.primal.coefficients,
+            source_owner,
+            target_owner,
+            part_count,
+            operator_id=self.transfer_id,
+        )
 
     def apply(self, values: ArrayLike, /) -> Array:
         """Transfer source coefficients, preserving trailing payload axes."""
@@ -860,23 +889,58 @@ def _oriented_basis(
     return basis * orientation[..., None, :]
 
 
-def _overlap_quadrature(
-    simplices: np.ndarray, degree: int, /
-) -> tuple[np.ndarray, np.ndarray, str]:
-    """Physical points ``(S, Q, d)`` and weights ``(S, Q)`` exact to ``degree``."""
+def _coordinate_measure_key(
+    discretization: FiniteElementDiscretization, /
+) -> tuple[CoordinateMeasure, int | None, CoordinateFrame]:
+    measure = discretization.coordinate_measure
+    return (
+        ("cartesian", None, "reference")
+        if measure is None
+        else (measure.kind, measure.radial_axis, measure.frame)
+    )
 
+
+def _overlap_quadrature(
+    simplices: np.ndarray,
+    degree: int,
+    /,
+    *,
+    coordinate_measure: CoordinateMeasurePlan | None,
+    coordinate_frame: CoordinateFrame,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Physical points/weights with the declared coordinate measure."""
     dimension = simplices.shape[-1]
+    measure_degree = (
+        0
+        if coordinate_measure is None or coordinate_measure.kind == "cartesian"
+        else 2
+        if coordinate_measure.kind == "spherical-radial"
+        else 1
+    )
     # ty: ignore[invalid-argument-type]
-    rule = cubature_rule_data(_SIMPLEX_KINDS[dimension], degree)
+    rule = cubature_rule_data(
+        _SIMPLEX_KINDS[dimension], degree + measure_degree
+    )
     frames = np.swapaxes(simplices[:, 1:, :] - simplices[:, :1, :], -1, -2)
-    # Overlap simplices are fanned and positively oriented up to rounding; the
-    # signed measure keeps each fan an exact partition of its overlap.
     measures = np.linalg.det(frames)
     points = simplices[:, None, 0, :] + np.asarray(rule.points)[None] @ np.swapaxes(
         frames, -1, -2
     )
     weights = measures[:, None] * np.asarray(rule.weights)[None, :]
-    return points, weights, rule.rule_id
+    if coordinate_measure is None:
+        return points, weights, rule.rule_id
+    coordinate_measure.validate_coordinates(points)
+    weights = weights * np.asarray(
+        coordinate_measure.factor(points, frame=coordinate_frame), dtype=np.float64
+    )
+    rule_id = canonical_fingerprint(
+        {
+            "kind": "coordinate-measure-overlap-rule",
+            "cubature": rule.rule_id,
+            "coordinate_measure": coordinate_measure.plan_id,
+        }
+    )
+    return points, weights, rule_id
 
 
 def _overlap_basis(
@@ -1207,6 +1271,11 @@ def prepare_l2_projection_transfer(
     source_index = source._field_index(source_name)
     space = target.discretization
     target_index = space._field_index(target.field_name)
+    if (
+        source.default_runtime.coordinate_frame != space.default_runtime.coordinate_frame
+        or _coordinate_measure_key(source) != _coordinate_measure_key(space)
+    ):
+        raise ValueError("L2 projection requires matching coordinate frame and measure.")
     simplices, source_cells, target_cells = _validated_overlaps(
         refinement, source.mesh, space.mesh
     )
@@ -1216,6 +1285,8 @@ def prepare_l2_projection_transfer(
         simplices,
         max(element.degree for element in source_elements)
         + max(element.degree for element in target_elements),
+        coordinate_measure=space.coordinate_measure,
+        coordinate_frame=space.default_runtime.coordinate_frame,
     )
     target_routes, target_valid, target_basis = _overlap_basis(
         space, target_index, target_cells, points

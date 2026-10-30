@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,6 +15,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._fingerprint import canonical_fingerprint
 from ..._mass import require_exact_mass
 from ..._strict import StrictModule
 from ...typing import checked, PRNGKey
@@ -24,14 +25,14 @@ from .._capabilities import (
 )
 from .._contracts import CompiledGeometry, GeometryKernel
 from ._schema import DesignState, ParameterId, ParameterSchema
+from ._sketch_certificate import RootDOFEvidence
+from ._solve import solve_design_residual
 
 
 if TYPE_CHECKING:
     from ...optim import DifferentialEvolutionSearch
     from ._search import DesignSearchResult
 
-
-_SolveState: TypeAlias = tuple[Array, Array, Array]
 
 
 class AbstractDesignConstraint(StrictModule):
@@ -329,6 +330,8 @@ class ConstraintSolveResult(StrictModule):
     residual_norm: Array
     converged: Array
     iterations: Array
+    root_evidence: RootDOFEvidence
+    status: Array
 
     def __init__(
         self,
@@ -338,12 +341,18 @@ class ConstraintSolveResult(StrictModule):
         residual_norm: ArrayLike,
         converged: ArrayLike,
         iterations: ArrayLike,
+        root_evidence: RootDOFEvidence,
+        status: ArrayLike,
     ) -> None:
+        if not isinstance(root_evidence, RootDOFEvidence):
+            raise TypeError("root_evidence must be RootDOFEvidence.")
         self.state = state
         self.residual = jnp.asarray(residual, dtype=jnp.float64)
         self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
         self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
+        self.root_evidence = root_evidence
+        self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
 
 
 class DesignConstraintSystem(StrictModule):
@@ -481,6 +490,16 @@ class DesignConstraintSystem(StrictModule):
         )
         return jnp.concatenate(values)
 
+    def _problem_id(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "compiled-design-constraint-system",
+                "parameter_ids": [str(value) for value in self.geometry.schema.parameter_ids],
+                "kernel_type": type(self.geometry.kernel).__qualname__,
+                "constraints": [type(value).__qualname__ for value in self.constraints],
+            }
+        )
+
     def search(
         self,
         search: DifferentialEvolutionSearch,
@@ -489,6 +508,7 @@ class DesignConstraintSystem(StrictModule):
         key: PRNGKey,
         bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
         initial_state: DesignState | None = None,
+        root_tolerance: float = 1e-9,
     ) -> DesignSearchResult:
         """Search globally over a finite box of trainable geometry parameters."""
         from ._search import search_design_constraints
@@ -499,6 +519,7 @@ class DesignConstraintSystem(StrictModule):
             key=key,
             bounds=bounds,
             initial_state=initial_state,
+            root_tolerance=root_tolerance,
         )
 
     def solve(
@@ -508,12 +529,7 @@ class DesignConstraintSystem(StrictModule):
         max_iterations: int = 32,
         tolerance: float = 1e-9,
         damping: float = 1e-8,
-        line_search_steps: int = 8,
     ) -> ConstraintSolveResult:
-        if max_iterations <= 0 or line_search_steps <= 0:
-            raise ValueError("iteration counts must be positive.")
-        if tolerance <= 0.0 or damping <= 0.0:
-            raise ValueError("tolerance and damping must be positive.")
         state = self.geometry.state if initial_state is None else initial_state
         if not isinstance(state, DesignState):
             raise TypeError("initial_state must be a DesignState or None.")
@@ -522,69 +538,33 @@ class DesignConstraintSystem(StrictModule):
         def residual_vector(vector: Array) -> Array:
             return self.residual(self.unpack(vector, base_state=state))
 
-        initial_norm = jnp.linalg.norm(residual_vector(initial))
-        loop_state: _SolveState = (
+        problem_id = self._problem_id()
+        solve_result = solve_design_residual(
+            residual_vector,
             initial,
-            initial_norm <= tolerance,
-            jnp.asarray(0, dtype=jnp.int32),
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            damping=damping,
+            problem_id=problem_id,
+            bounds=(self.lower_bounds, self.upper_bounds),
         )
-
-        def iteration(_: int | Array, state: _SolveState) -> _SolveState:
-            vector, converged, count = state
-
-            def update(current: Array) -> Array:
-                values = residual_vector(current)
-                jacobian = jax.jacfwd(residual_vector)(current)
-                normal = jacobian.T @ jacobian + damping * jnp.eye(
-                    current.shape[0], dtype=current.dtype
-                )
-                step = jnp.linalg.solve(normal, -(jacobian.T @ values))
-                current_loss = jnp.sum(values * values)
-                search_state: _SolveState = (
-                    jnp.asarray(1.0, dtype=current.dtype),
-                    current,
-                    current_loss,
-                )
-
-                def search(_: int | Array, trial_state: _SolveState) -> _SolveState:
-                    alpha, best, best_loss = trial_state
-                    candidate = jnp.clip(
-                        current + alpha * step,
-                        self.lower_bounds,
-                        self.upper_bounds,
-                    )
-                    candidate_values = residual_vector(candidate)
-                    candidate_loss = jnp.sum(candidate_values * candidate_values)
-                    improve = candidate_loss < best_loss
-                    return (
-                        alpha * 0.5,
-                        jnp.where(improve, candidate, best),
-                        jnp.where(improve, candidate_loss, best_loss),
-                    )
-
-                _, best, _ = jax.lax.fori_loop(0, line_search_steps, search, search_state)
-                return best
-
-            candidate = jax.lax.cond(converged, lambda value: value, update, vector)
-            norm = jnp.linalg.norm(residual_vector(candidate))
-            active = ~converged
-            return (
-                candidate,
-                converged | (norm <= tolerance),
-                count + active.astype(jnp.int32),
-            )
-
-        vector, converged, iterations = jax.lax.fori_loop(
-            0, max_iterations, iteration, loop_state
+        state = self.unpack(solve_result.coordinates, base_state=state)
+        jacobian = jax.jacfwd(residual_vector)(solve_result.coordinates)
+        root_evidence = RootDOFEvidence(
+            problem_id,
+            solve_result.coordinates,
+            solve_result.residual,
+            jacobian,
+            residual_tolerance=tolerance,
         )
-        state = self.unpack(vector, base_state=state)
-        residual = self.residual(state)
         return ConstraintSolveResult(
             state=state,
-            residual=residual,
-            residual_norm=jnp.linalg.norm(residual),
-            converged=converged,
-            iterations=iterations,
+            residual=solve_result.residual,
+            residual_norm=solve_result.residual_norm,
+            converged=solve_result.converged,
+            iterations=solve_result.iterations,
+            status=solve_result.status,
+            root_evidence=root_evidence,
         )
 
 

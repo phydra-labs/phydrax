@@ -531,16 +531,15 @@ def _host(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResu
     with np.errstate(over="ignore", invalid="ignore", under="ignore"):
         signs, certain = _filter(np, spec, flat, np.float64, 1.0)
     if mode is PredicateMode.EXACT:
-        unresolved = np.flatnonzero(~certain)
-        if unresolved.size and native_exact:
-            signs[unresolved] = _EXACT_ROUTES[spec.name](
-                *(array[unresolved] for array in flat)
-            )
-            certain[unresolved] = True
-        elif unresolved.size:
-            exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
-            signs[unresolved] = exact_signs
-            certain[unresolved] = exact_certain
+        if native_exact:
+            signs[:] = _EXACT_ROUTES[spec.name](*flat)
+            certain[:] = True
+        else:
+            unresolved = np.flatnonzero(~certain)
+            if unresolved.size:
+                exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
+                signs[unresolved] = exact_signs
+                certain[unresolved] = exact_certain
     return PredicateResult(signs.reshape(leading), certain.reshape(leading), mode)
 
 
@@ -696,8 +695,6 @@ class PolygonSimplicityResult(StrictModule, NonTrainableState):
     orientation: Array
     intersecting_pairs: Array
     uncertain_pairs: Array
-    candidate_pair_count: int = eqx.field(static=True)
-    candidate_capacity_exceeded: bool = eqx.field(static=True)
     mode: PredicateMode = eqx.field(static=True)
 
     def __init__(
@@ -707,9 +704,6 @@ class PolygonSimplicityResult(StrictModule, NonTrainableState):
         intersecting_pairs: Array,
         uncertain_pairs: Array,
         mode: PredicateMode,
-        *,
-        candidate_pair_count: int,
-        candidate_capacity_exceeded: bool,
     ) -> None:
         if not isinstance(mode, PredicateMode):
             raise TypeError("mode must be a PredicateMode.")
@@ -724,17 +718,10 @@ class PolygonSimplicityResult(StrictModule, NonTrainableState):
             == uncertain_pairs.shape
         ):
             raise ValueError("Polygon simplicity arrays must share one shape.")
-        count = int(candidate_pair_count)
-        if count < 0:
-            raise ValueError("candidate_pair_count must be non-negative.")
-        if not isinstance(candidate_capacity_exceeded, (bool, np.bool_)):
-            raise TypeError("candidate_capacity_exceeded must be bool.")
         self.status = status
         self.orientation = orientation
         self.intersecting_pairs = intersecting_pairs
         self.uncertain_pairs = uncertain_pairs
-        self.candidate_pair_count = count
-        self.candidate_capacity_exceeded = bool(candidate_capacity_exceeded)
         self.mode = mode
 
 
@@ -817,53 +804,41 @@ def segment_intersections_2d(
 
 
 def _edge_pair_evidence(
-    points: np.ndarray, mode: PredicateMode, maximum_candidate_pairs: int, /
-) -> tuple[np.ndarray, np.ndarray, int, bool]:
-    """Bounded offending and unresolved edge-pair evidence."""
+    points: np.ndarray, mode: PredicateMode, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Count every certified offending and unresolved edge pair."""
 
     polygon_count, corner_count, _ = points.shape
     intersecting = np.zeros((polygon_count,), dtype=np.int64)
     uncertain = np.zeros((polygon_count,), dtype=np.int64)
     starts = points.reshape((-1, 2))
     stops = np.roll(points, -1, axis=1).reshape((-1, 2))
-    # An exact polygon coordinate axis keeps the broad phase within polygons.
+    # A coordinate axis keeps broad-phase candidates within their polygons.
     group = np.repeat(np.arange(polygon_count, dtype=np.float64), corner_count)
     bvh = prepare_bvh(
         np.column_stack((np.minimum(starts, stops), group)),
         np.column_stack((np.maximum(starts, stops), group)),
         dtype=np.float64,
     )
-    candidate_count = 0
-    exceeded = False
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         first = first[keep]
         second = second[keep]
-        remaining = maximum_candidate_pairs - candidate_count
-        if first.size > remaining:
-            first = first[:remaining]
-            second = second[:remaining]
-            exceeded = True
-        candidate_count += first.size
-        if first.size:
-            status = _classify_segments(
-                starts[first], stops[first], starts[second], stops[second], mode
-            )
-            gap = second - first
-            adjacent = (gap == 1) | (gap == corner_count - 1)
-            allowed = (status == SegmentIntersectionStatus.DISJOINT) | (
-                adjacent & (status == SegmentIntersectionStatus.ENDPOINT_CONTACT)
-            )
-            unresolved = status == SegmentIntersectionStatus.UNCERTAIN
-            polygon = first // corner_count
-            np.add.at(intersecting, polygon[~allowed & ~unresolved], 1)
-            np.add.at(uncertain, polygon[unresolved], 1)
-        if exceeded:
-            # A proven crossing remains invalid; every other loop is unresolved
-            # because unvisited candidate pairs may intersect.
-            uncertain += intersecting == 0
-            break
-    return intersecting, uncertain, candidate_count, exceeded
+        if first.size == 0:
+            continue
+        status = _classify_segments(
+            starts[first], stops[first], starts[second], stops[second], mode
+        )
+        gap = second - first
+        adjacent = (gap == 1) | (gap == corner_count - 1)
+        allowed = (status == SegmentIntersectionStatus.DISJOINT) | (
+            adjacent & (status == SegmentIntersectionStatus.ENDPOINT_CONTACT)
+        )
+        unresolved = status == SegmentIntersectionStatus.UNCERTAIN
+        polygon = first // corner_count
+        np.add.at(intersecting, polygon[~allowed & ~unresolved], 1)
+        np.add.at(uncertain, polygon[unresolved], 1)
+    return intersecting, uncertain
 
 
 def _extreme_turn(points: np.ndarray, mode: PredicateMode, /) -> PredicateResult:
@@ -884,30 +859,17 @@ def _extreme_turn(points: np.ndarray, mode: PredicateMode, /) -> PredicateResult
 
 
 def polygon_simplicity_2d(
-    vertices: Any,
-    /,
-    *,
-    mode: PredicateMode,
-    maximum_candidate_pairs: int = 5_000_000,
+    vertices: Any, /, *, mode: PredicateMode
 ) -> PolygonSimplicityResult:
     """Certify that closed vertex loops ``(..., n, 2)`` bound simple polygons.
 
     A loop is simple when non-adjacent edges are disjoint and adjacent edges
-    meet only at their shared vertex; repeated vertices therefore make a loop
-    self-intersecting. Candidate edge pairs come from a bounded BVH block stream
-    over exact edge boxes, partitioned by polygon; exhausting
-    ``maximum_candidate_pairs`` leaves every unproved loop ``UNCERTAIN``.
+    meet only at their shared vertex. Candidate edge pairs are streamed
+    completely from a BVH over exact edge boxes, partitioned by polygon.
     Host-only (``FILTERED`` or ``EXACT``).
     """
 
     _require_host_mode(mode)
-    if isinstance(maximum_candidate_pairs, bool) or not isinstance(
-        maximum_candidate_pairs, (int, np.integer)
-    ):
-        raise TypeError("maximum_candidate_pairs must be an integer.")
-    capacity = int(maximum_candidate_pairs)
-    if capacity <= 0:
-        raise ValueError("maximum_candidate_pairs must be positive.")
     array = np.asarray(vertices)
     if array.ndim < 2 or array.shape[-2] < 3:
         raise ValueError("Polygon vertices must have shape (..., n >= 3, 2).")
@@ -924,12 +886,8 @@ def polygon_simplicity_2d(
             empty,
             empty.copy(),
             mode,
-            candidate_pair_count=0,
-            candidate_capacity_exceeded=False,
         )
-    intersecting, uncertain, candidate_count, exceeded = _edge_pair_evidence(
-        points, mode, capacity
-    )
+    intersecting, uncertain = _edge_pair_evidence(points, mode)
     status = np.where(
         intersecting > 0,
         PolygonSimplicityStatus.SELF_INTERSECTING,
@@ -951,8 +909,6 @@ def polygon_simplicity_2d(
         intersecting.reshape(leading),
         uncertain.reshape(leading),
         mode,
-        candidate_pair_count=candidate_count,
-        candidate_capacity_exceeded=exceeded,
     )
 
 

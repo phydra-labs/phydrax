@@ -117,7 +117,7 @@ def _plan(
         AtomisticDomainRolePlan(
             requirement,
             cell.image_stencil(
-                requirement.bounded_cutoff() + SKIN, maximum_image_count=4096
+                requirement.bounded_cutoff() + SKIN
             ),
             streaming=StreamedRelationPlan(accumulation="deterministic"),
             skin=SKIN,

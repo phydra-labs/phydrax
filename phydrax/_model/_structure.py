@@ -8,16 +8,29 @@ import base64
 import dataclasses
 import enum
 import json
+import math
 from collections.abc import Mapping
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, BinaryIO, TYPE_CHECKING
+from typing import Any, BinaryIO, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
+
+
+if TYPE_CHECKING:
+    from .._physical import SpatialCoordinateContract
+    from ..discretization._cell_geometry import CellGeometrySpec
+    from ..discretization._cell_mesh import CellMesh
+    from ..discretization._exact_algebraic_geometry import RadicalElement
+    from ..geometry._surface_source_support import Corners
+    from ..meshing._association import GeometryAssociation
 
 from .._array_archive import (
     _read_npy_metadata,
@@ -28,7 +41,522 @@ from .._array_archive import (
 from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
-from ._artifacts import artifact_value, artifact_value_id
+from ._artifacts import artifact_value, artifact_value_id, register_artifact_value
+
+
+class AdaptiveImplicitBoundarySourceArchiveRecipe(NamedTuple):
+    surface: object
+    expected_source_id: str
+    expected_source_revision: str
+    frame_id: str
+
+
+class ParametricCurveBoundarySourceArchiveRecipe(NamedTuple):
+    curves: tuple[object, ...]
+    parameter_ranges: tuple[tuple[float, float], ...]
+    source_id: str
+    source_revision: str
+    curve_entity_ids: tuple[str, ...]
+    occurrence_paths: tuple[tuple[str, ...], ...]
+    chart_ids: tuple[str, ...]
+    expected_query_id: str
+
+
+class MeshingDomainArchiveRecipe(NamedTuple):
+    patches: tuple[object, ...]
+    curves: tuple[object, ...]
+    corner_count: int
+    source_id: str
+    source_revision: str
+    regions: tuple[object, ...]
+    tolerance: float
+    accuracy: str
+    source_indices: tuple[tuple[int, ...], ...]
+    source_occurrences: tuple[tuple[tuple[str, ...], ...], ...]
+    region_source_indices: tuple[int, ...]
+    region_source_occurrences: tuple[tuple[str, ...], ...]
+    source_kinds: tuple[str, ...]
+    authority_id: str
+    brep_authority: object | None
+    corner_points: object
+    expected_domain_id: str
+
+
+class MeshingDomainBoundarySourceArchiveRecipe(NamedTuple):
+    domain: MeshingDomainArchiveRecipe
+    patches: tuple[int, ...]
+    resolution: int
+    boundary_occurrences: object | None
+    boundary_cell_ids: object | None
+    boundary_patch_ids: object | None
+    expected_source_scope_id: str
+
+
+class SurfaceSourceChartsArchiveRecipe(NamedTuple):
+    domain: MeshingDomainArchiveRecipe
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    coordinate_contract: SpatialCoordinateContract
+    root_parameters: np.ndarray
+    root_parameter_exact: tuple[Corners, ...]
+    root_patches: np.ndarray
+    associations: tuple[GeometryAssociation, ...]
+    boundary_source: MeshingDomainBoundarySourceArchiveRecipe
+    source_root_cell_ids: np.ndarray
+    source_piece_ids: tuple[tuple[int, ...], ...]
+    expected_source_chart_id: str
+
+
+class SurfaceChartBoundarySourceArchiveRecipe(NamedTuple):
+    root: object
+    support: object
+    deformation: object
+    predecessor_fidelity: object
+    expected_source_id: str
+    expected_source_revision: str
+    expected_source_query_id: str
+    expected_source_scope_id: str
+    expected_domain_id: str
+    expected_support_id: str
+    expected_deformation_domain_id: str
+    expected_deformation_id: str
+    expected_predecessor_fidelity_id: str
+    expected_source_profile_id: str | None
+    expected_source_profile_revision: str | None
+    expected_source_atlas_id: str | None
+    expected_target_atlas_id: str | None
+
+
+class SurfaceSubdivisionBoundarySourceArchiveRecipe(NamedTuple):
+    root: MeshingDomainBoundarySourceArchiveRecipe
+    support: object
+    lineages: tuple[object, ...]
+    vertex_stencils: tuple[object, ...]
+    targets: tuple[CellMesh, ...]
+    geometry: CellGeometrySpec
+    source_id: str
+    source_revision: str
+    expected_boundary_occurrence_id: str
+
+
+class SphereMaterialCellAtlasArchiveRecipe(NamedTuple):
+    source_profile: object
+    source_mesh: CellMesh
+    source_geometry: CellGeometrySpec
+    source_validity: object
+    source_embedding: object
+    expected_atlas_id: str
+
+
+class PreparedSphereChartDeformationArchiveRecipe(NamedTuple):
+    source_atlas: SphereMaterialCellAtlasArchiveRecipe
+    target_atlas: SphereMaterialCellAtlasArchiveRecipe
+    expected_deformation_id: str
+
+
+class ReconstructedTriangleBoundarySourceArchiveRecipe(NamedTuple):
+    source: object
+    expected_source_id: str
+    expected_source_revision: str
+
+
+class NativeImplicitBoundaryQueryArchiveRecipe(NamedTuple):
+    query: AdaptiveImplicitBoundarySourceArchiveRecipe
+    source_id: str
+    source_revision: str
+    frame_id: str
+
+
+class NativePlcSourceArchiveRecipe(NamedTuple):
+    complex: object
+    source_id: str
+    source_revision: str
+    mapped_domain: object | None
+    fidelity_source: object | None
+    maximum_deviation: float | None
+    plc_vertex_root_global_ids: object | None
+    expected_binding_id: str
+
+
+class NativeMappedHexSourceArchiveRecipe(NamedTuple):
+    reference: object
+    domain: object
+    plc_vertex_root_global_ids: object
+    expected_source_id: str
+    expected_source_revision: str
+    expected_binding_id: str
+    expected_relation_id: str
+
+
+class MappedReferenceBoundarySourceArchiveRecipe(NamedTuple):
+    authority: NativeMappedHexSourceArchiveRecipe
+    face_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
+    edge_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
+    expected_source_query_id: str
+
+
+class SurfaceEnvelopeSourceArchiveRecipe(NamedTuple):
+    original: object
+    source_id: str
+    coordinate_contract: object
+    offset: float
+    spacing: float
+    certificate_spacing: float
+    maximum_deviation: float
+    expected_source_revision: str
+    expected_envelope_id: str
+
+
+class PiecewiseLinearBoundarySourceArchiveRecipe(NamedTuple):
+    owner: SurfaceEnvelopeSourceArchiveRecipe
+    entity_dimension: int
+    entity_ids: object
+    expected_source_query_id: str
+    source_rows: object
+    source_entity_keys: tuple[str, ...]
+    source_occurrence_paths: tuple[tuple[str, ...], ...]
+    chart_ids: tuple[str, ...]
+
+
+class AnalyticImplicitProfileArchiveRecipe(NamedTuple):
+    geometry: object
+    coordinate_contract: object
+    tube_radius: float
+    cover_radius: float
+    source_id: str
+    source_revision: str
+    expected_profile_id: str
+
+
+class FiniteElementAcceptedStateArchiveRecipe(NamedTuple):
+    """Stored state payload plus canonical layout recipes for FE cold restore."""
+
+    fields: tuple[object, ...]
+    time: object
+    step: int
+    topology_id: str
+    prepared_id: str
+    compilation_id: str
+    field_layouts: tuple[object, ...]
+    field_ownership: tuple[object, ...] | None
+    materials: object | None
+    schedule_cursor: int
+    state_version: int
+    expected_accepted_id: str
+
+
+class FiniteVolumeRuntimeStateArchiveRecipe(NamedTuple):
+    """Typed accepted FV state fields bound to stable source-row identity."""
+
+    content_state: object
+    topology_journal_record: Mapping[str, Any]
+    topology_journal_arrays: Mapping[str, np.ndarray]
+    accepted_step: Array
+    step_size: Array
+    last_status: Array
+    controller_state: Array
+    integrator_state: Array
+    output_cursor: Array
+    sliding_shift: Array
+    sliding_event_id: str | None
+    sliding_coupling_id: str | None
+    source_cell_ids: Array
+    expected_runtime_id: str
+    expected_epoch_id: str
+    expected_state_id: str
+
+
+class FiniteVolumeOwnerLocalCellStateBankArchiveRecipe(NamedTuple):
+    """Stable-keyed external cell-state bank layout with an array key column."""
+
+    entry_id: str
+    cell_ids: ArrayLike
+    cell_axis: int
+
+
+class FiniteVolumeOversetPartSpecArchiveRecipe(NamedTuple):
+    """Callable-free owner-local overset part declaration."""
+
+    part_name: str
+    wall: object | None
+    boundary: object | None
+    excluded: object | None
+    solid_index: int
+    priority: int
+    owner_rank: int
+    image_rotation: object | None
+    image_translation: object | None
+    expected_spec_id: str
+
+
+class FiniteVolumeOversetPolicyArchiveRecipe(NamedTuple):
+    """Exact scientific overset selection policy."""
+
+    fringe_layers: int
+    donor_priority: str
+    expected_policy_id: str
+
+
+class FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe(NamedTuple):
+    """Callable-free local source/target inputs for a cold FV repartition."""
+
+    group_id: str
+    process_indices: tuple[int, ...]
+    device_keys: tuple[tuple[int, int], ...]
+    mesh_axes: tuple[tuple[str, int], ...]
+    parent_group_id: str | None
+    process_host_ids: tuple[tuple[int, str], ...]
+    part_names: tuple[str, ...]
+    donor_part_name: str
+    receptor_part_name: str
+    source_views: tuple[object, ...]
+    source_specifications: tuple[object, ...]
+    source_overset_specs: tuple[object, ...]
+    source_overset_policy: object
+    target_overset_specs: tuple[object, ...]
+    target_graph_partition_plan: object
+    target_specification: object
+    target_view: object
+    source_topology_epoch_record: object
+    source_topology_artifacts_record: object
+    target_topology_epoch_record: object
+    target_topology_artifacts_record: object
+    source_boundary_patch_names: tuple[str, ...]
+    target_boundary_patch_names: tuple[str, ...]
+    system_kind: str
+    spatial_dimension: int
+    expected_system_id: str
+    problem_name: str
+    field_name: str
+    source_id: str | None
+    reconstruction_kind: str
+    flux_kind: str
+    expected_method_id: str
+    flux_smooth_epsilon: float
+    material_gamma: float
+    material_gas_constant: float
+    material_density_floor: float
+    material_pressure_floor: float
+    precision_policy: object
+    positivity_iterations: int
+    positivity_fallback_kind: str
+    step_cfl: float
+    step_reduction_factor: float
+    step_minimum_step_size: float
+    boundary_condition_kind: str
+    maximum_retries: int
+    topology_event_capacity: int
+    topology_event_policy: str
+    owner_local_axis_name: str
+    expected_target_plan_id: str
+    expected_source_dynamics_id: str
+    expected_source_boundary_set_id: str
+    expected_target_boundary_set_id: str
+    expected_positivity_id: str
+    expected_source_runtime_id: str
+    expected_source_epoch_id: str
+    expected_precision_policy_id: str
+    expected_step_policy_id: str
+    expected_source_artifacts_id: str
+    expected_source_connectivity_id: str
+    expected_target_distribution_id: str
+    expected_target_connectivity_id: str
+    expected_target_dynamics_id: str
+    expected_target_epoch_id: str
+    expected_target_artifacts_id: str
+
+
+class SparseCoordinateOperatorArchiveRecipe(NamedTuple):
+    relation: object
+    coefficients: object
+    source: object
+    target: object
+    properties: object
+    operator_id: str
+    accumulation_dtype: object
+    block_shape: tuple[int, int] | None
+
+
+class _FiniteElementSpecArchiveProjection(NamedTuple):
+    """Distinguish a projected executable FE element from a stored layout recipe."""
+
+    recipe: Any
+
+    def rebuild(self, /) -> Any:
+        _, recipe_type = _finite_element_archive_types()
+        if type(self.recipe) is not recipe_type:
+            raise TypeError(
+                "FiniteElementSpec projection lost its canonical element recipe."
+            )
+        element = self.recipe.rebuild()
+        element_type, _ = _finite_element_archive_types()
+        if type(element) is not element_type:
+            raise TypeError(
+                "FiniteElementSpec recipe rebuilt an unexpected element type."
+            )
+        return element
+
+
+def _finite_element_archive_types() -> tuple[type, type]:
+    from ..discretization.fem._reference import FiniteElementSpec
+    from ..solver._finite_element_schedule import FiniteElementAcceptedElementRecipe
+
+    register_artifact_value(
+        "phydrax.discretization.fem:FiniteElementSpec", FiniteElementSpec
+    )
+    register_artifact_value(
+        "phydrax.solver:FiniteElementAcceptedElementRecipe",
+        FiniteElementAcceptedElementRecipe,
+    )
+    return FiniteElementSpec, FiniteElementAcceptedElementRecipe
+
+
+_RADICAL_TYPE_ID = "phydrax.discretization:RadicalElement"
+_RADICAL_TYPE: type[RadicalElement] | None = None
+
+
+def _radical_element_type() -> type[RadicalElement]:
+    global _RADICAL_TYPE
+    if _RADICAL_TYPE is None:
+        from ..discretization._exact_algebraic_geometry import RadicalElement
+
+        register_artifact_value(_RADICAL_TYPE_ID, RadicalElement)
+        _RADICAL_TYPE = RadicalElement
+    return _RADICAL_TYPE
+
+
+def _is_radical_element(value: Any, /) -> bool:
+    value_type = type(value)
+    if (
+        value_type.__module__ != "phydrax.discretization._exact_algebraic_geometry"
+        or value_type.__name__ != "RadicalElement"
+    ):
+        return False
+    return value_type is _radical_element_type()
+
+
+_RATIONAL_POLYNOMIAL_TYPE_ID = "phydrax.discretization:RationalPolynomial"
+_RATIONAL_POLYNOMIAL_TYPE: type | None = None
+
+
+def _rational_polynomial_type() -> type:
+    global _RATIONAL_POLYNOMIAL_TYPE
+    if _RATIONAL_POLYNOMIAL_TYPE is None:
+        from ..discretization._coordinate_enclosure import RationalPolynomial
+
+        register_artifact_value(_RATIONAL_POLYNOMIAL_TYPE_ID, RationalPolynomial)
+        _RATIONAL_POLYNOMIAL_TYPE = RationalPolynomial
+    return _RATIONAL_POLYNOMIAL_TYPE
+
+
+def _is_rational_polynomial(value: Any, /) -> bool:
+    value_type = type(value)
+    if (
+        value_type.__module__ != "phydrax.discretization._coordinate_enclosure"
+        or value_type.__name__ != "RationalPolynomial"
+    ):
+        return False
+    return value_type is _rational_polynomial_type()
+
+
+_FORM_TYPE_ID = "phydrax.exterior:FormType"
+_FORM_VALUE_SPEC_ID = "phydrax.exterior:FormValueSpec"
+
+
+def _form_value_types() -> tuple[type, type]:
+    from ..exterior._form_type import FormType, FormValueSpec
+
+    register_artifact_value(_FORM_TYPE_ID, FormType)
+    register_artifact_value(_FORM_VALUE_SPEC_ID, FormValueSpec)
+    return FormType, FormValueSpec
+
+
+def _strict_value_field_names(value_type: type, /) -> tuple[str, ...] | None:
+    form_type, form_value_spec = _form_value_types()
+    if value_type is form_type:
+        return (
+            "dimension",
+            "degree",
+            "twist",
+            "fiber_shape",
+            "ambient_dimension",
+            "form_type_id",
+        )
+    if value_type is form_value_spec:
+        return ("form_type", "proxy", "value_spec_id")
+    return None
+
+
+def _form_value_recipe(value: Any, /, *, path: str) -> dict[str, Any] | None:
+    if type(value).__module__ != "phydrax.exterior._form_type":
+        return None
+    form_type, form_value_spec = _form_value_types()
+    if type(value) is form_type:
+        rebuilt = form_type(
+            value.dimension,
+            value.degree,
+            twist=value.twist,
+            fiber_shape=value.fiber_shape,
+            ambient_dimension=value.ambient_dimension,
+        )
+        if rebuilt.form_type_id != value.form_type_id:
+            raise ValueError(f"{path} FormType identity is not canonical.")
+        fields = {
+            "dimension": value.dimension,
+            "degree": value.degree,
+            "twist": value.twist,
+            "fiber_shape": value.fiber_shape,
+            "ambient_dimension": value.ambient_dimension,
+            "form_type_id": value.form_type_id,
+        }
+    elif type(value) is form_value_spec:
+        rebuilt = form_value_spec(value.form_type, proxy=value.proxy)
+        if rebuilt.value_spec_id != value.value_spec_id:
+            raise ValueError(f"{path} FormValueSpec identity is not canonical.")
+        fields = {
+            "form_type": value.form_type,
+            "proxy": value.proxy,
+            "value_spec_id": value.value_spec_id,
+        }
+    else:
+        return None
+    return {
+        "kind": "strict_value",
+        "type": artifact_value_id(type(value)),
+        "fields": {
+            name: model_structure_recipe(field_value, path=f"{path}.{name}")
+            for name, field_value in fields.items()
+        },
+    }
+
+
+def _restore_strict_value(value_type: type, fields: Mapping[str, Any], /) -> Any:
+    expected = _strict_value_field_names(value_type)
+    if expected is None:
+        raise TypeError("Stored strict value type is not an admitted form value.")
+    if set(fields) != set(expected):
+        raise ValueError("Stored strict value fields do not match their exact type.")
+    form_type, form_value_spec = _form_value_types()
+    if value_type is form_type:
+        restored = form_type(
+            fields["dimension"],
+            fields["degree"],
+            twist=fields["twist"],
+            fiber_shape=fields["fiber_shape"],
+            ambient_dimension=fields["ambient_dimension"],
+        )
+        if restored.form_type_id != fields["form_type_id"]:
+            raise ValueError("Stored FormType identity does not reproduce.")
+        return restored
+    if value_type is form_value_spec:
+        source_type = fields["form_type"]
+        if type(source_type) is not form_type:
+            raise TypeError("Stored FormValueSpec requires its exact FormType owner.")
+        restored = form_value_spec(source_type, proxy=fields["proxy"])
+        if restored.value_spec_id != fields["value_spec_id"]:
+            raise ValueError("Stored FormValueSpec identity does not reproduce.")
+        return restored
+    raise TypeError("Stored strict value type is not an admitted form value.")
 
 
 if TYPE_CHECKING:
@@ -79,6 +607,739 @@ def _canonical_recipe_payload(recipe: Mapping[str, Any], /) -> bytes:
         raise ValueError("Model artifact recipe is not canonical finite JSON.") from error
 
 
+def _source_query_archive_recipe(value: Any, /) -> object | None:
+    """Project query owners onto their exact inputs, excluding prepared caches."""
+    if type(value).__module__ not in {
+        "phydrax.geometry._curve_boundary",
+        "phydrax.geometry._domain_boundary",
+        "phydrax.geometry._meshing_domain",
+        "phydrax.geometry._surface_source_support",
+        "phydrax.geometry._piecewise_linear_boundary",
+        "phydrax.geometry.implicit._adaptive_discovery",
+        "phydrax.geometry.reconstruction._boundary",
+        "phydrax.geometry.reconstruction._core",
+        "phydrax.geometry.implicit._analytic_profile",
+        "phydrax.meshing.providers._native_implicit",
+        "phydrax.geometry._mapped_reference_boundary",
+        "phydrax.meshing.providers._native_sources",
+        "phydrax.meshing._surface_envelope",
+        "phydrax.meshing._surface_boundary_sources",
+        "phydrax.geometry._sphere_material_atlas",
+        "phydrax.discretization._sphere_chart_records",
+    }:
+        return None
+    from ..discretization._sphere_chart_records import PreparedSphereChartDeformation
+    from ..geometry._curve_boundary import ParametricCurveBoundarySource
+    from ..geometry._domain_boundary import MeshingDomainBoundarySource
+    from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+    from ..geometry._meshing_domain import MeshingDomain
+    from ..geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+    from ..geometry._source_boundary_records import SourceBoundaryQuery
+    from ..geometry._sphere_material_atlas import SphereMaterialCellAtlas
+    from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ..geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitBoundarySource,
+        AdaptiveImplicitSurface,
+    )
+    from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
+    from ..geometry.reconstruction._boundary import ReconstructedTriangleBoundarySource
+    from ..geometry.reconstruction._core import (
+        ReconstructedGeometrySource,
+        ReconstructedGeometrySourceArchiveRecipe,
+    )
+    from ..meshing._plc_source import PiecewiseLinearComplex
+    from ..meshing._surface_boundary_sources import (
+        _boundary_occurrence_identity,
+        SurfaceChartBoundarySource,
+        SurfaceSubdivisionBoundarySource,
+    )
+    from ..meshing._surface_envelope import SurfaceEnvelopeSource
+    from ..meshing.providers._native_sources import NativeMappedHexSource, NativePlcSource
+
+    if type(value) is AnalyticImplicitProfile:
+        return AnalyticImplicitProfileArchiveRecipe(
+            value.geometry,
+            value.coordinate_contract,
+            value.tube_radius,
+            value.cover_radius,
+            value.source_id,
+            value.source_revision,
+            value.profile_id,
+        )
+    if type(value) is AdaptiveImplicitSurface:
+        return value.archive_recipe
+    if type(value) is AdaptiveImplicitBoundarySource:
+        value.require_current()
+        return AdaptiveImplicitBoundarySourceArchiveRecipe(
+            value.surface.archive_recipe,
+            value.source_id,
+            value.source_revision,
+            value.frame_id,
+        )
+    if type(value) is ParametricCurveBoundarySource:
+        value.require_current()
+        return ParametricCurveBoundarySourceArchiveRecipe(
+            value.curves,
+            value.parameter_ranges,
+            value.source_id,
+            value.source_revision,
+            value.curve_entity_ids,
+            value.occurrence_paths,
+            value.chart_ids,
+            value.query_id,
+        )
+    if type(value) is ReconstructedGeometrySource:
+        return value.archive_recipe
+    if type(value) is ReconstructedTriangleBoundarySource:
+        return ReconstructedTriangleBoundarySourceArchiveRecipe(
+            value.source.archive_recipe,
+            value.source_id,
+            value.source_revision,
+        )
+    if type(value) is MeshingDomain:
+        value.require_current(value.source_id, value.source_revision)
+        return MeshingDomainArchiveRecipe(
+            value.patches,
+            value.curves,
+            int(value.corner_points.shape[0]),
+            value.source_id,
+            value.source_revision,
+            value.regions,
+            value.tolerance,
+            value.accuracy,
+            value.source_indices,
+            value.source_occurrences,
+            value.region_source_indices,
+            value.region_source_occurrences,
+            value.source_kinds,
+            value.authority_id,
+            value.brep_authority,
+            value.corner_points,
+            value.domain_id,
+        )
+    if type(value) is MeshingDomainBoundarySource:
+        value.require_current()
+        domain_recipe = _source_query_archive_recipe(value.domain)
+        if type(domain_recipe) is not MeshingDomainArchiveRecipe:
+            raise TypeError(
+                "Meshing-domain boundary source lost its exact domain recipe."
+            )
+        return MeshingDomainBoundarySourceArchiveRecipe(
+            domain_recipe,
+            value.patches,
+            value.resolution,
+            value.boundary_occurrences,
+            value.boundary_cell_ids,
+            value.boundary_patch_ids,
+            value.source_scope_id,
+        )
+    if type(value) is SurfaceSourceCharts:
+        value.require_current()
+        domain_recipe = _source_query_archive_recipe(value.domain)
+        boundary_recipe = _source_query_archive_recipe(value.boundary_source)
+        if (
+            type(domain_recipe) is not MeshingDomainArchiveRecipe
+            or type(boundary_recipe) is not MeshingDomainBoundarySourceArchiveRecipe
+        ):
+            raise TypeError("Surface source charts lost their exact source recipes.")
+        return SurfaceSourceChartsArchiveRecipe(
+            domain_recipe,
+            value.mesh,
+            value.geometry,
+            value.coordinate_contract,
+            value.root_parameters,
+            value.root_parameter_exact,
+            value.root_patches,
+            value.associations,
+            boundary_recipe,
+            value.source_root_cell_ids,
+            value.source_piece_ids,
+            value.source_chart_id,
+        )
+    if type(value) is SurfaceEnvelopeSource:
+        value.require_current()
+        original_recipe = _source_query_archive_recipe(value.original)
+        if type(original_recipe) is not ReconstructedGeometrySourceArchiveRecipe:
+            raise TypeError(
+                "Surface envelope lost its exact reconstructed source recipe."
+            )
+        return SurfaceEnvelopeSourceArchiveRecipe(
+            original_recipe,
+            value.source_id,
+            value.coordinate_contract,
+            value.offset,
+            value.spacing,
+            value.certificate_spacing,
+            value.maximum_deviation,
+            value.source_revision,
+            value.envelope_id,
+        )
+    if type(value) is PiecewiseLinearBoundarySource:
+        value.require_current()
+        owner_recipe = _source_query_archive_recipe(value.owner)
+        if type(owner_recipe) is not SurfaceEnvelopeSourceArchiveRecipe:
+            raise TypeError(
+                "Piecewise-linear boundary query lost its exact envelope owner."
+            )
+        return PiecewiseLinearBoundarySourceArchiveRecipe(
+            owner_recipe,
+            value.entity_dimension,
+            value.entity_ids,
+            value.source_query_id,
+            value.source_rows,
+            value.source_entity_keys,
+            value.source_occurrence_paths,
+            value.chart_ids,
+        )
+    if type(value) is NativePlcSource:
+        complex_ = PiecewiseLinearComplex.from_stored_fields(value.complex)
+        rebuilt = NativePlcSource(
+            complex_,
+            value.source_id,
+            value.source_revision,
+            mapped_domain=value.mapped_domain,
+            fidelity_source=value.fidelity_source,
+            maximum_deviation=value.maximum_deviation,
+            plc_vertex_root_global_ids=value.plc_vertex_root_global_ids,
+        )
+        if rebuilt.binding_id != value.binding_id:
+            raise ValueError(
+                "Native PLC source binding identity differs from its exact inputs."
+            )
+        fidelity_recipe = (
+            None
+            if value.fidelity_source is None
+            else _source_query_archive_recipe(value.fidelity_source)
+        )
+        if value.fidelity_source is not None and fidelity_recipe is None:
+            raise TypeError("Native PLC source lost its exact fidelity-query recipe.")
+        return NativePlcSourceArchiveRecipe(
+            complex_,
+            value.source_id,
+            value.source_revision,
+            value.mapped_domain,
+            fidelity_recipe,
+            value.maximum_deviation,
+            value.plc_vertex_root_global_ids,
+            value.binding_id,
+        )
+    if type(value) is SurfaceSubdivisionBoundarySource:
+        value.require_current()
+        root_recipe = _source_query_archive_recipe(value.root)
+        if type(root_recipe) is not MeshingDomainBoundarySourceArchiveRecipe:
+            raise TypeError("Surface subdivision lost its exact root boundary recipe.")
+        return SurfaceSubdivisionBoundarySourceArchiveRecipe(
+            root_recipe,
+            value.support,
+            value.lineages,
+            value.vertex_stencils,
+            value.targets,
+            value.geometry,
+            value.source_id,
+            value.source_revision,
+            _boundary_occurrence_identity(value.current_boundary_source),
+        )
+    if type(value) is SphereMaterialCellAtlas:
+        value.require_bound(value.source_mesh, value.source_geometry)
+        profile_recipe = _source_query_archive_recipe(value.source_profile)
+        if type(profile_recipe) is not AnalyticImplicitProfileArchiveRecipe:
+            raise TypeError(
+                "Sphere material atlas lost its exact analytic profile recipe."
+            )
+        return SphereMaterialCellAtlasArchiveRecipe(
+            profile_recipe,
+            value.source_mesh,
+            value.source_geometry,
+            value.source_validity,
+            value.source_embedding,
+            value.atlas_id,
+        )
+    if type(value) is PreparedSphereChartDeformation:
+        value.require_bound(
+            value.source_mesh,
+            value.source_geometry,
+            value.target_mesh,
+            value.target_geometry,
+        )
+        source_recipe = _source_query_archive_recipe(value.source_atlas)
+        target_recipe = _source_query_archive_recipe(value.target_atlas)
+        if (
+            type(source_recipe) is not SphereMaterialCellAtlasArchiveRecipe
+            or type(target_recipe) is not SphereMaterialCellAtlasArchiveRecipe
+        ):
+            raise TypeError("Sphere deformation lost one of its exact atlas recipes.")
+        return PreparedSphereChartDeformationArchiveRecipe(
+            source_recipe, target_recipe, value.deformation_id
+        )
+    if type(value) is NativeMappedHexSource:
+        value.validate_restored()
+        reference_recipe = _source_query_archive_recipe(value.reference)
+        if type(reference_recipe) is not NativePlcSourceArchiveRecipe:
+            raise TypeError(
+                "Mapped hex authority lost its exact native PLC reference recipe."
+            )
+        return NativeMappedHexSourceArchiveRecipe(
+            reference_recipe,
+            value.domain,
+            value.root_relation.vertex_root_global_ids,
+            value.source_id,
+            value.source_revision,
+            value.binding_id,
+            value.root_relation.relation_id,
+        )
+    if type(value) is SurfaceChartBoundarySource:
+        value.require_current()
+        from ..discretization._sphere_chart_records import (
+            PreparedSphereChartDeformation,
+        )
+        from ..meshing._surface_boundary_sources import (
+            SurfaceSubdivisionBoundarySource,
+        )
+
+        deformation = value.deformation
+        source_profile_id = None
+        source_profile_revision = None
+        source_atlas_id = target_atlas_id = None
+        if type(deformation) is PreparedSphereChartDeformation:
+            source_atlas = deformation.source_atlas
+            target_atlas = deformation.target_atlas
+            source_profile_id = source_atlas.source_profile.source_id
+            source_profile_revision = source_atlas.source_profile.source_revision
+            source_atlas_id = source_atlas.atlas_id
+            target_atlas_id = target_atlas.atlas_id
+        if isinstance(value.root, MeshingDomainBoundarySource):
+            root_scope_id = value.root.source_scope_id
+        elif isinstance(value.root, SurfaceSubdivisionBoundarySource):
+            root_scope_id = value.root.current_boundary_source.source_scope_id
+        else:
+            raise TypeError(
+                "Surface chart boundary source has an unregistered root query."
+            )
+        return SurfaceChartBoundarySourceArchiveRecipe(
+            value.root,
+            value.support,
+            deformation,
+            value.predecessor_fidelity,
+            value.source_id,
+            value.source_revision,
+            value.source_query_id,
+            root_scope_id,
+            value.domain.domain_id,
+            value.support.support_id,
+            deformation.domain_id,
+            deformation.deformation_id,
+            value.predecessor_fidelity.certificate_id,
+            source_profile_id,
+            source_profile_revision,
+            source_atlas_id,
+            target_atlas_id,
+        )
+    if type(value) is MappedReferenceBoundarySource:
+        value.require_current()
+        authority_recipe = _source_query_archive_recipe(value.authority)
+        if type(authority_recipe) is not NativeMappedHexSourceArchiveRecipe:
+            raise TypeError("Mapped boundary query lost its exact root authority recipe.")
+        return MappedReferenceBoundarySourceArchiveRecipe(
+            authority_recipe,
+            value.face_scope_keys,
+            value.edge_scope_keys,
+            value.source_query_id,
+        )
+    if type(value).__module__ == "phydrax.meshing.providers._native_implicit":
+        from ..meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+
+        if type(value) is _NativeImplicitBoundaryQuery:
+            value.require_current()
+            query_recipe = _source_query_archive_recipe(value.query)
+            if type(query_recipe) is not AdaptiveImplicitBoundarySourceArchiveRecipe:
+                raise TypeError("Native implicit query lost its adaptive source recipe.")
+            return NativeImplicitBoundaryQueryArchiveRecipe(
+                query_recipe,
+                value.source_id,
+                value.source_revision,
+                value.frame_id,
+            )
+    if isinstance(value, SourceBoundaryQuery):
+        raise TypeError(
+            f"No explicit source-query archive recipe is registered for {type(value).__name__}."
+        )
+    return None
+
+
+def _finite_element_accepted_state_archive_recipe(
+    value: Any, /
+) -> FiniteElementAcceptedStateArchiveRecipe | None:
+    if type(value).__module__ != "phydrax.solver._finite_element_schedule":
+        return None
+    from ..solver._finite_element_schedule import FiniteElementAcceptedState
+
+    if type(value) is not FiniteElementAcceptedState:
+        return None
+    return FiniteElementAcceptedStateArchiveRecipe(
+        value.fields,
+        value.time,
+        value.step,
+        value.topology_id,
+        value.prepared_id,
+        value.compilation_id,
+        tuple(layout.recipe() for layout in value.field_layouts),
+        value.field_ownership,
+        value.materials,
+        value.schedule_cursor,
+        value.state_version,
+        value.accepted_id,
+    )
+
+
+def _finite_volume_runtime_state_archive_recipe(
+    value: Any, /
+) -> FiniteVolumeRuntimeStateArchiveRecipe | None:
+    if (
+        type(value).__module__ != "phydrax.solver._finite_volume_runtime"
+        or type(value).__name__ != "FiniteVolumeValidatedRuntimeState"
+    ):
+        return None
+    from ..solver._finite_volume_runtime import (
+        FiniteVolumeRuntimeState,
+        FiniteVolumeValidatedRuntimeState,
+    )
+    from ..solver._finite_volume_topology_events import (
+        FiniteVolumeTopologyEventJournal,
+    )
+
+    if type(value) is not FiniteVolumeValidatedRuntimeState:
+        raise TypeError(
+            "Finite-volume archive projection requires its exact validated token."
+        )
+    state = value.runtime_state
+    if type(state) is not FiniteVolumeRuntimeState:
+        raise TypeError("Finite-volume validated token lost its canonical runtime state.")
+    journal = state.topology_journal
+    if type(journal) is not FiniteVolumeTopologyEventJournal:
+        raise TypeError(
+            "Finite-volume runtime state lost its canonical topology journal."
+        )
+    return FiniteVolumeRuntimeStateArchiveRecipe(
+        state.content_state,
+        journal.to_archive_record(),
+        journal.archive_arrays(),
+        state.accepted_step,
+        state.step_size,
+        state.last_status,
+        state.controller_state,
+        state.integrator_state,
+        state.output_cursor,
+        state.sliding_shift,
+        state.sliding_event_id,
+        state.sliding_coupling_id,
+        value.source_cell_ids,
+        value.runtime_id,
+        value.epoch_id,
+        value.state_id,
+    )
+
+
+def _finite_volume_cell_state_bank_archive_recipe(
+    value: Any, /
+) -> FiniteVolumeOwnerLocalCellStateBankArchiveRecipe | None:
+    if (
+        type(value).__module__ != "phydrax.solver._finite_volume_runtime"
+        or type(value).__name__ != "FiniteVolumeOwnerLocalCellStateBankSpec"
+    ):
+        return None
+    from ..solver._finite_volume_runtime import (
+        FiniteVolumeOwnerLocalCellStateBankSpec,
+    )
+
+    if type(value) is not FiniteVolumeOwnerLocalCellStateBankSpec:
+        raise TypeError("FV cell-bank archive projection requires its exact owner type.")
+    return FiniteVolumeOwnerLocalCellStateBankArchiveRecipe(
+        value.entry_id,
+        np.asarray(value.cell_ids, dtype=np.int64),
+        value.cell_axis,
+    )
+
+
+def _finite_volume_overset_part_spec_archive_recipe(
+    value: Any, /
+) -> FiniteVolumeOversetPartSpecArchiveRecipe | None:
+    if (
+        type(value).__module__ != "phydrax.meshing._overset"
+        or type(value).__name__ != "OversetPartSpec"
+    ):
+        return None
+    from ..meshing._overset import OversetPartSpec
+
+    if type(value) is not OversetPartSpec:
+        raise TypeError("FV archive requires the exact owner-local OversetPartSpec.")
+    if value.solid_query is not None:
+        raise TypeError(
+            "FV archive context cannot persist an unregistered solid callback."
+        )
+    return FiniteVolumeOversetPartSpecArchiveRecipe(
+        value.part_name,
+        value.wall,
+        value.boundary,
+        value.excluded,
+        value.solid_index,
+        value.priority,
+        value.owner_rank,
+        value.image_rotation,
+        value.image_translation,
+        value.spec_id,
+    )
+
+
+def _finite_volume_overset_policy_archive_recipe(
+    value: Any, /
+) -> FiniteVolumeOversetPolicyArchiveRecipe | None:
+    if (
+        type(value).__module__ != "phydrax.meshing._overset"
+        or type(value).__name__ != "OversetPolicy"
+    ):
+        return None
+    from ..meshing._overset import OversetPolicy
+
+    if type(value) is not OversetPolicy:
+        raise TypeError("FV archive policy must use its exact owner type.")
+    return FiniteVolumeOversetPolicyArchiveRecipe(
+        value.fringe_layers,
+        value.donor_priority,
+        value.policy_id,
+    )
+
+
+def _finite_element_spec_archive_recipe(
+    value: Any, /
+) -> _FiniteElementSpecArchiveProjection | None:
+    if type(value).__module__ != "phydrax.discretization.fem._reference":
+        return None
+    element_type, recipe_type = _finite_element_archive_types()
+    if type(value) is not element_type:
+        raise TypeError(
+            "Finite-element source maps require their exact registered element."
+        )
+    from ..solver._finite_element_schedule import _accepted_element_recipe
+
+    recipe = _accepted_element_recipe(value)
+    if type(recipe) is not recipe_type:
+        raise TypeError("Finite-element source map lost its canonical element recipe.")
+    return _FiniteElementSpecArchiveProjection(recipe)
+
+
+def _conic_root_line_endpoint_witness_archive_recipe(value: Any, /) -> Any | None:
+    if (
+        type(value).__module__ != "phydrax.geometry.brep._intersection"
+        or type(value).__name__ != "ConicRootLineEndpointWitness"
+    ):
+        return None
+    from ..geometry.brep._intersection import ConicRootLineEndpointWitness
+    from ..interchange._cad_archive import ConicRootLineEndpointWitnessArchiveRecipe
+
+    if type(value) is not ConicRootLineEndpointWitness:
+        raise TypeError(
+            "Conic endpoint archive projection requires its exact owner type."
+        )
+    return ConicRootLineEndpointWitnessArchiveRecipe(
+        object.__getattribute__(value, "source_curve"),
+        object.__getattribute__(value, "source_pcurve"),
+        object.__getattribute__(value, "source_region"),
+        object.__getattribute__(value, "parameter_exact"),
+        object.__getattribute__(value, "source_interval"),
+        object.__getattribute__(value, "trim_curve"),
+        object.__getattribute__(value, "trim_interval"),
+    )
+
+
+def _cell_quality_report_archive_recipe(value: Any, /) -> object | None:
+    if (
+        type(value).__module__ != "phydrax.meshing._quality"
+        or type(value).__name__ != "CellQualityReport"
+    ):
+        return None
+    from ..meshing._quality import (
+        CellQualityReport,
+        CellQualityReportArchiveRecipe,
+    )
+
+    if type(value) is not CellQualityReport:
+        raise TypeError("Quality archive projection requires CellQualityReport.")
+    recipe = CellQualityReportArchiveRecipe.from_report(value)
+    register_artifact_value(
+        "phydrax.meshing:CellQualityReportArchiveRecipe", type(recipe)
+    )
+    return recipe
+
+
+def model_archive_projection(value: Any, /) -> Any:
+    """Return a structural archive view with query caches replaced by owner inputs."""
+    if (
+        type(value).__module__ == "phydrax.geometry.implicit._source_charts"
+        and type(value).__name__ == "ImplicitRootChartEvidence"
+    ):
+        from ..geometry.implicit._source_charts import ImplicitRootChartEvidence
+
+        if type(value) is not ImplicitRootChartEvidence:
+            raise TypeError(
+                "Implicit root-chart evidence must use its canonical record type."
+            )
+        return {
+            name: model_archive_projection(object.__getattribute__(value, name))
+            for name in (
+                "row",
+                "target_cell_global_id",
+                "target_entity_global_id",
+                "target_local_entity_index",
+                "source_cell_key",
+                "root_edge_keys",
+                "status",
+                "field_residual_bound",
+                "target_to_root_lower_bound",
+                "target_to_root_bound",
+                "source_normal_deviation_bounds",
+                "chart_jacobian_lower",
+                "chart_injectivity_margin",
+                "source_gradient_lower",
+                "detail",
+            )
+        }
+
+    state_recipe = _finite_element_accepted_state_archive_recipe(value)
+    if state_recipe is not None:
+        return model_archive_projection(state_recipe)
+    fv_state_recipe = _finite_volume_runtime_state_archive_recipe(value)
+    if fv_state_recipe is not None:
+        return model_archive_projection(fv_state_recipe)
+    bank_recipe = _finite_volume_cell_state_bank_archive_recipe(value)
+    if bank_recipe is not None:
+        return model_archive_projection(bank_recipe)
+    overset_part_recipe = _finite_volume_overset_part_spec_archive_recipe(value)
+    if overset_part_recipe is not None:
+        return model_archive_projection(overset_part_recipe)
+    overset_policy_recipe = _finite_volume_overset_policy_archive_recipe(value)
+    if overset_policy_recipe is not None:
+        return model_archive_projection(overset_policy_recipe)
+    element_recipe = _finite_element_spec_archive_recipe(value)
+    if element_recipe is not None:
+        return model_archive_projection(element_recipe)
+    quality_recipe = _cell_quality_report_archive_recipe(value)
+    if quality_recipe is not None:
+        return model_archive_projection(quality_recipe)
+    conic_endpoint_recipe = _conic_root_line_endpoint_witness_archive_recipe(value)
+    if conic_endpoint_recipe is not None:
+        return model_archive_projection(conic_endpoint_recipe)
+    recipe = _source_query_archive_recipe(value)
+    if recipe is not None:
+        return model_archive_projection(recipe)
+    if (
+        type(value).__module__ == "phydrax.linalg._spaces"
+        and type(value).__name__ == "ArraySpace"
+    ):
+        from ..linalg._spaces import ArraySpace
+
+        if type(value) is not ArraySpace:
+            raise TypeError("Array-space archive projection requires the canonical type.")
+        recipe = value.archive_recipe()
+        return type(recipe)(
+            recipe.shape,
+            recipe.dtype,
+            model_archive_projection(recipe.pairing),
+            recipe.space_id,
+        )
+    if (
+        type(value).__module__ == "phydrax.linalg._operator_pairing"
+        and type(value).__name__ == "OperatorPairing"
+    ):
+        from ..linalg._operator_pairing import OperatorPairing
+
+        if type(value) is not OperatorPairing:
+            raise TypeError(
+                "Operator-pairing archive projection requires the canonical type."
+            )
+        recipe = value.archive_recipe()
+        return type(recipe)(
+            model_archive_projection(recipe.operator),
+            model_archive_projection(recipe.solve_policy),
+            recipe.pairing_id,
+            recipe.operator_id,
+            recipe.solve_policy_fingerprint,
+        )
+    if (
+        type(value).__module__ == "phydrax.sparse._linear"
+        and type(value).__name__ == "SparseCoordinateOperator"
+    ):
+        from ..sparse._linear import SparseCoordinateOperator
+
+        if type(value) is not SparseCoordinateOperator:
+            raise TypeError(
+                "Sparse archive projection requires its canonical operator type."
+            )
+        return SparseCoordinateOperatorArchiveRecipe(
+            model_archive_projection(value.relation),
+            value.coefficients,
+            model_archive_projection(value.source),
+            model_archive_projection(value.target),
+            model_archive_projection(value.properties),
+            value.operator_id,
+            value.accumulation_dtype,
+            value.block_shape,
+        )
+    if isinstance(value, (jax.Array, np.ndarray)) or _is_prng_key(value):
+        return value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        fields = {
+            field.name: model_archive_projection(
+                object.__getattribute__(value, field.name)
+            )
+            for field in dataclasses.fields(value)
+        }
+        if all(
+            fields[field.name] is object.__getattribute__(value, field.name)
+            for field in dataclasses.fields(value)
+        ):
+            return value
+        return _restore_dataclass(type(value), fields)
+    if isinstance(value, tuple) and "_fields" in vars(type(value)):
+        values = tuple(model_archive_projection(item) for item in value)
+        return (
+            value
+            if all(a is b for a, b in zip(values, value, strict=True))
+            else type(value)(*values)
+        )
+    if isinstance(value, tuple):
+        values = tuple(model_archive_projection(item) for item in value)
+        return (
+            value if all(a is b for a, b in zip(values, value, strict=True)) else values
+        )
+    if isinstance(value, list):
+        values = [model_archive_projection(item) for item in value]
+        return (
+            value if all(a is b for a, b in zip(values, value, strict=True)) else values
+        )
+    if isinstance(value, (set, frozenset)):
+        values = tuple(model_archive_projection(item) for item in value)
+        if all(any(projected is original for original in value) for projected in values):
+            return value
+        projected_set = set(values)
+        return frozenset(projected_set) if isinstance(value, frozenset) else projected_set
+    if isinstance(value, Mapping):
+        pairs = tuple(
+            (model_archive_projection(key), model_archive_projection(item))
+            for key, item in value.items()
+        )
+        if all(
+            new_key is key and new_item is item
+            for (new_key, new_item), (key, item) in zip(pairs, value.items(), strict=True)
+        ):
+            return value
+        if isinstance(value, frozendict):
+            return frozendict(pairs)
+        if isinstance(value, MappingProxyType):
+            return MappingProxyType(dict(pairs))
+        return dict(pairs)
+    return value
+
+
 def _recipe_contains_array(recipe: Mapping[str, Any], /) -> bool:
     pending = [recipe]
     while pending:
@@ -88,12 +1349,16 @@ def _recipe_contains_array(recipe: Mapping[str, Any], /) -> bool:
             return True
         if kind == "slice":
             pending.extend((node["start"], node["stop"], node["step"]))
-        elif kind == "dataclass":
+        elif kind in ("dataclass", "strict_value"):
             pending.extend(node["fields"].values())
+        elif kind == "finite_element_spec":
+            pending.append(node["recipe"])
         elif kind in ("tuple", "list", "set", "frozenset", "namedtuple"):
             pending.extend(node["items"])
         elif kind in ("mapping", "frozendict", "mappingproxy"):
             pending.extend(item for pair in node["items"] for item in pair)
+        elif kind == "rational_polynomial":
+            pending.extend((node["numerator"], node["denominator"]))
     return False
 
 
@@ -168,6 +1433,8 @@ def model_structure_recipe(
     path: str = "model",
 ) -> dict[str, Any]:
     """Encode static model structure without embedding Python module paths."""
+    if path == "model":
+        value = model_archive_projection(value)
     if _is_prng_key(value):
         data = np.asarray(jr.key_data(value))
         return {
@@ -190,6 +1457,39 @@ def model_structure_recipe(
             "kind": "enum",
             "type": artifact_value_id(type(value)),
             "name": value.name,
+        }
+    if _is_radical_element(value):
+        radical = _radical_element_type().from_stored_fields(value)
+        return {
+            "kind": "radical",
+            "type": artifact_value_id(type(radical)),
+            "terms": [
+                [radicand, coefficient.numerator, coefficient.denominator]
+                for radicand, coefficient in radical.terms
+            ],
+        }
+    if _is_rational_polynomial(value):
+        polynomial = _rational_polynomial_type()(value.numerator, value.denominator)
+        if (
+            polynomial.numerator != value.numerator
+            or polynomial.denominator != value.denominator
+        ):
+            raise ValueError(f"{path} rational polynomial is not canonical.")
+        return {
+            "kind": "rational_polynomial",
+            "type": artifact_value_id(type(polynomial)),
+            "numerator": model_structure_recipe(
+                polynomial.numerator, path=f"{path}.numerator"
+            ),
+            "denominator": model_structure_recipe(
+                polynomial.denominator, path=f"{path}.denominator"
+            ),
+        }
+    if isinstance(value, Fraction):
+        return {
+            "kind": "fraction",
+            "numerator": value.numerator,
+            "denominator": value.denominator,
         }
     if value is None or isinstance(value, (str, bool, int, float)):
         if isinstance(value, float) and not np.isfinite(value):
@@ -221,6 +1521,17 @@ def model_structure_recipe(
         return {"kind": "ellipsis"}
     if isinstance(value, type):
         return {"kind": "type", "value": artifact_value_id(value)}
+    if type(value) is _FiniteElementSpecArchiveProjection:
+        element_type, recipe_type = _finite_element_archive_types()
+        if type(value.recipe) is not recipe_type:
+            raise TypeError(
+                "FiniteElementSpec projection must retain its exact owner recipe."
+            )
+        return {
+            "kind": "finite_element_spec",
+            "type": artifact_value_id(element_type),
+            "recipe": model_structure_recipe(value.recipe, path=f"{path}.recipe"),
+        }
     if isinstance(value, tuple) and "_fields" in vars(type(value)):
         return {
             "kind": "namedtuple",
@@ -230,6 +1541,9 @@ def model_structure_recipe(
                 for index, item in enumerate(value)
             ],
         }
+    strict_value = _form_value_recipe(value, path=path)
+    if strict_value is not None:
+        return strict_value
     if dataclasses.is_dataclass(value) and not isinstance(value, frozendict):
         return {
             "kind": "dataclass",
@@ -340,7 +1654,7 @@ def _recipe_fields(
 def _recipe_array_spec(
     shape_value: Any,
     dtype_value: Any,
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     path: str,
     /,
 ) -> tuple[tuple[int, ...], np.dtype[Any], int, int]:
@@ -349,34 +1663,55 @@ def _recipe_array_spec(
     ):
         raise ValueError(f"{path} shape must contain exact nonnegative integers.")
     shape = tuple(shape_value)
-    if len(shape) > limits.max_array_rank:
+    if limits is not None and len(shape) > limits.max_array_rank:
         raise ValueError(f"{path} exceeds the recipe array-rank limit.")
     try:
         dtype = np.dtype(dtype_value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{path} dtype is invalid.") from error
-    if (
-        dtype.hasobject
-        or (
-            (dtype.fields is not None or dtype.subdtype is not None)
-            and not limits.allow_structured_dtypes
+    if limits is None:
+        invalid_dtype = (
+            dtype.hasobject
+            or dtype.fields is not None
+            or dtype.subdtype is not None
+            or dtype.metadata is not None
+            or dtype.kind not in {"b", "i", "u", "f", "c"}
         )
-        or dtype.metadata is not None
-        or dtype.kind not in limits.allowed_dtype_kinds
-        or dtype.itemsize > limits.max_dtype_itemsize
-    ):
+    else:
+        invalid_dtype = (
+            dtype.hasobject
+            or (
+                (dtype.fields is not None or dtype.subdtype is not None)
+                and not limits.allow_structured_dtypes
+            )
+            or dtype.metadata is not None
+            or dtype.kind not in limits.allowed_dtype_kinds
+            or dtype.itemsize > limits.max_dtype_itemsize
+        )
+    if invalid_dtype:
         raise ValueError(f"{path} dtype is not admitted by recipe policy.")
+    maximum_addressable = int(np.iinfo(np.intp).max)
     elements = 1
     for extent in shape:
-        if extent > limits.max_axis_length:
+        if extent > maximum_addressable:
+            raise ValueError(f"{path} exceeds addressable array extent.")
+        if limits is not None and extent > limits.max_axis_length:
             raise ValueError(f"{path} exceeds the recipe axis-length limit.")
-        if extent and elements > limits.max_array_elements // extent:
+        if extent and elements > maximum_addressable // extent:
+            raise ValueError(f"{path} exceeds addressable array elements.")
+        if (
+            limits is not None
+            and extent
+            and elements > limits.max_array_elements // extent
+        ):
             raise ValueError(f"{path} exceeds the recipe element limit.")
         elements *= extent
-    if elements > limits.max_array_elements:
+    if limits is not None and elements > limits.max_array_elements:
         raise ValueError(f"{path} exceeds the recipe element limit.")
     byte_count = elements * dtype.itemsize
-    if byte_count > limits.max_member_bytes:
+    if byte_count > maximum_addressable:
+        raise ValueError(f"{path} exceeds addressable array bytes.")
+    if limits is not None and byte_count > limits.max_member_bytes:
         raise ValueError(f"{path} exceeds the recipe array-byte limit.")
     return shape, dtype, elements, byte_count
 
@@ -385,11 +1720,10 @@ def validate_model_structure_recipe(
     recipe: Mapping[str, Any],
     /,
     *,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> None:
     """Validate a complete recipe and every allocation bound without allocating."""
-
-    if not isinstance(limits, ArrayArchiveLimits):
+    if limits is not None and not isinstance(limits, ArrayArchiveLimits):
         raise TypeError("limits must be an ArrayArchiveLimits instance.")
     pending: list[tuple[Any, int, str]] = [(recipe, 1, "recipe")]
     canonical_sets: list[tuple[str, list[Mapping[str, Any]]]] = []
@@ -400,9 +1734,9 @@ def validate_model_structure_recipe(
     while pending:
         node, depth, path = pending.pop()
         node_count += 1
-        if node_count > limits.max_manifest_bytes:
+        if limits is not None and node_count > limits.max_manifest_bytes:
             raise ValueError("Model artifact recipe exceeds its node limit.")
-        if depth > limits.max_manifest_nesting:
+        if limits is not None and depth > limits.max_manifest_nesting:
             raise ValueError("Model artifact recipe exceeds its nesting limit.")
         if not isinstance(node, dict):
             raise TypeError(f"{path} must be a recipe object.")
@@ -434,12 +1768,21 @@ def validate_model_structure_recipe(
             elements = 0
             byte_count = 0
         if elements:
-            if total_elements > limits.max_total_array_elements - elements:
-                raise ValueError("Model artifact recipe exceeds its total element limit.")
-            if total_bytes > limits.max_aggregate_bytes - byte_count:
-                raise ValueError(
-                    "Model artifact recipe exceeds its total array-byte limit."
-                )
+            maximum_addressable = int(np.iinfo(np.intp).max)
+            if limits is None:
+                if total_elements > maximum_addressable - elements:
+                    raise ValueError("Model recipe exceeds addressable total elements.")
+                if total_bytes > maximum_addressable - byte_count:
+                    raise ValueError("Model recipe exceeds addressable total bytes.")
+            else:
+                if total_elements > limits.max_total_array_elements - elements:
+                    raise ValueError(
+                        "Model artifact recipe exceeds its total element limit."
+                    )
+                if total_bytes > limits.max_aggregate_bytes - byte_count:
+                    raise ValueError(
+                        "Model artifact recipe exceeds its total array-byte limit."
+                    )
             total_elements += elements
             total_bytes += byte_count
 
@@ -452,6 +1795,65 @@ def validate_model_structure_recipe(
                 raise TypeError(f"{path} literal has an invalid type.")
             if isinstance(value, float) and not np.isfinite(value):
                 raise ValueError(f"{path} literal must be finite.")
+            continue
+        if kind == "fraction":
+            _recipe_fields(node, {"kind", "numerator", "denominator"}, path)
+            numerator = node["numerator"]
+            denominator = node["denominator"]
+            if (
+                type(numerator) is not int
+                or type(denominator) is not int
+                or denominator <= 0
+                or math.gcd(numerator, denominator) != 1
+            ):
+                raise ValueError(f"{path} fraction must be a reduced exact rational.")
+            continue
+        if kind == "radical":
+            _recipe_fields(node, {"kind", "type", "terms"}, path)
+            radical_type = _radical_element_type()
+            if (
+                node["type"] != _RADICAL_TYPE_ID
+                or artifact_value(node["type"]) is not radical_type
+            ):
+                raise TypeError(
+                    f"{path} radical type is not the registered exact scalar."
+                )
+            terms = node["terms"]
+            if not isinstance(terms, list):
+                raise TypeError(f"{path} radical terms must be a list.")
+            previous_radicand = 0
+            for term in terms:
+                if (
+                    not isinstance(term, list)
+                    or len(term) != 3
+                    or type(term[0]) is not int
+                    or term[0] <= previous_radicand
+                    or type(term[1]) is not int
+                    or type(term[2]) is not int
+                    or term[1] == 0
+                    or term[2] <= 0
+                    or math.gcd(term[1], term[2]) != 1
+                ):
+                    raise ValueError(f"{path} radical terms are not canonical rationals.")
+                previous_radicand = term[0]
+            continue
+        if kind == "rational_polynomial":
+            _recipe_fields(node, {"kind", "type", "numerator", "denominator"}, path)
+            polynomial_type = _rational_polynomial_type()
+            if (
+                node["type"] != _RATIONAL_POLYNOMIAL_TYPE_ID
+                or artifact_value(node["type"]) is not polynomial_type
+            ):
+                raise TypeError(
+                    f"{path} rational polynomial type is not the registered exact scalar."
+                )
+            for name in ("numerator", "denominator"):
+                child = node[name]
+                if not isinstance(child, dict) or child.get("kind") != "mappingproxy":
+                    raise TypeError(
+                        f"{path}.{name} must be an immutable exact polynomial map."
+                    )
+                pending.append((child, depth + 1, f"{path}.{name}"))
             continue
         if kind == "complex":
             _recipe_fields(node, {"kind", "real", "imag"}, path)
@@ -476,7 +1878,7 @@ def validate_model_structure_recipe(
                 decoded = base64.b64decode(node["value"].encode("ascii"), validate=True)
             except (UnicodeEncodeError, ValueError) as error:
                 raise ValueError(f"{path} bytes value is invalid base64.") from error
-            if len(decoded) > limits.max_member_bytes:
+            if limits is not None and len(decoded) > limits.max_member_bytes:
                 raise ValueError(f"{path} bytes value exceeds the static-byte limit.")
             continue
         if kind == "path":
@@ -530,6 +1932,26 @@ def validate_model_structure_recipe(
                 for index, item in enumerate(items)
             )
             continue
+        if kind == "finite_element_spec":
+            _recipe_fields(node, {"kind", "type", "recipe"}, path)
+            element_type, recipe_type = _finite_element_archive_types()
+            type_id = node["type"]
+            if (
+                not isinstance(type_id, str)
+                or type_id != artifact_value_id(element_type)
+                or artifact_value(type_id) is not element_type
+            ):
+                raise TypeError(f"{path} FE projection has an unregistered element type.")
+            recipe = node["recipe"]
+            if (
+                not isinstance(recipe, dict)
+                or recipe.get("kind") != "dataclass"
+                or recipe.get("type") != artifact_value_id(recipe_type)
+                or artifact_value(recipe["type"]) is not recipe_type
+            ):
+                raise TypeError(f"{path} FE projection lost its exact element recipe.")
+            pending.append((recipe, depth + 1, f"{path}.recipe"))
+            continue
         if kind == "dataclass":
             _recipe_fields(node, {"kind", "type", "fields"}, path)
             cls = artifact_value(node["type"]) if isinstance(node["type"], str) else None
@@ -541,6 +1963,31 @@ def validate_model_structure_recipe(
             expected = tuple(field.name for field in dataclasses.fields(cls))
             if set(fields) != set(expected):
                 raise ValueError(f"{path} dataclass fields do not match their type.")
+            pending.extend(
+                (fields[name], depth + 1, f"{path}.fields.{name}") for name in expected
+            )
+            continue
+        if kind == "strict_value":
+            _recipe_fields(node, {"kind", "type", "fields"}, path)
+            type_id = node["type"]
+            if not isinstance(type_id, str):
+                raise TypeError(f"{path} strict value identity must be text.")
+            value_type = artifact_value(type_id)
+            if (
+                not isinstance(value_type, type)
+                or artifact_value_id(value_type) != type_id
+            ):
+                raise TypeError(
+                    f"{path} strict value type is not canonically registered."
+                )
+            expected = _strict_value_field_names(value_type)
+            fields = node["fields"]
+            if expected is None:
+                raise TypeError(f"{path} strict value type is not admitted.")
+            if not isinstance(fields, dict):
+                raise TypeError(f"{path} strict value fields must be an object.")
+            if set(fields) != set(expected):
+                raise ValueError(f"{path} strict value fields do not match their type.")
             pending.extend(
                 (fields[name], depth + 1, f"{path}.fields.{name}") for name in expected
             )
@@ -586,75 +2033,138 @@ def validate_model_structure_recipe(
             raise ValueError(f"{path} mapping keys cannot contain array recipes.")
 
 
-def _restore_dataclass(
-    cls: type[DataclassInstance],
-    fields: Mapping[str, Any],
-    array_factory: Any,
-    /,
-) -> Any:
+def _restore_dataclass(cls: type[DataclassInstance], fields: Mapping[str, Any], /) -> Any:
     instance = object.__new__(cls)
     for field in dataclasses.fields(cls):
-        object.__setattr__(
-            instance,
-            field.name,
-            _restore_recipe(fields[field.name], array_factory),
-        )
+        object.__setattr__(instance, field.name, fields[field.name])
     if issubclass(cls, Strict):
         mark_strict_initialized(instance)
     return instance
 
 
-def _restore_recipe(recipe: Mapping[str, Any], array_factory: Any, /) -> Any:
+def _recipe_children(recipe: Mapping[str, Any], /) -> tuple[Any, ...]:
     kind = recipe["kind"]
-    if kind in ("array", "prng_key"):
-        return array_factory(recipe)
-    if kind == "literal":
-        return recipe["value"]
-    if kind == "complex":
-        return complex(recipe["real"], recipe["imag"])
-    if kind == "dtype":
-        return np.dtype(recipe["value"])
-    if kind == "bytes":
-        return base64.b64decode(recipe["value"].encode("ascii"), validate=True)
-    if kind == "path":
-        return Path(recipe["value"])
     if kind == "slice":
-        return slice(
-            _restore_recipe(recipe["start"], array_factory),
-            _restore_recipe(recipe["stop"], array_factory),
-            _restore_recipe(recipe["step"], array_factory),
-        )
-    if kind == "ellipsis":
-        return Ellipsis
-    if kind == "enum":
-        return artifact_value(recipe["type"])[recipe["name"]]
-    if kind in ("type", "callable"):
-        return artifact_value(recipe["value"])
-    if kind == "namedtuple":
-        cls = artifact_value(recipe["type"])
-        return cls(*(_restore_recipe(item, array_factory) for item in recipe["items"]))
-    if kind == "dataclass":
-        return _restore_dataclass(
-            artifact_value(recipe["type"]), recipe["fields"], array_factory
-        )
-    if kind in ("tuple", "list", "set", "frozenset"):
-        items = [_restore_recipe(item, array_factory) for item in recipe["items"]]
-        if kind == "tuple":
-            return tuple(items)
-        if kind == "list":
-            return items
-        if kind == "set":
-            return set(items)
-        return frozenset(items)
-    value = {
-        _restore_recipe(key, array_factory): _restore_recipe(item, array_factory)
-        for key, item in recipe["items"]
-    }
-    if kind == "frozendict":
-        return frozendict(value)
-    if kind == "mappingproxy":
-        return MappingProxyType(value)
-    return value
+        return recipe["start"], recipe["stop"], recipe["step"]
+    if kind in ("dataclass", "strict_value"):
+        return tuple(recipe["fields"].values())
+    if kind == "finite_element_spec":
+        return (recipe["recipe"],)
+    if kind == "rational_polynomial":
+        return recipe["numerator"], recipe["denominator"]
+    if kind in ("tuple", "list", "set", "frozenset", "namedtuple"):
+        return tuple(recipe["items"])
+    if kind in ("mapping", "frozendict", "mappingproxy"):
+        return tuple(child for pair in recipe["items"] for child in (pair[0], pair[1]))
+    return ()
+
+
+def _restore_recipe(recipe: Mapping[str, Any], array_factory: Any, /) -> Any:
+    """Restore validated recipe trees with an explicit stack, never recursion."""
+    pending: list[tuple[Mapping[str, Any], bool]] = [(recipe, False)]
+    state: dict[int, bool] = {}
+    order: list[Mapping[str, Any]] = []
+    while pending:
+        node, expanded = pending.pop()
+        identity = id(node)
+        if expanded:
+            state[identity] = True
+            order.append(node)
+            continue
+        if identity in state:
+            if not state[identity]:
+                raise ValueError("Model recipe contains a cyclic container graph.")
+            continue
+        state[identity] = False
+        pending.append((node, True))
+        for child in reversed(_recipe_children(node)):
+            child_identity = id(child)
+            if child_identity in state:
+                if not state[child_identity]:
+                    raise ValueError("Model recipe contains a cyclic container graph.")
+                continue
+            pending.append((child, False))
+
+    restored: dict[int, Any] = {}
+    for node in order:
+        kind = node["kind"]
+        identity = id(node)
+        if kind in ("array", "prng_key"):
+            value = array_factory(node)
+        elif kind == "literal":
+            value = node["value"]
+        elif kind == "fraction":
+            value = Fraction(node["numerator"], node["denominator"])
+        elif kind == "complex":
+            value = complex(node["real"], node["imag"])
+        elif kind == "dtype":
+            value = np.dtype(node["value"])
+        elif kind == "bytes":
+            value = base64.b64decode(node["value"].encode("ascii"), validate=True)
+        elif kind == "path":
+            value = Path(node["value"])
+        elif kind == "slice":
+            value = slice(*(restored[id(child)] for child in _recipe_children(node)))
+        elif kind == "ellipsis":
+            value = Ellipsis
+        elif kind == "enum":
+            value = artifact_value(node["type"])[node["name"]]
+        elif kind in ("type", "callable"):
+            value = artifact_value(node["value"])
+        elif kind == "namedtuple":
+            cls = artifact_value(node["type"])
+            value = cls(*(restored[id(child)] for child in node["items"]))
+        elif kind == "radical":
+            cls = artifact_value(node["type"])
+            terms = tuple(
+                (radicand, Fraction(numerator, denominator))
+                for radicand, numerator, denominator in node["terms"]
+            )
+            value = cls(terms=terms)
+            if value.terms != terms:
+                raise ValueError(
+                    "Stored radical terms are not in canonical square-free form."
+                )
+        elif kind == "rational_polynomial":
+            cls = artifact_value(node["type"])
+            value = cls(
+                restored[id(node["numerator"])],
+                restored[id(node["denominator"])],
+            )
+        elif kind == "finite_element_spec":
+            _, recipe_type = _finite_element_archive_types()
+            element_recipe = restored[id(node["recipe"])]
+            if type(element_recipe) is not recipe_type:
+                raise TypeError("FE projection did not restore its exact element recipe.")
+            value = _FiniteElementSpecArchiveProjection(element_recipe)
+        elif kind == "strict_value":
+            value_type = artifact_value(node["type"])
+            fields = {name: restored[id(child)] for name, child in node["fields"].items()}
+            value = _restore_strict_value(value_type, fields)
+        elif kind == "dataclass":
+            fields = {name: restored[id(child)] for name, child in node["fields"].items()}
+            value = _restore_dataclass(artifact_value(node["type"]), fields)
+        elif kind in ("tuple", "list", "set", "frozenset"):
+            items = [restored[id(child)] for child in node["items"]]
+            if kind == "tuple":
+                value = tuple(items)
+            elif kind == "list":
+                value = items
+            elif kind == "set":
+                value = set(items)
+            else:
+                value = frozenset(items)
+        elif kind in ("mapping", "frozendict", "mappingproxy"):
+            items = node["items"]
+            value = {restored[id(key)]: restored[id(item)] for key, item in items}
+            if kind == "frozendict":
+                value = frozendict(value)
+            elif kind == "mappingproxy":
+                value = MappingProxyType(value)
+        else:
+            raise ValueError(f"Unknown model recipe kind {kind!r}.")
+        restored[identity] = value
+    return restored[id(recipe)]
 
 
 def _array_descriptor(recipe: Mapping[str, Any], /) -> _RecipeArrayDescriptor:
@@ -674,7 +2184,7 @@ def _array_descriptor(recipe: Mapping[str, Any], /) -> _RecipeArrayDescriptor:
 
 def _descriptor_tree(
     recipe: Mapping[str, Any],
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     /,
 ) -> Any:
     validate_model_structure_recipe(recipe, limits=limits)
@@ -685,7 +2195,7 @@ def model_recipe_template(
     recipe: Mapping[str, Any],
     /,
     *,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Any:
     """Construct a nonallocating structural template for serialized leaves."""
 
@@ -737,7 +2247,7 @@ def model_recipe_array_inventory(
     /,
     *,
     prefix: str,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> tuple[ModelRecipeArray, ...]:
     """Return the exact dynamic array inventory without allocating arrays."""
 
@@ -770,9 +2280,10 @@ def pack_model_array_tree(
     /,
     *,
     prefix: str,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, np.ndarray]:
     """Extract the exact dynamic arrays declared by a canonical recipe."""
+    value = model_archive_projection(value)
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     descriptor_leaves, descriptor_definition = jax.tree_util.tree_flatten_with_path(
@@ -818,9 +2329,10 @@ def model_from_array_recipe(
     /,
     *,
     prefix: str,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    validate: bool = True,
 ) -> Any:
-    """Restore a model recipe from an exact, preflighted host-array inventory."""
+    """Restore an exact array inventory, optionally deferring owner validation."""
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     path_leaves, definition = jax.tree_util.tree_flatten_with_path(descriptor_tree)
@@ -850,9 +2362,10 @@ def model_from_array_recipe(
         else:
             restored[entry.tree_index] = np.array(payload, copy=True, order="C")
     model = jax.tree_util.tree_unflatten(definition, restored)
-    # Raw reconstruction bypasses constructors: check restored structural
-    # contracts once, on the complete value.
-    validate_tree(model)
+    # Owner recipes may occupy fields whose live values have a different type.
+    # The scientific restore callback must reconstruct and validate those owners.
+    if validate:
+        validate_tree(model)
     return model
 
 
@@ -860,7 +2373,7 @@ def model_from_structure_recipe(
     recipe: Mapping[str, Any],
     /,
     *,
-    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Any:
     """Construct a bounded array-zeroed template from a validated recipe."""
 

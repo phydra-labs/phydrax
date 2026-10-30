@@ -132,6 +132,14 @@ def _assert_runtime_state_exact(actual: Any, expected: Any) -> None:
         actual.content_state.active_cell_mask,
         expected.content_state.active_cell_mask,
     )
+    assert (actual.content_state.owned_cell_mask is None) == (
+        expected.content_state.owned_cell_mask is None
+    )
+    if expected.content_state.owned_cell_mask is not None:
+        np.testing.assert_array_equal(
+            actual.content_state.owned_cell_mask,
+            expected.content_state.owned_cell_mask,
+        )
     np.testing.assert_array_equal(actual.cell_average(), expected.cell_average())
     np.testing.assert_array_equal(actual.time, expected.time)
     np.testing.assert_array_equal(actual.accepted_step, expected.accepted_step)
@@ -344,6 +352,8 @@ def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path: Any) -> No
     assert "content/conservative_content" in manifest["arrays"]
     assert "content/effective_cell_volumes" in manifest["arrays"]
     assert "content/active_cell_mask" in manifest["arrays"]
+    assert "content/owned_cell_mask" in manifest["arrays"]
+    assert manifest["content"]["owned_cell_mask_present"] is False
     assert not path.with_suffix(path.suffix + ".tmp").exists()
 
 

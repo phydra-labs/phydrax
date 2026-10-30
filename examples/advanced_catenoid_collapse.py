@@ -76,7 +76,7 @@ def _collapse(ratio: float, neck: float, epochs: int = 60) -> dict[str, Any]:
     seed = seed_catenoid(1.0, ratio, ring_points=16, rows=10, neck_radius=neck)
     topology = seed.topology(
         seed.capacity_plan(
-            resource_id="catenoid-collapse", headroom=3.0, event_capacity=64
+            resource_id="catenoid-collapse", headroom=3.0
         )
     )
     base = seed.state(topology)

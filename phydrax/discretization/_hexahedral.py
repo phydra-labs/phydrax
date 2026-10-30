@@ -171,14 +171,15 @@ def hexahedral_connectivity(
     vertices = int(vertex_count)
     cells = np.asarray(hexahedra, dtype=np.int32)
     if (
-        vertices <= 0
+        vertices < 0
         or cells.ndim != 2
         or cells.shape[1] != 8
-        or cells.shape[0] == 0
         or np.any(cells < 0)
         or np.any(cells >= vertices)
     ):
-        raise ValueError("hexahedra must have shape (n > 0,8) with valid vertices.")
+        raise ValueError("hexahedra must have shape (n >= 0,8) with valid vertices.")
+    if cells.shape[0] == 0 and vertices != 0:
+        raise ValueError("At least one hexahedral cell is required.")
     ordered_cells = np.sort(cells, axis=1)
     if np.any(ordered_cells[:, 1:] == ordered_cells[:, :-1]):
         raise ValueError("Each hexahedron must reference eight distinct vertices.")

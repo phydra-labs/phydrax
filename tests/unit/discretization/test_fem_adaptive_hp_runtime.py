@@ -478,6 +478,12 @@ def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
         np.asarray(primal_policy.apply(transfer, source_values)),
         np.asarray(target_values),
     )
+    layout = phx.solver.FiniteElementAcceptedFieldLayout.hp_cell_slots(
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.discontinuous_element("quadrilateral", 0)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NESTED_FE,
+    )
     accepted_state = phx.solver.FiniteElementAcceptedState(
         (source_values,),
         0.0,
@@ -485,6 +491,7 @@ def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
         source.topology.topology_id,
         source.epoch_id,
         "compiled-source",
+        field_layouts=(layout,),
     )
     executor = phx.solver.FiniteElementTopologyTransaction(
         lambda epoch, fields, materials, candidate, args: (

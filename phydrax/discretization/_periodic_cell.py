@@ -194,7 +194,6 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
     minimum_singular_value: float = eqx.field(static=True)
     condition_number: float = eqx.field(static=True)
     image_count: int = eqx.field(static=True)
-    maximum_image_count: int = eqx.field(static=True)
     cell_id: str = eqx.field(static=True)
     stencil_id: str = eqx.field(static=True)
 
@@ -207,7 +206,6 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
         axis_reach: tuple[float, ...],
         minimum_singular_value: float,
         condition_number: float,
-        maximum_image_count: int,
         cell_id: str,
     ) -> None:
         bounds = tuple(extents)
@@ -224,10 +222,7 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
             raise ValueError(
                 "fractional_excursion and axis_reach must be lattice-rank aligned."
             )
-        limit = int(maximum_image_count)
         count = prod(2 * int(item) + 1 for item in bounds)
-        if limit <= 0 or count > limit:
-            raise ValueError("Image stencil exceeds maximum_image_count.")
         self.extents = tuple(int(item) for item in bounds)
         self.shifts = jnp.asarray(_complete_image_shifts(self.extents))
         self.radius = float(radius)
@@ -236,7 +231,6 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
         self.minimum_singular_value = float(minimum_singular_value)
         self.condition_number = float(condition_number)
         self.image_count = count
-        self.maximum_image_count = limit
         self.cell_id = str(cell_id)
         self.stencil_id = canonical_fingerprint(
             {
@@ -245,7 +239,6 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
                 "extents": list(self.extents),
                 "radius": self.radius,
                 "fractional_excursion": list(self.fractional_excursion),
-                "maximum_image_count": self.maximum_image_count,
                 "axis_reach": list(self.axis_reach),
             }
         )
@@ -261,9 +254,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
     ``vectors @ reciprocal_vectors.T == 2 pi I``.
 
     For a lower-rank lattice, wrapping and minimum-image evaluation preserve
-    the component orthogonal to the lattice span.  Image enumeration is fixed
-    at preparation, bounded by ``maximum_image_count``, and certified against
-    ``maximum_condition_number``.
+    the component orthogonal to the lattice span. Image enumeration is fixed
+    at preparation from the certified lattice condition and keeps every
+    translation required by the declared radius and fractional excursion.
     """
 
     origin: Array
@@ -289,7 +282,6 @@ class PeriodicCell(StrictModule, NonTrainableState):
         origin: ArrayLike | None = None,
         periodic_axes: tuple[bool, ...] | None = None,
         maximum_condition_number: float | None = None,
-        maximum_image_count: int = 4096,
     ) -> None:
         matrix = np.asarray(vectors)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
@@ -336,15 +328,6 @@ class PeriodicCell(StrictModule, NonTrainableState):
                 "maximum_condition_number must cover the initial lattice condition."
             )
         extent = max(1, ceil(0.5 + certified_condition * sqrt(rank)))
-        limit = int(maximum_image_count)
-        if limit <= 0:
-            raise ValueError("maximum_image_count must be positive.")
-        # Admit the scalar stencil size before enumerating condition-sized shifts.
-        image_count = (2 * extent + 1) ** sum(axes)
-        if image_count > limit:
-            raise ValueError(
-                f"PeriodicCell requires {image_count} image candidates, exceeding maximum_image_count={limit}."
-            )
         choices = [range(-extent, extent + 1) if axis else (0,) for axis in axes]
         shifts = np.asarray(tuple(product(*choices)), dtype=np.int32)
 
@@ -391,10 +374,24 @@ class PeriodicCell(StrictModule, NonTrainableState):
                     }
                 ),
                 "image_extent": extent,
-                "maximum_image_count": limit,
                 "certified_condition_number": certified_condition,
             }
         )
+
+    @classmethod
+    def from_stored_fields(cls, value: PeriodicCell, /) -> PeriodicCell:
+        """Rebuild the lattice from its authored fields and verify its identity."""
+        if not isinstance(value, cls):
+            raise TypeError("value must be PeriodicCell.")
+        renewed = cls(
+            value.vectors,
+            origin=value.origin,
+            periodic_axes=value.periodic_axes,
+            maximum_condition_number=value.certified_condition_number,
+        )
+        if renewed.cell_id != value.cell_id:
+            raise ValueError("Stored periodic cell fields do not reproduce their identity.")
+        return renewed
 
     @property
     def rank(self) -> int:
@@ -520,7 +517,6 @@ class PeriodicCell(StrictModule, NonTrainableState):
         radius: float,
         /,
         *,
-        maximum_image_count: int,
         cell_vectors: ArrayLike | None = None,
         fractional_excursion: float | tuple[float, ...] = 1.0,
     ) -> PeriodicImageStencil:
@@ -532,15 +528,13 @@ class PeriodicCell(StrictModule, NonTrainableState):
         below ``fractional_excursion`` (``1`` for wrapped coordinates).  The
         bound uses the host right inverse, sized with the shared outward
         roundoff headroom (`_padded_reference_reach`; ``axis_reach`` records the
-        raw reach), and refuses conditioning outside the cell certificate or a
-        stencil larger than ``maximum_image_count``.
+        raw reach), and refuses conditioning outside the cell certificate. The
+        result contains the complete derived translation product without a
+        resource-count cutoff.
         """
         value = float(radius)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Image enumeration radius must be finite and positive.")
-        limit = int(maximum_image_count)
-        if limit <= 0:
-            raise ValueError("maximum_image_count must be positive.")
         matrix = np.asarray(
             self.vectors if cell_vectors is None else cell_vectors, dtype=np.float64
         )
@@ -577,14 +571,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
             int(np.floor(excursion[axis] + value * sizing[axis])) if periodic else 0
             for axis, periodic in enumerate(self.periodic_axes)
         )
-        count = 1
-        for extent in extents:
-            count *= 2 * extent + 1
-        if count > limit:
-            raise ValueError(
-                f"Image enumeration requires {count} translations, exceeding "
-                f"maximum_image_count={limit}."
-            )
+
         return PeriodicImageStencil(
             extents=extents,
             radius=value,
@@ -592,7 +579,6 @@ class PeriodicCell(StrictModule, NonTrainableState):
             axis_reach=tuple(float(item) for item in reach),
             minimum_singular_value=float(singular_values[-1]),
             condition_number=condition,
-            maximum_image_count=limit,
             cell_id=self.cell_id,
         )
 

@@ -1,0 +1,222 @@
+{
+  "kind": "native-meshing-scientific-case-migration",
+  "schema_version": 1,
+  "provenance": {
+    "source_branch": "feature/native-meshing-20260929",
+    "source_commit": "c56614a9fe52c4a8f56484874e91fde6498ec9ff",
+    "campaign_registration": "tests/data/meshing/campaigns.json",
+    "campaign_registration_id": "39bd2b58efe13be6c3ee031752b88e45561841c8d542ef82570409b9d4681c82",
+    "source_corpus": "tests/data/meshing/corpus.json",
+    "source_corpus_registration_id": "21885704b0d7671e397d34f8fb40d4c40fae1e52d5a0b9b5be13a670b0c83c87",
+    "source_case_registry": "tools/_meshing_cases.py::CORPUS and family/profile registries",
+    "source_scenario_owners": "tools/meshing_qualification/scenarios/*.py",
+    "expected_admission": "positive",
+    "refusal_counts_as_positive_completion": false
+  },
+  "inventory": {
+    "family_count": 13,
+    "profile_count": 114,
+    "mapped_profile_count": 114,
+    "unmapped_profile_count": 0,
+    "coverage_meaning": "All original positive profile identities are explicitly mapped below. A mapped target scenario is not a pass claim: each workflow remains a failing gate until every listed profile's physical input, feature combination, independent oracle, and tolerance is exercised."
+  },
+  "workflow_contracts": [
+    {
+      "workflow": "planar-features",
+      "profiles": [
+        "native-surface-pde:annulus",
+        "native-surface-pde:annulus:larger",
+        "native-surface-pde:capped_cylinder",
+        "native-surface-pde:capped_cylinder:larger",
+        "native-surface-pde:capped_cylinder_features",
+        "native-surface-pde:capped_cylinder_features:larger",
+        "native-surface-pde:cylinder_sheet",
+        "native-surface-pde:cylinder_sheet:larger",
+        "native-surface-pde:folded_plates",
+        "native-surface-pde:folded_plates:larger",
+        "native-surface-pde:torus",
+        "native-surface-pde:torus:larger",
+        "planar-hole-feature",
+        "planar-hole-feature:larger",
+        "planar-thin-channel",
+        "sphere-feature-surface",
+        "sphere-feature-surface:larger"
+      ],
+      "target_scenario": "native-planar-feature-matrix",
+      "source": "Analytic planar junction/hole/embedded-feature/thin-channel PLCs; closed sphere and torus, open trimmed cylinder sheet, capped cylinder and folded plates; donor planar/surface fixtures and `tools/_meshing_cases.py`.",
+      "source_provenance": "PHYDRA-authored deterministic analytic geometry; source and revision IDs are profile-bound; coordinates use declared physical units.",
+      "required_feature_combinations": ["junctions", "holes", "embedded features", "thin channels", "closed curved surfaces", "open trimmed sheets", "complete source association", "native surface PDE consumer"],
+      "independent_oracle": "Exact source-domain area/volume and topology, complete source entity coverage, independent source-to-mesh deviation, and manufactured FE solution/error; output family and region labels must match each request.",
+      "tolerances": {"analytic_measure_relative": 1e-10, "native_brep_profile_maximum_deviation_m": 0.02, "pde_normalized_residual": 2e-8, "profile_size_and_fidelity": "exact `scenario_controls` from the cited donor profile request; never replace with a looser scenario default"},
+      "target_gate_status": "failing-until-all-17-profiles-and-their-oracles-run",
+      "uncovered_contracts": ["all trimmed/open and folded profiles at both resolutions", "complete profile-specific size/fidelity acceptance", "native physical solve on each authored geometry"]
+    },
+    {
+      "workflow": "constrained-solid",
+      "profiles": ["plc-disconnected", "plc-fixed-boundary", "plc-material-cavity", "plc-material-cavity:larger", "plc-nonconvex", "plc-sliver-rich", "plc-small-angle", "plc-thin-channel", "plc-triple-junction"],
+      "target_scenarios": ["native-constrained-solids"],
+      "source": "Independent tetrahedral PLCs with disconnected components, nonconvex/cavity regions, material interfaces, triple junction, thin channel, small-angle wedge, sliver-rich shape, and fixed/conforming boundary variants; donor `native_lifecycle.py` and `_meshing_cases.py` source construction.",
+      "source_provenance": "PHYDRA-authored deterministic PLCs with stable source vertex/facet/segment IDs, named regions and revision-bound boundary semantics.",
+      "required_feature_combinations": ["all nine original source profiles", "material/cavity labels", "fixed and conforming boundaries", "actual FE or FV physical solve"],
+      "independent_oracle": "Independent analytic region measures and boundary/facet coverage, exact region labels, FE manufactured harmonic solution, and native audit/certification.",
+      "tolerances": {"region_measure_relative": 1e-10, "boundary_coverage": "all declared source facets, no omitted or duplicated boundary/interface", "fe_normalized_residual": 2e-9, "fe_affine_solution_maximum_error": 2e-9},
+      "target_gate_status": "failing-until-all-nine-source-profiles-run",
+      "uncovered_contracts": ["disconnected", "nonconvex cavity", "sliver-rich", "small-angle", "thin-channel", "triple-junction", "fixed/conforming boundary pair"]
+    },
+    {
+      "workflow": "implicit-domain",
+      "profiles": ["native-implicit-lifecycle", "native-implicit-lifecycle:offset-ring-torus-anisotropic", "native-implicit-lifecycle:sphere-refinement"],
+      "target_scenarios": ["native-implicit-adaptation"],
+      "source": "Exact analytic sphere, offset ring torus with anisotropic size request, and an adaptive sphere-refinement sequence; donor implicit-domain fixture and `native_implicit_lifecycle` source owner.",
+      "source_provenance": "Analytic compiled geometry with explicit coordinate contract, stable profile source/revision and adaptive discovery policy; no optional geometry engine.",
+      "required_feature_combinations": ["sphere", "offset torus", "hidden/disconnected component discovery", "source-faithful adaptive changes", "physical volume convergence"],
+      "independent_oracle": "Exact sphere and ring-torus volume, independently counted surface components/genus, certified source boundary, and target volume convergence after refinement.",
+      "tolerances": {"implicit_source_fidelity_m": 0.02, "root_tolerance_m": 1e-10, "relative_volume_error": 0.15, "source_fidelity_after_adaptation": "must retain and renew the original source certificate"},
+      "target_gate_status": "failing-until-every-profile-and-anisotropic-adaptation-oracle-pass",
+      "uncovered_contracts": ["anisotropic torus metric profile", "profile-specific adaptive convergence sequence"]
+    },
+    {
+      "workflow": "labeled-image",
+      "profiles": ["native-image-lifecycle", "native-image-lifecycle:oblique-junction-transport"],
+      "target_scenarios": ["native-image-material"],
+      "source": "Two-slab and oblique/sheared/reflected multi-material label fields, with declared image-to-world map and retained junction interfaces.",
+      "source_provenance": "Deterministic authored integer label arrays; record the exact interpretation, world affine, label IDs and ambient material.",
+      "required_feature_combinations": ["two slabs", "oblique junction", "shear/reflection", "interface extraction", "finite-volume transport inventory and flux balance"],
+      "independent_oracle": "Exact transformed interface geometry and region measures, exact label/material inventory, and independently assembled transport content/flux balance.",
+      "tolerances": {"region_measure_relative": 1e-10, "transport_balance_relative": 1e-9, "interface_location": "exact affine transform of authored voxel faces"},
+      "target_gate_status": "failing-until-both-label-profiles-and-transport-oracles-run",
+      "uncovered_contracts": ["oblique/sheared/reflected profile transport and independent flux balance"]
+    },
+    {
+      "workflow": "imperfect-surface",
+      "profiles": ["native-envelope-lifecycle", "native-reconstruction-lifecycle:lobed-sphere", "native-reconstruction-lifecycle:lobed-sphere:larger", "native-reconstruction-lifecycle:rotated-ellipsoid", "native-reconstruction-lifecycle:rotated-ellipsoid:larger", "native-reconstruction-lifecycle:torus", "native-reconstruction-lifecycle:torus:larger"],
+      "target_scenario": "native-reconstruction",
+      "profile_target_overrides": {"native-envelope-lifecycle": "native-envelope"},
+      "source": "Unoriented noisy point clouds of a genus-zero three-lobed sphere, genus-one torus (R=0.32 m, r=0.17 m), and 40-degree rotated triaxial ellipsoid (0.32, 0.24, 0.18 m), plus the original imperfect open-sheet envelope input.",
+      "source_provenance": "Deterministic seeds 1709/1711/1713 in donor `scenarios/reconstruction.py`; synthetic original-source geometry is used only for the independent deviation oracle, never as inferred reconstruction authority.",
+      "required_feature_combinations": ["missing normals", "Gaussian noise standard deviation 0.0008 m", "twofold sample-density drop where x < -0.5 max|x|", "isolated outliers at radial offsets 0.35/0.55 m", "unsampled cap radius 0.2 m in direction (0.6,0,0.8)", "explicit Poisson closure semantics", "open-sheet envelope repair"],
+      "independent_oracle": "One connected, watertight, consistently wound output; expected Euler characteristic 2 for genus zero and 0 for the torus; independently recomputed outlier rule; retained-sample coverage and two-sided sampled surface deviation; original-source deviation; separate observed versus model-implied repair area.",
+      "tolerances": {"poisson_relative_residual": 1e-8, "maximum_repair_excursion_fraction_of_sample_diagonal": 0.4, "maximum_discarded_supported_sample_fraction": 0.05, "minimum_regular_to_sparse_density_ratio": 1.2, "coverage_distance": "2 x authored sample spacing", "thin_feature_distance": "2 x finest authored Poisson width"},
+      "target_gate_status": "failing-until-open-sheet-envelope-contract-and-all-six-reconstruction-profiles-pass",
+      "uncovered_contracts": ["native envelope construction directly from the imperfect open triangle sheet with topology-repair interpretation and independent input-to-envelope deviation"]
+    },
+    {
+      "workflow": "native-cad",
+      "profiles": ["native-cad-lifecycle:brep", "native-cad-lifecycle:brep:external-combined", "native-cad-lifecycle:brep:external-routine", "native-cad-lifecycle:brep:quadric-larger", "native-cad-lifecycle:brep:quadric-routine", "native-cad-lifecycle:iges", "native-cad-lifecycle:iges:external-combined", "native-cad-lifecycle:iges:external-routine", "native-cad-lifecycle:iges:quadric-larger", "native-cad-lifecycle:iges:quadric-routine", "native-cad-lifecycle:step", "native-cad-lifecycle:step:external-combined", "native-cad-lifecycle:step:external-routine", "native-cad-lifecycle:step:quadric-larger", "native-cad-lifecycle:step:quadric-routine"],
+      "target_scenario": "native-cad-profile-matrix",
+      "source": "Native construction/query/partition/serialize/read/mesh/curve/solve through BRep, STEP and IGES; trimmed rational/nonrational intersections, seams, poles, occurrences and units; native source families only.",
+      "source_provenance": "PHYDRA-authored native BRep and CAD text exchange recipes with exact source/revision/units; `external-*` names are donor profile labels, not permission to require or substitute an optional geometry engine in the native corpus.",
+      "required_feature_combinations": ["BRep, STEP and IGES roundtrip profiles", "analytic quadric routine/larger sources", "native partition/association", "mesh and actual solve", "no optional engine substitution"],
+      "independent_oracle": "Reconstructed source and topology identities, exact BRep region measures, CAD association/occurrence and unit oracles, source-fidelity certificate, and FE solve residual.",
+      "tolerances": {"volume_relative": 1e-10, "native_brep_maximum_deviation_m": 0.02, "source_revision_and_unit_identity": "exact", "fe_normalized_residual": 2e-8},
+      "target_gate_status": "failing-until-all-15-cad-format-and-quadric-profiles-run",
+      "uncovered_contracts": ["15-profile interchange matrix", "trimmed rational/nonrational intersection branches", "seams/poles/occurrences/units on generated meshes", "native CAD-derived high-order continuation"]
+    },
+    {
+      "workflow": "periodic-system",
+      "profiles": ["native-periodic-lifecycle:skew-lattice-exact-algebraic", "native-periodic-lifecycle:skew-lattice-exact-algebraic:larger", "native-periodic-lifecycle:skew-material-feature-exact-algebraic", "native-periodic-lifecycle:skew-material-feature-exact-algebraic:larger"],
+      "target_scenario": "native-periodic-profile-matrix",
+      "source": "Skew lattice periodic point orbits, shared representatives, material interfaces and multiple winding entities; exact algebraic source geometry.",
+      "source_provenance": "Deterministic rational fractional sites and authored stable orbit IDs in the donor periodic source registry.",
+      "required_feature_combinations": ["skew lattice", "material interface", "multiple winding entities", "shared quotient representatives", "orbit-synchronized refine/coarsen/metric changes", "compatible field transfer"],
+      "independent_oracle": "Exact quotient topology and lattice measure, orbit/winding identity, permutation-invariant output, and commuting/conservative field-transfer evidence.",
+      "tolerances": {"quotient_measure_absolute": 1e-10, "winding_and_orbit_identity": "exact", "field_transfer_residual": 1e-10},
+      "target_gate_status": "failing-until-material-interface-and-periodic-adaptation-profiles-run",
+      "uncovered_contracts": ["material-interface profile", "orbit-synchronized adaptation/transfer across both source sizes"]
+    },
+    {
+      "workflow": "hybrid-layers",
+      "profiles": ["native-hybrid-lifecycle:archived-layer-core", "native-hybrid-lifecycle:cad-entire-solid-slab", "native-hybrid-lifecycle:cad-slab-and-core", "native-hybrid-lifecycle:channel_gap005_policies", "native-hybrid-lifecycle:concave-box-core-lifecycle", "native-hybrid-lifecycle:concave-box-core-lifecycle:larger", "native-hybrid-lifecycle:concave_box_count3", "native-hybrid-lifecycle:curved-periodic-layer-core", "native-hybrid-lifecycle:curved-periodic-layer-core:larger", "native-hybrid-lifecycle:exact-sweep-nonperiodic-accepted", "native-hybrid-lifecycle:exact-sweep-periodic-accepted", "native-hybrid-lifecycle:open_box_floor_count4", "native-hybrid-lifecycle:opposing_sloped_plates4", "native-hybrid-lifecycle:outward_box_count3", "native-hybrid-lifecycle:periodic-convex-ridge", "native-hybrid-lifecycle:periodic-partial-quadrilateral", "native-hybrid-lifecycle:periodic-partial-triangle", "native-hybrid-lifecycle:periodic-rotation-quadrilateral", "native-hybrid-lifecycle:periodic-rotation-triangle", "native-hybrid-lifecycle:periodic-translation-quadrilateral", "native-hybrid-lifecycle:periodic-translation-triangle", "native-hybrid-lifecycle:plate5", "native-hybrid-lifecycle:quadrilateral_plate3", "native-hybrid-lifecycle:sphere_radius04_subdivision2", "native-hybrid-lifecycle:unit-box"],
+      "target_scenario": "native-hybrid-layer-matrix",
+      "source": "Convex/concave/curved/periodic walls, opposing plates/channel gap, CAD slabs and core, archived layer-core source, triangle/quadrilateral wall forms, fixed cap/core and exact sweep witnesses.",
+      "source_provenance": "Stable wall, curve, material and periodic source IDs; per-profile physical schedule and collision policy from donor controls.",
+      "required_feature_combinations": ["all 25 wall and core profiles", "physical first-layer height", "growth schedule", "collision policy", "fixed cap/core", "periodic boundary correspondence", "high-order mixed adaptation", "conservative/compatible state"],
+      "independent_oracle": "Measured first-layer thickness/growth, no invalid/colliding cells, independent layer volume closure, cap/core source coverage, periodic compatibility and transferred physical state.",
+      "tolerances": {"relative_layer_thickness": 1e-9, "growth_rate_error": 1e-9, "volume_closure_relative": 1e-10, "geometry_certificate": "all active cells certified valid"},
+      "target_gate_status": "failing-until-all-25-layer-profiles-and-periodic-high-order-consumers-run",
+      "uncovered_contracts": ["curved-periodic sources", "CAD whole/slab/core profiles", "exact sweep and periodic cap variants", "mixed high-order adaptation and physical-state transfer"]
+    },
+    {
+      "workflow": "general-quads-hexes",
+      "profiles": ["native-family-lifecycle:curved-cavity-hex", "native-family-lifecycle:curved-cavity-hex:larger", "native-family-lifecycle:curved-frame-sweep-hex", "native-family-lifecycle:curved-material-hex", "native-family-lifecycle:curved-material-hex:larger", "native-family-lifecycle:curved-nonsweepable-hex", "native-family-lifecycle:curved-quarter-extrusion-quad", "native-family-lifecycle:dual-hex", "native-family-lifecycle:dual-quad", "native-family-lifecycle:hex-dominant", "native-family-lifecycle:multiblock-cycle-quad", "native-family-lifecycle:multiblock-material-hex", "native-family-lifecycle:multiblock-quad", "native-family-lifecycle:multiblock-reversed-hex", "native-family-lifecycle:nonsweepable-dual-hex", "native-family-lifecycle:sweep-hex", "native-family-lifecycle:sweep-prism", "native-family-lifecycle:transfinite-quad"],
+      "target_scenarios": ["native-general-families"],
+      "source": "Structured/swept/multiblock sources and true dual conversion, field-aligned planar quads, curved/material/cavity and nonsweepable all-hex sources; donor family fixtures.",
+      "source_provenance": "Exact source block/patch/interface identity and physical lengths; profile names retain route distinctions rather than substituting one affine cube.",
+      "required_feature_combinations": ["all 18 source profiles", "structured/swept/multiblock and dual-conversion branches", "field-aligned quads", "nonsweepable/cavity/curved/material all-hex", "strict required family policy"],
+      "independent_oracle": "Analytic domain and per-material measures, source facet/edge ancestry, cell-family inventory, no unrequested transition family, mapped-cell validity and source fidelity.",
+      "tolerances": {"region_measure_relative": 1e-10, "source_fidelity": "profile-specific declared maximum deviation", "cell_quality": "profile-specific hard minimum from authored schedule", "family_policy": "exact required output family or declared transitions only"},
+      "target_gate_status": "failing-until-all-18-generation-routes-and-oracles-run",
+      "uncovered_contracts": ["structured and swept multiblocks", "curved cavity/material all-hex", "nonsweepable dual all-hex", "full profile-specific field and material combinations"]
+    },
+    {
+      "workflow": "polyhedral-system",
+      "profiles": ["polyhedral-material-L", "polyhedral-material-L:larger", "polyhedral-periodic-cube", "polyhedral-periodic-cube:larger", "polyhedral-stretched-L", "polyhedral-stretched-L:larger"],
+      "target_scenarios": ["native-polyhedral"],
+      "source": "Nonconvex material-L, periodic cube and stretched L sources with stable power sites; native restricted-power regeneration/adaptation.",
+      "source_provenance": "Deterministic authored PLC region/interface/facet labels and stable represented power-site IDs from donor polyhedral registry.",
+      "required_feature_combinations": ["nonconvex", "material interface", "stretched geometry", "periodic quotient", "site regeneration", "real FV/VEM consumption", "non-nested conservative remap"],
+      "independent_oracle": "Independent exact region volumes and surface coverage; FV/VEM affine solution or content integral; periodic site/orbit identity; conservative remap content and transpose oracle.",
+      "tolerances": {"region_measure_relative": 1e-10, "fv_affine_error": 2e-8, "fv_normalized_residual": 2e-8, "remap_content_absolute": 1e-12},
+      "target_gate_status": "failing-until-material-L-stretched-periodic-and-remap-profiles-run",
+      "uncovered_contracts": ["material-L and stretched-L source families", "periodic site/orbit changes", "VEM consumption", "conservative nonnested remap"]
+    },
+    {
+      "workflow": "distributed-lifecycle",
+      "profiles": ["native-distributed-lifecycle", "native-distributed-lifecycle:larger"],
+      "target_scenarios": ["native-distributed-lifecycle"],
+      "source": "Owner-local native periodic generation and adaptation on two real JAX processes; source profile is the authored unit-square native source with routine/larger resolution variants.",
+      "source_provenance": "Stable global source/site IDs, explicit owner ranks and sharded owner-directory witness; per-rank result is a compact local view, not a hidden global gather.",
+      "required_feature_combinations": ["owner-local generation", "refine/coarsen", "graph repartition with changed placement", "all required fields/history/RNG/clock", "fresh-process changed-placement restart", "continued physical solve"],
+      "independent_oracle": "Exact periodic quotient measure and topology, all-rank ownership counts and unique owner directory, field/history preservation, accepted continuation step and conservation ledger.",
+      "tolerances": {"quotient_measure_absolute": 1e-10, "ownership": "every required entity has exactly one owner", "continued_solve_balance": 1e-8},
+      "target_gate_status": "failing-until-owner-local-physical-state-migration-and-cold-continuation-run",
+      "uncovered_contracts": ["distributed mesh adaptation lineage and explicit state migration", "fresh changed-placement restart of fields/material/history/RNG/clock and continued solve"]
+    },
+    {
+      "workflow": "moving-overset",
+      "profiles": ["native-overset-lifecycle", "native-overset-lifecycle:combined", "native-overset-lifecycle:larger"],
+      "target_scenarios": ["native-moving-overset"],
+      "source": "Moving square-annulus body and background domain, routine/combined/larger placement profiles, source-bound wall and artificial-boundary scopes.",
+      "source_provenance": "Native-generated triangulations with stable entity IDs; motion is a physical rigid displacement applied through accepted mesh-motion evidence.",
+      "required_feature_combinations": ["hole cutting", "fringe/donor search", "moving refresh", "interpolative field action", "conservative overlap transport", "orphan failure", "complete rollback", "accepted moving PDE update"],
+      "independent_oracle": "Independent hole/fringe/donor coverage and orphan count, exact affine interpolation, conservative overlap content balance, PDE manufactured error/flux balance, and unchanged composition after rejection.",
+      "tolerances": {"interpolation_absolute": 1e-10, "orphan_count_on_accepted_epoch": 0, "conservative_content_absolute": 1e-10, "pde_normalized_residual": 1e-9, "flux_balance_relative": 1e-8},
+      "target_gate_status": "failing-until-composite-moving-overset-pde-update-and-all-three-profiles-run",
+      "uncovered_contracts": ["accepted composite overset PDE update with physical error/QoI reanalysis", "moving conservative-overlap transport coupled to the accepted epoch"]
+    },
+    {
+      "workflow": "design-learned-loop",
+      "profiles": ["native-design-lifecycle", "native-design-lifecycle:combined-design-target", "native-design-lifecycle:larger-sphere"],
+      "target_scenarios": ["native-design-loop"],
+      "source": "Native analytic sphere and combined design target at routine/larger profiles, using analytic, uniform and learned proposal paths.",
+      "source_provenance": "Versioned source geometry and a frozen physical FE reanalysis problem; model proposal records retain training/source inputs and decision scope.",
+      "required_feature_combinations": ["independent derivative oracle", "geometry-error versus field-error decision", "analytic/uniform/learned proposals", "fresh reanalysis", "event-boundary invalidation"],
+      "independent_oracle": "Analytic derivative/QoI reference, separately measured geometry and FE field errors, accepted fresh solve after mesh changes, and stale proposal refusal at topology/source events.",
+      "tolerances": {"derivative_relative_error": 1e-6, "fe_normalized_residual": 2e-8, "continuous_qoi_absolute_error": 1e-8, "stale_event_acceptance": "must refuse", "proposal_size_bounds": "exact authored safety-policy interval"},
+      "target_gate_status": "failing-until-fixed-epoch-design-target-and-all-three-sphere-profiles-pass",
+      "uncovered_contracts": ["fixed-epoch FE-adjoint design target root and source republication/requalification", "source-fidelity-preserving embedded-surface adaptation/transfer across all three proposal routes"]
+    }
+  ],
+  "additional_mandatory_workflows": [
+    {
+      "workflow": "high-order-curving-and-continuation",
+      "target_scenario": "native-high-order-curving",
+      "source": "Native exact sphere BRep, P1 tetrahedral carrier, native P2 projection/curving, native refinement and FE analysis.",
+      "source_provenance": "Exact BRep source/revision and native projection; no Gmsh/OCP or optional engine.",
+      "independent_oracle": "Exact sphere volume, independent Bernstein geometry certificate, source-node residual, FE harmonic solution and continued solve after adaptation.",
+      "tolerances": {"source_node_residual": "HighOrderCurvingPolicy.residual_tolerance", "validity": "all active cells certified valid", "relative_volume_error": "curved error < 0.25 x straight-sided error", "fe_solution_error": 2e-9},
+      "coverage_status": "one native curved sphere witness; broader high-order family/adaptation matrix remains required"
+    },
+    {
+      "workflow": "cold-fe-fv-continuation",
+      "target_scenario": "native-cold-fe-fv-continuation",
+      "source": "Producer-generated exact BRep unit box and tetrahedral FE mesh; deterministic triangular FV Euler geometry; and the authored skew-lattice periodic point-orbit source used by the three-owner FE restart, post-restore orbit-synchronized adaptation, and changed-placement repartition.",
+      "source_provenance": "Exact BRep and model-artifact recipes; the periodic source retains stable orbit IDs and lattice windings, while base/adaptation SurfaceMeshingSpecs and source/target GraphPartitionPlans are typed archive roots replayed without profile-template reconstruction. Writer owners 0/1 and an empty owner 2 are restored in a fresh process onto target owner 2 with owners 0/1 empty.",
+      "independent_oracle": "Fresh FE harmonic solve and next solve; exact restored P1/P0 field ownership; nonconstant P1 transfer of sin(2π(ξ0+2ξ1)) against an independent Hessian bound and winding-sensitive lifted-image check; conservative P0 cell averages of the same periodic field integrated over lifted triangles, with owner-reduced source/target content evidence; exact orbit/winding identity; FV runtime/epoch/state/cell-ID identity, accepted next step, positivity and conservation ledger.",
+      "tolerances": {"fe_solution_error": 2e-9, "fe_normalized_residual": 2e-9, "fe_transfer_absolute": 1e-12, "fe_conservative_integral_absolute": "rounding bound from owner-reduced source absolute content", "periodic_p1_interpolation": "independent Hessian interpolation bound from valid stencil weights and lifted source/target distances", "periodic_orbit_and_winding_identity": "exact", "fv_state_identity": "exact", "fv_next_step": "one accepted step with positive admissibility and finite ledger"},
+      "coverage_status": "Failing gate until the owner-local periodic P1/P0 source-to-adapted topology transaction, restored banks/material/RNG/clock, and FV owner-local changed-placement continuation are exercised and the next physical solves pass."
+    }
+  ],
+  "administrative_fields_removed": ["work/query/scratch/data/memory credits or caps", "timeouts and execution deadlines", "resource receipts", "capacity trials", "optional-provider substitution", "external completion labels", "generation aliases"],
+  "profile_control_authority": "Retain each original profile's non-administrative `scenario_controls` by source identity at `campaigns.json#/profile_requests/<profile-id>`; remove only the administrative fields listed above. Do not regenerate looser controls or use this migration record as a resource manifest."
+}

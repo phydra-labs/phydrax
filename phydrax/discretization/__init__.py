@@ -237,7 +237,6 @@ _DEFERRED_EXPORTS = {
     "polyhedral_cell_complex": "._cell_complex",
     "polyhedral_connectivity": "._cell_complex",
     "PolyhedralConnectivity": "._cell_complex",
-    "PolyhedralWorksetLimitError": "._cell_complex",
     "PolyhedralWorksets": "._cell_complex",
     "prepare_polyhedral_worksets": "._cell_complex",
     "simplicial_cell_complex": "._cell_complex",
@@ -255,6 +254,7 @@ _DEFERRED_EXPORTS = {
     "certify_cell_geometry_validity": "._cell_geometry_validity",
     "CellBlock": "._cell_mesh",
     "CellMesh": "._cell_mesh",
+    "EmptyLocalCellMeshAuthority": "._cell_mesh",
     "PolyhedralBlock": "._cell_mesh",
     "SimplicialConnectivity": "._cell_mesh",
     "CochainDiscretization": "._cochain",
@@ -278,6 +278,7 @@ _DEFERRED_EXPORTS = {
     "PreparationReport": "._core",
     "DistributedHaloPlan": "._distributed_field",
     "DistributedLocalOperator": "._distributed_field",
+    "DistributedSparseTransfer": "._distributed_field",
     "BallAverageKernel": "._embedded_transfer",
     "CircleAverageKernel": "._embedded_transfer",
     "EmbeddedKernelKind": "._embedded_transfer",
@@ -409,9 +410,19 @@ _DEFERRED_EXPORTS = {
     "SideRouteMode": "._side_actions",
     "SideTraceProvider": "._side_actions",
     "SideTraceQuantity": "._side_actions",
-    "AbstractCellLocator": "._simplicial_locator",
-    "CellLocationResult": "._simplicial_locator",
-    "CellLocationStatus": "._simplicial_locator",
+    "AbstractCellLocator": "._cell_locator",
+    "CellLocationResult": "._cell_locator",
+    "CellLocationStatus": "._cell_locator",
+    "LocatedCellMap": "._cell_locator",
+    "MappedLocationPolicy": "._mapped_locator",
+    "PreparedMappedCellMap": "._mapped_locator",
+    "PreparedMappedCellLocator": "._mapped_locator",
+    "PreparedPolyhedralCellMap": "._polyhedral_locator",
+    "PreparedPolyhedralCellLocator": "._polyhedral_locator",
+    "MappedFieldSupport": "._view_support",
+    "MappedMeshSupportQueryResult": "._view_support",
+    "mapped_mesh_support_query": "._view_support",
+    "prepare_mapped_field_support": "._view_support",
     "PreparedSimplicialCellLocator": "._simplicial_locator",
     "SegmentLocationResult": "._simplicial_locator",
     "SimplicialLocationPolicy": "._simplicial_locator",
@@ -770,6 +781,7 @@ _DEFERRED_EXPORTS = {
     "ExplicitPolygonH1RuntimeData": ".explicit_polygon_h1",
     "prepare_explicit_polygon_h1_field_reconstruction": ".explicit_polygon_h1",
     "prepare_explicit_polygon_h1_reconstruction": ".explicit_polygon_h1",
+    "canonical_nodal_entity_identity": ".fem",
     "affine_dof_constraint": ".fem",
     "assemble_masked_finite_element": ".fem",
     "AttachmentActionReactionCertificate": ".fem",
@@ -789,6 +801,10 @@ _DEFERRED_EXPORTS = {
     "FiniteElementBoundarySet": ".fem",
     "FiniteElementCellMapEvaluation": ".fem",
     "FiniteElementDeRhamComplex": ".fem",
+    "DistributedFiniteElementTransfer": ".fem",
+    "FiniteElementTransferResult": ".fem",
+    "SparseCommutingEvidence": ".fem",
+    "SparseTransferEntryEvidence": ".fem",
     "FiniteElementDirichletConstraint": ".fem",
     "FiniteElementDiscretization": ".fem",
     "FiniteElementDistributedPhasePlan": ".fem",
@@ -825,6 +841,7 @@ _DEFERRED_EXPORTS = {
     "HDGCondensationPlan": ".fem",
     "HDGTraceSpace": ".fem",
     "lagrange_element": ".fem",
+    "lagrange_reference_node_data": ".fem",
     "local_dual_weighted_residual": ".fem",
     "lower_distributed_finite_element_phases": ".fem",
     "MaskedFiniteElementPlan": ".fem",
@@ -1227,6 +1244,8 @@ _DEFERRED_EXPORTS = {
     "NoSlipAdiabaticWallBoundary": ".finite_volume",
     "NoSlipIsothermalWallBoundary": ".finite_volume",
     "NumericalFluxResult": ".finite_volume",
+    "OwnerLocalConservativeRemapEvidence": ".finite_volume",
+    "OwnerLocalConservativeRemapResult": ".finite_volume",
     "PeriodicSlidingCoupling": ".finite_volume",
     "PeriodicSlidingInterfacePlan": ".finite_volume",
     "PeriodicSlidingRefreshArtifact": ".finite_volume",
@@ -1237,6 +1256,8 @@ _DEFERRED_EXPORTS = {
     "PLICReconstruction": ".finite_volume",
     "PositivityBlendResult": ".finite_volume",
     "prepare_finite_volume_field_reconstruction": ".finite_volume",
+    "prepare_owner_local_conservative_remap": ".finite_volume",
+    "prepare_owner_local_finite_volume_field_reconstruction": ".finite_volume",
     "prepare_polyhedral_finite_volume_geometry": ".finite_volume",
     "prepare_unstructured_conservative_remap": ".finite_volume",
     "PreparedBalancedShallowWaterLowering": ".finite_volume",
@@ -1267,6 +1288,7 @@ _DEFERRED_EXPORTS = {
     "PreparedMappedMACGeometry": ".finite_volume",
     "PreparedMappedMACMarkerTransfer": ".finite_volume",
     "PreparedNonlinearFaceTrace": ".finite_volume",
+    "PreparedOwnerLocalConservativeRemap": ".finite_volume",
     "PreparedPolyhedralFiniteVolumeGeometry": ".finite_volume",
     "PreparedShallowWaterBathymetry": ".finite_volume",
     "PreparedTriangleFiniteVolumeDynamics": ".finite_volume",
@@ -2521,6 +2543,7 @@ _DEFERRED_EXPORTS = {
     "VirtualElementSpec": ".vem",
     "VirtualElementStabilizationEvidence": ".vem",
     "VirtualElementStabilizationPolicy": ".vem",
+    "prepare_surface_chart_deformation": "._surface_chart_deformation",
 }
 
 
@@ -2621,7 +2644,6 @@ if TYPE_CHECKING:
         polyhedral_cell_complex,
         polyhedral_connectivity,
         PolyhedralConnectivity,
-        PolyhedralWorksetLimitError,
         PolyhedralWorksets,
         prepare_polyhedral_worksets,
         simplicial_cell_complex,
@@ -2642,7 +2664,19 @@ if TYPE_CHECKING:
         CellValidityStatus,
         certify_cell_geometry_validity,
     )
-    from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
+    from ._cell_locator import (
+        AbstractCellLocator,
+        CellLocationResult,
+        CellLocationStatus,
+        LocatedCellMap,
+    )
+    from ._cell_mesh import (
+        CellBlock,
+        CellMesh,
+        EmptyLocalCellMeshAuthority,
+        PolyhedralBlock,
+        SimplicialConnectivity,
+    )
     from ._cochain import CochainDiscretization
     from ._cochain_distribution import CochainHaloExchange, CochainPartition
     from ._cochain_electrochemical import (
@@ -2666,7 +2700,11 @@ if TYPE_CHECKING:
         DiscretizationRole,
         PreparationReport,
     )
-    from ._distributed_field import DistributedHaloPlan, DistributedLocalOperator
+    from ._distributed_field import (
+        DistributedHaloPlan,
+        DistributedLocalOperator,
+        DistributedSparseTransfer,
+    )
     from ._embedded_transfer import (
         BallAverageKernel,
         CircleAverageKernel,
@@ -2700,6 +2738,11 @@ if TYPE_CHECKING:
         LoweredKernel,
         LoweredNumPyBackend,
         LoweredOperatorProgram,
+    )
+    from ._mapped_locator import (
+        MappedLocationPolicy,
+        PreparedMappedCellLocator,
+        PreparedMappedCellMap,
     )
     from ._marker_epoch import (
         MarkerEpochPlan,
@@ -2788,6 +2831,10 @@ if TYPE_CHECKING:
         PolygonTriangulation,
         prepare_polygon_triangulation,
     )
+    from ._polyhedral_locator import (
+        PreparedPolyhedralCellLocator,
+        PreparedPolyhedralCellMap,
+    )
     from ._reciprocal import (
         prepare_reciprocal_connectivity,
         PreparedReciprocalConnectivity,
@@ -2825,9 +2872,6 @@ if TYPE_CHECKING:
         SideTraceQuantity,
     )
     from ._simplicial_locator import (
-        AbstractCellLocator,
-        CellLocationResult,
-        CellLocationStatus,
         PreparedSimplicialCellLocator,
         SegmentLocationResult,
         SimplicialLocationPolicy,
@@ -2868,6 +2912,9 @@ if TYPE_CHECKING:
         StructuredDifferentialOperator,
     )
     from ._support import DiscreteSupport
+    from ._surface_chart_deformation import (
+        prepare_surface_chart_deformation as prepare_surface_chart_deformation,
+    )
     from ._temporal import RealizedTemporalMesh, TemporalMesh, TemporalMeshRole
     from ._tensor import (
         AbstractStrongFormDiscretization,
@@ -2897,6 +2944,12 @@ if TYPE_CHECKING:
     )
     from ._trace_stability import certify_trace_inverse, TraceInverseEvidence
     from ._transfer import FieldTransfer, TransferProperties
+    from ._view_support import (
+        mapped_mesh_support_query,
+        MappedFieldSupport,
+        MappedMeshSupportQueryResult,
+        prepare_mapped_field_support,
+    )
     from ._views import (
         AbstractFieldReconstructionKernel,
         DiscreteFieldEvaluator,
@@ -3240,6 +3293,7 @@ if TYPE_CHECKING:
         dirichlet_constraint,
         discontinuous_element,
         DistributedFiniteElementConstraint,
+        DistributedFiniteElementTransfer,
         dorfler_mark,
         dual_weighted_residual_estimate,
         EmbeddedQuadrature,
@@ -3279,6 +3333,7 @@ if TYPE_CHECKING:
         FiniteElementRuntimeData,
         FiniteElementSpec,
         FiniteElementTopologyTransfer,
+        FiniteElementTransferResult,
         form_element,
         FormBasis,
         FormElementFamily,
@@ -3329,6 +3384,8 @@ if TYPE_CHECKING:
         RigidDeformableKKTLinearization,
         RigidDeformableKKTPayload,
         SimplicialWhitneyKernel,
+        SparseCommutingEvidence,
+        SparseTransferEntryEvidence,
         write_finite_element_field,
     )
     from .finite_difference import (
@@ -3692,6 +3749,8 @@ if TYPE_CHECKING:
         NoSlipAdiabaticWallBoundary,
         NoSlipIsothermalWallBoundary,
         NumericalFluxResult,
+        OwnerLocalConservativeRemapEvidence,
+        OwnerLocalConservativeRemapResult,
         PeriodicSlidingCoupling,
         PeriodicSlidingInterfacePlan,
         PeriodicSlidingRefreshArtifact,
@@ -3702,6 +3761,8 @@ if TYPE_CHECKING:
         PLICReconstruction,
         PositivityBlendResult,
         prepare_finite_volume_field_reconstruction,
+        prepare_owner_local_conservative_remap,
+        prepare_owner_local_finite_volume_field_reconstruction,
         prepare_polyhedral_finite_volume_geometry,
         prepare_unstructured_conservative_remap,
         PreparedBalancedShallowWaterLowering,
@@ -3732,6 +3793,7 @@ if TYPE_CHECKING:
         PreparedMappedMACGeometry,
         PreparedMappedMACMarkerTransfer,
         PreparedNonlinearFaceTrace,
+        PreparedOwnerLocalConservativeRemap,
         PreparedPolyhedralFiniteVolumeGeometry,
         PreparedShallowWaterBathymetry,
         PreparedTriangleFiniteVolumeDynamics,
@@ -5253,6 +5315,7 @@ __all__ = [
     "virtual_element_dirichlet_constraint",
     "CellBlock",
     "CellMesh",
+    "EmptyLocalCellMeshAuthority",
     "AdaptiveSimplexCounter",
     "AdaptiveSimplexLayout",
     "AdaptiveSimplexParts",
@@ -5415,7 +5478,6 @@ __all__ = [
     "PolygonalConnectivity",
     "PolyhedralConnectivity",
     "PolyhedralBlock",
-    "PolyhedralWorksetLimitError",
     "PolyhedralWorksets",
     "prepare_polyhedral_worksets",
     "TetrahedralConnectivity",
@@ -5639,6 +5701,10 @@ __all__ = [
     "SurfaceTensionPolicy",
     "PreparedUnstructuredConservativeRemap",
     "prepare_unstructured_conservative_remap",
+    "OwnerLocalConservativeRemapEvidence",
+    "OwnerLocalConservativeRemapResult",
+    "PreparedOwnerLocalConservativeRemap",
+    "prepare_owner_local_conservative_remap",
     "reconstruct_wall_interface_normal",
     "FixedConnectivityMotionPlan",
     "UnstructuredConservativeRemapPlan",
@@ -6023,6 +6089,7 @@ __all__ = [
     "partition_cells_cost_aware",
     "read_finite_element_mesh",
     "DistributedFiniteElementConstraint",
+    "canonical_nodal_entity_identity",
     "discontinuous_element",
     "dirichlet_constraint",
     "periodic_constraint",
@@ -6071,6 +6138,10 @@ __all__ = [
     "FormElementFamily",
     "form_element",
     "FiniteElementDeRhamComplex",
+    "DistributedFiniteElementTransfer",
+    "FiniteElementTransferResult",
+    "SparseCommutingEvidence",
+    "SparseTransferEntryEvidence",
     "FormFieldReconstructionKernel",
     "SimplicialWhitneyKernel",
     "SplineDeRhamComplex",
@@ -6082,6 +6153,7 @@ __all__ = [
     "write_finite_element_field",
     "MultiscaleFiniteElementBasis",
     "lagrange_element",
+    "lagrange_reference_node_data",
     "MeasureNormalization",
     "ModalDofLayout",
     "ModalTransform",
@@ -7049,6 +7121,16 @@ __all__ = [
     "CellLocationResult",
     "AbstractCellLocator",
     "CellLocationStatus",
+    "LocatedCellMap",
+    "MappedFieldSupport",
+    "MappedMeshSupportQueryResult",
+    "MappedLocationPolicy",
+    "PreparedMappedCellLocator",
+    "PreparedMappedCellMap",
+    "PreparedPolyhedralCellLocator",
+    "PreparedPolyhedralCellMap",
+    "mapped_mesh_support_query",
+    "prepare_mapped_field_support",
     "PreparedSimplicialCellLocator",
     "SegmentLocationResult",
     "ParticleAllocationRequest",
@@ -7402,6 +7484,7 @@ __all__ = [
     "make_pair_relation_events",
     "DistributedHaloPlan",
     "DistributedLocalOperator",
+    "DistributedSparseTransfer",
     "BoundarySurfaceTrace",
     "BoundaryEntityKind",
     "BoundaryTraceConformity",
@@ -7456,6 +7539,7 @@ __all__ = [
     "MultilinearGridInterpolation",
     "prepare_finite_difference_field_reconstruction",
     "prepare_finite_volume_field_reconstruction",
+    "prepare_owner_local_finite_volume_field_reconstruction",
     "StructuredFiniteVolumeFieldReconstructionKernel",
     "PreparedNonlinearFaceTrace",
     "UnstructuredFiniteVolumeFieldReconstructionKernel",
@@ -7487,6 +7571,7 @@ __all__ = [
     "prepare_contact_stencil_batch",
     "empty_contact_stencil_batch",
     "pack_contact_stencil_batch",
+    "prepare_surface_chart_deformation",
 ]
 
 __all__ += [

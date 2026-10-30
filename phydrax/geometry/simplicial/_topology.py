@@ -19,6 +19,7 @@ from ...discretization._topology import (
     OrientedIncidence,
 )
 from ...sparse import EdgeRelation
+from ...typing import ConvertibleToArray
 
 
 def _csr(
@@ -101,7 +102,7 @@ class SegmentTopology(StrictModule):
     vertex_edges: Array
     num_vertices: int = eqx.field(static=True)
 
-    def __init__(self, edges: Array, *, num_vertices: int | None = None) -> None:
+    def __init__(self, edges: ConvertibleToArray, *, num_vertices: int | None = None) -> None:
         edges_host = np.asarray(edges, dtype=np.int32)
         if edges_host.ndim != 2 or edges_host.shape[1] != 2 or edges_host.shape[0] == 0:
             raise ValueError("edges must have shape (num_edges > 0, 2).")

@@ -48,7 +48,6 @@ def _ifc(
 def test_lattice_dynamics_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     values = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     ifc = _ifc(
@@ -72,7 +71,6 @@ def test_lattice_dynamics_scenario_1() -> None:
     np.testing.assert_allclose(result.angular_frequencies[1], np.sqrt(2.0), atol=1.0e-12)
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(2.0 * np.eye(3))
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 1, 1], [0, 1, 0, 1], source_size=2, target_size=2)
     identity = np.eye(3)
     values = np.asarray([identity, -identity, -identity, identity])

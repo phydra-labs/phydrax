@@ -91,7 +91,7 @@ requirement = model.requirements.neighborhood(
 )
 role = phx.atomistic.AtomisticDomainRolePlan(
     requirement,
-    cell.image_stencil(requirement.bounded_cutoff() + skin, maximum_image_count=4096),
+    cell.image_stencil(requirement.bounded_cutoff() + skin),
     streaming=phx.sparse.StreamedRelationPlan(
         receiver_tile=4, edge_tile=32,
         channel_capacity=model.configuration.message_payload_width(),

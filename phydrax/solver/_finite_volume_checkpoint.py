@@ -44,6 +44,7 @@ _RUNTIME_ARRAY_NAMES = (
     "content/conservative_content",
     "content/effective_cell_volumes",
     "content/active_cell_mask",
+    "content/owned_cell_mask",
     "content/time",
     "content/geometry_version",
     "content/evidence_version",
@@ -80,6 +81,7 @@ _CONTENT_RECORD_FIELDS = frozenset(
         "geometry_family_id",
         "geometry_layout_id",
         "evidence_policy_id",
+        "owned_cell_mask_present",
     )
 )
 
@@ -128,6 +130,7 @@ def _content_layout_id(
             "content_shape": list(content_state.conservative_content.shape),
             "effective_volume_shape": list(content_state.effective_cell_volumes.shape),
             "active_mask_shape": list(content_state.active_cell_mask.shape),
+            "owned_mask_shape": [content_state.cell_count],
         }
     )
 
@@ -147,6 +150,7 @@ def _content_record(
         "geometry_family_id": content_state.geometry_family_id,
         "geometry_layout_id": content_state.geometry_layout_id,
         "evidence_policy_id": content_state.evidence_policy_id,
+        "owned_cell_mask_present": content_state.owned_cell_mask is not None,
     }
 
 
@@ -431,6 +435,12 @@ def _runtime_arrays(
             content.effective_cell_volumes, dtype=checkpoint_dtype
         ),
         "content/active_cell_mask": np.asarray(content.active_cell_mask, dtype=np.bool_),
+        "content/owned_cell_mask": np.asarray(
+            np.ones((content.cell_count,), dtype=np.bool_)
+            if content.owned_cell_mask is None
+            else content.owned_cell_mask,
+            dtype=np.bool_,
+        ),
         "content/time": np.asarray(content.time, dtype=checkpoint_dtype),
         "content/geometry_version": np.asarray(content.geometry_version, dtype=np.int32),
         "content/evidence_version": np.asarray(content.evidence_version, dtype=np.int32),
@@ -488,6 +498,7 @@ def _validate_runtime_arrays(
         "content/conservative_content": (content_shape, checkpoint_dtype),
         "content/effective_cell_volumes": ((cell_count,), checkpoint_dtype),
         "content/active_cell_mask": ((cell_count,), np.dtype(np.bool_)),
+        "content/owned_cell_mask": ((cell_count,), np.dtype(np.bool_)),
         "content/time": ((), checkpoint_dtype),
         "content/geometry_version": ((), np.dtype(np.int32)),
         "content/evidence_version": ((), np.dtype(np.int32)),
@@ -1064,6 +1075,12 @@ def write_finite_volume_checkpoint(
     if plan.case is None:
         raise RuntimeError("Ordinary checkpoint plan lost its finite-volume case.")
     content = runtime_state.content_state
+    if plan.runtime is not None:
+        plan.runtime._validate_state(runtime_state)
+    elif content.owned_cell_mask is not None:
+        raise ValueError(
+            "Owner-local checkpoint state requires its prepared runtime and current owner view."
+        )
     if content.precision.policy_id != plan.case.precision.policy_id:
         raise ValueError("Checkpoint content precision policy changed.")
     if (
@@ -1170,6 +1187,8 @@ def _read_checkpoint(
         or set(content_record) != _CONTENT_RECORD_FIELDS
     ):
         raise ValueError("Finite-volume checkpoint content record fields changed.")
+    if not isinstance(content_record["owned_cell_mask_present"], bool):
+        raise ValueError("Finite-volume checkpoint ownership-mask presence changed.")
     for name in (
         "content_policy_id",
         "content_layout_id",
@@ -1209,6 +1228,11 @@ def _read_checkpoint(
         evidence_policy_id=content_record["evidence_policy_id"],
         evidence_version=arrays["content/evidence_version"],
         precision=case.precision,
+        owned_cell_mask=(
+            arrays["content/owned_cell_mask"]
+            if content_record["owned_cell_mask_present"]
+            else None
+        ),
     )
     if _content_record(content) != content_record:
         raise ValueError("Finite-volume checkpoint content identity changed.")
@@ -1230,6 +1254,12 @@ def _read_checkpoint(
         sliding_shift=sliding_shift,
         sliding_event_id=sliding_event_id,
     )
+    if plan.runtime is not None:
+        plan.runtime._validate_state(runtime)
+    elif content.owned_cell_mask is not None:
+        raise ValueError(
+            "Owner-local checkpoint state requires its prepared runtime and current owner view."
+        )
     if _sliding_record(plan, runtime) != manifest["sliding"]:
         raise ValueError("Finite-volume checkpoint sliding identity changed.")
     return FiniteVolumeCheckpoint(

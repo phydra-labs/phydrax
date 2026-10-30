@@ -28,9 +28,21 @@
 
 ::: phydrax.geometry.CompartmentComplex
 
-::: phydrax.meshing.CompartmentMeshingSpec
+::: phydrax.geometry.CompartmentInterfaceDefinition
 
-::: phydrax.meshing.FTetWildCompartmentProvider
+::: phydrax.geometry.CompartmentMeshingSource
+
+::: phydrax.meshing.CellMeshingResult
+
+::: phydrax.meshing.NativeMeshingProvider
+
+::: phydrax.meshing.VolumeMeshingSpec
+
+::: phydrax.meshing.RegionSeed
+
+::: phydrax.meshing.MeshZone
+
+::: phydrax.meshing.RegionRole
 
 ## H(div) finite elements
 

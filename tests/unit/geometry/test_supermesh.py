@@ -131,7 +131,6 @@ def test_supermesh_scenario_1() -> None:
         refinement.source_cell_global_ids, mesh.blocks[0].global_ids
     )
     # Neighbors sharing a face only touch: exact classification drops them.
-    assert refinement.evidence.candidate_pair_count > refinement.entry_count
     assert refinement.source_mesh_id == refinement.target_mesh_id == mesh.mesh_id
     points, quads = _grid(5)
     # Moving vertex (0.4, 0.4) inward turns its lower-left quadrilateral into a
@@ -209,7 +208,6 @@ def test_supermesh_scenario_2() -> None:
     prism_points = np.concatenate((prism_points, ((1, 1, 1),)))
     prisms = CellMesh(
         prism_points,
-        # ty: ignore[invalid-argument-type]
         (CellBlock("prisms", "prism", ((0, 1, 2, 3, 4, 5), (1, 6, 2, 4, 7, 5))),),
     )
     policy = CommonRefinementPolicy(second_moments=True)
@@ -226,7 +224,6 @@ def test_supermesh_scenario_2() -> None:
     )
     pyramid = CellMesh(
         pyramid_points,
-        # ty: ignore[invalid-argument-type]
         (CellBlock("pyramids", "pyramid", ((0, 1, 2, 3, 4),)),),
     )
     refinement = prepare_common_refinement(
@@ -282,7 +279,6 @@ def test_supermesh_scenario_2() -> None:
 def test_supermesh_scenario_3() -> None:
     # Nearly collinear corner: the filter cannot resolve it, exact predicates can.
     sliver = np.asarray(((0.5, 0.5), (12.0, 12.0), (24.0, 24.0 + 2.0**-48)))
-    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_triangles(sliver, ((0, 1, 2),))
     filtered = prepare_common_refinement(
         mesh, mesh, policy=CommonRefinementPolicy(predicate_mode=PredicateMode.FILTERED)
@@ -290,13 +286,11 @@ def test_supermesh_scenario_3() -> None:
     exact = prepare_common_refinement(mesh, mesh)
     tiny = CellMesh.from_triangles(
         1.0e-40 * np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
-        # ty: ignore[invalid-argument-type]
         ((0, 1, 2),),
     )
     outside = prepare_common_refinement(tiny, tiny)
     bowtie = CellMesh(
         np.asarray(((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0))),
-        # ty: ignore[invalid-argument-type]
         (CellBlock("bowtie", "quadrilateral", ((0, 1, 2, 3),)),),
     )
     invalid = prepare_common_refinement(bowtie, _quad_mesh(1))
@@ -309,20 +303,6 @@ def test_supermesh_scenario_3() -> None:
     assert outside.status is CommonRefinementStatus.PREDICATE_UNCERTAIN
     assert invalid.status is CommonRefinementStatus.INVALID_GEOMETRY
     assert invalid.evidence.invalid_cell_count == 1
-    source = _quad_mesh(6)
-    target = _perturbed_triangles(5, 1)
-    baseline = prepare_common_refinement(source, target)
-    for policy in (
-        CommonRefinementPolicy(maximum_candidate_pairs=10),
-        CommonRefinementPolicy(maximum_accepted_pairs=10),
-        CommonRefinementPolicy(maximum_memory_bytes=4096),
-    ):
-        refused = prepare_common_refinement(source, target, policy=policy)
-        assert refused.status is CommonRefinementStatus.RESOURCE_LIMIT
-        assert refused.entry_count == 0
-        np.testing.assert_array_equal(refused.target_offsets, 0)
-    assert baseline.succeeded
-    assert baseline.evidence.retained_bytes > 0
     source = _quad_mesh(3)
     target = _perturbed_triangles(4, 2)
     first = prepare_common_refinement(source, target)

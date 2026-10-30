@@ -8,6 +8,8 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from phydrax.discretization import CellMesh
+from phydrax.discretization.fem import FiniteElementDeRhamComplex
 from phydrax.discretization.fem._fast_diagonalization import (
     TensorFastDiagonalizationBuilder,
 )
@@ -30,7 +32,9 @@ from phydrax.discretization.fem._patch_preconditioning import (
     FiniteElementPatchPreconditionerBuilder,
 )
 from phydrax.linalg import (
+    adjoint,
     ArraySpace,
+    coordinate_operator,
     DenseLinearOperator,
     DiagonalLinearOperator,
     factorize,
@@ -246,22 +250,21 @@ def test_fem_solver_hierarchy_scenario_2() -> None:
 
     assert plan.partition_residual == 0.0
     assert jnp.allclose(preconditioner.apply(value), value)
-    high = ArraySpace((3,))
-    low = ArraySpace((3,))
-    high_to_low = DenseLinearOperator(
-        jnp.eye(3),
-        source=high,
-        target=low,
+    mesh = CellMesh.from_triangles(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
     )
-    low_to_high = DenseLinearOperator(
-        jnp.eye(3),
-        source=low,
-        target=high,
-    )
+    complex_ = FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
+    transfer_result = complex_.transfer(complex_)
+    high_to_low = coordinate_operator(transfer_result.complex_map.maps[0])
+    low_to_high = adjoint(high_to_low)
+    high = high_to_low.source
+    low = high_to_low.target
     plan = LowOrderAuxiliaryOperatorPlan(
+        transfer_result,
         high_to_low,
         low_to_high,
-        jnp.ones((3,)),
+        jnp.ones((high.size,)),
     )
     builder = low_order_auxiliary_preconditioner_builder(
         plan,
@@ -271,6 +274,6 @@ def test_fem_solver_hierarchy_scenario_2() -> None:
         IdentityLinearOperator(high),
         materialization=MaterializationPolicy(),
     )
-    value = jnp.asarray([1.0, -2.0, 3.0])
+    value = jnp.arange(1.0, high.size + 1.0)
 
     assert jnp.allclose(preconditioner.apply(value), value)

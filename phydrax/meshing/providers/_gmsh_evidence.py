@@ -39,7 +39,7 @@ from .._organization import (
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import MeshingStageKind
 from ._gmsh_elements import _curve_corner_rows, _ElementRows, _local_connectivity
-from ._gmsh_import import _CadEntityMap
+from ._gmsh_import import _CadEntityMap, _scope_indices, _source_entity_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,28 +64,27 @@ def _boundary_association(
             for block in boundary.blocks
         ]
     )
+    tessellation = source.require_tessellation()
     query_mesh = TriangleMesh(
-        source.mesh_vertices,
-        source.mesh_faces,
+        tessellation.vertices,
+        tessellation.triangles,
         source_id=f"{source.report.source_id}:association-query",
     )
     query = query_mesh.query_index().query(jnp.asarray(centroids))
     triangle_ids = np.asarray(query.face_index, dtype=np.int32)
-    source_faces = np.asarray(source.triangle_face_ids, dtype=np.int32)[triangle_ids]
+    source_faces = np.asarray(tessellation.face_ids, dtype=np.int32)[triangle_ids]
     residuals = np.asarray(query.distance, dtype=np.float64)
     tolerance = max(
-        source.report.linear_deflection * float(tolerance_factor),
+        tessellation.linear_deflection * float(tolerance_factor),
         256.0 * np.finfo(np.float64).eps,
     )
     resolved = residuals <= tolerance
     target_set = boundary.entity_set(2)
-    source_ids = tuple(
-        f"{source.report.source_revision}:face:{int(index)}" for index in source_faces
-    )
+    source_ids = _source_entity_ids(source, 2, source_faces)
     association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
-        source.report.source_revision,
+        source.source_revision,
         target_set.entity_set_id,
         target_set.entity_ids,
         source_ids,
@@ -300,12 +299,10 @@ def _planar_surface_evidence(
     face_association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
-        source.report.source_revision,
+        source.source_revision,
         cell_entity_set.entity_set_id,
         cell_ids,
-        tuple(
-            f"{source.report.source_revision}:face:{int(face)}" for face in cell_face_ids
-        ),
+        _source_entity_ids(source, 2, cell_face_ids),
         np.zeros(cell_ids.shape, dtype=np.float64),
         exact=True,
         source_dimensions=np.full(cell_ids.shape, 2, dtype=np.int8),
@@ -316,13 +313,10 @@ def _planar_surface_evidence(
     edge_association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
-        source.report.source_revision,
+        source.source_revision,
         edge_entity_set.entity_set_id,
         edge_ids[mapped],
-        tuple(
-            f"{source.report.source_revision}:edge:{int(mesh_edge_source[index])}"
-            for index in mapped
-        ),
+        _source_entity_ids(source, 1, mesh_edge_source[mapped]),
         np.zeros(mapped.shape, dtype=np.float64),
         exact=True,
         source_dimensions=np.full(mapped.shape, 1, dtype=np.int8),
@@ -333,7 +327,13 @@ def _planar_surface_evidence(
     face_regions[:] = None
     zones = []
     for control in specification.region_controls:
-        source_faces = np.asarray(control.scope.entity_ids, dtype=np.int32)
+        source_faces = _scope_indices(source, control.scope, 2)
+        if source_faces is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Region face scope does not belong to the imported BRep owner and revision.",
+                stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+            )
         face_regions[source_faces] = control.region_name
         selected = np.isin(cell_face_ids, source_faces)
         if not np.any(selected):
@@ -370,7 +370,13 @@ def _planar_surface_evidence(
     patches = []
     claimed: set[int] = set()
     for control in specification.patch_controls:
-        source_edges = np.asarray(control.scope.entity_ids, dtype=np.int32)
+        source_edges = _scope_indices(source, control.scope, 1)
+        if source_edges is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Patch edge scope does not belong to the imported BRep owner and revision.",
+                stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+            )
         selected = np.flatnonzero(np.isin(mesh_edge_source, source_edges))
         if {int(value) for value in mesh_edge_source[selected]} != {
             int(value) for value in source_edges
@@ -676,7 +682,7 @@ def _semantic_surface_evidence(
     ordered_sources = np.asarray(boundary_sources, dtype=np.int32)[boundary_order]
     boundary_metadata = SurfaceMetadata(
         source_id=source.report.source_id,
-        source_revision=source.report.source_revision,
+        source_revision=source.source_revision,
         coordinate_contract=source.coordinate_contract,
         provenance=("gmsh-occ", plan_id),
         cell_tags=tuple(f"brep-face:{int(value)}" for value in ordered_sources),
@@ -694,13 +700,10 @@ def _semantic_surface_evidence(
     association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
-        source.report.source_revision,
+        source.source_revision,
         face_entity_set.entity_set_id,
         face_ids[mapped],
-        tuple(
-            f"{source.report.source_revision}:face:{int(face_source[index])}"
-            for index in mapped
-        ),
+        _source_entity_ids(source, 2, face_source[mapped]),
         np.zeros((mapped.size,), dtype=np.float64),
         exact=True,
         source_dimensions=np.full((mapped.size,), 2, dtype=np.int8),
@@ -781,7 +784,13 @@ def _region_evidence(
     solid_regions[:] = None
     zones = []
     for control in specification.region_controls:
-        solid_ids = np.asarray(control.scope.entity_ids, dtype=np.int64)
+        solid_ids = _scope_indices(source, control.scope, 3)
+        if solid_ids is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Region solid scope does not belong to the imported BRep owner and revision.",
+                stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+            )
         solid_regions[solid_ids] = control.region_name
         selected = np.isin(cell_solid_ids, solid_ids)
         if not np.any(selected):
@@ -836,15 +845,15 @@ def _region_evidence(
     claimed: set[int] = set()
     patches = []
     for control in specification.patch_controls:
-        selected = np.flatnonzero(
-            np.isin(
-                face_source,
-                np.asarray(control.scope.entity_ids, dtype=np.int32),
+        source_faces = _scope_indices(source, control.scope, 2)
+        if source_faces is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Patch face scope does not belong to the imported BRep owner and revision.",
+                stage=MeshingStageKind.CONTROL_RESOLUTION.value,
             )
-        )
-        requested_source_faces = {
-            int(value) for value in np.asarray(control.scope.entity_ids)
-        }
+        selected = np.flatnonzero(np.isin(face_source, source_faces))
+        requested_source_faces = {int(value) for value in source_faces}
         mapped_source_faces = {int(value) for value in face_source[selected]}
         if selected.size and mapped_source_faces != requested_source_faces:
             raise MeshingFailure(

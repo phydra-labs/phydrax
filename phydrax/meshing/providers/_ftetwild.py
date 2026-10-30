@@ -36,7 +36,7 @@ from .._contracts import (
     VolumeMeshingSpec,
 )
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
-from .._scope import MeshingEntityKind, MeshingScope
+from .._scope import MeshingScope
 from .._sizing import SizeControlStrength, UniformSizeControl
 from .._trace import (
     MeshingStageKind,
@@ -44,12 +44,7 @@ from .._trace import (
     MeshingStageStatus,
     MeshingTrace,
 )
-from ._conversion import (
-    _check_arrays,
-    _check_result_limits,
-    _fresh_ids,
-    _identity_report,
-)
+from ._conversion import _check_arrays, _fresh_ids, _identity_report
 
 
 _FTETWILD_LOCK = threading.Lock()
@@ -185,20 +180,6 @@ class FTetWildProvider:
         )
 
     @staticmethod
-    def whole_scope(source: SurfaceModel, /) -> MeshingScope:
-        if not isinstance(source, SurfaceModel):
-            raise TypeError("source must be SurfaceModel.")
-        faces = source.mesh.entity_set(2)
-        return MeshingScope(
-            source.metadata.source_id,
-            source.metadata.source_revision,
-            MeshingEntityKind.MESH,
-            2,
-            faces.entity_set_id,
-            faces.entity_ids,
-        )
-
-    @staticmethod
     def inspect_source(source: SurfaceModel, /) -> MeshingSourceDescriptor:
         if not isinstance(source, SurfaceModel):
             raise TypeError("source must be SurfaceModel.")
@@ -219,7 +200,7 @@ class FTetWildProvider:
     ) -> ProviderSupportReport:
         descriptor = self.inspect_source(source)
         unsupported = []
-        scope = self.whole_scope(source)
+        scope = MeshingScope.whole(source, 2)
         if specification.boundary_scope.scope_id != scope.scope_id:
             unsupported.append("fTetWild requires the entire exact source surface scope")
         target = specification.target
@@ -275,7 +256,6 @@ class FTetWildProvider:
             weakened_guarantees=(
                 "sampled boundary envelope audit only",
                 "source entity lineage unavailable",
-                "native workspace and wall time are not bounded",
             ),
         )
 
@@ -328,8 +308,7 @@ class FTetWildProvider:
         faces = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in source.blocks]
         )
-        limits = plan.specification.limits
-        _check_arrays(points, faces, limits)
+        _check_arrays(points, faces)
         diagonal = float(np.linalg.norm(np.ptp(points, axis=0)))
         if diagonal <= 0 or not np.isfinite(diagonal):
             raise MeshingFailure(
@@ -367,7 +346,7 @@ class FTetWildProvider:
                 ) from error
         points_out = np.asarray(points_out, dtype=np.float64)
         cells = np.asarray(cells)
-        _check_arrays(points_out, cells, limits)
+        _check_arrays(points_out, cells)
         if points_out.shape[1] != 3 or cells.shape[1] != 4:
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
@@ -436,7 +415,6 @@ class FTetWildProvider:
             audit_policy=plan.audit_policy,
             associations=(association,),
         )
-        _check_result_limits(certified, limits)
         connectivity = mesh.connectivity
         assert isinstance(connectivity, TetrahedralConnectivity)
         edges = np.asarray(connectivity.edges)
@@ -502,13 +480,6 @@ class FTetWildProvider:
                 f"wildmeshing {version}",
                 MeshingExecutionMode.IN_PROCESS,
                 deterministic=False,
-                enforced_limits=(
-                    "output_vertices",
-                    "output_cells",
-                    "output_incidence",
-                    "converted_arrays",
-                ),
-                unenforced_limits=("provider_workspace", "wall_time"),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             SemanticProvenance(

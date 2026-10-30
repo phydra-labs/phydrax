@@ -18,6 +18,24 @@ qualification, mixed MPM/FEM benchmark, friction validation, or general stack
 claim. Rejection preserves all accepted coordinates and histories.
 
 
+## T-spline CAD-to-IGA analysis
+
+```text
+JAX_ENABLE_X64=1 python -m examples.iga_tspline_surface_poisson
+JAX_ENABLE_X64=1 python -m examples.native_tspline_cad_analysis
+python tools/iga_closure_qualification.py
+python tools/iga_tspline_benchmarks.py --smoke
+```
+
+The [IGA guide](../guides_isogeometric_analysis.md#rectilinear-asts2d-t-spline-surfaces)
+documents the shared source-parametric T-spline carrier, local refinement,
+exact prolongation, and separate parameter-basis/physical-map certificates. The
+first script exercises direct IGA; the second builds a B-Rep T-spline patch, plans
+and executes accepted native parametric-surface meshing through the public provider,
+retains and independently rechecks chart/root/piece source fidelity, then solves a
+Poisson problem on that same carrier. These routes remain scientific demonstrations,
+not R1 release tuples.
+
 ## Meshfree spatial and temporal workflows
 
 Run these checkout examples from the repository root with explicit float64
@@ -610,15 +628,14 @@ python examples/ale_conservative_remesh.py
 python examples/cad_high_order_curving.py
 python examples/boundary_layer_core_mesh.py
 python examples/delaunay_voronoi.py
-python -m tools.meshing_qualification --scenario bisection
+python examples/native_brep_workflow.py
+python examples/native_tspline_cad_analysis.py
+python -m tools.meshing_qualification --scenario native-corpus
+python tools/check_native_dependency_isolation.py --python 3.13 --all-native
 python -m tools.meshing_benchmarks --case host-bisection --resolution 64 --repeats 1
 ```
 
-The [meshing guide](../guides_meshing.md#workflows) describes what each script
-certifies. Triangulation, supermesh, and remap routes need the meshcore library
-(`phydrax[meshcore]` or `PHYDRAX_MESHCORE_LIBRARY`); the CAD-curving and
-boundary-layer core scripts need Gmsh and OCP. Qualification scenarios whose
-external dependency is absent print an explicit `missing-dependency` record.
+The [meshing guide](../guides_meshing.md#workflows) and [native CAD guide](../guides_native_cad.md) describe the independent acceptance each workflow requires. The installed isolation gate runs the actual wheels outside the source checkout and refuses optional engine imports. Optional comparison scenarios remain explicit and report missing dependencies rather than passing.
 
 ## Medical imaging and neurofluid transport
 

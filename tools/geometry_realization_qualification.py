@@ -69,7 +69,6 @@ def _surface_setup() -> Any:
     plan = phx.geometry.discover_implicit_surface(
         geometry,
         grid,
-        policy=phx.geometry.ImplicitSurfacePolicy(maximum_intersection_pairs=500_000),
         source_id="sphere-surface",
     )
     radius_index = geometry.schema.index(phx.geometry.ParameterId("sphere", "radius"))

@@ -638,6 +638,17 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 compression="gzip",
                 shuffle=True,
             )
+            group.create_dataset(
+                "owned_cell_mask",
+                data=np.asarray(
+                    np.ones((content_state.cell_count,), dtype=np.bool_)
+                    if content_state.owned_cell_mask is None
+                    else content_state.owned_cell_mask,
+                    dtype=np.bool_,
+                ),
+                compression="gzip",
+                shuffle=True,
+            )
             if shallow_water is not None:
                 from ..discretization.finite_volume import ShallowWaterObservables
 

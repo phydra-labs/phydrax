@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import combinations, permutations, product
 from math import factorial
+from types import MappingProxyType
 from typing import assert_never, Literal, TypeAlias
 
 import jax.numpy as jnp
@@ -14,12 +15,29 @@ from .._host_table_cache import host_table_cache, logical_table_bytes
 from ..typing import parse
 
 
+_DIMENSION_QUALIFIED_FAMILIES = MappingProxyType(
+    {
+        "simplex:1": "interval",
+        "simplex:2": "triangle",
+        "simplex:3": "tetrahedron",
+        "tensor:1": "interval",
+        "tensor:2": "quadrilateral",
+        "tensor:3": "hexahedron",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ReferenceCellTopology:
     name: str
     dimension: int
     vertices: tuple[tuple[float, ...], ...]
     entities: tuple[tuple[tuple[int, ...], ...], ...]
+
+    @property
+    def family(self) -> str:
+        """Classify the declared reference kind without changing its identity."""
+        return _DIMENSION_QUALIFIED_FAMILIES.get(self.name, self.name)
 
     @property
     def topology_id(self) -> str:
@@ -372,15 +390,7 @@ def reference_cell_topology(
     limit = maximum_entities + 1 if family == "simplex" else maximum_entities
     if exponent > maximum_entities.bit_length() or base**exponent > limit:
         raise ValueError("Reference-cell entity count exceeds maximum_entities.")
-    native_names = {
-        ("simplex", 1): "interval",
-        ("simplex", 2): "triangle",
-        ("simplex", 3): "tetrahedron",
-        ("tensor", 1): "interval",
-        ("tensor", 2): "quadrilateral",
-        ("tensor", 3): "hexahedron",
-    }
-    native_name = native_names.get((family, dimension))
+    native_name = _DIMENSION_QUALIFIED_FAMILIES.get(name)
     if native_name is not None:
         native = REFERENCE_TOPOLOGIES[native_name]
         return ReferenceCellTopology(name, dimension, native.vertices, native.entities)

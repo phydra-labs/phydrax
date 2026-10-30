@@ -35,12 +35,10 @@ def _surface_case(count: int, *, warmup: int, repeats: int) -> Any:
         tuple(phx.discretization.UniformAxisSpec(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
     ).prepare(jnp.asarray([[-1.3, -1.3, -1.3], [1.3, 1.3, 1.3]]))
-    policy = phx.geometry.ImplicitSurfacePolicy(maximum_intersection_pairs=2_000_000)
     plan, discovery_seconds = measure_synchronized(
         lambda: phx.geometry.discover_implicit_surface(
             geometry,
             grid,
-            policy=policy,
             source_id=f"sphere-surface-{count}",
         )
     )

@@ -46,6 +46,24 @@ def _policy(*, allow_lossy: Any = False) -> Any:
     )
 
 
+def test_native_artifact_export_is_not_admitted_by_reader_entity_limits() -> None:
+    mesh = _mesh()
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    policy = phx.meshing.MeshInteropPolicy(
+        phx.SpatialCoordinateContract.si(),
+        maximum_vertices=1,
+        maximum_cells=1,
+    )
+    artifact, report = export_mesh_array_artifact(mesh, geometry, policy)
+    restored = phx.meshing.import_cell_mesh(artifact, _policy())
+    assert report.status == phx.interchange.AdapterStatus.LOSSLESS
+    np.testing.assert_array_equal(restored.mesh.vertex_global_ids, mesh.vertex_global_ids)
+    np.testing.assert_array_equal(
+        restored.mesh.blocks[0].global_ids, mesh.blocks[0].global_ids
+    )
+    np.testing.assert_array_equal(restored.geometry.coordinates, geometry.coordinates)
+
+
 def test_vtu_roundtrip_preserves_ids_and_attributes_by_entity_identity(
     tmp_path: Any,
 ) -> None:

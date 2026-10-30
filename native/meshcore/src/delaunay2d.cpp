@@ -15,15 +15,19 @@
 namespace {
 
 int32_t triangulate_2d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, int64_t max_triangles, phx_mc_mesh** mesh) {
+                       bool weighted, phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   *mesh = nullptr;
-  if (point_count < 0 || point_count > phx::mc::kMaxMeshPoints ||
-      (point_count > 0 && points == nullptr) ||
-      (weighted && point_count > 0 && weights == nullptr) || max_triangles < 0) {
+  if (point_count < 0 || !phx::mc::addressable(point_count, 2, sizeof(double)) ||
+      !phx::mc::addressable(point_count, 1, sizeof(int32_t)) ||
+      !phx::mc::addressable(point_count, 1, sizeof(double)) ||
+      (point_count > 0 && points == nullptr) || (weighted && point_count > 0 && weights == nullptr)) {
     return PHX_MC_INVALID_ARGUMENT;
+  }
+  if (point_count > phx::mc::kMaxMeshPoints) {
+    return PHX_MC_INDEX_RANGE_ERROR;
   }
   int32_t status = phx::mc::validate_points(points, point_count, 2, weights);
   if (status != PHX_MC_OK) {
@@ -37,8 +41,8 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   }
   phx::mc::Triangulation2D triangulation;
   triangulation.reset(points, point_count, weights);
-  status = phx::mc::build_delaunay_2d(triangulation, points, point_count, weights, max_triangles,
-                                      result->vertex_map);
+  status = phx::mc::build_delaunay_2d(
+      triangulation, points, point_count, weights, result->vertex_map);
   if (status != PHX_MC_OK) {
     return status;
   }
@@ -58,16 +62,14 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
 
 extern "C" {
 
-int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points, int64_t max_triangles,
-                           phx_mc_mesh** mesh) {
-  return phx::mc::guarded(
-      [&] { return triangulate_2d(point_count, points, nullptr, false, max_triangles, mesh); });
+int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points, phx_mc_mesh** mesh) {
+  return phx::mc::guarded([&] { return triangulate_2d(point_count, points, nullptr, false, mesh); });
 }
 
 int32_t phx_mc_regular_2d(int64_t point_count, const double* points, const double* weights,
-                          int64_t max_triangles, phx_mc_mesh** mesh) {
+                          phx_mc_mesh** mesh) {
   return phx::mc::guarded(
-      [&] { return triangulate_2d(point_count, points, weights, true, max_triangles, mesh); });
+      [&] { return triangulate_2d(point_count, points, weights, true, mesh); });
 }
 
 }  // extern "C"

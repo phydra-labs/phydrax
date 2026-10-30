@@ -16,11 +16,22 @@ from ..discretization import (
     PolyhedralConnectivity,
 )
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry import (
+    CellVertexGeometryElement,
+    ScalarCoordinateElement,
+)
 from ..discretization._cell_geometry_validity import CellValidityStatus
 from ..discretization._hexahedral import HexahedralConnectivity
+from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._planar_embedding import PlanarEmbedding
+from ..geometry._surface_source_support import SurfaceSourceCharts
+from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy
+from ._certification import MeshCertificationReport
+from ._certification_inputs import MeshCertificationInputs
 from ._contracts import (
+    CurveMeshingSpec,
     MeshingCapability,
     MeshingDerivativeMode,
     MeshingExecutionMode,
@@ -29,8 +40,18 @@ from ._contracts import (
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
+    SurfaceMeshingSpec,
+    VolumeMeshingSpec,
 )
-from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
+from ._layer_curving_records import LayerCurvingSourceEvidence
+from ._native_construction import NativeMeshConstruction, NativeMeshOrganization
+from ._organization import (
+    MeshAttribute,
+    MeshLabel,
+    MeshPatch,
+    MeshZone,
+    RegionBoundaryEvidence,
+)
 from ._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from ._trace import (
     MeshingDiagnostic,
@@ -161,13 +182,27 @@ def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
         np.array_equal(values, np.asarray(rebuilt.entity_set(dimension).entity_ids))
         for dimension, values in entity_ids.items()
     ):
-        return rebuilt
+        canonical_lifted = rebuilt
+    else:
+        canonical_lifted = CellMesh(
+            mesh.coordinates,
+            ordered,
+            vertex_global_ids=mesh.vertex_global_ids,
+            entity_global_ids=entity_ids,
+            numeric_version=mesh.numeric_version,
+        )
+    if mesh.periodic_topology is None:
+        return canonical_lifted
+    from ._periodic import _periodic_topology_after_reorder
+
+    periodic_topology = _periodic_topology_after_reorder(mesh, canonical_lifted)
     return CellMesh(
         mesh.coordinates,
         ordered,
         vertex_global_ids=mesh.vertex_global_ids,
         entity_global_ids=entity_ids,
         numeric_version=mesh.numeric_version,
+        periodic_topology=periodic_topology,
     )
 
 
@@ -178,11 +213,17 @@ def certify_cell_mesh(
     *,
     geometry: CellGeometrySpec | None = None,
     audit_policy: CellMeshAuditPolicy | None = None,
+    boundary: SurfaceModel | None = None,
+    certification_inputs: MeshCertificationInputs | None = None,
     patches: tuple[MeshPatch, ...] = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
     attributes: tuple[MeshAttribute, ...] = (),
     associations: tuple[GeometryAssociation, ...] = (),
+    surface_source: SurfaceSourceCharts | None = None,
+    region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
+    planar_embedding: PlanarEmbedding | None = None,
+    layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates."""
 
@@ -197,16 +238,42 @@ def certify_cell_mesh(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
-    audit = audit_cell_mesh(
-        canonical,
-        geometry_,
-        policy=audit_policy,
-        patches=patches,
-        associations=associations,
-        attributes=attributes,
-        zones=zones,
-        labels=labels,
-    )
+    certification = None
+    if certification_inputs is None:
+        audit = audit_cell_mesh(
+            canonical,
+            geometry_,
+            policy=audit_policy,
+            boundary=boundary,
+            patches=patches,
+            associations=associations,
+            attributes=attributes,
+            zones=zones,
+            labels=labels,
+        )
+    else:
+        certification_inputs.require_current(
+            canonical,
+            geometry_,
+            domain=certification_inputs.domain,
+            source=certification_inputs.source,
+        )
+        certification = MeshCertificationReport(
+            certification_inputs,
+            audit_policy=audit_policy,
+            organization=NativeMeshOrganization(
+                boundary=boundary,
+                patches=patches,
+                zones=zones,
+                labels=labels,
+                attributes=attributes,
+                associations=associations,
+                surface_source=surface_source,
+                region_boundary_evidence=region_boundary_evidence,
+            ),
+        )
+        certification.require_passed()
+        audit = certification.audit
     if not audit.passed:
         uncertified = (
             np.asarray(audit.validity.status) != CellValidityStatus.CERTIFIED_VALID
@@ -286,7 +353,6 @@ def certify_cell_mesh(
         _NATIVE_PROVIDER.version,
         MeshingExecutionMode.IN_PROCESS,
         deterministic=True,
-        enforced_limits=("canonical_connectivity",),
     )
     return CellMeshingResult(
         canonical,
@@ -300,11 +366,188 @@ def certify_cell_mesh(
         runtime,
         MeshingDerivativeMode.FIXED_TOPOLOGY_EXACT,
         provenance,
+        boundary=boundary,
+        certification=certification,
         patches=patches,
         zones=zones,
         labels=labels,
         attributes=attributes,
         associations=associations,
+        surface_source=surface_source,
+        region_boundary_evidence=region_boundary_evidence,
+        planar_embedding=planar_embedding,
+        layer_curving_evidence=layer_curving_evidence,
+    )
+
+
+def _require_native_target(
+    construction: NativeMeshConstruction,
+    specification: CurveMeshingSpec | SurfaceMeshingSpec | VolumeMeshingSpec,
+    /,
+) -> None:
+    mesh, target = construction.mesh, specification.target
+    issues: list[str] = []
+    if (mesh.topological_dimension, mesh.ambient_dimension) != (
+        target.topological_dimension,
+        target.ambient_dimension,
+    ):
+        issues.append("Constructed mesh dimensions differ from the requested target.")
+    kinds = {
+        block.cell_kind
+        if block.cell_kind in ("polygon", "polyhedron")
+        else reference_cell_topology(block.cell_kind).family
+        for block in mesh.blocks
+        if block.cell_count
+    }
+    families = target.cell_families
+    allowed = set(
+        (*families.required, *families.preferred, *families.allowed_transitions)
+    )
+    if not kinds or not set(families.required) <= kinds or not kinds <= allowed:
+        issues.append(
+            "Constructed cell families do not satisfy the requested family policy."
+        )
+    if not families.allow_mixed and len(kinds) != 1:
+        issues.append("The requested target does not permit mixed cell families.")
+    elements, _, _ = construction.geometry.resolve(mesh)
+    for element in elements:
+        if isinstance(element, CellVertexGeometryElement):
+            degree = 1
+        elif isinstance(element, ScalarCoordinateElement):
+            degree = element.degree
+        else:
+            raise TypeError(
+                "Native target geometry must use a canonical coordinate element."
+            )
+        if degree != target.geometry_order:
+            issues.append(
+                "Constructed coordinate geometry order differs from the requested target."
+            )
+            break
+    if construction.compliance.specification_id != specification.specification_id:
+        raise ValueError(
+            "Native compliance must bind the actual requested specification."
+        )
+    issues.extend(construction.compliance.issues)
+    if issues:
+        raise MeshingFailure(
+            MeshingFailureCategory.COMPLIANCE_FAILED,
+            "; ".join(issues),
+            stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
+        )
+
+
+def _native_acceptance_trace(
+    construction: NativeMeshConstruction, certification: MeshCertificationReport, /
+) -> MeshingTrace:
+    diagnostics = tuple(
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.WARNING,
+            f"{finding.check}: {finding.status}",
+            entity_ids=finding.entity_ids,
+        )
+        for finding in certification.recorded
+    )
+    status = MeshingStageStatus.WARNING if diagnostics else MeshingStageStatus.PASSED
+    return MeshingTrace(
+        (
+            *construction.stages,
+            MeshingStageReport(
+                MeshingStageKind.GEOMETRY_AUDIT,
+                status,
+                input_ids=(certification.inputs.request_id,),
+                output_ids=(certification.report_id,),
+                diagnostics=diagnostics,
+            ),
+            MeshingStageReport(
+                MeshingStageKind.SPECIFICATION_COMPLIANCE,
+                MeshingStageStatus.PASSED,
+                input_ids=(construction.compliance.specification_id,),
+                output_ids=(construction.compliance.report_id,),
+            ),
+        )
+    )
+
+
+def _accept_native_construction(
+    construction: NativeMeshConstruction,
+    specification: CurveMeshingSpec | SurfaceMeshingSpec | VolumeMeshingSpec,
+    provider: MeshingProviderInfo,
+    actual_version: str,
+    plan_id: str,
+    route: str,
+    /,
+) -> CellMeshingResult:
+    """Publish only a candidate satisfying its actual source and target obligations."""
+    _require_native_target(construction, specification)
+    mesh, geometry = construction.mesh, construction.geometry
+    if canonicalize_cell_mesh(mesh) is not mesh:
+        raise MeshingFailure(
+            MeshingFailureCategory.CANONICALIZATION_FAILED,
+            "Native construction must canonicalize topology before binding coordinate routes.",
+            stage=MeshingStageKind.CANONICALIZATION.value,
+        )
+    request = construction.certification
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        request.schedule,
+        source_id=request.source_id,
+        source_revision=request.source_revision,
+        domain=request.domain,
+        cell_regions=request.cell_regions,
+        source=request.fidelity_source,
+        fidelity_tolerance=request.fidelity_tolerance,
+        maximum_normal_deviation=request.maximum_normal_deviation,
+        junction_vertices=request.junction_vertices,
+        protected_features=request.protected_features,
+        feature_source=request.feature_source,
+        scoped_fidelity=request.scoped_fidelity,
+        fidelity_witness=request.fidelity_witness,
+        source_coverage_witness=request.source_coverage_witness,
+    )
+    organization = construction.organization
+    certification = MeshCertificationReport(inputs, organization=organization)
+    certification.require_passed()
+    runtime = MeshingRuntimeInfo(
+        provider.provider_id,
+        actual_version,
+        MeshingExecutionMode.IN_PROCESS,
+        deterministic=True,
+    )
+    provenance = SemanticProvenance(
+        {
+            "kind": "native-mesh-construction",
+            "plan": plan_id,
+            "route": route,
+            "source": (request.source_id, request.source_revision),
+            "specification": specification.specification_id,
+            "certification": certification.report_id,
+        }
+    )
+    return CellMeshingResult(
+        mesh,
+        geometry,
+        construction.coordinate_contract,
+        certification.audit,
+        certification.audit.quality,
+        construction.compliance,
+        _native_acceptance_trace(construction, certification),
+        provider,
+        runtime,
+        MeshingDerivativeMode.NONDIFFERENTIABLE,
+        provenance,
+        boundary=organization.boundary,
+        patches=organization.patches,
+        zones=organization.zones,
+        labels=organization.labels,
+        attributes=organization.attributes,
+        associations=organization.associations,
+        surface_source=organization.surface_source,
+        region_boundary_evidence=organization.region_boundary_evidence,
+        planar_embedding=construction.planar_embedding,
+        certification=certification,
+        layer_curving_evidence=construction.layer_curving_evidence,
     )
 
 

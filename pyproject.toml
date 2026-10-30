@@ -202,6 +202,8 @@ radar-cfradial = [
   "netcdf4>=1.7.4,<2",
 ]
 rosbag = [
+  # APSW 3.54.0 refreshed SQLite source checksums after SQLite reissued its archive.
+  "apsw>=3.54.0,<4",
   "rosbags>=0.11.5,<0.12",
 ]
 sonar-xtf = [

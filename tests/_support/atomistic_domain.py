@@ -147,7 +147,7 @@ def role_plan(
     return AtomisticDomainRolePlan(
         requirement,
         periodic.image_stencil(
-            requirement.bounded_cutoff() + skin, maximum_image_count=4096
+            requirement.bounded_cutoff() + skin
         ),
         streaming=streaming(model, accumulation) if stream is None else stream,
         skin=skin,

@@ -159,7 +159,6 @@ def test_cell_incidence_scenario_2() -> None:
     first = ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3))
     # The shared face (1, 2, 3) appears reversed and rotated as (3, 2, 1).
     second = ((3, 2, 1), (3, 1, 4), (2, 3, 4), (1, 2, 4))
-    # ty: ignore[invalid-argument-type]
     connectivity = polyhedral_connectivity((first, second), 5)
     counts = np.asarray(connectivity.face_cell_counts)
     assert np.count_nonzero(counts == 2) == 1
@@ -176,19 +175,15 @@ def test_cell_incidence_scenario_2() -> None:
 
     inward = tuple(face[::-1] for face in second)
     with pytest.raises(ValueError, match="Shared polyhedral faces must have opposite"):
-        # ty: ignore[invalid-argument-type]
         polyhedral_connectivity((first, inward), 5)
     with pytest.raises(ValueError, match="closed oriented two-manifold"):
-        # ty: ignore[invalid-argument-type]
         polyhedral_connectivity((first, ((1, 2, 3),) + second[1:]), 5)
 
     three_faces = first[:3]
     non_simple = first[:3] + ((2, 0, 3, 0),)
     with pytest.raises(ValueError, match="at least four faces"):
-        # ty: ignore[invalid-argument-type]
         polyhedral_connectivity((three_faces, non_simple), 5)
     with pytest.raises(ValueError, match="must be simple"):
-        # ty: ignore[invalid-argument-type]
         polyhedral_connectivity((non_simple, three_faces), 5)
     points = np.asarray(
         [
@@ -207,13 +202,9 @@ def test_cell_incidence_scenario_2() -> None:
         ]
     )
     blocks = (
-        # ty: ignore[invalid-argument-type]
         CellBlock("tetrahedra", "tetrahedron", [[4, 5, 8, 9]], global_ids=[3]),
-        # ty: ignore[invalid-argument-type]
         CellBlock("pyramids", "pyramid", [[4, 5, 6, 7, 8]], global_ids=[2]),
-        # ty: ignore[invalid-argument-type]
         CellBlock("prisms", "prism", [[5, 6, 10, 1, 2, 11]], global_ids=[1]),
-        # ty: ignore[invalid-argument-type]
         CellBlock("hexahedra", "hexahedron", [list(range(8))], global_ids=[0]),
     )
     mesh = CellMesh(points, blocks)

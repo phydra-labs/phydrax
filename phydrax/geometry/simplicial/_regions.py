@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import ConvertibleToArray
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -79,7 +80,7 @@ class SegmentMesh(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(
-        self, vertices: Array, edges: Array, *, source_id: str | None = None
+        self, vertices: ConvertibleToArray, edges: ConvertibleToArray, *, source_id: str | None = None
     ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if (
@@ -181,7 +182,6 @@ class PlanarMeshRegion(GeometrySource):
         edges = np.concatenate(
             [np.stack((loop, np.roll(loop, -1)), axis=1) for loop in loops_host], axis=0
         )
-        # ty: ignore[invalid-argument-type]
         SegmentTopology(edges, num_vertices=vertices_host.shape[0])
         signed_areas = []
         for loop in loops_host:

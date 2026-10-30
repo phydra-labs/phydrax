@@ -410,7 +410,6 @@ def _stencil_like(
         axis_reach=stencil.axis_reach,
         minimum_singular_value=stencil.minimum_singular_value,
         condition_number=stencil.condition_number,
-        maximum_image_count=stencil.maximum_image_count,
         cell_id=stencil.cell_id,
     )
 
@@ -460,7 +459,7 @@ def test_plan_refuses_forged_incomplete_or_nonperiodic_image_stencils() -> None:
 
     open_cell = PeriodicCell(CELL, periodic_axes=(True, True, False))
     owners = ownership(2, periodic_axes=(True, True, False))
-    open_stencil = open_cell.image_stencil(CUTOFF + SKIN, maximum_image_count=4096)
+    open_stencil = open_cell.image_stencil(CUTOFF + SKIN)
     partition = FractionalOwnerPartition(open_cell, (2, 1, 1))
     _replan(plan, open_stencil, owners=owners, partition=partition)
     translated = _stencil_like(open_stencil, extents=open_stencil.extents[:2] + (1,))

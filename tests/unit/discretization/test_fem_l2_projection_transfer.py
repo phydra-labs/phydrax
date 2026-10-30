@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._coordinate_measure import CoordinateMeasurePlan
 from phydrax._meshcore import meshcore_available
 from phydrax.geometry import (
     CommonRefinementCoverage,
@@ -69,14 +70,23 @@ def _tetrahedra(n: Any) -> Any:
     )
 
 
-def _space(mesh: Any, kind: Any, degree: Any = 1, *, discontinuous: Any = False) -> Any:
+def _space(
+    mesh: Any,
+    kind: Any,
+    degree: Any = 1,
+    *,
+    discontinuous: Any = False,
+    coordinate_measure: Any = None,
+) -> Any:
     element = (
         phx.discretization.discontinuous_element(kind, degree)
         if discontinuous
         else phx.discretization.lagrange_element(kind, degree)
     )
     return phx.discretization.FiniteElementPlan(
-        mesh, phx.discretization.FiniteElementFieldSpec("u", element)
+        mesh,
+        phx.discretization.FiniteElementFieldSpec("u", element),
+        coordinate_measure=coordinate_measure,
     ).prepare()
 
 
@@ -158,6 +168,24 @@ def test_fem_l2_projection_transfer_scenario_1() -> None:
             atol=1e-14,
         )
 
+
+
+def test_l2_overlap_respects_axisymmetric_measure() -> None:
+    measure = CoordinateMeasurePlan("cylindrical-radial", radial_axis=0)
+    source_mesh, target_mesh = _triangles(3), _triangles(2)
+    source = _space(source_mesh, "triangle", coordinate_measure=measure)
+    target = _space(target_mesh, "triangle", coordinate_measure=measure)
+    transfer = _transfer(source, target, _refinement(source_mesh, target_mesh))
+    source_values = jnp.ones((source.dof_maps[0].global_dof_count,))
+    target_values = transfer.apply(source_values)
+
+    np.testing.assert_allclose(target_values, 1.0, atol=2.0e-11, rtol=2.0e-11)
+    np.testing.assert_allclose(
+        _integrals(target) @ np.asarray(target_values),
+        _integrals(source) @ np.asarray(source_values),
+        atol=2.0e-11,
+        rtol=2.0e-11,
+    )
 
 def test_target_space_fields_are_reproduced_and_claims_are_certified(planar: Any) -> None:
     source, target, transfer = planar

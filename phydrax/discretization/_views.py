@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from ..domain._domain import Domain
     from ..geometry import CompiledGeometry
     from ._field_query import FieldQueryCoverage, PreparedFieldQuery
-
+    from ._view_support import MappedFieldSupport, OwnerLocalFieldSupport
 
 FieldTraceSide: TypeAlias = Literal["owner", "neighbor", "average"]
 FieldSupportCoverage: TypeAlias = Literal["complete", "partial"]
@@ -353,7 +353,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
     """
 
     kernel: AbstractFieldReconstructionKernel
-    support_geometry: CompiledGeometry
+    support_geometry: CompiledGeometry | MappedFieldSupport | OwnerLocalFieldSupport
     value_port: ValuePort
     regularity: DerivativeRegularity
     trace_policy: FieldTracePolicy
@@ -373,7 +373,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         kernel: AbstractFieldReconstructionKernel,
         /,
         *,
-        support_geometry: CompiledGeometry,
+        support_geometry: CompiledGeometry | MappedFieldSupport | OwnerLocalFieldSupport,
         value_port: ValuePort,
         regularity: DerivativeRegularity,
         trace_policy: FieldTracePolicy,
@@ -387,11 +387,18 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         coefficient_dtype: DTypeLike | None = None,
     ) -> None:
         from ..geometry import CompiledGeometry, GeometryKind
+        from ._view_support import MappedFieldSupport, OwnerLocalFieldSupport
 
         if not isinstance(kernel, AbstractFieldReconstructionKernel):
             raise TypeError("kernel must be an AbstractFieldReconstructionKernel.")
-        if not isinstance(support_geometry, CompiledGeometry):
-            raise TypeError("support_geometry must be a CompiledGeometry.")
+        if not isinstance(
+            support_geometry,
+            (CompiledGeometry, MappedFieldSupport, OwnerLocalFieldSupport),
+        ):
+            raise TypeError(
+                "support_geometry must be a CompiledGeometry or exact mapped/local "
+                "field support evidence."
+            )
         if not isinstance(value_port, ValuePort):
             raise TypeError("value_port must be a ValuePort.")
         if not isinstance(regularity, DerivativeRegularity):
@@ -417,6 +424,10 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
             raise ValueError(
                 "support_geometry ambient dimension must equal physical_dimension."
             )
+        if isinstance(
+            support_geometry, (MappedFieldSupport, OwnerLocalFieldSupport)
+        ):
+            support_geometry.require_kernel(kernel)
         for order in range(1, maximum + 1):
             level, _ = regularity.admits_order(order)
             if level is GradientLevel.NONE:
@@ -527,6 +538,14 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
             raise TypeError("Query points must be real floating point.")
         return values
 
+    def _require_support_binding(self, /) -> None:
+        from ._view_support import MappedFieldSupport, OwnerLocalFieldSupport
+
+        if isinstance(
+            self.support_geometry, (MappedFieldSupport, OwnerLocalFieldSupport)
+        ):
+            self.support_geometry.require_kernel(self.kernel)
+
     def _side(self, side: FieldSideBinding | None, /) -> FieldSideBinding | None:
         if side is None:
             return None
@@ -545,6 +564,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         side: FieldSideBinding | None = None,
     ) -> FieldQueryEvidence:
         """Return pointwise query evidence without evaluating coefficients."""
+        self._require_support_binding()
         _, evidence = self.kernel.locate(
             self._points(points), self.derivative_index(derivative), self._side(side)
         )
@@ -569,7 +589,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         *,
         side: FieldSideBinding | None = None,
     ) -> FieldQueryResult:
-        """Evaluate the exact coordinate derivative `derivative` with evidence."""
+        """Evaluate the exact coordinate derivative with evidence."""
+        self._require_support_binding()
         values = self.validate_coefficients(coefficients)
         route, evidence = self.kernel.locate(
             self._points(points), self.derivative_index(derivative), self._side(side)
@@ -591,6 +612,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
                 f"{self.trace_policy.sides}."
             )
         sites = np.asarray(points)
+        self._require_support_binding()
         if sites.ndim == 1 and sites.shape[0] == self.physical_dimension:
             sites = sites[None]
         if sites.ndim != 2 or sites.shape[1] != self.physical_dimension:
@@ -651,6 +673,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         """
         from ._field_query import PreparedFieldQuery
 
+        self._require_support_binding()
         if side is None and cell_ids is not None:
             raise ValueError("cell_ids select trace cells and require a side.")
         binding = (
@@ -723,6 +746,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
                 "algebraic transpose; differentiate it under its branch policy."
             )
         query = self._points(points)
+        self._require_support_binding()
         route, evidence = self.kernel.locate(
             query, self.derivative_index(derivative), self._side(side)
         )

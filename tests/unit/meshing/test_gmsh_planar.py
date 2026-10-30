@@ -81,20 +81,17 @@ def _partition(tmp_path: Any, *, hole: Any = False) -> Any:
             _EMBEDDING,
             operands,
             phx.geometry.BRepPartitionPolicy(precedence),
-        ),
-        destination=tmp_path / ("hole.brep" if hole else "regions.brep"),
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        )
     )
 
 
 def _semantic_spec(
-    provider: Any, source: Any, kind: Any, *, embedding: Any = _EMBEDDING
+    source: Any, kind: Any, *, embedding: Any = _EMBEDDING
 ) -> Any:
-    scope = provider.whole_scope(source, 2)
+    scope = phx.meshing.MeshingScope.whole(source.model, 2)
     regions = tuple(
         phx.meshing.RegionControl(
-            provider.entity_scope(source, region.entity_ids),
+            phx.meshing.MeshingScope.from_geometry(source.model, region.entity_ids),
             region.name,
             f"material:{region.name}",
             phx.meshing.RegionRole.SOLID,
@@ -104,7 +101,7 @@ def _semantic_spec(
     patches = tuple(
         phx.meshing.PatchControl(
             patch.name,
-            provider.entity_scope(source, patch.entity_ids),
+            phx.meshing.MeshingScope.from_geometry(source.model, patch.entity_ids),
             patch.adjacent_region_ids,
         )
         for patch in source.patches
@@ -133,7 +130,7 @@ def test_real_gmsh_planar_regions_interfaces_and_exterior_patches(
     source = _partition(tmp_path)
     provider = phx.meshing.GmshProvider()
 
-    result = provider.plan(source, _semantic_spec(provider, source, kind)).execute()
+    result = provider.plan(source, _semantic_spec(source, kind)).execute()
 
     assert result.mesh.ambient_dimension == 2
     assert result.boundary is None
@@ -163,7 +160,7 @@ def test_real_gmsh_planar_hole_has_complete_main_mesh_boundary_patch(
     source = _partition(tmp_path, hole=True)
     provider = phx.meshing.GmshProvider()
 
-    result = provider.plan(source, _semantic_spec(provider, source, "triangle")).execute()
+    result = provider.plan(source, _semantic_spec(source, "triangle")).execute()
 
     # ty: ignore[unresolved-attribute]
     boundary_edges = np.asarray(result.mesh.connectivity.boundary_edges, dtype="bool")
@@ -189,5 +186,5 @@ def test_real_gmsh_rejects_nodes_outside_declared_embedding_plane(tmp_path: Any)
     with pytest.raises(phx.meshing.MeshingFailure, match="embedding"):
         provider.plan(
             source,
-            _semantic_spec(provider, source, "triangle", embedding=wrong),
+            _semantic_spec(source, "triangle", embedding=wrong),
         ).execute()

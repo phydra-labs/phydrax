@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, TypeVar
 
@@ -49,6 +50,7 @@ from ..discretization.finite_volume import (
     TriangleFiniteVolumeDiscretization,
     UnstructuredEmbeddedBoundarySet,
     UnstructuredFiniteVolumeDiscretization,
+    UnstructuredFiniteVolumePlan,
 )
 from ..discretization.finite_volume._geometry_protocol import (
     FiniteVolumeGeometryStatus,
@@ -67,8 +69,10 @@ from ..discretization.finite_volume._shallow_water import (
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
 )
+from ..lifecycle import CompositionRebindReceipt
 from ..typing import checked
 from ._finite_volume import (
+    FiniteVolumeStageDecisionProvider,
     FiniteVolumeStageStateProvider,
     unstructured_ale_ssprk33_candidate,
     unstructured_ssprk33_content_candidate,
@@ -77,6 +81,7 @@ from ._finite_volume import (
 )
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_topology_events import (
+    _OwnerLocalRepartitionTransfer,
     FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
@@ -87,6 +92,496 @@ from ._finite_volume_topology_events import (
 
 
 _TreeT = TypeVar("_TreeT")
+
+
+@dataclass(frozen=True, slots=True)
+class FiniteVolumeOwnerLocalCellStateBankSpec:
+    """Declare stable-ID rows along one array axis of an owner-local state entry.
+
+    ``cell_ids`` labels either owned rows or every resident owned/ghost row in
+    the source entry. The target entry stores the migrated owned rows only.
+    """
+
+    entry_id: str
+    cell_ids: ArrayLike
+    cell_axis: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.entry_id, str)
+            or not self.entry_id
+            or self.entry_id != self.entry_id.strip()
+            or isinstance(self.cell_axis, bool)
+            or not isinstance(self.cell_axis, (int, np.integer))
+        ):
+            raise ValueError("Owner-local cell-state bank schema is malformed.")
+        raw_ids = np.asarray(self.cell_ids)
+        if (
+            raw_ids.dtype.kind not in "iu"
+            or raw_ids.ndim != 1
+            or (
+                raw_ids.dtype.kind == "u"
+                and raw_ids.size
+                and int(np.max(raw_ids)) > np.iinfo(np.int64).max
+            )
+            or (raw_ids.size and np.any(raw_ids < 0))
+            or np.unique(raw_ids).size != raw_ids.size
+        ):
+            raise ValueError("Owner-local cell-state bank IDs must be unique int64 keys.")
+        object.__setattr__(
+            self, "cell_ids", tuple(int(value) for value in raw_ids.tolist())
+        )
+        object.__setattr__(self, "cell_axis", int(self.cell_axis))
+
+
+def _prepare_owner_local_fv_stage_state_provider(
+    owner_local_view: Any,
+    execution_group: Any,
+    plan_cell_ids: Any,
+    /,
+    *,
+    axis_name: str,
+    required_stencil_depth: int,
+) -> tuple[FiniteVolumeStageStateProvider, Array, Any]:
+    """Prepare sparse per-stage owner-to-ghost exchange for the local cell axis."""
+    import jax
+
+    from .._execution_runtime import ExecutionGroup
+    from ..discretization._distributed_field import DistributedHaloPlan
+    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..meshing._distribution import (
+        _owner_exchange_message_banks,
+        _owner_group_allgather,
+        _owner_pair_channel_plan,
+    )
+
+    if not isinstance(owner_local_view, OwnerLocalCellGeometry):
+        raise TypeError("owner_local_view must be OwnerLocalCellGeometry.")
+    if not isinstance(execution_group, ExecutionGroup):
+        raise TypeError("execution_group must be ExecutionGroup.")
+    axis = str(axis_name).strip()
+    if not axis:
+        raise ValueError("owner-local FV halo axis_name must be non-empty.")
+    members = execution_group.spec.process_indices
+    local_rank = owner_local_view.owner_rank
+    if (
+        not execution_group.is_member
+        or len(execution_group.devices) != len(members)
+        or tuple(device.process_index for device in execution_group.devices) != members
+        or not 0 <= local_rank < len(members)
+        or members[local_rank] != jax.process_index()
+    ):
+        raise ValueError("Owner-local FV halo view is not on its accepted group rank.")
+    local_ids = np.asarray(owner_local_view.cell_ids, dtype=np.int64)
+    local_owners = np.asarray(owner_local_view.cell_owner_ranks, dtype=np.int32)
+    local_owned = np.asarray(owner_local_view.owned, dtype=np.bool_)
+    if (
+        local_owners.shape != local_ids.shape
+        or local_owned.shape != local_ids.shape
+        or np.unique(local_ids).size != local_ids.size
+        or np.any(local_owners < 0)
+        or np.any(local_owners >= len(members))
+        or np.any(local_owned != (local_owners == local_rank))
+    ):
+        raise ValueError("Owner-local FV cell ownership rows are malformed.")
+    requested_plan_ids = np.asarray(plan_cell_ids, dtype=np.int64)
+    if requested_plan_ids.shape != local_ids.shape or set(
+        int(value) for value in requested_plan_ids
+    ) != set(int(value) for value in local_ids):
+        raise ValueError("Owner-local FV plan cells differ from the accepted local view.")
+    view_row_by_id = {int(identifier): row for row, identifier in enumerate(local_ids)}
+    plan_to_view = np.asarray(
+        [view_row_by_id[int(identifier)] for identifier in requested_plan_ids],
+        dtype=np.int32,
+    )
+    owner_row_by_id = {
+        int(identifier): row
+        for row, identifier in enumerate(local_ids)
+        if local_owned[row]
+    }
+    offsets = np.asarray(owner_local_view.cell_neighbor_offsets, dtype=np.int64)
+    neighbor_ids = np.asarray(owner_local_view.cell_neighbor_ids, dtype=np.int64)
+    if (
+        offsets.shape != (local_ids.size + 1,)
+        or offsets[0] != 0
+        or offsets[-1] != neighbor_ids.size
+        or np.any(np.diff(offsets) < 0)
+    ):
+        raise ValueError("Owner-local FV reconstruction-neighbor routes are malformed.")
+    if (
+        isinstance(required_stencil_depth, bool)
+        or not isinstance(required_stencil_depth, (int, np.integer))
+        or required_stencil_depth < 1
+    ):
+        raise ValueError("Owner-local FV stencil depth must be a positive integer.")
+    resident = set(int(value) for value in local_ids)
+    frontier = {int(local_ids[row]) for row in np.flatnonzero(local_owned)}
+    reached = set(frontier)
+    for _ in range(int(required_stencil_depth)):
+        next_frontier: set[int] = set()
+        for identifier in frontier:
+            row = view_row_by_id[identifier]
+            neighbors = neighbor_ids[offsets[row] : offsets[row + 1]]
+            missing = [int(value) for value in neighbors if int(value) not in resident]
+            if missing:
+                raise ValueError(
+                    "Owner-local FV view omits required reconstruction-stencil halo cells."
+                )
+            next_frontier.update(int(value) for value in neighbors)
+        next_frontier.difference_update(reached)
+        reached.update(next_frontier)
+        frontier = next_frontier
+    outgoing_requests: list[np.ndarray] = [
+        np.empty((0, 2), dtype=np.int64) for _ in members
+    ]
+    request_rows: dict[int, list[tuple[int, int]]] = {}
+    for row, (identifier, owner, owned) in enumerate(
+        zip(local_ids, local_owners, local_owned, strict=True)
+    ):
+        if owned:
+            continue
+        if owner == local_rank:
+            raise ValueError("A locally owned FV cell is marked as a ghost.")
+        request_rows.setdefault(int(owner), []).append((int(identifier), row))
+    for owner, rows in request_rows.items():
+        rows.sort()
+        outgoing_requests[owner] = np.asarray(rows, dtype=np.int64).reshape((-1, 2))
+    incoming_requests = _owner_exchange_message_banks(
+        tuple(outgoing_requests),
+        local_rank,
+        execution_group,
+        f"{axis}_requests",
+    )
+    local_counts = np.asarray(
+        [values.shape[0] for values in outgoing_requests], dtype=np.int64
+    )
+    count_matrix = _owner_group_allgather(
+        local_counts,
+        execution_group,
+        f"{axis}_route_counts",
+    )
+    if count_matrix.shape != (len(members), len(members)) or np.any(count_matrix < 0):
+        raise ValueError("Owner-local FV halo route counts are malformed.")
+    if not np.array_equal(count_matrix[local_rank], local_counts):
+        raise ValueError("Owner-local FV halo route counts changed on this rank.")
+    routes = []
+    for sender in range(len(members)):
+        for receiver in range(len(members)):
+            count = int(count_matrix[receiver, sender])
+            if not count:
+                continue
+            pair = _owner_pair_channel_plan(sender, receiver, len(members))
+            if not isinstance(pair, DistributedHaloPlan):
+                raise TypeError("Owner channel builder returned an invalid halo plan.")
+            if local_rank == sender:
+                requests = incoming_requests.get(receiver)
+                if requests is None or requests.shape != (count, 2):
+                    raise ValueError("FV ghost requests do not match their owner route.")
+                try:
+                    send_rows = np.asarray(
+                        [
+                            owner_row_by_id[int(identifier)]
+                            for identifier in requests[:, 0]
+                        ],
+                        dtype=np.int32,
+                    )
+                except KeyError as error:
+                    raise ValueError(
+                        "A requested FV stencil cell is absent from its accepted owner."
+                    ) from error
+            else:
+                send_rows = np.zeros((count,), dtype=np.int32)
+            if local_rank == receiver:
+                requests = outgoing_requests[sender]
+                if requests.shape != (count, 2):
+                    raise ValueError("FV ghost rows do not match their owner route.")
+                ghost_rows = np.asarray(requests[:, 1], dtype=np.int32)
+            else:
+                ghost_rows = np.zeros((count,), dtype=np.int32)
+            pair_ids = np.asarray(pair.local_global_ids, dtype=np.int64)
+            pair_owned = np.asarray(pair.local_owned, dtype=np.bool_)
+            send_slots = np.flatnonzero((pair_ids[sender] == 0) & pair_owned[sender])
+            receive_slots = np.flatnonzero(
+                (pair_ids[receiver] == 0) & ~pair_owned[receiver]
+            )
+            if send_slots.size != 1 or receive_slots.size != 1:
+                raise ValueError(
+                    "FV owner-pair channel does not expose one exact payload slot."
+                )
+            routes.append(
+                (
+                    pair,
+                    sender,
+                    receiver,
+                    send_rows,
+                    ghost_rows,
+                    int(send_slots[0]),
+                    int(receive_slots[0]),
+                    count,
+                )
+            )
+    local_counts_by_rank = _owner_group_allgather(
+        np.asarray((local_ids.size,), dtype=np.int32),
+        execution_group,
+        f"{axis}_local_capacity",
+    )
+    capacity = max(1, int(np.max(local_counts_by_rank, initial=0)))
+    local_cell_count = int(local_ids.size)
+    provider_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-fv-stage-state-provider",
+            "group": execution_group.spec.group_id,
+            "view": owner_local_view.local_view_id,
+            "plan_cell_ids": requested_plan_ids,
+            "plan_to_view": plan_to_view,
+            "routes": tuple(
+                (
+                    sender,
+                    receiver,
+                    count,
+                    array_tree_fingerprint(send_rows),
+                    array_tree_fingerprint(ghost_rows),
+                )
+                for (
+                    _,
+                    sender,
+                    receiver,
+                    send_rows,
+                    ghost_rows,
+                    _,
+                    _,
+                    count,
+                ) in routes
+            ),
+        }
+    )
+    devices = execution_group.devices
+    stage_axis = f"{axis}_stage"
+
+    def exchange_stage_state(time: Array, state: Array, /) -> Array:
+        del time
+        if state.ndim < 2 or state.shape[0] != local_cell_count:
+            raise ValueError(
+                "Owner-local stage state does not match local cell ownership."
+            )
+        components = int(np.prod(state.shape[1:]))
+        flattened = state.reshape((local_cell_count, components))
+        padded = jnp.pad(
+            flattened,
+            ((0, capacity - local_cell_count), (0, 0)),
+        )
+
+        def exchange(local_state: Array, /) -> Array:
+            values = local_state[0]
+            rank = jax.lax.axis_index(stage_axis)
+            for (
+                pair,
+                sender,
+                receiver,
+                send_rows,
+                ghost_rows,
+                send_slot,
+                receive_slot,
+                count,
+            ) in routes:
+                payload_width = count * components
+                source_values = values[jnp.asarray(send_rows, dtype=jnp.int32)]
+                packed = jnp.where(
+                    rank == sender,
+                    source_values.reshape((payload_width,)),
+                    jnp.zeros((payload_width,), dtype=values.dtype),
+                )
+                pair_values = (
+                    jnp.zeros((pair.local_capacity, payload_width), dtype=values.dtype)
+                    .at[send_slot]
+                    .set(packed)
+                )
+                received = pair.exchange(
+                    pair_values,
+                    rank,
+                    axis_name=stage_axis,
+                )
+                ghost_values = received[receive_slot].reshape((count, components))
+                values = jax.lax.cond(
+                    rank == receiver,
+                    lambda current: current.at[
+                        jnp.asarray(ghost_rows, dtype=jnp.int32)
+                    ].set(ghost_values),
+                    lambda current: current,
+                    values,
+                )
+            return values[None, ...]
+
+        mapped = jax.pmap(
+            exchange,
+            axis_name=stage_axis,
+            devices=devices,
+        )
+        exchanged = mapped(padded[None, ...])[0, :local_cell_count]
+        view_values = exchanged
+        plan_values = view_values[jnp.asarray(plan_to_view, dtype=jnp.int32)]
+        return plan_values.reshape(state.shape)
+
+    provider = FiniteVolumeStageStateProvider(
+        exchange_stage_state,
+        provider_id=provider_id,
+    )
+    return provider, jnp.asarray(local_owned[plan_to_view]), plan_to_view
+
+
+def _owner_local_global_decision_provider(
+    execution_group: Any,
+    /,
+    *,
+    axis_name: str,
+) -> FiniteVolumeStageDecisionProvider:
+    import jax
+
+    axis = str(axis_name).strip()
+    if not axis:
+        raise ValueError("owner-local decision axis_name must be non-empty.")
+    devices = execution_group.devices
+    if len(devices) == 1:
+        callback = lambda value: jnp.asarray(value, dtype=jnp.bool_)
+    else:
+
+        def reduce(local_value: Array, /) -> Array:
+            return jax.lax.pmin(local_value.astype(jnp.int32), axis)
+
+        mapped = jax.pmap(reduce, axis_name=axis, devices=devices)
+
+        def callback(value: Array, /) -> Array:
+            local_value = jnp.asarray(value, dtype=jnp.int32).reshape((1,))
+            return mapped(local_value)[0].astype(jnp.bool_)
+
+    return FiniteVolumeStageDecisionProvider(
+        callback,
+        provider_id=canonical_fingerprint(
+            {
+                "kind": "owner-local-stage-decision-provider",
+                "group": execution_group.spec.group_id,
+                "axis": axis,
+            }
+        ),
+    )
+
+
+def _require_owner_local_fv_geometry_current(
+    view: Any,
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+    execution_group: Any,
+    axis_name: str,
+    /,
+) -> None:
+    from ..discretization._view_support import OwnerLocalCellGeometry
+
+    if not isinstance(view, OwnerLocalCellGeometry) or not isinstance(
+        dynamics.discretization, UnstructuredFiniteVolumeDiscretization
+    ):
+        raise TypeError(
+            "Owner-local FV geometry requires its typed view and discretization."
+        )
+    prepared_view = dynamics.discretization.owner_local_view
+    if (
+        not isinstance(prepared_view, OwnerLocalCellGeometry)
+        or prepared_view.local_view_id != view.local_view_id
+        or prepared_view.distribution_id != view.distribution_id
+        or prepared_view.part_id != view.part_id
+        or prepared_view.source_topology_id != view.source_topology_id
+        or prepared_view.source_geometry_id != view.source_geometry_id
+        or prepared_view.source_map_id != view.source_map_id
+        or prepared_view.source_context_id != view.source_context_id
+    ):
+        raise ValueError(
+            "Prepared FV dynamics differ from their exact compact geometry view."
+        )
+    view.require_owner_directory_current(
+        execution_group,
+        axis_name=axis_name,
+    )
+    local_mesh, local_geometry = view.reconstruct_local_geometry()
+    prepared_mesh = dynamics.discretization.mesh
+    if local_mesh is None:
+        if (
+            prepared_mesh is not None
+            or local_geometry is not None
+            or view.local_mesh_id is not None
+            or np.asarray(view.cell_ids).size
+            or np.asarray(view.vertex_ids).size
+        ):
+            raise ValueError(
+                "Empty owner-local FV geometry differs from its prepared carrier."
+            )
+    elif (
+        prepared_mesh is None
+        or local_geometry is None
+        or local_mesh.mesh_id != prepared_mesh.mesh_id
+        or view.local_mesh_id != local_mesh.mesh_id
+    ):
+        raise ValueError(
+            "Prepared FV mesh differs from the exact reconstructed owner geometry."
+        )
+
+
+def _owner_local_reconstruction_stencil_depth(
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics, /
+) -> int:
+    from ..discretization.finite_volume._cell_polynomial import (
+        PreparedCellPolynomialReconstruction,
+    )
+    from ..discretization.finite_volume._unstructured_weno import (
+        PreparedUnstructuredWENOZReconstruction,
+    )
+
+    reconstruction = dynamics.method.reconstruction
+    if isinstance(reconstruction, PiecewiseConstantReconstruction):
+        return 1
+    if isinstance(reconstruction, PreparedCellPolynomialReconstruction):
+        depths = (int(np.asarray(reconstruction.report.maximum_stencil_depth)),)
+    elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
+        depths = tuple(
+            int(np.asarray(item.report.maximum_stencil_depth))
+            for item in (reconstruction.optimal, *reconstruction.sectors)
+        )
+    else:
+        raise TypeError(
+            "Owner-local FV requires a reconstruction with an explicit prepared stencil."
+        )
+    return max(1, max(depths, default=0) + 1)
+
+
+def _minimum_or_infinity(values: Array, dtype: Any, /) -> Array:
+    target_dtype = jnp.dtype(dtype)
+    if values.size == 0:
+        return jnp.asarray(jnp.inf, dtype=target_dtype)
+    return jnp.min(values).astype(target_dtype)
+
+
+def _owner_local_global_scalar_min_provider(
+    execution_group: Any,
+    /,
+    *,
+    axis_name: str,
+) -> Callable[[Array], Array]:
+    import jax
+
+    axis = str(axis_name).strip()
+    if not axis:
+        raise ValueError("owner-local scalar reduction axis_name must be non-empty.")
+    devices = execution_group.devices
+    if len(devices) == 1:
+        return lambda value: jnp.asarray(value)
+
+    def reduce(local_value: Array, /) -> Array:
+        return jax.lax.pmin(local_value, axis)
+
+    mapped = jax.pmap(reduce, axis_name=axis, devices=devices)
+
+    def collective(value: Array, /) -> Array:
+        local_value = jnp.asarray(value).reshape((1,))
+        return mapped(local_value)[0]
+
+    return collective
 
 
 class FiniteVolumeRunStatus(IntEnum):
@@ -368,6 +863,46 @@ class FiniteVolumeRuntimeState(StrictModule):
         return self.content_state.cell_average()
 
 
+class FiniteVolumeValidatedRuntimeState(StrictModule):
+    """Runtime-ordered accepted state bound to stable source IDs and authority."""
+
+    runtime_state: FiniteVolumeRuntimeState
+    source_cell_ids: Array
+    runtime_id: str = eqx.field(static=True)
+    epoch_id: str = eqx.field(static=True)
+    state_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        source_cell_ids: ArrayLike,
+        runtime_id: str,
+        epoch_id: str,
+        state_id: str,
+        /,
+    ) -> None:
+        ids = jnp.asarray(source_cell_ids)
+        host_ids = np.asarray(ids)
+        if (
+            not isinstance(runtime_state, FiniteVolumeRuntimeState)
+            or ids.ndim != 1
+            or host_ids.dtype.kind not in "iu"
+            or (host_ids.size and np.any(host_ids < 0))
+            or np.unique(host_ids).size != host_ids.size
+            or ids.shape != (runtime_state.content_state.cell_count,)
+        ):
+            raise ValueError("Validated FV runtime state has malformed stable cell IDs.")
+        identities = (runtime_id, epoch_id, state_id)
+        if any(not isinstance(value, str) or not value for value in identities):
+            raise ValueError("Validated FV runtime state identities must be non-empty.")
+        self.runtime_state = runtime_state
+        self.source_cell_ids = ids
+        self.runtime_id = runtime_id
+        self.epoch_id = epoch_id
+        self.state_id = state_id
+
+
 class FiniteVolumeALEAdvanceEvidence(StrictModule):
     """ALE geometry and stage-rate evidence for the public accepted ledger."""
 
@@ -420,6 +955,17 @@ class FiniteVolumeAdvanceResult(StrictModule):
         default=None
     )
     stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
+    overset_motion_receipt: CompositionRebindReceipt | None = fixed_field(default=None)
+
+
+class FiniteVolumeOwnerLocalRepartitionResult(StrictModule):
+    """REPARTITION event outcome, distinct from any prior PDE advance result."""
+
+    runtime_state: FiniteVolumeRuntimeState = fixed_field()
+    accepted: Array = fixed_field()
+    event_status: Array = fixed_field()
+    successor_runtime: PreparedFiniteVolumeRuntime | None = None
+    repartition_receipt: CompositionRebindReceipt | None = fixed_field(default=None)
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
@@ -452,6 +998,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     stage_flux_provider: FiniteVolumeStageFluxProvider | None
     effective_cell_volumes: Array = fixed_field()
     active_cell_mask: Array = fixed_field()
+    owner_local_geometry: Any = fixed_field()
+    owner_local_execution_group: Any = eqx.field(static=True)
+    owner_local_owned_cell_mask: Array | None = fixed_field()
+    owner_local_decision_provider: Any = eqx.field(static=True)
+    owner_local_scalar_min_provider: Any = eqx.field(static=True)
+    owner_local_axis_name: str = eqx.field(static=True)
     precision: FiniteVolumePrecisionPolicy
     static_flux_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = (
         fixed_field()
@@ -483,6 +1035,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         topology_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         stage_state_provider: FiniteVolumeStageStateProvider | None = None,
         stage_flux_provider: FiniteVolumeStageFluxProvider | None = None,
+        execution_group: Any = None,
+        owner_local_geometry: Any = None,
+        owner_local_axis_name: str = "finite_volume_owner_local",
     ) -> None:
         if not isinstance(
             dynamics,
@@ -502,6 +1057,73 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         policy_ = FiniteVolumeStepPolicy() if policy is None else policy
         if not isinstance(policy_, FiniteVolumeStepPolicy):
             raise TypeError("policy must be FiniteVolumeStepPolicy.")
+        owner_local_view = owner_local_geometry
+        if (
+            owner_local_view is None
+            and isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            and isinstance(
+                dynamics.discretization, UnstructuredFiniteVolumeDiscretization
+            )
+        ):
+            owner_local_view = dynamics.discretization.owner_local_view
+        owner_local_group = execution_group
+        owner_local_owned_mask = None
+        owner_local_decision_provider = None
+        owner_local_scalar_min_provider = None
+        owner_axis = str(owner_local_axis_name).strip()
+        if owner_local_view is None:
+            if execution_group is not None:
+                raise ValueError(
+                    "execution_group requires a canonical owner-local FV geometry view."
+                )
+            owner_axis = ""
+        else:
+            from .._execution_runtime import ExecutionGroup
+            from ..discretization._view_support import OwnerLocalCellGeometry
+
+            if not isinstance(owner_local_view, OwnerLocalCellGeometry):
+                raise TypeError("owner_local_geometry must be OwnerLocalCellGeometry.")
+            if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+                raise TypeError("Owner-local geometry requires unstructured FV dynamics.")
+            if not isinstance(
+                dynamics.discretization, UnstructuredFiniteVolumeDiscretization
+            ):
+                raise TypeError(
+                    "Owner-local geometry requires unstructured discretization."
+                )
+            if not isinstance(owner_local_group, ExecutionGroup):
+                raise TypeError(
+                    "Owner-local finite-volume runtime requires ExecutionGroup."
+                )
+            if stage_state_provider is not None:
+                raise ValueError(
+                    "Owner-local FV runtimes require their canonical stage halo provider."
+                )
+            _require_owner_local_fv_geometry_current(
+                owner_local_view,
+                dynamics,
+                owner_local_group,
+                f"{owner_axis}_directory",
+            )
+            stage_state_provider, owner_local_owned_mask, _ = (
+                _prepare_owner_local_fv_stage_state_provider(
+                    owner_local_view,
+                    owner_local_group,
+                    dynamics.discretization.cell_global_ids,
+                    axis_name=owner_axis,
+                    required_stencil_depth=_owner_local_reconstruction_stencil_depth(
+                        dynamics
+                    ),
+                )
+            )
+            owner_local_decision_provider = _owner_local_global_decision_provider(
+                owner_local_group,
+                axis_name=f"{owner_axis}_decisions",
+            )
+            owner_local_scalar_min_provider = _owner_local_global_scalar_min_provider(
+                owner_local_group,
+                axis_name=f"{owner_axis}_scalar_min",
+            )
         if stage_state_provider is not None:
             if not isinstance(stage_state_provider, FiniteVolumeStageStateProvider):
                 raise TypeError(
@@ -761,19 +1383,37 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                 )
             static_flux_rate_block_templates = tuple(templates)
+        native_overset_id = (
+            None
+            if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            or dynamics.coupling.overset is None
+            else dynamics.coupling.overset.native_connectivity_id
+        )
+        epoch_topology_id = topology_id
+        epoch_geometry_id = geometry_id
+        if owner_local_view is not None:
+            epoch_topology_id = owner_local_view.source_topology_id
+            epoch_geometry_id = owner_local_view.source_geometry_id
+        partition_id = (
+            "serial" if owner_local_view is None else owner_local_view.distribution_id
+        )
         default_topology_epoch = TopologyEpoch(
             0,
-            geometry_id,
-            topology_id,
-            "serial",
+            epoch_geometry_id,
+            epoch_topology_id,
+            partition_id,
         )
         default_topology_artifacts = FiniteVolumeTopologyArtifacts(
             default_topology_epoch,
             discretization.prepared_id,
             topology_artifact_id=(
-                None
-                if sliding_initial_coupling is None
-                else sliding_initial_coupling.coupling_id
+                native_overset_id
+                if native_overset_id is not None
+                else (
+                    None
+                    if sliding_initial_coupling is None
+                    else sliding_initial_coupling.coupling_id
+                )
             ),
             metrics_artifact_id=(
                 None
@@ -801,10 +1441,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         if (
             initial_topology_artifacts.epoch_id != initial_topology_epoch.epoch_id
             or initial_topology_artifacts.prepared_id != discretization.prepared_id
-            or initial_topology_epoch.geometry_id != geometry_id
-            or initial_topology_epoch.partition_id != "serial"
+            or initial_topology_epoch.geometry_id != epoch_geometry_id
+            or initial_topology_epoch.topology_id != epoch_topology_id
+            or initial_topology_epoch.partition_id != partition_id
         ):
             raise ValueError("Reprepared topology does not match runtime geometry.")
+        if (
+            native_overset_id is not None
+            and initial_topology_artifacts.topology_artifact_id != native_overset_id
+        ):
+            raise ValueError(
+                "Initial topology artifacts do not bind the native overset connectivity."
+            )
         topology_epoch_id = initial_topology_epoch.epoch_id
         if (
             embedded_metrics is not None
@@ -836,6 +1484,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         else:
             active_mask = jnp.ones(self.effective_cell_volumes.shape, dtype=jnp.bool_)
         self.active_cell_mask = jnp.asarray(active_mask, dtype=jnp.bool_)
+        self.owner_local_geometry = owner_local_view
+        self.owner_local_execution_group = owner_local_group
+        self.owner_local_owned_cell_mask = owner_local_owned_mask
+        self.owner_local_decision_provider = owner_local_decision_provider
+        self.owner_local_scalar_min_provider = owner_local_scalar_min_provider
+        self.owner_local_axis_name = owner_axis
 
         self.policy = policy_
         self.stage_state_provider = stage_state_provider
@@ -851,6 +1505,23 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self.sliding_initial_coupling = sliding_initial_coupling
         self.initial_topology_epoch = initial_topology_epoch
         self.initial_topology_artifacts = initial_topology_artifacts
+        owner_local_identity = None
+        if owner_local_view is not None:
+            if (
+                owner_local_group is None
+                or owner_local_owned_mask is None
+                or owner_local_decision_provider is None
+            ):
+                raise RuntimeError(
+                    "Owner-local runtime identity lacks its prepared providers."
+                )
+            owner_local_identity = {
+                "group": owner_local_group.spec.group_id,
+                "view": owner_local_view.local_view_id,
+                "owned_mask": array_tree_fingerprint(np.asarray(owner_local_owned_mask)),
+                "decision_provider": owner_local_decision_provider.provider_id,
+                "axis": owner_axis,
+            }
         self.runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-volume-runtime",
@@ -864,6 +1535,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 "geometry_family": geometry_family_id,
                 "geometry_layout": geometry_layout_id,
                 "evidence_policy": evidence_policy_id,
+                "owner_local": owner_local_identity,
                 "stage_state_provider": (
                     None
                     if stage_state_provider is None
@@ -998,6 +1670,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     ) -> Array:
         average = cell_average.reshape((-1, cell_average.shape[-1]))
         active = active_cell_mask.reshape((-1,))
+        if average.shape[0] == 0:
+            return jnp.asarray(True)
         first_active = jnp.argmax(active.astype(jnp.int32))
 
         def evaluate(_: None) -> Array:
@@ -1018,6 +1692,477 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             operand=None,
         )
 
+    @checked
+    def _validate_state(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        /,
+    ) -> None:
+        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
+            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
+        content = runtime_state.content_state
+        journal = runtime_state.topology_journal
+        if content.precision.policy_id != self.precision.policy_id:
+            raise ValueError("Runtime content precision does not match the runtime.")
+        if (
+            journal.capacity < self._topology_journal_capacity()
+            or journal.current_epoch_id != self.initial_topology_epoch.epoch_id
+            or content.topology_epoch_id != journal.current_epoch_id
+        ):
+            raise ValueError("Runtime topology journal does not match the runtime.")
+        if not journal.artifact_table:
+            raise ValueError("Runtime topology journal has no current artifacts.")
+        current_artifacts = journal.artifact_table[-1]
+        if (
+            current_artifacts.epoch_id != self.initial_topology_epoch.epoch_id
+            or current_artifacts.prepared_id
+            != self.initial_topology_artifacts.prepared_id
+        ):
+            raise ValueError("Runtime topology artifacts do not match the runtime.")
+        if (
+            isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            and self.dynamics.coupling.overset is not None
+            and self.dynamics.coupling.overset.native_connectivity_id is not None
+            and current_artifacts.topology_artifact_id
+            != self.dynamics.coupling.overset.native_connectivity_id
+        ):
+            raise ValueError(
+                "Runtime topology journal does not bind the prepared native overset connectivity."
+            )
+        if content.topology_epoch_id != self.topology_epoch_id:
+            raise ValueError("Runtime content topology epoch does not match the runtime.")
+        if content.geometry_family_id != self.geometry_family_id:
+            raise ValueError(
+                "Runtime content geometry family does not match the runtime."
+            )
+        if content.geometry_layout_id != self.geometry_layout_id:
+            raise ValueError(
+                "Runtime content geometry layout does not match the runtime."
+            )
+        if content.evidence_policy_id != self.evidence_policy_id:
+            raise ValueError(
+                "Runtime content evidence policy does not match the runtime."
+            )
+        expected_content_shape = (
+            int(np.prod(self._state_shape()[:-1])),
+            self._state_shape()[-1],
+        )
+        if content.conservative_content.shape != expected_content_shape:
+            raise ValueError(
+                "Runtime content coordinates do not match the finite-volume layout."
+            )
+        if (
+            content.effective_cell_volumes.shape != self.effective_cell_volumes.shape
+            or content.active_cell_mask.shape != self.active_cell_mask.shape
+        ):
+            raise ValueError(
+                "Runtime content metrics do not match the finite-volume layout."
+            )
+        if self.owner_local_geometry is not None:
+            owner_mask = self.owner_local_owned_cell_mask
+            if owner_mask is None:
+                raise ValueError("Owner-local runtime lacks its prepared ownership mask.")
+            if (
+                content.owned_cell_mask is None
+                or content.owned_cell_mask.shape != owner_mask.shape
+                or not np.array_equal(
+                    np.asarray(content.owned_cell_mask, dtype=np.bool_),
+                    np.asarray(owner_mask, dtype=np.bool_),
+                )
+            ):
+                raise ValueError(
+                    "Runtime content ownership does not match its accepted local cell view."
+                )
+        elif content.owned_cell_mask is not None and not bool(
+            np.all(np.asarray(content.owned_cell_mask))
+        ):
+            raise ValueError(
+                "Partially owned content requires its accepted owner-local geometry binding."
+            )
+        if self.sliding_plan is not None:
+            self._validate_sliding_state(runtime_state)
+
+    def _owner_local_runtime_cell_ids(self) -> np.ndarray:
+        from ..discretization._view_support import OwnerLocalCellGeometry
+
+        if not isinstance(self.owner_local_geometry, OwnerLocalCellGeometry):
+            raise ValueError("Owner-local runtime lacks its typed geometry view.")
+        if not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError("Owner-local runtime requires unstructured FV dynamics.")
+        discretization = self.dynamics.discretization
+        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError("Owner-local runtime requires unstructured cell geometry.")
+        cell_ids = np.asarray(discretization.cell_global_ids, dtype=np.int64)
+        view_ids = np.asarray(self.owner_local_geometry.cell_ids, dtype=np.int64)
+        if (
+            cell_ids.ndim != 1
+            or np.unique(cell_ids).size != cell_ids.size
+            or view_ids.shape != cell_ids.shape
+            or not np.array_equal(np.sort(view_ids), np.sort(cell_ids))
+        ):
+            raise ValueError(
+                "Runtime plan cells differ from its accepted owner-local view."
+            )
+        return cell_ids
+
+    @checked
+    def owner_local_cell_ids(self) -> np.ndarray:
+        """Return exact runtime row IDs for owner-local accepted state arrays."""
+        return self._owner_local_runtime_cell_ids()
+
+    def _owner_local_state_rows(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        source_cell_ids: ArrayLike,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
+            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
+        raw_ids = np.asarray(source_cell_ids)
+        if (
+            raw_ids.dtype.kind not in "iu"
+            or raw_ids.ndim != 1
+            or raw_ids.shape != (runtime_state.content_state.cell_count,)
+            or np.unique(raw_ids).size != raw_ids.size
+            or (raw_ids.size and np.any(raw_ids < 0))
+            or (
+                raw_ids.dtype.kind == "u"
+                and raw_ids.size
+                and np.any(raw_ids > np.iinfo(np.int64).max)
+            )
+        ):
+            raise ValueError("Source FV rows require unique nonnegative stable cell IDs.")
+        source_ids = np.asarray(raw_ids, dtype=np.int64)
+        runtime_ids = self._owner_local_runtime_cell_ids()
+        if source_ids.shape != runtime_ids.shape or not np.array_equal(
+            np.sort(source_ids), np.sort(runtime_ids)
+        ):
+            raise ValueError(
+                "Source stable cell IDs differ from the prepared owner-local plan."
+            )
+        source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
+        runtime_rows = np.asarray(
+            [source_rows[int(identifier)] for identifier in runtime_ids],
+            dtype=np.int32,
+        )
+        return source_ids, runtime_ids, runtime_rows
+
+    def _runtime_ordered_state(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        source_cell_ids: ArrayLike,
+        /,
+    ) -> tuple[FiniteVolumeRuntimeState, np.ndarray]:
+        source_ids, runtime_ids, runtime_rows = self._owner_local_state_rows(
+            runtime_state, source_cell_ids
+        )
+        if np.array_equal(source_ids, runtime_ids):
+            return runtime_state, runtime_ids
+        source = runtime_state.content_state
+        rows = jnp.asarray(runtime_rows, dtype=jnp.int32)
+        content = FiniteVolumeConservativeContentState(
+            jnp.asarray(source.conservative_content)[rows],
+            jnp.asarray(source.effective_cell_volumes)[rows],
+            jnp.asarray(source.active_cell_mask)[rows],
+            source.time,
+            topology_epoch_id=source.topology_epoch_id,
+            geometry_family_id=source.geometry_family_id,
+            geometry_layout_id=source.geometry_layout_id,
+            geometry_version=source.geometry_version,
+            evidence_policy_id=source.evidence_policy_id,
+            evidence_version=source.evidence_version,
+            precision=source.precision,
+            owned_cell_mask=(
+                None
+                if source.owned_cell_mask is None
+                else jnp.asarray(source.owned_cell_mask)[rows]
+            ),
+        )
+        return (
+            FiniteVolumeRuntimeState(
+                content,
+                runtime_state.topology_journal,
+                runtime_state.step_size,
+                accepted_step=runtime_state.accepted_step,
+                last_status=runtime_state.last_status,
+                controller_state=runtime_state.controller_state,
+                integrator_state=runtime_state.integrator_state,
+                output_cursor=runtime_state.output_cursor,
+                sliding_coupling=runtime_state.sliding_coupling,
+                sliding_shift=runtime_state.sliding_shift,
+                sliding_event_id=runtime_state.sliding_event_id,
+            ),
+            runtime_ids,
+        )
+
+    @checked
+    def accepted_state_id(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        source_cell_ids: ArrayLike,
+        /,
+    ) -> str:
+        """Hash core rows with their explicit IDs; external banks are separate.
+
+        The root binds this runtime/view and source geometry, keyed conservative
+        content, volumes, activity, owner-mask presence/data, complete journal,
+        accepted controls, and sliding state. It is stable under row order.
+        """
+        cell_ids, _, _ = self._owner_local_state_rows(runtime_state, source_cell_ids)
+        content = runtime_state.content_state
+        order = np.argsort(cell_ids, kind="stable")
+        journal = runtime_state.topology_journal
+        journal_static = {
+            "current_epoch_id": journal.current_epoch_id,
+            "epochs": tuple(
+                (
+                    epoch.index,
+                    epoch.geometry_id,
+                    epoch.topology_id,
+                    epoch.partition_id,
+                    epoch.epoch_id,
+                )
+                for epoch in journal.epoch_table
+            ),
+            "artifacts": tuple(
+                artifact.artifacts_id for artifact in journal.artifact_table
+            ),
+            "input_epoch_ids": journal.input_epoch_ids,
+            "requested_ids": journal.requested_ids,
+            "result_ids": journal.result_ids,
+            "payload_ids": journal.payload_ids,
+            "capacity": journal.capacity,
+            "journal_id": journal.journal_id,
+        }
+        return canonical_fingerprint(
+            {
+                "kind": "finite-volume-accepted-runtime-state",
+                "runtime_id": self.runtime_id,
+                "owner_local_view_id": self.owner_local_geometry.local_view_id,
+                "source_topology_id": self.owner_local_geometry.source_topology_id,
+                "source_geometry_id": self.owner_local_geometry.source_geometry_id,
+                "distribution_id": self.owner_local_geometry.distribution_id,
+                "cell_ids": cell_ids[order],
+                "conservative_content": array_tree_fingerprint(
+                    np.asarray(content.conservative_content)[order]
+                ),
+                "effective_cell_volumes": array_tree_fingerprint(
+                    np.asarray(content.effective_cell_volumes)[order]
+                ),
+                "active_cell_mask": array_tree_fingerprint(
+                    np.asarray(content.active_cell_mask)[order]
+                ),
+                "owned_cell_mask_present": content.owned_cell_mask is not None,
+                "owned_cell_mask": (
+                    None
+                    if content.owned_cell_mask is None
+                    else array_tree_fingerprint(
+                        np.asarray(content.owned_cell_mask)[order]
+                    )
+                ),
+                "content": {
+                    "time": array_tree_fingerprint(content.time),
+                    "geometry_version": array_tree_fingerprint(content.geometry_version),
+                    "evidence_version": array_tree_fingerprint(content.evidence_version),
+                    "topology_epoch_id": content.topology_epoch_id,
+                    "geometry_family_id": content.geometry_family_id,
+                    "geometry_layout_id": content.geometry_layout_id,
+                    "evidence_policy_id": content.evidence_policy_id,
+                    "precision_policy_id": content.precision.policy_id,
+                },
+                "topology_journal": {
+                    "arrays": array_tree_fingerprint(
+                        (
+                            journal.kinds,
+                            journal.states,
+                            journal.statuses,
+                            journal.accepted_steps,
+                            journal.times,
+                            journal.next_sequence,
+                            journal.count,
+                            journal.overflowed,
+                        )
+                    ),
+                    "static": journal_static,
+                },
+                "accepted_step": array_tree_fingerprint(runtime_state.accepted_step),
+                "step_size": array_tree_fingerprint(runtime_state.step_size),
+                "last_status": array_tree_fingerprint(runtime_state.last_status),
+                "controller_state": array_tree_fingerprint(
+                    runtime_state.controller_state
+                ),
+                "integrator_state": array_tree_fingerprint(
+                    runtime_state.integrator_state
+                ),
+                "output_cursor": array_tree_fingerprint(runtime_state.output_cursor),
+                "sliding": {
+                    "coupling_id": runtime_state.sliding_coupling_id,
+                    "coupling": (
+                        None
+                        if runtime_state.sliding_coupling is None
+                        else array_tree_fingerprint(runtime_state.sliding_coupling)
+                    ),
+                    "shift": array_tree_fingerprint(runtime_state.sliding_shift),
+                    "event_id": runtime_state.sliding_event_id,
+                },
+            }
+        )
+
+    @checked
+    def validate_restored_accepted_state(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        source_cell_ids: ArrayLike,
+        /,
+        *,
+        expected_runtime_id: str,
+        expected_epoch_id: str,
+        expected_state_id: str | None = None,
+    ) -> FiniteVolumeValidatedRuntimeState:
+        """Validate a decoded accepted shard against this exact source runtime."""
+        from .._execution_runtime import ExecutionGroup
+        from ..discretization._view_support import OwnerLocalCellGeometry
+        from ..meshing._distribution import _owner_group_fail_if_any
+
+        execution_group = self.owner_local_execution_group
+        if not isinstance(execution_group, ExecutionGroup):
+            raise TypeError("Restored owner-local state requires its ExecutionGroup.")
+        owner_view: OwnerLocalCellGeometry | None = None
+        normalized_state: FiniteVolumeRuntimeState | None = None
+        runtime_cell_ids: np.ndarray | None = None
+        state_id: str | None = None
+        local_error: str | None = None
+        try:
+            owner_view = self.owner_local_geometry
+            if not isinstance(owner_view, OwnerLocalCellGeometry):
+                raise TypeError(
+                    "Restored owner-local state requires its source geometry view."
+                )
+            state_id = self.accepted_state_id(runtime_state, source_cell_ids)
+            if expected_state_id is not None and state_id != expected_state_id:
+                raise ValueError("Restored source state identity changed.")
+            normalized_state, runtime_cell_ids = self._runtime_ordered_state(
+                runtime_state, source_cell_ids
+            )
+            self._validate_state(normalized_state)
+            if expected_runtime_id != self.runtime_id:
+                raise ValueError("Restored source runtime identity changed.")
+            if (
+                expected_epoch_id != self.topology_epoch_id
+                or normalized_state.topology_journal.current_epoch_id != expected_epoch_id
+            ):
+                raise ValueError(
+                    "Restored source epoch differs from its prepared runtime."
+                )
+            if (
+                owner_view.source_topology_id != self.initial_topology_epoch.topology_id
+                or owner_view.source_geometry_id
+                != self.initial_topology_epoch.geometry_id
+                or owner_view.distribution_id != self.initial_topology_epoch.partition_id
+            ):
+                raise ValueError("Restored source view differs from its runtime epoch.")
+            status = int(np.asarray(normalized_state.last_status))
+            if status not in (
+                int(FiniteVolumeRunStatus.SUCCESS),
+                int(FiniteVolumeRunStatus.RECOVERED_REJECTION),
+            ):
+                raise ValueError("Restored runtime state is not an accepted boundary.")
+            if (
+                int(np.asarray(normalized_state.accepted_step)) < 0
+                or int(np.asarray(normalized_state.output_cursor)) < 0
+                or not np.isfinite(float(np.asarray(normalized_state.time)))
+                or not np.isfinite(float(np.asarray(normalized_state.step_size)))
+                or float(np.asarray(normalized_state.step_size)) <= 0.0
+            ):
+                raise ValueError(
+                    "Restored runtime controls are outside the accepted domain."
+                )
+            content = normalized_state.content_state
+            if not np.array_equal(
+                np.asarray(content.effective_cell_volumes),
+                np.asarray(self.effective_cell_volumes),
+            ) or not np.array_equal(
+                np.asarray(content.active_cell_mask),
+                np.asarray(self.active_cell_mask),
+            ):
+                raise ValueError(
+                    "Restored FV state differs from the prepared source geometry."
+                )
+            self.precision.validate_state(content.conservative_content)
+        except Exception as error:
+            local_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_if_any(
+            local_error,
+            execution_group,
+            f"{self.owner_local_axis_name}_restored_state_admission",
+            "restored accepted finite-volume source state",
+        )
+        if owner_view is None:
+            raise ValueError("Restored source geometry view admission produced no view.")
+        if normalized_state is None or runtime_cell_ids is None or state_id is None:
+            raise ValueError(
+                "Restored source-state normalization produced incomplete typed data."
+            )
+        if not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError(
+                "Restored owner-local FV geometry requires unstructured dynamics."
+            )
+        try:
+            _require_owner_local_fv_geometry_current(
+                owner_view,
+                self.dynamics,
+                execution_group,
+                f"{self.owner_local_axis_name}_restored_source_directory",
+            )
+        except Exception as error:
+            authority_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_if_any(
+            authority_error,
+            execution_group,
+            f"{self.owner_local_axis_name}_restored_source_authority",
+            "restored source geometry authority",
+        )
+        local_admissible: Array | None = None
+        admissibility_error: str | None = None
+        try:
+            content = normalized_state.content_state
+            active = content.active_cell_mask
+            owner_mask = self.owner_local_owned_cell_mask
+            if owner_mask is None:
+                raise ValueError("Restored owner-local runtime has no ownership mask.")
+            active = active & owner_mask
+            local_admissible = self._active_state_is_admissible(
+                content.cell_average(),
+                active,
+            )
+        except Exception as error:
+            admissibility_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_if_any(
+            admissibility_error,
+            execution_group,
+            f"{self.owner_local_axis_name}_restored_state_admissibility",
+            "restored accepted finite-volume source admissibility",
+        )
+        if local_admissible is None:
+            raise ValueError("Restored source admissibility produced no typed result.")
+        valid = local_admissible
+        if self.owner_local_decision_provider is None:
+            raise ValueError(
+                "Restored owner-local runtime has no collective decision provider."
+            )
+        valid = self.owner_local_decision_provider(valid)
+        if not bool(np.asarray(valid)):
+            raise ValueError(
+                "Restored FV state is not admissible on its owned active cells."
+            )
+        return FiniteVolumeValidatedRuntimeState(
+            normalized_state,
+            runtime_cell_ids,
+            self.runtime_id,
+            self.topology_epoch_id,
+            state_id,
+        )
+
     def reprepare_for_epoch(
         self,
         topology_epoch: TopologyEpoch,
@@ -1031,8 +2176,19 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             self.policy,
             topology_epoch=topology_epoch,
             topology_artifacts=topology_artifacts,
-            stage_state_provider=self.stage_state_provider,
+            stage_state_provider=(
+                None
+                if self.owner_local_geometry is not None
+                else self.stage_state_provider
+            ),
             stage_flux_provider=self.stage_flux_provider,
+            execution_group=self.owner_local_execution_group,
+            owner_local_geometry=self.owner_local_geometry,
+            owner_local_axis_name=(
+                "finite_volume_owner_local"
+                if not self.owner_local_axis_name
+                else self.owner_local_axis_name
+            ),
         )
 
     def initialize_state(
@@ -1131,7 +2287,20 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             evidence_policy_id=self.evidence_policy_id,
             evidence_version=jnp.asarray(0, dtype=jnp.int32),
             precision=self.precision,
+            owned_cell_mask=self.owner_local_owned_cell_mask,
         )
+        if self.owner_local_decision_provider is not None:
+            refreshed_average = self._provide_stage_state(
+                time_value,
+                content_state.cell_average(),
+            )
+            refreshed_content = (
+                refreshed_average
+                * content_state.effective_cell_volumes.reshape(
+                    (-1,) + (1,) * (refreshed_average.ndim - 1)
+                )
+            )
+            content_state = content_state.with_content(refreshed_content)
         return FiniteVolumeRuntimeState(
             content_state,
             topology_journal,
@@ -1680,11 +2849,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         # One accepted boundary produces one request and one transaction.  The
         # scheduler owns append/commit ordering and keeps failed artifacts out of
         # the runtime state.
-        event_kind = getattr(
-            TopologyEventKind,
-            "SLIDING_REFRESH",
-            TopologyEventKind.OVERSET_DONOR_REBUILD,
-        )
+        event_kind = TopologyEventKind.SLIDING_REFRESH
         request = FiniteVolumeTopologyEventRequest(
             event_kind,
             prior_state.content_state.topology_epoch_id,
@@ -1699,10 +2864,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise ValueError("Sliding refresh requires unstructured geometry.")
         current_epoch = prior_state.topology_journal.epoch_table[-1]
         successor = current_epoch
+        native_overset_id = (
+            self.dynamics.coupling.overset.native_connectivity_id
+            if isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            and self.dynamics.coupling.overset is not None
+            else None
+        )
         successor_artifacts = FiniteVolumeTopologyArtifacts(
             successor,
             discretization.prepared_id,
-            topology_artifact_id=coupling.coupling_id,
+            topology_artifact_id=(
+                coupling.coupling_id if native_overset_id is None else native_overset_id
+            ),
             metrics_artifact_id=coupling.evidence_id,
             operators_artifact_id=plan.plan_id,
         )
@@ -1718,6 +2891,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             evidence_policy_id=accepted_state.content_state.evidence_policy_id,
             evidence_version=accepted_state.content_state.evidence_version,
             precision=accepted_state.content_state.precision,
+            owned_cell_mask=accepted_state.content_state.owned_cell_mask,
         )
         scheduler = FiniteVolumeTopologyEventScheduler(prior_state.topology_journal)
         scheduler.submit(request, accepted_step, event_time, accepted=True)
@@ -1779,7 +2953,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             self.policy,
             topology_epoch=transaction.result_epoch,
             topology_artifacts=transaction.result_artifacts,
-            stage_state_provider=self.stage_state_provider,
+            stage_state_provider=(
+                None
+                if self.owner_local_geometry is not None
+                else self.stage_state_provider
+            ),
+            execution_group=self.owner_local_execution_group,
+            owner_local_geometry=self.owner_local_geometry,
+            owner_local_axis_name=(
+                "finite_volume_owner_local"
+                if not self.owner_local_axis_name
+                else self.owner_local_axis_name
+            ),
         )
         refreshed_result = eqx.tree_at(
             lambda answer: answer.runtime_state,
@@ -1793,6 +2978,3360 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             is_leaf=lambda node: node is None,
         )
 
+    def commit_moving_overset_update(
+        self,
+        accepted_result: FiniteVolumeAdvanceResult,
+        previous_connectivity: Any,
+        candidate_connectivity: Any,
+        motion_advances: Any,
+        successor_dynamics: PreparedUnstructuredFiniteVolumeDynamics | None,
+        /,
+        *,
+        args: Any = None,
+        accepted_composition: Any = None,
+        execution_group: Any = None,
+        owner_local_source_views: Any = None,
+        owner_local_successor_assembly: Any = None,
+        owner_local_successor_specs: Any = None,
+        owner_local_field_reconstructions: Any = None,
+        owner_local_coefficient_ids: Any = None,
+        owner_local_field_name: str = "state",
+        owner_local_part_name: str | None = None,
+    ) -> FiniteVolumeAdvanceResult:
+        """Commit one accepted native overset motion/rezone at the step boundary.
+
+        Eulerian steps use a fixed-time conservative rezone and keep physical
+        boundary coordinates fixed. An ALE result instead supplies the exact
+        accepted endpoint geometry; the native motion transition must realize
+        that geometry, and a successor ALE plan must continue from it. Both
+        routes transfer the actual accepted post-step content and publish only
+        after the finite-volume event and native lifecycle rebind commit.
+        """
+        from collections.abc import Mapping
+
+        from ..discretization.finite_volume._unstructured_remap import (
+            UnstructuredConservativeRemapPlan,
+        )
+        from ..lifecycle import (
+            Composition,
+            CompositionEntry,
+            CompositionTransport,
+        )
+        from ..meshing._assembly import MeshPart
+        from ..meshing._canonical import certify_cell_mesh
+        from ..meshing._motion import MeshMotionAdvance
+        from ..meshing._overset import (
+            OversetConnectivity,
+            prepare_overset_conservative_remap,
+            prepare_overset_motion_rebind,
+        )
+        from ..meshing._result import CellMeshingResult
+        from ._finite_volume_topology_events import (
+            FiniteVolumeTopologyArtifactEvidence,
+        )
+
+        if not isinstance(accepted_result, FiniteVolumeAdvanceResult):
+            raise TypeError("accepted_result must be FiniteVolumeAdvanceResult.")
+        if not bool(np.asarray(accepted_result.accepted)):
+            return accepted_result
+        if accepted_composition is not None and not isinstance(
+            accepted_composition, Composition
+        ):
+            raise TypeError("accepted_composition must be Composition or None.")
+        if not isinstance(previous_connectivity, OversetConnectivity):
+            raise TypeError("previous_connectivity must be OversetConnectivity.")
+        if candidate_connectivity is not None and not isinstance(
+            candidate_connectivity, OversetConnectivity
+        ):
+            raise TypeError("candidate_connectivity must be OversetConnectivity or None.")
+        if not isinstance(motion_advances, Mapping) or (
+            not motion_advances and not previous_connectivity.owner_local
+        ):
+            raise TypeError("motion_advances must map accepted moved-part advances.")
+        if (
+            not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            or self.dynamics.coupling.overset is None
+        ):
+            raise ValueError(
+                "Native overset motion requires prepared unstructured overset dynamics."
+            )
+        ale_result = accepted_result.ale
+        if ale_result is None:
+            ale_error = (
+                "moving runtime result lacks accepted ALE geometry"
+                if self.dynamics.coupling.motion is not None
+                else None
+            )
+        elif (
+            self.dynamics.coupling.motion is None
+            or ale_result.geometry.motion_plan_id != self.dynamics.coupling.motion.plan_id
+        ):
+            ale_error = "ALE evidence does not bind the predecessor runtime motion plan"
+        elif not bool(np.asarray(ale_result.accepted)):
+            ale_error = "ALE geometry was not accepted"
+        else:
+            ale_error = None
+        if self.dynamics.coupling.topology_event_policy != "accepted_step":
+            raise ValueError(
+                "Native overset motion requires accepted-step topology events."
+            )
+        source_map = self.dynamics.coupling.overset
+        if (
+            source_map.native_connectivity_id is None
+            or source_map.native_connectivity_id != previous_connectivity.connectivity_id
+        ):
+            raise ValueError(
+                "The predecessor FV map does not bind the accepted native connectivity."
+            )
+        candidate_error: str | None = None
+        if previous_connectivity.owner_local and owner_local_source_views is None:
+            owner_local_source_views = {
+                part.name: part.carrier for part in previous_connectivity.assembly.parts
+            }
+        try:
+            if previous_connectivity.owner_local:
+                if (
+                    execution_group is None
+                    or owner_local_source_views is None
+                    or owner_local_successor_assembly is None
+                    or accepted_composition is None
+                    or owner_local_successor_specs is None
+                ):
+                    raise ValueError(
+                        "Owner-local motion requires the accepted Composition, source views, successor assembly/specs, and execution group."
+                    )
+                if (
+                    owner_local_field_reconstructions is None
+                    and owner_local_coefficient_ids is None
+                ):
+                    from ..discretization.finite_volume._field_view import (
+                        prepare_owner_local_finite_volume_field_reconstruction,
+                    )
+                    from ..meshing._overset_exchange import (
+                        _synchronize_owner_search_failure,
+                    )
+
+                    local_reconstructions = {}
+                    local_coefficient_ids = {}
+                    local_error: Exception | None = None
+                    try:
+                        for part in owner_local_successor_assembly.parts:
+                            view = part.carrier
+                            nonempty_blocks = tuple(
+                                block
+                                for block in view.blocks
+                                if np.asarray(block.cell_ids).size
+                            )
+                            if len(nonempty_blocks) > 1:
+                                raise ValueError(
+                                    "Automatic owner-local donor reconstruction requires one canonical cell block per part; pass an exact prepared field binding for multiblock views."
+                                )
+                            if nonempty_blocks:
+                                block = nonempty_blocks[0]
+                                local_reconstructions[part.name] = (
+                                    prepare_owner_local_finite_volume_field_reconstruction(
+                                        view,
+                                        block.name,
+                                        owner_local_field_name,
+                                    )
+                                )
+                                local_coefficient_ids[part.name] = np.asarray(
+                                    block.cell_ids, dtype=np.int64
+                                )
+                    except Exception as error:
+                        local_error = error
+                    if _synchronize_owner_search_failure(
+                        local_error is not None,
+                        execution_group.devices,
+                        "finite_volume_owner_local_reconstruction",
+                    ):
+                        detail = (
+                            str(local_error)
+                            if local_error is not None
+                            else "another rank rejected its owner-local donor reconstruction"
+                        )
+                        raise ValueError(
+                            "Owner-local donor reconstruction failed collectively: "
+                            + detail
+                        )
+                    if local_error is not None:
+                        raise ValueError(
+                            "Owner-local donor reconstruction failed collectively."
+                        )
+                    owner_local_field_reconstructions = local_reconstructions
+                    owner_local_coefficient_ids = local_coefficient_ids
+                derived_candidate = previous_connectivity.moved_from_advances(
+                    motion_advances,
+                    successor_specs=owner_local_successor_specs,
+                    owner_local_source_views=owner_local_source_views,
+                    successor_assembly=owner_local_successor_assembly,
+                    execution_group=execution_group,
+                    owner_local_field_reconstructions=owner_local_field_reconstructions,
+                    owner_local_coefficient_ids=owner_local_coefficient_ids,
+                    axis_name="finite_volume_motion",
+                    owner_local_field_name=owner_local_field_name,
+                )
+                if candidate_connectivity is not None and (
+                    candidate_connectivity.complete
+                    and candidate_connectivity.connectivity_id
+                    != derived_candidate.connectivity_id
+                ):
+                    candidate_error = "supplied resolved owner-local connectivity differs from the accepted motion result"
+                candidate_connectivity = derived_candidate
+            else:
+                derived_candidate = previous_connectivity.moved_from_advances(
+                    motion_advances
+                )
+                if candidate_connectivity is not None and (
+                    candidate_connectivity.connectivity_id
+                    != derived_candidate.connectivity_id
+                ):
+                    candidate_error = (
+                        "supplied candidate differs from moved_from_advances result"
+                    )
+                candidate_connectivity = derived_candidate
+        except (KeyError, TypeError, ValueError) as error:
+            candidate_error = str(error)
+            candidate_connectivity = None
+
+        accepted_state = accepted_result.runtime_state
+        current_epoch = accepted_state.topology_journal.epoch_table[-1]
+        current_artifacts = accepted_state.topology_journal.artifact_table[-1]
+        candidate_id = (
+            None
+            if candidate_connectivity is None
+            else candidate_connectivity.connectivity_id
+        )
+        request = FiniteVolumeTopologyEventRequest(
+            TopologyEventKind.OVERSET_DONOR_REBUILD,
+            current_epoch.epoch_id,
+            previous_connectivity.connectivity_id,
+            payload_id=candidate_id,
+            reason=(
+                "accepted ALE overset motion and endpoint physical remap"
+                if ale_result is not None
+                else "accepted Eulerian overset rezone and physical field remap"
+            ),
+        )
+        accepted_step = int(np.asarray(accepted_state.accepted_step))
+        event_time = float(np.asarray(accepted_state.time))
+
+        def with_journal(
+            journal: FiniteVolumeTopologyEventJournal,
+            content: FiniteVolumeConservativeContentState,
+        ) -> FiniteVolumeRuntimeState:
+            return FiniteVolumeRuntimeState(
+                content,
+                journal,
+                accepted_state.step_size,
+                accepted_step=accepted_state.accepted_step,
+                last_status=accepted_state.last_status,
+                controller_state=accepted_state.controller_state,
+                integrator_state=accepted_state.integrator_state,
+                output_cursor=accepted_state.output_cursor,
+                sliding_coupling=accepted_state.sliding_coupling,
+                sliding_shift=accepted_state.sliding_shift,
+                sliding_event_id=accepted_state.sliding_event_id,
+            )
+
+        def fail(
+            status: TopologyEventStatus,
+            reason: str,
+            /,
+            *,
+            coverage_error: Any = 0.0,
+            conservation_defect: Any = 0.0,
+        ) -> FiniteVolumeAdvanceResult:
+            evidence = FiniteVolumeTopologyArtifactEvidence(
+                passed=jnp.asarray(False),
+                status=jnp.asarray(int(status), dtype=jnp.int32),
+                coverage_error=jnp.asarray(coverage_error),
+                conservation_defect=jnp.asarray(conservation_defect),
+                evidence_id=canonical_fingerprint(
+                    {
+                        "kind": "failed-native-overset-motion",
+                        "request": request.request_id,
+                        "candidate": candidate_id,
+                        "reason": reason,
+                        "status": int(status),
+                    }
+                ),
+            )
+            scheduler = FiniteVolumeTopologyEventScheduler(
+                accepted_state.topology_journal
+            )
+            scheduler.submit(request, accepted_step, event_time)
+            transaction = scheduler.transact(
+                accepted=True,
+                source_content=accepted_state.content_state,
+                candidate_epoch=current_epoch,
+                candidate_artifacts=current_artifacts,
+                remap=evidence,
+                metrics=evidence,
+                evidence=evidence,
+                status=status,
+            )
+            rolled_back = with_journal(transaction.journal, transaction.content_state)
+            return eqx.tree_at(
+                lambda result: result.runtime_state,
+                accepted_result,
+                rolled_back,
+            )
+
+        def commit_owner_local(
+            candidate_connectivity_for_commit: OversetConnectivity,
+            successor_dynamics_for_commit: PreparedUnstructuredFiniteVolumeDynamics,
+        ) -> FiniteVolumeAdvanceResult:
+            from ..discretization._cell_complex import (
+                PolygonalConnectivity,
+                PolyhedralConnectivity,
+                TetrahedralConnectivity,
+            )
+            from ..discretization._view_support import OwnerLocalCellGeometry
+            from ..discretization.finite_volume._owner_local_remap import (
+                prepare_owner_local_conservative_remap,
+            )
+            from ..meshing._overset_exchange import _synchronize_owner_search_failure
+
+            def collective_error(
+                error: Exception | None,
+                axis_name: str,
+                /,
+            ) -> str | None:
+                any_failed = _synchronize_owner_search_failure(
+                    error is not None,
+                    execution_group.devices,
+                    axis_name,
+                )
+                if not any_failed:
+                    return None
+                return (
+                    str(error)
+                    if error is not None
+                    else "another owner rejected the same accepted topology event"
+                )
+
+            if (
+                execution_group is None
+                or owner_local_successor_assembly is None
+                or owner_local_source_views is None
+                or accepted_composition is None
+                or self.owner_local_geometry is None
+            ):
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local accepted-state rebind lacks its accepted composition or geometry views.",
+                )
+            part_name = (
+                self.owner_local_geometry.part_name
+                if owner_local_part_name is None
+                else str(owner_local_part_name)
+            )
+            local_error: Exception | None = None
+            try:
+                source_dynamics = self.dynamics
+                if not isinstance(
+                    source_dynamics, PreparedUnstructuredFiniteVolumeDynamics
+                ):
+                    raise TypeError("Owner-local motion source dynamics changed type.")
+                source_geometry = source_dynamics.discretization
+                target_geometry = successor_dynamics_for_commit.discretization
+                if not isinstance(
+                    source_geometry, UnstructuredFiniteVolumeDiscretization
+                ) or not isinstance(
+                    target_geometry, UnstructuredFiniteVolumeDiscretization
+                ):
+                    raise TypeError(
+                        "Owner-local motion requires unstructured cell geometry."
+                    )
+                source_geometry_view = source_geometry.owner_local_view
+                target_geometry_view = target_geometry.owner_local_view
+                if not isinstance(
+                    source_geometry_view, OwnerLocalCellGeometry
+                ) or not isinstance(target_geometry_view, OwnerLocalCellGeometry):
+                    raise ValueError("Prepared FV geometry lost its owner-local view.")
+                if (
+                    not part_name
+                    or part_name != self.owner_local_geometry.part_name
+                    or owner_local_source_views is None
+                    or owner_local_successor_assembly is None
+                ):
+                    raise ValueError(
+                        "Owner-local runtime part differs from its accepted source view."
+                    )
+                source_view_value = owner_local_source_views[part_name]
+                target_view_value = owner_local_successor_assembly.part(part_name).carrier
+                candidate_view_value = candidate_connectivity_for_commit.assembly.part(
+                    part_name
+                ).carrier
+                if (
+                    not isinstance(source_view_value, OwnerLocalCellGeometry)
+                    or not isinstance(target_view_value, OwnerLocalCellGeometry)
+                    or not isinstance(candidate_view_value, OwnerLocalCellGeometry)
+                ):
+                    raise TypeError(
+                        "Owner-local motion lost a typed source or target view."
+                    )
+                source_view = source_view_value
+                target_view = target_view_value
+                candidate_view = candidate_view_value
+                local_advance = motion_advances.get(part_name)
+                if (
+                    source_view.local_view_id != self.owner_local_geometry.local_view_id
+                    or target_view.local_view_id != candidate_view.local_view_id
+                    or source_geometry_view.local_view_id != source_view.local_view_id
+                    or target_geometry_view.local_view_id != target_view.local_view_id
+                ):
+                    raise ValueError(
+                        "Owner-local FV geometry does not bind the accepted source/successor views."
+                    )
+                if (
+                    source_view.source_topology_id != current_epoch.topology_id
+                    or source_view.source_geometry_id != current_epoch.geometry_id
+                ):
+                    raise ValueError(
+                        "Owner-local source view differs from the current global target authority."
+                    )
+                source_ids = np.asarray(source_geometry.cell_global_ids, dtype=np.int64)
+                target_ids = np.asarray(target_geometry.cell_global_ids, dtype=np.int64)
+                source_view_ids = np.asarray(source_view.cell_ids, dtype=np.int64)
+                target_view_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
+                if set(int(value) for value in source_ids) != set(
+                    int(value) for value in source_view_ids
+                ) or set(int(value) for value in target_ids) != set(
+                    int(value) for value in target_view_ids
+                ):
+                    raise ValueError(
+                        "Owner-local FV plan cells differ from their local views."
+                    )
+                source_view_row = {
+                    int(identifier): row for row, identifier in enumerate(source_view_ids)
+                }
+                target_view_row = {
+                    int(identifier): row for row, identifier in enumerate(target_view_ids)
+                }
+                source_plan_to_view = np.asarray(
+                    [source_view_row[int(identifier)] for identifier in source_ids],
+                    dtype=np.int32,
+                )
+                target_plan_to_view = np.asarray(
+                    [target_view_row[int(identifier)] for identifier in target_ids],
+                    dtype=np.int32,
+                )
+                source_view_measures = np.asarray(source_view.cell_measures)[
+                    source_plan_to_view
+                ]
+                target_view_measures = np.asarray(target_view.cell_measures)[
+                    target_plan_to_view
+                ]
+                for measures, geometry, label in (
+                    (
+                        source_view_measures,
+                        np.asarray(source_geometry.cell_volumes),
+                        "source",
+                    ),
+                    (
+                        target_view_measures,
+                        np.asarray(target_geometry.cell_volumes),
+                        "target",
+                    ),
+                ):
+                    tolerance = (
+                        64.0
+                        * np.finfo(np.float64).eps
+                        * max(1.0, float(np.max(np.abs(geometry), initial=0.0)))
+                    )
+                    if measures.shape != geometry.shape or not np.allclose(
+                        measures, geometry, rtol=0.0, atol=tolerance
+                    ):
+                        raise ValueError(
+                            f"Owner-local {label} FV volumes differ from the accepted local geometry."
+                        )
+                source_content = accepted_state.content_state
+                if source_content.owned_cell_mask is None or not np.array_equal(
+                    np.asarray(source_content.owned_cell_mask),
+                    np.asarray(self.owner_local_owned_cell_mask),
+                ):
+                    raise ValueError(
+                        "Accepted finite-volume state lost its owner-local cell ownership."
+                    )
+                source_active_by_id = {
+                    int(identifier): bool(source_content.active_cell_mask[row])
+                    for row, identifier in enumerate(source_ids)
+                }
+                target_active_by_id = {
+                    int(identifier): bool(
+                        successor_dynamics_for_commit.overset_active_cell_mask[row]
+                    )
+                    for row, identifier in enumerate(target_ids)
+                }
+                if source_active_by_id != target_active_by_id:
+                    raise ValueError(
+                        "Owner-local motion cannot change physical active-cell ownership."
+                    )
+                accepted_volumes = np.asarray(source_content.effective_cell_volumes)
+                source_plan_volumes = np.asarray(source_geometry.cell_volumes)
+                source_active = np.asarray(
+                    source_content.active_cell_mask, dtype=np.bool_
+                )
+                volume_tolerance = (
+                    64.0
+                    * np.finfo(np.float64).eps
+                    * max(1.0, float(np.max(np.abs(source_plan_volumes), initial=0.0)))
+                )
+                if (
+                    accepted_volumes.shape != source_plan_volumes.shape
+                    or not np.allclose(
+                        accepted_volumes[source_active],
+                        source_plan_volumes[source_active],
+                        rtol=0.0,
+                        atol=volume_tolerance,
+                    )
+                    or np.any(accepted_volumes[~source_active] != 0.0)
+                ):
+                    raise ValueError(
+                        "Accepted owner-local content volumes do not bind the source geometry."
+                    )
+                if ale_result is not None:
+                    endpoint = ale_result.geometry.end_geometry
+                    if (
+                        ale_result.geometry.topology_epoch_id
+                        != source_content.topology_epoch_id
+                        or not np.array_equal(
+                            np.asarray(endpoint.vertices),
+                            np.asarray(source_geometry.vertices),
+                        )
+                    ):
+                        raise ValueError(
+                            "Accepted ALE endpoint differs from the current owner-local FV geometry."
+                        )
+                elif local_advance is None:
+                    if target_view.local_view_id != source_view.local_view_id:
+                        raise ValueError(
+                            "An unchanged Eulerian part cannot claim a moved geometry view."
+                        )
+                else:
+                    if local_advance.local_fixed_vertex_ids is None:
+                        raise ValueError(
+                            "Eulerian MeshMotionAdvance lacks its exact fixed-boundary request."
+                        )
+                    fixed_ids = np.asarray(
+                        local_advance.local_fixed_vertex_ids, dtype=np.int64
+                    )
+                    if fixed_ids.ndim != 1 or np.unique(fixed_ids).size != fixed_ids.size:
+                        raise ValueError("Owner-local fixed vertex IDs are malformed.")
+                    if source_geometry.cell_count:
+                        patch_names = source_geometry.boundary_patch_names
+                        if "__physical_boundary__" not in patch_names:
+                            raise ValueError(
+                                "Owner-local FV plan lacks its separate physical-boundary patch."
+                            )
+                        physical_patch = patch_names.index("__physical_boundary__")
+                        boundary_face_ids = np.flatnonzero(
+                            np.asarray(source_geometry.boundary_patch_ids)
+                            == physical_patch
+                        )
+                        connectivity = source_geometry.connectivity
+                        if isinstance(connectivity, PolygonalConnectivity):
+                            face_vertices = np.asarray(connectivity.edges, dtype=np.int64)
+                            physical_rows = face_vertices[boundary_face_ids]
+                        elif isinstance(connectivity, TetrahedralConnectivity):
+                            face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
+                            physical_rows = face_vertices[boundary_face_ids]
+                        elif isinstance(connectivity, PolyhedralConnectivity):
+                            face_offsets = np.asarray(
+                                connectivity.face_vertex_offsets, dtype=np.int64
+                            )
+                            face_values = np.asarray(
+                                connectivity.face_vertex_values, dtype=np.int64
+                            )
+                            physical_rows = tuple(
+                                face_values[face_offsets[face] : face_offsets[face + 1]]
+                                for face in boundary_face_ids
+                            )
+                        else:
+                            raise TypeError(
+                                "Owner-local physical-boundary validation requires canonical cell faces."
+                            )
+                        physical_ids = np.unique(
+                            np.concatenate(
+                                [
+                                    source_geometry.vertex_global_ids[row]
+                                    for row in physical_rows
+                                ]
+                            )
+                            if len(physical_rows)
+                            else np.empty((0,), dtype=np.int64)
+                        )
+                        if not set(int(value) for value in physical_ids).issubset(
+                            set(int(value) for value in fixed_ids)
+                        ):
+                            raise ValueError(
+                                "Eulerian motion request does not fix every physical boundary vertex."
+                            )
+                    source_vertex_ids = np.asarray(source_view.vertex_ids, dtype=np.int64)
+                    target_vertex_ids = np.asarray(target_view.vertex_ids, dtype=np.int64)
+                    source_vertex_row = {
+                        int(identifier): row
+                        for row, identifier in enumerate(source_vertex_ids)
+                    }
+                    target_vertex_row = {
+                        int(identifier): row
+                        for row, identifier in enumerate(target_vertex_ids)
+                    }
+                    for identifier in fixed_ids:
+                        source_row = source_vertex_row.get(int(identifier))
+                        target_row = target_vertex_row.get(int(identifier))
+                        if (
+                            source_row is None
+                            or target_row is None
+                            or not np.array_equal(
+                                np.asarray(source_view.vertex_coordinates)[source_row],
+                                np.asarray(target_view.vertex_coordinates)[target_row],
+                            )
+                        ):
+                            raise ValueError(
+                                "Eulerian motion changed a fixed physical boundary vertex."
+                            )
+            except Exception as error:
+                local_error = error
+
+            if _synchronize_owner_search_failure(
+                local_error is not None,
+                execution_group.devices,
+                "finite_volume_owner_local_state_admission",
+            ):
+                detail = (
+                    str(local_error)
+                    if local_error is not None
+                    else "another owner rejected its accepted local FV state binding"
+                )
+                return fail(
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    "Owner-local state admission failed collectively: " + detail,
+                )
+            if local_error is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    "Owner-local state admission failed collectively.",
+                )
+
+            target_map_for_commit = successor_dynamics_for_commit.coupling.overset
+            target_map_error = None
+            if (
+                target_map_for_commit is None
+                or target_map_for_commit.native_connectivity_id
+                != candidate_connectivity_for_commit.connectivity_id
+            ):
+                target_map_error = ValueError(
+                    "Owner-local successor map does not bind its native candidate."
+                )
+            target_map_error_text = collective_error(
+                target_map_error,
+                "finite_volume_owner_local_target_map_admission",
+            )
+            if target_map_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    target_map_error_text,
+                )
+            if target_map_for_commit is None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local target-map admission produced no typed map.",
+                )
+
+            advance = motion_advances.get(part_name)
+            transition = None if advance is None else advance.geometry_transition
+            transition_advance_id = (
+                None
+                if transition is None or np.asarray(source_view.cell_ids).size == 0
+                else advance.advance_id
+            )
+            source_average_plan = self._dynamics_cell_average(
+                accepted_state.content_state
+            ).reshape((-1, self.dynamics.system.component_count))
+            source_average_view = source_average_plan[
+                jnp.asarray(
+                    [
+                        np.flatnonzero(source_ids == int(identifier))[0]
+                        for identifier in source_view_ids
+                    ],
+                    dtype=jnp.int32,
+                )
+            ]
+            local_remap = prepare_owner_local_conservative_remap(
+                source_view,
+                target_view,
+                execution_group,
+                transition=transition,
+                advance_id=transition_advance_id,
+                axis_name="finite_volume_owner_local_rezone",
+                require_complete=True,
+            )
+            remap_result = local_remap.apply_averages(
+                source_average_view,
+                source_view,
+                target_view,
+                execution_group,
+                axis_name="finite_volume_owner_local_rezone",
+            )
+            target_average_view = remap_result.local_values
+            target_average_plan = target_average_view[
+                jnp.asarray(
+                    [
+                        np.flatnonzero(target_view_ids == int(identifier))[0]
+                        for identifier in target_ids
+                    ],
+                    dtype=jnp.int32,
+                )
+            ]
+
+            target_topology_id = target_view.source_topology_id
+            target_geometry_id = target_view.source_geometry_id
+            target_partition_id = target_view.distribution_id
+            same_epoch = (
+                target_topology_id == current_epoch.topology_id
+                and target_geometry_id == current_epoch.geometry_id
+                and target_partition_id == current_epoch.partition_id
+            )
+            candidate_epoch = TopologyEpoch(
+                current_epoch.index if same_epoch else current_epoch.index + 1,
+                target_geometry_id,
+                target_topology_id,
+                target_partition_id,
+            )
+            coverage_error = max(
+                float(
+                    np.max(
+                        np.abs(np.asarray(local_remap.evidence.source_coverage_defects)),
+                        initial=0.0,
+                    )
+                ),
+                float(
+                    np.max(
+                        np.abs(np.asarray(local_remap.evidence.target_coverage_defects)),
+                        initial=0.0,
+                    )
+                ),
+            )
+            conservation_defect = remap_result.conservation_residual
+            remap_tolerance = float(local_remap.tolerance)
+            residual_host = np.asarray(conservation_defect, dtype=np.float64)
+            remap_error = None
+            if (
+                not bool(np.asarray(local_remap.evidence.coverage_complete))
+                or np.any(~np.isfinite(residual_host))
+                or np.any(np.abs(residual_host) > remap_tolerance)
+            ):
+                remap_error = ValueError(
+                    "Owner-local common refinement did not prove complete conservative coverage."
+                )
+            remap_error_text = collective_error(
+                remap_error,
+                "finite_volume_owner_local_remap_admission",
+            )
+            if remap_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local remap failed collective admission: " + remap_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+
+            candidate_artifacts = FiniteVolumeTopologyArtifacts(
+                candidate_epoch,
+                target_geometry.prepared_id,
+                topology_artifact_id=candidate_connectivity_for_commit.connectivity_id,
+                metrics_artifact_id=local_remap.evidence.evidence_id,
+                operators_artifact_id=target_map_for_commit.plan_id,
+            )
+            successor_sliding_coupling = None
+            successor_sliding_shift = jnp.asarray(
+                0.0, dtype=self.precision.reduction_dtype
+            )
+            sliding_plan = successor_dynamics_for_commit.coupling.sliding
+            sliding_error = None
+            try:
+                if sliding_plan is not None:
+                    successor_sliding_shift = sliding_plan.evaluate_shift(
+                        accepted_state.time, args
+                    )
+                    successor_sliding_coupling = sliding_plan.coupling(
+                        successor_sliding_shift
+                    )
+                    successor_dynamics_for_commit = (
+                        successor_dynamics_for_commit.with_sliding_coupling(
+                            successor_sliding_coupling
+                        )
+                    )
+                elif self.sliding_plan is not None:
+                    raise ValueError(
+                        "Successor dynamics omit the predecessor sliding coupling."
+                    )
+            except Exception as error:
+                sliding_error = error
+            sliding_error_text = collective_error(
+                sliding_error,
+                "finite_volume_owner_local_sliding_admission",
+            )
+            if sliding_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local sliding rebind failed collective admission: "
+                    + sliding_error_text,
+                )
+            successor_runtime = None
+            target_content = None
+            target_runtime_error = None
+            try:
+                successor_runtime = PreparedFiniteVolumeRuntime(
+                    successor_dynamics_for_commit,
+                    self.positivity,
+                    self.policy,
+                    topology_epoch=candidate_epoch,
+                    topology_artifacts=candidate_artifacts,
+                    execution_group=execution_group,
+                    owner_local_geometry=target_view,
+                    owner_local_axis_name=self.owner_local_axis_name,
+                )
+                successor_owned_cell_mask = successor_runtime.owner_local_owned_cell_mask
+                if successor_owned_cell_mask is None:
+                    raise ValueError(
+                        "Owner-local successor runtime lost its ownership mask."
+                    )
+                if ale_result is not None:
+                    successor_motion = successor_dynamics_for_commit.coupling.motion
+                    if successor_motion is None:
+                        raise ValueError(
+                            "Continuous owner-local ALE update has no successor motion plan."
+                        )
+                    continuation = successor_motion.prepare_ssprk33_step(
+                        accepted_state.time,
+                        accepted_state.step_size,
+                        candidate_epoch.epoch_id,
+                        accepted_state.content_state.geometry_version,
+                        accepted_state.content_state.evidence_version,
+                        args,
+                        prior_effective_cell_volumes=successor_runtime.effective_cell_volumes,
+                    )
+                    if not np.array_equal(
+                        np.asarray(continuation.start_geometry.vertices),
+                        np.asarray(target_geometry.vertices),
+                    ):
+                        raise ValueError(
+                            "Successor owner-local ALE plan does not start at the accepted target geometry."
+                        )
+                target_content = FiniteVolumeConservativeContentState.from_cell_average(
+                    target_average_plan,
+                    successor_runtime.effective_cell_volumes,
+                    successor_runtime.active_cell_mask,
+                    accepted_state.time,
+                    topology_epoch_id=candidate_epoch.epoch_id,
+                    geometry_family_id=successor_runtime.geometry_family_id,
+                    geometry_layout_id=successor_runtime.geometry_layout_id,
+                    geometry_version=jnp.asarray(0, dtype=jnp.int32),
+                    evidence_policy_id=successor_runtime.evidence_policy_id,
+                    evidence_version=jnp.asarray(0, dtype=jnp.int32),
+                    precision=successor_runtime.precision,
+                    owned_cell_mask=successor_owned_cell_mask,
+                )
+            except Exception as error:
+                target_runtime_error = error
+            target_runtime_error_text = collective_error(
+                target_runtime_error,
+                "finite_volume_owner_local_target_runtime_admission",
+            )
+            if target_runtime_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local target runtime failed collective admission: "
+                    + target_runtime_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            if not isinstance(
+                successor_runtime, PreparedFiniteVolumeRuntime
+            ) or not isinstance(target_content, FiniteVolumeConservativeContentState):
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local target runtime admission produced no accepted state.",
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            event_evidence = FiniteVolumeTopologyArtifactEvidence(
+                passed=jnp.asarray(True),
+                status=jnp.asarray(int(TopologyEventStatus.SUCCESS), dtype=jnp.int32),
+                coverage_error=jnp.asarray(coverage_error),
+                conservation_defect=conservation_defect,
+                evidence_id=canonical_fingerprint(
+                    {
+                        "kind": "accepted-owner-local-overset-rezone-evidence",
+                        "connectivity": candidate_connectivity_for_commit.connectivity_id,
+                        "remap": local_remap.remap_id,
+                        "action": remap_result.result_id,
+                        "source_state": array_tree_fingerprint(
+                            accepted_state.content_state.conservative_content
+                        ),
+                    }
+                ),
+            )
+            transaction = None
+            transaction_error = None
+            try:
+                scheduler = FiniteVolumeTopologyEventScheduler(
+                    accepted_state.topology_journal
+                )
+                scheduler.submit(request, accepted_step, event_time)
+                successor_owned_cell_mask = successor_runtime.owner_local_owned_cell_mask
+                if successor_owned_cell_mask is None:
+                    raise ValueError(
+                        "Owner-local successor runtime lost its ownership mask."
+                    )
+                active_owned_mask = (
+                    successor_runtime.active_cell_mask & successor_owned_cell_mask
+                )
+                transaction = scheduler.transact(
+                    accepted=True,
+                    source_content=accepted_state.content_state,
+                    candidate_epoch=candidate_epoch,
+                    candidate_artifacts=candidate_artifacts,
+                    remap=local_remap,
+                    metrics=event_evidence,
+                    evidence=event_evidence,
+                    status=TopologyEventStatus.SUCCESS,
+                    coverage_tolerance=remap_tolerance,
+                    active_cell_mask=successor_runtime.active_cell_mask,
+                    admissibility=lambda content: jnp.all(
+                        jnp.where(
+                            active_owned_mask,
+                            successor_dynamics_for_commit.system.admissible(
+                                content.cell_average()
+                            ),
+                            True,
+                        )
+                    ),
+                    transfer=lambda _content, _remap: target_content,
+                    result_id=candidate_epoch.epoch_id,
+                    payload_ids=(request.payload_id,),
+                )
+            except Exception as error:
+                transaction_error = error
+            if transaction is None and transaction_error is None:
+                transaction_error = ValueError(
+                    "Owner-local topology transaction produced no result."
+                )
+            transaction_error_text = collective_error(
+                transaction_error,
+                "finite_volume_owner_local_event_transaction",
+            )
+            if transaction_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local topology transaction failed collective admission: "
+                    + transaction_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            if transaction is None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local topology transaction produced no result.",
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            transaction_error = (
+                None
+                if transaction.committed and transaction.events
+                else ValueError(
+                    "Owner-local native overset transaction did not commit one event."
+                )
+            )
+            transaction_error_text = collective_error(
+                transaction_error,
+                "finite_volume_owner_local_event_commit",
+            )
+            if transaction_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local topology event failed collective admission: "
+                    + transaction_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            event_id = transaction.events[-1].event_id
+            next_state = FiniteVolumeRuntimeState(
+                transaction.content_state,
+                transaction.journal,
+                accepted_state.step_size,
+                accepted_step=accepted_state.accepted_step,
+                last_status=accepted_state.last_status,
+                controller_state=accepted_state.controller_state,
+                integrator_state=accepted_state.integrator_state,
+                output_cursor=accepted_state.output_cursor,
+                sliding_coupling=successor_sliding_coupling,
+                sliding_shift=successor_sliding_shift,
+                sliding_event_id=(
+                    event_id
+                    if successor_sliding_coupling is not None
+                    else accepted_state.sliding_event_id
+                ),
+            )
+            composition = None
+            transport = None
+            composition_error = None
+            try:
+                previous_entries = previous_connectivity.composition_entries()
+                candidate_entries = (
+                    candidate_connectivity_for_commit.composition_entries()
+                )
+                previous_route = next(
+                    entry for entry in previous_entries if entry.role == "interface-route"
+                )
+                candidate_route = next(
+                    entry
+                    for entry in candidate_entries
+                    if entry.role == "interface-route"
+                )
+                accepted_route = accepted_composition.entry(previous_route.entry_id)
+                if accepted_route.revision_id != previous_route.revision_id:
+                    raise ValueError(
+                        "Accepted Composition does not bind the predecessor overset route."
+                    )
+
+                def state_entry(
+                    state: FiniteVolumeRuntimeState,
+                    route: Any,
+                    layout_id: str,
+                    runtime_id: str,
+                    /,
+                ) -> CompositionEntry:
+                    content = state.content_state
+                    revision_id = canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-accepted-state",
+                            "runtime": runtime_id,
+                            "time": float(np.asarray(state.time)).hex(),
+                            "accepted_step": int(np.asarray(state.accepted_step)),
+                            "content": array_tree_fingerprint(
+                                content.conservative_content
+                            ),
+                            "controller": array_tree_fingerprint(state.controller_state),
+                            "integrator": array_tree_fingerprint(state.integrator_state),
+                            "output_cursor": int(np.asarray(state.output_cursor)),
+                        }
+                    )
+                    return CompositionEntry(
+                        state,
+                        entry_id="finite-volume/state",
+                        role="physical-state",
+                        owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
+                        structure_id=layout_id,
+                        revision_id=revision_id,
+                        semantics_id=successor_dynamics_for_commit.system.system_id,
+                        dependencies=(route.binding("revision"),),
+                    )
+
+                source_state_entry = state_entry(
+                    accepted_state,
+                    previous_route,
+                    accepted_state.content_state.geometry_layout_id,
+                    self.runtime_id,
+                )
+                target_state_entry = state_entry(
+                    next_state,
+                    candidate_route,
+                    transaction.content_state.geometry_layout_id,
+                    successor_runtime.runtime_id,
+                )
+                preserved_entries = tuple(
+                    entry
+                    for entry in accepted_composition.entries
+                    if entry.entry_id != source_state_entry.entry_id
+                )
+                composition = Composition(
+                    (*preserved_entries, source_state_entry),
+                    boundary_id=canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-accepted-boundary",
+                            "epoch": current_epoch.epoch_id,
+                            "accepted_step": accepted_step,
+                        }
+                    ),
+                )
+                source_total = remap_result.source_integral
+                target_total = remap_result.target_integral
+                content_tolerance = jnp.asarray(
+                    remap_tolerance, dtype=source_total.dtype
+                ) * jnp.maximum(jnp.abs(source_total), 1.0)
+                transport = CompositionTransport(
+                    "physical-remap",
+                    ("finite-volume/state",),
+                    (target_state_entry,),
+                    source_structure_ids=(source_state_entry.structure_id,),
+                    route_id=local_remap.remap_id,
+                    successful=jnp.asarray(True),
+                    source_content=source_total,
+                    target_content=target_total,
+                    content_tolerance=content_tolerance,
+                )
+            except Exception as error:
+                composition_error = error
+            composition_error_text = collective_error(
+                composition_error,
+                "finite_volume_owner_local_composition_preparation",
+            )
+            if composition_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local accepted-state composition failed collective admission: "
+                    + composition_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            if not isinstance(composition, Composition) or not isinstance(
+                transport, CompositionTransport
+            ):
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local accepted-state transport was not prepared.",
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            receipt = None
+            rebind_error = None
+            try:
+                prepared_motion = prepare_overset_motion_rebind(
+                    composition,
+                    previous_connectivity,
+                    candidate_connectivity_for_commit,
+                    transports=(transport,),
+                )
+                receipt = prepared_motion.commit(accepted_boundary=True)
+            except Exception as error:
+                rebind_error = error
+            rebind_error_text = collective_error(
+                rebind_error,
+                "finite_volume_owner_local_composition_rebind",
+            )
+            if rebind_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local accepted-state rebind failed collective admission: "
+                    + rebind_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            receipt_error = (
+                None
+                if isinstance(receipt, CompositionRebindReceipt) and receipt.published
+                else ValueError("Owner-local accepted-state transport was not admitted.")
+            )
+            receipt_error_text = collective_error(
+                receipt_error,
+                "finite_volume_owner_local_receipt_admission",
+            )
+            if receipt_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local accepted-state receipt failed collective admission: "
+                    + receipt_error_text,
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            if not isinstance(receipt, CompositionRebindReceipt) or not receipt.published:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local accepted-state receipt was not published.",
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            answer = eqx.tree_at(
+                lambda result: result.runtime_state,
+                accepted_result,
+                next_state,
+            )
+            answer = eqx.tree_at(
+                lambda result: result.successor_runtime,
+                answer,
+                successor_runtime,
+                is_leaf=lambda node: node is None,
+            )
+            return eqx.tree_at(
+                lambda result: result.overset_motion_receipt,
+                answer,
+                receipt,
+                is_leaf=lambda node: node is None,
+            )
+
+        if previous_connectivity.owner_local:
+            if execution_group is None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local motion requires its execution group for collective admission.",
+                )
+            from ..meshing._overset_exchange import _synchronize_owner_search_failure
+
+            admission_error = ale_error or candidate_error
+            if candidate_connectivity is None:
+                admission_error = admission_error or (
+                    "native donor reanalysis produced no owner-local candidate"
+                )
+            else:
+                if not candidate_connectivity.owner_local:
+                    admission_error = admission_error or (
+                        "owner-local source produced a root-geometry candidate"
+                    )
+                if (
+                    candidate_connectivity.epoch != previous_connectivity.epoch + 1
+                    or candidate_connectivity.predecessor_id
+                    != previous_connectivity.connectivity_id
+                ):
+                    admission_error = admission_error or (
+                        "candidate native connectivity does not continue its predecessor"
+                    )
+                if not candidate_connectivity.complete:
+                    admission_error = admission_error or (
+                        "candidate native donor search contains orphan receptors"
+                    )
+            if successor_dynamics is None or not isinstance(
+                successor_dynamics, PreparedUnstructuredFiniteVolumeDynamics
+            ):
+                admission_error = admission_error or (
+                    "successor finite-volume dynamics are missing"
+                )
+            else:
+                target_map = successor_dynamics.coupling.overset
+                if (
+                    target_map is None
+                    or candidate_connectivity is None
+                    or target_map.native_connectivity_id
+                    != candidate_connectivity.connectivity_id
+                    or successor_dynamics.source_id != self.dynamics.source_id
+                    or successor_dynamics.system.system_id
+                    != self.dynamics.system.system_id
+                ):
+                    admission_error = admission_error or (
+                        "successor dynamics are stale or change the accepted source/system"
+                    )
+                if ale_result is not None and successor_dynamics.coupling.motion is None:
+                    admission_error = admission_error or (
+                        "continuous ALE motion requires a successor motion plan"
+                    )
+                if not isinstance(
+                    self.dynamics.discretization,
+                    UnstructuredFiniteVolumeDiscretization,
+                ) or not isinstance(
+                    successor_dynamics.discretization,
+                    UnstructuredFiniteVolumeDiscretization,
+                ):
+                    admission_error = admission_error or (
+                        "owner-local physical rezone requires unstructured cell geometry"
+                    )
+            if _synchronize_owner_search_failure(
+                admission_error is not None,
+                execution_group.devices,
+                "finite_volume_owner_local_candidate_admission",
+            ):
+                return fail(
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    "Owner-local motion candidate failed collective admission: "
+                    + (
+                        admission_error
+                        if admission_error is not None
+                        else "another owner rejected its candidate"
+                    ),
+                )
+        if ale_error is not None:
+            return fail(TopologyEventStatus.FAILED_STALE_EPOCH, ale_error)
+        if candidate_error is not None:
+            return fail(
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                "native motion candidate was not derived from the supplied advances: "
+                + candidate_error,
+            )
+
+        if candidate_connectivity is None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "native donor reanalysis produced no candidate",
+            )
+        if (
+            candidate_connectivity.epoch != previous_connectivity.epoch + 1
+            or candidate_connectivity.predecessor_id
+            != previous_connectivity.connectivity_id
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                "candidate native connectivity does not continue its predecessor",
+            )
+        if not candidate_connectivity.complete:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "candidate native donor search contains orphan receptors",
+                coverage_error=candidate_connectivity.orphan_count,
+            )
+        if successor_dynamics is None or not isinstance(
+            successor_dynamics, PreparedUnstructuredFiniteVolumeDynamics
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "successor finite-volume dynamics are missing",
+            )
+        target_map = successor_dynamics.coupling.overset
+        if (
+            target_map is None
+            or target_map.native_connectivity_id != candidate_connectivity.connectivity_id
+            or successor_dynamics.source_id != self.dynamics.source_id
+            or successor_dynamics.system.system_id != self.dynamics.system.system_id
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "successor dynamics are stale or change the accepted source/system",
+            )
+        if ale_result is not None and successor_dynamics.coupling.motion is None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "continuous ALE motion requires a successor motion plan",
+            )
+        if previous_connectivity.owner_local != candidate_connectivity.owner_local:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "native motion candidate changed between local and root geometry",
+            )
+        if previous_connectivity.owner_local:
+            return commit_owner_local(candidate_connectivity, successor_dynamics)
+        if not isinstance(
+            self.dynamics.discretization, UnstructuredFiniteVolumeDiscretization
+        ) or not isinstance(
+            successor_dynamics.discretization,
+            UnstructuredFiniteVolumeDiscretization,
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "physical overset rezone requires unstructured cell geometry",
+            )
+        source_geometry = self.dynamics.discretization
+        target_geometry = successor_dynamics.discretization
+
+        def part_matches_geometry(part: Any, geometry: Any, /) -> bool:
+            if not isinstance(part.carrier, CellMeshingResult):
+                return False
+            mesh = part.carrier.mesh
+            return (
+                mesh.topology_id == geometry.mesh.topology_id
+                and np.array_equal(
+                    np.asarray(mesh.coordinates), np.asarray(geometry.vertices)
+                )
+                and np.array_equal(
+                    np.asarray(mesh.vertex_global_ids),
+                    np.asarray(geometry.vertex_global_ids),
+                )
+                and np.array_equal(
+                    np.asarray(mesh.entity_set(mesh.topological_dimension).entity_ids),
+                    np.asarray(geometry.cell_global_ids),
+                )
+            )
+
+        source_part = None
+        target_part = None
+        for name, advance in motion_advances.items():
+            if not isinstance(name, str) or not isinstance(advance, MeshMotionAdvance):
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "motion advances must contain named MeshMotionAdvance values",
+                )
+            try:
+                prior_part = previous_connectivity.assembly.part(name)
+                next_part = candidate_connectivity.assembly.part(name)
+            except KeyError:
+                return fail(
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    "motion advance names an unregistered assembly part",
+                )
+            motion_transition = advance.geometry_transition
+            if (
+                not advance.accepted
+                or advance.result is None
+                or motion_transition is None
+                or not isinstance(prior_part.carrier, CellMeshingResult)
+                or not isinstance(next_part.carrier, CellMeshingResult)
+                or advance.source_mesh_id != prior_part.carrier.mesh.mesh_id
+                or advance.source_result_id != prior_part.carrier.result_id
+                or motion_transition.source_topology_id
+                != prior_part.carrier.mesh.topology_id
+                or next_part.carrier.result_id != advance.result.result_id
+            ):
+                return fail(
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    "MeshMotionAdvance does not bind the candidate native geometry",
+                )
+            boundary_mask = np.asarray(
+                prior_part.carrier.mesh.topology.entities(0).subset("boundary").mask,
+                dtype=np.bool_,
+            )
+            prior_coordinates = np.asarray(prior_part.carrier.mesh.coordinates)
+            moved_coordinates = np.asarray(motion_transition.target_mesh.coordinates)
+            if ale_result is None:
+                if not np.array_equal(
+                    prior_coordinates[boundary_mask],
+                    moved_coordinates[boundary_mask],
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                        "physical boundary motion requires accepted ALE geometry",
+                    )
+                source_matches_runtime = part_matches_geometry(
+                    prior_part, source_geometry
+                )
+            else:
+                ale_start = np.asarray(ale_result.geometry.start_geometry.vertices)
+                ale_end = np.asarray(ale_result.geometry.end_geometry.vertices)
+                if (
+                    source_geometry.topology_id
+                    != ale_result.geometry.start_geometry.topology_id
+                    or ale_result.geometry.topology_epoch_id
+                    != accepted_state.content_state.topology_epoch_id
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        "ALE stage geometry does not bind the accepted predecessor FV topology",
+                    )
+                if (
+                    not np.array_equal(prior_coordinates, ale_start)
+                    or not np.array_equal(moved_coordinates, ale_end)
+                    or motion_transition.target_mesh.topology_id
+                    != prior_part.carrier.mesh.topology_id
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        "MeshMotionAdvance does not realize the accepted ALE endpoint",
+                    )
+                source_matches_runtime = part_matches_geometry(
+                    prior_part, source_geometry
+                )
+            if source_matches_runtime:
+                if source_part is not None:
+                    return fail(
+                        TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                        "one runtime update cannot own multiple independent mesh parts",
+                    )
+                source_part = prior_part
+                target_part = next_part
+        if (
+            source_part is None
+            or target_part is None
+            or not part_matches_geometry(target_part, target_geometry)
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                "source and successor FV geometry do not match the moved native part",
+            )
+
+        remap_source_geometry = source_geometry
+        remap_source_part = source_part
+        try:
+            if ale_result is not None:
+                if len(motion_advances) != 1:
+                    return fail(
+                        TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                        "one ALE runtime update must bind exactly one moved FV part",
+                    )
+                motion_plan = self.dynamics.coupling.motion
+                if motion_plan is None:
+                    return fail(
+                        TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                        "accepted ALE evidence has no predecessor motion plan",
+                    )
+                end_vertices = np.asarray(ale_result.geometry.end_geometry.vertices)
+                source_end_mesh = source_part.carrier.mesh.with_coordinates(
+                    end_vertices,
+                    numeric_version=(
+                        "accepted-ale:" + ale_result.geometry.motion_plan_id
+                    ),
+                )
+                source_end_result = certify_cell_mesh(
+                    source_end_mesh,
+                    source_part.carrier.coordinate_contract,
+                )
+                remap_source_part = MeshPart(source_part.name, source_end_result)
+                base_plan = motion_plan.base_plan
+                endpoint_plan = UnstructuredFiniteVolumePlan(
+                    end_vertices,
+                    triangles=base_plan.triangles,
+                    quadrilaterals=base_plan.quadrilaterals,
+                    tetrahedra=base_plan.tetrahedra,
+                    vertex_global_ids=base_plan.vertex_global_ids,
+                    cell_global_ids=base_plan.cell_global_ids,
+                    boundary_patches={
+                        name: faces
+                        for name, faces in zip(
+                            base_plan.patch_names, base_plan.patch_faces, strict=True
+                        )
+                    },
+                    field_name=base_plan.field_name,
+                    component_names=base_plan.component_names,
+                )
+                remap_source_geometry = endpoint_plan.prepare(
+                    numeric_version=ale_result.geometry.motion_plan_id
+                )
+                if (
+                    remap_source_geometry.topology_id != source_geometry.topology_id
+                    or not np.array_equal(
+                        np.asarray(remap_source_geometry.cell_global_ids),
+                        np.asarray(source_geometry.cell_global_ids),
+                    )
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        "realized ALE endpoint changed the predecessor FV topology",
+                    )
+                accepted_volumes = np.asarray(
+                    accepted_state.content_state.effective_cell_volumes
+                )
+                endpoint_volumes = np.asarray(remap_source_geometry.cell_volumes)
+                volume_tolerance = (
+                    64.0
+                    * np.finfo(accepted_volumes.dtype).eps
+                    * max(1.0, float(np.max(np.abs(endpoint_volumes))))
+                )
+                if accepted_volumes.shape != endpoint_volumes.shape or not np.allclose(
+                    accepted_volumes,
+                    endpoint_volumes,
+                    rtol=0.0,
+                    atol=volume_tolerance,
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        "accepted ALE content volumes do not bind the realized endpoint",
+                    )
+            native_remap = prepare_overset_conservative_remap(
+                remap_source_part,
+                target_part,
+            )
+            if not native_remap.complete:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "native physical overlap is incomplete",
+                )
+            refinement = native_remap.refinement
+            remap_tolerance = float(refinement.policy.coverage_tolerance)
+            remap = UnstructuredConservativeRemapPlan(
+                remap_source_geometry,
+                target_geometry,
+                refinement.target_offsets,
+                refinement.source_cells,
+                refinement.volumes,
+                method="native-common-refinement",
+                provenance=native_remap.transfer_id,
+                tolerance=remap_tolerance,
+            )
+        except (TypeError, ValueError, FloatingPointError):
+            return fail(
+                TopologyEventStatus.FAILED_COVERAGE,
+                "native physical overlap preparation failed",
+            )
+        source_active = np.asarray(accepted_state.content_state.active_cell_mask)
+        target_active = np.asarray(successor_dynamics.overset_active_cell_mask)
+        same_physical_ownership = (np.all(source_active) and np.all(target_active)) or (
+            source_active.shape == target_active.shape
+            and np.array_equal(source_active, target_active)
+        )
+        if not same_physical_ownership:
+            return fail(
+                TopologyEventStatus.FAILED_COVERAGE,
+                "serial physical rezone cannot change active cell ownership",
+            )
+
+        next_index = (
+            current_epoch.index
+            if (
+                target_geometry.topology_id == current_epoch.topology_id
+                and target_geometry.geometry_id == current_epoch.geometry_id
+            )
+            else current_epoch.index + 1
+        )
+        candidate_epoch = TopologyEpoch(
+            next_index,
+            target_geometry.geometry_id,
+            target_geometry.topology_id,
+            current_epoch.partition_id,
+        )
+        candidate_artifacts = FiniteVolumeTopologyArtifacts(
+            candidate_epoch,
+            target_geometry.prepared_id,
+            topology_artifact_id=candidate_connectivity.connectivity_id,
+            metrics_artifact_id=native_remap.evidence.evidence_id,
+            operators_artifact_id=target_map.plan_id,
+        )
+        successor_sliding_coupling = None
+        successor_sliding_shift = jnp.asarray(0.0, dtype=self.precision.reduction_dtype)
+        sliding_plan = successor_dynamics.coupling.sliding
+        if sliding_plan is not None:
+            try:
+                successor_sliding_shift = sliding_plan.evaluate_shift(
+                    accepted_state.time, args
+                )
+                successor_sliding_coupling = sliding_plan.coupling(
+                    successor_sliding_shift
+                )
+                successor_dynamics = successor_dynamics.with_sliding_coupling(
+                    successor_sliding_coupling
+                )
+            except (TypeError, ValueError, FloatingPointError):
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "successor ALE/overset sliding map could not be prepared",
+                )
+        elif self.sliding_plan is not None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "successor dynamics omit the predecessor sliding coupling",
+            )
+        try:
+            successor_runtime = PreparedFiniteVolumeRuntime(
+                successor_dynamics,
+                self.positivity,
+                self.policy,
+                topology_epoch=candidate_epoch,
+                topology_artifacts=candidate_artifacts,
+                stage_state_provider=self.stage_state_provider,
+                stage_flux_provider=self.stage_flux_provider,
+            )
+            if ale_result is not None:
+                successor_motion = successor_dynamics.coupling.motion
+                if successor_motion is None:
+                    return fail(
+                        TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                        "continuous ALE update has no successor motion plan",
+                    )
+                continuation = successor_motion.prepare_ssprk33_step(
+                    accepted_state.time,
+                    accepted_state.step_size,
+                    candidate_epoch.epoch_id,
+                    jnp.asarray(0, dtype=jnp.int32),
+                    jnp.asarray(0, dtype=jnp.int32),
+                    args,
+                    prior_effective_cell_volumes=successor_runtime.effective_cell_volumes,
+                )
+                if not np.array_equal(
+                    np.asarray(continuation.start_geometry.vertices),
+                    np.asarray(target_geometry.vertices),
+                ):
+                    return fail(
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        "successor ALE plan does not continue from the accepted physical geometry",
+                    )
+            source_average = accepted_state.content_state.cell_average()
+            transferred_average = native_remap.apply_intensive(source_average)
+            target_content = FiniteVolumeConservativeContentState.from_cell_average(
+                transferred_average,
+                successor_runtime.effective_cell_volumes,
+                successor_runtime.active_cell_mask,
+                accepted_state.time,
+                topology_epoch_id=candidate_epoch.epoch_id,
+                geometry_family_id=successor_runtime.geometry_family_id,
+                geometry_layout_id=successor_runtime.geometry_layout_id,
+                geometry_version=jnp.asarray(0, dtype=jnp.int32),
+                evidence_policy_id=successor_runtime.evidence_policy_id,
+                evidence_version=jnp.asarray(0, dtype=jnp.int32),
+                precision=successor_runtime.precision,
+            )
+        except (TypeError, ValueError, FloatingPointError):
+            return fail(
+                TopologyEventStatus.FAILED_COVERAGE,
+                "native physical state transfer failed",
+            )
+
+        conservation_defect = remap.conservation_defect(
+            source_average, transferred_average
+        )
+        coverage_error = jnp.maximum(
+            remap.report.maximum_source_coverage_defect,
+            remap.report.maximum_target_coverage_defect,
+        )
+        event_evidence = FiniteVolumeTopologyArtifactEvidence(
+            passed=jnp.asarray(True),
+            status=jnp.asarray(int(TopologyEventStatus.SUCCESS), dtype=jnp.int32),
+            coverage_error=coverage_error,
+            conservation_defect=conservation_defect,
+            evidence_id=canonical_fingerprint(
+                {
+                    "kind": "accepted-native-overset-rezone-evidence",
+                    "connectivity": candidate_connectivity.connectivity_id,
+                    "transfer": native_remap.transfer_id,
+                    "remap": remap.plan_id,
+                    "source_state": array_tree_fingerprint(
+                        accepted_state.content_state.conservative_content
+                    ),
+                }
+            ),
+        )
+        scheduler = FiniteVolumeTopologyEventScheduler(accepted_state.topology_journal)
+        scheduler.submit(request, accepted_step, event_time)
+        transaction = scheduler.transact(
+            accepted=True,
+            source_content=accepted_state.content_state,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            candidate_epoch=candidate_epoch,
+            candidate_artifacts=candidate_artifacts,
+            remap=remap,
+            metrics=event_evidence,
+            evidence=event_evidence,
+            status=TopologyEventStatus.SUCCESS,
+            coverage_tolerance=remap_tolerance,
+            active_cell_mask=successor_runtime.active_cell_mask,
+            admissibility=lambda content: jnp.all(
+                successor_dynamics.system.admissible(content.cell_average())
+            ),
+            transfer=lambda _content, _remap: target_content,
+            result_id=candidate_epoch.epoch_id,
+            payload_ids=(request.payload_id,),
+        )
+        if not transaction.committed:
+            failure_status = (
+                transaction.failure
+                if transaction.failure is not None
+                else TopologyEventStatus.FAILED_COVERAGE
+            )
+            return fail(
+                failure_status,
+                "Native overset topology transaction was rejected: "
+                + failure_status.name,
+                coverage_error=coverage_error,
+                conservation_defect=conservation_defect,
+            )
+
+        if not transaction.events:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "accepted native overset transaction committed without an event",
+            )
+        event_id = transaction.events[-1].event_id
+        next_state = FiniteVolumeRuntimeState(
+            transaction.content_state,
+            transaction.journal,
+            accepted_state.step_size,
+            accepted_step=accepted_state.accepted_step,
+            last_status=accepted_state.last_status,
+            controller_state=accepted_state.controller_state,
+            integrator_state=accepted_state.integrator_state,
+            output_cursor=accepted_state.output_cursor,
+            sliding_coupling=successor_sliding_coupling,
+            sliding_shift=successor_sliding_shift,
+            sliding_event_id=(
+                event_id
+                if successor_sliding_coupling is not None
+                else accepted_state.sliding_event_id
+            ),
+        )
+        try:
+            previous_entries = previous_connectivity.composition_entries()
+            candidate_entries = candidate_connectivity.composition_entries()
+            previous_route = next(
+                entry for entry in previous_entries if entry.role == "interface-route"
+            )
+            candidate_route = next(
+                entry for entry in candidate_entries if entry.role == "interface-route"
+            )
+
+            def state_entry(
+                state: FiniteVolumeRuntimeState,
+                route: CompositionEntry,
+                geometry_layout_id: str,
+                runtime_id: str,
+                /,
+            ) -> CompositionEntry:
+                content = state.content_state
+                revision_id = canonical_fingerprint(
+                    {
+                        "kind": "finite-volume-accepted-state",
+                        "runtime": runtime_id,
+                        "time": float(np.asarray(state.time)).hex(),
+                        "accepted_step": int(np.asarray(state.accepted_step)),
+                        "content": array_tree_fingerprint(content.conservative_content),
+                        "controller": array_tree_fingerprint(state.controller_state),
+                        "integrator": array_tree_fingerprint(state.integrator_state),
+                        "output_cursor": int(np.asarray(state.output_cursor)),
+                    }
+                )
+                return CompositionEntry(
+                    state,
+                    entry_id="finite-volume/state",
+                    role="physical-state",
+                    owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
+                    structure_id=geometry_layout_id,
+                    revision_id=revision_id,
+                    semantics_id=self.dynamics.system.system_id,
+                    dependencies=(route.binding("revision"),),
+                )
+
+            source_state_entry = state_entry(
+                accepted_state,
+                previous_route,
+                accepted_state.content_state.geometry_layout_id,
+                self.runtime_id,
+            )
+            target_state_entry = state_entry(
+                next_state,
+                candidate_route,
+                transaction.content_state.geometry_layout_id,
+                successor_runtime.runtime_id,
+            )
+            if accepted_composition is None:
+                composition_entries = previous_entries
+            else:
+                accepted_route = accepted_composition.entry(previous_route.entry_id)
+                if accepted_route.revision_id != previous_route.revision_id:
+                    raise ValueError(
+                        "accepted Composition does not bind the predecessor native connectivity."
+                    )
+                composition_entries = tuple(
+                    entry
+                    for entry in accepted_composition.entries
+                    if entry.entry_id != source_state_entry.entry_id
+                )
+            composition = Composition(
+                (*composition_entries, source_state_entry),
+                boundary_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-volume-accepted-boundary",
+                        "epoch": current_epoch.epoch_id,
+                        "accepted_step": accepted_step,
+                    }
+                ),
+            )
+            source_total = accepted_state.content_state.volume_integral()
+            target_total = transaction.content_state.volume_integral()
+            content_tolerance = jnp.asarray(
+                remap_tolerance, dtype=source_total.dtype
+            ) * jnp.maximum(jnp.abs(source_total), 1.0)
+            transport = CompositionTransport(
+                "physical-remap",
+                ("finite-volume/state",),
+                (target_state_entry,),
+                source_structure_ids=(source_state_entry.structure_id,),
+                route_id=remap.plan_id,
+                successful=jnp.asarray(True),
+                source_content=source_total,
+                target_content=target_total,
+                content_tolerance=content_tolerance,
+            )
+            prepared_motion = prepare_overset_motion_rebind(
+                composition,
+                previous_connectivity,
+                candidate_connectivity,
+                transports=(transport,),
+            )
+            receipt = prepared_motion.commit(accepted_boundary=True)
+        except (KeyError, TypeError, ValueError, FloatingPointError):
+            return fail(
+                TopologyEventStatus.FAILED_COVERAGE,
+                "accepted physical-state ownership rebind failed",
+                coverage_error=coverage_error,
+                conservation_defect=conservation_defect,
+            )
+        if not isinstance(receipt, CompositionRebindReceipt):
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "accepted motion rebind returned no typed composition receipt",
+                coverage_error=coverage_error,
+                conservation_defect=conservation_defect,
+            )
+        if not receipt.published:
+            return fail(
+                TopologyEventStatus.FAILED_COVERAGE,
+                "accepted physical-state transport was not admitted",
+                coverage_error=coverage_error,
+                conservation_defect=conservation_defect,
+            )
+        answer = eqx.tree_at(
+            lambda result: result.runtime_state,
+            accepted_result,
+            next_state,
+        )
+        answer = eqx.tree_at(
+            lambda result: result.successor_runtime,
+            answer,
+            successor_runtime,
+            is_leaf=lambda node: node is None,
+        )
+        return eqx.tree_at(
+            lambda result: result.overset_motion_receipt,
+            answer,
+            receipt,
+            is_leaf=lambda node: node is None,
+        )
+
+    @checked
+    def commit_owner_local_repartition(
+        self,
+        accepted_source: FiniteVolumeValidatedRuntimeState,
+        previous_connectivity: Any,
+        candidate_connectivity: Any,
+        target_dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+        /,
+        *,
+        accepted_composition: Any = None,
+        execution_group: Any = None,
+        cell_state_banks: tuple[FiniteVolumeOwnerLocalCellStateBankSpec, ...] = (),
+        retained_state_entry_ids: tuple[str, ...] = (),
+        reprepare_entries: tuple[Any, ...] = (),
+        invalidate_entry_ids: tuple[str, ...] = (),
+        owner_local_part_name: str | None = None,
+    ) -> FiniteVolumeOwnerLocalRepartitionResult:
+        """Commit exact owner-local cell state to a graph-migrated FV partition."""
+        from .._execution_runtime import ExecutionGroup
+        from ..discretization._view_support import OwnerLocalCellGeometry
+        from ..lifecycle import Composition, CompositionEntry, CompositionTransport
+        from ..meshing._distribution import (
+            _owner_group_allgather,
+            OwnerLocalGraphMigrationEvidence,
+        )
+        from ..meshing._overset import (
+            OversetConnectivity,
+            prepare_overset_motion_rebind,
+        )
+        from ..meshing._overset_exchange import _synchronize_owner_search_failure
+        from ._finite_volume_topology_events import FiniteVolumeTopologyArtifactEvidence
+
+        if not isinstance(previous_connectivity, OversetConnectivity) or not isinstance(
+            candidate_connectivity, OversetConnectivity
+        ):
+            raise TypeError(
+                "Repartition requires predecessor and candidate overset connectivity."
+            )
+        if accepted_composition is not None and not isinstance(
+            accepted_composition, Composition
+        ):
+            raise TypeError("accepted_composition must be Composition or None.")
+        if not isinstance(execution_group, ExecutionGroup):
+            raise TypeError("Owner-local repartition requires an ExecutionGroup.")
+        if (
+            not isinstance(self.owner_local_execution_group, ExecutionGroup)
+            or execution_group.spec.group_id
+            != self.owner_local_execution_group.spec.group_id
+        ):
+            raise ValueError(
+                "Repartition execution group differs from its source runtime."
+            )
+        if not isinstance(accepted_source, FiniteVolumeValidatedRuntimeState):
+            raise TypeError("accepted_source must be FiniteVolumeValidatedRuntimeState.")
+        if not isinstance(cell_state_banks, tuple) or any(
+            not isinstance(spec, FiniteVolumeOwnerLocalCellStateBankSpec)
+            for spec in cell_state_banks
+        ):
+            raise TypeError(
+                "cell_state_banks must contain explicit FV cell-bank schemas."
+            )
+        if (
+            not isinstance(retained_state_entry_ids, tuple)
+            or not isinstance(reprepare_entries, tuple)
+            or not isinstance(invalidate_entry_ids, tuple)
+        ):
+            raise TypeError("Repartition Composition dispositions must be tuples.")
+        validated_source = self.validate_restored_accepted_state(
+            accepted_source.runtime_state,
+            accepted_source.source_cell_ids,
+            expected_runtime_id=accepted_source.runtime_id,
+            expected_epoch_id=accepted_source.epoch_id,
+            expected_state_id=accepted_source.state_id,
+        )
+        accepted_state = validated_source.runtime_state
+        source_content = accepted_state.content_state
+        current_epoch = accepted_state.topology_journal.epoch_table[-1]
+        current_artifacts = accepted_state.topology_journal.artifact_table[-1]
+        if not isinstance(current_epoch, TopologyEpoch) or not isinstance(
+            current_artifacts, FiniteVolumeTopologyArtifacts
+        ):
+            raise TypeError("Accepted runtime state has no typed topology authority.")
+        request = FiniteVolumeTopologyEventRequest(
+            TopologyEventKind.REPARTITION,
+            current_epoch.epoch_id,
+            candidate_connectivity.connectivity_id,
+            payload_id=candidate_connectivity.connectivity_id,
+            reason="accepted owner-local graph repartition",
+        )
+        accepted_step = int(np.asarray(accepted_state.accepted_step))
+        event_time = float(np.asarray(accepted_state.time))
+
+        def with_journal(
+            journal: FiniteVolumeTopologyEventJournal,
+            content: FiniteVolumeConservativeContentState,
+        ) -> FiniteVolumeRuntimeState:
+            return FiniteVolumeRuntimeState(
+                content,
+                journal,
+                accepted_state.step_size,
+                accepted_step=accepted_state.accepted_step,
+                last_status=accepted_state.last_status,
+                controller_state=accepted_state.controller_state,
+                integrator_state=accepted_state.integrator_state,
+                output_cursor=accepted_state.output_cursor,
+                sliding_coupling=accepted_state.sliding_coupling,
+                sliding_shift=accepted_state.sliding_shift,
+                sliding_event_id=accepted_state.sliding_event_id,
+            )
+
+        def rollback_result(
+            journal: FiniteVolumeTopologyEventJournal,
+            content: FiniteVolumeConservativeContentState,
+            event_status: TopologyEventStatus,
+            /,
+        ) -> FiniteVolumeOwnerLocalRepartitionResult:
+            return FiniteVolumeOwnerLocalRepartitionResult(
+                with_journal(journal, content),
+                jnp.asarray(False),
+                jnp.asarray(int(event_status), dtype=jnp.int32),
+            )
+
+        def fail(
+            status: TopologyEventStatus,
+            reason: str,
+            /,
+        ) -> FiniteVolumeOwnerLocalRepartitionResult:
+            evidence = FiniteVolumeTopologyArtifactEvidence(
+                passed=jnp.asarray(False),
+                status=jnp.asarray(int(status), dtype=jnp.int32),
+                coverage_error=jnp.asarray(0.0),
+                conservation_defect=jnp.asarray(0.0),
+                evidence_id=canonical_fingerprint(
+                    {
+                        "kind": "failed-owner-local-fv-repartition",
+                        "request": request.request_id,
+                        "reason": reason,
+                        "status": int(status),
+                    }
+                ),
+            )
+            scheduler = FiniteVolumeTopologyEventScheduler(
+                accepted_state.topology_journal
+            )
+            scheduler.submit(request, accepted_step, event_time)
+            transaction = scheduler.transact(
+                accepted=True,
+                source_content=source_content,
+                candidate_epoch=current_epoch,
+                candidate_artifacts=current_artifacts,
+                remap=evidence,
+                metrics=evidence,
+                evidence=evidence,
+                status=status,
+            )
+            return rollback_result(transaction.journal, transaction.content_state, status)
+
+        def collective_error(
+            error: Exception | None,
+            axis_name: str,
+            /,
+        ) -> str | None:
+            failed = _synchronize_owner_search_failure(
+                error is not None,
+                execution_group.devices,
+                axis_name,
+            )
+            if not failed:
+                return None
+            return (
+                f"{type(error).__name__}: {error}"
+                if error is not None
+                else "another owner rejected the same repartition transaction"
+            )
+
+        part_name = (
+            self.owner_local_geometry.part_name
+            if owner_local_part_name is None and self.owner_local_geometry is not None
+            else str(owner_local_part_name)
+        )
+        local_rank = -1
+        members = execution_group.spec.process_indices
+        preflight_error: Exception | None = None
+        source_view = target_view = graph_migration = None
+        candidate_epoch = current_epoch
+        candidate_artifacts = current_artifacts
+        route_identity_id = ""
+        source_sliding_plan_id: str | None = None
+        source_sliding_coupling_id = accepted_state.sliding_coupling_id
+        target_sliding_coupling_id: str | None = None
+        previous_route = candidate_route = None
+        source_state_entry = None
+        source_composition = None
+        external_specs: dict[str, FiniteVolumeOwnerLocalCellStateBankSpec] = {}
+        retained_ids: tuple[str, ...] = ()
+        invalidated_ids: tuple[str, ...] = ()
+        prepared_entries: tuple[CompositionEntry, ...] = ()
+        bank_inputs: list[tuple[str, CompositionEntry, np.ndarray, Any, Any]] = []
+        source_plan_ids = source_owned_ids = target_plan_ids = target_owned_ids = None
+        target_owned_mask: np.ndarray | None = None
+        source_owned_rows = target_owned_rows = None
+        target_runtime: PreparedFiniteVolumeRuntime | None = None
+        try:
+            local_rank = members.index(jax.process_index())
+            if (
+                not part_name
+                or not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+                or self.dynamics.coupling.overset is None
+                or self.owner_local_geometry is None
+                or not isinstance(self.owner_local_geometry, OwnerLocalCellGeometry)
+                or not previous_connectivity.owner_local
+                or not candidate_connectivity.owner_local
+                or candidate_connectivity.epoch != previous_connectivity.epoch + 1
+                or candidate_connectivity.predecessor_id
+                != previous_connectivity.connectivity_id
+                or self.dynamics.coupling.overset.native_connectivity_id
+                != previous_connectivity.connectivity_id
+                or accepted_state.topology_journal.current_epoch_id
+                != current_epoch.epoch_id
+                or source_content.topology_epoch_id != current_epoch.epoch_id
+                or self.initial_topology_epoch.epoch_id != current_epoch.epoch_id
+                or self.initial_topology_artifacts.artifacts_id
+                != current_artifacts.artifacts_id
+            ):
+                raise ValueError(
+                    "Accepted FV runtime does not bind the predecessor graph partition."
+                )
+            self._validate_sliding_state(accepted_state)
+            source_dynamics = self.dynamics
+            if not isinstance(source_dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+                raise TypeError("Owner-local source runtime is not unstructured FV.")
+            source_geometry = source_dynamics.discretization
+            if not isinstance(source_geometry, UnstructuredFiniteVolumeDiscretization):
+                raise TypeError("Owner-local source plan lacks unstructured cell IDs.")
+            source_view_candidate = self.owner_local_geometry
+            if not isinstance(source_view_candidate, OwnerLocalCellGeometry):
+                raise TypeError("Accepted runtime lost its owner-local source view.")
+            source_geometry_view = source_geometry.owner_local_view
+            if not isinstance(source_geometry_view, OwnerLocalCellGeometry):
+                raise TypeError("Accepted FV geometry lost its owner-local source view.")
+            source_view = source_view_candidate
+            part_name = (
+                source_view.part_name
+                if owner_local_part_name is None
+                else str(owner_local_part_name)
+            )
+            if source_geometry_view.local_view_id != source_view.local_view_id:
+                raise ValueError(
+                    "Accepted FV geometry differs from its owner-local source view."
+                )
+            target_view_candidate = candidate_connectivity.assembly.part(
+                part_name
+            ).carrier
+            if not isinstance(target_view_candidate, OwnerLocalCellGeometry):
+                raise TypeError(
+                    "Candidate connectivity lacks its owner-local target view."
+                )
+            target_view = target_view_candidate
+            target_geometry = target_dynamics.discretization
+            if not isinstance(target_geometry, UnstructuredFiniteVolumeDiscretization):
+                raise TypeError("Target FV plan lacks unstructured cell IDs.")
+            target_geometry_view = target_geometry.owner_local_view
+            if not isinstance(target_geometry_view, OwnerLocalCellGeometry):
+                raise TypeError("Target FV geometry lacks its owner-local view.")
+            target_overset = target_dynamics.coupling.overset
+            if (
+                target_overset is None
+                or target_overset.native_connectivity_id
+                != candidate_connectivity.connectivity_id
+                or target_geometry_view.local_view_id != target_view.local_view_id
+            ):
+                raise ValueError(
+                    "Target dynamics do not bind the candidate connectivity view."
+                )
+            if source_dynamics.coupling.overset is None or (
+                source_dynamics.coupling.overset.native_connectivity_id
+                != previous_connectivity.connectivity_id
+            ):
+                raise ValueError("Source dynamics do not bind predecessor connectivity.")
+            graph_migration = target_view.graph_migration_evidence
+            if not isinstance(graph_migration, OwnerLocalGraphMigrationEvidence):
+                raise ValueError(
+                    "Candidate owner-local view lacks native graph migration evidence."
+                )
+            if (
+                source_view.owner_rank != local_rank
+                or target_view.owner_rank != local_rank
+                or source_view.part_name != target_view.part_name
+                or source_view.source_topology_id != current_epoch.topology_id
+                or source_view.source_geometry_id != current_epoch.geometry_id
+                or target_view.source_topology_id != current_epoch.topology_id
+                or target_view.source_geometry_id != current_epoch.geometry_id
+                or source_view.distribution_id != current_epoch.partition_id
+                or target_view.distribution_id == current_epoch.partition_id
+                or graph_migration.local_rank != local_rank
+                or graph_migration.part_count != len(members)
+                or graph_migration.group_id != execution_group.spec.group_id
+                or graph_migration.source_part_id != source_view.part_id
+                or graph_migration.source_directory_id != source_view.distribution_id
+                or graph_migration.source_candidate_id
+                != source_view.candidate_revision_id
+                or graph_migration.periodic_face_coverage_id
+                != source_view.periodic_face_coverage_id
+                or graph_migration.target_part_id != target_view.part_id
+                or graph_migration.target_directory_id != target_view.distribution_id
+                or not graph_migration.result.feasible
+                or graph_migration.result.migration_count <= 0
+            ):
+                raise ValueError(
+                    "Native graph migration does not bind the accepted source/target."
+                )
+            source_plan_ids = np.asarray(source_geometry.cell_global_ids, dtype=np.int64)
+            target_plan_ids = np.asarray(target_geometry.cell_global_ids, dtype=np.int64)
+            source_owned_plan_mask = self.owner_local_owned_cell_mask
+            if source_owned_plan_mask is None:
+                raise ValueError("Accepted owner-local runtime lacks its ownership mask.")
+            source_owned_mask = np.asarray(source_owned_plan_mask, dtype=np.bool_)
+            target_view_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
+            target_view_owned = np.asarray(target_view.owned, dtype=np.bool_)
+            target_view_row = {
+                int(identifier): row
+                for row, identifier in enumerate(target_view_ids.tolist())
+            }
+            target_owned_mask = np.asarray(
+                [
+                    target_view_owned[target_view_row[int(identifier)]]
+                    for identifier in target_plan_ids
+                ],
+                dtype=np.bool_,
+            )
+            source_view_ids = np.asarray(source_view.cell_ids, dtype=np.int64)
+            source_view_owned = np.asarray(source_view.owned, dtype=np.bool_)
+            source_view_row = {
+                int(identifier): row
+                for row, identifier in enumerate(source_view_ids.tolist())
+            }
+            source_view_owned_mask = np.asarray(
+                [
+                    source_view_owned[source_view_row[int(identifier)]]
+                    for identifier in source_plan_ids
+                ],
+                dtype=np.bool_,
+            )
+            if (
+                source_plan_ids.ndim != 1
+                or target_plan_ids.ndim != 1
+                or source_owned_mask.shape != source_plan_ids.shape
+                or target_owned_mask.shape != target_plan_ids.shape
+                or np.unique(source_plan_ids).size != source_plan_ids.size
+                or np.unique(target_plan_ids).size != target_plan_ids.size
+                or not np.array_equal(
+                    np.sort(source_plan_ids), np.sort(np.asarray(source_view.cell_ids))
+                )
+                or not np.array_equal(
+                    np.sort(target_plan_ids), np.sort(np.asarray(target_view.cell_ids))
+                )
+                or not np.array_equal(source_owned_mask, source_view_owned_mask)
+            ):
+                raise ValueError(
+                    "FV plan rows do not match the accepted owner-local cell views."
+                )
+            source_owned_rows = np.flatnonzero(source_owned_mask)
+            target_owned_rows = np.flatnonzero(target_owned_mask)
+            source_owned_ids = np.sort(source_plan_ids[source_owned_rows])
+            target_owned_ids = np.sort(target_plan_ids[target_owned_rows])
+            if (
+                not np.array_equal(
+                    source_owned_ids,
+                    np.sort(
+                        np.asarray(graph_migration.result.entity_ids, dtype=np.int64)
+                    ),
+                )
+                or not np.array_equal(
+                    target_owned_ids,
+                    np.asarray(graph_migration.target_cell_ids, dtype=np.int64),
+                )
+                or not np.array_equal(
+                    target_owned_ids,
+                    np.sort(np.asarray(target_view.owned_cell_ids, dtype=np.int64)),
+                )
+                or source_content.owned_cell_mask is None
+                or not np.array_equal(
+                    np.asarray(source_content.owned_cell_mask, dtype=np.bool_),
+                    source_owned_mask,
+                )
+                or target_dynamics.system.system_id != self.dynamics.system.system_id
+                or target_dynamics.precision.policy_id != self.precision.policy_id
+            ):
+                raise ValueError(
+                    "Source/target FV owner masks or graph cell keys differ."
+                )
+            candidate_epoch = TopologyEpoch(
+                current_epoch.index + 1,
+                current_epoch.geometry_id,
+                current_epoch.topology_id,
+                target_view.distribution_id,
+            )
+            if candidate_epoch.partition_id == current_epoch.partition_id:
+                raise ValueError(
+                    "Graph repartition did not change the global partition identity."
+                )
+            source_sliding_plan = self.sliding_plan
+            target_sliding_plan = target_dynamics.coupling.sliding
+            source_sliding_plan_id = (
+                None if source_sliding_plan is None else source_sliding_plan.plan_id
+            )
+            target_sliding_plan_id = (
+                None if target_sliding_plan is None else target_sliding_plan.plan_id
+            )
+            if source_sliding_plan_id != target_sliding_plan_id:
+                raise ValueError(
+                    "Repartition changes the declared sliding-interface plan."
+                )
+            if target_sliding_plan is not None:
+                target_sliding_coupling = target_sliding_plan.coupling(
+                    accepted_state.sliding_shift
+                )
+                target_dynamics = target_dynamics.with_sliding_coupling(
+                    target_sliding_coupling
+                )
+                target_sliding_coupling_id = target_sliding_coupling.coupling_id
+            candidate_artifacts = FiniteVolumeTopologyArtifacts(
+                candidate_epoch,
+                target_geometry.prepared_id,
+                topology_artifact_id=candidate_connectivity.connectivity_id,
+                metrics_artifact_id=graph_migration.evidence_id,
+                operators_artifact_id=target_dynamics.dynamics_id,
+            )
+            route_identity_id = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-owner-local-graph-repartition",
+                    "source_part": graph_migration.source_part_id,
+                    "source_directory": graph_migration.source_directory_id,
+                    "target_part": graph_migration.target_part_id,
+                    "target_directory": graph_migration.target_directory_id,
+                    "graph_plan": graph_migration.result.plan_id,
+                    "group": graph_migration.group_id,
+                }
+            )
+            previous_entries = previous_connectivity.composition_entries()
+            candidate_entries = candidate_connectivity.composition_entries()
+            previous_route = next(
+                entry for entry in previous_entries if entry.role == "interface-route"
+            )
+            candidate_route = next(
+                entry for entry in candidate_entries if entry.role == "interface-route"
+            )
+            source_entries = (
+                previous_entries
+                if accepted_composition is None
+                else accepted_composition.entries
+            )
+            source_entry_by_id = {entry.entry_id: entry for entry in source_entries}
+            if accepted_composition is not None:
+                for previous_entry in previous_entries:
+                    if (
+                        accepted_composition.entry(previous_entry.entry_id).record_id
+                        != previous_entry.record_id
+                    ):
+                        raise ValueError(
+                            "Accepted Composition does not bind predecessor connectivity."
+                        )
+                accepted_route = accepted_composition.entry(previous_route.entry_id)
+                if accepted_route.revision_id != previous_route.revision_id:
+                    raise ValueError(
+                        "Accepted Composition does not bind the predecessor route."
+                    )
+            retained_ids = tuple(sorted(set(retained_state_entry_ids)))
+            invalidated_ids = tuple(sorted(set(invalidate_entry_ids)))
+            prepared_entries = tuple(reprepare_entries)
+            prepared_by_id = {entry.entry_id: entry for entry in prepared_entries}
+            if (
+                len(retained_ids) != len(retained_state_entry_ids)
+                or len(invalidated_ids) != len(invalidate_entry_ids)
+                or len(prepared_by_id) != len(prepared_entries)
+                or set(retained_ids) & set(invalidated_ids)
+                or set(retained_ids) & set(prepared_by_id)
+                or set(invalidated_ids) & set(prepared_by_id)
+            ):
+                raise ValueError("Composition repartition dispositions are duplicated.")
+            external_entries = tuple(
+                entry
+                for entry in source_entries
+                if entry.entry_id not in {item.entry_id for item in previous_entries}
+                and entry.entry_id != "finite-volume/state"
+            )
+            external_by_id = {entry.entry_id: entry for entry in external_entries}
+            external_specs = {spec.entry_id: spec for spec in cell_state_banks}
+            if (
+                len(external_specs) != len(cell_state_banks)
+                or set(external_specs) & set(retained_ids)
+                or set(external_specs) & set(invalidated_ids)
+                or set(external_specs) & set(prepared_by_id)
+            ):
+                raise ValueError(
+                    "Cell-state bank declarations overlap other dispositions."
+                )
+            state_roles = {
+                "physical-state",
+                "exchange-state",
+                "budget",
+                "model-parameter",
+                "model-state",
+                "optimizer-state",
+                "history",
+                "statistics",
+                "rng",
+            }
+            derived_roles = {
+                "topology",
+                "discretization",
+                "interface-route",
+                "transfer",
+                "preconditioner",
+                "observation",
+                "prepared-graph",
+                "workset",
+            }
+            for entry_id, spec in external_specs.items():
+                entry = external_by_id.get(entry_id)
+                if entry is None or entry.role not in state_roles:
+                    raise ValueError("Cell-state bank must name an accepted state entry.")
+                if spec.cell_axis >= np.ndim(entry.value) or spec.cell_axis < -np.ndim(
+                    entry.value
+                ):
+                    raise ValueError(
+                        "Cell-state bank axis is outside its typed value rank."
+                    )
+            for entry_id in retained_ids:
+                entry = external_by_id.get(entry_id)
+                if entry is None or entry.role not in state_roles:
+                    raise ValueError(
+                        "Only explicitly declared global state entries may be retained."
+                    )
+            for entry_id in invalidated_ids:
+                entry = external_by_id.get(entry_id)
+                if entry is None or entry.role not in derived_roles:
+                    raise ValueError(
+                        "Only derived artifacts may be explicitly invalidated."
+                    )
+            for entry_id, target_entry in prepared_by_id.items():
+                entry = external_by_id.get(entry_id)
+                if (
+                    entry is None
+                    or entry.role not in derived_roles
+                    or target_entry.role != entry.role
+                    or target_entry.owner_id != entry.owner_id
+                ):
+                    raise ValueError(
+                        "Reprepared entries must replace matching derived artifacts."
+                    )
+            dispositions = (
+                set(external_specs)
+                | set(retained_ids)
+                | set(invalidated_ids)
+                | set(prepared_by_id)
+            )
+            if dispositions != set(external_by_id):
+                unknown = sorted(set(external_by_id) - dispositions)
+                raise ValueError(
+                    "Every non-connectivity Composition entry needs an explicit repartition "
+                    f"disposition; unresolved entries: {unknown!r}."
+                )
+            source_state_entry = CompositionEntry(
+                accepted_state,
+                entry_id="finite-volume/state",
+                role="physical-state",
+                owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
+                structure_id=source_content.geometry_layout_id,
+                revision_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-volume-accepted-state",
+                        "runtime": self.runtime_id,
+                        "time": float(np.asarray(accepted_state.time)).hex(),
+                        "accepted_step": accepted_step,
+                        "content": array_tree_fingerprint(
+                            source_content.conservative_content
+                        ),
+                        "controller": array_tree_fingerprint(
+                            accepted_state.controller_state
+                        ),
+                        "integrator": array_tree_fingerprint(
+                            accepted_state.integrator_state
+                        ),
+                        "output_cursor": int(np.asarray(accepted_state.output_cursor)),
+                    }
+                ),
+                semantics_id=self.dynamics.system.system_id,
+                dependencies=(previous_route.binding("revision"),),
+            )
+            source_composition = Composition(
+                (
+                    *(
+                        entry
+                        for entry in source_entries
+                        if entry.entry_id != "finite-volume/state"
+                    ),
+                    source_state_entry,
+                ),
+                boundary_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-volume-accepted-boundary",
+                        "epoch": current_epoch.epoch_id,
+                        "accepted_step": accepted_step,
+                    }
+                ),
+            )
+            source_plan_row = {
+                int(identifier): row for row, identifier in enumerate(source_plan_ids)
+            }
+            source_rows = np.asarray(
+                [source_plan_row[int(identifier)] for identifier in source_owned_ids],
+                dtype=np.int32,
+            )
+            if (
+                np.asarray(source_content.conservative_content).shape[0]
+                != source_plan_ids.size
+                or np.asarray(source_content.effective_cell_volumes).shape
+                != source_plan_ids.shape
+                or np.asarray(source_content.active_cell_mask).shape
+                != source_plan_ids.shape
+                or not np.array_equal(
+                    np.asarray(source_content.effective_cell_volumes),
+                    np.asarray(self.effective_cell_volumes),
+                )
+                or not np.array_equal(
+                    np.asarray(source_content.active_cell_mask),
+                    np.asarray(self.active_cell_mask),
+                )
+                or float(np.asarray(source_content.time))
+                != float(np.asarray(accepted_state.time))
+            ):
+                raise ValueError(
+                    "Accepted owner-local content differs from its source runtime."
+                )
+
+            def add_bank(
+                name: str,
+                source_entry: CompositionEntry,
+                source_ids: np.ndarray,
+                source_values: Any,
+                /,
+            ) -> None:
+                if not isinstance(source_values, Array) and not hasattr(
+                    source_values, "shape"
+                ):
+                    raise TypeError("Graph-migrated cell bank values must be arrays.")
+                values_shape = tuple(int(value) for value in source_values.shape)
+                if not values_shape or values_shape[0] != source_ids.size:
+                    raise ValueError(
+                        "Graph-migrated cell bank rows lack explicit stable IDs."
+                    )
+                bank_inputs.append(
+                    (name, source_entry, source_ids, source_values, values_shape[1:])
+                )
+
+            core_names = (
+                "conservative_content",
+                "effective_cell_volumes",
+                "active_cell_mask",
+            )
+            core_values = (
+                jnp.asarray(source_content.conservative_content)[source_rows],
+                jnp.asarray(source_content.effective_cell_volumes)[source_rows],
+                jnp.asarray(source_content.active_cell_mask)[source_rows],
+            )
+            for name, values in zip(core_names, core_values, strict=True):
+                entry_id = f"finite-volume/repartition/{name}"
+                temp_entry = CompositionEntry(
+                    values,
+                    entry_id=entry_id,
+                    role="physical-state",
+                    owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
+                    structure_id=source_view.geometry_layout_id,
+                    revision_id=canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-repartition-cell-bank-schema",
+                            "source_geometry": current_epoch.geometry_id,
+                            "name": name,
+                            "tail_shape": tuple(int(value) for value in values.shape[1:]),
+                            "dtype": str(values.dtype),
+                        }
+                    ),
+                    semantics_id=canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-cell-bank-semantics",
+                            "system": self.dynamics.system.system_id,
+                            "name": name,
+                        }
+                    ),
+                )
+                add_bank(name, temp_entry, source_owned_ids, values)
+            for entry_id in sorted(external_specs):
+                spec = external_specs[entry_id]
+                source_entry = external_by_id[entry_id]
+                row_ids = np.asarray(spec.cell_ids, dtype=np.int64)
+                source_local_ids = np.asarray(source_view.cell_ids, dtype=np.int64)
+                if not (
+                    np.array_equal(np.sort(row_ids), source_owned_ids)
+                    or np.array_equal(np.sort(row_ids), np.sort(source_local_ids))
+                ):
+                    raise ValueError(
+                        f"Cell-state bank {entry_id!r} must label every source-owned "
+                        "row or every resident source row explicitly."
+                    )
+                axis = spec.cell_axis
+                source_array = jnp.asarray(source_entry.value)
+                values = jnp.moveaxis(source_array, axis, 0)
+                id_to_row = {
+                    int(identifier): row for row, identifier in enumerate(row_ids)
+                }
+                ordered_rows = jnp.asarray(
+                    [id_to_row[int(identifier)] for identifier in source_owned_ids],
+                    dtype=jnp.int32,
+                )
+                values = values[ordered_rows]
+                transfer_entry = CompositionEntry(
+                    values,
+                    entry_id=f"finite-volume/repartition/cell-bank/{entry_id}",
+                    role=source_entry.role,
+                    owner_id=source_entry.owner_id,
+                    structure_id=source_view.geometry_layout_id,
+                    revision_id=canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-repartition-cell-bank-schema",
+                            "entry": entry_id,
+                            "source_geometry": current_epoch.geometry_id,
+                            "role": source_entry.role,
+                            "owner": source_entry.owner_id,
+                            "semantics": source_entry.semantics_id,
+                            "cell_axis": axis,
+                            "tail_shape": tuple(int(value) for value in values.shape[1:]),
+                            "dtype": str(values.dtype),
+                        }
+                    ),
+                    semantics_id=source_entry.semantics_id,
+                )
+                add_bank(f"entry:{entry_id}", transfer_entry, source_owned_ids, values)
+            schema_id = canonical_fingerprint(
+                tuple(
+                    (
+                        name,
+                        entry.entry_id,
+                        entry.role,
+                        entry.owner_id,
+                        entry.structure_id,
+                        entry.revision_id,
+                        entry.semantics_id,
+                        shape,
+                        str(values.dtype),
+                    )
+                    for name, entry, _, values, shape in bank_inputs
+                )
+            )
+        except Exception as error:
+            preflight_error = error
+            schema_id = canonical_fingerprint(
+                {"kind": "invalid-finite-volume-repartition-bank-schema"}
+            )
+        try:
+            group_state_id = canonical_fingerprint(
+                {
+                    "group": execution_group.spec.group_id,
+                    "request": request.request_id,
+                    "epoch": current_epoch.epoch_id,
+                    "accepted_step": accepted_step,
+                    "time": float(event_time).hex(),
+                    "journal_capacity": accepted_state.topology_journal.capacity,
+                    "journal_count": int(
+                        np.asarray(accepted_state.topology_journal.count)
+                    ),
+                }
+            )
+            group_rows = _owner_group_allgather(
+                np.frombuffer(bytes.fromhex(group_state_id), dtype=np.uint8),
+                execution_group,
+                f"{self.owner_local_axis_name}_repartition_boundary",
+            )
+            if any(
+                np.asarray(row, dtype=np.uint8).tobytes().hex() != group_state_id
+                for row in group_rows
+            ):
+                preflight_error = ValueError(
+                    "Owner ranks do not share one accepted FV event boundary."
+                )
+            schema_rows = _owner_group_allgather(
+                np.frombuffer(bytes.fromhex(schema_id), dtype=np.uint8),
+                execution_group,
+                f"{self.owner_local_axis_name}_repartition_schema",
+            )
+            if any(
+                np.asarray(row, dtype=np.uint8).tobytes().hex() != schema_id
+                for row in schema_rows
+            ):
+                preflight_error = ValueError(
+                    "Owner ranks declared different cell-state bank schemas."
+                )
+        except Exception as error:
+            preflight_error = error
+        preflight_error_text = collective_error(
+            preflight_error, f"{self.owner_local_axis_name}_repartition_admission"
+        )
+        if preflight_error_text is not None:
+            return fail(TopologyEventStatus.FAILED_MISSING_ARTIFACT, preflight_error_text)
+        if (
+            not isinstance(source_view, OwnerLocalCellGeometry)
+            or not isinstance(target_view, OwnerLocalCellGeometry)
+            or not isinstance(graph_migration, OwnerLocalGraphMigrationEvidence)
+            or previous_route is None
+            or candidate_route is None
+            or source_state_entry is None
+            or source_composition is None
+            or source_plan_ids is None
+            or source_owned_ids is None
+            or target_plan_ids is None
+            or target_owned_ids is None
+            or source_owned_rows is None
+            or target_owned_rows is None
+            or target_owned_mask is None
+        ):
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "Owner-local repartition preflight produced incomplete typed state.",
+            )
+
+        target_runtime_error: Exception | None = None
+        try:
+            target_runtime = PreparedFiniteVolumeRuntime(
+                target_dynamics,
+                self.positivity,
+                self.policy,
+                topology_epoch=candidate_epoch,
+                topology_artifacts=candidate_artifacts,
+                execution_group=execution_group,
+                owner_local_geometry=target_view,
+                owner_local_axis_name=self.owner_local_axis_name,
+            )
+            runtime_sliding_plan_id = (
+                None
+                if target_runtime.sliding_plan is None
+                else target_runtime.sliding_plan.plan_id
+            )
+            runtime_sliding_coupling_id = (
+                None
+                if target_runtime.sliding_initial_coupling is None
+                else target_runtime.sliding_initial_coupling.coupling_id
+            )
+            if (
+                target_runtime.owner_local_owned_cell_mask is None
+                or not np.array_equal(
+                    np.asarray(target_runtime.owner_local_owned_cell_mask),
+                    target_owned_mask,
+                )
+                or target_runtime.geometry_family_id != source_content.geometry_family_id
+                or target_runtime.evidence_policy_id != source_content.evidence_policy_id
+                or runtime_sliding_plan_id != source_sliding_plan_id
+                or runtime_sliding_coupling_id != target_sliding_coupling_id
+            ):
+                raise ValueError("Target runtime changes preserved FV state semantics.")
+        except Exception as error:
+            target_runtime_error = error
+        target_runtime_error_text = collective_error(
+            target_runtime_error,
+            f"{self.owner_local_axis_name}_repartition_target_runtime",
+        )
+        if target_runtime_error_text is not None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                target_runtime_error_text,
+            )
+        if target_runtime is None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "Target FV runtime preparation produced no runtime.",
+            )
+        target_owned_plan_mask = target_runtime.owner_local_owned_cell_mask
+        if target_owned_plan_mask is None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "Target owner-local FV runtime has no ownership mask.",
+            )
+
+        retained_entries = tuple(
+            source_entry_by_id[entry_id] for entry_id in retained_ids
+        )
+        retained_state_identity = tuple(
+            (
+                entry.entry_id,
+                entry.role,
+                entry.owner_id,
+                entry.structure_id,
+                entry.revision_id,
+                entry.semantics_id,
+                array_tree_fingerprint(entry.value),
+                tuple(
+                    (dependency.entry_id, dependency.facet, dependency.bound_id)
+                    for dependency in entry.dependencies
+                ),
+            )
+            for entry in retained_entries
+        )
+        state_global_payload = {
+            "time": float(np.asarray(accepted_state.time)).hex(),
+            "accepted_step": accepted_step,
+            "step_size": array_tree_fingerprint(accepted_state.step_size),
+            "last_status": int(np.asarray(accepted_state.last_status)),
+            "controller_state": array_tree_fingerprint(accepted_state.controller_state),
+            "integrator_state": array_tree_fingerprint(accepted_state.integrator_state),
+            "output_cursor": int(np.asarray(accepted_state.output_cursor)),
+            "sliding_plan_id": source_sliding_plan_id,
+            "sliding_shift": array_tree_fingerprint(accepted_state.sliding_shift),
+            "sliding_event_id": accepted_state.sliding_event_id,
+            "geometry_family": source_content.geometry_family_id,
+            "evidence_policy": source_content.evidence_policy_id,
+            "geometry_version": array_tree_fingerprint(source_content.geometry_version),
+            "evidence_version": array_tree_fingerprint(source_content.evidence_version),
+            "precision": source_content.precision.policy_id,
+            "owned_cell_mask_present": source_content.owned_cell_mask is not None,
+            "retained_global_entries": retained_state_identity,
+        }
+        key_identity_id = canonical_fingerprint(
+            {
+                "kind": "finite-volume-stable-cell-global-id",
+                "topology": current_epoch.topology_id,
+            }
+        )
+        transfer_holder: dict[str, Any] = {}
+
+        def failed_transfer(
+            reason: str,
+            /,
+            *,
+            content: FiniteVolumeConservativeContentState = source_content,
+        ) -> _OwnerLocalRepartitionTransfer:
+            rejected_root = canonical_fingerprint(
+                {
+                    "kind": "rejected-owner-local-fv-cell-transfer",
+                    "request": request.request_id,
+                    "reason": reason,
+                }
+            )
+            return _OwnerLocalRepartitionTransfer(
+                content,
+                graph_migration.evidence_id,
+                route_identity_id,
+                rejected_root,
+                rejected_root,
+                (),
+                (),
+                False,
+            )
+
+        def transfer_cells(
+            content: Any,
+            migration: Any,
+            /,
+        ) -> _OwnerLocalRepartitionTransfer:
+            local_error: Exception | None = None
+            if content is not source_content or migration is not graph_migration:
+                local_error = ValueError(
+                    "Repartition transfer source or graph evidence changed after admission."
+                )
+            error_text = collective_error(
+                local_error, f"{self.owner_local_axis_name}_repartition_transfer_source"
+            )
+            if error_text is not None:
+                return failed_transfer(error_text)
+            transfer_rows: dict[str, Any] = {}
+            for ordinal, (name, entry, source_ids, values, _) in enumerate(bank_inputs):
+                transfer_error: Exception | None = None
+                bank_transfer = None
+                try:
+                    source_owners = np.full(source_ids.size, local_rank, dtype=np.int32)
+                    target_owners = np.full(
+                        target_owned_ids.size, local_rank, dtype=np.int32
+                    )
+                    bank_transfer = graph_migration.transfer_keyed_values(
+                        entry,
+                        source_ids,
+                        source_owners,
+                        values,
+                        target_owned_ids,
+                        target_owners,
+                        execution_group,
+                        target_structure_id=target_view.geometry_layout_id,
+                        key_identity_id=key_identity_id,
+                        axis_name=(
+                            f"{self.owner_local_axis_name}_repartition_bank_{ordinal}"
+                        ),
+                    )
+                    if (
+                        bank_transfer.migration_evidence_id != graph_migration.evidence_id
+                        or bank_transfer.source_key_set_id
+                        != bank_transfer.target_key_set_id
+                        or bank_transfer.source_content_root
+                        != bank_transfer.target_content_root
+                        or not bool(np.asarray(bank_transfer.successful))
+                        or not np.array_equal(
+                            np.asarray(bank_transfer.target_entity_keys)[:, 0],
+                            target_owned_ids,
+                        )
+                    ):
+                        raise ValueError(
+                            f"Graph transfer for {name!r} did not preserve exact keyed rows."
+                        )
+                except Exception as error:
+                    transfer_error = error
+                error_text = collective_error(
+                    transfer_error,
+                    f"{self.owner_local_axis_name}_repartition_bank_{ordinal}_admission",
+                )
+                if error_text is not None or bank_transfer is None:
+                    return failed_transfer(
+                        error_text or "A graph cell-row transfer failed."
+                    )
+                transfer_rows[name] = bank_transfer
+
+            target_content_state: FiniteVolumeConservativeContentState | None = None
+            content_error: Exception | None = None
+            try:
+                target_row_by_id = {
+                    int(identifier): row
+                    for row, identifier in enumerate(target_plan_ids.tolist())
+                }
+                target_rows = np.asarray(
+                    [
+                        target_row_by_id[int(identifier)]
+                        for identifier in target_owned_ids
+                    ],
+                    dtype=np.int32,
+                )
+                if not np.array_equal(
+                    np.sort(target_plan_ids[target_owned_rows]), target_owned_ids
+                ):
+                    raise ValueError(
+                        "Target plan owned rows differ from graph migration."
+                    )
+                migrated_content = np.asarray(
+                    transfer_rows["conservative_content"].target_values
+                )
+                migrated_volumes = np.asarray(
+                    transfer_rows["effective_cell_volumes"].target_values
+                )
+                migrated_active = np.asarray(
+                    transfer_rows["active_cell_mask"].target_values,
+                    dtype=np.bool_,
+                )
+                target_volumes = np.asarray(target_runtime.effective_cell_volumes)
+                target_active = np.asarray(
+                    target_runtime.active_cell_mask, dtype=np.bool_
+                )
+                if (
+                    not np.array_equal(migrated_volumes, target_volumes[target_rows])
+                    or not np.array_equal(migrated_active, target_active[target_rows])
+                    or migrated_content.shape[0] != target_owned_ids.size
+                ):
+                    raise ValueError(
+                        "Migrated cell measures/activity differ from target geometry."
+                    )
+                content_values = np.zeros(
+                    (target_plan_ids.size, *migrated_content.shape[1:]),
+                    dtype=migrated_content.dtype,
+                )
+                content_values[target_rows] = migrated_content
+                safe_volumes = np.where(target_active, target_volumes, 1.0)
+                trailing = (1,) * (content_values.ndim - 1)
+                owned_average = np.where(
+                    target_active.reshape((-1,) + trailing),
+                    content_values / safe_volumes.reshape((-1,) + trailing),
+                    0.0,
+                )
+                refreshed_average = target_runtime._provide_stage_state(
+                    source_content.time, jnp.asarray(owned_average)
+                )
+                target_runtime.precision.validate_state(refreshed_average)
+                refreshed_content = np.asarray(
+                    refreshed_average
+                    * jnp.asarray(target_volumes).reshape((-1,) + trailing)
+                )
+                refreshed_content = np.where(
+                    target_active.reshape((-1,) + trailing), refreshed_content, 0.0
+                )
+                refreshed_content[target_rows] = migrated_content
+                target_content_state = FiniteVolumeConservativeContentState(
+                    refreshed_content,
+                    target_runtime.effective_cell_volumes,
+                    target_runtime.active_cell_mask,
+                    source_content.time,
+                    topology_epoch_id=candidate_epoch.epoch_id,
+                    geometry_family_id=target_runtime.geometry_family_id,
+                    geometry_layout_id=target_runtime.geometry_layout_id,
+                    geometry_version=source_content.geometry_version,
+                    evidence_policy_id=target_runtime.evidence_policy_id,
+                    evidence_version=source_content.evidence_version,
+                    precision=target_runtime.precision,
+                    owned_cell_mask=target_owned_plan_mask,
+                )
+                target_runtime.precision.validate_state(
+                    target_content_state.conservative_content
+                )
+                active_owned = target_runtime.active_cell_mask & target_owned_plan_mask
+                valid = jnp.all(
+                    jnp.where(
+                        active_owned,
+                        target_runtime.dynamics.system.admissible(
+                            target_content_state.cell_average()
+                        ),
+                        True,
+                    )
+                )
+                valid = target_runtime.owner_local_decision_provider(valid)
+                if not bool(np.asarray(valid)):
+                    raise ValueError("Migrated target FV state is inadmissible.")
+            except Exception as error:
+                content_error = error
+            error_text = collective_error(
+                content_error,
+                f"{self.owner_local_axis_name}_repartition_content_admission",
+            )
+            if error_text is not None or target_content_state is None:
+                return failed_transfer(
+                    error_text or "Target content construction failed."
+                )
+
+            source_banks = tuple(
+                (name, row.source_content_root)
+                for name, row in sorted(transfer_rows.items())
+            )
+            target_banks = tuple(
+                (name, row.target_content_root)
+                for name, row in sorted(transfer_rows.items())
+            )
+            source_root = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-owner-local-runtime-state-bank-v1",
+                    "global_fields": state_global_payload,
+                    "cell_banks": source_banks,
+                }
+            )
+            target_root = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-owner-local-runtime-state-bank-v1",
+                    "global_fields": state_global_payload,
+                    "cell_banks": target_banks,
+                }
+            )
+            if source_root != target_root:
+                return failed_transfer(
+                    "Exact runtime state roots changed during owner-local migration."
+                )
+            transfer_holder["rows"] = transfer_rows
+            bank_route_evidence = tuple(
+                (
+                    name,
+                    row.transfer_id,
+                    row.source_owner_map_id,
+                    row.target_owner_map_id,
+                )
+                for name, row in sorted(transfer_rows.items())
+            )
+            return _OwnerLocalRepartitionTransfer(
+                target_content_state,
+                graph_migration.evidence_id,
+                route_identity_id,
+                source_root,
+                target_root,
+                tuple(sorted(transfer_rows)),
+                bank_route_evidence,
+                True,
+            )
+
+        def target_state_entry(
+            state: FiniteVolumeRuntimeState,
+            route: CompositionEntry,
+            runtime: PreparedFiniteVolumeRuntime,
+            /,
+        ) -> CompositionEntry:
+            content = state.content_state
+            revision_id = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-accepted-state",
+                    "runtime": runtime.runtime_id,
+                    "time": float(np.asarray(state.time)).hex(),
+                    "accepted_step": int(np.asarray(state.accepted_step)),
+                    "content": array_tree_fingerprint(content.conservative_content),
+                    "controller": array_tree_fingerprint(state.controller_state),
+                    "integrator": array_tree_fingerprint(state.integrator_state),
+                    "output_cursor": int(np.asarray(state.output_cursor)),
+                }
+            )
+            return CompositionEntry(
+                state,
+                entry_id="finite-volume/state",
+                role="physical-state",
+                owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
+                structure_id=content.geometry_layout_id,
+                revision_id=revision_id,
+                semantics_id=target_runtime.dynamics.system.system_id,
+                dependencies=(route.binding("revision"),),
+            )
+
+        def remap_dependencies(
+            source_entry: CompositionEntry,
+            target_entry: CompositionEntry,
+            target_entries: dict[str, CompositionEntry],
+            /,
+        ) -> CompositionEntry:
+            dependencies = []
+            for dependency in source_entry.dependencies:
+                target = target_entries.get(dependency.entry_id)
+                if target is None:
+                    raise ValueError(
+                        f"Cell-state entry {source_entry.entry_id!r} has an "
+                        f"unresolved dependency {dependency.entry_id!r}."
+                    )
+                dependencies.append(target.binding(dependency.facet))
+            return CompositionEntry(
+                target_entry.value,
+                entry_id=target_entry.entry_id,
+                role=target_entry.role,
+                owner_id=target_entry.owner_id,
+                structure_id=target_entry.structure_id,
+                revision_id=target_entry.revision_id,
+                semantics_id=target_entry.semantics_id,
+                dependencies=tuple(dependencies),
+            )
+
+        commit_holder: dict[str, Any] = {}
+
+        def commit_rebind(
+            _prepared_event: Any,
+            transfer: _OwnerLocalRepartitionTransfer,
+            committed_journal: FiniteVolumeTopologyEventJournal,
+            /,
+        ) -> bool:
+            local_error: Exception | None = None
+            receipt = None
+            next_state = None
+            try:
+                next_state = FiniteVolumeRuntimeState(
+                    transfer.content_state,
+                    committed_journal,
+                    accepted_state.step_size,
+                    accepted_step=accepted_state.accepted_step,
+                    last_status=accepted_state.last_status,
+                    controller_state=accepted_state.controller_state,
+                    integrator_state=accepted_state.integrator_state,
+                    output_cursor=accepted_state.output_cursor,
+                    sliding_coupling=target_runtime.sliding_initial_coupling,
+                    sliding_shift=accepted_state.sliding_shift,
+                    sliding_event_id=accepted_state.sliding_event_id,
+                )
+                target_runtime._validate_sliding_state(next_state)
+                target_state = target_state_entry(
+                    next_state, candidate_route, target_runtime
+                )
+                target_entry_map = {
+                    entry.entry_id: entry
+                    for entry in candidate_connectivity.composition_entries()
+                }
+                target_entry_map.update(
+                    {entry.entry_id: entry for entry in prepared_entries}
+                )
+                target_entry_map.update(
+                    {entry.entry_id: entry for entry in retained_entries}
+                )
+                target_entry_map["finite-volume/state"] = target_state
+                provisional_targets: dict[str, CompositionEntry] = {}
+                external_transports = []
+                transfers = transfer_holder["rows"]
+                for entry_id in sorted(external_specs):
+                    spec = external_specs[entry_id]
+                    source_entry = external_by_id[entry_id]
+                    bank_transfer = transfers[f"entry:{entry_id}"]
+                    axis = spec.cell_axis
+                    values = jnp.moveaxis(bank_transfer.target_values, 0, axis)
+                    revision_id = canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-owner-local-cell-state",
+                            "entry": entry_id,
+                            "source_revision": source_entry.revision_id,
+                            "target_partition": candidate_epoch.partition_id,
+                            "graph_plan": graph_migration.result.plan_id,
+                        }
+                    )
+                    provisional_targets[entry_id] = CompositionEntry(
+                        values,
+                        entry_id=entry_id,
+                        role=source_entry.role,
+                        owner_id=source_entry.owner_id,
+                        structure_id=target_view.geometry_layout_id,
+                        revision_id=revision_id,
+                        semantics_id=source_entry.semantics_id,
+                    )
+                target_entry_map.update(provisional_targets)
+                for entry_id in sorted(external_specs):
+                    source_entry = external_by_id[entry_id]
+                    target_entry = remap_dependencies(
+                        source_entry,
+                        provisional_targets[entry_id],
+                        target_entry_map,
+                    )
+                    bank_transfer = transfers[f"entry:{entry_id}"]
+                    if (
+                        bank_transfer.source_content_root
+                        != bank_transfer.target_content_root
+                    ):
+                        raise ValueError(
+                            f"Cell-state bank {entry_id!r} failed exact content preservation."
+                        )
+                    external_transports.append(
+                        CompositionTransport(
+                            "ownership-migration",
+                            (entry_id,),
+                            (target_entry,),
+                            source_structure_ids=(source_entry.structure_id,),
+                            route_id=canonical_fingerprint(
+                                {
+                                    "kind": "finite-volume-owner-cell-state-transfer",
+                                    "transfer": bank_transfer.transfer_id,
+                                }
+                            ),
+                            successful=bank_transfer.successful,
+                            source_content_root=bank_transfer.source_content_root,
+                            target_content_root=bank_transfer.target_content_root,
+                        )
+                    )
+                source_composition_value = Composition(
+                    (
+                        *(
+                            entry
+                            for entry in source_composition.entries
+                            if entry.entry_id != "finite-volume/state"
+                        ),
+                        source_state_entry,
+                    ),
+                    boundary_id=source_composition.boundary_id,
+                )
+                state_transport = CompositionTransport(
+                    "ownership-migration",
+                    ("finite-volume/state",),
+                    (target_state,),
+                    source_structure_ids=(source_state_entry.structure_id,),
+                    route_id=canonical_fingerprint(
+                        {
+                            "kind": "finite-volume-owner-runtime-state-migration",
+                            "migration": graph_migration.evidence_id,
+                            "route": transfer.route_identity_id,
+                            "bank_routes": transfer.bank_route_evidence,
+                            "target_state": target_state.record_id,
+                            "source_sliding_coupling": source_sliding_coupling_id,
+                            "target_sliding_coupling": target_sliding_coupling_id,
+                        }
+                    ),
+                    successful=jnp.asarray(True),
+                    source_content_root=transfer.source_content_root,
+                    target_content_root=transfer.target_content_root,
+                )
+                prepared_rebind = prepare_overset_motion_rebind(
+                    source_composition_value,
+                    previous_connectivity,
+                    candidate_connectivity,
+                    transports=(state_transport, *external_transports),
+                    reprepare=prepared_entries,
+                    retain=retained_ids,
+                    invalidate=invalidated_ids,
+                )
+                receipt = prepared_rebind.commit(accepted_boundary=True)
+                if (
+                    not isinstance(receipt, CompositionRebindReceipt)
+                    or not receipt.published
+                ):
+                    raise ValueError("Owner-local FV state rebind did not publish.")
+            except Exception as error:
+                local_error = error
+            error_text = collective_error(
+                local_error, f"{self.owner_local_axis_name}_repartition_rebind"
+            )
+            if error_text is not None or next_state is None or receipt is None:
+                return False
+            commit_holder["state"] = next_state
+            commit_holder["receipt"] = receipt
+            return True
+
+        transaction: Any = None
+        transaction_error: Exception | None = None
+        try:
+            scheduler = FiniteVolumeTopologyEventScheduler(
+                accepted_state.topology_journal
+            )
+            scheduler.submit(request, accepted_step, event_time)
+            transaction = scheduler.transact(
+                accepted=True,
+                source_content=source_content,
+                candidate_epoch=candidate_epoch,
+                candidate_artifacts=candidate_artifacts,
+                remap=graph_migration,
+                metrics=graph_migration,
+                evidence=graph_migration,
+                status=TopologyEventStatus.SUCCESS,
+                active_cell_mask=target_runtime.active_cell_mask,
+                transfer=transfer_cells,
+                admissibility=True,
+                result_id=candidate_epoch.epoch_id,
+                payload_ids=(route_identity_id,),
+                commit_action=commit_rebind,
+            )
+        except Exception as error:
+            transaction_error = error
+        transaction_error_text = collective_error(
+            transaction_error, f"{self.owner_local_axis_name}_repartition_transaction"
+        )
+        if transaction_error_text is not None or transaction is None:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                transaction_error_text
+                or "Owner-local repartition produced no transaction.",
+            )
+        commit_error = (
+            None
+            if transaction.committed and transaction.events
+            else ValueError("Owner-local FV graph repartition did not commit.")
+        )
+        commit_error_text = collective_error(
+            commit_error, f"{self.owner_local_axis_name}_repartition_commit"
+        )
+        if commit_error_text is not None:
+            return rollback_result(
+                transaction.journal,
+                source_content,
+                transaction.event_status,
+            )
+        next_state = commit_holder.get("state")
+        receipt = commit_holder.get("receipt")
+        receipt_error = (
+            None
+            if isinstance(next_state, FiniteVolumeRuntimeState)
+            and isinstance(receipt, CompositionRebindReceipt)
+            and receipt.published
+            else ValueError("Owner-local FV repartition has no committed target state.")
+        )
+        receipt_error_text = collective_error(
+            receipt_error, f"{self.owner_local_axis_name}_repartition_receipt"
+        )
+        if receipt_error_text is not None:
+            return rollback_result(
+                transaction.journal,
+                source_content,
+                transaction.event_status,
+            )
+        if (
+            not isinstance(next_state, FiniteVolumeRuntimeState)
+            or not isinstance(receipt, CompositionRebindReceipt)
+            or not isinstance(target_runtime, PreparedFiniteVolumeRuntime)
+        ):
+            return rollback_result(
+                transaction.journal,
+                source_content,
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+            )
+        return FiniteVolumeOwnerLocalRepartitionResult(
+            next_state,
+            jnp.asarray(True),
+            jnp.asarray(int(TopologyEventStatus.SUCCESS), dtype=jnp.int32),
+            successor_runtime=target_runtime,
+            repartition_receipt=receipt,
+        )
+
     @checked
     def advance(
         self,
@@ -1800,49 +6339,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         args: Any = None,
         /,
     ) -> FiniteVolumeAdvanceResult:
+        self._validate_state(runtime_state)
         content_state = runtime_state.content_state
-        if content_state.precision.policy_id != self.precision.policy_id:
-            raise ValueError("Runtime content precision does not match the runtime.")
-        if (
-            runtime_state.topology_journal.capacity < self._topology_journal_capacity()
-            or runtime_state.topology_journal.current_epoch_id
-            != self.initial_topology_epoch.epoch_id
-        ):
-            raise ValueError("Runtime topology journal does not match the runtime.")
-        if self.sliding_plan is None:
-            if content_state.topology_epoch_id != self.topology_epoch_id:
-                raise ValueError(
-                    "Runtime content topology epoch does not match the runtime."
-                )
-        elif (
-            content_state.topology_epoch_id
-            != runtime_state.topology_journal.current_epoch_id
-        ):
-            raise ValueError(
-                "Sliding runtime content epoch does not match the journal tip."
-            )
-        if content_state.geometry_family_id != self.geometry_family_id:
-            raise ValueError(
-                "Runtime content geometry family does not match the runtime."
-            )
-        if content_state.geometry_layout_id != self.geometry_layout_id:
-            raise ValueError(
-                "Runtime content geometry layout does not match the runtime."
-            )
-        if content_state.evidence_policy_id != self.evidence_policy_id:
-            raise ValueError(
-                "Runtime content evidence policy does not match the runtime."
-            )
-        expected_content_shape = (
-            int(np.prod(self._state_shape()[:-1])),
-            self._state_shape()[-1],
-        )
-        if content_state.conservative_content.shape != expected_content_shape:
-            raise ValueError(
-                "Runtime content coordinates do not match the finite-volume layout."
-            )
-        if self.sliding_plan is not None:
-            self._validate_sliding_state(runtime_state)
         average = self._dynamics_cell_average(content_state)
         stage_average = self._provide_stage_state(content_state.time, average)
         if (
@@ -1856,6 +6354,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 stage_average,
                 content_state.active_cell_mask,
             )
+            if self.owner_local_decision_provider is not None:
+                valid = self.owner_local_decision_provider(valid)
             return self._refresh_sliding_after_accept(
                 runtime_state,
                 self._advance_overset(runtime_state, average, valid, args),
@@ -1891,6 +6391,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             )
             self.precision.validate_state(stage_average)
             valid = jnp.all(self.dynamics.system.admissible(stage_average))
+            if self.owner_local_decision_provider is not None:
+                valid = self.owner_local_decision_provider(valid)
             return self._refresh_sliding_after_accept(
                 runtime_state,
                 self._advance_ale(runtime_state, average, valid, args),
@@ -1910,6 +6412,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         )
         self.precision.validate_state(stage_average)
         valid = jnp.all(self.dynamics.system.admissible(stage_average))
+        if self.owner_local_decision_provider is not None:
+            valid = self.owner_local_decision_provider(valid)
 
         def valid_branch(_: None) -> FiniteVolumeAdvanceResult:
             return self._advance_valid(runtime_state, average, args)
@@ -1936,7 +6440,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     dtype=jnp.dtype(self.precision.reduction_dtype),
                 ),
                 activated=jnp.asarray(False),
-                minimum_density=self.precision.decision(jnp.min(stage_average[..., 0])),
+                minimum_density=self.precision.decision(
+                    _minimum_or_infinity(
+                        stage_average[..., 0], self.precision.reduction_dtype
+                    )
+                ),
                 limited_state_valid=jnp.asarray(False),
                 secondary_reduction_applied=jnp.asarray(False),
                 secondary_reduction_factor=jnp.asarray(
@@ -2112,7 +6620,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             fallback_valid=jnp.asarray(False),
             blend_factor=zero,
             activated=jnp.asarray(False),
-            minimum_density=self.precision.decision(jnp.min(active_density)),
+            minimum_density=self.precision.decision(
+                _minimum_or_infinity(active_density, self.precision.reduction_dtype)
+            ),
             limited_state_valid=jnp.asarray(False),
             secondary_reduction_applied=jnp.asarray(False),
             secondary_reduction_factor=zero,
@@ -2197,6 +6707,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 current_dt,
                 runtime_state.accepted_step,
                 stage_state_provider=self.stage_state_provider,
+                stage_decision_provider=self.owner_local_decision_provider,
             )
             candidate = jax.lax.cond(
                 initial_valid,
@@ -2211,6 +6722,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     runtime_state.accepted_step + jnp.asarray(1, dtype=jnp.int32),
                     args,
                     stage_state_provider=self.stage_state_provider,
+                    stage_decision_provider=self.owner_local_decision_provider,
                     cfl=self.policy.cfl,
                 ),
                 lambda _: zero_candidate,
@@ -2236,6 +6748,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 & candidate.positivity.fallback_valid
                 & candidate.positivity.limited_state_valid
             )
+            if self.owner_local_decision_provider is not None:
+                candidate_valid = self.owner_local_decision_provider(candidate_valid)
             take = (~accepted) & candidate_valid
             accepted_content = select_tree(
                 take, candidate.content_state, accepted_content
@@ -2281,6 +6795,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             lambda _: original_content,
             operand=None,
         )
+        if self.owner_local_decision_provider is not None:
+            refreshed_average = self._provide_stage_state(
+                next_content.time,
+                next_content.cell_average(),
+            )
+            refreshed_content = (
+                refreshed_average
+                * next_content.effective_cell_volumes.reshape(
+                    (-1,) + (1,) * (refreshed_average.ndim - 1)
+                )
+            )
+            next_content = next_content.with_content(refreshed_content)
         next_state = FiniteVolumeRuntimeState(
             next_content,
             runtime_state.topology_journal,
@@ -2373,7 +6899,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             fallback_valid=jnp.asarray(False),
             blend_factor=zero,
             activated=jnp.asarray(False),
-            minimum_density=self.precision.decision(jnp.min(active_density)),
+            minimum_density=self.precision.decision(
+                _minimum_or_infinity(active_density, self.precision.reduction_dtype)
+            ),
             limited_state_valid=jnp.asarray(False),
             secondary_reduction_applied=jnp.asarray(False),
             secondary_reduction_factor=zero,
@@ -2417,6 +6945,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 runtime_state.accepted_step,
                 stage_state_provider=self.stage_state_provider,
                 redistribution=redistribution,
+                stage_decision_provider=self.owner_local_decision_provider,
             )
             metrics_success = jnp.all(
                 jnp.stack(
@@ -2430,6 +6959,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                 )
             )
+            if self.owner_local_decision_provider is not None:
+                metrics_success = self.owner_local_decision_provider(metrics_success)
             precheck_state = (
                 original_content
                 if self.stage_state_provider is None
@@ -2452,6 +6983,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             precheck_cfl_valid = jnp.isinf(precheck.relative_cfl_step) | (
                 current_dt <= precheck.relative_cfl_step
             )
+            if self.owner_local_decision_provider is not None:
+                precheck_cfl_valid = self.owner_local_decision_provider(
+                    precheck_cfl_valid
+                )
             evaluate_physics = initial_valid & metrics_success & precheck_cfl_valid
             candidate = jax.lax.cond(
                 evaluate_physics,
@@ -2468,6 +7003,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     cfl=self.policy.cfl,
                     redistribution=redistribution,
                     stage_state_provider=self.stage_state_provider,
+                    stage_decision_provider=self.owner_local_decision_provider,
                 ),
                 lambda _: zero_candidate,
                 operand=None,
@@ -2524,6 +7060,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 & candidate.positivity.fallback_valid
                 & candidate.positivity.limited_state_valid
             )
+            if self.owner_local_decision_provider is not None:
+                candidate_valid = self.owner_local_decision_provider(candidate_valid)
             take = (~accepted) & candidate_valid
             accepted_content = select_tree(
                 take,
@@ -2649,7 +7187,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             fallback_valid=jnp.asarray(False),
             blend_factor=zero,
             activated=jnp.asarray(False),
-            minimum_density=self.precision.decision(jnp.min(original_average[..., 0])),
+            minimum_density=self.precision.decision(
+                _minimum_or_infinity(
+                    original_average[..., 0], self.precision.reduction_dtype
+                )
+            ),
             limited_state_valid=jnp.asarray(False),
             secondary_reduction_applied=jnp.asarray(False),
             secondary_reduction_factor=zero,
@@ -2695,6 +7237,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             geometry_success = geometry.passed & (
                 geometry.status == int(FiniteVolumeGeometryStatus.SUCCESS)
             )
+            if self.owner_local_decision_provider is not None:
+                geometry_success = self.owner_local_decision_provider(geometry_success)
+            geometry_reduction = geometry.proposed_reduction_factor
+            if self.owner_local_scalar_min_provider is not None:
+                geometry_reduction = self.owner_local_scalar_min_provider(
+                    geometry_reduction
+                )
             evaluate_physics = initial_valid & geometry_success
             candidate = jax.lax.cond(
                 evaluate_physics,
@@ -2709,6 +7258,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     args,
                     cfl=self.policy.cfl,
                     stage_state_provider=self.stage_state_provider,
+                    stage_decision_provider=self.owner_local_decision_provider,
                 ),
                 lambda _: zero_candidate,
                 operand=None,
@@ -2735,14 +7285,14 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             )
             recorded_geometry_reduction = jnp.where(
                 record_attempt,
-                geometry.proposed_reduction_factor,
+                geometry_reduction,
                 recorded_geometry_reduction,
             )
             minimum_geometry_reduction = jnp.where(
                 record_attempt,
                 jnp.minimum(
                     minimum_geometry_reduction,
-                    geometry.proposed_reduction_factor,
+                    geometry_reduction,
                 ),
                 minimum_geometry_reduction,
             )
@@ -2771,6 +7321,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 & candidate.positivity.fallback_valid
                 & candidate.positivity.limited_state_valid
             )
+            if self.owner_local_decision_provider is not None:
+                candidate_valid = self.owner_local_decision_provider(candidate_valid)
             take = (~accepted) & candidate_valid
             accepted_content = select_tree(
                 take,
@@ -2793,7 +7345,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             retry_factor = jnp.where(
                 geometry_success,
                 jnp.asarray(self.policy.reduction_factor, dtype=current_dt.dtype),
-                geometry.proposed_reduction_factor.astype(current_dt.dtype),
+                geometry_reduction.astype(current_dt.dtype),
             )
             current_dt = self.precision.decision(current_dt * retry_factor)
 
@@ -2823,6 +7375,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             lambda _: original_content,
             operand=None,
         )
+        if self.owner_local_decision_provider is not None:
+            refreshed_average = self._provide_stage_state(
+                next_content.time,
+                next_content.cell_average(),
+            )
+            refreshed_content = (
+                refreshed_average
+                * next_content.effective_cell_volumes.reshape(
+                    (-1,) + (1,) * (refreshed_average.ndim - 1)
+                )
+            )
+            next_content = next_content.with_content(refreshed_content)
         next_state = FiniteVolumeRuntimeState(
             next_content,
             runtime_state.topology_journal,
@@ -2902,7 +7466,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             ),
             activated=jnp.asarray(False),
             minimum_density=self.precision.decision(
-                jnp.min(initial_stage_average[..., 0])
+                _minimum_or_infinity(
+                    initial_stage_average[..., 0], self.precision.reduction_dtype
+                )
             ),
             limited_state_valid=jnp.asarray(False),
             secondary_reduction_applied=jnp.asarray(False),
@@ -3098,7 +7664,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
 __all__ = [
     "FiniteVolumeALEAdvanceEvidence",
     "FiniteVolumeEmbeddedAdvanceEvidence",
+    "FiniteVolumeOwnerLocalCellStateBankSpec",
     "FiniteVolumeAdvanceResult",
+    "FiniteVolumeOwnerLocalRepartitionResult",
     "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeStageFlux",
     "FiniteVolumeStageFluxProvider",
@@ -3106,5 +7674,6 @@ __all__ = [
     "FiniteVolumeRunStatus",
     "FiniteVolumeRuntimeState",
     "FiniteVolumeStepPolicy",
+    "FiniteVolumeValidatedRuntimeState",
     "PreparedFiniteVolumeRuntime",
 ]

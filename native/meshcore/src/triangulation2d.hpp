@@ -85,6 +85,9 @@ class Triangulation2D {
       slot = free_slots.back();
       free_slots.pop_back();
     } else {
+      if (triangles.size() >= static_cast<std::size_t>(kMaxMeshPoints)) {
+        throw std::length_error("triangulation2d slot index exceeds int32 range");
+      }
       slot = static_cast<int32_t>(triangles.size());
       triangles.push_back({{0, 0, 0}, {-1, -1, -1}});
       constraints.insert(constraints.end(), 3, -1);
@@ -396,12 +399,11 @@ class Triangulation2D {
 
 // Deduplicates, orders and builds the (regular) Delaunay triangulation of the
 // representatives into `triangulation` (whose coordinates must already hold
-// the input points).  Returns DEGENERATE_INPUT when the representatives are
-// collinear and CAPACITY_EXCEEDED as soon as the finite triangle count
-// exceeds max_triangles.
+// the input points). Returns DEGENERATE_INPUT when the representatives are
+// collinear.
 inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* points,
                                  int64_t point_count, const double* weights,
-                                 int64_t max_triangles, std::vector<int32_t>& vertex_map) {
+                                 std::vector<int32_t>& vertex_map) {
   const std::vector<int32_t> representatives =
       deduplicate_points(points, point_count, 2, weights, vertex_map);
   if (representatives.size() < 3) {
@@ -427,16 +429,9 @@ inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* p
     std::swap(b, c);
   }
   triangulation.initialize(a, b, c);
-  if (triangulation.finite_count > max_triangles) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  }
   for (std::size_t k = 2; k < order.size(); ++k) {
-    if (k == third) {
-      continue;
-    }
-    triangulation.insert(order[k]);
-    if (triangulation.finite_count > max_triangles) {
-      return PHX_MC_CAPACITY_EXCEEDED;
+    if (k != third) {
+      triangulation.insert(order[k]);
     }
   }
   return PHX_MC_OK;

@@ -6,20 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 
 import numpy as np
-from OCP.BRepAdaptor import BRepAdaptor_Curve
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-from OCP.BRepGProp import BRepGProp
-from OCP.GeomAbs import GeomAbs_Line
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
-from OCP.TopoDS import TopoDS
 
 from .._fingerprint import canonical_fingerprint
 from ..geometry._cad_revision import CADSelectionSet
+from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry.brep import (
     BRepEntityId,
     BRepImportReport,
@@ -28,19 +20,13 @@ from ..geometry.brep import (
     BRepPartitionPolicy,
     BRepPartitionRegion,
     BRepPartitionResult,
-    BRepPartitionRole,
-    cad_revision_from_brep_model,
     partition_planar,
-    PlanarEmbedding,
     PlanarPartitionOperand,
     PlanarPartitionPlan,
-    read_occt_shape,
 )
-from ..geometry.brep._planar import (
-    _explore_unique,
-    _face_from_mesh,
-    _require_coplanar_face,
-)
+from ..geometry.brep._constructors import BRepTessellationPolicy
+from ..geometry.brep._partition import BRepPartitionRole
+from ..geometry.brep._patches import LineCurve, PlanePatch
 from ..geometry.simplicial import PlanarMeshRegion
 from ._controls import LayerSchedule
 
@@ -188,7 +174,7 @@ class _PlanarBandLayer:
 
 @dataclass(frozen=True, slots=True)
 class PlanarBandResult:
-    """Published exact band partition and the identities needed for meshing."""
+    """In-memory exact band partition and identities needed for meshing."""
 
     partition: BRepPartitionResult
     embedding: PlanarEmbedding
@@ -257,28 +243,103 @@ class PlanarBandResult:
         return self.partition.model.report
 
 
-def _curve_segment(edge: Any, embedding: PlanarEmbedding, /) -> np.ndarray:
-    curve = BRepAdaptor_Curve(edge)
-    if curve.GetType() != GeomAbs_Line:
-        raise ValueError("Planar bands support only exact straight patch edges.")
-    points = tuple(
-        curve.Value(float(parameter))
-        for parameter in (curve.FirstParameter(), curve.LastParameter())
+def _curve_segment(
+    model: BRepModel, edge_index: int, embedding: PlanarEmbedding, /
+) -> np.ndarray:
+    geometry = model.geometry
+    curve_index = geometry.edge_curves[edge_index]
+    if curve_index < 0:
+        raise ValueError("Planar bands support exact straight patch edges only.")
+    curve = geometry.curves[curve_index]
+    if not isinstance(curve, LineCurve):
+        raise ValueError("Planar bands support exact straight patch edges only.")
+    edge_range = np.asarray(geometry.edge_ranges[edge_index], dtype=np.float64)
+    curve_origin = np.asarray(curve.origin, dtype=np.float64)
+    curve_direction = np.asarray(curve.direction, dtype=np.float64)
+    world = np.stack(
+        (
+            curve_origin + edge_range[0] * curve_direction,
+            curve_origin + edge_range[1] * curve_direction,
+        )
     )
-    world = np.asarray(
-        tuple((point.X(), point.Y(), point.Z()) for point in points), dtype=np.float64
-    )
+    vertices = np.asarray(geometry.vertex_points, dtype=np.float64)
+    endpoint_vertices = np.asarray(geometry.edge_vertices[edge_index], dtype=np.int64)
+    endpoint_points = vertices[endpoint_vertices]
     tolerance = (
         512.0
         * np.finfo(np.float64).eps
         * max(1.0, float(np.max(np.abs(world), initial=0.0)))
     )
+    direct_error = float(np.max(np.abs(world - endpoint_points), initial=0.0))
+    reverse_error = float(np.max(np.abs(world - endpoint_points[::-1]), initial=0.0))
+    if min(direct_error, reverse_error) > tolerance:
+        raise ValueError("A planar band edge disagrees with its exact endpoint vertices.")
     if np.max(np.abs(embedding.plane_residual(world)), initial=0.0) > tolerance:
         raise ValueError("A planar band patch lies outside the declared embedding.")
     planar = embedding.to_planar(world)
     if np.linalg.norm(planar[1] - planar[0]) <= tolerance:
         raise ValueError("A planar band patch has zero length.")
     return planar
+
+
+def _inward_normal(
+    model: BRepModel,
+    face_index: int,
+    edge_index: int,
+    embedding: PlanarEmbedding,
+    segments: tuple[np.ndarray, ...],
+    /,
+) -> np.ndarray:
+    geometry = model.geometry
+    oriented_loops: list[tuple[np.ndarray, tuple[tuple[int, int], ...]]] = []
+    for coedge_loop in geometry.face_loops[face_index]:
+        points: list[np.ndarray] = []
+        edge_senses: list[tuple[int, int]] = []
+        for coedge_index in coedge_loop:
+            edge = geometry.coedge_edges[coedge_index]
+            sense = geometry.coedge_senses[coedge_index]
+            if sense not in (-1, 1):
+                raise ValueError("A planar face has an invalid coedge orientation.")
+            segment = segments[edge]
+            directed = segment if sense == 1 else segment[::-1]
+            points.append(directed[0])
+            edge_senses.append((edge, sense))
+        loop_points = np.asarray(points, dtype=np.float64)
+        if loop_points.shape[0] < 3:
+            raise ValueError("A planar face boundary loop requires at least three edges.")
+        loop_area = _signed_area(loop_points)
+        if loop_area == 0.0:
+            raise ValueError("A planar face boundary loop must enclose positive area.")
+        oriented_loops.append((loop_points, tuple(edge_senses)))
+    if not oriented_loops:
+        raise ValueError("A planar face requires an oriented boundary loop.")
+    loop_areas = tuple(_signed_area(points) for points, _ in oriented_loops)
+    outer = max(range(len(loop_areas)), key=lambda index: abs(loop_areas[index]))
+    if outer != 0:
+        raise ValueError("A planar face must declare its outer loop first.")
+    outer_orientation = 1 if loop_areas[0] > 0.0 else -1
+    if any(
+        (1 if area > 0.0 else -1)
+        != (outer_orientation if index == 0 else -outer_orientation)
+        for index, area in enumerate(loop_areas)
+    ):
+        raise ValueError(
+            "Planar face outer and hole loops have inconsistent orientation."
+        )
+    matching = tuple(
+        sense
+        for _, edges in oriented_loops
+        for edge, sense in edges
+        if edge == edge_index
+    )
+    if len(matching) != 1:
+        raise ValueError(
+            "A planar-band edge must have one oriented occurrence in its adjacent face."
+        )
+    tangent = segments[edge_index][1] - segments[edge_index][0]
+    tangent *= matching[0]
+    tangent /= np.linalg.norm(tangent)
+    return outer_orientation * np.asarray((-tangent[1], tangent[0]))
 
 
 def _rectangle(
@@ -307,43 +368,43 @@ def _rectangle(
     return PlanarMeshRegion(points, ((0, 1, 2, 3),), feature_id=feature_id)
 
 
-def _surface_area(shape: Any, /) -> float:
-    properties = GProp_GProps()
-    BRepGProp.SurfaceProperties_s(shape, properties)
-    return abs(float(properties.Mass()))
-
-
-def _common_area(first: Any, second: Any, /) -> float:
-    operation = BRepAlgoAPI_Common(first, second)
-    operation.Build()
-    if not operation.IsDone():
-        raise RuntimeError("OCCT failed to evaluate exact planar-band clearance.")
-    return _surface_area(operation.Shape())
+def _signed_area(points: np.ndarray, /) -> float:
+    return 0.5 * float(
+        np.sum(
+            points[:, 0] * np.roll(points[:, 1], -1)
+            - np.roll(points[:, 0], -1) * points[:, 1]
+        )
+    )
 
 
 def _selection(
     partition: BRepPartitionResult, face_indices: tuple[int, ...], /
 ) -> CADSelectionSet:
-    revision = cad_revision_from_brep_model(partition.model)
     return CADSelectionSet.from_revision(
-        revision, tuple(f"face:{index}" for index in face_indices)
+        partition.revision, tuple(f"face:{index}" for index in face_indices)
     )
 
 
-def _segment_subset(
-    candidate: np.ndarray, reference: np.ndarray, tolerance: float, /
-) -> bool:
-    direction = reference[1] - reference[0]
-    length = float(np.linalg.norm(direction))
-    unit = direction / length
-    offsets = candidate - reference[0]
-    normal = np.asarray((-unit[1], unit[0]))
-    parameters = offsets @ unit
-    return bool(
-        np.max(np.abs(offsets @ normal), initial=0.0) <= tolerance
-        and np.min(parameters, initial=0.0) >= -tolerance
-        and np.max(parameters, initial=0.0) <= length + tolerance
+def _front_edge_index(
+    region: PlanarMeshRegion,
+    segment: np.ndarray,
+    tolerance: float,
+    /,
+) -> int:
+    vertices = np.asarray(region.vertices, dtype=np.float64)
+    edges = np.asarray(region.edges, dtype=np.int64).reshape((-1, 2))
+    matches = tuple(
+        edge_index
+        for edge_index, (first, second) in enumerate(edges)
+        if min(
+            float(np.max(np.abs(vertices[[first, second]] - segment), initial=0.0)),
+            float(np.max(np.abs(vertices[[first, second]] - segment[::-1]), initial=0.0)),
+        )
+        <= tolerance
     )
+    if len(matches) != 1:
+        raise ValueError("A planar-band rectangle must retain one exact front edge.")
+    return matches[0]
 
 
 def _rectangles_overlap(
@@ -367,79 +428,100 @@ def _rectangles_overlap(
     return True
 
 
-def _edge_segments(shape: Any, embedding: PlanarEmbedding, /) -> tuple[np.ndarray, ...]:
-    return tuple(
-        _curve_segment(edge, embedding)
-        for edge in _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
-    )
+def _entity_text(entity: BRepEntityId, /) -> str:
+    return f"{entity.source_revision}:{entity.kind}:{entity.index}"
 
 
 def _organized_partition(
     raw: BRepPartitionResult,
     source: BRepPartitionResult,
     temporary_owner: Mapping[str, str],
-    original_segments: tuple[np.ndarray, ...],
-    front_segments: Mapping[str, np.ndarray],
-    embedding: PlanarEmbedding,
-    tolerance: float,
+    front_source_edges: Mapping[str, tuple[str, int]],
     /,
 ) -> BRepPartitionResult:
-    owner_by_face: dict[int, str] = {}
+    entities_by_region: dict[str, list[BRepEntityId]] = {
+        region.name: [] for region in source.regions
+    }
     for region in raw.regions:
         owner = temporary_owner.get(region.name, region.name)
-        for entity in region.entity_ids:
-            owner_by_face[entity.index] = owner
+        if owner not in entities_by_region:
+            raise ValueError("A native band partition returned an undeclared region.")
+        entities_by_region[owner].extend(region.entity_ids)
     regions = tuple(
-        BRepPartitionRegion(
-            region.name,
-            tuple(
-                raw.model.face_ids[index]
-                for index in range(raw.model.topology.num_faces)
-                if owner_by_face[index] == region.name
-            ),
-            2,
-        )
-        for region in source.regions
+        BRepPartitionRegion(name, tuple(entities_by_region[name]), 2)
+        for name in entities_by_region
     )
-    source_patch_by_edge = {
-        entity.index: patch.name
+
+    source_patch_by_entity = {
+        _entity_text(entity): patch.name
         for patch in source.patches
         for entity in patch.entity_ids
     }
-    target_shape, _, _ = read_occt_shape(raw.model.source_id)
-    target_segments = _edge_segments(target_shape, embedding)
+    target_edge_by_entity = {
+        _entity_text(entity): entity.index for entity in raw.model.edge_ids
+    }
+    front_occurrence_names: dict[str, str] = {}
+    for occurrence in raw.association_graph.source_revision.occurrences:
+        if occurrence.kind != "edge" or occurrence.parent_occurrence_id is None:
+            continue
+        for temporary, (front_name, edge_index) in front_source_edges.items():
+            if occurrence.parent_occurrence_id.startswith(
+                f"operand:{temporary}:face:"
+            ) and occurrence.occurrence_id.endswith(f"/edge:{edge_index}"):
+                front_occurrence_names[occurrence.occurrence_id] = front_name
+    target_names: dict[int, set[str]] = {}
+    graph = raw.association_graph
+    for correspondence in graph.transaction.correspondences:
+        source_occurrence = graph.source_revision.occurrence(
+            correspondence.source_occurrence_id
+        )
+        target_occurrence = graph.target_revision.occurrence(
+            correspondence.target_occurrence_id
+        )
+        if source_occurrence.kind != "edge" or target_occurrence.kind != "edge":
+            continue
+        target_index = target_edge_by_entity.get(target_occurrence.entity_id)
+        if target_index is None:
+            continue
+        names = target_names.setdefault(target_index, set())
+        source_patch = source_patch_by_entity.get(source_occurrence.entity_id)
+        if source_patch is not None:
+            names.add(source_patch)
+        front_name = front_occurrence_names.get(source_occurrence.occurrence_id)
+        if front_name is not None:
+            names.add(front_name)
+    expected_front_names = {name for name, _ in front_source_edges.values()}
+    mapped_front_names = {
+        name
+        for names in target_names.values()
+        for name in names
+        if name in expected_front_names
+    }
+    if mapped_front_names != expected_front_names:
+        raise ValueError("Native partition lineage did not preserve every band front.")
+
     region_rank = {region.name: index for index, region in enumerate(source.regions)}
-    groups: dict[tuple[str, tuple[str, ...]], list[Any]] = {}
-    for edge_index, (segment, face_indices) in enumerate(
-        zip(target_segments, raw.model.topology.edge_faces, strict=True)
-    ):
+    adjacent_by_edge = {
+        entity.index: patch.adjacent_region_ids
+        for patch in raw.patches
+        for entity in patch.entity_ids
+    }
+    groups: dict[tuple[str, tuple[str, ...]], list[BRepEntityId]] = {}
+    for edge_index, entity in enumerate(raw.model.edge_ids):
         adjacent = tuple(
             sorted(
-                (owner_by_face[index] for index in face_indices),
+                (
+                    temporary_owner.get(name, name)
+                    for name in adjacent_by_edge[edge_index]
+                ),
                 key=region_rank.__getitem__,
             )
         )
-        matches = tuple(
-            source_patch_by_edge[index]
-            for index, source_segment in enumerate(original_segments)
-            if _segment_subset(segment, source_segment, tolerance)
-        )
-        if len(set(matches)) > 1:
-            raise RuntimeError("A partition edge has ambiguous source-patch ownership.")
-        if matches:
-            name = matches[0]
-        else:
-            front_matches = tuple(
-                name
-                for name, front in front_segments.items()
-                if _segment_subset(segment, front, tolerance)
-            )
-            if len(front_matches) > 1:
-                raise RuntimeError("A planar-band front has ambiguous exact ownership.")
-            name = (
-                front_matches[0] if front_matches else f"band-seam:{':'.join(adjacent)}"
-            )
-        groups.setdefault((name, adjacent), []).append(raw.model.edge_ids[edge_index])
+        matches = target_names.get(edge_index, set())
+        if len(matches) > 1:
+            raise ValueError("Native edge lineage has ambiguous patch ownership.")
+        name = next(iter(matches)) if matches else f"band-seam:{':'.join(adjacent)}"
+        groups.setdefault((name, adjacent), []).append(entity)
     duplicate_names: dict[str, int] = {}
     patches = []
     for (name, adjacent), entity_ids in sorted(groups.items()):
@@ -458,50 +540,60 @@ def _organized_partition(
     )
 
 
+def _require_coplanar_face(
+    model: BRepModel,
+    face_index: int,
+    embedding: PlanarEmbedding,
+    tolerance: float,
+    /,
+) -> None:
+    patch = model.patches[face_index]
+    if not isinstance(patch, PlanePatch):
+        raise ValueError("Planar bands require exact planar source faces.")
+    first = np.asarray(patch.first_axis, dtype=np.float64)
+    second = np.asarray(patch.second_axis, dtype=np.float64)
+    cross = np.cross(first, second)
+    norm = float(np.linalg.norm(cross))
+    origin = np.asarray(patch.origin, dtype=np.float64)
+    if not np.isfinite(norm) or norm == 0.0 or not np.all(np.isfinite(origin)):
+        raise ValueError("A planar source face has an invalid plane frame.")
+    normal = cross / norm
+    embedding_normal = np.asarray(embedding.normal, dtype=np.float64)
+    alignment = float(normal @ embedding_normal)
+    if not np.isfinite(alignment) or abs(abs(alignment) - 1.0) > 1.0e-12:
+        raise ValueError("A planar source face is not parallel to its embedding.")
+    if abs(float(embedding.plane_residual(origin))) > tolerance:
+        raise ValueError("A planar source face lies outside its declared embedding.")
+
+
 def prepare_planar_bands(
     plan: PlanarBandPlan,
     /,
     *,
-    destination: str | Path,
-    linear_deflection: float = 1e-3,
-    angular_deflection: float = 0.1,
-    trim_samples_per_edge: int = 33,
-    overwrite: bool = False,
+    tessellation: BRepTessellationPolicy | None = None,
 ) -> PlanarBandResult:
-    """Partition all requested straight layer fronts in one certified CAD operation."""
+    """Partition all requested straight layer fronts in memory."""
 
     if not isinstance(plan, PlanarBandPlan):
         raise TypeError("plan must be a PlanarBandPlan.")
-    if not isinstance(overwrite, bool):
-        raise TypeError("overwrite must be a bool.")
+    if tessellation is not None and not isinstance(tessellation, BRepTessellationPolicy):
+        raise TypeError("tessellation must be a BRepTessellationPolicy or None.")
     source = plan.partition
-    shape, source_format, source_digest = read_occt_shape(source.model.source_id)
-    if (
-        source_format != source.model.report.source_format
-        or source_digest != source.model.report.source_digest
-    ):
-        raise ValueError("The planar-band source bytes changed after partitioning.")
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
-    if (
-        len(faces) != source.model.topology.num_faces
-        or len(edges) != source.model.topology.num_edges
-    ):
-        raise ValueError("The planar-band source topology changed after import.")
-    original_segments = tuple(_curve_segment(edge, plan.embedding) for edge in edges)
-    scale = max(
-        1.0,
-        float(np.max(np.abs(np.asarray(source.model.mesh_vertices)), initial=0.0)),
-    )
+    vertices = np.asarray(source.model.geometry.vertex_points, dtype=np.float64)
+    scale = max(1.0, float(np.max(np.abs(vertices), initial=0.0)))
     tolerance = float(4096.0 * np.finfo(np.float64).eps * scale)
+    for face_index in range(source.model.topology.num_faces):
+        _require_coplanar_face(source.model, face_index, plan.embedding, tolerance)
+    original_segments = tuple(
+        _curve_segment(source.model, edge_index, plan.embedding)
+        for edge_index in range(source.model.topology.num_edges)
+    )
     region_by_face = {
         entity.index: region.name
         for region in source.regions
         for entity in region.entity_ids
     }
-    for face in faces:
-        _require_coplanar_face(face, plan.embedding)
-    operands = []
+    operands: list[PlanarPartitionOperand] = []
     for region in source.regions:
         face_indices = tuple(entity.index for entity in region.entity_ids)
         operands.append(
@@ -526,10 +618,11 @@ def prepare_planar_bands(
             np.ndarray,
             np.ndarray,
             str,
+            float,
         ]
     ] = []
-    occupied_rectangles: list[tuple[str, np.ndarray, Any]] = []
-    front_segments: dict[str, np.ndarray] = {}
+    occupied_rectangles: list[tuple[str, np.ndarray]] = []
+    front_source_edges: dict[str, tuple[str, int]] = {}
     for control_index, control in enumerate(plan.controls):
         patch = source.patch(control.patch_name)
         edge_index = patch.entity_ids[0].index
@@ -537,10 +630,6 @@ def prepare_planar_bands(
         tangent = segment[1] - segment[0]
         length = float(np.linalg.norm(tangent))
         tangent /= length
-        candidate_normals = (
-            np.asarray((-tangent[1], tangent[0])),
-            np.asarray((tangent[1], -tangent[0])),
-        )
         adjacent_faces = source.model.topology.edge_faces[edge_index]
         for region_name, schedule in control.side_schedules:
             face_candidates = tuple(
@@ -551,76 +640,64 @@ def prepare_planar_bands(
                     "A planar band side must meet exactly one face of its named region."
                 )
             face_index = face_candidates[0]
-            total = schedule.total_thickness
-            expected_area = length * total
-            matching_normals = []
-            for normal_index, normal in enumerate(candidate_normals):
-                candidate = _rectangle(
-                    segment,
-                    normal,
-                    0.0,
-                    total,
-                    f"band-probe:{control.control_id}:{region_name}:{normal_index}",
-                )
-                candidate_shape = _face_from_mesh(candidate, plan.embedding)
-                area = _common_area(candidate_shape, faces[face_index])
-                if abs(area - expected_area) <= max(
-                    tolerance * max(length, total), 1e-11 * expected_area
-                ):
-                    matching_normals.append(normal)
-            if len(matching_normals) != 1:
-                raise ValueError(
-                    "A planar band lacks unique collision-free clearance inside its adjacent region."
-                )
-            inward = matching_normals[0]
+            inward = _inward_normal(
+                source.model,
+                face_index,
+                edge_index,
+                plan.embedding,
+                original_segments,
+            )
             cumulative = np.cumsum(np.asarray(schedule.thicknesses, dtype=np.float64))
             lower = 0.0
-            for layer_index, upper in enumerate(cumulative):
+            for layer_index, upper_value in enumerate(cumulative):
+                upper = float(upper_value)
                 temporary = f"__planar_band__:{control_index}:{region_name}:{layer_index}"
                 rectangle = _rectangle(
                     segment,
                     inward,
                     lower,
-                    float(upper),
+                    upper,
                     temporary,
                 )
-                rectangle_shape = _face_from_mesh(rectangle, plan.embedding)
                 rectangle_points = np.asarray(rectangle.vertices, dtype=np.float64)
-                for other_name, other_points, other_shape in occupied_rectangles:
-                    if (
-                        _rectangles_overlap(rectangle_points, other_points, tolerance)
-                        and _common_area(rectangle_shape, other_shape) > tolerance**2
-                    ):
+                for other_name, other_points in occupied_rectangles:
+                    if _rectangles_overlap(rectangle_points, other_points, tolerance):
                         raise ValueError(
                             f"Planar bands {control.patch_name!r} and {other_name!r} collide."
                         )
-                occupied_rectangles.append(
-                    (control.patch_name, rectangle_points, rectangle_shape)
-                )
+                occupied_rectangles.append((control.patch_name, rectangle_points))
                 operands.append(
-                    PlanarPartitionOperand(temporary, rectangle, BRepPartitionRole.REGION)
+                    PlanarPartitionOperand(
+                        temporary,
+                        rectangle,
+                        BRepPartitionRole.REGION,
+                    )
                 )
                 temporary_owner[temporary] = region_name
                 front_name = (
                     f"{control.patch_name}:band:{region_name}:front:{layer_index + 1}"
                 )
-                front = segment + float(upper) * inward
-                front_segments[front_name] = front
+                front = segment + upper * inward
+                front_source_edges[temporary] = (
+                    front_name,
+                    _front_edge_index(rectangle, front, tolerance),
+                )
                 temporary_layers.append(
                     (
                         control,
                         region_name,
                         layer_index,
                         float(schedule.thicknesses[layer_index]),
-                        float(upper),
+                        upper,
                         temporary,
                         tangent.copy(),
                         inward.copy(),
                         segment[0].copy(),
                         front_name,
+                        float(np.linalg.norm(front[1] - front[0])),
                     )
                 )
-                lower = float(upper)
+                lower = upper
 
     precedence = (
         *(layer[5] for layer in temporary_layers),
@@ -631,12 +708,9 @@ def prepare_planar_bands(
             source.model.coordinate_contract,
             plan.embedding,
             tuple(operands),
-            BRepPartitionPolicy(tuple(precedence), overwrite=overwrite),
+            BRepPartitionPolicy(tuple(precedence)),
         ),
-        destination=destination,
-        linear_deflection=linear_deflection,
-        angular_deflection=angular_deflection,
-        trim_samples_per_edge=trim_samples_per_edge,
+        tessellation=tessellation,
     )
     expected_faces = source.model.topology.num_faces + len(temporary_layers)
     if raw.model.topology.num_faces != expected_faces:
@@ -647,10 +721,7 @@ def prepare_planar_bands(
         raw,
         source,
         temporary_owner,
-        original_segments,
-        front_segments,
-        plan.embedding,
-        tolerance,
+        front_source_edges,
     )
     layers = []
     for (
@@ -664,11 +735,24 @@ def prepare_planar_bands(
         inward,
         origin,
         front_name,
+        front_length,
     ) in temporary_layers:
         face_ids = raw.region(temporary).entity_ids
         if len(face_ids) != 1:
             raise ValueError(
                 "An exact planar-band layer did not remain one straight strip face."
+            )
+        front_patches = tuple(
+            patch
+            for patch in organized.patches
+            if patch.name == front_name or patch.name.startswith(f"{front_name}:")
+        )
+        if not front_patches or any(
+            patch.adjacent_region_ids != (region_name, region_name)
+            for patch in front_patches
+        ):
+            raise ValueError(
+                "A planar-band front lacks exact clearance inside its named region."
             )
         layers.append(
             _PlanarBandLayer(
@@ -683,11 +767,7 @@ def prepare_planar_bands(
                 (float(tangent[0]), float(tangent[1])),
                 (float(inward[0]), float(inward[1])),
                 (float(origin[0]), float(origin[1])),
-                float(
-                    np.linalg.norm(
-                        front_segments[front_name][1] - front_segments[front_name][0]
-                    )
-                ),
+                front_length,
                 control.tangential_target,
             )
         )

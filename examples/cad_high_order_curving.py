@@ -3,14 +3,15 @@
 #
 """Curve Gmsh tetrahedra of OCCT solids onto their exact B-Rep and certify them.
 
-For an OCCT cylinder and sphere: persist the solid as a native BREP and import the
-published revision, mesh it with Gmsh into coarse straight P1 tetrahedra, bind OCCT
-projectors to the imported revision, classify every mesh vertex on its B-Rep entity
-(and derive the edge, face, and cell classes from them), curve the mesh to P2 and P3
-geometry, and certify every curved cell with Bernstein determinant bounds. The
-exactly integrated volumes of the straight and curved geometry are compared with the
-exact solid volumes. Finally a Gmsh second-order output of the sphere is verified
-against the B-Rep without moving it.
+For an OCCT cylinder and sphere: persist the solid as native BREP text and import
+the published revision through the native codec, mesh it with Gmsh into coarse
+straight P1 tetrahedra, bind native projection queries to the imported revision,
+classify every mesh vertex on its B-Rep entity (and derive the edge, face, and cell
+classes from them), curve the mesh to P2 and P3 geometry, and certify every curved
+cell with Bernstein determinant bounds. The exactly integrated volumes of the
+straight and curved geometry are compared with the exact solid volumes. Finally a
+Gmsh second-order output of the sphere is verified against the B-Rep without moving
+it.
 
 Requires the optional Gmsh and OCP (OpenCascade) dependencies. Run with
 ``python examples/cad_high_order_curving.py``.
@@ -26,6 +27,12 @@ import numpy as np
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import (
+    CadImportPolicy,
+    persist_occt_shape,
+    read_brep_text,
+)
 
 
 CONTRACT = phx.SpatialCoordinateContract.si()
@@ -37,7 +44,7 @@ HEIGHT = 2.0
 def mesh_solid(source: Any, size: Any, geometry_order: Any) -> Any:
     """Coarse Gmsh tetrahedra of one closed solid at the requested geometry order."""
     provider = phx.meshing.GmshProvider()
-    scope = provider.whole_scope(source, 3)
+    scope = phx.meshing.MeshingScope.whole(source, 3)
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -184,16 +191,22 @@ summary = {}
 with TemporaryDirectory(prefix="phydrax-cad-curving-") as temporary:
     for name, shape, exact_volume, size in solids:
         path = Path(temporary) / f"{name}.brep"
-        phx.geometry.persist_occt_shape(shape, path, coordinate_contract=CONTRACT)
-        model = phx.geometry.import_brep(
+        persist_occt_shape(shape, path, coordinate_contract=CONTRACT)
+        model = read_brep_text(
             path,
-            coordinate_contract=CONTRACT,
-            linear_deflection=0.05,
-            angular_deflection=0.2,
-        )
+            CadImportPolicy(
+                CONTRACT,
+                tessellation=BRepTessellationPolicy(
+                    linear_deflection=0.05,
+                    angular_deflection=0.2,
+                ),
+            ),
+            trusted_root=Path(temporary),
+            source_length_unit=CONTRACT.length_unit,
+        ).model
         source = phx.geometry.BRepSource(model)
         straight = mesh_solid(source, size, 1)
-        projection = phx.geometry.prepare_brep_projection(model, path)
+        projection = phx.geometry.prepare_brep_projection(model)
         association, counts = classify(straight.mesh, projection)
         summary[name] = {
             "source_revision": model.source_revision,

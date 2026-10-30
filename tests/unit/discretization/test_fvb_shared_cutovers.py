@@ -1,14 +1,12 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.discretization import PeriodicCell
 from phydrax.discretization._cell_complex import (
     polyhedral_cell_complex,
     polyhedral_connectivity,
     PolyhedralConnectivity,
-    PolyhedralWorksetLimitError,
     prepare_polyhedral_worksets,
 )
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
@@ -19,8 +17,11 @@ from phydrax.discretization.vem import prepare_polyhedral_h1_virtual_element_3d
 
 
 def test_fvb_shared_cutovers_scenario_1() -> None:
-    # ty: ignore[invalid-argument-type]
-    cell = PeriodicCell([[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]])
+    cell = PeriodicCell(
+        np.asarray(
+            [[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]], dtype=np.float64
+        )
+    )
     point = jnp.asarray([2.25, -0.1, 3.0])
     wrapped, images = cell.wrap(point)
     assert cell.rank == 2
@@ -39,7 +40,6 @@ def test_fvb_shared_cutovers_scenario_1() -> None:
         (0, 3, 2),
         (1, 2, 3),
     )
-    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_polyhedra(points, (faces,))
     assert isinstance(mesh.connectivity, PolyhedralConnectivity)
     assert bool(jnp.all(mesh.connectivity.boundary_faces))
@@ -57,15 +57,12 @@ def test_fvb_shared_cutovers_scenario_1() -> None:
     )
     vertex_count = arity + 1 + 4 * tetrahedron_count
     connectivity = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         (pyramid, ("tetrahedron", tetrahedra)),
         vertex_count,
     )
     input_entries = 4 * arity + 12 * tetrahedron_count
     stored_bytes = sum(array.nbytes for array in jax.tree.leaves(connectivity))
     assert stored_bytes <= 64 * (input_entries + vertex_count + connectivity.cell_count)
-    with pytest.raises(PolyhedralWorksetLimitError):
-        prepare_polyhedral_worksets(connectivity, maximum_entries=input_entries)
 
 
 def test_mixed_contracts() -> None:
@@ -84,13 +81,11 @@ def test_mixed_contracts() -> None:
         "cell_global_ids": np.asarray((901, 42)),
     }
     connectivity = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         (("prism", np.arange(6)[None, :]), tetrahedron_faces),
         7,
         **identifiers,
     )
     rotated = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         tuple(
             tuple(face[1:] + face[:1] for face in faces)
             for faces in (prism_faces, tetrahedron_faces)
@@ -111,14 +106,7 @@ def test_mixed_contracts() -> None:
     np.testing.assert_array_equal(boundary[shared], np.zeros(1))
     assert np.sum(np.abs(boundary)) == 7
 
-    with pytest.raises(PolyhedralWorksetLimitError):
-        prepare_polyhedral_worksets(connectivity, maximum_entries=213)
-    worksets = prepare_polyhedral_worksets(connectivity, maximum_entries=214)
-    assert (
-        worksets.allocated_entries
-        == sum(array.size for array in jax.tree.leaves(worksets))
-        == 214
-    )
+    worksets = prepare_polyhedral_worksets(connectivity)
     dense_boundary = np.bincount(
         np.asarray(worksets.cell_faces)[np.asarray(worksets.cell_face_valid)],
         weights=np.asarray(worksets.cell_face_signs)[
@@ -144,18 +132,24 @@ def test_mixed_contracts() -> None:
             CellBlock(
                 "prism",
                 "prism",
-                # ty: ignore[invalid-argument-type]
                 ((1, 2, 0, 4, 5, 3),),
-                # ty: ignore[invalid-argument-type]
                 global_ids=(901,),
             ),
         ),
-        # ty: ignore[invalid-argument-type]
-        polyhedra={"cap": (((3, 5, 4), (3, 4, 6), (3, 6, 5), (4, 5, 6)),)},
-        # ty: ignore[invalid-argument-type]
-        vertex_global_ids=(50, 10, 70, 20, 80, 30, 90),
-        # ty: ignore[invalid-argument-type]
-        polyhedral_cell_global_ids={"cap": (42,)},
+        polyhedra={
+            "cap": (
+                (
+                    np.asarray((3, 5, 4), dtype=np.int32),
+                    np.asarray((3, 4, 6), dtype=np.int32),
+                    np.asarray((3, 6, 5), dtype=np.int32),
+                    np.asarray((4, 5, 6), dtype=np.int32),
+                ),
+            )
+        },
+        vertex_global_ids=np.asarray(
+            (50, 10, 70, 20, 80, 30, 90), dtype=np.int64
+        ),
+        polyhedral_cell_global_ids={"cap": np.asarray((42,), dtype=np.int64)},
     )
     geometry = prepare_polyhedral_finite_volume_geometry(mesh)
     np.testing.assert_allclose(geometry.cell_volumes, (0.5, 1.0 / 6.0))

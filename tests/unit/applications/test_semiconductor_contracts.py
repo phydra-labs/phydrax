@@ -125,7 +125,6 @@ def test_native_affine_simplex_preserves_linear_energy_and_persistent_identity(
     count = len(points)
     mesh = CellMesh(
         points,
-        # ty: ignore[invalid-argument-type]
         (CellBlock("bulk", kind, [list(range(count))]),),
         vertex_global_ids=np.arange(count) * 7 + 13,
         numeric_version="revision-7",
@@ -179,12 +178,9 @@ def test_native_multi_block_tetrahedra_bind_exact_face_scopes() -> None:
         [1.0, 1.0, 1.0],
     ]
     mesh = CellMesh(
-        # ty: ignore[invalid-argument-type]
         points,
         (
-            # ty: ignore[invalid-argument-type]
             CellBlock("lower", "tetrahedron", [[0, 1, 2, 3]]),
-            # ty: ignore[invalid-argument-type]
             CellBlock("upper", "tetrahedron", [[1, 2, 3, 4]], global_ids=[1]),
         ),
     )
@@ -217,7 +213,6 @@ def test_native_multi_block_tetrahedra_bind_exact_face_scopes() -> None:
 
 
 def test_native_obtuse_simplex_rejects_negative_two_point_metric() -> None:
-    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_triangles([[0.0, 0.0], [1.0, 0.0], [0.2, 0.1]], [[0, 1, 2]])
     result = certify_cell_mesh(mesh, SpatialCoordinateContract.si())
     with pytest.raises(ValueError):

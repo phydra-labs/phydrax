@@ -1340,6 +1340,28 @@ def test_local_launcher_preserves_rank_output_and_device_bootstrap() -> None:
     assert all(result.stderr == b"rank-stderr\n" for result in results)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_local_launcher_preserves_early_failure_through_group_cleanup() -> None:
+    from phydrax._execution_launch import LocalProcessLaunchError
+
+    with pytest.raises(LocalProcessLaunchError) as captured:
+        launch_local_processes(
+            (
+                sys.executable,
+                "-c",
+                "import sys; print('early-worker-failure', file=sys.stderr); sys.exit(17)",
+            ),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=10.0,
+        )
+    error = captured.value
+    assert not error.timed_out
+    assert any(
+        result.returncode == 17 and b"early-worker-failure" in result.stderr
+        for result in error.results
+    )
+
+
 def _assert_launcher_descendant_stopped(pid: int) -> None:
     import time
 

@@ -8,6 +8,9 @@ All component axes follow the exterior owner's lexicographic blade convention.
 
 from __future__ import annotations
 
+from fractions import Fraction
+from functools import lru_cache
+from hashlib import sha256
 from itertools import combinations, product
 from math import comb, factorial, prod
 from typing import final, Literal, NamedTuple
@@ -30,6 +33,7 @@ from ..._polynomial._orthogonal import (
 from ..._strict import StrictModule
 from ...ein import contract
 from ...exterior._form_type import FormProxy, FormTwist, FormType, FormValueSpec
+from ...linalg._exact import determinant_exact, solve_exact
 from ...typing import parse
 from .._reference_cell import reference_cell_topology
 from ._reference import FiniteElementSpec
@@ -38,7 +42,37 @@ from ._reference import FiniteElementSpec
 type FormElementFamily = Literal["trimmed", "full", "tensor-trimmed"]
 type DofLabel = tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]
 type _Polynomial = dict[tuple[int, ...], float]
+type _ExactPolynomial = dict[tuple[int, ...], Fraction]
 type _HostArray = npt.NDArray[np.float64]
+type _ExactCoefficientBank = tuple[tuple[tuple[Fraction, ...], ...], ...]
+type _ExactMomentBank = tuple[tuple[tuple[Fraction, ...], ...], ...]
+type _ExactMatrix = tuple[tuple[Fraction, ...], ...]
+
+
+@lru_cache(maxsize=128)
+def _exact_data_digest(value: object, /) -> str:
+    digest = sha256()
+
+    def feed(item: object, /) -> None:
+        if isinstance(item, Fraction):
+            digest.update(b"F")
+            for integer in (item.numerator, item.denominator):
+                magnitude = abs(integer)
+                length = max(1, (magnitude.bit_length() + 7) // 8)
+                digest.update(b"-" if integer < 0 else b"+")
+                digest.update(length.to_bytes(8, "big"))
+                digest.update(magnitude.to_bytes(length, "big"))
+            return
+        if isinstance(item, tuple):
+            digest.update(b"T")
+            digest.update(len(item).to_bytes(8, "big"))
+            for child in item:
+                feed(child)
+            return
+        raise TypeError("Exact basis fingerprints require tuples of Fractions.")
+
+    feed(value)
+    return digest.hexdigest()
 
 
 def _compositions(total: int, length: int) -> tuple[tuple[int, ...], ...]:
@@ -73,19 +107,6 @@ def _power(poly: _Polynomial, degree: int, n: int) -> _Polynomial:
     return result
 
 
-def _barycentric(n: int) -> tuple[_Polynomial, ...]:
-    zero = (0,) * n
-    axes = tuple(tuple(int(i == j) for i in range(n)) for j in range(n))
-    return ({zero: 1.0, **{axis: -1.0 for axis in axes}}, *({axis: 1.0} for axis in axes))
-
-
-def _barycentric_product(alpha: tuple[int, ...], n: int) -> _Polynomial:
-    result: _Polynomial = {(0,) * n: 1.0}
-    for exponent, coordinate in zip(alpha, _barycentric(n), strict=True):
-        result = _multiply(result, _power(coordinate, exponent, n))
-    return result
-
-
 def _minor(matrix: _HostArray, rows: tuple[int, ...], columns: tuple[int, ...]) -> float:
     if not rows:
         return 1.0
@@ -95,85 +116,380 @@ def _minor(matrix: _HostArray, rows: tuple[int, ...], columns: tuple[int, ...]) 
 type _GeneratorLabel = tuple[tuple[int, ...], tuple[int, ...]]
 
 
-def _full_generators(
-    n: int,
-    r: int,
-    exponents: tuple[tuple[int, ...], ...],
-    blades: tuple[tuple[int, ...], ...],
-) -> tuple[list[_HostArray], list[_GeneratorLabel]]:
-    positions = {alpha: index for index, alpha in enumerate(exponents)}
-    generators: list[_HostArray] = []
-    labels: list[_GeneratorLabel] = []
-    for alpha in _compositions(r, n + 1):
-        scalar = _barycentric_product(alpha, n)
-        for component, blade in enumerate(blades):
-            coeff = np.zeros((len(exponents), len(blades)), dtype=np.float64)
-            for exponent, value in scalar.items():
-                coeff[positions[exponent], component] = value
-            generators.append(coeff)
-            labels.append((alpha, tuple(axis + 1 for axis in blade)))
-    return generators, labels
-
-
-def _whitney_generator(
-    n: int,
-    k: int,
-    alpha: tuple[int, ...],
-    sigma: tuple[int, ...],
-    exponents: tuple[tuple[int, ...], ...],
-    blades: tuple[tuple[int, ...], ...],
-    gradients: _HostArray,
-) -> _HostArray:
-    positions = {exponent: index for index, exponent in enumerate(exponents)}
-    coeff = np.zeros((len(exponents), len(blades)), dtype=np.float64)
-    scalar = _barycentric_product(alpha, n)
-    for position, vertex in enumerate(sigma):
-        other = tuple(v for v in sigma if v != vertex)
-        polynomial = _multiply(scalar, _barycentric(n)[vertex])
-        for component, blade in enumerate(blades):
-            factor = factorial(k) * (-1.0) ** position * _minor(gradients, other, blade)
-            for exponent, value in polynomial.items():
-                coeff[positions[exponent], component] += factor * value
-    return coeff
-
-
-def _trimmed_generators(
-    n: int,
-    k: int,
-    r: int,
-    exponents: tuple[tuple[int, ...], ...],
-    blades: tuple[tuple[int, ...], ...],
-) -> tuple[list[_HostArray], list[_GeneratorLabel]]:
-    gradients = np.concatenate((-np.ones((1, n)), np.eye(n)), axis=0)
-    generators: list[_HostArray] = []
-    labels: list[_GeneratorLabel] = []
-    for sigma in combinations(range(n + 1), k + 1):
-        for alpha in _compositions(r - 1, n + 1):
-            if any(alpha[i] for i in range(sigma[0])):
-                continue
-            generators.append(
-                _whitney_generator(n, k, alpha, sigma, exponents, blades, gradients)
-            )
-            labels.append((alpha, sigma))
-    return generators, labels
-
-
 def _generators(
     n: int, k: int, r: int, trimmed: bool
 ) -> tuple[tuple[tuple[int, ...], ...], _HostArray, tuple[_GeneratorLabel, ...]]:
-    """Independent Bernstein--Whitney generators, or full polynomial generators."""
+    """Project the canonical exact simplex generators for execution."""
+    exponents, exact_coefficients, labels = _exact_generators(n, k, r, trimmed)
+    return exponents, np.asarray(exact_coefficients, dtype=np.float64), labels
+
+
+def _exact_multiply(
+    left: _ExactPolynomial, right: _ExactPolynomial, /
+) -> _ExactPolynomial:
+    result: _ExactPolynomial = {}
+    for alpha, first in left.items():
+        for beta, second in right.items():
+            exponent = tuple(a + b for a, b in zip(alpha, beta, strict=True))
+            result[exponent] = result.get(exponent, Fraction(0)) + first * second
+    return {exponent: value for exponent, value in result.items() if value}
+
+
+def _exact_power(
+    polynomial: _ExactPolynomial, degree: int, variables: int, /
+) -> _ExactPolynomial:
+    result: _ExactPolynomial = {(0,) * variables: Fraction(1)}
+    for _ in range(degree):
+        result = _exact_multiply(result, polynomial)
+    return result
+
+
+def _exact_add_scaled(
+    destination: _ExactPolynomial,
+    source: _ExactPolynomial,
+    scale: Fraction,
+    /,
+) -> None:
+    if not scale:
+        return
+    for exponent, value in source.items():
+        result = destination.get(exponent, Fraction(0)) + scale * value
+        if result:
+            destination[exponent] = result
+        else:
+            destination.pop(exponent, None)
+
+
+def _exact_barycentric(n: int, /) -> tuple[_ExactPolynomial, ...]:
+    zero = (0,) * n
+    axes = tuple(tuple(int(i == j) for i in range(n)) for j in range(n))
+    return (
+        {
+            zero: Fraction(1),
+            **{axis: Fraction(-1) for axis in axes},
+        },
+        *({axis: Fraction(1)} for axis in axes),
+    )
+
+
+def _exact_barycentric_product(alpha: tuple[int, ...], n: int, /) -> _ExactPolynomial:
+    result: _ExactPolynomial = {(0,) * n: Fraction(1)}
+    for exponent, coordinate in zip(alpha, _exact_barycentric(n), strict=True):
+        result = _exact_multiply(result, _exact_power(coordinate, exponent, n))
+    return result
+
+
+def _exact_minor(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    rows: tuple[int, ...],
+    columns: tuple[int, ...],
+    /,
+) -> Fraction:
+    if not rows:
+        return Fraction(1)
+    return Fraction(
+        determinant_exact(
+            tuple(tuple(matrix[row][column] for column in columns) for row in rows)
+        )
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_generators(
+    n: int, k: int, r: int, trimmed: bool, /
+) -> tuple[
+    tuple[tuple[int, ...], ...],
+    _ExactCoefficientBank,
+    tuple[_GeneratorLabel, ...],
+]:
+    """Exact Bernstein--Whitney generators, or full polynomial generators."""
     exponents = _exponents(n, max(r, 0))
     blades = tuple(combinations(range(n), k))
+    generators: list[tuple[tuple[_ExactPolynomial, ...], _GeneratorLabel]] = []
     if not trimmed or k == 0:
-        generators, labels = _full_generators(n, r, exponents, blades)
+        for alpha in _compositions(r, n + 1):
+            scalar = _exact_barycentric_product(alpha, n)
+            for component, blade in enumerate(blades):
+                components = tuple(
+                    scalar if index == component else {} for index in range(len(blades))
+                )
+                generators.append(
+                    (components, (alpha, tuple(axis + 1 for axis in blade)))
+                )
     else:
-        generators, labels = _trimmed_generators(n, k, r, exponents, blades)
-    coefficients = (
-        np.stack(generators, axis=-1)
-        if generators
-        else np.zeros((len(exponents), len(blades), 0), dtype=np.float64)
+        gradients = tuple(
+            tuple(Fraction(-1) for _ in range(n))
+            if vertex == 0
+            else tuple(Fraction(int(axis == vertex - 1)) for axis in range(n))
+            for vertex in range(n + 1)
+        )
+        barycentric = _exact_barycentric(n)
+        for sigma in combinations(range(n + 1), k + 1):
+            for alpha in _compositions(r - 1, n + 1):
+                if any(alpha[index] for index in range(sigma[0])):
+                    continue
+                scalar = _exact_barycentric_product(alpha, n)
+                components: list[_ExactPolynomial] = [{} for _ in range(len(blades))]
+                for position, vertex in enumerate(sigma):
+                    other = tuple(item for item in sigma if item != vertex)
+                    polynomial = _exact_multiply(scalar, barycentric[vertex])
+                    for component, blade in enumerate(blades):
+                        factor = Fraction(
+                            factorial(k) * (-1 if position % 2 else 1)
+                        ) * _exact_minor(gradients, other, blade)
+                        _exact_add_scaled(components[component], polynomial, factor)
+                generators.append((tuple(components), (alpha, sigma)))
+    coefficients: _ExactCoefficientBank = tuple(
+        tuple(
+            tuple(
+                polynomial[component].get(exponent, Fraction(0))
+                for polynomial, _ in generators
+            )
+            for component in range(len(blades))
+        )
+        for exponent in exponents
     )
-    return exponents, coefficients, tuple(labels)
+    return (
+        exponents,
+        coefficients,
+        tuple(label for _, label in generators),
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_dual_coefficients(
+    generators: _ExactCoefficientBank,
+    moments: _ExactMomentBank,
+    /,
+) -> _ExactCoefficientBank:
+    dof_count = len(moments)
+    generator_count = len(generators[0][0]) if generators and generators[0] else 0
+    if (
+        dof_count != generator_count
+        or any(len(row) != len(generators) for row in moments)
+        or any(len(row) != len(generators[0]) for row in generators)
+        or any(
+            len(moments[dof][monomial]) != len(generators[monomial])
+            for dof in range(dof_count)
+            for monomial in range(len(generators))
+        )
+    ):
+        raise ValueError("Exact polynomial generators and moment functionals disagree.")
+    pairing = [
+        [
+            sum(
+                (
+                    moments[dof][monomial][component]
+                    * generators[monomial][component][generator]
+                    for monomial in range(len(generators))
+                    for component in range(len(generators[monomial]))
+                ),
+                Fraction(0),
+            )
+            for generator in range(generator_count)
+        ]
+        for dof in range(dof_count)
+    ]
+    inverse = solve_exact(
+        pairing,
+        [
+            [Fraction(int(row == column)) for column in range(dof_count)]
+            for row in range(dof_count)
+        ],
+    )
+    return tuple(
+        tuple(
+            tuple(
+                sum(
+                    (
+                        generators[monomial][component][generator]
+                        * inverse[generator][dof]
+                        for generator in range(generator_count)
+                    ),
+                    Fraction(0),
+                )
+                for dof in range(dof_count)
+            )
+            for component in range(len(generators[monomial]))
+        )
+        for monomial in range(len(generators))
+    )
+
+
+def _exact_shifted_legendre(degree: int, /) -> _ExactPolynomial:
+    return {
+        (power,): Fraction(
+            (-1 if (degree + power) % 2 else 1)
+            * comb(degree, power)
+            * comb(degree + power, power)
+        )
+        for power in range(degree + 1)
+    }
+
+
+def _exact_integral_interval(polynomial: _ExactPolynomial, exponent: int, /) -> Fraction:
+    return sum(
+        (
+            coefficient / (power[0] + exponent + 1)
+            for power, coefficient in polynomial.items()
+        ),
+        Fraction(0),
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_tensor_interval_data(
+    order: int, /
+) -> tuple[
+    tuple[tuple[Fraction, ...], ...],
+    tuple[tuple[Fraction, ...], ...],
+    tuple[_ExactPolynomial, ...],
+    tuple[_ExactPolynomial, ...],
+    tuple[_ExactPolynomial, ...],
+    tuple[_ExactPolynomial, ...],
+]:
+    zero_candidates: list[_ExactPolynomial] = [
+        {(0,): Fraction(1), (1,): Fraction(-1)},
+        {(1,): Fraction(1)},
+    ]
+    bubble: _ExactPolynomial = {(1,): Fraction(1), (2,): Fraction(-1)}
+    zero_candidates.extend(
+        _exact_multiply(bubble, _exact_shifted_legendre(mode))
+        for mode in range(order - 1)
+    )
+    one_candidates = tuple(_exact_shifted_legendre(mode) for mode in range(order))
+    interior = order - 1
+    zero_coefficients = [
+        [Fraction(0) for _ in range(order + 1)] for _ in range(order + 1)
+    ]
+    zero_coefficients[0][0] = Fraction(1)
+    zero_coefficients[1][order] = Fraction(1)
+    if interior:
+        matrix = [
+            [
+                _exact_integral_interval(zero_candidates[mode + 2], exponent)
+                for mode in range(interior)
+            ]
+            for exponent in range(interior)
+        ]
+        right = [
+            [
+                -_exact_integral_interval(zero_candidates[0], exponent),
+                *(Fraction(int(column == exponent)) for column in range(interior)),
+                -_exact_integral_interval(zero_candidates[1], exponent),
+            ]
+            for exponent in range(interior)
+        ]
+        solved = solve_exact(matrix, right)
+        for mode, row in enumerate(solved, start=2):
+            zero_coefficients[mode] = row
+    zero = []
+    for dof in range(order + 1):
+        polynomial: _ExactPolynomial = {}
+        for candidate, candidate_polynomial in enumerate(zero_candidates):
+            _exact_add_scaled(
+                polynomial,
+                candidate_polynomial,
+                zero_coefficients[candidate][dof],
+            )
+        zero.append(polynomial)
+    one_matrix = [
+        [_exact_integral_interval(candidate, exponent) for candidate in one_candidates]
+        for exponent in range(order)
+    ]
+    one_inverse = solve_exact(
+        one_matrix,
+        [
+            [Fraction(int(row == column)) for column in range(order)]
+            for row in range(order)
+        ],
+    )
+    one = []
+    for dof in range(order):
+        polynomial = {}
+        for candidate, candidate_polynomial in enumerate(one_candidates):
+            _exact_add_scaled(
+                polynomial, candidate_polynomial, one_inverse[candidate][dof]
+            )
+        one.append(polynomial)
+    return (
+        tuple(tuple(row) for row in zero_coefficients),
+        tuple(tuple(row) for row in one_inverse),
+        tuple(zero_candidates),
+        tuple(one_candidates),
+        tuple(zero),
+        tuple(one),
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_tensor_coefficients(
+    n: int,
+    order: int,
+    exponents: tuple[tuple[int, ...], ...],
+    labels: tuple[DofLabel, ...],
+    blades: tuple[tuple[int, ...], ...],
+    /,
+) -> _ExactCoefficientBank:
+    _, _, _, _, zero, one = _exact_tensor_interval_data(order)
+    return tuple(
+        tuple(
+            tuple(
+                (
+                    prod(
+                        (
+                            (one if axis in component_blade else zero)[index[axis]].get(
+                                (exponent[axis],), Fraction(0)
+                            )
+                            for axis in range(n)
+                        ),
+                        start=Fraction(1),
+                    )
+                    if component_blade == label_blade
+                    else Fraction(0)
+                )
+                for _, index, label_blade in labels
+            )
+            for component_blade in blades
+        )
+        for exponent in exponents
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_tensor_generators(
+    n: int,
+    order: int,
+    exponents: tuple[tuple[int, ...], ...],
+    labels: tuple[DofLabel, ...],
+    blades: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[_ExactCoefficientBank, tuple[_GeneratorLabel, ...]]:
+    _, _, zero_candidates, one_candidates, _, _ = _exact_tensor_interval_data(order)
+    coefficients = tuple(
+        tuple(
+            tuple(
+                (
+                    prod(
+                        (
+                            (one_candidates if axis in blade else zero_candidates)[
+                                index[axis]
+                            ].get((exponent[axis],), Fraction(0))
+                            for axis in range(n)
+                        ),
+                        start=Fraction(1),
+                    )
+                    if blade == label_blade
+                    else Fraction(0)
+                )
+                for _, index, label_blade in labels
+            )
+            for blade in blades
+        )
+        for exponent in exponents
+    )
+    generator_labels = tuple((index, blade) for _, index, blade in labels)
+    return coefficients, generator_labels
 
 
 def _monomials(points: _HostArray, exponents: tuple[tuple[int, ...], ...]) -> _HostArray:
@@ -196,13 +512,6 @@ def _wedge_sign(left: tuple[int, ...], right: tuple[int, ...]) -> int:
     return (-1) ** sum(a > b for a in left for b in right)
 
 
-def _integral(poly: _Polynomial, n: int) -> float:
-    return sum(
-        value * prod(factorial(a) for a in alpha) / factorial(n + sum(alpha))
-        for alpha, value in poly.items()
-    )
-
-
 def _substitute(
     alpha: tuple[int, ...], origin: _HostArray, jacobian: _HostArray
 ) -> _Polynomial:
@@ -219,12 +528,10 @@ def _substitute(
 
 class _Prepared(NamedTuple):
     exponents: tuple[tuple[int, ...], ...]
-    generators: _HostArray
     labels: tuple[DofLabel, ...]
     entities: tuple[tuple[tuple[int, ...], ...], ...]
     points: _HostArray
     weights: _HostArray
-    moments: _HostArray
     nodes: _HostArray
 
 
@@ -232,7 +539,6 @@ class _EntityMoments(NamedTuple):
     labels: tuple[DofLabel, ...]
     points: _HostArray
     weights: _HostArray
-    moments: _HostArray
     nodes: _HostArray
 
 
@@ -247,13 +553,13 @@ class _SimplexTests(NamedTuple):
 
 def _finish_prepared(
     exponents: tuple[tuple[int, ...], ...],
-    generators: _HostArray,
     entities: tuple[tuple[tuple[int, ...], ...], ...],
     blocks: list[_EntityMoments],
+    component_count: int,
 ) -> _Prepared:
     labels = tuple(label for block in blocks for label in block.labels)
     total = sum(block.points.shape[0] for block in blocks)
-    weights = np.zeros((len(labels), total, generators.shape[1]), dtype=np.float64)
+    weights = np.zeros((len(labels), total, component_count), dtype=np.float64)
     row, column = 0, 0
     for block in blocks:
         rows, columns = block.weights.shape[:2]
@@ -262,12 +568,10 @@ def _finish_prepared(
         column += columns
     return _Prepared(
         exponents,
-        generators,
         labels,
         entities,
         np.concatenate([block.points for block in blocks]),
         weights,
-        np.concatenate([block.moments for block in blocks]),
         np.concatenate([block.nodes for block in blocks]),
     )
 
@@ -276,28 +580,23 @@ def _constant_simplex_prepared(
     n: int,
     blades: tuple[tuple[int, ...], ...],
     exponents: tuple[tuple[int, ...], ...],
-    generators: _HostArray,
     entities: tuple[tuple[tuple[int, ...], ...], ...],
 ) -> _Prepared:
     q, quadrature = _simplex_quadrature(n, 0)
     count = len(blades)
     weights = np.zeros((count, q.shape[0], count), dtype=np.float64)
-    moments = np.zeros((count, 1, count), dtype=np.float64)
     for component in range(count):
         weights[component, :, component] = quadrature
-        moments[component, 0, component] = 1.0 / factorial(n)
     labels = tuple(
         (tuple(range(n + 1)), (0,) * (n + 1), tuple(axis + 1 for axis in blade))
         for blade in blades
     )
     return _Prepared(
         exponents,
-        generators,
         labels,
         entities,
         q,
         weights,
-        moments,
         np.full((count, n), 1.0 / (n + 1), dtype=np.float64),
     )
 
@@ -340,43 +639,11 @@ def _simplex_pairing(
     return pullback, wedge
 
 
-def _simplex_test_polynomials(tests: _SimplexTests, test: int) -> tuple[_Polynomial, ...]:
-    return tuple(
-        {
-            a: float(tests.coefficients[index, component, test])
-            for index, a in enumerate(tests.exponents)
-            if tests.coefficients[index, component, test] != 0.0
-        }
-        for component in range(tests.coefficients.shape[1])
-    )
-
-
-def _simplex_moment_row(
-    exponents: tuple[tuple[int, ...], ...],
-    test_polynomials: tuple[_Polynomial, ...],
-    origin: _HostArray,
-    jacobian: _HostArray,
-    pullback: _HostArray,
-    wedge: _HostArray,
-) -> _HostArray:
-    row = np.zeros((len(exponents), pullback.shape[1]), dtype=np.float64)
-    for monomial, exponent in enumerate(exponents):
-        pulled = _substitute(exponent, origin, jacobian)
-        for dual_component, test_poly in enumerate(test_polynomials):
-            integral = _integral(_multiply(pulled, test_poly), jacobian.shape[1])
-            for local_component in range(pullback.shape[0]):
-                sign = wedge[local_component, dual_component]
-                if sign != 0:
-                    row[monomial] += integral * sign * pullback[local_component]
-    return row
-
-
 def _simplex_entity_moments(
     n: int,
     k: int,
     face: tuple[int, ...],
     vertices: _HostArray,
-    exponents: tuple[tuple[int, ...], ...],
     tests: _SimplexTests,
 ) -> _EntityMoments:
     origin = vertices[face[0]]
@@ -388,40 +655,222 @@ def _simplex_entity_moments(
     labels = tuple(
         (face, alpha, tuple(face[i] for i in sigma)) for alpha, sigma in tests.labels
     )
-    moments = np.stack(
-        [
-            _simplex_moment_row(
-                exponents,
-                _simplex_test_polynomials(tests, test),
-                origin,
-                jacobian,
-                pullback,
-                wedge,
-            )
-            for test in range(len(tests.labels))
-        ]
-    )
     nodes = np.stack([vertices[list(face)].mean(axis=0) for _ in tests.labels])
     return _EntityMoments(
-        labels, origin[None, :] + tests.points @ jacobian.T, weights, moments, nodes
+        labels, origin[None, :] + tests.points @ jacobian.T, weights, nodes
     )
+
+
+def _exact_integral_simplex(polynomial: _ExactPolynomial, dimension: int, /) -> Fraction:
+    return sum(
+        (
+            coefficient
+            * prod(factorial(value) for value in exponent)
+            / factorial(dimension + sum(exponent))
+            for exponent, coefficient in polynomial.items()
+        ),
+        Fraction(0),
+    )
+
+
+def _exact_substitute_monomial(
+    exponent: tuple[int, ...],
+    origin: tuple[Fraction, ...],
+    jacobian: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> _ExactPolynomial:
+    variables = len(jacobian[0]) if jacobian else 0
+    zero = (0,) * variables
+    result: _ExactPolynomial = {zero: Fraction(1)}
+    for row, degree in enumerate(exponent):
+        affine: _ExactPolynomial = {}
+        if origin[row]:
+            affine[zero] = origin[row]
+        for column in range(variables):
+            value = jacobian[row][column]
+            if value:
+                axis = tuple(int(index == column) for index in range(variables))
+                affine[axis] = value
+        result = _exact_multiply(result, _exact_power(affine, degree, variables))
+    return result
+
+
+def _exact_simplex_pairing(
+    jacobian: tuple[tuple[Fraction, ...], ...], n: int, k: int, /
+) -> tuple[
+    tuple[tuple[Fraction, ...], ...],
+    tuple[tuple[Fraction, ...], ...],
+]:
+    m = len(jacobian[0]) if jacobian else 0
+    blades = tuple(combinations(range(n), k))
+    local_blades = tuple(combinations(range(m), k))
+    dual_blades = tuple(combinations(range(m), m - k))
+    pullback = tuple(
+        tuple(_exact_minor(jacobian, blade, local) for blade in blades)
+        for local in local_blades
+    )
+    wedge = tuple(
+        tuple(
+            Fraction(_wedge_sign(local, dual) if set(local).isdisjoint(dual) else 0)
+            for dual in dual_blades
+        )
+        for local in local_blades
+    )
+    return pullback, wedge
+
+
+@lru_cache(maxsize=128)
+def _exact_simplex_functional_moments(
+    n: int,
+    k: int,
+    order: int,
+    family: FormElementFamily,
+    exponents: tuple[tuple[int, ...], ...],
+    labels: tuple[DofLabel, ...],
+    /,
+) -> _ExactMomentBank:
+    blades = tuple(combinations(range(n), k))
+    if family == "full" and order == 0:
+        rows = []
+        for label in labels:
+            component = blades.index(tuple(axis - 1 for axis in label[2]))
+            row = [[Fraction(0) for _ in blades] for _ in exponents]
+            row[0][component] = Fraction(1, factorial(n))
+            rows.append(tuple(tuple(values) for values in row))
+        return tuple(rows)
+    vertices = (
+        (0,) * n,
+        *(tuple(int(axis == coordinate) for axis in range(n)) for coordinate in range(n)),
+    )
+    result = []
+    test_cache: dict[
+        int,
+        tuple[
+            tuple[tuple[int, ...], ...],
+            _ExactCoefficientBank,
+            dict[_GeneratorLabel, int],
+        ],
+    ] = {}
+    for face, alpha, sigma in labels:
+        entity_dimension = len(face) - 1
+        degree = order + k - entity_dimension - int(family == "trimmed")
+        if degree < 0:
+            raise ValueError(
+                "A declared simplex moment has negative test polynomial degree."
+            )
+        tests = test_cache.get(entity_dimension)
+        if tests is None:
+            test_exponents, test_coefficients, test_labels = _exact_generators(
+                entity_dimension,
+                entity_dimension - k,
+                degree,
+                family == "full",
+            )
+            tests = (
+                test_exponents,
+                test_coefficients,
+                dict(zip(test_labels, range(len(test_labels)), strict=True)),
+            )
+            test_cache[entity_dimension] = tests
+        test_exponents, test_coefficients, test_positions = tests
+        local_sigma = tuple(face.index(vertex) for vertex in sigma)
+        test_position = test_positions.get((alpha, local_sigma))
+        if test_position is None:
+            raise ValueError("A simplex DOF has no exact complementary test generator.")
+        test_polynomials = tuple(
+            {
+                exponent: test_coefficients[monomial][component][test_position]
+                for monomial, exponent in enumerate(test_exponents)
+                if test_coefficients[monomial][component][test_position]
+            }
+            for component in range(len(test_coefficients[0]))
+        )
+        origin = tuple(Fraction(value) for value in vertices[face[0]])
+        jacobian = tuple(
+            tuple(
+                Fraction(vertices[face[column + 1]][row] - vertices[face[0]][row])
+                for column in range(entity_dimension)
+            )
+            for row in range(n)
+        )
+        pullback, wedge = _exact_simplex_pairing(jacobian, n, k)
+        row: list[list[Fraction]] = [[Fraction(0) for _ in blades] for _ in exponents]
+        for monomial, exponent in enumerate(exponents):
+            pulled = _exact_substitute_monomial(exponent, origin, jacobian)
+            for dual_component, test_polynomial in enumerate(test_polynomials):
+                integral = _exact_integral_simplex(
+                    _exact_multiply(pulled, test_polynomial), entity_dimension
+                )
+                if not integral:
+                    continue
+                for local_component in range(len(pullback)):
+                    sign = wedge[local_component][dual_component]
+                    if not sign:
+                        continue
+                    for component, factor in enumerate(pullback[local_component]):
+                        row[monomial][component] += integral * sign * factor
+        result.append(tuple(tuple(values) for values in row))
+    return tuple(result)
+
+
+@lru_cache(maxsize=128)
+def _exact_tensor_functional_moments(
+    n: int,
+    k: int,
+    exponents: tuple[tuple[int, ...], ...],
+    labels: tuple[DofLabel, ...],
+    /,
+) -> _ExactMomentBank:
+    blades = tuple(combinations(range(n), k))
+    blade_positions = {blade: position for position, blade in enumerate(blades)}
+    vertices = _tensor_vertices(n)
+    result = []
+    for face, index, blade in labels:
+        free = tuple(
+            axis
+            for axis in range(n)
+            if len({vertices[vertex][axis] for vertex in face}) > 1
+        )
+        origin = tuple(
+            Fraction(0) if axis in free else Fraction(vertices[face[0]][axis])
+            for axis in range(n)
+        )
+        alpha = tuple(index[axis] - int(axis not in blade) for axis in free)
+        component = blade_positions[blade]
+        row = []
+        for exponent in exponents:
+            integral = Fraction(1)
+            for axis in range(n):
+                integral *= (
+                    Fraction(1, exponent[axis] + alpha[free.index(axis)] + 1)
+                    if axis in free
+                    else origin[axis] ** exponent[axis]
+                )
+            row.append(
+                tuple(
+                    integral if column == component else Fraction(0)
+                    for column in range(len(blades))
+                )
+            )
+        result.append(tuple(row))
+    return tuple(result)
 
 
 def _prepare_simplex(n: int, k: int, r: int, family: FormElementFamily) -> _Prepared:
-    exponents, generators, _ = _generators(n, k, r, family == "trimmed")
+    exponents = _exponents(n, max(r, 0))
     blades = tuple(combinations(range(n), k))
     entities = tuple(tuple(combinations(range(n + 1), m + 1)) for m in range(n + 1))
     vertices = np.concatenate((np.zeros((1, n)), np.eye(n)), axis=0)
     if family == "full" and r == 0:
-        return _constant_simplex_prepared(n, blades, exponents, generators, entities)
+        return _constant_simplex_prepared(n, blades, exponents, entities)
     blocks: list[_EntityMoments] = []
     for m in range(k, n + 1):
         tests = _simplex_tests(m, k, r, family)
         if tests is None:
             continue
         for face in entities[m]:
-            blocks.append(_simplex_entity_moments(n, k, face, vertices, exponents, tests))
-    return _finish_prepared(exponents, generators, entities, blocks)
+            blocks.append(_simplex_entity_moments(n, k, face, vertices, tests))
+    return _finish_prepared(exponents, entities, blocks, len(blades))
 
 
 def _tensor_vertices(n: int) -> tuple[tuple[int, ...], ...]:
@@ -433,6 +882,53 @@ def _tensor_vertices(n: int) -> tuple[tuple[int, ...], ...]:
     if n == 3:
         return tuple((*v, z) for z in range(2) for v in _tensor_vertices(2))
     return tuple(product(range(2), repeat=n))
+
+
+def _form_orientation_generators(
+    dimension: int, family: FormElementFamily, /
+) -> tuple[tuple[int, ...], ...]:
+    if family != "tensor-trimmed":
+        result = []
+        for axis in range(dimension):
+            permutation = list(range(dimension + 1))
+            permutation[axis], permutation[axis + 1] = (
+                permutation[axis + 1],
+                permutation[axis],
+            )
+            result.append(tuple(permutation))
+        return tuple(result)
+    vertices = _tensor_vertices(dimension)
+    positions = {vertex: index for index, vertex in enumerate(vertices)}
+    result = []
+    for axis in range(dimension):
+        result.append(
+            tuple(
+                positions[
+                    tuple(
+                        1 - value if coordinate == axis else value
+                        for coordinate, value in enumerate(vertex)
+                    )
+                ]
+                for vertex in vertices
+            )
+        )
+    for axis in range(dimension - 1):
+        result.append(
+            tuple(
+                positions[
+                    tuple(
+                        vertex[axis + 1]
+                        if coordinate == axis
+                        else vertex[axis]
+                        if coordinate == axis + 1
+                        else value
+                        for coordinate, value in enumerate(vertex)
+                    )
+                ]
+                for vertex in vertices
+            )
+        )
+    return tuple(result)
 
 
 def _cube_face(
@@ -459,98 +955,17 @@ def _tensor_entities(n: int) -> tuple[tuple[tuple[int, ...], ...], ...]:
 class _TensorInterval(NamedTuple):
     zero: _HostArray
     one: _HostArray
-    zero_monomials: _HostArray
-    one_monomials: _HostArray
-
-
-def _solve_interval_moments(moments: _HostArray, rhs: _HostArray) -> _HostArray:
-    from ...linalg import (
-        DenseLinearOperator,
-        FactorizationPolicy,
-        factorize,
-        FailurePolicy,
-        RHSLayout,
-    )
-
-    prepared = factorize(
-        DenseLinearOperator(jnp.asarray(moments)),
-        FactorizationPolicy("qr", failure=FailurePolicy("error")),
-    )
-    if int(jax.device_get(prepared.rank())) != moments.shape[0]:
-        raise ValueError("Tensor interval moments are not numerically unisolvent.")
-    result = prepared.solve(jnp.asarray(rhs), rhs_layout=RHSLayout((rhs.shape[1],)))
-    return np.asarray(jax.device_get(result.value), dtype=np.float64)
 
 
 @host_table_cache(max_entries=256, max_bytes=1048576)
 def _tensor_interval(r: int) -> _TensorInterval:
-    """Admit reusable interval duals, never a global tensor Vandermonde."""
-    q, quadrature = _tensor_quadrature(1, r + 1)
-    x = q[:, 0]
-    legendre = np.polynomial.legendre.legvander(2.0 * x - 1.0, r - 1)
-    zero_values = np.column_stack(
-        (1.0 - x, x, x[:, None] * (1.0 - x[:, None]) * legendre[:, : r - 1])
-    )
-    zero = np.zeros((r + 1, r + 1), dtype=np.float64)
-    zero[0, 0] = zero[1, r] = 1.0
-    if r > 1:
-        interior_moments = np.stack(
-            tuple((quadrature * x**alpha) @ zero_values for alpha in range(r - 1))
-        )
-        rhs = np.zeros((r - 1, r + 1), dtype=np.float64)
-        rhs[:, 0] = -interior_moments[:, 0]
-        rhs[:, r] = -interior_moments[:, 1]
-        rhs[:, 1:r] = np.eye(r - 1, dtype=np.float64)
-        # Endpoint traces stay exact: only the bubble block needs a solve.
-        zero[2:] = _solve_interval_moments(interior_moments[:, 2:], rhs)
-    one_moments = np.stack(
-        tuple((quadrature * x**alpha) @ legendre for alpha in range(r))
-    )
-    one = _solve_interval_moments(one_moments, np.eye(r, dtype=np.float64))
+    """Project the exact one-dimensional interval duals for execution."""
+    zero_exact, one_exact, _, _, _, _ = _exact_tensor_interval_data(r)
+    zero = np.asarray(zero_exact, dtype=np.float64)
+    one = np.asarray(one_exact, dtype=np.float64)
     zero.setflags(write=False)
     one.setflags(write=False)
-    zero_generators = np.zeros((r + 1, r + 1), dtype=np.float64)
-    zero_generators[:2, :2] = np.asarray(((1.0, 0.0), (-1.0, 1.0)))
-    one_generators = np.zeros((r + 1, r), dtype=np.float64)
-    bubble = np.polynomial.Polynomial((0.0, 1.0, -1.0))
-    for mode in range(r):
-        polynomial = np.polynomial.Legendre.basis(mode, domain=(0.0, 1.0)).convert(
-            kind=np.polynomial.Polynomial
-        )
-        one_generators[: polynomial.coef.size, mode] = polynomial.coef
-        if mode < r - 1:
-            bubble_polynomial = bubble * polynomial
-            zero_generators[: bubble_polynomial.coef.size, mode + 2] = (
-                bubble_polynomial.coef
-            )
-    zero_monomials, one_monomials = (
-        zero_generators @ zero,
-        one_generators @ one,
-    )
-    zero_monomials.setflags(write=False)
-    one_monomials.setflags(write=False)
-    return _TensorInterval(zero, one, zero_monomials, one_monomials)
-
-
-def _tensor_coefficients(
-    n: int,
-    r: int,
-    exponents: tuple[tuple[int, ...], ...],
-    labels: tuple[DofLabel, ...],
-    blades: tuple[tuple[int, ...], ...],
-) -> _HostArray:
-    interval = _tensor_interval(r)
-    coefficients = np.zeros((len(exponents), len(blades), len(labels)), dtype=np.float64)
-    powers = np.asarray(exponents, dtype=np.int64)
-    for dof, (_, index, blade) in enumerate(labels):
-        factors = tuple(
-            (interval.one_monomials if axis in blade else interval.zero_monomials)[
-                powers[:, axis], index[axis]
-            ]
-            for axis in range(n)
-        )
-        coefficients[:, blades.index(blade), dof] = np.prod(np.stack(factors), axis=0)
-    return coefficients
+    return _TensorInterval(zero, one)
 
 
 @host_table_cache(max_entries=256, max_bytes=16777216)
@@ -616,32 +1031,10 @@ def _tensor_test_index(
     )
 
 
-def _tensor_moment_row(
-    exponents: tuple[tuple[int, ...], ...],
-    alpha: tuple[int, ...],
-    free: tuple[int, ...],
-    origin: _HostArray,
-    component: int,
-    component_count: int,
-) -> _HostArray:
-    row = np.zeros((len(exponents), component_count), dtype=np.float64)
-    for monomial, exponent in enumerate(exponents):
-        integral = 1.0
-        for axis, degree in enumerate(exponent):
-            integral *= (
-                1.0 / (degree + alpha[free.index(axis)] + 1)
-                if axis in free
-                else origin[axis] ** degree
-            )
-        row[monomial, component] = integral
-    return row
-
-
 def _tensor_entity_moments(
     n: int,
     r: int,
     face: tuple[int, ...],
-    exponents: tuple[tuple[int, ...], ...],
     blades: tuple[tuple[int, ...], ...],
     q: _HostArray,
     quadrature: _HostArray,
@@ -652,7 +1045,6 @@ def _tensor_entity_moments(
     labels: list[DofLabel] = []
     nodes: list[_HostArray] = []
     blocks: list[_HostArray] = []
-    rows: list[_HostArray] = []
     for component, blade in enumerate(blades):
         if not set(blade).issubset(free):
             continue
@@ -665,32 +1057,25 @@ def _tensor_entity_moments(
             block = np.zeros((q.shape[0], len(blades)), dtype=np.float64)
             block[:, component] = quadrature * density
             blocks.append(block)
-            rows.append(
-                _tensor_moment_row(exponents, alpha, free, origin, component, len(blades))
-            )
     if not blocks:
         return None
-    return _EntityMoments(
-        tuple(labels), points, np.stack(blocks), np.stack(rows), np.stack(nodes)
-    )
+    return _EntityMoments(tuple(labels), points, np.stack(blocks), np.stack(nodes))
 
 
 def _prepare_tensor(n: int, k: int, r: int) -> _Prepared:
     blades = tuple(combinations(range(n), k))
     exponents = tuple(product(range(r + 1), repeat=n))
     entities = _tensor_entities(n)
-    # Only the component extent is used while assembling the moment functionals.
-    generators = np.zeros((len(exponents), len(blades), 0), dtype=np.float64)
     blocks: list[_EntityMoments] = []
     for m, level in enumerate(entities):
         if m < k:
             continue
         q, quadrature = _tensor_quadrature(m, r)
         for face in level:
-            block = _tensor_entity_moments(n, r, face, exponents, blades, q, quadrature)
+            block = _tensor_entity_moments(n, r, face, blades, q, quadrature)
             if block is not None:
                 blocks.append(block)
-    return _finish_prepared(exponents, generators, entities, blocks)
+    return _finish_prepared(exponents, entities, blocks, len(blades))
 
 
 def _entity_dof_indices(
@@ -757,6 +1142,215 @@ def _form_pullback_matrix(
     if twist == "twisted":
         matrix *= np.sign(np.linalg.det(jacobian))
     return matrix
+
+
+def _exact_vertex_permutation_affine(
+    n: int,
+    family: FormElementFamily,
+    vertices: tuple[int, ...],
+    /,
+) -> tuple[tuple[Fraction, ...], _ExactMatrix]:
+    reference = (
+        _tensor_vertices(n)
+        if family == "tensor-trimmed"
+        else (
+            (0,) * n,
+            *(
+                tuple(int(axis == coordinate) for axis in range(n))
+                for coordinate in range(n)
+            ),
+        )
+    )
+    if tuple(sorted(vertices)) != tuple(range(len(reference))):
+        raise ValueError("vertices must be a permutation of reference vertex indices.")
+    images = tuple(reference[index] for index in vertices)
+    origin = tuple(Fraction(value) for value in images[0])
+    coordinate_positions = {vertex: index for index, vertex in enumerate(reference)}
+    neighbors = tuple(
+        coordinate_positions[tuple(int(axis == column) for axis in range(n))]
+        for column in range(n)
+    )
+    jacobian: _ExactMatrix = tuple(
+        tuple(
+            Fraction(images[neighbors[column]][row] - images[0][row])
+            for column in range(n)
+        )
+        for row in range(n)
+    )
+    if any(
+        tuple(
+            origin[row]
+            + sum(
+                (
+                    jacobian[row][column] * reference[vertex][column]
+                    for column in range(n)
+                ),
+                Fraction(0),
+            )
+            for row in range(n)
+        )
+        != tuple(Fraction(value) for value in images[vertex])
+        for vertex in range(len(reference))
+    ):
+        raise ValueError("Tensor vertex permutation must be an affine cube symmetry.")
+    return origin, jacobian
+
+
+def _exact_form_pullback_matrix(
+    n: int,
+    k: int,
+    jacobian: _ExactMatrix,
+    twist: FormTwist,
+    /,
+) -> _ExactMatrix:
+    blades = tuple(combinations(range(n), k))
+    matrix = tuple(
+        tuple(_exact_minor(jacobian, source, target) for source in blades)
+        for target in blades
+    )
+    if twist != "twisted":
+        return matrix
+    determinant = Fraction(determinant_exact(jacobian))
+    if not determinant:
+        raise ValueError("Form permutation chart must be nonsingular.")
+    sign = Fraction(1 if determinant > 0 else -1)
+    return tuple(tuple(sign * value for value in row) for row in matrix)
+
+
+def _exact_substitute_polynomial(
+    polynomial: _ExactPolynomial,
+    origin: tuple[Fraction, ...],
+    jacobian: _ExactMatrix,
+    /,
+) -> _ExactPolynomial:
+
+    result: _ExactPolynomial = {}
+    for exponent, coefficient in polynomial.items():
+        _exact_add_scaled(
+            result,
+            _exact_substitute_monomial(exponent, origin, jacobian),
+            coefficient,
+        )
+    return result
+
+
+def _exact_substitute_coefficients(
+    exponents: tuple[tuple[int, ...], ...],
+    coefficients: _ExactCoefficientBank,
+    origin: tuple[Fraction, ...],
+    jacobian: _ExactMatrix,
+    pullback: _ExactMatrix,
+    /,
+) -> _ExactCoefficientBank:
+    component_count = len(coefficients[0])
+    dof_count = len(coefficients[0][0])
+    source_polynomials = [
+        [
+            {
+                exponent: coefficients[monomial][component][dof]
+                for monomial, exponent in enumerate(exponents)
+                if coefficients[monomial][component][dof]
+            }
+            for dof in range(dof_count)
+        ]
+        for component in range(component_count)
+    ]
+    transformed_polynomials: list[list[_ExactPolynomial]] = [
+        [{} for _ in range(dof_count)] for _ in range(component_count)
+    ]
+    for target_component in range(component_count):
+        for source_component in range(component_count):
+            scale = pullback[target_component][source_component]
+            if not scale:
+                continue
+            for dof in range(dof_count):
+                _exact_add_scaled(
+                    transformed_polynomials[target_component][dof],
+                    _exact_substitute_polynomial(
+                        source_polynomials[source_component][dof],
+                        origin,
+                        jacobian,
+                    ),
+                    scale,
+                )
+    positions = {exponent: index for index, exponent in enumerate(exponents)}
+    result = [
+        [[Fraction(0) for _ in range(dof_count)] for _ in range(component_count)]
+        for _ in exponents
+    ]
+    for component, polynomials in enumerate(transformed_polynomials):
+        for dof, polynomial in enumerate(polynomials):
+            for exponent, value in polynomial.items():
+                monomial = positions.get(exponent)
+                if monomial is None:
+                    raise ValueError(
+                        "Exact form permutation left the canonical monomial space."
+                    )
+                result[monomial][component][dof] = value
+    return tuple(tuple(tuple(dofs) for dofs in components) for components in result)
+
+
+@lru_cache(maxsize=128)
+def _exact_form_permutation_matrix(
+    dimension: int,
+    form_degree: int,
+    family: FormElementFamily,
+    twist: FormTwist,
+    exponents: tuple[tuple[int, ...], ...],
+    coefficients: _ExactCoefficientBank,
+    functional_moments: _ExactMomentBank,
+    vertices: tuple[int, ...],
+    /,
+) -> _ExactMatrix:
+    origin, jacobian = _exact_vertex_permutation_affine(dimension, family, vertices)
+    pullback = _exact_form_pullback_matrix(dimension, form_degree, jacobian, twist)
+    transformed = _exact_substitute_coefficients(
+        exponents, coefficients, origin, jacobian, pullback
+    )
+    dof_count = len(functional_moments)
+    component_count = comb(dimension, form_degree)
+    return tuple(
+        tuple(
+            sum(
+                (
+                    functional_moments[row][monomial][component]
+                    * transformed[monomial][component][column]
+                    for monomial in range(len(exponents))
+                    for component in range(component_count)
+                ),
+                Fraction(0),
+            )
+            for column in range(dof_count)
+        )
+        for row in range(dof_count)
+    )
+
+
+@lru_cache(maxsize=128)
+def _exact_form_orientation_actions(
+    dimension: int,
+    form_degree: int,
+    family: FormElementFamily,
+    twist: FormTwist,
+    exponents: tuple[tuple[int, ...], ...],
+    coefficients: _ExactCoefficientBank,
+    functional_moments: _ExactMomentBank,
+    vertices: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[_ExactMatrix, ...]:
+    return tuple(
+        _exact_form_permutation_matrix(
+            dimension,
+            form_degree,
+            family,
+            twist,
+            exponents,
+            coefficients,
+            functional_moments,
+            permutation,
+        )
+        for permutation in vertices
+    )
 
 
 def _substitute_coefficients(
@@ -876,6 +1470,8 @@ class _TensorFactors(StrictModule):
     """Interval modal duals and canonical product/component routes."""
 
     order: int = eqx.field(static=True)
+    zero_projection_errors: _ExactMatrix = eqx.field(static=True)
+    one_projection_errors: _ExactMatrix = eqx.field(static=True)
     zero: Array
     one: Array
     zero_derivatives: Array
@@ -886,8 +1482,17 @@ class _TensorFactors(StrictModule):
 
     def __init__(self, n: int, k: int, r: int, labels: tuple[DofLabel, ...]) -> None:
         interval = _tensor_interval(r)
+        zero_exact, one_exact, _, _, _, _ = _exact_tensor_interval_data(r)
         blades = tuple(combinations(range(n), k))
         self.order = r
+        self.zero_projection_errors = tuple(
+            tuple(abs(Fraction(float(value)) - value) for value in row)
+            for row in zero_exact
+        )
+        self.one_projection_errors = tuple(
+            tuple(abs(Fraction(float(value)) - value) for value in row)
+            for row in one_exact
+        )
         self.zero = jnp.asarray(interval.zero)
         self.one = jnp.asarray(interval.one)
         self.zero_derivatives = standard_series_derivative_coefficients(
@@ -965,7 +1570,12 @@ class _TensorFactors(StrictModule):
 
 @final
 class FormBasis(StrictModule):
-    """A moment-dual polynomial basis and its complete interpolation functionals."""
+    """A moment-dual polynomial basis and its complete interpolation functionals.
+
+    Exact Fraction banks define the source basis; coefficients and functional
+    moments are binary64 execution projections with their conversion errors
+    retained separately.
+    """
 
     dimension: int = eqx.field(static=True)
     form_degree: int = eqx.field(static=True)
@@ -975,6 +1585,12 @@ class FormBasis(StrictModule):
     exponents: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     dof_labels: tuple[DofLabel, ...] = eqx.field(static=True)
     entity_vertices: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    exact_generators: _ExactCoefficientBank = eqx.field(static=True)
+    exact_generator_labels: tuple[_GeneratorLabel, ...] = eqx.field(static=True)
+    exact_coefficients: _ExactCoefficientBank = eqx.field(static=True)
+    exact_functional_moments: _ExactMomentBank = eqx.field(static=True)
+    coefficient_projection_errors: _ExactCoefficientBank = eqx.field(static=True)
+    functional_moment_projection_errors: _ExactMomentBank = eqx.field(static=True)
     coefficients: Array
     tensor_factors: _TensorFactors | None
     functional_points: Array
@@ -1005,28 +1621,103 @@ class FormBasis(StrictModule):
             if family_ == "tensor-trimmed"
             else _prepare_simplex(dimension, form_degree, order, family_)
         )
+        blades = tuple(combinations(range(dimension), form_degree))
         if family_ == "tensor-trimmed":
-            coefficients = _tensor_coefficients(
+            exact_coefficients = _exact_tensor_coefficients(
                 dimension,
                 order,
                 prepared.exponents,
                 prepared.labels,
-                tuple(combinations(range(dimension), form_degree)),
+                blades,
+            )
+            exact_generators, exact_generator_labels = _exact_tensor_generators(
+                dimension,
+                order,
+                prepared.exponents,
+                prepared.labels,
+                blades,
+            )
+            exact_functional_moments = _exact_tensor_functional_moments(
+                dimension,
+                form_degree,
+                prepared.exponents,
+                prepared.labels,
             )
             tensor_factors = _TensorFactors(
                 dimension, form_degree, order, prepared.labels
             )
         else:
-            matrix = np.einsum("dmc,mcb->db", prepared.moments, prepared.generators)
-            if matrix.shape[0] != matrix.shape[1]:
-                raise ValueError(
-                    "Polynomial generators and entity functionals disagree in dimension."
+            generator_exponents, exact_generators, exact_generator_labels = (
+                _exact_generators(
+                    dimension,
+                    form_degree,
+                    order,
+                    family_ == "trimmed",
                 )
-            flat = prepared.generators.reshape(-1, matrix.shape[0])
-            coefficients = np.linalg.solve(matrix.T, flat.T).T.reshape(
-                prepared.generators.shape
+            )
+            if generator_exponents != prepared.exponents:
+                raise ValueError(
+                    "Exact generator monomials differ from execution preparation."
+                )
+            exact_functional_moments = _exact_simplex_functional_moments(
+                dimension,
+                form_degree,
+                order,
+                family_,
+                prepared.exponents,
+                prepared.labels,
+            )
+            exact_coefficients = _exact_dual_coefficients(
+                exact_generators, exact_functional_moments
             )
             tensor_factors = None
+        if (
+            len(exact_generators) != len(prepared.exponents)
+            or len(exact_generator_labels) != len(prepared.labels)
+            or any(len(row) != len(blades) for row in exact_generators)
+            or any(
+                len(row) != len(exact_generator_labels)
+                for monomial in exact_generators
+                for row in monomial
+            )
+        ):
+            raise ValueError("Exact form generator bank has inconsistent extents.")
+        if (
+            len(exact_functional_moments) != len(prepared.labels)
+            or any(
+                len(row) != len(prepared.exponents)
+                or any(len(components) != len(blades) for components in row)
+                for row in exact_functional_moments
+            )
+            or len(exact_coefficients) != len(prepared.exponents)
+            or any(len(row) != len(blades) for row in exact_coefficients)
+            or any(
+                len(row) != len(prepared.labels)
+                for monomial in exact_coefficients
+                for row in monomial
+            )
+        ):
+            raise ValueError("Exact form basis banks have inconsistent extents.")
+        coefficients = np.asarray(exact_coefficients, dtype=np.float64)
+        functional_moments = np.asarray(exact_functional_moments, dtype=np.float64)
+        if not np.all(np.isfinite(coefficients)) or not np.all(
+            np.isfinite(functional_moments)
+        ):
+            raise ValueError("Exact form basis has no finite binary64 projection.")
+        coefficient_projection_errors = tuple(
+            tuple(
+                tuple(abs(Fraction(float(value)) - value) for value in dofs)
+                for dofs in components
+            )
+            for components in exact_coefficients
+        )
+        functional_moment_projection_errors = tuple(
+            tuple(
+                tuple(abs(Fraction(float(value)) - value) for value in components)
+                for components in monomials
+            )
+            for monomials in exact_functional_moments
+        )
         self.dimension = dimension
         self.form_degree = form_degree
         self.order = order
@@ -1035,12 +1726,29 @@ class FormBasis(StrictModule):
         self.exponents = prepared.exponents
         self.dof_labels = prepared.labels
         self.entity_vertices = prepared.entities
+        self.exact_generators = exact_generators
+        self.exact_generator_labels = exact_generator_labels
+        self.exact_coefficients = exact_coefficients
+        self.exact_functional_moments = exact_functional_moments
+        self.coefficient_projection_errors = coefficient_projection_errors
+        self.functional_moment_projection_errors = functional_moment_projection_errors
         self.coefficients = jnp.asarray(coefficients)
         self.tensor_factors = tensor_factors
         self.functional_points = jnp.asarray(prepared.points)
         self.functional_weights = jnp.asarray(prepared.weights)
-        self.functional_moments = jnp.asarray(prepared.moments)
+        self.functional_moments = jnp.asarray(functional_moments)
         self.reference_nodes = jnp.asarray(prepared.nodes)
+        orientation_generators = _form_orientation_generators(dimension, family_)
+        orientation_actions = _exact_form_orientation_actions(
+            dimension,
+            form_degree,
+            family_,
+            twist_,
+            prepared.exponents,
+            exact_coefficients,
+            exact_functional_moments,
+            orientation_generators,
+        )
         self.basis_id = canonical_fingerprint(
             {
                 "kind": "form-basis",
@@ -1051,6 +1759,12 @@ class FormBasis(StrictModule):
                 "twist": twist_,
                 "exponents": prepared.exponents,
                 "labels": prepared.labels,
+                "exact_generator_labels": exact_generator_labels,
+                "exact_generators": _exact_data_digest(exact_generators),
+                "exact_coefficients": _exact_data_digest(exact_coefficients),
+                "exact_functional_moments": _exact_data_digest(exact_functional_moments),
+                "orientation_generators": orientation_generators,
+                "orientation_actions": _exact_data_digest(orientation_actions),
             }
         )
 
@@ -1172,7 +1886,7 @@ class FormBasis(StrictModule):
             )
         return reference_points, result.at[jnp.asarray(indices)].set(block)
 
-    def exterior_derivative_matrix(self, target: FormBasis, /) -> Array:
+    def _require_exterior_derivative_target(self, target: FormBasis, /) -> None:
         if (target.dimension, target.form_degree, target.twist) != (
             self.dimension,
             self.form_degree + 1,
@@ -1188,6 +1902,9 @@ class FormBasis(StrictModule):
             raise ValueError(
                 "Target family/order does not contain the exterior derivative."
             )
+
+    def exterior_derivative_matrix(self, target: FormBasis, /) -> Array:
+        self._require_exterior_derivative_target(target)
         if self.tensor_factors is not None:
             if target.order == self.order:
                 return jnp.asarray(
@@ -1229,6 +1946,40 @@ class FormBasis(StrictModule):
         result = contract("dmc,mcb->db", target.functional_moments, derivatives)
         return result
 
+    def exact_exterior_derivative_matrix(self, target: FormBasis, /) -> _ExactMatrix:
+        """Return the exact local moment action of the exterior derivative."""
+        self._require_exterior_derivative_target(target)
+        target_component_count = comb(self.dimension, self.form_degree + 1)
+        derivatives = [
+            [
+                [Fraction(0) for _ in range(self.local_dof_count)]
+                for _ in range(target_component_count)
+            ]
+            for _ in target.exponents
+        ]
+        for index, component, lower, output, factor in _polynomial_derivative_terms(
+            self.exponents, target.exponents, self.dimension, self.form_degree
+        ):
+            for dof in range(self.local_dof_count):
+                derivatives[lower][output][dof] += (
+                    factor * self.exact_coefficients[index][component][dof]
+                )
+        return tuple(
+            tuple(
+                sum(
+                    (
+                        target.exact_functional_moments[row][monomial][component]
+                        * derivatives[monomial][component][column]
+                        for monomial in range(len(target.exponents))
+                        for component in range(target_component_count)
+                    ),
+                    Fraction(0),
+                )
+                for column in range(self.local_dof_count)
+            )
+            for row in range(target.local_dof_count)
+        )
+
     def permutation_matrix(self, vertices: tuple[int, ...], /) -> Array:
         """Return local moments of pullback under v_i -> v_vertices[i].
 
@@ -1252,6 +2003,19 @@ class FormBasis(StrictModule):
         transformed = _substitute_coefficients(self.exponents, original, origin, jacobian)
         return jnp.asarray(
             np.einsum("dmc,mcb->db", np.asarray(self.functional_moments), transformed)
+        )
+
+    def exact_permutation_matrix(self, vertices: tuple[int, ...], /) -> _ExactMatrix:
+        """Return the exact pullback action on local entity moments."""
+        return _exact_form_permutation_matrix(
+            self.dimension,
+            self.form_degree,
+            self.family,
+            self.twist,
+            self.exponents,
+            self.exact_coefficients,
+            self.exact_functional_moments,
+            vertices,
         )
 
     def canonical_permutation(
@@ -1292,6 +2056,32 @@ class FormBasis(StrictModule):
                     ].set(block)
         return result
 
+    def exact_entity_permutation_matrix(
+        self, global_vertices: tuple[int, ...], /
+    ) -> _ExactMatrix:
+        """Return the exact local-to-global entity moment action."""
+        expected = (
+            2**self.dimension if self.family == "tensor-trimmed" else self.dimension + 1
+        )
+        if len(global_vertices) != expected or len(set(global_vertices)) != expected:
+            raise ValueError("Provide one distinct global identifier per local vertex.")
+        result = [
+            [Fraction(0) for _ in range(self.local_dof_count)]
+            for _ in range(self.local_dof_count)
+        ]
+        for m, level in enumerate(self.entity_vertices):
+            for face in level:
+                indices = _entity_dof_indices(self.dof_labels, face)
+                if not indices:
+                    continue
+                block = self._exact_entity_moment_transform(
+                    m, face, len(indices), global_vertices
+                )
+                for row, index in enumerate(indices):
+                    for column, source in enumerate(indices):
+                        result[index][source] = block[row][column]
+        return tuple(tuple(row) for row in result)
+
     def _entity_moment_transform(
         self,
         m: int,
@@ -1309,6 +2099,27 @@ class FormBasis(StrictModule):
         ids = _canonical_entity_ids(self.family, self.dimension, m, face, global_vertices)
         full = entity.permutation_matrix(entity.canonical_permutation(ids))
         return full[jnp.asarray(interior)[:, None], jnp.asarray(interior)[None, :]]
+
+    def _exact_entity_moment_transform(
+        self,
+        m: int,
+        face: tuple[int, ...],
+        count: int,
+        global_vertices: tuple[int, ...],
+    ) -> _ExactMatrix:
+        if m == 0 or (self.family == "full" and self.order == 0):
+            return tuple(
+                tuple(Fraction(int(row == column)) for column in range(count))
+                for row in range(count)
+            )
+        entity = FormBasis(m, self.form_degree, self.order, self.family, "untwisted")
+        vertex_count = 2**m if self.family == "tensor-trimmed" else m + 1
+        interior = _interior_dof_indices(entity.dof_labels, vertex_count)
+        if len(interior) != count:
+            raise ValueError("Entity moment block dimensions disagree.")
+        ids = _canonical_entity_ids(self.family, self.dimension, m, face, global_vertices)
+        full = entity.exact_permutation_matrix(entity.canonical_permutation(ids))
+        return tuple(tuple(full[row][column] for column in interior) for row in interior)
 
 
 def _canonical_cube_permutation(

@@ -10,8 +10,23 @@ import pytest
 
 import phydrax as phx
 from phydrax import _config_state
+from phydrax._execution_resources import ExecutionGroupSpec
+from phydrax._execution_runtime import ExecutionGroup
+from phydrax._fingerprint import canonical_fingerprint
+from phydrax.graph import (
+    DistributedWeightedCSRGraph,
+    GraphPartitionPlan,
+    partition_graph_distributed,
+)
+from phydrax.lifecycle import CompositionEntry
 from phydrax.meshing._assembly import MeshPart
-from phydrax.meshing._distribution import MeshDistribution
+from phydrax.meshing._distribution import (
+    _OWNER_LOCAL_IDENTITY_BUCKET_COUNT,
+    _owner_local_multiset_identity,
+    MeshDistribution,
+    OwnerLocalGraphMigrationEvidence,
+    ShardedOwnerDirectoryWitness,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -370,7 +385,7 @@ def _brute_force_halos(part: Any, owner: Any, part_count: Any, width: Any) -> An
     return halos
 
 
-def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
+def test_provider_and_native_graph_routes_take_explicit_ownership_or_fail_closed(
     monkeypatch: Any,
 ) -> None:
     part, _ = _quad_mesh(4, 4)
@@ -388,8 +403,8 @@ def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
         phx.meshing.prepare_mesh_distribution(part, policy=graph, ownership=owners)
     with monkeypatch.context() as patched:
         patched.setenv("PHYDRAX_METIS_LIBRARY", "/nonexistent/libmetis.dylib")
-        with pytest.raises(phx.meshing.MetisUnavailableError, match="missing"):
-            phx.meshing.prepare_mesh_distribution(part, policy=graph)
+        native = phx.meshing.prepare_mesh_distribution(part, policy=graph)
+    assert native.evidence.provenance.startswith("phydrax-meshcore ")
 
 
 @pytest.mark.parametrize("path", (None, "", " \t "))
@@ -402,8 +417,11 @@ def test_absent_or_blank_metis_path_uses_platform_fallback(
         monkeypatch.setenv("PHYDRAX_METIS_LIBRARY", path)
     monkeypatch.setattr(ctypes.util, "find_library", lambda name: None)
     part, _ = _quad_mesh(4, 4)
-    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.GRAPH, 2)
-    with pytest.raises(phx.meshing.MetisUnavailableError, match="requires METIS; set"):
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.METIS, 2)
+    with pytest.raises(
+        phx.meshing.MetisUnavailableError,
+        match="explicit METIS comparison requires a METIS library",
+    ):
         phx.meshing.prepare_mesh_distribution(part, policy=policy)
 
 
@@ -414,17 +432,45 @@ def test_configured_missing_metis_path_refuses_platform_fallback(tmp_path: Path)
         )
     )
     part, _ = _quad_mesh(4, 4)
-    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.GRAPH, 2)
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.METIS, 2)
     with pytest.raises(
         phx.meshing.MetisUnavailableError, match="PHYDRAX_METIS_LIBRARY names a missing"
     ):
         phx.meshing.prepare_mesh_distribution(part, policy=policy)
 
 
-def test_graph_route_partitions_with_metis_deterministically() -> None:
+def test_graph_route_partitions_with_native_meshcore_deterministically() -> None:
     part, _ = _quad_mesh(10, 10)
     policy = phx.meshing.MeshPartitionPolicy(
         phx.meshing.MeshPartitionKind.GRAPH, 4, maximum_imbalance=1.1
+    )
+    first = phx.meshing.prepare_mesh_distribution(part, policy=policy)
+    second = phx.meshing.prepare_mesh_distribution(part, policy=policy)
+    np.testing.assert_array_equal(first.partition.cell_owner, second.partition.cell_owner)
+    assert np.unique(np.asarray(first.partition.cell_owner)).size == 4
+    assert first.evidence.provenance.startswith("phydrax-meshcore ")
+    assert first.evidence.feasible
+
+
+def test_owner_local_geometry_selector_compacts_cells_and_coordinate_routes() -> None:
+    part, _ = _quad_mesh(12, 12)
+    policy = phx.meshing.MeshPartitionPolicy(
+        phx.meshing.MeshPartitionKind.MORTON, 4, halo_width=1
+    )
+    distribution = phx.meshing.prepare_mesh_distribution(part, policy=policy)
+    local = distribution.local_cell_geometry(0)
+    carrier = part.carrier
+    assert np.all(np.diff(np.asarray(local["cell_ids"])) > 0)
+    assert local["coordinates"].shape[0] < carrier.geometry.coordinates.shape[0]
+    for block in local["blocks"]:
+        routes = np.asarray(block["coordinate_routes"])
+        assert np.all((routes < 0) | (routes < local["coordinates"].shape[0]))
+
+
+def test_metis_route_remains_an_explicit_optional_comparison() -> None:
+    part, _ = _quad_mesh(10, 10)
+    policy = phx.meshing.MeshPartitionPolicy(
+        phx.meshing.MeshPartitionKind.METIS, 4, maximum_imbalance=1.1
     )
     try:
         first = phx.meshing.prepare_mesh_distribution(part, policy=policy)
@@ -434,7 +480,6 @@ def test_graph_route_partitions_with_metis_deterministically() -> None:
     np.testing.assert_array_equal(first.partition.cell_owner, second.partition.cell_owner)
     assert np.unique(np.asarray(first.partition.cell_owner)).size == 4
     assert first.evidence.provenance.startswith("metis:")
-    assert float(first.evidence.imbalance) <= 1.1 + 1e-12
 
 
 def _check_migration(transition: Any, parents: Any, source_values: Any) -> None:
@@ -648,3 +693,552 @@ def test_migration_transport_refuses_entries_of_other_distributions() -> None:
         transition.composition_transport(
             _cell_state(transition.target, mass), _cell_state(transition.target, mass)
         )
+
+
+def test_sharded_owner_directory_witness_resolves_owned_ids_and_refuses_unknown() -> None:
+    if jax.process_count() != 1:
+        pytest.skip("This ownership-rebind contract uses one local process group.")
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-directory-contract",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("owners", 1),),
+        ),
+        (device,),
+    )
+    source_authority = CompositionEntry(
+        None,
+        entry_id="periodic-source",
+        role="topology",
+        owner_id="phydrax.test.periodic",
+        structure_id="source-topology",
+        revision_id="source-revision",
+        semantics_id="source-meaning",
+    )
+    part_authority = CompositionEntry(
+        None,
+        entry_id="periodic-part",
+        role="topology",
+        owner_id="phydrax.test.periodic",
+        structure_id="periodic-topology",
+        revision_id="periodic-part-revision",
+        semantics_id="periodic-geometry",
+        dependencies=(source_authority.binding("structure"),),
+    )
+    witness = ShardedOwnerDirectoryWitness(
+        group,
+        0,
+        "single-owner-source-manifest",
+        "single-owner-directory",
+        np.asarray((1, 2), dtype=np.int64),
+        np.asarray((0, 0), dtype=np.int32),
+        np.asarray((True, True), dtype=np.bool_),
+        np.asarray((10,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int32),
+        np.asarray((20, 21, 22), dtype=np.int64),
+        np.asarray((0, 0, 0), dtype=np.int32),
+    )
+    bound = witness.bind_source_authority(
+        part_authority.record_id,
+        group,
+        axis_name="single-owner-directory-binding",
+    )
+    assert bound.source_authority_id == part_authority.record_id
+    assert witness.source_authority_id is None
+    assert bound.directory_id == witness.directory_id
+    assert bound.authority_id != witness.authority_id
+    assert witness.rank == 0 and witness.part_count == 1
+    np.testing.assert_array_equal(
+        bound.owner_ranks_for_ids(
+            np.asarray((10,), dtype=np.int64), directory_kind="mesh-cells"
+        ),
+        np.asarray((0,), dtype=np.int32),
+    )
+    with pytest.raises(ValueError, match="Owner lookup ID is outside"):
+        bound.owner_ranks_for_ids(
+            np.asarray((999,), dtype=np.int64), directory_kind="mesh-cells"
+        )
+    with pytest.raises(
+        ValueError,
+        match="Authority rebinding changed the accepted group, shard, or source binding",
+    ):
+        bound.bind_source_authority("different-periodic-part-authority", group)
+
+
+def test_owner_local_identity_is_order_independent_and_content_sensitive() -> None:
+    if jax.process_count() != 1:
+        pytest.skip("This identity contract uses one local process group.")
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-logical-identity",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("identity", 1),),
+        ),
+        (device,),
+    )
+    header = {"periodic_cell": "unit-cell", "dimension": 2}
+    records = (
+        (91, {"exact_point": ((0, 1), (1, 2)), "weight": (3, 5)}),
+        (4, {"exact_point": ((1, 1), (0, 1)), "weight": (0, 1)}),
+    )
+    identity = _owner_local_multiset_identity(
+        "periodic-source-content",
+        header,
+        records,
+        "source",
+        "revision",
+        group,
+        "identity_ordered",
+    )
+    assert (
+        _owner_local_multiset_identity(
+            "periodic-source-content",
+            header,
+            tuple(reversed(records)),
+            "source",
+            "revision",
+            group,
+            "identity_reordered",
+        )
+        == identity
+    )
+    assert (
+        _owner_local_multiset_identity(
+            "periodic-source-content",
+            header,
+            (
+                records[0],
+                (
+                    records[1][0],
+                    {"exact_point": ((1, 1), (1, 1)), "weight": (0, 1)},
+                ),
+            ),
+            "source",
+            "revision",
+            group,
+            "identity_changed_coordinate",
+        )
+        != identity
+    )
+    assert (
+        _owner_local_multiset_identity(
+            "periodic-source-content",
+            header,
+            ((92, records[0][1]), records[1]),
+            "source",
+            "revision",
+            group,
+            "identity_changed_key",
+        )
+        != identity
+    )
+    assert (
+        _owner_local_multiset_identity(
+            "periodic-source-content",
+            header,
+            (records[0],),
+            "source",
+            "revision",
+            group,
+            "identity_dropped_record",
+        )
+        != identity
+    )
+    with pytest.raises(ValueError, match="duplicate entity keys"):
+        _owner_local_multiset_identity(
+            "periodic-source-content",
+            header,
+            (records[0], records[0]),
+            "source",
+            "revision",
+            group,
+            "identity_duplicate_key",
+        )
+
+
+def test_owner_local_periodic_source_entry_is_stable_under_coordinate_motion() -> None:
+    if jax.process_count() != 1:
+        pytest.skip("This source identity contract uses one local process group.")
+    from phydrax.discretization._periodic_cell import PeriodicCell
+    from phydrax.meshing._periodic import PeriodicPointOrbits
+    from phydrax.meshing.providers._native_periodic import (
+        _owner_local_periodic_source_authority,
+        NativePeriodicSource,
+    )
+
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-periodic-source-motion",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("source_identity", 1),),
+        ),
+        (device,),
+    )
+    cell = PeriodicCell(np.eye(2, dtype=np.float64))
+    point_ids = np.asarray((11, 29), dtype=np.int64)
+    weights = np.asarray((0.125, -0.25), dtype=np.float64)
+    owners = np.zeros(point_ids.shape, dtype=np.int32)
+    source_values = (
+        np.asarray(((0.0, 0.25), (0.5, 0.75)), dtype=np.float64),
+        np.asarray(((0.125, 0.25), (0.5, 0.75)), dtype=np.float64),
+        np.asarray(((-0.0, 0.25), (0.5, 0.75)), dtype=np.float64),
+    )
+    authorities = tuple(
+        _owner_local_periodic_source_authority(
+            NativePeriodicSource(
+                PeriodicPointOrbits(cell, points, point_ids),
+                "periodic-motion-source",
+                "periodic-motion-revision",
+                site_weights=weights,
+                point_owner_ranks=owners,
+            ),
+            group,
+            f"source_identity_{index}",
+        )
+        for index, points in enumerate(source_values)
+    )
+    entries = tuple(authority[0].record_id for authority in authorities)
+    content = tuple(authority[2] for authority in authorities)
+    bindings = tuple(authority[0].value.binding_id for authority in authorities)
+    assert entries[0] == entries[1] == entries[2]
+    assert authorities[0][1].composition_id == authorities[1][1].composition_id
+    assert authorities[0][1].composition_id == authorities[2][1].composition_id
+    assert content[0] != content[1]
+    assert content[0] != content[2]
+    assert bindings[0] != bindings[1]
+    assert bindings[0] != bindings[2]
+
+
+def test_owner_local_graph_keyed_state_transfer_preserves_exact_rows() -> None:
+    if jax.process_count() != 1:
+        pytest.skip("This keyed-row transfer contract uses one local process group.")
+
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-graph-state-transfer",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("graph_state", 1),),
+        ),
+        (device,),
+    )
+    cell_ids = np.asarray((10, 20), dtype=np.int64)
+    graph = DistributedWeightedCSRGraph(
+        np.asarray((0, 0, 0), dtype=np.int64),
+        np.empty((0,), dtype=np.int64),
+        entity_ids=cell_ids,
+        owner_ranks=np.zeros((2,), dtype=np.int32),
+        neighbor_owner_ranks=np.empty((0,), dtype=np.int32),
+        vertex_weights=np.ones((2,), dtype=np.int64),
+    )
+    result = partition_graph_distributed(
+        graph,
+        GraphPartitionPlan(1, maximum_imbalance=1.0),
+        group,
+        axis_name="graph_state_partition",
+    )
+    evidence = OwnerLocalGraphMigrationEvidence(
+        result,
+        "graph-state-candidate",
+        "source-part",
+        "periodic-face-coverage",
+        "source-directory",
+        "target-part",
+        "target-directory",
+        group.spec.group_id,
+        0,
+        1,
+        cell_ids,
+    )
+    source_keys = np.asarray(((3, 10, 0), (3, 20, 0)), dtype=np.int64)
+    target_keys = source_keys[::-1].copy()
+    owners = np.zeros((2,), dtype=np.int32)
+    values = np.asarray(((1.25, -0.0), (3.5, 4.0)), dtype=np.float64)
+    source = CompositionEntry(
+        values,
+        entry_id="cell-state",
+        role="physical-state",
+        owner_id="test-solver",
+        structure_id="source-part",
+        revision_id="state-revision-1",
+        semantics_id="velocity-field",
+    )
+
+    transfer = evidence.transfer_keyed_values(
+        source,
+        source_keys,
+        owners,
+        values,
+        target_keys,
+        owners,
+        group,
+        target_structure_id="target-part",
+        key_identity_id=canonical_fingerprint(
+            {"kind": "periodic-cell-state-keys", "entity_dimension": 3}
+        ),
+        axis_name="graph_state_transfer",
+    )
+    np.testing.assert_array_equal(np.asarray(transfer.target_entity_keys), target_keys)
+    np.testing.assert_array_equal(
+        np.asarray(transfer.target_values).view(np.uint8),
+        values[::-1].copy().view(np.uint8),
+    )
+    assert transfer.source_content_root == transfer.target_content_root
+    target = CompositionEntry(
+        transfer.target_values,
+        entry_id=source.entry_id,
+        role=source.role,
+        owner_id=source.owner_id,
+        structure_id="target-part",
+        revision_id=source.revision_id,
+        semantics_id=source.semantics_id,
+    )
+    transport = transfer.composition_transport(source, target)
+    assert bool(np.asarray(transport.successful))
+    assert transport.source_content is None
+    assert transport.target_content is None
+    assert transport.content_tolerance is None
+    assert transport.source_content_root == transfer.source_content_root
+    assert transport.target_content_root == transfer.target_content_root
+
+    local_keys = target_keys[[0, 1, 0]]
+    local_values = transfer.gather_target_local_values(
+        local_keys,
+        group,
+        axis_name="graph_state_local_rows",
+    )
+    np.testing.assert_array_equal(
+        np.asarray(local_values).view(np.uint8),
+        values[[1, 0, 1]].copy().view(np.uint8),
+    )
+    empty_local_values = transfer.gather_target_local_values(
+        np.empty((0, 3), dtype=np.int64),
+        group,
+        axis_name="graph_state_empty_local_rows",
+    )
+    assert empty_local_values.shape == (0, 2)
+
+    key_data = np.asarray(((1, 2), (3, 4)), dtype=np.uint32)
+    rng_values = jax.random.wrap_key_data(jnp.asarray(key_data), impl="threefry2x32")
+    rng_source = CompositionEntry(
+        rng_values,
+        entry_id="cell-rng-state",
+        role="physical-state",
+        owner_id="test-solver",
+        structure_id="source-part",
+        revision_id="rng-revision-1",
+        semantics_id="cell-rng-keys",
+    )
+    rng_transfer = evidence.transfer_keyed_values(
+        rng_source,
+        source_keys,
+        owners,
+        rng_values,
+        target_keys,
+        owners,
+        group,
+        target_structure_id="target-part",
+        key_identity_id=canonical_fingerprint(
+            {"kind": "periodic-cell-rng-keys", "entity_dimension": 3}
+        ),
+        axis_name="graph_state_rng_transfer",
+    )
+    assert jax.dtypes.issubdtype(rng_transfer.target_values.dtype, jax.dtypes.prng_key)
+    assert str(jax.random.key_impl(rng_transfer.target_values)) == "threefry2x32"
+    np.testing.assert_array_equal(
+        np.asarray(jax.random.key_data(rng_transfer.target_values)),
+        key_data[::-1],
+    )
+    rng_target = CompositionEntry(
+        rng_transfer.target_values,
+        entry_id=rng_source.entry_id,
+        role=rng_source.role,
+        owner_id=rng_source.owner_id,
+        structure_id="target-part",
+        revision_id=rng_source.revision_id,
+        semantics_id=rng_source.semantics_id,
+    )
+    rng_transport = rng_transfer.composition_transport(rng_source, rng_target)
+    assert bool(np.asarray(rng_transport.successful))
+    assert rng_transport.source_content_root == rng_transport.target_content_root
+    local_rng_values = rng_transfer.gather_target_local_values(
+        local_keys,
+        group,
+        axis_name="graph_state_rng_local_rows",
+    )
+    assert jax.dtypes.issubdtype(local_rng_values.dtype, jax.dtypes.prng_key)
+    np.testing.assert_array_equal(
+        np.asarray(jax.random.key_data(local_rng_values)),
+        key_data[[1, 0, 1]],
+    )
+    empty_local_rng = rng_transfer.gather_target_local_values(
+        np.empty((0, 3), dtype=np.int64),
+        group,
+        axis_name="graph_state_empty_rng_rows",
+    )
+    assert empty_local_rng.shape == (0,)
+    assert jax.dtypes.issubdtype(empty_local_rng.dtype, jax.dtypes.prng_key)
+    empty_keys = np.empty((0, 3), dtype=np.int64)
+    empty_owners = np.empty((0,), dtype=np.int32)
+    empty_values = np.empty((0, 2), dtype=np.float64)
+    empty_source = CompositionEntry(
+        empty_values,
+        entry_id="empty-cell-state",
+        role="physical-state",
+        owner_id="test-solver",
+        structure_id="source-part",
+        revision_id="state-revision-1",
+        semantics_id="empty-cell-field",
+    )
+    empty_transfer = evidence.transfer_keyed_values(
+        empty_source,
+        empty_keys,
+        empty_owners,
+        empty_values,
+        empty_keys,
+        empty_owners,
+        group,
+        target_structure_id="target-part",
+        key_identity_id=canonical_fingerprint(
+            {"kind": "periodic-cell-state-keys", "entity_dimension": 3}
+        ),
+        axis_name="graph_state_empty_transfer",
+    )
+    assert empty_transfer.target_values.shape == (0, 2)
+    empty_target = CompositionEntry(
+        empty_transfer.target_values,
+        entry_id=empty_source.entry_id,
+        role=empty_source.role,
+        owner_id=empty_source.owner_id,
+        structure_id="target-part",
+        revision_id=empty_source.revision_id,
+        semantics_id=empty_source.semantics_id,
+    )
+    empty_transport = empty_transfer.composition_transport(empty_source, empty_target)
+    assert bool(np.asarray(empty_transport.successful))
+    assert empty_transport.source_content_root == empty_transport.target_content_root
+
+    tampered = np.asarray(transfer.target_values).copy()
+    tampered[0, 0] = 2.0
+    bad_target = CompositionEntry(
+        tampered,
+        entry_id=source.entry_id,
+        role=source.role,
+        owner_id=source.owner_id,
+        structure_id="target-part",
+        revision_id=source.revision_id,
+        semantics_id=source.semantics_id,
+    )
+    with pytest.raises(ValueError, match="exact rows"):
+        transfer.composition_transport(source, bad_target)
+
+
+def _logical_bucket_identity_reference(
+    kind: str,
+    header: object,
+    records: tuple[tuple[object, object], ...],
+    source_id: str,
+    source_revision: str,
+    /,
+) -> str:
+    header_digest = canonical_fingerprint(
+        {
+            "kind": kind,
+            "source_id": source_id,
+            "source_revision": source_revision,
+            "header": header,
+        }
+    )
+    buckets: list[list[tuple[str, str]]] = [
+        [] for _ in range(_OWNER_LOCAL_IDENTITY_BUCKET_COUNT)
+    ]
+    for key, record in records:
+        key_digest = canonical_fingerprint(key)
+        record_digest = canonical_fingerprint(
+            {
+                "kind": kind,
+                "header": header_digest,
+                "key": key,
+                "record": record,
+            }
+        )
+        buckets[bytes.fromhex(key_digest)[0]].append((key_digest, record_digest))
+    logical_buckets = tuple(
+        (
+            bucket,
+            canonical_fingerprint(
+                {
+                    "kind": f"{kind}-logical-bucket",
+                    "bucket": bucket,
+                    "records": tuple(sorted(buckets[bucket])),
+                }
+            ),
+        )
+        for bucket in range(_OWNER_LOCAL_IDENTITY_BUCKET_COUNT)
+    )
+    return canonical_fingerprint(
+        {
+            "kind": f"owner-local-{kind}",
+            "source_id": source_id,
+            "source_revision": source_revision,
+            "header": header,
+            "logical_buckets": logical_buckets,
+        }
+    )
+
+
+def test_owner_local_identity_is_process_count_invariant() -> None:
+    processes = tuple(sorted({device.process_index for device in jax.devices()}))
+    if len(processes) not in (1, 3):
+        pytest.skip("The identity contract is qualified on one or three processes.")
+    devices_by_process = {
+        process: next(
+            device for device in jax.devices() if device.process_index == process
+        )
+        for process in processes
+    }
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "logical-bucket-process-invariance",
+            processes,
+            tuple((process, devices_by_process[process].id) for process in processes),
+            mesh_axes=(("identity", len(processes)),),
+        ),
+        tuple(devices_by_process[process] for process in processes),
+    )
+    rank = processes.index(jax.process_index())
+    records = (
+        (91, {"exact_point": ((0, 1), (1, 2)), "weight": (3, 5)}),
+        (4, {"exact_point": ((1, 1), (0, 1)), "weight": (0, 1)}),
+    )
+    local_records = tuple(
+        record for index, record in enumerate(records) if index % len(processes) == rank
+    )
+    header = {"periodic_cell": "unit-cell", "dimension": 2}
+    identity = _owner_local_multiset_identity(
+        "periodic-source-content",
+        header,
+        local_records,
+        "source",
+        "revision",
+        group,
+        "logical_bucket_process_invariance",
+    )
+    assert identity == _logical_bucket_identity_reference(
+        "periodic-source-content",
+        header,
+        records,
+        "source",
+        "revision",
+    )

@@ -641,11 +641,6 @@ def export_mesh_array_artifact(
         raise TypeError("policy must be MeshInteropPolicy.")
     elements, routes, points = geometry.resolve(mesh)
     points = np.asarray(points)
-    if (
-        points.shape[0] > policy.maximum_vertices
-        or sum(block.cell_count for block in mesh.blocks) > policy.maximum_cells
-    ):
-        raise ValueError("Mesh export exceeds maximum_vertices or maximum_cells.")
     reverse_types = {
         (kind, order): source for source, (kind, order, _) in MESHIO_CELL_TYPES.items()
     }
@@ -793,7 +788,6 @@ def export_mesh_array_artifact(
         labels=tuple(label_selection(value) for value in labels),
         patches=tuple(patch_selection(value) for value in patches),
     )
-    _check_array_limits(artifact, policy)
     report = _report(
         "phydrax-cell-mesh",
         "phydrax-mesh-arrays",

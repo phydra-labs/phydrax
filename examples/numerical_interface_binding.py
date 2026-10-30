@@ -20,7 +20,9 @@ from OCP.gp import gp_Pnt
 from OCP.TopoDS import TopoDS_Face
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
 from phydrax.geometry.surface import InterfaceSide
+from phydrax.interchange import model_from_occt_shape
 from phydrax.solver.coupling import InterfaceBinding, InterfaceEndpoint, InterfaceSource
 
 
@@ -52,12 +54,16 @@ def grid(x0: float, x1: float, count: int) -> phx.discretization.CellMesh:
 
 
 shape = BRepAlgoAPI_Fuse(rectangle(-1.0, 0.0), rectangle(0.0, 1.0)).Shape()
-model = phx.geometry.model_from_occt_shape(
-    shape, coordinate_contract=CONTRACT, linear_deflection=0.05, angular_deflection=0.2
+model = model_from_occt_shape(
+    shape,
+    coordinate_contract=CONTRACT,
+    tessellation=BRepTessellationPolicy(
+        linear_deflection=0.05,
+        angular_deflection=0.2,
+    ),
 )
 projection = phx.geometry.prepare_brep_projection(
     model,
-    shape,
     embedding=phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
 )
 
@@ -71,7 +77,7 @@ residuals = np.asarray(
     ).residuals
 )
 wall = phx.geometry.brep_entity_id(
-    model.source_revision, 1, int(np.flatnonzero(residuals < 1e-12)[0])
+    model.source_id, model.source_revision, 1, int(np.flatnonzero(residuals < 1e-12)[0])
 )
 
 

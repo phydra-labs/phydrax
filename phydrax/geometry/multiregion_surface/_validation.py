@@ -95,7 +95,6 @@ class _Intersections:
     intersecting: int
     uncertain: int
     candidates: int
-    exceeded: bool
 
 
 def _region_cycles(
@@ -494,17 +493,16 @@ def _self_intersections(
     points: np.ndarray,
     faces: np.ndarray,
     valid: np.ndarray,
-    capacity: int,
     /,
 ) -> _Intersections:
-    """Bounded BVH broad phase plus exact narrow phase beyond shared features."""
+    """Exhaustively scan BVH-overlap face pairs with exact narrow predicates."""
     # The exact welded triangle-pair classifier is owned by the meshing audit;
     # importing it lazily keeps geometry importable before meshing.
     from ...meshing._audit_topology import _triangle_pairs_intersect
 
     selected = np.flatnonzero(valid)
     if selected.size < 2:
-        return _Intersections(True, 0, 0, 0, False)
+        return _Intersections(True, 0, 0, 0)
     triangles = points[faces[selected]]
     bvh = prepare_bvh(
         np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=np.float64
@@ -512,23 +510,16 @@ def _self_intersections(
     intersecting = 0
     uncertain = 0
     candidates = 0
-    exceeded = False
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         first = selected[first[keep]]
         second = selected[second[keep]]
-        remaining = capacity - candidates
-        if first.size > remaining:
-            first, second = first[:remaining], second[:remaining]
-            exceeded = True
         candidates += first.size
         if first.size:
             hit, certain = _triangle_pairs_intersect(points, faces[first], faces[second])
             intersecting += int(np.count_nonzero(hit & certain))
             uncertain += int(np.count_nonzero(~certain))
-        if exceeded:
-            break
-    return _Intersections(True, intersecting, uncertain, candidates, exceeded)
+    return _Intersections(True, intersecting, uncertain, candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,8 +610,6 @@ def _status(
         return MultiRegionSurfaceStatus.SELF_INTERSECTION
     if uncertain:
         return MultiRegionSurfaceStatus.UNCERTAIN_PREDICATE
-    if intersections.exceeded:
-        return MultiRegionSurfaceStatus.INTERSECTION_CANDIDATES_EXCEEDED
     return MultiRegionSurfaceStatus.ACCEPTED
 
 
@@ -696,11 +685,9 @@ def validate_multiregion_surface(
         volumes = np.full((len(finite_indices),), np.nan)
     positive = bool(np.all(volumes > 0.0))
     if finite and policy_.check_self_intersection:
-        intersections = _self_intersections(
-            points, faces, ~degenerate, policy_.intersection_candidate_capacity
-        )
+        intersections = _self_intersections(points, faces, ~degenerate)
     else:
-        intersections = _Intersections(False, 0, 0, 0, False)
+        intersections = _Intersections(False, 0, 0, 0)
     uncertain = (
         wedges.uncertain
         + int(np.count_nonzero(~degenerate_certain))
@@ -748,7 +735,6 @@ def validate_multiregion_surface(
         intersecting_pair_count=intersections.intersecting,
         uncertain_pair_count=uncertain,
         candidate_pair_count=intersections.candidates,
-        candidate_capacity_exceeded=intersections.exceeded,
         predicate_mode=mode.value,
         capacity=topology.plan.capacity_evidence(topology.counts),
         topology_id=topology.topology_id,

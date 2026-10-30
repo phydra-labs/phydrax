@@ -10,6 +10,7 @@ import json
 import math
 import os
 import struct
+import sys
 import zipfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -26,10 +27,9 @@ from ._host_io import open_regular_file
 from ._publication import publish_file
 
 
-_DEFAULT_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
-_DEFAULT_MAX_ARRAY_BYTES = 4 * 1024 * 1024 * 1024
-_DEFAULT_MAX_TOTAL_BYTES = 16 * 1024 * 1024 * 1024
-_DEFAULT_MAX_MEMBERS = 100_001
+_CORE_ARRAY_DTYPE_KINDS = frozenset("?biufcmMUSV")
+_CORE_JSON_NESTING_LIMIT = min(256, max(32, sys.getrecursionlimit() // 4))
+_CORE_NPY_HEADER_NESTING_LIMIT = 128
 
 
 class ArrayArchiveError(RuntimeError):
@@ -104,63 +104,55 @@ DEFAULT_ARRAY_ARCHIVE_LIMITS = ArrayArchiveLimits()
 def _resolved_archive_limits(
     limits: ArrayArchiveLimits | None,
     /,
-) -> ArrayArchiveLimits:
+) -> ArrayArchiveLimits | None:
     if limits is not None and not isinstance(limits, ArrayArchiveLimits):
         raise TypeError("limits must be ArrayArchiveLimits or None.")
-    if limits is not None:
-        return limits
-    return ArrayArchiveLimits(
-        max_container_bytes=2**63 - 1,
-        max_aggregate_bytes=2**63 - 1,
-        max_member_bytes=2**63 - 1,
-        max_manifest_bytes=2**63 - 1,
-        max_members=2**31 - 1,
-        max_central_directory_bytes=2**63 - 1,
-        max_npy_header_bytes=2**31 - 1,
-        max_npy_header_nesting=2**31 - 1,
-        max_array_rank=2**31 - 1,
-        max_axis_length=2**63 - 1,
-        max_array_elements=2**63 - 1,
-        max_total_array_elements=2**63 - 1,
-        max_dtype_itemsize=2**31 - 1,
-        max_manifest_nesting=2**31 - 1,
-        allowed_dtype_kinds=frozenset("?biufcmMUSV"),
-        allow_structured_dtypes=True,
-    )
+    return limits
 
 
 def _admit_array_for_archive(
     array: np.ndarray,
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     name: str,
     /,
 ) -> int:
     dtype = array.dtype
-    if dtype.hasobject:
-        raise TypeError(f"Archive array {name!r} cannot have object dtype.")
-    if (
-        (
-            (dtype.fields is not None or dtype.subdtype is not None)
-            and not limits.allow_structured_dtypes
-        )
-        or dtype.metadata is not None
-        or dtype.kind not in limits.allowed_dtype_kinds
-        or dtype.itemsize > limits.max_dtype_itemsize
-    ):
-        raise TypeError(f"Archive array {name!r} dtype is not admitted by policy.")
-    if array.ndim > limits.max_array_rank:
-        raise ValueError(f"Archive array {name!r} exceeds the rank limit.")
+    if dtype.hasobject or dtype.metadata is not None:
+        raise TypeError(f"Archive array {name!r} has an unsupported dtype.")
+    if limits is None:
+        if dtype.kind not in _CORE_ARRAY_DTYPE_KINDS:
+            raise TypeError(f"Archive array {name!r} dtype is not in the core format.")
+        maximum_addressable = int(np.iinfo(np.intp).max)
+        if dtype.itemsize > maximum_addressable:
+            raise ValueError(f"Archive array {name!r} exceeds addressable metadata.")
+    else:
+        if (
+            ((dtype.fields is not None or dtype.subdtype is not None)
+             and not limits.allow_structured_dtypes)
+            or dtype.kind not in limits.allowed_dtype_kinds
+            or dtype.itemsize > limits.max_dtype_itemsize
+        ):
+            raise TypeError(f"Archive array {name!r} dtype is not admitted by policy.")
+        if array.ndim > limits.max_array_rank:
+            raise ValueError(f"Archive array {name!r} exceeds the rank limit.")
+        maximum_addressable = int(np.iinfo(np.intp).max)
     elements = 1
     for extent in array.shape:
-        if extent > limits.max_axis_length:
+        if extent > maximum_addressable:
+            raise ValueError(f"Archive array {name!r} exceeds addressable extent.")
+        if limits is not None and extent > limits.max_axis_length:
             raise ValueError(f"Archive array {name!r} exceeds the axis-length limit.")
-        if extent and elements > limits.max_array_elements // extent:
+        if extent and elements > maximum_addressable // extent:
+            raise ValueError(f"Archive array {name!r} exceeds addressable elements.")
+        if limits is not None and extent and elements > limits.max_array_elements // extent:
             raise ValueError(f"Archive array {name!r} exceeds the element limit.")
         elements *= extent
-    if elements > limits.max_array_elements:
+    if limits is not None and elements > limits.max_array_elements:
         raise ValueError(f"Archive array {name!r} exceeds the element limit.")
     raw_bytes = elements * dtype.itemsize
-    if raw_bytes > limits.max_member_bytes:
+    if raw_bytes > sys.maxsize:
+        raise ValueError(f"Archive array {name!r} exceeds addressable bytes.")
+    if limits is not None and raw_bytes > limits.max_member_bytes:
         raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
     return elements
 
@@ -268,7 +260,7 @@ def _prepare_arrays(
     limits: ArrayArchiveLimits | None = None,
 ) -> _PreparedArrays:
     policy = _resolved_archive_limits(limits)
-    if len(arrays) + 1 > policy.max_members:
+    if policy is not None and len(arrays) + 1 > policy.max_members:
         raise ValueError("Archive exceeds the member count limit.")
     collection = hashlib.sha256()
     entries: dict[str, _ArrayEvidence] = {}
@@ -279,7 +271,7 @@ def _prepare_arrays(
             raise TypeError("Archive array names must be non-empty strings.")
         source = np.asarray(arrays[name])
         elements = _admit_array_for_archive(source, policy, name)
-        if total_elements > policy.max_total_array_elements - elements:
+        if policy is not None and total_elements > policy.max_total_array_elements - elements:
             raise ValueError("Archive arrays exceed the aggregate element limit.")
         total_elements += elements
         encoded_name = name.encode("utf-8")
@@ -287,9 +279,11 @@ def _prepare_arrays(
         collection.update(encoded_name)
         sink = _PayloadSink(collection=collection, payload_size=source.nbytes)
         array = _save_array(source, sink)
-        if sink.byte_count > policy.max_member_bytes:
+        if policy is not None and sink.byte_count > policy.max_member_bytes:
             raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
-        if total_bytes > policy.max_aggregate_bytes - sink.byte_count:
+        if total_bytes > sys.maxsize - sink.byte_count:
+            raise ValueError("Archive arrays exceed addressable total bytes.")
+        if policy is not None and total_bytes > policy.max_aggregate_bytes - sink.byte_count:
             raise ValueError("Archive exceeds the aggregate member byte limit.")
         total_bytes += sink.byte_count
         entries[name] = _ArrayEvidence(
@@ -437,11 +431,29 @@ def _write_prepared_array_archive(
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
         raise TypeError("Archive manifest must contain finite JSON values.") from error
-    if len(manifest_payload) > policy.max_manifest_bytes:
+    if policy is not None and len(manifest_payload) > policy.max_manifest_bytes:
         raise ValueError("Archive manifest exceeds the manifest byte limit.")
-    _validate_json_nesting(manifest_payload.decode("utf-8"), policy.max_manifest_nesting)
-    if total_member_bytes > policy.max_aggregate_bytes - len(manifest_payload):
+    _validate_json_nesting(
+        manifest_payload.decode("utf-8"),
+        None if policy is None else policy.max_manifest_nesting,
+    )
+    if policy is not None and total_member_bytes > policy.max_aggregate_bytes - len(manifest_payload):
         raise ValueError("Archive exceeds the aggregate member byte limit.")
+    if total_member_bytes > sys.maxsize - len(manifest_payload):
+        raise ValueError("Archive exceeds addressable payload bytes.")
+
+    # Bound actual stored payloads plus their maximum local, central, and ZIP64 records.
+    # This is a writer extent check, not an application resource quota.
+    publication_extent = total_member_bytes + len(manifest_payload) + 98
+    for index in range(len(prepared.entries) + 1):
+        member_name = (
+            "manifest.json"
+            if index == 0
+            else f"arrays/{index - 1:06d}.npy"
+        )
+        publication_extent += 140 + 2 * len(member_name.encode("utf-8"))
+    if publication_extent > sys.maxsize:
+        raise ValueError("Archive exceeds addressable container bytes.")
 
     def writer(stream: BinaryIO) -> None:
         with zipfile.ZipFile(
@@ -480,7 +492,7 @@ def _write_prepared_array_archive(
     publish_file(
         path,
         writer,
-        maximum_bytes=policy.max_container_bytes,
+        maximum_bytes=publication_extent,
         mode="atomic_replace",
         validator=validator,
     )
@@ -495,11 +507,11 @@ _HASH_CHUNK_BYTES = 1_048_576
 
 def _validate_zip_container(
     stream: BinaryIO,
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     /,
 ) -> None:
     file_size = os.fstat(stream.fileno()).st_size
-    if file_size > limits.max_container_bytes:
+    if limits is not None and file_size > limits.max_container_bytes:
         raise ArrayArchiveCorruptionError("Archive exceeds the container byte limit.")
     if file_size < _END_OF_CENTRAL_DIRECTORY.size:
         raise ArrayArchiveCorruptionError("Archive ZIP directory is missing.")
@@ -523,19 +535,86 @@ def _validate_zip_container(
         signature != _ZIP_END_SIGNATURE
         or disk_number != 0
         or directory_disk != 0
-        or entries_on_disk != entry_count
         or comment_size != len(tail) - offset - _END_OF_CENTRAL_DIRECTORY.size
     ):
         raise ArrayArchiveCorruptionError("Archive ZIP directory is noncanonical.")
-    if entry_count == 0xFFFF or directory_size == 0xFFFFFFFF:
-        raise ArrayArchiveCorruptionError("ZIP64 array archives are not accepted.")
-    if entry_count > limits.max_members:
-        raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
-    if directory_size > limits.max_central_directory_bytes:
-        raise ArrayArchiveCorruptionError(
-            "Archive exceeds the central-directory byte limit."
+    end_offset = file_size - tail_size + offset
+    has_zip64 = (
+        entries_on_disk == 0xFFFF
+        or entry_count == 0xFFFF
+        or directory_size == 0xFFFFFFFF
+        or directory_offset == 0xFFFFFFFF
+    )
+    if has_zip64:
+        locator_size = 20
+        locator_offset = end_offset - locator_size
+        if locator_offset < 0:
+            raise ArrayArchiveCorruptionError("Archive ZIP64 locator is missing.")
+        stream.seek(locator_offset)
+        locator = stream.read(locator_size)
+        if len(locator) != locator_size:
+            raise ArrayArchiveCorruptionError("Archive ZIP64 locator is truncated.")
+        locator_signature, disk, zip64_offset, disk_count = struct.unpack(
+            "<4sLQL", locator
         )
-    if directory_offset + directory_size > file_size - _END_OF_CENTRAL_DIRECTORY.size:
+        if (
+            locator_signature != b"PK\x06\x07"
+            or disk != 0
+            or disk_count != 1
+            or zip64_offset > sys.maxsize
+        ):
+            raise ArrayArchiveCorruptionError("Archive ZIP64 locator is noncanonical.")
+        stream.seek(zip64_offset)
+        zip64_record = stream.read(56)
+        if len(zip64_record) != 56:
+            raise ArrayArchiveCorruptionError("Archive ZIP64 directory is truncated.")
+        (
+            zip64_signature,
+            record_size,
+            _version_made,
+            _version_needed,
+            zip64_disk,
+            zip64_directory_disk,
+            zip64_entries_on_disk,
+            zip64_entry_count,
+            zip64_directory_size,
+            zip64_directory_offset,
+        ) = struct.unpack("<4sQ2H2L4Q", zip64_record)
+        if (
+            zip64_signature != b"PK\x06\x06"
+            or record_size < 44
+            or zip64_offset + 12 + record_size != locator_offset
+            or zip64_disk != 0
+            or zip64_directory_disk != 0
+            or zip64_entries_on_disk != zip64_entry_count
+        ):
+            raise ArrayArchiveCorruptionError("Archive ZIP64 directory is noncanonical.")
+        if entries_on_disk != 0xFFFF and entries_on_disk != zip64_entries_on_disk:
+            raise ArrayArchiveCorruptionError("Archive ZIP directory counts disagree.")
+        if entry_count != 0xFFFF and entry_count != zip64_entry_count:
+            raise ArrayArchiveCorruptionError("Archive ZIP directory counts disagree.")
+        if directory_size != 0xFFFFFFFF and directory_size != zip64_directory_size:
+            raise ArrayArchiveCorruptionError("Archive ZIP directory sizes disagree.")
+        if directory_offset != 0xFFFFFFFF and directory_offset != zip64_directory_offset:
+            raise ArrayArchiveCorruptionError("Archive ZIP directory offsets disagree.")
+        entry_count = zip64_entry_count
+        directory_size = zip64_directory_size
+        directory_offset = zip64_directory_offset
+        directory_end_limit = zip64_offset
+    else:
+        if entries_on_disk != entry_count:
+            raise ArrayArchiveCorruptionError("Archive ZIP directory counts disagree.")
+        directory_end_limit = end_offset
+    if any(value > sys.maxsize for value in (entry_count, directory_size, directory_offset)):
+        raise ArrayArchiveCorruptionError("Archive ZIP directory exceeds addressable extents.")
+    if limits is not None:
+        if entry_count > limits.max_members:
+            raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
+        if directory_size > limits.max_central_directory_bytes:
+            raise ArrayArchiveCorruptionError(
+                "Archive exceeds the central-directory byte limit."
+            )
+    if directory_offset + directory_size > directory_end_limit:
         raise ArrayArchiveCorruptionError("Archive ZIP directory is invalid.")
     stream.seek(0)
 
@@ -543,7 +622,7 @@ def _validate_zip_container(
 @contextmanager
 def _preflight_zip_container(
     source: str | os.PathLike[str],
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     /,
 ) -> Iterator[BinaryIO]:
     with _open_regular_archive(source) as stream:
@@ -571,11 +650,11 @@ def _preflight_zip_container(
 
 def _preflight_members(
     archive: zipfile.ZipFile,
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     /,
 ) -> tuple[list[zipfile.ZipInfo], zipfile.ZipInfo]:
     members = archive.infolist()
-    if len(members) > limits.max_members:
+    if limits is not None and len(members) > limits.max_members:
         raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
     member_names = [member.filename for member in members]
     if len(set(member_names)) != len(member_names):
@@ -592,7 +671,12 @@ def _preflight_members(
         raise ArrayArchiveCorruptionError(
             "Archive members must use canonical stored, unencrypted encoding."
         )
-    if sum(member.file_size for member in members) > limits.max_aggregate_bytes:
+    total_size = 0
+    for member in members:
+        if member.file_size > sys.maxsize or total_size > sys.maxsize - member.file_size:
+            raise ArrayArchiveCorruptionError("Archive members exceed addressable bytes.")
+        total_size += member.file_size
+    if limits is not None and total_size > limits.max_aggregate_bytes:
         raise ArrayArchiveCorruptionError(
             "Archive exceeds the aggregate member byte limit."
         )
@@ -600,20 +684,23 @@ def _preflight_members(
     if len(manifests) != 1:
         raise ArrayArchiveCorruptionError("Archive manifest is missing or duplicated.")
     manifest_info = manifests[0]
-    if any(
+    if limits is not None and any(
         member.file_size > limits.max_member_bytes
         for member in members
         if member is not manifest_info
     ):
         raise ArrayArchiveCorruptionError("Archive member exceeds the member byte limit.")
-    if manifest_info.file_size > limits.max_manifest_bytes:
+    if manifest_info.file_size > sys.maxsize:
+        raise ArrayArchiveCorruptionError("Archive manifest exceeds addressable bytes.")
+    if limits is not None and manifest_info.file_size > limits.max_manifest_bytes:
         raise ArrayArchiveCorruptionError(
             "Archive manifest exceeds the manifest byte limit."
         )
     return members, manifest_info
 
 
-def _validate_json_nesting(payload: str, maximum: int, /) -> None:
+def _validate_json_nesting(payload: str, maximum: int | None, /) -> None:
+    maximum = _CORE_JSON_NESTING_LIMIT if maximum is None else maximum
     depth = 0
     in_string = False
     escaped = False
@@ -702,7 +789,7 @@ def _read_exact(stream: IO[bytes], size: int, /) -> bytes:
 def _read_npy_metadata(
     stream: IO[bytes],
     member_size: int | None,
-    limits: ArrayArchiveLimits,
+    limits: ArrayArchiveLimits | None,
     /,
 ) -> tuple[np.dtype[Any], tuple[int, ...], int]:
     if _read_exact(stream, len(_NPY_MAGIC)) != _NPY_MAGIC:
@@ -717,13 +804,20 @@ def _read_npy_metadata(
         encoding = "utf-8" if version == (3, 0) else "latin1"
     else:
         raise ArrayArchiveCorruptionError("Archive array NPY version is unsupported.")
-    if header_size > limits.max_npy_header_bytes:
+    if limits is not None and header_size > limits.max_npy_header_bytes:
         raise ArrayArchiveCorruptionError(
             "Archive array exceeds the NPY header byte limit."
         )
+    if member_size is not None and header_size > member_size - stream.tell():
+        raise ArrayArchiveCorruptionError("Archive NPY header exceeds its member extent.")
     try:
         header_text = _read_exact(stream, header_size).decode(encoding)
-        _validate_npy_header_nesting(header_text, limits.max_npy_header_nesting)
+        maximum_nesting = (
+            _CORE_NPY_HEADER_NESTING_LIMIT
+            if limits is None
+            else limits.max_npy_header_nesting
+        )
+        _validate_npy_header_nesting(header_text, maximum_nesting)
         header = ast.literal_eval(header_text)
     except (RecursionError, SyntaxError, UnicodeDecodeError, ValueError) as error:
         raise ArrayArchiveCorruptionError(
@@ -747,38 +841,56 @@ def _read_npy_metadata(
         raise ArrayArchiveCorruptionError(
             "Archive array shape or storage-order metadata is invalid."
         )
-    if len(shape) > limits.max_array_rank:
+    maximum_addressable = int(np.iinfo(np.intp).max)
+    if limits is not None and len(shape) > limits.max_array_rank:
         raise ArrayArchiveCorruptionError("Archive array exceeds the rank limit.")
     elements = 1
     for extent in shape:
-        if extent > limits.max_axis_length:
+        if extent > maximum_addressable:
+            raise ArrayArchiveCorruptionError("Archive array extent is not addressable.")
+        if limits is not None and extent > limits.max_axis_length:
             raise ArrayArchiveCorruptionError(
                 "Archive array shape exceeds the axis-length limit."
             )
-        if extent and elements > limits.max_array_elements // extent:
+        if extent and elements > maximum_addressable // extent:
+            raise ArrayArchiveCorruptionError("Archive array exceeds addressable elements.")
+        if limits is not None and extent and elements > limits.max_array_elements // extent:
             raise ArrayArchiveCorruptionError("Archive array exceeds the element limit.")
         elements *= extent
+    if limits is not None and elements > limits.max_array_elements:
+        raise ArrayArchiveCorruptionError("Archive array exceeds the element limit.")
     try:
         dtype = np.dtype(header["descr"])
     except (TypeError, ValueError) as error:
         raise ArrayArchiveCorruptionError(
             "Archive array dtype metadata is invalid."
         ) from error
-    if (
-        dtype.hasobject
-        or (
-            (dtype.fields is not None or dtype.subdtype is not None)
-            and not limits.allow_structured_dtypes
+    if limits is None:
+        invalid_dtype = (
+            dtype.hasobject
+            or dtype.metadata is not None
+            or dtype.kind not in _CORE_ARRAY_DTYPE_KINDS
         )
-        or dtype.metadata is not None
-        or dtype.kind not in limits.allowed_dtype_kinds
-        or dtype.itemsize > limits.max_dtype_itemsize
-    ):
+    else:
+        invalid_dtype = (
+            dtype.hasobject
+            or (
+                (dtype.fields is not None or dtype.subdtype is not None)
+                and not limits.allow_structured_dtypes
+            )
+            or dtype.metadata is not None
+            or dtype.kind not in limits.allowed_dtype_kinds
+            or dtype.itemsize > limits.max_dtype_itemsize
+        )
+    if invalid_dtype:
         raise ArrayArchiveCorruptionError(
             "Archive array dtype is not admitted by policy."
         )
+    byte_count = elements * dtype.itemsize
+    if byte_count > sys.maxsize:
+        raise ArrayArchiveCorruptionError("Archive array bytes are not addressable.")
     if member_size is not None:
-        expected_size = stream.tell() + elements * dtype.itemsize
+        expected_size = stream.tell() + byte_count
         if expected_size != member_size:
             raise ArrayArchiveCorruptionError(
                 "Archive array byte size is inconsistent with its NPY metadata."
@@ -805,11 +917,11 @@ def read_array_archive(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     expected_inventory: Mapping[str, tuple[tuple[int, ...], Any | None]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
-    """Read one archive after bounded preflight and checksum validation.
+    """Read one archive after structural, extent, and checksum validation.
 
-    The default limits admit untrusted archives conservatively. Pass ``None``
-    explicitly only for a trusted local archive that must retain legacy,
-    effectively unbounded size limits.
+    The default limits provide conservative admission for untrusted archives.
+    Pass ``None`` to omit application resource refusals while retaining core
+    format, addressability, checksum, and actual-payload validation.
     """
     return _read_array_archive(
         path, limits=limits, expected_inventory=expected_inventory, map_arrays=False
@@ -860,7 +972,10 @@ def _read_array_archive(
                 raise ArrayArchiveCorruptionError(
                     "Archive manifest is invalid UTF-8."
                 ) from error
-            _validate_json_nesting(manifest_text, policy.max_manifest_nesting)
+            _validate_json_nesting(
+                manifest_text,
+                None if policy is None else policy.max_manifest_nesting,
+            )
             try:
                 manifest = json.loads(
                     manifest_text,
@@ -951,7 +1066,12 @@ def _read_array_archive(
                         raise ArrayArchiveCorruptionError(
                             f"Archive array {logical_name!r} changed template shape, dtype, or byte count."
                         )
-                if total_elements > policy.max_total_array_elements - elements:
+                if policy is None:
+                    if total_elements > int(np.iinfo(np.intp).max) - elements:
+                        raise ArrayArchiveCorruptionError(
+                            "Archive array extents exceed addressable elements."
+                        )
+                elif total_elements > policy.max_total_array_elements - elements:
                     raise ArrayArchiveCorruptionError(
                         "Archive arrays exceed the aggregate element limit."
                     )
@@ -997,7 +1117,7 @@ def _read_array_archive(
                             value = np.load(
                                 stream,
                                 allow_pickle=False,
-                                max_header_size=policy.max_npy_header_bytes,
+                                max_header_size=member.file_size,
                             )
                 except (EOFError, OSError, ValueError) as error:
                     raise ArrayArchiveCorruptionError(
@@ -1042,13 +1162,13 @@ def _canonical_member_name(name: str, /) -> bool:
     if name == "manifest.json":
         return True
     parts = name.split("/")
-    return (
-        len(parts) == 2
-        and parts[0] == "arrays"
-        and len(parts[1]) == 10
-        and parts[1].endswith(".npy")
-        and parts[1][:6].isdigit()
-    )
+    if len(parts) != 2 or parts[0] != "arrays":
+        return False
+    filename = parts[1]
+    if not filename.endswith(".npy"):
+        return False
+    digits = filename[:-4]
+    return len(digits) >= 6 and digits.isdigit() and (len(digits) == 6 or digits[0] != "0")
 
 
 def _unique_json_object(

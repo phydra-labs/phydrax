@@ -2,27 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Device-resident fixed-capacity simplex topology and compiled bisection.
+"""Capacity-bucketed simplex topology and compiled Maubach bisection.
 
-`MaskedSimplexMesh` is the capacity-bucketed layout consumed by masked solver
-routes: vertex and cell slots of a static capacity with activity masks and
-array-based half-facet adjacency. Inactive lanes are padding that never
-contributes; compiled consumers are keyed by the layout signature (cell kind,
-ambient dimension, capacities, coordinate precision), never by active counts.
+`MaskedSimplexMesh` is the layout consumed by masked solver routes: vertex and
+cell slots of a static capacity with activity masks and array-based half-facet
+adjacency. Compiled consumers are keyed by cell kind, ambient dimension,
+capacities and coordinate precision, never by active counts.
 
-`AdaptiveSimplexState` extends that layout with the Maubach labels and the
-bisection forest. `refine_adaptive_simplex` and `coarsen_adaptive_simplex` are
-module-level compiled entry points that replay the host bisection of
-`phydrax.meshing` exactly: the same labels (canonical tagged tuples), the same
-conformity closure (every cell with a split edge is bisected, iteration by
-iteration), the same vertex and cell ID issue order, and the same coarsening
-families. Slot order equals global-ID order and slots are never reused inside
-one prepared epoch, so ranks by slot are ranks by ID and every issue order is a
-prefix sum. Every call records its `AdaptiveSimplexStatus` flags in the state,
-where they accumulate over the prepared epoch. A failed call (capacity, closure
-limit, protected conflict, invalid geometry) rolls back every mesh, topology,
-and numerical array but still records its terminal flags; every later call on
-that state is refused on device until a new epoch is prepared.
+`AdaptiveSimplexState` adds the Maubach labels and bisection forest. Refinement
+and coarsening replay the host bisection's canonical tuples, conformity closure,
+ID issue order and complete-family coarsening. Closure and coarsening run to
+their natural fixed points without numerical iteration quotas. Refinement
+capacity requests are transient: the host wrapper grows the execution layout
+and retries from the unchanged state. The returned update supplies the current
+layout for continued calls. Protected conflicts and invalid geometry roll back
+and record scientific failure; uncertain device orientation is resolved at
+commit with exact host predicates.
 """
 
 from __future__ import annotations
@@ -308,57 +303,38 @@ def _vertex_half_facets(
 class AdaptiveSimplexStatus(IntFlag):
     """Outcome flags of one device adaptation call, accumulated per epoch.
 
-    ``CAPACITY_EXCEEDED``, ``CLOSURE_LIMIT``, ``PROTECTED_CONFLICT`` and
-    ``INVALID_GEOMETRY`` are terminal failures: the returned state keeps the
-    input topology and arrays but records the flags in
-    `AdaptiveSimplexState.status_flags`, and every later call on it is refused
-    (``report.failed``) until a new epoch is prepared (for resources, with
-    larger capacities). ``PASS_LIMIT`` (coarsening stopped at its pass bound)
-    and ``NEEDS_HOST_RESOLUTION`` (some filtered device predicate is uncertain)
-    are applied outcomes: the commit reports a pass-limited epoch as
-    ``PASS_LIMIT`` and resolves uncertain orientation with exact host
-    predicates or rejects the epoch.
+    ``CAPACITY_EXCEEDED`` requests a larger execution layout and is transient:
+    the host wrapper grows the state and retries the unchanged epoch. It is
+    never recorded in the epoch status flags. ``PROTECTED_CONFLICT`` and
+    ``INVALID_GEOMETRY`` are terminal scientific failures. A filtered device
+    predicate may still require exact host resolution at commit.
     """
 
     COMPLETE = 0
     CAPACITY_EXCEEDED = 1
-    CLOSURE_LIMIT = 2
     PROTECTED_CONFLICT = 4
-    PASS_LIMIT = 8
     NEEDS_HOST_RESOLUTION = 16
     INVALID_GEOMETRY = 32
 
 
 _FAILURES = int(
-    AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-    | AdaptiveSimplexStatus.CLOSURE_LIMIT
-    | AdaptiveSimplexStatus.PROTECTED_CONFLICT
-    | AdaptiveSimplexStatus.INVALID_GEOMETRY
+    AdaptiveSimplexStatus.PROTECTED_CONFLICT | AdaptiveSimplexStatus.INVALID_GEOMETRY
 )
-
-
-def adaptive_simplex_bucket(count: int, growth_factor: float, /) -> int:
-    """Capacity bucket: the next power of two holding ``growth_factor * count``."""
-
-    required = max(int(math.ceil(growth_factor * max(int(count), 1))), _MINIMUM_BUCKET)
-    return 1 << (required - 1).bit_length()
 
 
 @final
 class AdaptiveSimplexPolicy(StrictModule, NonTrainableState):
-    """Capacity bucket and coarsening pass bound of one device simplex layout.
+    """Initial capacity hints and growth factor for a device simplex layout.
 
-    Explicit ``vertex_capacity``/``cell_capacity`` pin the bucket; otherwise a
-    capacity is the next power of two holding ``growth_factor`` times the
-    prepared slot count (at least 64). Repeated adaptation inside one bucket
-    reuses every compiled entry point.
+    Explicit ``vertex_capacity``/``cell_capacity`` are lower-bound hints,
+    never pins. Otherwise capacities are the next power of two holding
+    ``growth_factor`` times the prepared slot count (at least 64). Any later
+    overflow grows the execution layout and retries the same logical update.
     """
 
     vertex_capacity: int | None = eqx.field(static=True)
     cell_capacity: int | None = eqx.field(static=True)
     growth_factor: float = eqx.field(static=True)
-    maximum_coarsening_passes: int = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -366,7 +342,6 @@ class AdaptiveSimplexPolicy(StrictModule, NonTrainableState):
         vertex_capacity: int | None = None,
         cell_capacity: int | None = None,
         growth_factor: float = 4.0,
-        maximum_coarsening_passes: int = 64,
     ) -> None:
         vertices = (
             None
@@ -379,39 +354,25 @@ class AdaptiveSimplexPolicy(StrictModule, NonTrainableState):
         growth = float(growth_factor)
         if not math.isfinite(growth) or growth < 1.0:
             raise ValueError("growth_factor must be finite and at least one.")
-        passes = _count(maximum_coarsening_passes, "maximum_coarsening_passes")
         self.vertex_capacity = vertices
         self.cell_capacity = cells
         self.growth_factor = growth
-        self.maximum_coarsening_passes = passes
-        self.policy_id = canonical_fingerprint(
-            {
-                "kind": "adaptive-simplex-policy",
-                "vertex_capacity": vertices,
-                "cell_capacity": cells,
-                "growth_factor": growth,
-                "maximum_coarsening_passes": passes,
-            }
-        )
 
     def capacities(self, vertex_count: int, cell_count: int, /) -> tuple[int, int]:
-        """Vertex and cell capacities of a layout preparing the given slot counts."""
+        """Initial capacities, honoring hints without rejecting source counts."""
 
-        vertices = (
-            adaptive_simplex_bucket(vertex_count, self.growth_factor)
-            if self.vertex_capacity is None
-            else self.vertex_capacity
+        vertices = max(
+            vertex_count,
+            self.vertex_capacity
+            if self.vertex_capacity is not None
+            else adaptive_simplex_bucket(vertex_count, self.growth_factor),
         )
-        cells = (
-            adaptive_simplex_bucket(cell_count, self.growth_factor)
-            if self.cell_capacity is None
-            else self.cell_capacity
+        cells = max(
+            cell_count,
+            self.cell_capacity
+            if self.cell_capacity is not None
+            else adaptive_simplex_bucket(cell_count, self.growth_factor),
         )
-        if vertices < vertex_count or cells < cell_count:
-            raise ValueError(
-                f"The prepared mesh ({vertex_count} vertices, {cell_count} cell slots) "
-                f"exceeds the adaptive simplex capacity ({vertices}, {cells})."
-            )
         return vertices, cells
 
 
@@ -428,8 +389,6 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
     vertex_capacity: int = eqx.field(static=True)
     cell_capacity: int = eqx.field(static=True)
     protected_edge_capacity: int = eqx.field(static=True)
-    maximum_closure_iterations: int = eqx.field(static=True)
-    maximum_coarsening_passes: int = eqx.field(static=True)
     coordinate_dtype: str = eqx.field(static=True)
     mesh_signature_id: str = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
@@ -443,8 +402,6 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
         vertex_capacity: int,
         cell_capacity: int,
         protected_edge_capacity: int,
-        maximum_closure_iterations: int,
-        maximum_coarsening_passes: int,
         coordinate_dtype: np.dtype = np.dtype(np.float64),
     ) -> None:
         kind = _CELL_KINDS.get(dimension)
@@ -457,8 +414,6 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
         if vertices > _INDEX_LIMIT or 2 * cells * (dimension + 1) > _INDEX_LIMIT:
             raise ValueError("Adaptive simplex capacities must address int32 slots.")
         protected = _count(protected_edge_capacity, "protected_edge_capacity")
-        closure = _count(maximum_closure_iterations, "maximum_closure_iterations")
-        passes = _count(maximum_coarsening_passes, "maximum_coarsening_passes")
         dtype = np.dtype(coordinate_dtype)
         if dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
             raise ValueError("Adaptive simplex coordinates are float32 or float64.")
@@ -470,8 +425,6 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
         self.vertex_capacity = vertices
         self.cell_capacity = cells
         self.protected_edge_capacity = protected
-        self.maximum_closure_iterations = closure
-        self.maximum_coarsening_passes = passes
         self.coordinate_dtype = dtype.name
         self.mesh_signature_id = mesh_signature
         self.signature_id = canonical_fingerprint(
@@ -479,14 +432,20 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
                 "kind": "adaptive-simplex-layout",
                 "mesh": mesh_signature,
                 "protected_edge_capacity": protected,
-                "maximum_closure_iterations": closure,
-                "maximum_coarsening_passes": passes,
             }
         )
 
     @property
     def cell_kind(self) -> str:
         return _CELL_KINDS[self.dimension]
+
+
+def adaptive_simplex_bucket(count: int, growth_factor: float, /) -> int:
+    """Capacity bucket: the next power of two holding ``growth_factor * count``."""
+
+    required = max(int(math.ceil(growth_factor * max(int(count), 1))), _MINIMUM_BUCKET)
+    return 1 << (required - 1).bit_length()
+
 
 
 @final
@@ -617,12 +576,11 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
 
     @property
     def status_flags(self) -> Array:
-        """Cumulative `AdaptiveSimplexStatus` flags of the epoch (traceable).
+        """Cumulative scientific outcome flags of the epoch (traceable).
 
-        Applied calls add ``PASS_LIMIT`` and ``NEEDS_HOST_RESOLUTION``; a failed
-        call rolls back every mesh, topology, and numerical array but still
-        records its flags, after which every call on the state is refused.
-        Stacked part states hold one entry per part.
+        Capacity requests are transient and never recorded. Terminal failures
+        roll back the attempted update and refuse later calls; stacked part
+        states hold one entry per part.
         """
 
         return self.clocks[..., 2]
@@ -632,17 +590,9 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
 class AdaptiveSimplexReport(StrictModule):
     """Traceable evidence of one device refinement or coarsening call.
 
-    ``status`` holds `AdaptiveSimplexStatus` flags. ``requested``/``accepted``
-    count the marks on active cells; ``rejected`` marks the refinement marks
-    whose own closure would split a protected edge, or the coarsening marks
-    that stay active. ``operations`` counts bisections or restored parents,
-    ``iterations`` closure iterations or coarsening passes, ``vertices``
-    created or removed vertices. Geometry evidence covers the attempted
-    candidate: on success that is the returned state's active cells; on failure
-    it records why the candidate was rejected while the state arrays roll back.
-    A call on a state whose `status_flags` hold a terminal failure is refused:
-    the state is returned unchanged, ``status`` holds those terminal flags, and
-    the accepted, operation, iteration, and vertex counts are zero.
+    ``required_vertex_capacity`` and ``required_cell_capacity`` report the
+    minimum local capacities needed after a transient capacity refusal. The
+    host wrapper grows the layout and retries from the unchanged input state.
     """
 
     status: Array
@@ -655,6 +605,8 @@ class AdaptiveSimplexReport(StrictModule):
     uncertain_cells: Array
     invalid_cells: Array
     minimum_quality: Array
+    required_vertex_capacity: Array
+    required_cell_capacity: Array
 
     @property
     def failed(self) -> Array:
@@ -663,8 +615,9 @@ class AdaptiveSimplexReport(StrictModule):
 
 @final
 class AdaptiveSimplexUpdate(StrictModule):
-    """State and report of one compiled device adaptation call."""
+    """Current execution layout, state and report of a device call."""
 
+    layout: AdaptiveSimplexLayout = eqx.field(static=True)
     state: AdaptiveSimplexState
     report: AdaptiveSimplexReport
 
@@ -854,6 +807,8 @@ class _Closure(NamedTuple):
     iterations: Array
     bisections: Array
     created: Array
+    required_vertex_capacity: Array
+    required_cell_capacity: Array
 
 
 class _Issue(NamedTuple):
@@ -1118,12 +1073,10 @@ def _bisected(work: _Work, selected: Array, issue: _Issue, dimension: int, /) ->
 def _bisection_round(
     closure: _Closure, dimension: int, guard: bool, axis: str | None, /
 ) -> _Closure:
-    """Bisect the selected cells once; select every cell holding a split edge.
+    """Bisect selected cells; select every cell holding a split edge.
 
-    New vertices are issued in ascending edge order and children in (parent,
-    first, second) order, which are the host global-ID orders. The round is
-    applied only when every part's capacities hold (and, when guarded, no
-    protected edge would be split); otherwise the status records the refusal.
+    Capacity failure reports the minimum local row counts required for this
+    round and leaves the logical epoch unchanged for host-side growth/retry.
     """
 
     work, selected = closure.work, closure.selected
@@ -1136,13 +1089,21 @@ def _bisection_round(
         if axis is None
         else _parts_issue(closure, known, position, codes, guard, axis)
     )
-    fits = (work.cursors[0] + issue.created_local <= vertices) & (
-        work.cursors[1] + 2 * issue.count_local.astype(jnp.int64) <= cells
-    )
+    required_vertices = work.cursors[0] + issue.created_local.astype(jnp.int64)
+    required_cells = work.cursors[1] + 2 * issue.count_local.astype(jnp.int64)
+    fits = (required_vertices <= vertices) & (required_cells <= cells)
     status = jnp.where(fits, 0, int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)) | jnp.where(
         issue.conflict, int(AdaptiveSimplexStatus.PROTECTED_CONFLICT), 0
     )
     status = _global_flags(status.astype(jnp.int32), axis)
+    requested = closure._replace(
+        required_vertex_capacity=jnp.maximum(
+            closure.required_vertex_capacity, required_vertices
+        ),
+        required_cell_capacity=jnp.maximum(
+            closure.required_cell_capacity, required_cells
+        ),
+    )
 
     def apply(_: Any) -> Any:
         level = work.clocks[0] + closure.iterations + 1
@@ -1166,6 +1127,10 @@ def _bisection_round(
         keys, values = jax.lax.sort((keys, values), num_keys=1)
         split, _ = _members(keys, _all_edge_codes(updated.tuples, dimension, vertices))
         following = updated.cell_active & jnp.any(split, axis=1)
+        invalid = _invalid_geometry(updated, dimension, axis)
+        invalid_status = jnp.where(
+            invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0
+        ).astype(jnp.int32)
         return _Closure(
             updated,
             following,
@@ -1173,14 +1138,16 @@ def _bisection_round(
             keys,
             values,
             closure.stored + issue.created_local,
-            closure.status,
+            closure.status | invalid_status,
             closure.iterations + 1,
             closure.bisections + issue.count_global,
             closure.created + issue.created_global,
+            requested.required_vertex_capacity,
+            requested.required_cell_capacity,
         )
 
     def refuse(_: Any) -> Any:
-        return closure._replace(status=(closure.status | status).astype(jnp.int32))
+        return requested._replace(status=(closure.status | status).astype(jnp.int32))
 
     return jax.lax.cond(status == 0, apply, refuse, None)
 
@@ -1193,7 +1160,7 @@ def _closure(
     axis: str | None = None,
     /,
 ) -> _Closure:
-    """Conformity closure of the marked cells in one compiled while loop.
+    """Conformity closure until conforming or a real refusal occurs.
 
     With ``axis`` the loop runs on every part of a shard_map; split edges and
     termination are exchanged by collectives until the global fixed point.
@@ -1211,33 +1178,28 @@ def _closure(
         jnp.zeros((), dtype=jnp.int32),
         jnp.zeros((), dtype=jnp.int32),
         jnp.zeros((), dtype=jnp.int32),
+        jnp.zeros((), dtype=jnp.int64),
+        jnp.zeros((), dtype=jnp.int64),
     )
-    limit = layout.maximum_closure_iterations
 
-    def proceed(closure: _Closure) -> Any:
-        return closure.pending & (closure.status == 0) & (closure.iterations < limit)
+    def proceed(value: _Closure) -> Any:
+        return value.pending & (value.status == 0)
 
-    def step(closure: _Closure) -> Any:
-        return _bisection_round(closure, layout.dimension, guard, axis)
+    def step(value: _Closure) -> Any:
+        return _bisection_round(value, layout.dimension, guard, axis)
 
-    result = jax.lax.while_loop(proceed, step, start)
-    unfinished = result.pending & (result.status == 0)
-    status = result.status | jnp.where(
-        unfinished, int(AdaptiveSimplexStatus.CLOSURE_LIMIT), 0
-    )
-    return result._replace(status=status.astype(jnp.int32))
+    return jax.lax.while_loop(proceed, step, start)
 
 
 def _protected_marks(
     work: _Work, marks: Array, layout: AdaptiveSimplexLayout, /
-) -> tuple[Array, Array]:
+) -> tuple[Array, Array, Array, Array]:
     """Marks whose own conformity closure would split a protected edge.
 
     Closures of a union are unions of closures (Stevenson), so the closure of
     one mark reaches exactly the cells and edges forward-reachable from it in
-    the forcing graph of the union closure: splitting edge ``e`` bisects every
-    cell holding ``e``, and bisecting cell ``c`` splits its refinement edge.
-    Reverse reachability from the protected edges is one monotone fixed point.
+    the forcing graph of the union closure. Reverse reachability from protected
+    edges is a monotone fixed point.
     """
 
     dimension, vertices = layout.dimension, layout.vertex_capacity
@@ -1270,10 +1232,12 @@ def _protected_marks(
         lambda state: state[1], spread, (protected, jnp.ones((), dtype=jnp.bool_))
     )
     rejected = marks & bad_edges[refinement]
-    failure = int(
-        AdaptiveSimplexStatus.CAPACITY_EXCEEDED | AdaptiveSimplexStatus.CLOSURE_LIMIT
+    return (
+        rejected,
+        analysis.status.astype(jnp.int32),
+        analysis.required_vertex_capacity,
+        analysis.required_cell_capacity,
     )
-    return rejected, (analysis.status & failure).astype(jnp.int32)
 
 
 def _shape_quality(points: Array, dimension: int, /) -> Array:
@@ -1293,6 +1257,26 @@ def _shape_quality(points: Array, dimension: int, /) -> Array:
         return 4.0 * math.sqrt(3.0) * area / squared
     volume = jnp.abs(jnp.sum(spans[:, 0] * jnp.cross(spans[:, 1], spans[:, 2]), axis=1))
     return 12.0 * (0.5 * volume) ** (2.0 / 3.0) / squared
+
+
+def _invalid_geometry(work: _Work, dimension: int, axis: str | None, /) -> Array:
+    """Count certified nonpositive active cells without shape-quality work."""
+
+    points = work.coordinates[work.cells]
+    active = work.cell_active
+    if points.shape[2] == dimension:
+        corners = tuple(points[:, index] for index in range(dimension + 1))
+        predicate = orient2d if dimension == 2 else orient3d
+        result = predicate(*corners, mode=PredicateMode.FILTERED_DEVICE)
+        invalid = active & result.certain & (
+            result.signs != int(PredicateSign.POSITIVE)
+        )
+    else:
+        spans = points[:, 1:] - points[:, :1]
+        normal = jnp.cross(spans[:, 0], spans[:, 1])
+        invalid = active & ~jnp.any(normal != 0.0, axis=1)
+    count = jnp.sum(invalid, dtype=jnp.int32)
+    return count if axis is None else jax.lax.psum(count, axis)
 
 
 def _geometry_evidence(work: _Work, dimension: int, axis: str | None, /) -> Any:
@@ -1328,7 +1312,7 @@ def _finished(
     source: _Work,
     work: _Work,
     status: Array,
-    dimension: int,
+    layout: AdaptiveSimplexLayout,
     /,
     *,
     requested: Array,
@@ -1337,53 +1321,86 @@ def _finished(
     operations: Array,
     iterations: Array,
     vertices: Array,
+    required_vertex_capacity: Array | None = None,
+    required_cell_capacity: Array | None = None,
     axis: str | None = None,
 ) -> AdaptiveSimplexUpdate:
-    uncertain, invalid, quality = _geometry_evidence(work, dimension, axis)
+    uncertain, invalid, quality = _geometry_evidence(work, layout.dimension, axis)
+    capacity_requested = (status & int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)) != 0
     status = (
         status
-        | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
-        | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
+        | jnp.where(
+            (invalid > 0) & ~capacity_requested,
+            int(AdaptiveSimplexStatus.INVALID_GEOMETRY),
+            0,
+        )
+        | jnp.where(
+            (uncertain > 0) & ~capacity_requested,
+            int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+            0,
+        )
     ).astype(jnp.int32)
     failed = (status & _FAILURES) != 0
-    # A failed call rolls back to the source arrays but keeps its status evidence.
-    result = _select(failed, source, work)
-    result = result._replace(clocks=result.clocks.at[2].set(source.clocks[2] | status))
+    rollback = failed | capacity_requested
+    # Scientific failures and capacity retries both preserve the accepted input.
+    result = _select(rollback, source, work)
+    recorded = status & ~int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    result = result._replace(
+        clocks=result.clocks.at[2].set(source.clocks[2] | recorded)
+    )
     zero = jnp.zeros((), dtype=jnp.int32)
+    zero_capacity = jnp.zeros((), dtype=jnp.int64)
+    required_vertices = (
+        zero_capacity
+        if required_vertex_capacity is None
+        else required_vertex_capacity.astype(jnp.int64)
+    )
+    required_cells = (
+        zero_capacity
+        if required_cell_capacity is None
+        else required_cell_capacity.astype(jnp.int64)
+    )
     report = AdaptiveSimplexReport(
         status=status,
         requested=requested,
-        accepted=jnp.where(failed, zero, accepted),
+        accepted=jnp.where(rollback, zero, accepted),
         rejected=rejected,
-        operations=jnp.where(failed, zero, operations),
+        operations=jnp.where(rollback, zero, operations),
         iterations=iterations,
-        vertices=jnp.where(failed, zero, vertices),
+        vertices=jnp.where(rollback, zero, vertices),
         uncertain_cells=uncertain,
         invalid_cells=invalid,
         minimum_quality=quality,
+        required_vertex_capacity=jnp.where(
+            capacity_requested, required_vertices, zero_capacity
+        ),
+        required_cell_capacity=jnp.where(
+            capacity_requested, required_cells, zero_capacity
+        ),
     )
-    return AdaptiveSimplexUpdate(_state(result), report)
+    return AdaptiveSimplexUpdate(layout, _state(result), report)
 
 
 def _terminal(work: _Work, axis: str | None, /) -> Array:
-    """Terminal failure flags already recorded by the epoch (on any part)."""
+    """Terminal scientific failures already recorded by the epoch."""
 
     return (_global_flags(work.clocks[2], axis) & _FAILURES).astype(jnp.int32)
 
 
 def _refused(
+    layout: AdaptiveSimplexLayout,
     state: AdaptiveSimplexState,
     work: _Work,
     requested: Array,
     rejected: Array,
-    dimension: int,
     axis: str | None = None,
     /,
 ) -> AdaptiveSimplexUpdate:
     """A call on an epoch that already failed: nothing runs, the state is kept."""
 
-    uncertain, invalid, quality = _geometry_evidence(work, dimension, axis)
+    uncertain, invalid, quality = _geometry_evidence(work, layout.dimension, axis)
     zero = jnp.zeros((), dtype=jnp.int32)
+    zero_capacity = jnp.zeros((), dtype=jnp.int64)
     report = AdaptiveSimplexReport(
         status=_terminal(work, axis),
         requested=requested,
@@ -1395,8 +1412,10 @@ def _refused(
         uncertain_cells=uncertain,
         invalid_cells=invalid,
         minimum_quality=quality,
+        required_vertex_capacity=zero_capacity,
+        required_cell_capacity=zero_capacity,
     )
-    return AdaptiveSimplexUpdate(state, report)
+    return AdaptiveSimplexUpdate(layout, state, report)
 
 
 def _refine(
@@ -1407,11 +1426,11 @@ def _refine(
     return jax.lax.cond(
         _terminal(work, None) != 0,
         lambda: _refused(
+            layout,
             state,
             work,
             jnp.sum(marks, dtype=jnp.int32),
             jnp.zeros_like(marks),
-            layout.dimension,
         ),
         lambda: _refined(layout, work, marks),
     )
@@ -1420,13 +1439,18 @@ def _refine(
 def _refined(
     layout: AdaptiveSimplexLayout, work: _Work, marks: Array, /
 ) -> AdaptiveSimplexUpdate:
-    """Protected admissibility, closure, and evidence of one applied refinement."""
+    """Protected admissibility, unbounded conformity closure and evidence."""
 
     analysed = jnp.any(work.protected_codes != _CODE_SENTINEL) & jnp.any(marks)
-    rejected, analysis_status = jax.lax.cond(
+    rejected, analysis_status, analysis_vertices, analysis_cells = jax.lax.cond(
         analysed,
         lambda _: _protected_marks(work, marks, layout),
-        lambda _: (jnp.zeros_like(marks), jnp.zeros((), dtype=jnp.int32)),
+        lambda _: (
+            jnp.zeros_like(marks),
+            jnp.zeros((), dtype=jnp.int32),
+            jnp.zeros((), dtype=jnp.int64),
+            jnp.zeros((), dtype=jnp.int64),
+        ),
         None,
     )
     accepted = marks & ~rejected
@@ -1467,13 +1491,84 @@ def _refined(
         work,
         result,
         closure.status | analysis_status,
-        layout.dimension,
+        layout,
         requested=requested,
         accepted=accepted_count,
         rejected=rejected,
         operations=closure.bisections,
         iterations=closure.iterations,
         vertices=closure.created,
+        required_vertex_capacity=jnp.maximum(
+            closure.required_vertex_capacity, analysis_vertices
+        ),
+        required_cell_capacity=jnp.maximum(
+            closure.required_cell_capacity, analysis_cells
+        ),
+    )
+
+
+def _coarsen(
+    layout: AdaptiveSimplexLayout, state: AdaptiveSimplexState, marks: Array, /
+) -> AdaptiveSimplexUpdate:
+    work = _work(state)
+    raw = marks & (work.cell_ids >= 0)
+    marks = raw & work.cell_active
+    # Every mark of a refused call stays active, hence rejected.
+    return jax.lax.cond(
+        _terminal(work, None) != 0,
+        lambda: _refused(
+            layout, state, work, jnp.sum(marks, dtype=jnp.int32), raw
+        ),
+        lambda: _coarsened(layout, work, raw, marks),
+    )
+
+
+def _coarsened(
+    layout: AdaptiveSimplexLayout, work: _Work, raw: Array, marks: Array, /
+) -> AdaptiveSimplexUpdate:
+    """Coarsen admissible marked families to their natural fixed point."""
+
+    zero = jnp.zeros((), dtype=jnp.int32)
+    start = _Coarsening(work, marks, zero, zero, zero, jnp.any(marks))
+    result = jax.lax.while_loop(
+        lambda value: value.progressed,
+        _coarsening_pass,
+        start,
+    )
+    # Marks stay rejected unless coarsened away (bisected marks included).
+    rejected = raw & ~result.work.retired
+    requested = jnp.sum(marks, dtype=jnp.int32)
+    increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
+    increments = increments.at[
+        jnp.asarray(
+            (
+                AdaptiveSimplexCounter.REQUESTED_COARSENINGS,
+                AdaptiveSimplexCounter.COARSENED_VERTICES,
+                AdaptiveSimplexCounter.COARSENING_PASSES,
+                AdaptiveSimplexCounter.RESTORED_CELLS,
+            )
+        )
+    ].set(
+        jnp.stack((requested, result.removed, result.passes, result.restored)).astype(
+            jnp.int64
+        )
+    )
+    final = result.work._replace(
+        coarsen_marked=result.work.coarsen_marked | raw,
+        clocks=result.work.clocks.at[1].add(result.passes),
+        counters=result.work.counters + increments,
+    )
+    return _finished(
+        work,
+        final,
+        jnp.zeros((), dtype=jnp.int32),
+        layout,
+        requested=requested,
+        accepted=requested - jnp.sum(rejected, dtype=jnp.int32),
+        rejected=rejected,
+        operations=result.restored,
+        iterations=result.passes,
+        vertices=result.removed,
     )
 
 
@@ -1596,74 +1691,6 @@ def _coarsening_pass(coarsening: _Coarsening, /) -> _Coarsening:
     )
 
 
-def _coarsen(
-    layout: AdaptiveSimplexLayout, state: AdaptiveSimplexState, marks: Array, /
-) -> AdaptiveSimplexUpdate:
-    work = _work(state)
-    raw = marks & (work.cell_ids >= 0)
-    marks = raw & work.cell_active
-    # Every mark of a refused call stays active, hence rejected.
-    return jax.lax.cond(
-        _terminal(work, None) != 0,
-        lambda: _refused(
-            state, work, jnp.sum(marks, dtype=jnp.int32), raw, layout.dimension
-        ),
-        lambda: _coarsened(layout, work, raw, marks),
-    )
-
-
-def _coarsened(
-    layout: AdaptiveSimplexLayout, work: _Work, raw: Array, marks: Array, /
-) -> AdaptiveSimplexUpdate:
-    """Bounded coarsening passes and evidence of one applied coarsening."""
-
-    zero = jnp.zeros((), dtype=jnp.int32)
-    start = _Coarsening(work, marks, zero, zero, zero, jnp.any(marks))
-    limit = layout.maximum_coarsening_passes
-    result = jax.lax.while_loop(
-        lambda value: value.progressed & (value.passes < limit),
-        _coarsening_pass,
-        start,
-    )
-    stopped = result.progressed & (result.passes >= limit)
-    status = jnp.where(stopped, int(AdaptiveSimplexStatus.PASS_LIMIT), 0)
-    # Marks stay rejected unless coarsened away (bisected marks included).
-    rejected = raw & ~result.work.retired
-    requested = jnp.sum(marks, dtype=jnp.int32)
-    increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
-    increments = increments.at[
-        jnp.asarray(
-            (
-                AdaptiveSimplexCounter.REQUESTED_COARSENINGS,
-                AdaptiveSimplexCounter.COARSENED_VERTICES,
-                AdaptiveSimplexCounter.COARSENING_PASSES,
-                AdaptiveSimplexCounter.RESTORED_CELLS,
-            )
-        )
-    ].set(
-        jnp.stack((requested, result.removed, result.passes, result.restored)).astype(
-            jnp.int64
-        )
-    )
-    final = result.work._replace(
-        coarsen_marked=result.work.coarsen_marked | raw,
-        clocks=result.work.clocks.at[1].add(result.passes),
-        counters=result.work.counters + increments,
-    )
-    return _finished(
-        work,
-        final,
-        status,
-        layout.dimension,
-        requested=requested,
-        accepted=requested - jnp.sum(rejected, dtype=jnp.int32),
-        rejected=rejected,
-        operations=result.restored,
-        iterations=result.passes,
-        vertices=result.removed,
-    )
-
-
 _compiled_refine = eqx.filter_jit(_refine)
 _compiled_coarsen = eqx.filter_jit(_coarsen)
 
@@ -1686,19 +1713,119 @@ def _checked(
     return mask
 
 
+def _capacity_layout(
+    layout: AdaptiveSimplexLayout, required_vertices: int, required_cells: int, /
+) -> AdaptiveSimplexLayout:
+    """Grow execution buckets geometrically to satisfy a compiled request."""
+
+    vertices = adaptive_simplex_bucket(
+        max(required_vertices, layout.vertex_capacity + 1), 2.0
+    )
+    cells = adaptive_simplex_bucket(max(required_cells, layout.cell_capacity + 1), 2.0)
+    return AdaptiveSimplexLayout(
+        layout.dimension,
+        layout.ambient_dimension,
+        vertex_capacity=vertices,
+        cell_capacity=cells,
+        protected_edge_capacity=layout.protected_edge_capacity,
+        coordinate_dtype=np.dtype(layout.coordinate_dtype),
+    )
+
+
+def _pad_rows(values: Array, capacity: int, axis: int, fill: Any, /) -> Array:
+    padding = [(0, 0)] * values.ndim
+    padding[axis] = (0, capacity - values.shape[axis])
+    return jnp.pad(values, padding, constant_values=fill)
+
+
+def _resize_state(
+    layout: AdaptiveSimplexLayout,
+    state: AdaptiveSimplexState,
+    grown: AdaptiveSimplexLayout,
+    /,
+) -> AdaptiveSimplexState:
+    """Resize every dynamic table without changing accepted epoch values."""
+
+    work = _work(state)
+    old_vertices = layout.vertex_capacity
+    vertices, cells = grown.vertex_capacity, grown.cell_capacity
+    protected = work.protected_codes != _CODE_SENTINEL
+    low = jnp.where(protected, work.protected_codes // old_vertices, 0)
+    high = jnp.where(protected, work.protected_codes % old_vertices, 0)
+    codes = jnp.where(protected, low * vertices + high, _CODE_SENTINEL)
+    expanded = work._replace(
+        coordinates=_pad_rows(work.coordinates, vertices, -2, 0.0),
+        vertex_ids=_pad_rows(work.vertex_ids, vertices, -1, -1),
+        vertex_active=_pad_rows(work.vertex_active, vertices, -1, False),
+        cells=_pad_rows(work.cells, cells, -2, 0),
+        cell_ids=_pad_rows(work.cell_ids, cells, -1, -1),
+        cell_active=_pad_rows(work.cell_active, cells, -1, False),
+        tuples=_pad_rows(work.tuples, cells, -2, 0),
+        tags=_pad_rows(work.tags, cells, -1, grown.dimension),
+        blocks=_pad_rows(work.blocks, cells, -1, 0),
+        generations=_pad_rows(work.generations, cells, -1, 0),
+        parents=_pad_rows(work.parents, cells, -1, -1),
+        children=_pad_rows(work.children, cells, -2, -1),
+        bisection_vertices=_pad_rows(work.bisection_vertices, cells, -1, -1),
+        retired=_pad_rows(work.retired, cells, -1, False),
+        cell_classes=_pad_rows(work.cell_classes, cells, -1, 0),
+        facet_classes=_pad_rows(work.facet_classes, cells, -2, 0),
+        vertex_parents=_pad_rows(work.vertex_parents, vertices, -2, -1),
+        vertex_levels=_pad_rows(work.vertex_levels, vertices, -1, 0),
+        vertex_removal=_pad_rows(work.vertex_removal, vertices, -1, -1),
+        vertex_protected=_pad_rows(work.vertex_protected, vertices, -1, False),
+        protected_codes=_pad_rows(
+            codes, grown.protected_edge_capacity, -1, _CODE_SENTINEL
+        ),
+        refine_rejected=_pad_rows(work.refine_rejected, cells, -1, False),
+        coarsen_marked=_pad_rows(work.coarsen_marked, cells, -1, False),
+    )
+    return _state(expanded)
+
+
+def _retry_capacity(
+    layout: AdaptiveSimplexLayout,
+    state: AdaptiveSimplexState,
+    marks: Array,
+    update: AdaptiveSimplexUpdate,
+    /,
+) -> tuple[AdaptiveSimplexLayout, AdaptiveSimplexState, Array]:
+    required_vertices, required_cells = jax.device_get(
+        (
+            update.report.required_vertex_capacity,
+            update.report.required_cell_capacity,
+        )
+    )
+    grown = _capacity_layout(
+        layout, int(np.max(required_vertices)), int(np.max(required_cells))
+    )
+    state = _resize_state(layout, state, grown)
+    marks = _pad_rows(marks, grown.cell_capacity, -1, False)
+    return grown, state, marks
+
+
 def refine_adaptive_simplex(
     layout: AdaptiveSimplexLayout, state: AdaptiveSimplexState, marks: ArrayLike, /
 ) -> AdaptiveSimplexUpdate:
-    """Bisect the marked active cells and close to a conforming mesh on device.
+    """Bisect marked cells and close conformity to a fixed point.
 
-    Marks whose own closure would split a protected edge are rejected (reported
-    in ``report.rejected``); the others are bisected once and closed. Capacity
-    overflow, the closure bound, and invalid children roll the state back and
-    record their terminal flags in ``state.status_flags``; a state holding a
-    terminal flag refuses every later call.
+    Marks whose own closure would split a protected edge are rejected and
+    reported. Capacity overflow grows the execution layout and retries the
+    identical update from its unchanged accepted state. The returned update
+    carries the current layout for later calls in the epoch.
     """
 
-    return _compiled_refine(layout, state, _checked(layout, state, marks))
+    mask = _checked(layout, state, marks)
+    while True:
+        update = _compiled_refine(layout, state, mask)
+        status = int(jax.device_get(update.report.status))
+        if not status & int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED):
+            return update
+        if bool(jax.device_get(update.report.failed)):
+            return update
+        layout, state, mask = _retry_capacity(layout, state, mask, update)
+
+
 
 
 def coarsen_adaptive_simplex(
@@ -1786,13 +1913,15 @@ def _refined_part(
         work,
         result,
         closure.status,
-        layout.dimension,
+        layout,
         requested=requested,
         accepted=requested,
         rejected=jnp.zeros_like(mask),
         operations=closure.bisections,
         iterations=closure.iterations,
         vertices=closure.created,
+        required_vertex_capacity=closure.required_vertex_capacity,
+        required_cell_capacity=closure.required_cell_capacity,
         axis=axis,
     )
 
@@ -1812,11 +1941,11 @@ def _refine_parts(
         work = _work(state)
         mask = marks_block[0] & work.cell_active
         requested = jax.lax.psum(jnp.sum(mask, dtype=jnp.int32), axis)
-        # The refusal is collective: every part sees the union of recorded flags.
+        # Every part sees the collective union of recorded scientific failures.
         update = jax.lax.cond(
             _terminal(work, axis) != 0,
             lambda: _refused(
-                state, work, requested, jnp.zeros_like(mask), layout.dimension, axis
+                layout, state, work, requested, jnp.zeros_like(mask), axis
             ),
             lambda: _refined_part(layout, work, mask, requested, axis),
         )
@@ -1838,18 +1967,18 @@ def refine_adaptive_simplex_parts(
     marks: ArrayLike,
     /,
 ) -> AdaptiveSimplexUpdate:
-    """Refine a part-sharded epoch: owned cells per part, closure across parts.
+    """Refine a part-sharded epoch with collective closure across parts.
 
     ``states`` stacks one local state per part on a leading axis (each part
     holds its owned cells and their vertices). Every closure round gathers the
     candidate refinement edges and selected cell IDs of all parts, so new vertex
     and cell IDs are global ranks, identical to the single-part issue whatever
     the ownership; split edges on shared part boundaries select the neighbor
-    part's cells until the global fixed point. A round that would exceed any
-    part's capacity or split a protected edge fails for all parts (arrays
-    rolled back, terminal flags recorded on every part); there is no per-mark
-    protected admissibility on parts. A terminal flag recorded on any part
-    refuses every later call on all parts.
+    part's cells until the global fixed point. Capacity requests grow all local
+    states and retry from the unchanged logical epoch. Splitting a protected
+    edge refuses every part; there is no per-mark protected admissibility on
+    parts. This is collective closure across the provided parts, not a separate
+    whole-orbit periodic transaction.
     """
 
     if not isinstance(layout, AdaptiveSimplexLayout):
@@ -1869,7 +1998,29 @@ def refine_adaptive_simplex_parts(
         raise TypeError(
             f"marks must be a bool ({count}, {layout.cell_capacity}) per-part mask."
         )
-    return _compiled_refine_parts(layout, parts, states, mask)
+    while True:
+        update = _compiled_refine_parts(layout, parts, states, mask)
+        status = np.asarray(jax.device_get(update.report.status), dtype=np.int32)
+        if not np.any(status & int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)):
+            return update
+        if np.any(np.asarray(jax.device_get(update.report.failed), dtype=np.bool_)):
+            return update
+        required_vertices, required_cells = jax.device_get(
+            (
+                update.report.required_vertex_capacity,
+                update.report.required_cell_capacity,
+            )
+        )
+        grown = _capacity_layout(
+            layout, int(np.max(required_vertices)), int(np.max(required_cells))
+        )
+        resized = []
+        for part in range(count):
+            local = jax.tree_util.tree_map(lambda value: value[part], states)
+            resized.append(_resize_state(layout, local, grown))
+        states = jax.tree_util.tree_map(lambda *values: jnp.stack(values), *resized)
+        mask = _pad_rows(mask, grown.cell_capacity, -1, False)
+        layout = grown
 
 
 def adaptive_simplex_state(

@@ -39,31 +39,36 @@ Result collect(int32_t status, phx_mc_mesh* mesh) {
     return result;
   }
   PHX_CHECK(phx_mc_mesh_dimension(mesh) == 2);
-  result.points.resize(static_cast<std::size_t>(2 * phx_mc_mesh_point_count(mesh)));
-  result.cells.resize(static_cast<std::size_t>(3 * phx_mc_mesh_cell_count(mesh)));
-  result.vertex_map.resize(static_cast<std::size_t>(phx_mc_mesh_input_point_count(mesh)));
-  phx_mc_mesh_copy_points(mesh, result.points.data());
-  phx_mc_mesh_copy_cells(mesh, result.cells.data());
-  phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
+  const int64_t point_count = phx_mc_mesh_point_count(mesh);
+  const int64_t cell_count = phx_mc_mesh_cell_count(mesh);
+  const int64_t input_count = phx_mc_mesh_input_point_count(mesh);
+  result.points.resize(static_cast<std::size_t>(2 * point_count));
+  result.cells.resize(static_cast<std::size_t>(3 * cell_count));
+  result.vertex_map.resize(static_cast<std::size_t>(input_count));
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, point_count, result.points.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, cell_count, result.cells.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, input_count, result.vertex_map.data()) ==
+            PHX_MC_OK);
   std::vector<int32_t> segments(result.cells.size());
-  phx_mc_mesh_copy_cell_segments(mesh, segments.data());
+  PHX_CHECK(phx_mc_mesh_copy_cell_segments(
+                mesh, cell_count, segments.data()) == PHX_MC_OK);
   PHX_CHECK(std::all_of(segments.begin(), segments.end(), [](int32_t s) { return s == -1; }));
   phx_mc_mesh_free(mesh);
   return result;
 }
 
-Result delaunay(const std::vector<double>& points, int64_t max_triangles = 1 << 30) {
+Result delaunay(const std::vector<double>& points) {
   phx_mc_mesh* mesh = nullptr;
-  const int32_t status = phx_mc_delaunay_2d(static_cast<int64_t>(points.size() / 2),
-                                            points.data(), max_triangles, &mesh);
+  const int32_t status = phx_mc_delaunay_2d(
+      static_cast<int64_t>(points.size() / 2), points.data(), &mesh);
   PHX_CHECK((status == PHX_MC_OK) == (mesh != nullptr));
   return collect(status, mesh);
 }
 
 Result regular(const std::vector<double>& points, const std::vector<double>& weights) {
   phx_mc_mesh* mesh = nullptr;
-  const int32_t status = phx_mc_regular_2d(static_cast<int64_t>(points.size() / 2),
-                                           points.data(), weights.data(), 1 << 30, &mesh);
+  const int32_t status = phx_mc_regular_2d(
+      static_cast<int64_t>(points.size() / 2), points.data(), weights.data(), &mesh);
   PHX_CHECK((status == PHX_MC_OK) == (mesh != nullptr));
   return collect(status, mesh);
 }
@@ -215,29 +220,20 @@ void test_degenerate_and_arguments() {
   PHX_CHECK(delaunay({}).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = reinterpret_cast<phx_mc_mesh*>(&mesh);
   const double pts[6] = {0, 0, 1, 0, 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(-1, pts, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(-1, pts, &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
-  PHX_CHECK(phx_mc_delaunay_2d(3, pts, 10, nullptr) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_2d(3, nullptr, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_2d(3, pts, -1, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_regular_2d(3, pts, nullptr, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, pts, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_regular_2d(3, pts, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   const double nan_pts[6] = {0, 0, 1, std::nan(""), 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(3, nan_pts, 10, &mesh) == PHX_MC_NONFINITE_INPUT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, nan_pts, &mesh) == PHX_MC_NONFINITE_INPUT);
   const double big_pts[6] = {0, 0, 1e300, 0, 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(3, big_pts, 10, &mesh) == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_delaunay_2d(3, big_pts, &mesh) == PHX_MC_RANGE_ERROR);
   const double weights[3] = {0, 1e-200, 0};
-  PHX_CHECK(phx_mc_regular_2d(3, pts, weights, 10, &mesh) == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_regular_2d(3, pts, weights, &mesh) == PHX_MC_RANGE_ERROR);
   PHX_CHECK(mesh == nullptr);
 }
 
-void test_capacity() {
-  const std::vector<double> points = random_points(200, 11);
-  const Result full = delaunay(points);
-  const int64_t count = static_cast<int64_t>(full.cells.size() / 3);
-  PHX_CHECK(delaunay(points, count).status == PHX_MC_OK);
-  PHX_CHECK(delaunay(points, count - 1).status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(delaunay(points, 0).status == PHX_MC_CAPACITY_EXCEEDED);
-}
 
 void test_duplicates() {
   std::vector<double> points = random_points(50, 3);
@@ -374,7 +370,6 @@ int main() {
   test_lattice();
   test_cocircular();
   test_degenerate_and_arguments();
-  test_capacity();
   test_duplicates();
   test_determinism();
   test_regular_zero_weights_is_delaunay();

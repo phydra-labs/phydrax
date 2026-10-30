@@ -94,7 +94,6 @@ class PolygonClipper {
   std::vector<int> loop;        // vertex ids, counterclockwise
   std::vector<int> edge_lines;  // supporting line of the edge loop[k] -> loop[k + 1]
   int origin = 0;               // input point: frame of explicit-explicit vertices
-  int64_t capacity = std::numeric_limits<int64_t>::max();
   bool clamp_to_box = false;
   double lower[2] = {0.0, 0.0};
   double upper[2] = {0.0, 0.0};
@@ -106,7 +105,6 @@ class PolygonClipper {
     loop.clear();
     edge_lines.clear();
     origin = 0;
-    capacity = std::numeric_limits<int64_t>::max();
     clamp_to_box = false;
   }
 
@@ -127,7 +125,6 @@ class PolygonClipper {
     sides_.resize(n);
     bool positive = false;
     bool negative = false;
-    int64_t kept = 0;
     for (std::size_t i = 0; i < n; ++i) {
       const int side = classify(vertices[loop[i]], line);
       if (side == kInvalidSide) {
@@ -136,7 +133,6 @@ class PolygonClipper {
       sides_[i] = static_cast<signed char>(side);
       positive = positive || side > 0;
       negative = negative || side < 0;
-      kept += side >= 0;
     }
     if (!positive) {
       loop.clear();
@@ -146,13 +142,6 @@ class PolygonClipper {
     }
     if (!negative) {
       return PHX_MC_OK;
-    }
-    int64_t crossings = 0;
-    for (std::size_t i = 0; i < n; ++i) {
-      crossings += sides_[i] * sides_[(i + 1) % n] < 0;
-    }
-    if (kept + crossings > capacity) {
-      return PHX_MC_CAPACITY_EXCEEDED;
     }
     next_loop_.clear();
     next_edge_lines_.clear();
@@ -534,12 +523,11 @@ int32_t clip_box(const double* lower, const double* upper, const double* normals
   if (status != PHX_MC_OK) {
     return status;
   }
-  if (vertex_capacity < 4) {
-    return PHX_MC_CAPACITY_EXCEEDED;
+  if (plane_count > std::numeric_limits<int>::max() - 4) {
+    return PHX_MC_INDEX_RANGE_ERROR;
   }
   PolygonClipper& clipper = work.clipper;
   clipper.reset();
-  clipper.capacity = vertex_capacity;
   clipper.clamp_to_box = true;
   for (int k = 0; k < 2; ++k) {
     clipper.lower[k] = lower[k];
@@ -576,6 +564,9 @@ int32_t clip_box(const double* lower, const double* upper, const double* normals
     }
   }
   const std::size_t n = clipper.loop.size();
+  if (n > static_cast<std::size_t>(vertex_capacity)) {
+    return PHX_MC_CAPACITY_EXCEEDED;
+  }
   for (std::size_t k = 0; k < n; ++k) {
     const Vertex& vertex = clipper.vertices[clipper.loop[k]];
     vertices[2 * k] = vertex.x[0];
@@ -595,6 +586,7 @@ int32_t polygon_batch(int64_t count, int32_t first_capacity, const double* first
                       int32_t simplex_capacity, double* simplices, int32_t* simplex_counts,
                       double* areas, double* first_moments, int32_t* item_status) {
   if (count < 0 || first_capacity < 0 || second_capacity < 0 || simplex_capacity < 0 ||
+      static_cast<int64_t>(first_capacity) + second_capacity > std::numeric_limits<int>::max() ||
       !addressable(count, 2 * static_cast<int64_t>(first_capacity), sizeof(double)) ||
       !addressable(count, 2 * static_cast<int64_t>(second_capacity), sizeof(double)) ||
       !addressable(count, 6 * static_cast<int64_t>(simplex_capacity), sizeof(double))) {
@@ -605,6 +597,7 @@ int32_t polygon_batch(int64_t count, int32_t first_capacity, const double* first
   }
   if (first_counts == nullptr || second_counts == nullptr || areas == nullptr ||
       first_moments == nullptr || item_status == nullptr ||
+      (simplex_counts != nullptr && simplex_capacity > 0 && simplices == nullptr) ||
       (first_capacity > 0 && first_vertices == nullptr) ||
       (second_capacity > 0 && second_vertices == nullptr)) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -617,12 +610,17 @@ int32_t polygon_batch(int64_t count, int32_t first_capacity, const double* first
   for (int64_t item = 0; item < count; ++item) {
     double area = 0.0;
     double moment[2] = {0.0, 0.0};
+    const double* first = first_vertices == nullptr
+                              ? nullptr
+                              : first_vertices + 2 * item * first_capacity;
+    const double* second = second_vertices == nullptr
+                               ? nullptr
+                               : second_vertices + 2 * item * second_capacity;
     clip::SimplexOutput out{simplex_capacity,
                             simplices == nullptr ? nullptr : simplices + 6 * item * simplex_capacity,
                             0};
     int32_t status = intersect_polygons(
-        first_vertices + 2 * item * first_capacity, first_counts[item],
-        second_vertices + 2 * item * second_capacity, second_counts[item], work, area, moment,
+        first, first_counts[item], second, second_counts[item], work, area, moment,
         simplex_counts == nullptr ? nullptr : &out);
     if (status != PHX_MC_OK) {
       area = 0.0;
@@ -664,10 +662,8 @@ int32_t phx_mc_polygon_intersection_simplices(
     const int32_t* second_counts, int32_t simplex_capacity, double* simplices,
     int32_t* simplex_counts, double* areas, double* first_moments, int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
-    if (simplex_capacity < 1) {
-      return PHX_MC_INVALID_ARGUMENT;
-    }
-    if (count > 0 && (simplices == nullptr || simplex_counts == nullptr)) {
+    if (count > 0 &&
+        (simplex_counts == nullptr || (simplex_capacity > 0 && simplices == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     return phx::mc::polygon_batch(count, first_capacity, first_vertices, first_counts,
@@ -685,9 +681,13 @@ int32_t phx_mc_clip_box_halfplanes(int64_t count, const double* box_lower,
                                    int32_t* vertex_counts, double* areas, double* first_moments,
                                    int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
-    if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 ||
+    if (count < 0 || plane_capacity < 0 || vertex_capacity < 0 ||
         !phx::mc::addressable(count, 2 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
-        !phx::mc::addressable(count, 2 * static_cast<int64_t>(vertex_capacity), sizeof(double))) {
+        !phx::mc::addressable(count, plane_capacity, sizeof(double)) ||
+        !phx::mc::addressable(count, vertex_capacity, sizeof(int32_t)) ||
+        !phx::mc::addressable(count, 1, sizeof(double)) ||
+        !phx::mc::addressable(count, 2, sizeof(double)) ||
+        !phx::mc::addressable(count, 1, sizeof(int32_t))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     const int32_t box_status = phx::mc::clip::check_box(box_lower, box_upper, 2);
@@ -697,7 +697,8 @@ int32_t phx_mc_clip_box_halfplanes(int64_t count, const double* box_lower,
     if (count == 0) {
       return PHX_MC_OK;
     }
-    if (plane_counts == nullptr || vertices == nullptr || edge_labels == nullptr ||
+    if (plane_counts == nullptr ||
+        (vertex_capacity > 0 && (vertices == nullptr || edge_labels == nullptr)) ||
         vertex_counts == nullptr || areas == nullptr || first_moments == nullptr ||
         item_status == nullptr ||
         (plane_capacity > 0 && (normals == nullptr || offsets == nullptr))) {
@@ -712,9 +713,12 @@ int32_t phx_mc_clip_box_halfplanes(int64_t count, const double* box_lower,
       double moment[2] = {0.0, 0.0};
       int32_t vertex_count = 0;
       const int32_t status = phx::mc::clip_box(
-          box_lower, box_upper, normals + 2 * item * plane_capacity,
-          offsets + item * plane_capacity, plane_counts[item], vertex_capacity, work,
-          vertices + 2 * item * vertex_capacity, edge_labels + item * vertex_capacity,
+          box_lower, box_upper,
+          normals == nullptr ? nullptr : normals + 2 * item * plane_capacity,
+          offsets == nullptr ? nullptr : offsets + item * plane_capacity, plane_counts[item],
+          vertex_capacity, work,
+          vertices == nullptr ? nullptr : vertices + 2 * item * vertex_capacity,
+          edge_labels == nullptr ? nullptr : edge_labels + item * vertex_capacity,
           vertex_count, area, moment);
       if (status != PHX_MC_OK) {
         vertex_count = 0;

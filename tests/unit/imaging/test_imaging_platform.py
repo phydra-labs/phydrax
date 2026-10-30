@@ -385,6 +385,80 @@ def test_imaging_platform_scenario_3() -> None:
     assert transition.target.asset.quality_flags[0] is source_flag
 
 
+
+def test_compartment_source_scopes_follow_image_lattice_keys() -> None:
+    import json
+
+    from phydrax.geometry._compartments import CompartmentMeshingSource
+    from phydrax.geometry._source_identity import source_entity_id
+
+    values = np.ones((2, 2, 2), dtype=np.int16)
+    values[1] = 2
+    layout = phx.imaging.ImageFieldSpec.named(
+        "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
+    )
+    ontology = phx.imaging.LabelOntology(
+        "scope-labels",
+        "synthetic",
+        "1",
+        (
+            phx.imaging.LabelDefinition(1, "left-label", "Left"),
+            phx.imaging.LabelDefinition(2, "right-label", "Right"),
+        ),
+    )
+    labels = phx.imaging.LabelVolume(_asset(values, layout, asset_id="scope-labels"), ontology)
+    compartments = (
+        phx.geometry.CompartmentDefinition(
+            "left", ("left-label",), "material", allowed_neighbor_ids=("right",)
+        ),
+        phx.geometry.CompartmentDefinition(
+            "right", ("right-label",), "material", allowed_neighbor_ids=("left",)
+        ),
+    )
+    interface = phx.geometry.CompartmentInterfaceDefinition(
+        "left-right", "left", "right", "exchange"
+    )
+    complex_ = phx.imaging.build_compartment_complex(labels, compartments, (interface,))
+    interfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
+    source = CompartmentMeshingSource(
+        labels, complex_, interfaces.surfaces[0].surface, interfaces
+    )
+
+    def keys(dimension: int) -> set[tuple[str, tuple[str, ...]]]:
+        return {
+            source.source_entity_key_for_scope(dimension, int(entity_id))
+            for entity_id in source.scope_entity_ids(dimension)
+        }
+
+    facet_keys = keys(2)
+    expected_interface = source_entity_id(
+        source.source_id,
+        source.source_revision,
+        "compartment-interface-facet",
+        "left-right",
+    )
+    expected_outer = {
+        source_entity_id(
+            source.source_id,
+            source.source_revision,
+            "compartment-outer-facet",
+            json.dumps((source.outer_surface.model_id, region), separators=(",", ":")),
+        )
+        for region in ("left", "right")
+    }
+    assert facet_keys == {(expected_interface, ()), *((name, ()) for name in expected_outer)}
+
+    expected_vertex = source_entity_id(
+        source.source_id,
+        source.source_revision,
+        "lattice-vertex",
+        json.dumps((1, -1, -1), separators=(",", ":")),
+    )
+    assert (expected_vertex, ()) in keys(0)
+    assert keys(3) == {("left", ()), ("right", ())}
+    assert source.scope_entity_ids(1).size > 0
+    assert all(source.scope_entity_set_id(dimension) for dimension in range(4))
+
 def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path: Any) -> None:
     nib = pytest.importorskip("nibabel")
 

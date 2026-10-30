@@ -36,7 +36,9 @@ _EnumT = TypeVar("_EnumT", bound=IntEnum)
 class TopologyEventKind(IntEnum):
     REMESH = 0
     AMR_REGRID = 1
-    OVERSET_DONOR_REBUILD = 2
+    REPARTITION = 2
+    SLIDING_REFRESH = 3
+    OVERSET_DONOR_REBUILD = 4
 
 
 class TopologyEventState(IntEnum):
@@ -1051,11 +1053,12 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             if current.index != previous.index + 1:
                 raise ValueError("Topology epoch indexes must be consecutive.")
             if (
-                current.topology_id == previous.topology_id
+                current.geometry_id == previous.geometry_id
+                and current.topology_id == previous.topology_id
                 and current.partition_id == previous.partition_id
             ):
                 raise ValueError(
-                    "Equal topology and partition must retain the current epoch."
+                    "Equal geometry, topology, and partition must retain the current epoch."
                 )
         current_epoch = _require_identifier(self.current_epoch_id, "current_epoch_id")
         if current_epoch != epoch_ids[-1]:
@@ -1365,14 +1368,15 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError("Committed topology artifacts have the wrong epoch key.")
         current = self.epoch_table[-1]
         same_realization = (
-            result_epoch.topology_id == current.topology_id
+            result_epoch.geometry_id == current.geometry_id
+            and result_epoch.topology_id == current.topology_id
             and result_epoch.partition_id == current.partition_id
         )
         retained = result_epoch.epoch_id == current.epoch_id
         if same_realization:
             if not retained:
                 raise ValueError(
-                    "Equal topology and partition must retain the current epoch."
+                    "Equal geometry, topology, and partition must retain the current epoch."
                 )
         elif result_epoch.index != current.index + 1:
             raise ValueError("Changed topology realizations must be consecutive.")
@@ -1650,7 +1654,92 @@ def _host_report_value(report: Any, name: str, /) -> np.ndarray | None:
 def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
     report = _host_field(remap, "report")
     if report is _MISSING:
+        report = _host_field(remap, "evidence")
+    if report is _MISSING:
         report = remap
+    local_complete = _host_field(report, "coverage_complete")
+    if local_complete is not _MISSING:
+        if not bool(np.asarray(local_complete)):
+            return False
+        defects_and_limits = (
+            ("source_coverage_defects", "source_coverage_tolerances"),
+            ("target_coverage_defects", "target_coverage_tolerances"),
+        )
+        field_pairs = tuple(
+            (_host_field(report, defect), _host_field(report, limit))
+            for defect, limit in defects_and_limits
+        )
+        if all(
+            defect is not _MISSING and limit is not _MISSING
+            for defect, limit in field_pairs
+        ):
+            for defects, limits in field_pairs:
+                defect_values = np.asarray(defects, dtype=np.float64)
+                tolerance_values = np.asarray(limits, dtype=np.float64)
+                if (
+                    defect_values.shape != tolerance_values.shape
+                    or np.any(~np.isfinite(defect_values))
+                    or np.any(~np.isfinite(tolerance_values))
+                    or np.any(np.abs(defect_values) > tolerance_values)
+                    or np.any(np.abs(defect_values) > tolerance)
+                ):
+                    return False
+            return True
+        if any(
+            defect is not _MISSING or limit is not _MISSING
+            for defect, limit in field_pairs
+        ):
+            return False
+        aggregate_names = (
+            "maximum_target_coverage_defect",
+            "maximum_source_coverage_defect",
+            "uncovered_target_measure",
+            "uncovered_source_measure",
+            "donor_excess_measure",
+            "source_measure",
+            "target_measure",
+            "tolerance",
+        )
+        aggregate_values = tuple(
+            _host_report_value(report, name) for name in aggregate_names
+        )
+        if any(value is None for value in aggregate_values):
+            return False
+        scalars = tuple(
+            np.asarray(value, dtype=np.float64) for value in aggregate_values
+        )
+        if any(value.shape != () or not np.isfinite(value) for value in scalars):
+            return False
+        (
+            target_defect,
+            source_defect,
+            target_uncovered,
+            source_uncovered,
+            source_excess,
+            source_measure,
+            target_measure,
+            report_tolerance,
+        ) = (float(value) for value in scalars)
+        if (
+            report_tolerance <= 0.0
+            or report_tolerance > tolerance
+            or source_measure <= 0.0
+            or target_measure <= 0.0
+        ):
+            return False
+        return (
+            max(
+                abs(target_defect),
+                abs(target_uncovered),
+            )
+            <= report_tolerance * target_measure
+            and max(
+                abs(source_defect),
+                abs(source_uncovered),
+                abs(source_excess),
+            )
+            <= report_tolerance * source_measure
+        )
     coverage_error = _host_field(report, "coverage_error")
     coverage_passed = _host_field(report, "coverage_passed")
     if coverage_error is not _MISSING:
@@ -1681,38 +1770,26 @@ def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
     )
 
 
-def _required_artifact_success(value: Any, name: str, /) -> bool:
-    if isinstance(value, TopologyEventStatus):
-        return value is TopologyEventStatus.SUCCESS
-    passed = _host_field(value, "passed")
-    status = _host_field(value, "status")
-    if passed is not _MISSING:
-        return bool(np.asarray(passed))
-    if status is not _MISSING:
-        return _host_success(status)
-    return False
-
-
-def _failure_reason(value: Any, default: TopologyEventStatus, /) -> TopologyEventStatus:
-    if isinstance(value, TopologyEventStatus) and _is_failed_status(value):
-        return value
-    return default
-
-
 def _conservation_passed(
     remap: Any,
     source_content: Any,
     target_content: Any,
     tolerance: float,
     /,
+    *,
+    evidence: Any = None,
 ) -> bool:
     report = _host_field(remap, "report")
+    if report is _MISSING:
+        report = _host_field(remap, "evidence")
     if report is _MISSING:
         report = remap
     if source_content is None and target_content is None:
         return _coverage_passed(remap, tolerance)
     method = _host_field(remap, "conservation_defect")
     defect = _host_field(report, "conservation_defect")
+    if defect is _MISSING:
+        defect = _host_field(evidence, "conservation_defect")
     if method is _MISSING:
         method = defect
     if callable(method) and source_content is not None and target_content is not None:
@@ -1736,6 +1813,27 @@ def _conservation_passed(
         return False
     value: np.ndarray = np.asarray(defect, dtype=np.float64)
     return bool(np.all(np.isfinite(value)) and np.all(np.abs(value) <= tolerance))
+
+
+
+def _required_artifact_success(value: Any, name: str, /) -> bool:
+    if isinstance(value, TopologyEventStatus):
+        return value is TopologyEventStatus.SUCCESS
+    passed = _host_field(value, "passed")
+    status = _host_field(value, "status")
+    if passed is not _MISSING:
+        return bool(np.asarray(passed))
+    if status is not _MISSING:
+        return _host_success(status)
+    return False
+
+
+def _failure_reason(value: Any, default: TopologyEventStatus, /) -> TopologyEventStatus:
+    if isinstance(value, TopologyEventStatus) and _is_failed_status(value):
+        return value
+    return default
+
+
 
 
 def _active_content_valid(content: Any, expected_mask: Any = _MISSING, /) -> bool:
@@ -1853,6 +1951,50 @@ class _PreparedTopologyEvent:
 
 
 @dataclass(frozen=True)
+class _OwnerLocalRepartitionTransfer:
+    """Owner-verified target state, exact value roots, and independent route evidence."""
+
+    content_state: Any
+    migration_evidence_id: str
+    route_identity_id: str
+    source_content_root: str
+    target_content_root: str
+    cell_transfer_ids: tuple[str, ...]
+    bank_route_evidence: tuple[tuple[str, str, str, str], ...]
+    successful: bool
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.migration_evidence_id, "migration_evidence_id"),
+            (self.route_identity_id, "route_identity_id"),
+            (self.source_content_root, "source_content_root"),
+            (self.target_content_root, "target_content_root"),
+        ):
+            _required_identifier(value, name)
+        if (
+            not isinstance(self.cell_transfer_ids, tuple)
+            or any(not isinstance(value, str) or not value for value in self.cell_transfer_ids)
+            or len(set(self.cell_transfer_ids)) != len(self.cell_transfer_ids)
+            or not isinstance(self.bank_route_evidence, tuple)
+            or any(
+                not isinstance(row, tuple)
+                or len(row) != 4
+                or any(not isinstance(value, str) or not value for value in row)
+                for row in self.bank_route_evidence
+            )
+            or len({row[0] for row in self.bank_route_evidence})
+            != len(self.bank_route_evidence)
+            or not isinstance(self.successful, (bool, np.bool_))
+            or (
+                self.successful
+                and {row[0] for row in self.bank_route_evidence}
+                != set(self.cell_transfer_ids)
+            )
+        ):
+            raise ValueError("Owner-local repartition transfer evidence is malformed.")
+
+
+@dataclass(frozen=True)
 class _TopologyEventCandidate:
     """Candidate fields; explicit transaction arguments precede prepared artifacts."""
 
@@ -1904,8 +2046,6 @@ def _normalize_topology_event_inputs(
         for request in self.requests
     ):
         return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
-    if self.maximum_requests is not None and (len(self.requests) > self.maximum_requests):
-        return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
     if self.journal.capacity - int(np.asarray(self.journal.count)) < len(self.requests):
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
     return _TopologyEventInputs(
@@ -2066,12 +2206,6 @@ def _prepare_automatic_remap(
     match automatic_remap.status:
         case CommonRefinementStatus.SUCCESS:
             return automatic_remap
-        case CommonRefinementStatus.RESOURCE_LIMIT:
-            return self._failure(
-                source_content,
-                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
-                automatic_remap=automatic_remap,
-            )
         case (
             CommonRefinementStatus.INVALID_GEOMETRY
             | CommonRefinementStatus.PREDICATE_UNCERTAIN
@@ -2095,9 +2229,56 @@ def _candidate_admission_failure(
     coverage_ok: bool | None,
     coverage_tolerance: float,
     /,
+    *,
+    ownership_migration: bool = False,
+    current_epoch: TopologyEpoch | None = None,
 ) -> TopologyEventStatus | None:
-    """Return the first failed candidate-artifact admission check, if any."""
+    """Admit one physical event or exact owner-placement migration."""
+    if ownership_migration:
+        from ..meshing._distribution import OwnerLocalGraphMigrationEvidence
 
+        if isinstance(candidate.status, TopologyEventStatus) and _is_failed_status(
+            candidate.status
+        ):
+            return candidate.status
+        if candidate.status is None:
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        if not _required_artifact_success(candidate.status, "status"):
+            return _failure_reason(
+                candidate.status, TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            )
+        if (
+            not isinstance(current_epoch, TopologyEpoch)
+            or not isinstance(candidate.candidate_epoch, TopologyEpoch)
+            or not isinstance(
+                candidate.candidate_artifacts, FiniteVolumeTopologyArtifacts
+            )
+        ):
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        migration = candidate.remap
+        if (
+            not isinstance(migration, OwnerLocalGraphMigrationEvidence)
+            or candidate.metrics is not migration
+            or candidate.evidence is not migration
+        ):
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        if (
+            not migration.result.feasible
+            or migration.result.migration_count <= 0
+        ):
+            return TopologyEventStatus.FAILED_RESOURCE_LIMIT
+        target = candidate.candidate_epoch
+        if (
+            target.index != current_epoch.index + 1
+            or target.topology_id != current_epoch.topology_id
+            or target.geometry_id != current_epoch.geometry_id
+            or target.partition_id == current_epoch.partition_id
+            or migration.source_directory_id != current_epoch.partition_id
+            or migration.target_directory_id != target.partition_id
+            or candidate.candidate_artifacts.epoch_id != target.epoch_id
+        ):
+            return TopologyEventStatus.FAILED_STALE_EPOCH
+        return None
     if (
         candidate.remap is None
         or candidate.metrics is None
@@ -2152,7 +2333,8 @@ def _prepare_topology_event_artifacts(
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
     automatic_remap = None
     if (
-        candidate.remap is None
+        not self.ownership_migration
+        and candidate.remap is None
         and self.source_geometry is not None
         and self.target_geometry is not None
     ):
@@ -2168,7 +2350,11 @@ def _prepare_topology_event_artifacts(
             status=TopologyEventStatus.SUCCESS,
         )
     failure = _candidate_admission_failure(
-        candidate, coverage_ok, self.coverage_tolerance
+        candidate,
+        coverage_ok,
+        self.coverage_tolerance,
+        ownership_migration=self.ownership_migration,
+        current_epoch=self.journal.epoch_table[-1],
     )
     if failure is not None:
         return self._failure(source_content, failure, automatic_remap=automatic_remap)
@@ -2202,7 +2388,6 @@ class FiniteVolumeTopologyEventTransaction:
         prepare: Callable[..., Any] | None = None,
         transfer: Callable[..., Any] | None = None,
         coverage_tolerance: float = 0.0,
-        maximum_requests: int | None = None,
         active_cell_mask: Any = _MISSING,
         admissibility: Callable[[Any], Any] | bool | None = None,
         artifact: Any = None,
@@ -2226,6 +2411,12 @@ class FiniteVolumeTopologyEventTransaction:
             for request in requests
         ):
             raise TypeError("Topology transaction requests are invalid.")
+        event_kinds = {request.kind for request in requests}
+        if TopologyEventKind.REPARTITION in event_kinds and (
+            event_kinds != {TopologyEventKind.REPARTITION}
+        ):
+            raise ValueError("Repartition requests cannot coalesce with physical events.")
+        self.ownership_migration = event_kinds == {TopologyEventKind.REPARTITION}
         if not isinstance(accepted, (bool, np.bool_)):
             raise TypeError("accepted must be boolean.")
         tolerance = float(coverage_tolerance)
@@ -2249,7 +2440,6 @@ class FiniteVolumeTopologyEventTransaction:
         self.prepare = prepare
         self.transfer = transfer
         self.coverage_tolerance = tolerance
-        self.maximum_requests = maximum_requests
         self.active_cell_mask = active_cell_mask
         self.admissibility = admissibility
         self._artifact = artifact
@@ -2336,7 +2526,8 @@ class FiniteVolumeTopologyEventTransaction:
         current_epoch = self.journal.epoch_table[-1]
         current_artifacts = self.journal.artifact_table[-1]
         same_realization = (
-            candidate_epoch.topology_id == current_epoch.topology_id
+            candidate_epoch.geometry_id == current_epoch.geometry_id
+            and candidate_epoch.topology_id == current_epoch.topology_id
             and candidate_epoch.partition_id == current_epoch.partition_id
         )
         if same_realization:
@@ -2369,6 +2560,8 @@ class FiniteVolumeTopologyEventTransaction:
         transfer_callback = self.transfer if transfer is None else transfer
         if transfer_callback is not None:
             return _call_transfer(transfer_callback, source_content, prepared_event.remap)
+        if self.ownership_migration and transfer_callback is None:
+            return None
         if source_content is not None:
             apply = _host_field(prepared_event.remap, "apply")
             if callable(apply):
@@ -2386,7 +2579,36 @@ class FiniteVolumeTopologyEventTransaction:
         /,
     ) -> TopologyEventStatus | None:
         """Check transferred epoch-keyed content against the candidate epoch."""
+        if self.ownership_migration:
+            if not isinstance(candidate_content, _OwnerLocalRepartitionTransfer):
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            if not candidate_content.successful:
+                return TopologyEventStatus.FAILED_COVERAGE
+            from ..meshing._distribution import OwnerLocalGraphMigrationEvidence
 
+            if (
+                not isinstance(
+                    prepared_event.remap, OwnerLocalGraphMigrationEvidence
+                )
+                or candidate_content.migration_evidence_id
+                != prepared_event.remap.evidence_id
+            ):
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            if (
+                candidate_content.source_content_root
+                != candidate_content.target_content_root
+            ):
+                return TopologyEventStatus.FAILED_COVERAGE
+            required_banks = {
+                "conservative_content",
+                "effective_cell_volumes",
+                "active_cell_mask",
+            }
+            if not required_banks.issubset(candidate_content.cell_transfer_ids):
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            content_state = candidate_content.content_state
+        else:
+            content_state = candidate_content
         if _host_field(prepared_event.source_content, "topology_epoch_id") is _MISSING:
             return None
         required_content_fields = (
@@ -2395,25 +2617,22 @@ class FiniteVolumeTopologyEventTransaction:
             "active_cell_mask",
             "conservative_content",
         )
-        if candidate_content is None or any(
-            _host_field(candidate_content, field) is _MISSING
+        if content_state is None or any(
+            _host_field(content_state, field) is _MISSING
             for field in required_content_fields
         ):
             return TopologyEventStatus.FAILED_MISSING_ARTIFACT
-        candidate_content_epoch = _host_field(candidate_content, "topology_epoch_id")
+        candidate_content_epoch = _host_field(content_state, "topology_epoch_id")
         if candidate_content_epoch != prepared_event.candidate_epoch.epoch_id:
             return TopologyEventStatus.FAILED_STALE_EPOCH
         if self.target_geometry is None:
             return None
         target_volumes = np.asarray(self.target_geometry.cell_volumes)
         candidate_volumes = np.asarray(
-            _host_field(candidate_content, "effective_cell_volumes")
+            _host_field(content_state, "effective_cell_volumes")
         )
-        if candidate_volumes.shape != target_volumes.shape or not np.allclose(
-            candidate_volumes,
-            target_volumes,
-            rtol=0.0,
-            atol=0.0,
+        if candidate_volumes.shape != target_volumes.shape or not np.array_equal(
+            candidate_volumes, target_volumes
         ):
             return TopologyEventStatus.FAILED_STALE_EPOCH
         return None
@@ -2429,23 +2648,35 @@ class FiniteVolumeTopologyEventTransaction:
         admissibility: Callable[[Any], Any] | bool | None,
     ) -> TopologyEventStatus | None:
         """Check conservation, positivity, and admissibility of transferred content."""
-
-        if not _conservation_passed(
-            prepared_event.remap,
-            prepared_event.source_content,
-            candidate_content,
-            self.coverage_tolerance,
-        ):
-            return TopologyEventStatus.FAILED_COVERAGE
+        if self.ownership_migration:
+            if not isinstance(candidate_content, _OwnerLocalRepartitionTransfer):
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            if (
+                not candidate_content.successful
+                or candidate_content.source_content_root
+                != candidate_content.target_content_root
+            ):
+                return TopologyEventStatus.FAILED_COVERAGE
+            content_state = candidate_content.content_state
+        else:
+            if not _conservation_passed(
+                prepared_event.remap,
+                prepared_event.source_content,
+                candidate_content,
+                self.coverage_tolerance,
+                evidence=prepared_event.evidence,
+            ):
+                return TopologyEventStatus.FAILED_COVERAGE
+            content_state = candidate_content
         if positivity_ok is False or not _active_content_valid(
-            candidate_content,
+            content_state,
             self.active_cell_mask if active_cell_mask is _MISSING else active_cell_mask,
         ):
             return TopologyEventStatus.FAILED_POSITIVITY
         if admissibility is None:
             return None
         admissible = (
-            admissibility(candidate_content)
+            admissibility(content_state)
             if callable(admissibility)
             else bool(admissibility)
         )
@@ -2458,9 +2689,10 @@ class FiniteVolumeTopologyEventTransaction:
         prepared_event: _PreparedTopologyEvent,
         candidate_content: Any,
         /,
+        *,
+        commit_action: Callable[..., Any] | None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
-        """Append and commit the coalesced requests as one journal transition."""
-
+        """Append, bind, and commit the coalesced requests atomically."""
         try:
             requested = self.journal.append_requested_batch(
                 self.requests, self.accepted_step, self.time
@@ -2480,6 +2712,16 @@ class FiniteVolumeTopologyEventTransaction:
                 TopologyEventStatus.FAILED_RESOURCE_LIMIT,
                 automatic_remap=prepared_event.automatic_remap,
             )
+        if self.ownership_migration:
+            if commit_action is None or not _host_success(
+                commit_action(prepared_event, candidate_content, committed)
+            ):
+                return self._failure(
+                    prepared_event.source_content,
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    automatic_remap=prepared_event.automatic_remap,
+                )
+            candidate_content = candidate_content.content_state
         return self._outcome(
             candidate_content
             if candidate_content is not None
@@ -2512,6 +2754,7 @@ class FiniteVolumeTopologyEventTransaction:
         resource_ok: bool | None = None,
         result_id: str | None = None,
         payload_ids: Sequence[str | None] | None = None,
+        commit_action: Callable[..., Any] | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         """Prepare, validate, transfer once, and atomically update the journal."""
         normalized = _normalize_topology_event_inputs(
@@ -2563,7 +2806,9 @@ class FiniteVolumeTopologyEventTransaction:
                 failure,
                 automatic_remap=prepared_event.automatic_remap,
             )
-        return self._commit_prepared(prepared_event, candidate_content)
+        return self._commit_prepared(
+            prepared_event, candidate_content, commit_action=commit_action
+        )
 
     run = execute
     commit = execute
@@ -2577,17 +2822,8 @@ class FiniteVolumeTopologyEventScheduler:
         self,
         journal: FiniteVolumeTopologyEventJournal,
         /,
-        *,
-        maximum_requests: int | None = None,
     ) -> None:
-        if maximum_requests is not None and (
-            isinstance(maximum_requests, bool)
-            or not isinstance(maximum_requests, int)
-            or maximum_requests <= 0
-        ):
-            raise ValueError("maximum_requests must be a positive integer.")
         self.journal = journal
-        self.maximum_requests = maximum_requests
         self._pending: list[_ScheduledTopologyRequest] = []
 
     @property
@@ -2614,11 +2850,6 @@ class FiniteVolumeTopologyEventScheduler:
             else _host_nonnegative_integer(accepted_step, "accepted_step")
         )
         time_value = None if time is None else _host_finite_time(time, "time")[0]
-        if (
-            self.maximum_requests is not None
-            and len(self._pending) >= self.maximum_requests
-        ):
-            raise OverflowError("Topology event scheduler resource limit reached.")
         self._pending.append(_ScheduledTopologyRequest(request, step, time_value))
         return request
 
@@ -2641,6 +2872,13 @@ class FiniteVolumeTopologyEventScheduler:
                     first.time is not None
                     and item.time is not None
                     and item.time != first.time
+                )
+                or (
+                    (
+                        first.request.kind is TopologyEventKind.REPARTITION
+                        or item.request.kind is TopologyEventKind.REPARTITION
+                    )
+                    and item.request.kind is not first.request.kind
                 )
                 or item.request.input_epoch_id != first.request.input_epoch_id
             ):
@@ -2690,9 +2928,6 @@ class FiniteVolumeTopologyEventScheduler:
         coverage_tolerance = constructor_kwargs.pop("coverage_tolerance", 0.0)
         active_cell_mask = constructor_kwargs.pop("active_cell_mask", _MISSING)
         admissibility = constructor_kwargs.pop("admissibility", None)
-        maximum_requests = constructor_kwargs.pop(
-            "maximum_requests", self.maximum_requests
-        )
         transaction = FiniteVolumeTopologyEventTransaction(
             self.journal,
             requests,
@@ -2702,7 +2937,6 @@ class FiniteVolumeTopologyEventScheduler:
             prepare=prepare,
             transfer=transfer,
             coverage_tolerance=coverage_tolerance,
-            maximum_requests=maximum_requests,
             active_cell_mask=active_cell_mask,
             admissibility=admissibility,
             source_geometry=source_geometry,

@@ -5,15 +5,17 @@ import pytest
 from phydrax import SpatialCoordinateContract
 from phydrax.geometry import (
     HighOrderDifferentiationError,
+    isoparametric_triangle_reference_nodes,
     realize_isoparametric_triangles,
     SurfaceMetadata,
     SurfaceModel,
 )
 
 
-def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_frame() -> (
-    None
-):
+@pytest.mark.parametrize("degree", (1, 9), ids=("linear", "degree-nine"))
+def test_isoparametric_triangle_preserves_authoritative_geometry_and_frame(
+    degree: int,
+) -> None:
     metadata = SurfaceMetadata(
         source_id="unit-triangle",
         source_revision="1",
@@ -26,8 +28,11 @@ def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_fram
         np.asarray([[0, 1, 2]], dtype=np.int32),
         metadata,
     )
-    nodes = np.asarray([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]])
-    realized = realize_isoparametric_triangles(model, nodes, 1)
+    reference = isoparametric_triangle_reference_nodes(degree)
+    nodes = np.column_stack((reference, np.zeros(reference.shape[0], dtype=np.float64)))[
+        None, :, :
+    ]
+    realized = realize_isoparametric_triangles(model, nodes, degree)
     frame = realized.frame(jnp.asarray([0]), jnp.asarray([[1.0 / 3.0, 1.0 / 3.0]]))
 
     assert jnp.allclose(

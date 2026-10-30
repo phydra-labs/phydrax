@@ -746,23 +746,37 @@ def _import_cad_surface(
     source: Path,
     file_format: SurfaceFileFormat,
     policy: SurfaceImportPolicy,
-    artifact_digest: str,
-    source_identity: str,
     /,
 ) -> SurfaceImportResult:
-    _require_module("OCP", f"{file_format.value} direct BRep import")
-    from ..brep._occt import import_brep
+    from ...interchange._cad import CadImportPolicy
+    from ...interchange._iges import read_iges
+    from ...interchange._step import read_step
+    from ..brep._constructors import BRepTessellationPolicy
 
-    cad_model = import_brep(
-        source,
-        coordinate_contract=SpatialCoordinateContract(policy.source_length_unit),
-        source_id=source_identity,
-        linear_deflection=policy.cad_linear_deflection_in_source_units,
-        angular_deflection=policy.cad_angular_deflection,
-        trim_samples_per_edge=policy.cad_trim_samples_per_edge,
+    cad_policy = CadImportPolicy(
+        SpatialCoordinateContract(policy.source_length_unit),
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=policy.cad_linear_deflection_in_source_units,
+            angular_deflection=policy.cad_angular_deflection,
+            trim_samples_per_edge=policy.cad_trim_samples_per_edge,
+        ),
     )
-    points = np.asarray(cad_model.mesh_vertices)
-    faces = np.asarray(cad_model.mesh_faces)
+    if file_format is SurfaceFileFormat.STEP:
+        cad_result = read_step(source, cad_policy, trusted_root=source.parent)
+    elif file_format is SurfaceFileFormat.IGES:
+        cad_result = read_iges(source, cad_policy, trusted_root=source.parent)
+    else:
+        raise SurfaceUnsupportedFormatError(
+            f"{file_format.value} has no native B-Rep codec."
+        )
+    cad_model = cad_result.model
+    tessellation = cad_model.tessellation
+    if tessellation is None:
+        raise RuntimeError(
+            "An explicit CAD surface import requires its requested native tessellation."
+        )
+    points = np.asarray(tessellation.vertices)
+    faces = np.asarray(tessellation.triangles)
     if points.shape[0] > policy.maximum_vertices or faces.shape[0] > policy.maximum_cells:
         raise SurfaceResourceLimitError(
             "CAD tessellation exceeds surface entity capacities."
@@ -774,21 +788,25 @@ def _import_cad_surface(
         (
             "cad_exact_geometry_tessellated_for_authoritative_cell_mesh",
             "generated_tessellation_global_ids",
+            "source_entity_names_and_presentation_metadata_not_carried_by_cell_mesh",
         ),
         policy.allow_lossy,
     )
-    face_ids = np.asarray(cad_model.triangle_face_ids, dtype=np.int32)
+    face_ids = np.asarray(tessellation.face_ids, dtype=np.int32)
     tags = tuple(cad_model.physical_tags[int(index)] for index in face_ids)
     scale = float(conversion_factor(policy.source_length_unit, METER))
+    source_id = cad_model.report.source_id
+    source_revision = cad_model.source_revision
+    artifact_digest = cad_result.source_digest
     metadata = SurfaceMetadata(
-        source_id=cad_model.source_id,
-        source_revision=cad_model.source_revision,
+        source_id=source_id,
+        source_revision=source_revision,
         coordinate_contract=SpatialCoordinateContract(METER),
         provenance=(
-            f"direct-brep-import:{file_format.value}",
+            f"native-cad-import:{file_format.value}",
             f"source-artifact-sha256:{artifact_digest}",
             f"coordinate-scale-to-si:{scale:.17g}",
-            "authoritative-cellmesh-from-reported-occt-tessellation",
+            "authoritative-cellmesh-from-native-brep-tessellation",
         ),
         cell_tags=tags,
     )
@@ -807,18 +825,18 @@ def _import_cad_surface(
     report = SurfaceInteropReport(
         operation="import",
         file_format=file_format,
-        provider="OCP",
+        provider="phydrax native CAD",
         source_length_unit=policy.source_length_unit,
         target_length_unit=METER,
         coordinate_scale=scale,
-        source_id=cad_model.source_id,
-        source_revision=cad_model.source_revision,
+        source_id=source_id,
+        source_revision=source_revision,
         artifact_digest=artifact_digest,
         vertex_count=points.shape[0],
         cell_count=faces.shape[0],
         source_ids_preserved=False,
-        tags_preserved=True,
-        source_metadata_preserved=True,
+        tags_preserved=False,
+        source_metadata_preserved=False,
         orientation_changed=orientation_changed,
         lossy=True,
         losses=losses,
@@ -841,9 +859,8 @@ def import_surface(
     source = Path(path).expanduser().absolute()
     format_ = _resolve_format(source, file_format)
     if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-        _require_module("OCP", f"{format_.value} direct BRep import")
-    else:
-        _require_module("meshio", f"{format_.value} surface import")
+        return _import_cad_surface(source, format_, policy)
+    _require_module("meshio", f"{format_.value} surface import")
     resource = read_bounded_resource(
         source.name,
         trusted_root=source.parent,
@@ -858,14 +875,6 @@ def import_surface(
     with TemporaryDirectory(prefix="phydrax-surface-read-") as temporary:
         staged = Path(temporary) / source.name
         staged.write_bytes(resource.data)
-        if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-            return _import_cad_surface(
-                staged,
-                format_,
-                policy,
-                resource.manifest.content_sha256,
-                str(source),
-            )
         return _import_meshio_surface(
             staged,
             format_,
@@ -993,10 +1002,9 @@ def export_surface(
     destination = Path(path).expanduser().resolve()
     format_ = _resolve_format(destination, file_format)
     if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-        _require_module("OCP", f"{format_.value} CAD export")
         raise SurfaceUnsupportedFormatError(
-            "The existing OCCT/BRep substrate provides direct STEP/IGES import but no "
-            "real SurfaceModel STEP/IGES writer; no fallback mesh export is permitted."
+            "Triangle SurfaceModel has no exact STEP/IGES CAD writer; "
+            "surface mesh export is not promoted to source CAD."
         )
     meshio = _require_module("meshio", f"{format_.value} surface export")
     if (

@@ -42,15 +42,15 @@ def test_overset_overlap_is_constant_exact_and_conservative() -> None:
         np.asarray((1.0, 1.0)),
     )
     donor_values = jnp.asarray(((1.0, 2.0), (3.0, 4.0)))
-    interpolated = eqx.filter_jit(overset.interpolate)(donor_values)
+    remapped = eqx.filter_jit(overset.remap_to_receptors)(donor_values)
 
-    np.testing.assert_allclose(interpolated, ((2.0, 3.0),))
-    np.testing.assert_allclose(overset.interpolate(jnp.ones((2,))), 1.0)
+    np.testing.assert_allclose(remapped, ((2.0, 3.0),))
+    np.testing.assert_allclose(overset.remap_to_receptors(jnp.ones((2,))), 1.0)
     np.testing.assert_allclose(
-        overset.conservation_defect(donor_values, interpolated), 0.0, atol=1e-14
+        overset.conservation_defect(donor_values, remapped), 0.0, atol=1e-14
     )
     receptor_values = jnp.zeros((1, 2))
-    np.testing.assert_allclose(overset.apply(receptor_values, donor_values), interpolated)
+    np.testing.assert_allclose(overset.apply(receptor_values, donor_values), remapped)
     assert overset.report.maximum_receptor_coverage_defect < 1e-12
     assert overset.report.maximum_donor_covered_fraction <= 1.0 + 1e-12
 
@@ -175,7 +175,7 @@ def test_overset_donor_global_ids_permit_permuted_route_indices() -> None:
     assert overset.coverage_status == "complete"
     assert overset.epoch_id == "mesh-7"
     assert overset.tolerance_id == "tol-a"
-    np.testing.assert_allclose(overset.interpolate(jnp.asarray((1.0, 3.0))), 2.0)
+    np.testing.assert_allclose(overset.remap_to_receptors(jnp.asarray((1.0, 3.0))), 2.0)
 
 
 def test_overset_rejects_donor_overcoverage_and_bad_union_certificate() -> None:
@@ -255,7 +255,7 @@ def test_overset_union_certificate_identity_and_incomplete_map() -> None:
         )
 
 
-def test_overset_nonconservative_policy_rejected_and_bounded_is_explicit() -> None:
+def test_overset_overlap_has_one_conservative_transfer_policy() -> None:
     donor, receptor = _overset_meshes()
     common = (
         donor,
@@ -265,12 +265,20 @@ def test_overset_nonconservative_policy_rejected_and_bounded_is_explicit() -> No
         np.asarray((0, 1), dtype=np.int32),
         np.asarray((1.0, 1.0)),
     )
-    with pytest.raises(ValueError, match="nonconservative"):
-        phx.discretization.UnstructuredOversetPlan(*common, policy="nearest")
-    bounded = phx.discretization.UnstructuredOversetPlan(
-        *common, policy="conservative_bounded"
+    overset = phx.discretization.UnstructuredOversetPlan(*common)
+    remapped = overset.remap_to_receptors(jnp.asarray((0.0, 10.0)))
+    np.testing.assert_allclose(remapped, (5.0,))
+    np.testing.assert_allclose(
+        overset.conservation_defect(jnp.asarray((0.0, 10.0)), remapped),
+        0.0,
+        atol=1e-14,
     )
-    assert bounded.bounded_interpolation
+    unsupported_policy: dict[str, Any] = {"policy": "nearest"}
+    unsupported_bounded: dict[str, Any] = {"bounded_interpolation": True}
+    with pytest.raises(TypeError):
+        phx.discretization.UnstructuredOversetPlan(*common, **unsupported_policy)
+    with pytest.raises(TypeError):
+        phx.discretization.UnstructuredOversetPlan(*common, **unsupported_bounded)
 
 
 def test_overset_rejects_stale_geometry_epoch() -> None:

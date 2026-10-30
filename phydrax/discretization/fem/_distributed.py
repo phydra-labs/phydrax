@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any, final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,6 +29,931 @@ from ._generic import FiniteElementDiscretization, FiniteElementDofMap
 from ._hp import FiniteElementHPLineage
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarPlan
+
+
+@final
+class FiniteElementDofOwnership(StrictModule, NonTrainableState):
+    """Semantic DOF identities and owner ranks for one accepted FE shard."""
+
+    dof_keys: Array
+    owner_ranks: Array
+    field_layout_id: str = eqx.field(static=True)
+    identity_id: str = eqx.field(static=True)
+    orientation_action_id: str = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    local_rank: int = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    ownership_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        dof_keys: ArrayLike,
+        owner_ranks: ArrayLike,
+        /,
+        *,
+        field_layout_id: str,
+        identity_id: str,
+        orientation_action_id: str,
+        distribution_id: str,
+        topology_id: str,
+        geometry_id: str,
+        local_rank: int,
+        part_count: int,
+    ) -> None:
+        keys = np.asarray(dof_keys)
+        owners = np.asarray(owner_ranks)
+        identities = (
+            field_layout_id,
+            identity_id,
+            orientation_action_id,
+            distribution_id,
+            topology_id,
+            geometry_id,
+        )
+        if (
+            keys.dtype != np.dtype(np.int64)
+            or keys.ndim != 2
+            or keys.shape[1] != 3
+            or np.any(keys < 0)
+            or np.unique(keys, axis=0).shape[0] != keys.shape[0]
+            or owners.shape != (keys.shape[0],)
+            or not np.issubdtype(owners.dtype, np.integer)
+            or isinstance(local_rank, (bool, np.bool_))
+            or not isinstance(local_rank, (int, np.integer))
+            or isinstance(part_count, (bool, np.bool_))
+            or not isinstance(part_count, (int, np.integer))
+            or int(part_count) <= 0
+            or not 0 <= int(local_rank) < int(part_count)
+            or (owners.size and np.any(owners != int(local_rank)))
+            or any(not isinstance(value, str) or not value for value in identities)
+        ):
+            raise ValueError("Finite-element DOF ownership metadata is malformed.")
+        rank = int(local_rank)
+        parts = int(part_count)
+        owner_values = owners.astype(np.int32, copy=False)
+        self.dof_keys = jnp.asarray(keys)
+        self.owner_ranks = jnp.asarray(owner_values)
+        self.field_layout_id = field_layout_id
+        self.identity_id = identity_id
+        self.orientation_action_id = orientation_action_id
+        self.distribution_id = distribution_id
+        self.topology_id = topology_id
+        self.geometry_id = geometry_id
+        self.local_rank = rank
+        self.part_count = parts
+        self.ownership_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-dof-ownership",
+                "keys": array_tree_fingerprint(keys),
+                "owners": array_tree_fingerprint(owner_values),
+                "field_layout": field_layout_id,
+                "identity": identity_id,
+                "orientation_action": orientation_action_id,
+                "distribution": distribution_id,
+                "topology": topology_id,
+                "geometry": geometry_id,
+                "local_rank": rank,
+                "part_count": parts,
+            }
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: FiniteElementDofOwnership,
+        /,
+    ) -> FiniteElementDofOwnership:
+        if type(value) is not cls:
+            raise TypeError("Stored FE ownership must be FiniteElementDofOwnership.")
+        rebuilt = cls(
+            value.dof_keys,
+            value.owner_ranks,
+            field_layout_id=value.field_layout_id,
+            identity_id=value.identity_id,
+            orientation_action_id=value.orientation_action_id,
+            distribution_id=value.distribution_id,
+            topology_id=value.topology_id,
+            geometry_id=value.geometry_id,
+            local_rank=value.local_rank,
+            part_count=value.part_count,
+        )
+        if rebuilt.ownership_id != value.ownership_id:
+            raise ValueError("Stored FE ownership changed its canonical identity.")
+        return rebuilt
+
+
+@final
+class FiniteElementDofIdentityPlan(StrictModule, NonTrainableState):
+    """Canonical keys and owner ranks for every row in one local FE map."""
+
+    dof_keys: Array
+    owner_ranks: Array
+    cell_ids: Array
+    cell_owner_ranks: Array
+    vertex_ids: Array
+    vertex_owner_ranks: Array
+    field_layout_id: str = eqx.field(static=True)
+    identity_id: str = eqx.field(static=True)
+    orientation_action_id: str = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    dof_map_id: str = eqx.field(static=True)
+    local_rank: int = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        dof_keys: ArrayLike,
+        owner_ranks: ArrayLike,
+        /,
+        *,
+        field_layout_id: str,
+        identity_id: str,
+        orientation_action_id: str,
+        distribution_id: str,
+        topology_id: str,
+        geometry_id: str,
+        dof_map_id: str,
+        local_rank: int,
+        part_count: int,
+        cell_ids: ArrayLike,
+        cell_owner_ranks: ArrayLike,
+        vertex_ids: ArrayLike,
+        vertex_owner_ranks: ArrayLike,
+    ) -> None:
+        keys = np.asarray(dof_keys)
+        owners = np.asarray(owner_ranks)
+        cells = np.asarray(cell_ids)
+        cell_owners = np.asarray(cell_owner_ranks)
+        vertices = np.asarray(vertex_ids)
+        vertex_owners = np.asarray(vertex_owner_ranks)
+        identities = (
+            field_layout_id,
+            identity_id,
+            orientation_action_id,
+            distribution_id,
+            topology_id,
+            geometry_id,
+            dof_map_id,
+        )
+        if (
+            keys.dtype != np.dtype(np.int64)
+            or keys.ndim != 2
+            or keys.shape[1] != 3
+            or np.any(keys < 0)
+            or np.unique(keys, axis=0).shape[0] != keys.shape[0]
+            or owners.shape != (keys.shape[0],)
+            or not np.issubdtype(owners.dtype, np.integer)
+            or cells.dtype.kind not in "iu"
+            or cells.ndim != 1
+            or cell_owners.shape != cells.shape
+            or not np.issubdtype(cell_owners.dtype, np.integer)
+            or vertices.dtype.kind not in "iu"
+            or vertices.ndim != 1
+            or vertex_owners.shape != vertices.shape
+            or not np.issubdtype(vertex_owners.dtype, np.integer)
+            or np.unique(cells).size != cells.size
+            or np.unique(vertices).size != vertices.size
+            or (cells.size and np.any(cells < 0))
+            or (
+                cells.dtype.kind == "u"
+                and cells.size
+                and int(np.max(cells)) > np.iinfo(np.int64).max
+            )
+            or (vertices.size and np.any(vertices < 0))
+            or (
+                vertices.dtype.kind == "u"
+                and vertices.size
+                and int(np.max(vertices)) > np.iinfo(np.int64).max
+            )
+            or isinstance(local_rank, (bool, np.bool_))
+            or not isinstance(local_rank, (int, np.integer))
+            or isinstance(part_count, (bool, np.bool_))
+            or not isinstance(part_count, (int, np.integer))
+            or int(part_count) <= 0
+            or not 0 <= int(local_rank) < int(part_count)
+            or (owners.size and (np.any(owners < 0) or np.any(owners >= part_count)))
+            or (
+                cell_owners.size
+                and (np.any(cell_owners < 0) or np.any(cell_owners >= part_count))
+            )
+            or (
+                vertex_owners.size
+                and (np.any(vertex_owners < 0) or np.any(vertex_owners >= part_count))
+            )
+            or any(not isinstance(value, str) or not value for value in identities)
+        ):
+            raise ValueError("Finite-element DOF identity plan is malformed.")
+        owner_values = owners.astype(np.int32, copy=False)
+        cell_values = cells.astype(np.int64, copy=False)
+        cell_owner_values = cell_owners.astype(np.int32, copy=False)
+        vertex_values = vertices.astype(np.int64, copy=False)
+        vertex_owner_values = vertex_owners.astype(np.int32, copy=False)
+        rank = int(local_rank)
+        parts = int(part_count)
+        self.dof_keys = jnp.asarray(keys)
+        self.owner_ranks = jnp.asarray(owner_values)
+        self.cell_ids = jnp.asarray(cell_values)
+        self.cell_owner_ranks = jnp.asarray(cell_owner_values)
+        self.vertex_ids = jnp.asarray(vertex_values)
+        self.vertex_owner_ranks = jnp.asarray(vertex_owner_values)
+        self.field_layout_id = field_layout_id
+        self.identity_id = identity_id
+        self.orientation_action_id = orientation_action_id
+        self.distribution_id = distribution_id
+        self.topology_id = topology_id
+        self.geometry_id = geometry_id
+        self.dof_map_id = dof_map_id
+        self.local_rank = rank
+        self.part_count = parts
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-dof-identity-plan",
+                "keys": array_tree_fingerprint(keys),
+                "owners": array_tree_fingerprint(owner_values),
+                "cells": array_tree_fingerprint(cell_values),
+                "cell_owners": array_tree_fingerprint(cell_owner_values),
+                "vertices": array_tree_fingerprint(vertex_values),
+                "vertex_owners": array_tree_fingerprint(vertex_owner_values),
+                "field_layout": field_layout_id,
+                "identity": identity_id,
+                "orientation_action": orientation_action_id,
+                "distribution": distribution_id,
+                "topology": topology_id,
+                "geometry": geometry_id,
+                "dof_map": dof_map_id,
+                "local_rank": rank,
+                "part_count": parts,
+            }
+        )
+
+    @property
+    def owned_local_indices(self) -> Array:
+        return jnp.asarray(
+            np.flatnonzero(np.asarray(self.owner_ranks) == self.local_rank),
+            dtype=jnp.int32,
+        )
+
+    def ownership(self, /) -> FiniteElementDofOwnership:
+        rows = np.flatnonzero(np.asarray(self.owner_ranks) == self.local_rank)
+        return FiniteElementDofOwnership(
+            np.asarray(self.dof_keys)[rows],
+            np.full((rows.size,), self.local_rank, dtype=np.int32),
+            field_layout_id=self.field_layout_id,
+            identity_id=self.identity_id,
+            orientation_action_id=self.orientation_action_id,
+            distribution_id=self.distribution_id,
+            topology_id=self.topology_id,
+            geometry_id=self.geometry_id,
+            local_rank=self.local_rank,
+            part_count=self.part_count,
+        )
+
+    def shard_values(
+        self, values: ArrayLike, /
+    ) -> tuple[Array, FiniteElementDofOwnership]:
+        """Select owner rows from this local FE coordinate vector."""
+        array = jnp.asarray(values)
+        if array.ndim == 0 or array.shape[0] != self.dof_keys.shape[0]:
+            raise ValueError("FE values do not match the identity plan's local rows.")
+        return array[self.owned_local_indices], self.ownership()
+
+
+def finite_element_dof_identity_plan(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    /,
+    *,
+    field_layout_id: str,
+    distribution_id: str,
+    topology_id: str,
+    geometry_id: str,
+    local_rank: int,
+    part_count: int,
+    cell_ids: ArrayLike,
+    cell_owner_ranks: ArrayLike,
+    vertex_ids: ArrayLike,
+    vertex_owner_ranks: ArrayLike,
+    periodic_quotient: bool = False,
+    coordinate_spec: object | None = None,
+) -> FiniteElementDofIdentityPlan:
+    """Build stable FE keys from entity, cell, and canonical moment metadata."""
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise TypeError("discretization must be FiniteElementDiscretization.")
+    if (
+        isinstance(field_index, (bool, np.bool_))
+        or not isinstance(field_index, (int, np.integer))
+        or not 0 <= int(field_index) < len(discretization.dof_maps)
+    ):
+        raise ValueError("field_index is outside the local FE discretization.")
+    if (
+        isinstance(part_count, (bool, np.bool_))
+        or not isinstance(part_count, (int, np.integer))
+        or int(part_count) <= 0
+        or isinstance(local_rank, (bool, np.bool_))
+        or not isinstance(local_rank, (int, np.integer))
+        or not 0 <= int(local_rank) < int(part_count)
+        or not isinstance(periodic_quotient, (bool, np.bool_))
+    ):
+        raise ValueError("Owner-local FE rank and quotient declarations are invalid.")
+    mesh = discretization.mesh
+    if periodic_quotient:
+        if mesh.periodic_topology is None:
+            raise ValueError("Periodic quotient FE layouts require a periodic mesh.")
+        return _periodic_finite_element_dof_identity_plan(
+            discretization,
+            int(field_index),
+            field_layout_id=field_layout_id,
+            distribution_id=distribution_id,
+            topology_id=topology_id,
+            geometry_id=geometry_id,
+            local_rank=int(local_rank),
+            part_count=int(part_count),
+            cell_ids=cell_ids,
+            cell_owner_ranks=cell_owner_ranks,
+            vertex_ids=vertex_ids,
+            vertex_owner_ranks=vertex_owner_ranks,
+            coordinate_spec=coordinate_spec,
+        )
+    index = int(field_index)
+    dof_map = discretization.dof_maps[index]
+    elements = discretization.elements[index]
+    cells = np.asarray(cell_ids)
+    cell_owners = np.asarray(cell_owner_ranks)
+    vertices = np.asarray(vertex_ids)
+    vertex_owners = np.asarray(vertex_owner_ranks)
+    if (
+        cells.dtype.kind not in "iu"
+        or cells.ndim != 1
+        or (cells.size and np.any(cells < 0))
+        or (
+            cells.dtype.kind == "u"
+            and cells.size
+            and int(np.max(cells)) > np.iinfo(np.int64).max
+        )
+        or cell_owners.shape != cells.shape
+        or not np.issubdtype(cell_owners.dtype, np.integer)
+        or vertices.dtype.kind not in "iu"
+        or vertices.ndim != 1
+        or (vertices.size and np.any(vertices < 0))
+        or (
+            vertices.dtype.kind == "u"
+            and vertices.size
+            and int(np.max(vertices)) > np.iinfo(np.int64).max
+        )
+        or vertex_owners.shape != vertices.shape
+        or not np.issubdtype(vertex_owners.dtype, np.integer)
+        or np.unique(cells).size != cells.size
+        or np.unique(vertices).size != vertices.size
+        or (cell_owners.size and np.any((cell_owners < 0) | (cell_owners >= part_count)))
+        or (
+            vertex_owners.size
+            and np.any((vertex_owners < 0) | (vertex_owners >= part_count))
+        )
+    ):
+        raise ValueError("Owner-local FE entity ownership arrays are malformed.")
+    cell_owner_by_id = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(cells, cell_owners, strict=True)
+    }
+    vertex_owner_by_id = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(vertices, vertex_owners, strict=True)
+    }
+    local_cell_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    local_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    if not set(local_cell_ids.tolist()).issubset(cell_owner_by_id) or not set(
+        local_vertex_ids.tolist()
+    ).issubset(vertex_owner_by_id):
+        raise ValueError("Local FE mesh rows lack explicit owner-directory entries.")
+    if dof_map.global_dof_count > np.iinfo(np.int32).max:
+        raise ValueError("Local FE DOF rows exceed supported route indices.")
+
+    entity_vertices: list[tuple[tuple[int, ...], ...]] = [
+        tuple((vertex,) for vertex in range(mesh.coordinates.shape[0]))
+    ]
+    for incidence in mesh.topology.incidences:
+        relation = incidence.relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        lower = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+        upper = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+        rows = [
+            set() for _ in range(mesh.topology.entity_sets[len(entity_vertices)].count)
+        ]
+        for source, target in zip(lower, upper, strict=True):
+            rows[int(target)].update(entity_vertices[-1][int(source)])
+        entity_vertices.append(tuple(tuple(sorted(row)) for row in rows))
+    entity_lookups = tuple(
+        {row: index for index, row in enumerate(level)} for level in entity_vertices
+    )
+    entity_ids = tuple(
+        np.asarray(entity_set.entity_ids, dtype=np.int64)
+        for entity_set in mesh.topology.entity_sets
+    )
+    if len(entity_ids) != mesh.topological_dimension + 1:
+        raise ValueError("Owner-local FE topology lacks complete entity sets.")
+    entity_vertex_ids = tuple(
+        {
+            int(entity_ids[dimension][row]): tuple(
+                sorted(int(local_vertex_ids[vertex]) for vertex in support)
+            )
+            for row, support in enumerate(level)
+        }
+        for dimension, level in enumerate(entity_vertices)
+    )
+    grouped_rows: dict[tuple[int, int], set[int]] = {}
+    orientation_actions: list[tuple[int, int, dict[str, Any]]] = []
+    from .._reference_cell import reference_cell_topology
+
+    for block_index, (block, element, routes, transforms) in enumerate(
+        zip(
+            mesh.blocks,
+            elements,
+            dof_map.cell_dofs,
+            dof_map.cell_transforms,
+            strict=True,
+        )
+    ):
+        block_ids = np.asarray(block.global_ids, dtype=np.int64)
+        block_vertices = np.asarray(block.vertices, dtype=np.int64).reshape(
+            (block.cell_count, block.arity)
+        )
+        route_array = np.asarray(routes, dtype=np.int64)
+        transform_array = np.asarray(transforms)
+        if (
+            route_array.shape != (block.cell_count, element.local_dof_count)
+            or transform_array.shape
+            != (block.cell_count, element.local_dof_count, element.local_dof_count)
+            or not np.all(np.isfinite(transform_array))
+        ):
+            raise ValueError("FE DOF routes or orientation actions are malformed.")
+        orientation_actions.extend(
+            (
+                int(cell_id),
+                block_index,
+                array_tree_fingerprint(transform_array[row]),
+            )
+            for row, cell_id in enumerate(block_ids)
+        )
+        if element.form_basis is not None and any(
+            np.linalg.matrix_rank(transform_array[row]) != element.local_dof_count
+            for row in range(block.cell_count)
+        ):
+            raise ValueError("Form FE orientation action is singular.")
+        match dof_map.association:
+            case "vertex":
+                if element.local_dof_count != block_vertices.shape[1]:
+                    raise ValueError("Vertex FE rows do not match the cell vertices.")
+                for cell_row, cell_vertices in enumerate(block_vertices):
+                    for local_vertex, local_dofs in enumerate(element.entity_dofs[0]):
+                        if len(local_dofs) != 1:
+                            raise ValueError(
+                                "H1 vertex identities require one nodal moment."
+                            )
+                        global_vertex = int(local_vertex_ids[cell_vertices[local_vertex]])
+                        grouped_rows.setdefault((0, global_vertex), set()).add(
+                            int(route_array[cell_row, local_dofs[0]])
+                        )
+            case "cell":
+                cell_dofs = element.entity_dofs[mesh.topological_dimension][0]
+                if len(cell_dofs) != element.local_dof_count:
+                    raise ValueError("DG cell rows do not cover every basis moment.")
+                for cell_row, cell_id in enumerate(block_ids):
+                    grouped_rows.setdefault(
+                        (mesh.topological_dimension, int(cell_id)), set()
+                    ).update(
+                        int(route_array[cell_row, local_dof]) for local_dof in cell_dofs
+                    )
+            case "entity" | "form_entity" | "edge":
+                local_entities = (
+                    element.form_basis.entity_vertices
+                    if element.form_basis is not None
+                    else reference_cell_topology(element.cell_kind).entities
+                )
+                if len(local_entities) != len(element.entity_dofs):
+                    raise ValueError(
+                        "Element entity moments do not match reference topology."
+                    )
+                for cell_row, cell_vertices in enumerate(block_vertices):
+                    for dimension, faces in enumerate(local_entities):
+                        if dimension >= len(entity_ids) or len(faces) != len(
+                            element.entity_dofs[dimension]
+                        ):
+                            raise ValueError(
+                                "Element entity moment rows are inconsistent."
+                            )
+                        for face, local_dofs in zip(
+                            faces, element.entity_dofs[dimension], strict=True
+                        ):
+                            if not local_dofs:
+                                continue
+                            local_support = tuple(
+                                sorted(
+                                    int(cell_vertices[local_vertex])
+                                    for local_vertex in face
+                                )
+                            )
+                            try:
+                                entity_row = entity_lookups[dimension][local_support]
+                            except KeyError as error:
+                                raise ValueError(
+                                    "FE entity is absent from canonical topology."
+                                ) from error
+                            entity_id = int(entity_ids[dimension][entity_row])
+                            grouped_rows.setdefault((dimension, entity_id), set()).update(
+                                int(route_array[cell_row, local_dof])
+                                for local_dof in local_dofs
+                            )
+            case other:
+                raise NotImplementedError(
+                    f"Owner-local FE identities do not support {other!r} association."
+                )
+
+    dof_keys = np.full((dof_map.global_dof_count, 3), -1, dtype=np.int64)
+    owners = np.empty((dof_map.global_dof_count,), dtype=np.int32)
+    for (dimension, entity_id), rows in grouped_rows.items():
+        if dimension == mesh.topological_dimension and dof_map.association != "vertex":
+            try:
+                owner = cell_owner_by_id[entity_id]
+            except KeyError as error:
+                raise ValueError("FE cell DOF lacks an explicit cell owner.") from error
+        else:
+            support = entity_vertex_ids[dimension].get(entity_id)
+            if not support:
+                raise ValueError("FE entity identity has no canonical vertex support.")
+            try:
+                owner = vertex_owner_by_id[support[0]]
+            except KeyError as error:
+                raise ValueError("FE entity lacks an explicit vertex owner.") from error
+        for moment, row in enumerate(sorted(rows)):
+            if not 0 <= row < dof_map.global_dof_count or dof_keys[row, 0] >= 0:
+                raise ValueError("FE DOF row has multiple semantic identities.")
+            dof_keys[row] = (dimension, entity_id, moment)
+            owners[row] = owner
+    if np.any(dof_keys < 0):
+        raise ValueError("Canonical FE DOF identity map left an unmapped row.")
+    if np.unique(dof_keys, axis=0).shape[0] != dof_keys.shape[0]:
+        raise ValueError("Canonical FE DOF keys are not unique.")
+    identity_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-dof-identity",
+            "field_layout": field_layout_id,
+            "topology": topology_id,
+            "key_semantics": "entity-dimension-global-id-canonical-basis-moment",
+            "elements": [element.element_id for element in elements],
+            "form_bases": [
+                None if element.form_basis is None else element.form_basis.basis_id
+                for element in elements
+            ],
+            "association": dof_map.association,
+        }
+    )
+    orientation_action_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-dof-orientation-actions",
+            "dof_map": dof_map.dof_map_id,
+            "actions": orientation_actions,
+        }
+    )
+    return FiniteElementDofIdentityPlan(
+        dof_keys,
+        owners,
+        field_layout_id=field_layout_id,
+        identity_id=identity_id,
+        orientation_action_id=orientation_action_id,
+        distribution_id=distribution_id,
+        topology_id=topology_id,
+        geometry_id=geometry_id,
+        dof_map_id=dof_map.dof_map_id,
+        local_rank=local_rank,
+        part_count=part_count,
+        cell_ids=cells,
+        cell_owner_ranks=cell_owners,
+        vertex_ids=vertices,
+        vertex_owner_ranks=vertex_owners,
+    )
+
+
+def _periodic_finite_element_dof_identity_plan(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    /,
+    *,
+    field_layout_id: str,
+    distribution_id: str,
+    topology_id: str,
+    geometry_id: str,
+    local_rank: int,
+    part_count: int,
+    cell_ids: ArrayLike,
+    cell_owner_ranks: ArrayLike,
+    vertex_ids: ArrayLike,
+    vertex_owner_ranks: ArrayLike,
+    coordinate_spec: object | None,
+) -> FiniteElementDofIdentityPlan:
+    from ...meshing._periodic import periodic_entity_orbit_map
+    from .._cell_geometry import CellGeometrySpec
+    from ._de_rham import (
+        _periodic_entity_coordinate_maps,
+        FiniteElementDeRhamComplex,
+    )
+    from ._generic import _topology_vertex_sets
+
+    mesh = discretization.mesh
+    periodic = mesh.periodic_topology
+    if periodic is None:
+        raise ValueError("Periodic quotient FE identity requires PeriodicMeshTopology.")
+    dof_map = discretization.dof_maps[field_index]
+    elements = discretization.elements[field_index]
+    if not all(element.form_basis is not None for element in elements):
+        raise ValueError("Periodic quotient FE identities require canonical form bases.")
+    basis = elements[0].form_basis
+    if basis is None or any(
+        element.form_basis is None or element.form_basis.basis_id != basis.basis_id
+        for element in elements
+    ):
+        raise ValueError("Periodic quotient field requires one compatible form basis.")
+    coordinate = (
+        CellGeometrySpec.affine(mesh) if coordinate_spec is None else coordinate_spec
+    )
+    if not isinstance(coordinate, CellGeometrySpec):
+        raise TypeError("coordinate_spec must be CellGeometrySpec for periodic FE.")
+    complex_ = FiniteElementDeRhamComplex(
+        mesh,
+        family=basis.family,
+        order=basis.order,
+        twist=basis.twist,
+        coordinate_spec=coordinate,
+        coefficient_dtype=discretization.coefficient_dtype,
+    )
+    degree = int(basis.form_degree)
+    complex_elements = complex_.discretization.elements[degree]
+    if tuple(value.element_id for value in complex_elements) != tuple(
+        value.element_id for value in elements
+    ):
+        raise ValueError("Periodic de Rham preparation changed the accepted form basis.")
+    lift, collapse, orbit_map_ids, _ = _periodic_entity_coordinate_maps(complex_, degree)
+    cells = np.asarray(cell_ids)
+    cell_owners = np.asarray(cell_owner_ranks)
+    vertices = np.asarray(vertex_ids)
+    vertex_owners = np.asarray(vertex_owner_ranks)
+    if (
+        cells.dtype.kind not in "iu"
+        or cells.ndim != 1
+        or (cells.size and np.any(cells < 0))
+        or (
+            cells.dtype.kind == "u"
+            and cells.size
+            and int(np.max(cells)) > np.iinfo(np.int64).max
+        )
+        or cell_owners.shape != cells.shape
+        or vertices.dtype.kind not in "iu"
+        or vertices.ndim != 1
+        or (vertices.size and np.any(vertices < 0))
+        or (
+            vertices.dtype.kind == "u"
+            and vertices.size
+            and int(np.max(vertices)) > np.iinfo(np.int64).max
+        )
+        or not np.issubdtype(cell_owners.dtype, np.integer)
+        or not np.issubdtype(vertex_owners.dtype, np.integer)
+        or vertex_owners.shape != vertices.shape
+        or np.unique(cells).size != cells.size
+        or np.unique(vertices).size != vertices.size
+        or (cell_owners.size and np.any((cell_owners < 0) | (cell_owners >= part_count)))
+        or (
+            vertex_owners.size
+            and np.any((vertex_owners < 0) | (vertex_owners >= part_count))
+        )
+    ):
+        raise ValueError("Periodic FE owner directories are malformed.")
+    cell_owner_by_id = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(cells, cell_owners, strict=True)
+    }
+    vertex_owner_by_id = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(vertices, vertex_owners, strict=True)
+    }
+    local_cell_ids = {
+        int(value)
+        for block in mesh.blocks
+        for value in np.asarray(block.global_ids, dtype=np.int64)
+    }
+    local_vertex_ids = set(np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist())
+    if not local_cell_ids.issubset(cell_owner_by_id) or not local_vertex_ids.issubset(
+        vertex_owner_by_id
+    ):
+        raise ValueError("Periodic local FE rows lack explicit owner entries.")
+
+    vertex_sets = _topology_vertex_sets(mesh)
+    entity_lookups = tuple(
+        {tuple(sorted(row)): index for index, row in enumerate(level)}
+        for level in vertex_sets
+    )
+    orbit_maps = tuple(
+        periodic_entity_orbit_map(mesh, dimension)
+        for dimension in range(mesh.topological_dimension + 1)
+    )
+    quotient_ids = tuple(
+        np.asarray(orbit.quotient_entity_ids, dtype=np.int64) for orbit in orbit_maps
+    )
+    quotient_widths = [
+        np.full((identifiers.size,), -1, dtype=np.int64) for identifiers in quotient_ids
+    ]
+    lifted_to_quotient = tuple(
+        np.asarray(orbit.lifted_to_quotient, dtype=np.int64) for orbit in orbit_maps
+    )
+    for block_index, (block, element, routes, transforms) in enumerate(
+        zip(
+            mesh.blocks,
+            elements,
+            dof_map.cell_dofs,
+            dof_map.cell_transforms,
+            strict=True,
+        )
+    ):
+        basis_ = element.form_basis
+        if basis_ is None:
+            raise ValueError("Periodic FE element lost its form basis.")
+        block_vertices = np.asarray(block.vertices, dtype=np.int64).reshape(
+            (block.cell_count, block.arity)
+        )
+        route_array = np.asarray(routes, dtype=np.int64)
+        transform_array = np.asarray(transforms)
+        if (
+            route_array.shape != (block.cell_count, element.local_dof_count)
+            or transform_array.shape
+            != (block.cell_count, element.local_dof_count, element.local_dof_count)
+            or not np.all(np.isfinite(transform_array))
+        ):
+            raise ValueError(
+                "Periodic FE local routes or orientation actions are invalid."
+            )
+        if any(
+            np.linalg.matrix_rank(transform_array[row]) != element.local_dof_count
+            for row in range(block.cell_count)
+        ):
+            raise ValueError("Periodic FE full form orientation action is singular.")
+        for cell_row, cell_vertices in enumerate(block_vertices):
+            for dimension, (faces, dof_groups) in enumerate(
+                zip(basis_.entity_vertices, element.entity_dofs, strict=True)
+            ):
+                for face, local_dofs in zip(faces, dof_groups, strict=True):
+                    if not local_dofs:
+                        continue
+                    local_support = tuple(
+                        sorted(int(cell_vertices[local_vertex]) for local_vertex in face)
+                    )
+                    try:
+                        lifted_row = entity_lookups[dimension][local_support]
+                    except KeyError as error:
+                        raise ValueError(
+                            "Periodic form entity is absent from lifted topology."
+                        ) from error
+                    quotient_row = int(lifted_to_quotient[dimension][lifted_row])
+                    width = len(local_dofs)
+                    previous = quotient_widths[dimension][quotient_row]
+                    if previous not in (-1, width):
+                        raise ValueError(
+                            "Periodic images have different FE moment-space widths."
+                        )
+                    quotient_widths[dimension][quotient_row] = width
+    quotient_topology = periodic.quotient
+    quotient_vertex_sets: list[tuple[tuple[int, ...], ...]] = [
+        tuple((row,) for row in range(quotient_topology.entity_sets[0].count))
+    ]
+    for incidence in quotient_topology.incidences:
+        relation = incidence.relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        lower = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+        upper = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+        rows = [
+            set()
+            for _ in range(quotient_topology.entity_sets[len(quotient_vertex_sets)].count)
+        ]
+        for source, target in zip(lower, upper, strict=True):
+            rows[int(target)].update(quotient_vertex_sets[-1][int(source)])
+        quotient_vertex_sets.append(tuple(tuple(sorted(row)) for row in rows))
+    quotient_vertex_ids = np.asarray(
+        quotient_topology.entity_sets[0].entity_ids, dtype=np.int64
+    )
+    quotient_vertex_owner: dict[int, int] = {}
+    for lifted_row, quotient_row in enumerate(lifted_to_quotient[0]):
+        lifted_id = int(np.asarray(mesh.vertex_global_ids, dtype=np.int64)[lifted_row])
+        quotient_id = int(quotient_ids[0][int(quotient_row)])
+        owner = vertex_owner_by_id.get(lifted_id)
+        if owner is None:
+            continue
+        previous = quotient_vertex_owner.get(quotient_id)
+        if previous is not None and previous != owner:
+            raise ValueError(
+                "Periodic copies of one quotient vertex have different FE owners."
+            )
+        quotient_vertex_owner[quotient_id] = owner
+    if len(quotient_vertex_ids) != len(quotient_ids[0]):
+        raise ValueError("Periodic quotient vertex IDs disagree with orbit data.")
+    for quotient_id in quotient_vertex_ids.tolist():
+        if int(quotient_id) not in quotient_vertex_owner:
+            raise ValueError(
+                "Periodic quotient vertex lacks a local owner-directory row."
+            )
+    for level in quotient_widths:
+        level[level < 0] = 0
+
+    row_count = int(lift.source.size)
+    if row_count != sum(int(np.sum(level)) for level in quotient_widths):
+        raise ValueError("Periodic quotient moment rows differ from the exact FE lift.")
+    keys = np.empty((row_count, 3), dtype=np.int64)
+    owners = np.empty((row_count,), dtype=np.int32)
+    offset = 0
+    quotient_entity_owner_maps: list[dict[int, int]] = []
+    for dimension, (ids, widths, supports) in enumerate(
+        zip(quotient_ids, quotient_widths, quotient_vertex_sets, strict=True)
+    ):
+        owner_by_entity: dict[int, int] = {}
+        for quotient_row, support_rows in enumerate(supports):
+            if widths[quotient_row] == 0:
+                continue
+            support_ids = sorted(int(quotient_vertex_ids[row]) for row in support_rows)
+            if not support_ids:
+                raise ValueError("Periodic quotient entity has no vertex support.")
+            owner_by_entity[int(ids[quotient_row])] = quotient_vertex_owner[
+                support_ids[0]
+            ]
+        quotient_entity_owner_maps.append(owner_by_entity)
+        for quotient_row, (entity_id, width) in enumerate(zip(ids, widths, strict=True)):
+            count = int(width)
+            if count == 0:
+                continue
+            keys[offset : offset + count, 0] = dimension
+            keys[offset : offset + count, 1] = int(entity_id)
+            keys[offset : offset + count, 2] = np.arange(count, dtype=np.int64)
+            owners[offset : offset + count] = owner_by_entity[int(entity_id)]
+            offset += count
+    if offset != row_count or np.unique(keys, axis=0).shape[0] != row_count:
+        raise ValueError("Periodic quotient FE keys are incomplete or ambiguous.")
+    identity_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-dof-identity",
+            "field_layout": field_layout_id,
+            "topology": topology_id,
+            "key_semantics": "entity-dimension-global-id-canonical-basis-moment",
+            "element": basis.basis_id,
+            "form_basis": basis.basis_id,
+            "periodic_quotient": True,
+        }
+    )
+    cell_actions = tuple(
+        (
+            int(cell_id),
+            block_index,
+            array_tree_fingerprint(np.asarray(transform)),
+        )
+        for block_index, (block, transforms) in enumerate(
+            zip(mesh.blocks, dof_map.cell_transforms, strict=True)
+        )
+        for cell_id, transform in zip(
+            np.asarray(block.global_ids, dtype=np.int64),
+            np.asarray(transforms),
+            strict=True,
+        )
+    )
+    orientation_action_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-periodic-dof-orientation-actions",
+            "dof_map": dof_map.dof_map_id,
+            "lift": lift.operator_id,
+            "collapse": collapse.operator_id,
+            "orbit_maps": orbit_map_ids,
+            "cell_actions": cell_actions,
+        }
+    )
+    return FiniteElementDofIdentityPlan(
+        keys,
+        owners,
+        field_layout_id=field_layout_id,
+        identity_id=identity_id,
+        orientation_action_id=orientation_action_id,
+        distribution_id=distribution_id,
+        topology_id=topology_id,
+        geometry_id=geometry_id,
+        dof_map_id=dof_map.dof_map_id,
+        local_rank=local_rank,
+        part_count=part_count,
+        cell_ids=cells,
+        cell_owner_ranks=cell_owners,
+        vertex_ids=vertices,
+        vertex_owner_ranks=vertex_owners,
+    )
 
 
 class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):

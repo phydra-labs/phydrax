@@ -10,6 +10,11 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._interpolation._tspline import (
+    LocalKnotVector2D,
+    TAnchor2D,
+    TMesh2D,
+)
 from phydrax.discretization.iga import BSplineGrid
 from phydrax.discretization.iga._adaptive import AdaptiveDesignEpoch
 from phydrax.discretization.iga._basis import (
@@ -31,11 +36,6 @@ from phydrax.discretization.iga._plan import IsogeometricPlan
 from phydrax.discretization.iga._realization import DirectTensorRealization
 from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
 from phydrax.discretization.iga._topology import SplineSpanTopology
-from phydrax.discretization.iga._tspline import (
-    LocalKnotVector2D,
-    TAnchor2D,
-    TMesh2D,
-)
 
 
 class _LineMap(phx.geometry.BoundaryMap):
@@ -206,6 +206,22 @@ def test_iga_correctness_repairs_scenario_2() -> None:
         (0.0, 0.0, 0.0, 0.0, 1.0),
     )
     anchor = TAnchor2D(10, (0.0, 0.0), knots)
-
-    with pytest.raises(ValueError, match="anchor IDs must be exactly"):
-        TMesh2D(((0.0, 1.0, 0.0, 1.0),), (anchor,))
+    mesh = TMesh2D(((0.0, 1.0, 0.0, 1.0),), (anchor,))
+    assert mesh.anchors[0].anchor_id == 10
+    assert mesh.anchor_row(10) == 0
+    with pytest.raises(KeyError, match="Unknown T-spline anchor ID"):
+        mesh.anchor_row(11)
+    with pytest.raises(ValueError, match="anchor IDs must be unique"):
+        TMesh2D(
+            ((0.0, 1.0, 0.0, 1.0),),
+            (anchor, TAnchor2D(10, (0.0, 0.0), knots)),
+        )
+    foreign_knots = LocalKnotVector2D(
+        (0.0, 0.0, 1.0, 1.0, 1.0),
+        (0.0, 0.0, 0.0, 0.0, 1.0),
+    )
+    with pytest.raises(ValueError, match="do not follow the T-mesh topology"):
+        TMesh2D(
+            ((0.0, 1.0, 0.0, 1.0),),
+            (TAnchor2D(11, (0.0, 0.0), foreign_knots),),
+        )

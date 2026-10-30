@@ -26,7 +26,6 @@ from .._contracts import (
     MeshingExecutionMode,
     MeshingFailure,
     MeshingFailureCategory,
-    MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
@@ -203,6 +202,10 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         raw_weights: ArrayLike,
         /,
     ) -> None:
+        if coupling.donor_weights is None:
+            raise ValueError(
+                "TIOGA donor evidence requires an explicit overset stencil."
+            )
         cells, weights = (
             np.asarray(donor_cell_ids),
             np.asarray(raw_weights, dtype=np.float64),
@@ -400,12 +403,11 @@ def _rows(vertex_ids: np.ndarray, identifiers: np.ndarray, /) -> np.ndarray:
     return order[np.searchsorted(vertex_ids[order], identifiers)].astype(np.int32)
 
 
-def _admit_parts(assembly: MeshAssembly, limits: MeshingLimits, /) -> None:
+def _admit_parts(assembly: MeshAssembly, /) -> None:
     if len(assembly.parts) < 2:
         raise ValueError("TIOGA requires at least two parts.")
     if any(isinstance(link, OversetCoupling) for link in assembly.couplings):
         raise ValueError("Remove previous overset overlays before reassembling.")
-    totals = np.zeros(3, dtype=np.int64)
     for part in assembly.parts:
         if (
             not isinstance(part.carrier, CellMeshingResult)
@@ -443,21 +445,6 @@ def _admit_parts(assembly: MeshAssembly, limits: MeshingLimits, /) -> None:
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
                 "Mesh exceeds TIOGA int32 local indexing capacity.",
             )
-        totals += (
-            mesh.coordinates.shape[0],
-            sum(block.cell_count for block in mesh.blocks),
-            connectivity,
-        )
-    if (
-        totals[0] > limits.maximum_vertices
-        or totals[1] > limits.maximum_cells
-        or totals[2] > limits.maximum_connectivity_entries
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "TIOGA input exceeds configured entity or connectivity limits.",
-        )
-
 
 def _boundaries(
     assembly: MeshAssembly, scopes: tuple[MeshingScope, ...], /
@@ -531,14 +518,6 @@ def _registration_arrays(
     }
 
 
-def _require_input_bytes(
-    arrays: Mapping[str, np.ndarray], limits: MeshingLimits, /
-) -> None:
-    if sum(value.nbytes for value in arrays.values()) > limits.maximum_data_bytes:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "TIOGA input exceeds maximum_data_bytes.",
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -617,7 +596,6 @@ def _donors(
     records: dict[str, np.ndarray],
     tables: tuple[_PartTables, ...],
     node_iblank: list[np.ndarray],
-    limits: MeshingLimits,
     tolerance: float,
     /,
 ) -> _Donors:
@@ -626,14 +604,6 @@ def _donors(
     receptor_nodes, donor_cells = records["receptor_nodes"], records["donor_cells"]
     offsets, stencil_nodes = records["stencil_offsets"], records["stencil_nodes"]
     count = donor_parts.size
-    if (
-        count > limits.maximum_vertices
-        or stencil_nodes.size > limits.maximum_connectivity_entries
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "TIOGA donor inventory exceeds resource limits.",
-        )
     nodes = np.asarray([table.vertex_ids.size for table in tables], dtype=np.int64)
     cells = np.asarray([table.cell_ids.size for table in tables], dtype=np.int64)
     widths = np.diff(offsets)
@@ -735,12 +705,11 @@ def _assembly_outputs(
     parts: tuple[MeshPart, ...],
     registration: TiogaRegistration,
     options: TiogaOptions,
-    limits: MeshingLimits,
     /,
 ) -> tuple[tuple[TiogaPartBlanking, ...], tuple[OversetCoupling, ...], tuple]:
     tables = tuple(_tables(part) for part in parts)
     node_iblank, cell_iblank, records = _rank_outputs(call, tables, options.ranks)
-    donors = _donors(records, tables, node_iblank, limits, options.tolerance)
+    donors = _donors(records, tables, node_iblank, options.tolerance)
     blanking = tuple(
         TiogaPartBlanking(part, nodes, cells)
         for part, nodes, cells in zip(parts, node_iblank, cell_iblank, strict=True)
@@ -926,7 +895,6 @@ class TiogaProvider:
         *,
         wall_scopes: tuple[MeshingScope, ...] = (),
         overset_scopes: tuple[MeshingScope, ...] = (),
-        limits: MeshingLimits | None = None,
     ) -> TiogaAssemblyResult:
         """Register and assemble 3D vertex-linear cell meshes without altering identities.
 
@@ -937,10 +905,9 @@ class TiogaProvider:
         Existing non-overset overlays and all input audits are retained
         verbatim. The registration replaces any earlier one of this session.
         """
-        limits_ = _limits(limits)
         if self.options.ranks > len(assembly.parts):
             raise ValueError("TIOGA requires ranks <= part count.")
-        _admit_parts(assembly, limits_)
+        _admit_parts(assembly)
         walls = _boundaries(assembly, wall_scopes)
         overset = _boundaries(assembly, overset_scopes)
         if any(
@@ -950,19 +917,14 @@ class TiogaProvider:
             raise ValueError("Wall and overset boundary node scopes must be disjoint.")
         tables = tuple(_tables(part) for part in assembly.parts)
         arrays = _registration_arrays(assembly, tables, walls, overset)
-        _require_input_bytes(arrays, limits_)
         provider = self.info()
         call = self.worker.call(
             "register",
             {
                 "fringe_layers": self.options.fringe_layers,
                 "exclusion_layers": self.options.exclusion_layers,
-                "maximum_vertices": limits_.maximum_vertices,
-                "maximum_cells": limits_.maximum_cells,
-                "maximum_connectivity_entries": limits_.maximum_connectivity_entries,
             },
             arrays,
-            limits=limits_,
         )
         return self._result(
             assembly.parts,
@@ -971,7 +933,6 @@ class TiogaProvider:
             overset,
             call,
             provider,
-            limits_,
             {"operation": "register", "source_assembly": assembly.assembly_id},
         )
 
@@ -981,8 +942,6 @@ class TiogaProvider:
         previous: TiogaAssemblyResult,
         coordinates: Mapping[str, ArrayLike],
         /,
-        *,
-        limits: MeshingLimits | None = None,
     ) -> TiogaAssemblyResult:
         """Move named parts of a resident registration and rerun connectivity.
 
@@ -995,7 +954,6 @@ class TiogaProvider:
         """
         if not isinstance(coordinates, Mapping) or not coordinates:
             raise TypeError("coordinates must map moved part names to coordinates.")
-        limits_ = _limits(limits)
         registration = previous.registration
         names = registration.part_names
         if any(name not in names for name in coordinates):
@@ -1047,12 +1005,10 @@ class TiogaProvider:
             "moved_parts": moved,
             "coordinates": np.concatenate(moved_coordinates),
         }
-        _require_input_bytes(arrays, limits_)
         call = self.worker.call(
             "move",
             {"registration": registration.registration, "state": registration.state},
             arrays,
-            limits=limits_,
         )
         return self._result(
             parts,
@@ -1061,7 +1017,6 @@ class TiogaProvider:
             tuple(np.asarray(values) for values in registration.overset_node_ids),
             call,
             provider,
-            limits_,
             {
                 "operation": "move",
                 "previous_result": previous.result_id,
@@ -1077,7 +1032,6 @@ class TiogaProvider:
         overset: tuple[np.ndarray, ...],
         call: NativeWorkerCall,
         provider: MeshingProviderInfo,
-        limits: MeshingLimits,
         content: dict,
         /,
     ) -> TiogaAssemblyResult:
@@ -1103,7 +1057,7 @@ class TiogaProvider:
         # the explicit checks above did not name is still a conversion failure.
         try:
             blanking, links, evidence = _assembly_outputs(
-                call, parts, registration, self.options, limits
+                call, parts, registration, self.options
             )
             assembly = MeshAssembly(parts, couplings=(*retained, *links))
         except ValueError as error:
@@ -1136,38 +1090,12 @@ class TiogaProvider:
             provider.version,
             MeshingExecutionMode.SUBPROCESS,
             deterministic=False,
-            enforced_limits=(
-                "wall_seconds",
-                "input_entities",
-                "input_connectivity_entries",
-                "input_bytes",
-                "output_bytes",
-                "local_int32_indexing",
-                "global_uint64_node_namespace",
-                self.worker.memory_limit_evidence(),
-            ),
-            unenforced_limits=(
-                "provider_internal_workspace",
-                "native_donor_generation_preallocation",
-            ),
         )
         return TiogaAssemblyResult(
             assembly, blanking, evidence, registration, provider, runtime, provenance
         )
 
 
-def _limits(limits: MeshingLimits | None, /) -> MeshingLimits:
-    limits_ = MeshingLimits() if limits is None else limits
-    if not isinstance(limits_, MeshingLimits):
-        raise TypeError("limits must be MeshingLimits.")
-    if (
-        limits_.maximum_vertices > 10_000_000
-        or limits_.maximum_cells > 20_000_000
-        or limits_.maximum_connectivity_entries > 500_000_000
-        or limits_.maximum_data_bytes > 4_000_000_000
-    ):
-        raise ValueError("limits exceed the TIOGA worker hard bounds.")
-    return limits_
 
 
 __all__ = [

@@ -247,7 +247,7 @@ initial = {
     "nodal_error": nodal_error,
 }
 policy = phx.meshing.MeshAdaptationPolicy(
-    phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D, maximum_passes=24
+    phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D
 )
 current = source
 cycles = []

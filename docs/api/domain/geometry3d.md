@@ -30,14 +30,23 @@ must be finite, nondegenerate, consistently oriented, watertight, and enclose
 nonzero volume.
 
 STEP, IGES, and BREP input lowers to `BRepSource`, preserving face patches,
-trims, topology identities, and import provenance:
+trims, topology identities, and import provenance. For an already-constructed
+OCCT shape, use the explicit optional adapter; source carriers still pass through
+the native BRep-text decoder and no external tessellation is used as source geometry.
 
 ```python
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
-model = phx.geometry.model_from_occt_shape(
+from phydrax.geometry.brep import BRepTessellationPolicy
+from phydrax.interchange import model_from_occt_shape
+
+model = model_from_occt_shape(
     BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
-    linear_deflection=0.1,
+    coordinate_contract=phx.SpatialCoordinateContract.si(),
+    tessellation=BRepTessellationPolicy(
+        linear_deflection=0.1,
+        angular_deflection=0.1,
+    ),
 )
 solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())
 print(solid.geometry.field_certificate)

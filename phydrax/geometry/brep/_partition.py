@@ -4,23 +4,9 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any
-
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-from OCP.collections import List_TopoDS_Shape
-from OCP.TopAbs import (
-    TopAbs_EDGE,
-    TopAbs_FACE,
-    TopAbs_SOLID,
-)
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -34,12 +20,7 @@ from .._cad_revision import (
     OccurrenceCorrespondenceTransaction,
 )
 from ._model import BRepEntityId, BRepModel
-from ._occt import (
-    _shape_digest,
-    import_brep,
-    persist_occt_shape,
-    read_occt_shape,
-)
+from ._projection_contracts import brep_entity_id
 
 
 def _text(value: str, name: str) -> str:
@@ -57,104 +38,117 @@ def _partition_dimension(value: int, /) -> int:
     return value
 
 
-def _solid_occurrence_id(index: int) -> str:
-    return f"solid:{index}"
+def _entity_text(entity: BRepEntityId, /) -> str:
+    dimensions = {"vertex": 0, "edge": 1, "face": 2, "solid": 3}
+    return brep_entity_id(
+        entity.source_id,
+        entity.source_revision,
+        dimensions[entity.kind],
+        entity.index,
+        occurrence_path=entity.occurrence_path,
+    )
 
 
-def _face_occurrence_id(solid_index: int, face_index: int) -> str:
-    return f"solid:{solid_index}/face:{face_index}"
+def _entity_occurrence_id(entity: BRepEntityId, /) -> str:
+    return canonical_fingerprint(
+        {"kind": "cad-qualified-entity-occurrence", "entity": _entity_text(entity)}
+    )
 
+def _assembly_namespace_occurrence_id(
+    source_id: str, source_revision: str, path: tuple[str, ...], /
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "cad-instance-namespace",
+            "source_id": source_id,
+            "source_revision": source_revision,
+            "path": path,
+        }
+    )
 
-def _edge_occurrence_id(face_index: int, edge_index: int) -> str:
-    return f"face:{face_index}/edge:{edge_index}"
-
-
-def _entity_text(entity: BRepEntityId) -> str:
-    return f"{entity.source_revision}:{entity.kind}:{entity.index}"
 
 
 def cad_revision_from_brep_model(model: BRepModel, /) -> CADRevision:
-    """Create the exact region and boundary occurrence inventory of a B-Rep."""
-
+    """Create the exhaustive occurrence-qualified source entity inventory."""
     if not isinstance(model, BRepModel):
         raise TypeError("model must be a BRepModel.")
+    geometry = model.geometry
+    records = geometry.qualified_entity_incidence(model.source_id, model.source_revision)
+    entities = tuple(sorted({record.member for record in records}))
+    namespaces = tuple(
+        sorted(
+            {entity.occurrence_path for entity in entities if entity.occurrence_path}
+            | {container.path for container in geometry.iter_assembly_containers()}
+            | {occurrence.path for occurrence in geometry.iter_occurrences()}
+        )
+    )
+    by_namespace = {
+        namespace: _assembly_namespace_occurrence_id(
+            model.source_id, model.source_revision, namespace
+        )
+        for namespace in namespaces
+    }
+    parents = {
+        child: container.path
+        for container in geometry.iter_assembly_containers()
+        for child in (*container.member_paths, *container.child_paths)
+    }
+    namespace_paths: dict[tuple[str, ...], tuple[str, ...]] = {}
+
+    def namespace_path(namespace: tuple[str, ...], /) -> tuple[str, ...]:
+        if namespace not in namespace_paths:
+            chain: list[tuple[str, ...]] = []
+            active: set[tuple[str, ...]] = set()
+            current = namespace
+            while current not in namespace_paths:
+                if current in active:
+                    raise ValueError("Assembly container paths must form an acyclic forest.")
+                active.add(current)
+                chain.append(current)
+                parent = parents.get(current)
+                if parent is None:
+                    break
+                current = parent
+            prefix = namespace_paths.get(current, ())
+            for item in reversed(chain):
+                prefix = (*prefix, by_namespace[item])
+                namespace_paths[item] = prefix
+        return namespace_paths[namespace]
+
     occurrences: list[CADOccurrence] = []
-    if model.topology.num_solids:
-        for solid_index, (face_indices, orientations) in enumerate(
-            zip(
-                model.topology.solid_faces,
-                model.topology.solid_face_orientations,
-                strict=True,
+    for namespace in namespaces:
+        identifier = by_namespace[namespace]
+        parent = parents.get(namespace)
+        occurrences.append(
+            CADOccurrence(
+                model.source_revision,
+                identifier,
+                identifier,
+                "assembly",
+                namespace_path(namespace),
+                None if parent is None else by_namespace[parent],
             )
-        ):
-            solid_occurrence_id = _solid_occurrence_id(solid_index)
-            occurrences.append(
-                CADOccurrence(
-                    model.source_revision,
-                    solid_occurrence_id,
-                    _entity_text(model.solid_ids[solid_index]),
-                    "solid",
-                    (solid_occurrence_id,),
-                )
+        )
+    for entity in entities:
+        identifier = _entity_occurrence_id(entity)
+        parent = by_namespace.get(entity.occurrence_path)
+        path = (
+            (identifier,)
+            if parent is None
+            else (*namespace_path(entity.occurrence_path), identifier)
+        )
+        occurrences.append(
+            CADOccurrence(
+                model.source_revision,
+                identifier,
+                _entity_text(entity),
+                entity.kind,
+                path,
+                parent,
             )
-            for face_index, orientation in zip(face_indices, orientations, strict=True):
-                face_occurrence_id = _face_occurrence_id(solid_index, face_index)
-                occurrences.append(
-                    CADOccurrence(
-                        model.source_revision,
-                        face_occurrence_id,
-                        _entity_text(model.face_ids[face_index]),
-                        "face",
-                        (solid_occurrence_id, face_occurrence_id),
-                        solid_occurrence_id,
-                        orientation,
-                    )
-                )
-    else:
-        for face_index, wires in enumerate(model.topology.face_wires):
-            face_occurrence_id = f"face:{face_index}"
-            occurrences.append(
-                CADOccurrence(
-                    model.source_revision,
-                    face_occurrence_id,
-                    _entity_text(model.face_ids[face_index]),
-                    "face",
-                    (face_occurrence_id,),
-                )
-            )
-            edge_orientations: dict[int, int] = {}
-            for wire in wires:
-                for signed_edge_index in wire:
-                    edge_index = abs(signed_edge_index) - 1
-                    if edge_index in edge_orientations:
-                        raise ValueError(
-                            "A planar B-Rep face cannot repeat an edge occurrence."
-                        )
-                    edge_orientations[edge_index] = 1 if signed_edge_index > 0 else -1
-            if set(edge_orientations) != set(model.topology.face_edges[face_index]):
-                raise ValueError(
-                    "Planar B-Rep face-edge incidence is internally inconsistent."
-                )
-            for edge_index in model.topology.face_edges[face_index]:
-                edge_occurrence_id = _edge_occurrence_id(face_index, edge_index)
-                occurrences.append(
-                    CADOccurrence(
-                        model.source_revision,
-                        edge_occurrence_id,
-                        _entity_text(model.edge_ids[edge_index]),
-                        "edge",
-                        (face_occurrence_id, edge_occurrence_id),
-                        face_occurrence_id,
-                        edge_orientations[edge_index],
-                    )
-                )
-    if not occurrences:
-        raise ValueError("A partition operand B-Rep must contain a solid or face.")
+        )
     return CADRevision(
-        model.source_revision,
-        model.source_id,
-        tuple(occurrences),
-        model.model_id,
+        model.source_revision, model.source_id, tuple(occurrences), geometry.geometry_id
     )
 
 
@@ -255,11 +249,9 @@ def _operand_selection(operand: BRepPartitionOperand) -> CADSelectionSet:
 
 @dataclass(frozen=True, slots=True)
 class BRepPartitionPolicy:
-    """Total region precedence and publication behavior for exact cell selection."""
+    """Declare total region precedence for native partition cells."""
 
     region_precedence: tuple[str, ...]
-    overwrite: bool = False
-    run_parallel: bool = False
 
     def __post_init__(self) -> None:
         precedence = tuple(
@@ -269,10 +261,6 @@ class BRepPartitionPolicy:
             raise ValueError("Partition policy requires explicit region precedence.")
         if len(set(precedence)) != len(precedence):
             raise ValueError("Region precedence cannot repeat a region.")
-        if not isinstance(self.overwrite, bool) or not isinstance(
-            self.run_parallel, bool
-        ):
-            raise TypeError("overwrite and run_parallel must be boolean.")
         object.__setattr__(self, "region_precedence", precedence)
 
 
@@ -337,8 +325,6 @@ class BRepPartitionPlan:
                     for value in operands
                 ),
                 "region_precedence": self.policy.region_precedence,
-                "overwrite": self.policy.overwrite,
-                "run_parallel": self.policy.run_parallel,
             }
         )
         object.__setattr__(self, "operands", operands)
@@ -626,16 +612,16 @@ class BRepPartitionResult:
                 signs = []
                 for face_index in region_indices:
                     matches = tuple(
-                        signed_edge
-                        for wire in self.model.topology.face_wires[face_index]
-                        for signed_edge in wire
-                        if abs(signed_edge) - 1 == patch_index
+                        self.model.geometry.coedge_senses[coedge]
+                        for loop in self.model.geometry.face_loops[face_index]
+                        for coedge in loop
+                        if self.model.geometry.coedge_edges[coedge] == patch_index
                     )
                     if len(matches) != 1:
                         raise ValueError(
                             "A planar face must contain each incident edge exactly once."
                         )
-                    signs.append(1 if matches[0] > 0 else -1)
+                    signs.append(matches[0])
                 if signs[0] == signs[1]:
                     raise ValueError(
                         "A shared planar edge must have opposite face incidence."
@@ -690,925 +676,382 @@ class BRepPartitionResult:
 
 
 class BRepPartitionHistoryError(RuntimeError):
-    """Raised when OCCT cannot certify exhaustive region and patch history."""
+    """Report unresolved native source correspondence or partition history."""
 
 
-@dataclass(frozen=True, slots=True)
-class _LoadedModel:
-    model: BRepModel
-    revision: CADRevision
-    shape: TopoDS_Shape
-    solids: tuple[Any, ...]
-    faces: tuple[Any, ...]
-    edges: tuple[Any, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _SourceFace:
-    occurrence: CADOccurrence
-    shape: Any
-
-
-@dataclass(frozen=True, slots=True)
-class _SourceSolid:
-    operand_id: str
-    occurrence: CADOccurrence
-    shape: Any
-    faces: tuple[_SourceFace, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _History:
-    target_indices: tuple[int, ...]
-    modified_count: int
-    generated_count: int
-    deleted: bool
-
-
-def _explore_unique(shape: Any, kind: Any, caster: Any) -> tuple[Any, ...]:
-    explorer = TopExp_Explorer(shape, kind)
-    entities: list[Any] = []
-    while explorer.More():
-        candidate = caster(explorer.Current())
-        if not any(value.IsSame(candidate) for value in entities):
-            entities.append(candidate)
-        explorer.Next()
-    return tuple(entities)
-
-
-def _shape_index(entities: Sequence[Any], candidate: Any) -> int:
-    for index, entity in enumerate(entities):
-        if entity.IsSame(candidate):
-            return index
-    raise BRepPartitionHistoryError(
-        "OCCT history referenced an entity outside the exact partition inventory."
-    )
-
-
-def _oriented_face(solid: Any, face: Any) -> Any:
-    explorer = TopExp_Explorer(solid, TopAbs_FACE)
-    while explorer.More():
-        candidate = TopoDS.Face(explorer.Current())
-        if candidate.IsSame(face):
-            return candidate
-        explorer.Next()
-    raise BRepPartitionHistoryError(
-        "Persisted solid incidence disagrees with its exact face inventory."
-    )
-
-
-def _shape_list(shapes: Sequence[Any]) -> List_TopoDS_Shape:
-    result = List_TopoDS_Shape()
-    for shape in shapes:
-        result.Append(shape)
-    return result
-
-
-def _members(
-    builder: BOPAlgo_CellsBuilder,
-    shape: Any,
-    atoms: tuple[Any, ...],
-) -> frozenset[int]:
-    builder.RemoveAllFromResult()
-    builder.AddToResult(_shape_list((shape,)), List_TopoDS_Shape())
-    selected = _explore_unique(builder.Shape(), TopAbs_SOLID, TopoDS.Solid)
-    return frozenset(_shape_index(atoms, value) for value in selected)
-
-
-def _flatten_history(values: Sequence[Any], kind: Any, caster: Any) -> tuple[Any, ...]:
-    result: list[Any] = []
-    for value in values:
-        candidates = (
-            (caster(value),)
-            if value.ShapeType() == kind
-            else _explore_unique(value, kind, caster)
-        )
-        for candidate in candidates:
-            if not any(existing.IsSame(candidate) for existing in result):
-                result.append(candidate)
-    return tuple(result)
-
-
-def _capture_history(
-    builder: BOPAlgo_CellsBuilder,
-    source: Any,
-    targets: tuple[Any, ...],
-    kind: Any,
-    caster: Any,
-) -> _History:
-    modified = tuple(builder.Modified(source))
-    generated = tuple(builder.Generated(source))
-    deleted = bool(builder.IsDeleted(source))
-    candidates = list(_flatten_history(modified, kind, caster))
-    candidates.extend(_flatten_history(generated, kind, caster))
-    if any(value.IsSame(source) for value in targets):
-        candidates.append(caster(source))
-    indices = tuple(
-        sorted(
-            {
-                _shape_index(targets, candidate)
-                for candidate in candidates
-                if any(target.IsSame(candidate) for target in targets)
-            }
-        )
-    )
-    history_entities = _flatten_history((*modified, *generated), kind, caster)
-    if any(
-        not any(target.IsSame(candidate) for target in targets)
-        for candidate in history_entities
-    ):
-        raise BRepPartitionHistoryError(
-            "OCCT returned non-final history without exhaustive final resolution."
-        )
-    if not indices and not deleted:
-        raise BRepPartitionHistoryError(
-            "OCCT supplied neither exact descendants nor a deletion decision."
-        )
-    return _History(indices, len(modified), len(generated), deleted)
-
-
-def _load_model(model: BRepModel) -> _LoadedModel:
-    source = Path(model.source_id).expanduser().resolve()
-    if model.report.source_format != "brep" or not source.is_file():
-        raise ValueError("Partition operands must be persisted native BREP models.")
-    shape, source_format, source_digest = read_occt_shape(source)
-    if source_format != "brep" or source_digest != model.source_digest:
-        raise ValueError("Persisted partition operand identity has changed.")
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
-    if (
-        len(solids) != model.topology.num_solids
-        or len(faces) != len(model.face_ids)
-        or len(edges) != len(model.edge_ids)
-    ):
-        raise ValueError("Persisted BREP inventory no longer matches its model.")
-    return _LoadedModel(
-        model,
-        cad_revision_from_brep_model(model),
-        shape,
-        solids,
-        faces,
-        edges,
-    )
-
-
-def _composite_sources(
+def _partition_source_revision(
     plan: BRepPartitionPlan,
-    loaded: dict[tuple[str, str], _LoadedModel],
-) -> tuple[CADRevision, tuple[_SourceSolid, ...], dict[str, tuple[Any, ...]]]:
+    operands: tuple[BRepPartitionOperand, ...],
+) -> tuple[
+    CADRevision,
+    tuple[dict[str, str], ...],
+    tuple[dict[str, str], ...],
+]:
     revision_id = canonical_fingerprint(
         {
-            "kind": "brep-partition-source-revision",
-            "plan_id": plan.plan_id,
+            "kind": "native-brep-partition-source-revision",
+            "plan": plan.plan_id,
+            "operands": tuple(
+                (operand.operand_id, operand.model.source_revision)
+                for operand in operands
+            ),
         }
     )
     occurrences: list[CADOccurrence] = []
-    source_solids: list[_SourceSolid] = []
-    operand_shapes: dict[str, tuple[Any, ...]] = {}
-    for operand in sorted(plan.operands, key=lambda value: value.operand_id):
-        item = loaded[(operand.model.source_id, operand.model.source_digest)]
-        selected_shapes: list[Any] = []
-        for selector in _operand_selection(operand).selectors:
-            source_solid_index = next(
-                index
-                for index in range(len(item.solids))
-                if item.revision.select(_solid_occurrence_id(index)) == selector
-            )
-            solid_occurrence_id = (
-                f"operand:{operand.operand_id}:solid:{source_solid_index}"
-            )
-            solid_occurrence = CADOccurrence(
-                revision_id,
-                solid_occurrence_id,
-                selector.entity_id,
-                "solid",
-                (solid_occurrence_id,),
-            )
-            occurrences.append(solid_occurrence)
-            faces: list[_SourceFace] = []
-            for face_index, orientation in zip(
-                item.model.topology.solid_faces[source_solid_index],
-                item.model.topology.solid_face_orientations[source_solid_index],
-                strict=True,
-            ):
-                face_occurrence_id = f"{solid_occurrence_id}/face:{face_index}"
-                original = item.revision.select(
-                    _face_occurrence_id(source_solid_index, face_index)
-                )
-                occurrence = CADOccurrence(
-                    revision_id,
-                    face_occurrence_id,
-                    original.entity_id,
-                    "face",
-                    (solid_occurrence_id, face_occurrence_id),
-                    solid_occurrence_id,
-                    orientation,
-                )
-                occurrences.append(occurrence)
-                faces.append(
-                    _SourceFace(
-                        occurrence,
-                        _oriented_face(
-                            item.solids[source_solid_index], item.faces[face_index]
-                        ),
-                    )
-                )
-            shape = item.solids[source_solid_index]
-            selected_shapes.append(shape)
-            source_solids.append(
-                _SourceSolid(
-                    operand.operand_id,
-                    solid_occurrence,
-                    shape,
-                    tuple(faces),
-                )
-            )
-        operand_shapes[operand.operand_id] = tuple(selected_shapes)
-    if len({value.occurrence_id for value in occurrences}) != len(occurrences):
-        raise ValueError("Partition operand IDs produce ambiguous CAD occurrences.")
-    revision = CADRevision(
-        revision_id,
-        f"brep-partition-input:{plan.plan_id}",
-        tuple(occurrences),
-        plan.plan_id,
-    )
-    return revision, tuple(source_solids), operand_shapes
-
-
-def _classify_atoms(
-    plan: BRepPartitionPlan,
-    operand_members: dict[str, frozenset[int]],
-    atom_count: int,
-) -> tuple[str | None, ...]:
-    voids = tuple(
-        value for value in plan.operands if value.role is BRepPartitionRole.VOID
-    )
-    owners: list[str | None] = []
-    for atom_index in range(atom_count):
-        owner = next(
-            (
-                region_id
-                for region_id in plan.policy.region_precedence
-                if atom_index in operand_members[region_id]
-            ),
-            None,
-        )
-        if owner is not None and any(
-            owner in void.target_region_ids
-            and atom_index in operand_members[void.operand_id]
-            for void in voids
-        ):
-            owner = None
-        owners.append(owner)
-    if not any(value is not None for value in owners):
-        raise ValueError("Partition policy removes every result solid.")
-    if {value for value in owners if value is not None} != set(
-        plan.policy.region_precedence
-    ):
-        raise ValueError("Every declared partition region must retain a solid.")
-    return tuple(owners)
-
-
-def _build_final_shape(
-    plan: BRepPartitionPlan,
-    builder: BOPAlgo_CellsBuilder,
-    operand_shapes: dict[str, tuple[Any, ...]],
-) -> TopoDS_Shape:
-    voids = tuple(
-        value for value in plan.operands if value.role is BRepPartitionRole.VOID
-    )
-    builder.RemoveAllFromResult()
-    for rank, region_id in enumerate(plan.policy.region_precedence):
-        higher = plan.policy.region_precedence[:rank]
-        avoid = tuple(
-            shape for higher_id in higher for shape in operand_shapes[higher_id]
-        ) + tuple(
-            shape
-            for void in voids
-            if region_id in void.target_region_ids
-            for shape in operand_shapes[void.operand_id]
-        )
-        for shape in operand_shapes[region_id]:
-            builder.AddToResult(
-                _shape_list((shape,)),
-                _shape_list(avoid),
-                rank + 1,
-            )
-    builder.RemoveInternalBoundaries()
-    result = builder.Shape()
-    if result.IsNull():
-        raise ValueError("OCCT produced an empty partition result.")
-    return result
-
-
-def _final_solid_owners(
-    final_solids: tuple[Any, ...],
-    atoms: tuple[Any, ...],
-    atom_owners: tuple[str | None, ...],
-) -> tuple[str, ...]:
-    oriented_atom_faces = tuple(
-        (owner, _explore_unique(atom, TopAbs_FACE, TopoDS.Face))
-        for atom, owner in zip(atoms, atom_owners, strict=True)
-        if owner is not None
-    )
-    owners: list[str] = []
-    for solid in final_solids:
-        evidence: set[str] = set()
-        explorer = TopExp_Explorer(solid, TopAbs_FACE)
-        while explorer.More():
-            final_face = TopoDS.Face(explorer.Current())
-            for owner, faces in oriented_atom_faces:
-                if any(final_face.IsEqual(face) for face in faces):
-                    evidence.add(owner)
-            explorer.Next()
-        if len(evidence) != 1:
-            raise BRepPartitionHistoryError(
-                "Final solid material ownership lacks unique exact cell incidence."
-            )
-        owners.append(evidence.pop())
-    if set(owners) != {value for value in atom_owners if value is not None}:
-        raise BRepPartitionHistoryError(
-            "Final solid ownership does not exhaust retained exact cells."
-        )
-    return tuple(owners)
-
-
-def _exact_roundtrip_map(
-    original: tuple[Any, ...], reopened: tuple[Any, ...], kind: str
-) -> tuple[int, ...]:
-    if len(original) != len(reopened):
-        raise BRepPartitionHistoryError(
-            f"Persisted partition changed the exact {kind} inventory."
-        )
-    original_digests = tuple(_shape_digest(value) for value in original)
-    reopened_digests = tuple(_shape_digest(value) for value in reopened)
-    if len(set(original_digests)) != len(original_digests) or len(
-        set(reopened_digests)
-    ) != len(reopened_digests):
-        raise BRepPartitionHistoryError(
-            f"Exact {kind} identity is ambiguous after persistence."
-        )
-    if set(original_digests) != set(reopened_digests):
-        raise BRepPartitionHistoryError(
-            f"Persisted partition changed exact {kind} topology or geometry."
-        )
-    return tuple(reopened_digests.index(value) for value in original_digests)
-
-
-def _verify_roundtrip(
-    original_shape: Any,
-    reopened_shape: Any,
-    model: BRepModel,
-) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[int, ...], tuple[int, ...]]:
-    original_solids = _explore_unique(original_shape, TopAbs_SOLID, TopoDS.Solid)
-    original_faces = _explore_unique(original_shape, TopAbs_FACE, TopoDS.Face)
-    reopened_solids = _explore_unique(reopened_shape, TopAbs_SOLID, TopoDS.Solid)
-    reopened_faces = _explore_unique(reopened_shape, TopAbs_FACE, TopoDS.Face)
-    solid_map = _exact_roundtrip_map(original_solids, reopened_solids, "solid")
-    face_map = _exact_roundtrip_map(original_faces, reopened_faces, "face")
-    if (
-        len(reopened_solids) != model.topology.num_solids
-        or len(reopened_faces) != model.topology.num_faces
-    ):
-        raise BRepPartitionHistoryError(
-            "Reopened partition model does not match its native BREP inventory."
-        )
-    for original_solid_index, solid in enumerate(original_solids):
-        mapped_faces: list[int] = []
-        mapped_orientations: list[int] = []
-        explorer = TopExp_Explorer(solid, TopAbs_FACE)
-        while explorer.More():
-            face = TopoDS.Face(explorer.Current())
-            original_face_index = _shape_index(original_faces, face)
-            mapped_faces.append(face_map[original_face_index])
-            global_face = original_faces[original_face_index]
-            mapped_orientations.append(
-                1 if face.Orientation() == global_face.Orientation() else -1
-            )
-            explorer.Next()
-        reopened_solid_index = solid_map[original_solid_index]
-        if (
-            tuple(mapped_faces) != model.topology.solid_faces[reopened_solid_index]
-            or tuple(mapped_orientations)
-            != model.topology.solid_face_orientations[reopened_solid_index]
-        ):
-            raise BRepPartitionHistoryError(
-                "Reopened partition changed exact solid-face incidence."
-            )
-    return original_solids, original_faces, solid_map, face_map
-
-
-def _identity_association_graph(
-    plan: BRepPartitionPlan,
-    source_revision: CADRevision,
-    source_solids: tuple[_SourceSolid, ...],
-    target_model: BRepModel,
-    final_solids: tuple[Any, ...],
-    final_faces: tuple[Any, ...],
-    solid_map: tuple[int, ...],
-    face_map: tuple[int, ...],
-    /,
-) -> tuple[AssociationGraph, str]:
-    """Certify a one-solid no-op partition through exact persisted topology."""
-
-    if len(source_solids) != 1 or len(final_solids) != 1 or len(solid_map) != 1:
-        raise BRepPartitionHistoryError(
-            "Identity BRep partition requires exactly one source and target solid."
-        )
-    target_revision = cad_revision_from_brep_model(target_model)
-    source_solid = source_solids[0]
-    target_solid_index = solid_map[0]
-    correspondences = [
-        OccurrenceCorrespondence(
-            source_solid.occurrence.occurrence_id,
-            _solid_occurrence_id(target_solid_index),
-            canonical_fingerprint(
+    source_entities: list[dict[str, str]] = []
+    source_namespaces: list[dict[str, str]] = []
+    for operand in operands:
+        model = operand.model
+        geometry = model.geometry
+        local_revision = cad_revision_from_brep_model(model)
+        local_to_partition = {
+            item.occurrence_id: canonical_fingerprint(
                 {
-                    "kind": "exact-brep-identity-solid",
-                    "plan_id": plan.plan_id,
-                    "source": source_solid.occurrence.occurrence_id,
-                    "target": _solid_occurrence_id(target_solid_index),
+                    "kind": "native-brep-partition-source-occurrence",
+                    "operand_id": operand.operand_id,
+                    "source_occurrence_id": item.occurrence_id,
                 }
-            ),
-        )
-    ]
-    for source_face in source_solid.faces:
-        original_face_index = _shape_index(final_faces, source_face.shape)
-        target_face_index = face_map[original_face_index]
-        target_solids = target_model.topology.face_solids[target_face_index]
-        if target_solids != (target_solid_index,):
-            raise BRepPartitionHistoryError(
-                "Identity BRep partition changed exact solid-face incidence."
             )
-        target_face_id = _face_occurrence_id(target_solid_index, target_face_index)
-        correspondences.append(
-            OccurrenceCorrespondence(
-                source_face.occurrence.occurrence_id,
-                target_face_id,
-                canonical_fingerprint(
-                    {
-                        "kind": "exact-brep-identity-face",
-                        "plan_id": plan.plan_id,
-                        "source": source_face.occurrence.occurrence_id,
-                        "target": target_face_id,
-                    }
+            for item in local_revision.occurrences
+        }
+        occurrences.extend(
+            CADOccurrence(
+                revision_id,
+                local_to_partition[item.occurrence_id],
+                item.entity_id,
+                item.kind,
+                tuple(local_to_partition[parent] for parent in item.path),
+                (
+                    None
+                    if item.parent_occurrence_id is None
+                    else local_to_partition[item.parent_occurrence_id]
                 ),
+                orientation=item.orientation,
             )
+            for item in local_revision.occurrences
         )
-    target_ids = {occurrence.occurrence_id for occurrence in target_revision.occurrences}
-    correspondence_targets = {
-        correspondence.target_occurrence_id for correspondence in correspondences
+        source_by_entity: dict[str, str] = {}
+        for record in geometry.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        ):
+            entity = record.member
+            if record.container != entity or entity.kind not in (
+                "solid", "face", "edge", "vertex"
+            ):
+                continue
+            local_id = _entity_occurrence_id(entity)
+            occurrence_id = local_to_partition.get(local_id)
+            if occurrence_id is None:
+                raise BRepPartitionHistoryError(
+                    "Partition source entity is absent from its canonical CAD revision."
+                )
+            source_by_entity[local_id] = occurrence_id
+        source_entities.append(source_by_entity)
+        source_namespaces.append(
+            {
+                item.entity_id: local_to_partition[item.occurrence_id]
+                for item in local_revision.occurrences
+                if item.kind == "assembly"
+            }
+        )
+    return (
+        CADRevision(
+            revision_id,
+            f"native-brep-partition-sources:{plan.plan_id}",
+            tuple(occurrences),
+            plan.plan_id,
+        ),
+        tuple(source_entities),
+        tuple(source_namespaces),
+    )
+
+
+def _full_overlay_partition_result(
+    plan: BRepPartitionPlan,
+    operands: tuple[BRepPartitionOperand, ...],
+    *,
+    tessellation: Any | None,
+) -> BRepPartitionResult:
+    from ._boolean_core import BRepBooleanPolicy, RegionSelection
+    from ._boolean_full_overlay import full_overlay_partition_brep
+    from ._assembly import BRepAffinePlacement
+    from ._placement import entity_text, materialize_brep_occurrences
+
+    source, source_occurrences, source_namespaces = _partition_source_revision(
+        plan, operands
+    )
+    identity = BRepAffinePlacement.identity().identity_payload()
+    model_list: list[BRepModel] = []
+    entity_maps: list[tuple[tuple[BRepEntityId, ...], tuple[BRepEntityId, ...]]] = []
+    for operand in operands:
+        geometry = operand.model.geometry
+        leaves = tuple(geometry.assembly_graph.iter_occurrences())
+        if (
+            len(leaves) == 1
+            and leaves[0].solid_index == 0
+            and operand.model.topology.num_solids == 1
+            and leaves[0].placement.identity_payload() == identity
+        ):
+            entities = tuple(
+                sorted(
+                    {
+                        record.member
+                        for record in geometry.qualified_entity_incidence(
+                            operand.model.source_id, operand.model.source_revision
+                        )
+                    }
+                )
+            )
+            model_list.append(operand.model)
+            entity_maps.append((entities, entities))
+        else:
+            placed = materialize_brep_occurrences(operand.model)
+            model_list.append(placed.model)
+            entity_maps.append((placed.source_entities, placed.target_entities))
+
+    selected_solids: list[tuple[int, int]] = []
+    target_sources: list[dict[BRepEntityId, str]] = []
+    target_source_entities: list[dict[BRepEntityId, BRepEntityId]] = []
+    for position, (operand, (source_entities, target_entities)) in enumerate(
+        zip(operands, entity_maps, strict=True)
+    ):
+        source_to_target = dict(zip(source_entities, target_entities, strict=True))
+        source_by_text = {entity_text(entity): entity for entity in source_entities}
+        for selector in _operand_selection(operand).selectors:
+            source_entity = source_by_text.get(selector.entity_id)
+            if source_entity is None or source_entity.kind != "solid":
+                raise BRepPartitionHistoryError(
+                    "Partition selection does not resolve to a source-solid occurrence."
+                )
+            target_entity = source_to_target[source_entity]
+            selected_solids.append((position, target_entity.index))
+        target_to_source: dict[BRepEntityId, str] = {}
+        for source_entity, target_entity in zip(source_entities, target_entities, strict=True):
+            if source_entity.kind not in ("solid", "face", "edge", "vertex"):
+                continue
+            source_occurrence_id = source_occurrences[position].get(
+                _entity_occurrence_id(source_entity)
+            )
+            if source_occurrence_id is None:
+                raise BRepPartitionHistoryError(
+                    "Partition input has no exact source occurrence binding."
+                )
+            target_to_source[target_entity] = source_occurrence_id
+        target_sources.append(target_to_source)
+        target_source_entities.append(
+            {
+                target_entity: source_entity
+                for source_entity, target_entity in zip(
+                    source_entities, target_entities, strict=True
+                )
+            }
+        )
+
+    models = tuple(model_list)
+
+    selection = RegionSelection(
+        tuple(operand.operand_id for operand in operands),
+        plan.policy.region_precedence,
+        tuple(
+            (operand.operand_id, tuple(sorted(operand.target_region_ids)))
+            for operand in operands
+            if operand.role is BRepPartitionRole.VOID
+        ),
+        tuple(sorted(set(selected_solids))),
+    )
+    native = full_overlay_partition_brep(
+        models,
+        selection,
+        BRepBooleanPolicy(tessellation=tessellation),
+    )
+
+    model = native.model
+    target_revision = cad_revision_from_brep_model(model)
+    geometry = model.geometry
+    target_entities = {
+        _entity_text(record.member): record.member
+        for record in geometry.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        )
     }
-    if correspondence_targets != target_ids:
-        raise BRepPartitionHistoryError(
-            "Identity BRep partition does not exhaust its target topology."
+    target_occurrences: dict[BRepEntityId, str] = {}
+    target_occurrence_records: dict[str, CADOccurrence] = {}
+    for occurrence in target_revision.occurrences:
+        target_occurrence_records[occurrence.occurrence_id] = occurrence
+        entity = target_entities.get(occurrence.entity_id)
+        if entity is not None:
+            target_occurrences[entity] = occurrence.occurrence_id
+    pairs: set[tuple[str, str]] = set()
+    def add_entity_correspondence(
+        operand_index: int,
+        source_entity: BRepEntityId,
+        target_entity: BRepEntityId,
+        kind: str,
+        /,
+    ) -> None:
+        source_occurrence_id = target_sources[operand_index].get(source_entity)
+        target_id = target_occurrences.get(target_entity)
+        original_entity = target_source_entities[operand_index].get(source_entity)
+        if source_occurrence_id is None or target_id is None or original_entity is None:
+            raise BRepPartitionHistoryError(
+                f"Partition {kind} correspondence must bind exact source and target occurrences."
+            )
+        pairs.add((source_occurrence_id, target_id))
+        namespace = _assembly_namespace_occurrence_id(
+            original_entity.source_id,
+            original_entity.source_revision,
+            original_entity.occurrence_path,
         )
+        source_assembly_id = source_namespaces[operand_index].get(namespace)
+        if source_assembly_id is None:
+            raise BRepPartitionHistoryError(
+                f"Partition {kind} source must retain its exact assembly occurrence."
+            )
+        source_assembly_chain = []
+        current_source_assembly = source_assembly_id
+        while current_source_assembly is not None:
+            source_occurrence = source.occurrence(current_source_assembly)
+            if source_occurrence.kind != "assembly":
+                raise BRepPartitionHistoryError(
+                    "Partition source namespace ancestry must contain only assemblies."
+                )
+            source_assembly_chain.append(current_source_assembly)
+            current_source_assembly = source_occurrence.parent_occurrence_id
+        target_assembly_chain = []
+        current_target_assembly = target_occurrence_records[
+            target_id
+        ].parent_occurrence_id
+        while current_target_assembly is not None:
+            target_occurrence = target_occurrence_records.get(current_target_assembly)
+            if target_occurrence is None or target_occurrence.kind != "assembly":
+                raise BRepPartitionHistoryError(
+                    "Partition target namespace ancestry must contain only assemblies."
+                )
+            target_assembly_chain.append(current_target_assembly)
+            current_target_assembly = target_occurrence.parent_occurrence_id
+        if source_assembly_chain and not target_assembly_chain:
+            raise BRepPartitionHistoryError(
+                "Partition target entity must retain its containing assembly occurrence."
+            )
+        for depth, source_assembly in enumerate(source_assembly_chain):
+            target_assembly = target_assembly_chain[
+                min(depth, len(target_assembly_chain) - 1)
+            ]
+            pairs.add((source_assembly, target_assembly))
+
+    for operand_index, source_entity, target_entity in native.solid_pairs:
+        add_entity_correspondence(operand_index, source_entity, target_entity, "solid")
+    for operand_index, source_entity, target_entity in native.face_pairs:
+        add_entity_correspondence(operand_index, source_entity, target_entity, "face")
+    for operand_index, source_entity, target_entity in native.edge_pairs:
+        add_entity_correspondence(operand_index, source_entity, target_entity, "edge")
+    for operand_index, source_entity, target_entity in native.vertex_pairs:
+        add_entity_correspondence(operand_index, source_entity, target_entity, "vertex")
+
     certificate_id = canonical_fingerprint(
         {
-            "kind": "exact-brep-identity-persistence",
-            "plan_id": plan.plan_id,
-            "source_revision": source_revision.revision_id,
+            "kind": "native-complete-face-cell-partition-history",
+            "plan": plan.plan_id,
+            "overlay": native.certificate_id,
+            "source_revision": source.revision_id,
             "target_revision": target_revision.revision_id,
-            "correspondences": sorted(
-                (
-                    correspondence.source_occurrence_id,
-                    correspondence.target_occurrence_id,
-                    correspondence.evidence_id,
-                )
-                for correspondence in correspondences
-            ),
+            "correspondences": tuple(sorted(pairs)),
         }
     )
+    correspondences = tuple(
+        OccurrenceCorrespondence(first, second, certificate_id)
+        for first, second in sorted(pairs)
+    )
+    mapped_source = {first for first, _ in pairs}
+    mapped_target = {second for _, second in pairs}
+    target_ids = {value.occurrence_id for value in target_revision.occurrences}
     transaction = OccurrenceCorrespondenceTransaction(
-        canonical_fingerprint(
-            {
-                "kind": "brep-identity-correspondence-transaction",
-                "plan_id": plan.plan_id,
-                "certificate": certificate_id,
-            }
-        ),
-        source_revision.revision_id,
+        certificate_id,
+        source.revision_id,
         target_revision.revision_id,
-        tuple(correspondences),
+        correspondences,
         frozenset(),
-        frozenset(),
+        frozenset(target_ids - mapped_target),
         AssociationCoverageEvidence(
             True,
             True,
             certificate_id,
-            "OCP.exact-persistence-identity",
+            "native-complete-face-cell-partition",
         ),
     )
-    return AssociationGraph(source_revision, target_revision, transaction), certificate_id
-
-
-def _association_graph(
-    plan: BRepPartitionPlan,
-    source_revision: CADRevision,
-    source_solids: tuple[_SourceSolid, ...],
-    target_model: BRepModel,
-    final_solids: tuple[Any, ...],
-    final_faces: tuple[Any, ...],
-    solid_map: tuple[int, ...],
-    face_map: tuple[int, ...],
-    builder: BOPAlgo_CellsBuilder,
-) -> tuple[AssociationGraph, str]:
-    if not builder.HasHistory():
-        raise BRepPartitionHistoryError(
-            "OCCT did not provide the required live Boolean history."
-        )
-    target_revision = cad_revision_from_brep_model(target_model)
-    edges: list[OccurrenceCorrespondence] = []
-    evidence_rows: list[tuple[object, ...]] = []
-    for source_solid in source_solids:
-        solid_history = _capture_history(
-            builder,
-            source_solid.shape,
-            final_solids,
-            TopAbs_SOLID,
-            TopoDS.Solid,
-        )
-        mapped_solids = tuple(solid_map[index] for index in solid_history.target_indices)
-        evidence_rows.append(
-            (
-                source_solid.occurrence.occurrence_id,
-                mapped_solids,
-                solid_history.modified_count,
-                solid_history.generated_count,
-                solid_history.deleted,
-            )
-        )
-        for target_solid_index in mapped_solids:
-            target_id = _solid_occurrence_id(target_solid_index)
-            evidence_id = canonical_fingerprint(
-                {
-                    "kind": "occt-exact-solid-history",
-                    "plan_id": plan.plan_id,
-                    "source": source_solid.occurrence.occurrence_id,
-                    "target": target_id,
-                }
-            )
-            edges.append(
-                OccurrenceCorrespondence(
-                    source_solid.occurrence.occurrence_id,
-                    target_id,
-                    evidence_id,
-                )
-            )
-        for source_face in source_solid.faces:
-            face_history = _capture_history(
-                builder,
-                source_face.shape,
-                final_faces,
-                TopAbs_FACE,
-                TopoDS.Face,
-            )
-            mapped_faces = tuple(face_map[index] for index in face_history.target_indices)
-            evidence_rows.append(
-                (
-                    source_face.occurrence.occurrence_id,
-                    mapped_faces,
-                    face_history.modified_count,
-                    face_history.generated_count,
-                    face_history.deleted,
-                )
-            )
-            for target_face_index in mapped_faces:
-                for target_solid_index in target_model.topology.face_solids[
-                    target_face_index
-                ]:
-                    target_id = _face_occurrence_id(target_solid_index, target_face_index)
-                    evidence_id = canonical_fingerprint(
-                        {
-                            "kind": "occt-exact-face-history",
-                            "plan_id": plan.plan_id,
-                            "source": source_face.occurrence.occurrence_id,
-                            "target": target_id,
-                        }
-                    )
-                    edges.append(
-                        OccurrenceCorrespondence(
-                            source_face.occurrence.occurrence_id,
-                            target_id,
-                            evidence_id,
-                        )
-                    )
-    pairs = {
-        (value.source_occurrence_id, value.target_occurrence_id): value for value in edges
-    }
-    edges = sorted(
-        pairs.values(),
-        key=lambda value: (
-            value.source_occurrence_id,
-            value.target_occurrence_id,
-        ),
-    )
-    edge_sources = {value.source_occurrence_id for value in edges}
-    edge_targets = {value.target_occurrence_id for value in edges}
-    target_ids = {value.occurrence_id for value in target_revision.occurrences}
-    source_ids = {value.occurrence_id for value in source_revision.occurrences}
-    if (
-        not {_solid_occurrence_id(index) for index in range(len(final_solids))}
-        <= edge_targets
-    ):
-        raise BRepPartitionHistoryError(
-            "OCCT solid history does not exhaust the final solid inventory."
-        )
-    certificate_id = canonical_fingerprint(
-        {
-            "kind": "occt-cells-builder-exhaustive-history",
-            "plan_id": plan.plan_id,
-            "source_revision": source_revision.revision_id,
-            "target_revision": target_revision.revision_id,
-            "history": sorted(evidence_rows),
-            "edges": sorted(pairs),
-            "deleted": sorted(source_ids - edge_sources),
-            "created": sorted(target_ids - edge_targets),
-        }
-    )
-    coverage = AssociationCoverageEvidence(
-        True,
-        True,
-        certificate_id,
-        "OCP.BOPAlgo_CellsBuilder",
-    )
-    transaction_id = canonical_fingerprint(
-        {
-            "kind": "brep-partition-correspondence-transaction",
-            "plan_id": plan.plan_id,
-            "certificate": certificate_id,
-        }
-    )
-    transaction = OccurrenceCorrespondenceTransaction(
-        transaction_id,
-        source_revision.revision_id,
-        target_revision.revision_id,
-        tuple(edges),
-        frozenset(),
-        frozenset(),
-        coverage,
-    )
-    return AssociationGraph(source_revision, target_revision, transaction), certificate_id
-
-
-def _regions_and_patches(
-    plan: BRepPartitionPlan,
-    model: BRepModel,
-    original_owners: tuple[str, ...],
-    solid_map: tuple[int, ...],
-) -> tuple[tuple[BRepPartitionRegion, ...], tuple[BRepPartitionPatch, ...]]:
-    model_owners = [""] * len(original_owners)
-    for original_index, model_index in enumerate(solid_map):
-        model_owners[model_index] = original_owners[original_index]
+    graph = AssociationGraph(source, target_revision, transaction)
+    rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
+    owners = tuple(native.solid_regions)
     regions = tuple(
         BRepPartitionRegion(
-            region_id,
-            tuple(
-                model.solid_ids[index]
-                for index, owner in enumerate(model_owners)
-                if owner == region_id
-            ),
+            name,
+            tuple(model.solid_ids[index] for index, owner in enumerate(owners) if owner == name),
         )
-        for region_id in plan.policy.region_precedence
+        for name in plan.policy.region_precedence
+        if name in owners
     )
-    rank = {
-        region_id: index for index, region_id in enumerate(plan.policy.region_precedence)
-    }
-    groups: dict[tuple[str, ...], list[BRepEntityId]] = {}
-    for face_index, solid_indices in enumerate(model.topology.face_solids):
-        if len(solid_indices) not in (1, 2):
+    grouped_faces: dict[tuple[str, ...], list[BRepEntityId]] = {}
+    for face, solids in enumerate(model.topology.face_solids):
+        adjacent = tuple(sorted((owners[solid] for solid in solids), key=rank.__getitem__))
+        if len(adjacent) not in (1, 2):
             raise BRepPartitionHistoryError(
-                "Final partition face is not exactly one- or two-sided."
+                "Native partition produced a nonmanifold face-region incidence."
             )
-        adjacent = tuple(
-            sorted(
-                (model_owners[index] for index in solid_indices),
-                key=rank.__getitem__,
-            )
+        grouped_faces.setdefault(adjacent, []).append(model.face_ids[face])
+    patches = tuple(
+        BRepPartitionPatch(
+            f"boundary:{adjacent[0]}"
+            if len(adjacent) == 1
+            else f"interface:{adjacent[0]}:{adjacent[1]}",
+            tuple(entity_ids),
+            adjacent,
         )
-        groups.setdefault(adjacent, []).append(model.face_ids[face_index])
-    patches: list[BRepPartitionPatch] = []
-    for adjacent in sorted(groups, key=lambda value: tuple(rank[item] for item in value)):
-        if len(adjacent) == 1:
-            name = f"boundary:{adjacent[0]}"
-        elif adjacent[0] == adjacent[1]:
-            name = f"internal:{adjacent[0]}"
-        else:
-            name = f"interface:{adjacent[0]}:{adjacent[1]}"
-        patches.append(BRepPartitionPatch(name, tuple(groups[adjacent]), adjacent))
-    return regions, tuple(patches)
-
-
-def _publish_staged(staging: Path, target: Path, overwrite: bool) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if overwrite:
-        os.replace(staging, target)
-    else:
-        os.link(staging, target)
-        staging.unlink()
-    directory_descriptor = os.open(target.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_descriptor)
-    finally:
-        os.close(directory_descriptor)
+        for adjacent, entity_ids in sorted(
+            grouped_faces.items(),
+            key=lambda item: tuple(rank[value] for value in item[0]),
+        )
+    )
+    report = BRepPartitionReport(
+        plan.plan_id,
+        model.model_id,
+        source.revision_id,
+        target_revision.revision_id,
+        certificate_id,
+        sum(value.kind == "solid" for value in source.occurrences),
+        sum(value.kind == "face" for value in source.occurrences),
+        model.topology.num_solids,
+        model.topology.num_faces,
+        sum(value.occurrence_id not in mapped_source for value in source.occurrences),
+        len(target_ids - mapped_target),
+    )
+    return BRepPartitionResult(model, target_revision, graph, regions, patches, report)
 
 
 def partition_brep(
     plan: BRepPartitionPlan,
     /,
     *,
-    destination: str | Path,
-    linear_deflection: float = 1e-3,
-    angular_deflection: float = 0.1,
-    trim_samples_per_edge: int = 33,
+    tessellation: Any | None = None,
 ) -> BRepPartitionResult:
-    """Execute, certify, persist, reopen, and atomically publish an exact partition."""
-
+    """Execute an exact in-memory arrangement and publish exhaustive lineage."""
     if not isinstance(plan, BRepPartitionPlan):
         raise TypeError("plan must be a BRepPartitionPlan.")
-    target = Path(destination).expanduser().resolve()
-    if target.suffix.lower() not in {".brep", ".brp"}:
-        raise ValueError("A partition destination requires a .brep or .brp suffix.")
-    if target.exists() and not plan.policy.overwrite:
-        raise FileExistsError(target)
-    loaded: dict[tuple[str, str], _LoadedModel] = {}
-    for operand in plan.operands:
-        key = (operand.model.source_id, operand.model.source_digest)
-        if key not in loaded:
-            loaded[key] = _load_model(operand.model)
-    source_revision, source_solids, operand_shapes = _composite_sources(plan, loaded)
+    if tessellation is not None:
+        from ._constructors import BRepTessellationPolicy
 
-    arguments: list[Any] = []
-    for source_solid in source_solids:
-        if not any(value.IsSame(source_solid.shape) for value in arguments):
-            arguments.append(source_solid.shape)
-    identity_partition = len(arguments) == 1 and len(source_solids) == 1
-    if identity_partition:
-        builder = None
-        atoms = (source_solids[0].shape,)
-        operand_members = {
-            operand_id: frozenset(
-                0 for shape in shapes if shape.IsSame(source_solids[0].shape)
-            )
-            for operand_id, shapes in operand_shapes.items()
-        }
-        final_shape = source_solids[0].shape
-    else:
-        builder = BOPAlgo_CellsBuilder()
-        builder.SetRunParallel(plan.policy.run_parallel)
-        builder.SetNonDestructive(True)
-        builder.SetToFillHistory(True)
-        for argument in arguments:
-            builder.AddArgument(argument)
-        builder.Perform()
-        if builder.HasErrors():
-            raise RuntimeError("OCCT failed to construct the exact partition cells.")
-        atoms = _explore_unique(builder.GetAllParts(), TopAbs_SOLID, TopoDS.Solid)
-        if not atoms:
-            raise RuntimeError("OCCT produced no solid partition cells.")
-        operand_members = {
-            operand_id: frozenset(
-                atom_index
-                for shape in shapes
-                for atom_index in _members(builder, shape, atoms)
-            )
-            for operand_id, shapes in operand_shapes.items()
-        }
-        final_shape = _build_final_shape(plan, builder, operand_shapes)
-    atom_owners = _classify_atoms(plan, operand_members, len(atoms))
-    final_solids = _explore_unique(final_shape, TopAbs_SOLID, TopoDS.Solid)
-    final_faces = _explore_unique(final_shape, TopAbs_FACE, TopoDS.Face)
-    if not final_solids or not final_faces:
-        raise RuntimeError("OCCT produced an incomplete partition result.")
-    original_owners = _final_solid_owners(final_solids, atoms, atom_owners)
+        if not isinstance(tessellation, BRepTessellationPolicy):
+            raise TypeError("tessellation must be a BRepTessellationPolicy or None.")
+    operands = tuple(sorted(plan.operands, key=lambda operand: operand.operand_id))
+    from ._boolean_core import rectilinear_family
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, staging_name = tempfile.mkstemp(
-        prefix=f".{target.name}.partition-",
-        suffix=".brep",
-        dir=target.parent,
-    )
-    os.close(descriptor)
-    staging = Path(staging_name)
-    staging.unlink()
-    try:
-        staged_model = persist_occt_shape(
-            final_shape,
-            staging,
-            coordinate_contract=plan.coordinate_contract,
-            linear_deflection=linear_deflection,
-            angular_deflection=angular_deflection,
-            trim_samples_per_edge=trim_samples_per_edge,
-        )
-        reopened_shape, source_format, source_digest = read_occt_shape(staging)
-        if source_format != "brep" or source_digest != staged_model.source_digest:
-            raise BRepPartitionHistoryError(
-                "Staged partition artifact failed exact identity verification."
-            )
-        (
-            verified_solids,
-            verified_faces,
-            solid_map,
-            face_map,
-        ) = _verify_roundtrip(final_shape, reopened_shape, staged_model)
-        if builder is None:
-            association_graph, history_certificate_id = _identity_association_graph(
-                plan,
-                source_revision,
-                source_solids,
-                staged_model,
-                verified_solids,
-                verified_faces,
-                solid_map,
-                face_map,
-            )
-        else:
-            association_graph, history_certificate_id = _association_graph(
-                plan,
-                source_revision,
-                source_solids,
-                staged_model,
-                verified_solids,
-                verified_faces,
-                solid_map,
-                face_map,
-                builder,
-            )
-        regions, patches = _regions_and_patches(
-            plan,
-            staged_model,
-            original_owners,
-            solid_map,
-        )
-        edge_sources = {
-            value.source_occurrence_id
-            for value in association_graph.transaction.correspondences
-        }
-        edge_targets = {
-            value.target_occurrence_id
-            for value in association_graph.transaction.correspondences
-        }
-        report = BRepPartitionReport(
-            plan.plan_id,
-            staged_model.model_id,
-            source_revision.revision_id,
-            staged_model.source_revision,
-            history_certificate_id,
-            sum(value.kind == "solid" for value in source_revision.occurrences),
-            sum(value.kind == "face" for value in source_revision.occurrences),
-            staged_model.topology.num_solids,
-            staged_model.topology.num_faces,
-            sum(
-                value.occurrence_id not in edge_sources
-                for value in source_revision.occurrences
-            ),
-            sum(
-                value.occurrence_id not in edge_targets
-                for value in association_graph.target_revision.occurrences
-            ),
-        )
-        BRepPartitionResult(
-            staged_model,
-            association_graph.target_revision,
-            association_graph,
-            regions,
-            patches,
-            report,
-        )
-        if target.exists() and not plan.policy.overwrite:
-            raise FileExistsError(target)
-        _publish_staged(staging, target, plan.policy.overwrite)
-        final_model = import_brep(
-            target,
-            coordinate_contract=plan.coordinate_contract,
-            linear_deflection=linear_deflection,
-            angular_deflection=angular_deflection,
-            trim_samples_per_edge=trim_samples_per_edge,
-        )
-        if (
-            final_model.source_revision != staged_model.source_revision
-            or final_model.model_id != staged_model.model_id
-        ):
-            raise RuntimeError(
-                "Published partition differs from its verified staged artifact."
-            )
-        final_revision = cad_revision_from_brep_model(final_model)
-        final_graph = AssociationGraph(
-            association_graph.source_revision,
-            final_revision,
-            association_graph.transaction,
-        )
-        return BRepPartitionResult(
-            final_model,
-            final_revision,
-            final_graph,
-            regions,
-            patches,
-            report,
-        )
-    finally:
-        staging.unlink(missing_ok=True)
+    if rectilinear_family(tuple(operand.model for operand in operands)):
+        from ._native_box_partition import partition_native_boxes
+
+        try:
+            return partition_native_boxes(plan, tessellation=tessellation)
+        except NotImplementedError:
+            pass
+    return _full_overlay_partition_result(plan, operands, tessellation=tessellation)
 
 
 __all__ = [

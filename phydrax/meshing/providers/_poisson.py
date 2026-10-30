@@ -456,8 +456,6 @@ class PoissonProvider:
                 provider.version,
                 MeshingExecutionMode.IN_PROCESS,
                 deterministic=False,
-                enforced_limits=("octree_depth", "threads"),
-                unenforced_limits=("wall_time", "memory"),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             provenance,

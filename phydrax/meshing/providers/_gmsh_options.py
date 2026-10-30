@@ -96,9 +96,8 @@ class GmshHighOrderOptimization(StrEnum):
 class GmshOptions(StrictModule, NonTrainableState):
     """Provider execution options; scientific requests live in specifications.
 
-    `num_threads` sets Gmsh's `General.NumThreads`; sessions refuse plans whose
-    thread count exceeds their `MeshingExecutionPolicy.parallelism`, and
-    multi-threaded generation is reported as nondeterministic.
+    `num_threads` sets Gmsh's `General.NumThreads`; multi-threaded generation is
+    reported as nondeterministic.
     """
 
     algorithm_2d: GmshSurfaceAlgorithm = eqx.field(static=True)

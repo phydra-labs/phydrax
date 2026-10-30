@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
+from fractions import Fraction
 from functools import partial
-from typing import assert_never, final, Generic, Literal, TypeVar
+from typing import assert_never, final, Generic, Literal, NamedTuple, TypeVar
 
 import equinox as eqx
 import jax
@@ -594,6 +596,7 @@ class TracelessHermitianSpace(StrictModule):
 
 
 __all__ = [
+    "HermitianFunctionEnclosure",
     "HermitianFunctionResult",
     "HermitianSpectralMapResult",
     "HermitianSpectrum",
@@ -601,8 +604,289 @@ __all__ = [
     "SylvesterSolveResult",
     "TracelessHermitianSpace",
     "hermitian_exp",
+    "hermitian_exp_enclosure",
     "hermitian_inverse_sqrt",
     "hermitian_log",
+    "hermitian_log_enclosure",
     "hermitian_sqrt",
     "hermitian_spectral_map",
 ]
+
+class HermitianFunctionEnclosure(NamedTuple):
+    """Rational symmetric matrix and an operator-norm error radius."""
+
+    matrix: tuple[tuple[Fraction, ...], ...]
+    error: Fraction
+
+
+class _HermitianSpectralEnclosure(NamedTuple):
+    values: tuple[Fraction, ...]
+    vectors: tuple[tuple[Fraction, ...], ...]
+    vector_norm: Fraction
+    polar_error: Fraction
+    residual: Fraction
+
+
+def fraction_sqrt_interval(value: Fraction, /) -> tuple[Fraction, Fraction]:
+    """Return rational square-root endpoints verified by exact squaring."""
+    if value < 0:
+        raise ValueError(f"fraction_sqrt_interval.value must be nonnegative; got {value!r}")
+    if value == 0:
+        return Fraction(0), Fraction(0)
+    numerator = math.isqrt(value.numerator)
+    denominator = math.isqrt(value.denominator)
+    if (
+        numerator * numerator == value.numerator
+        and denominator * denominator == value.denominator
+    ):
+        root = Fraction(numerator, denominator)
+        return root, root
+    try:
+        nominal = float(value)
+    except OverflowError:
+        nominal = math.inf
+    if not math.isfinite(nominal) or nominal < np.finfo(np.float64).tiny:
+        exponent = (value.numerator.bit_length() - value.denominator.bit_length()) // 2
+        scale = Fraction(2) ** exponent
+        lower, upper = fraction_sqrt_interval(value / (scale * scale))
+        return lower * scale, upper * scale
+    central = math.sqrt(nominal)
+    if not math.isfinite(central) or central == 0:
+        raise ValueError(
+            f"fraction_sqrt_interval.value has no finite nonzero binary64 square-root estimate; got {central!r}"
+        )
+    lower = upper = central
+    while Fraction(lower) ** 2 > value:
+        lower = float(np.nextafter(lower, -math.inf))
+    while Fraction(upper) ** 2 < value:
+        upper = float(np.nextafter(upper, math.inf))
+    return Fraction(lower), Fraction(upper)
+
+
+def _exact_matrix_product(
+    first: tuple[tuple[Fraction, ...], ...],
+    second: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[tuple[Fraction, ...], ...]:
+    dimension = len(first)
+    return tuple(
+        tuple(
+            sum((first[i][k] * second[k][j] for k in range(dimension)), Fraction(0))
+            for j in range(dimension)
+        )
+        for i in range(dimension)
+    )
+
+
+def matrix_norm_enclosure(
+    matrix: tuple[tuple[Fraction, ...], ...], /
+) -> Fraction:
+    """Bound the spectral norm by the outward-enclosed Frobenius norm."""
+    squared = sum((value * value for row in matrix for value in row), Fraction(0))
+    return fraction_sqrt_interval(squared)[1]
+
+
+def _scalar_log_enclosure(value: Fraction, /) -> tuple[Fraction, Fraction]:
+    """Enclose log(value) by an atanh series after exact dyadic scaling."""
+    if value <= 0:
+        raise ValueError(f"_scalar_log_enclosure.value must be positive; got {value!r}")
+    power = value.numerator.bit_length() - value.denominator.bit_length()
+    factor = Fraction(2) ** power
+    while value < factor:
+        power -= 1
+        factor /= 2
+    while value >= 2 * factor:
+        power += 1
+        factor *= 2
+    ratio = value / factor
+    z = (ratio - 1) / (ratio + 1)
+    intervals = []
+    for argument in (z, Fraction(1, 3)):
+        squared = argument * argument
+        term, total = argument, Fraction(0)
+        for index in range(32):
+            total += 2 * term / (2 * index + 1)
+            term *= squared
+        tail = 2 * term / (65 * (1 - squared))
+        intervals.append((total, total + tail))
+    low, high = intervals[0]
+    log_two = intervals[1]
+    return (
+        low + power * log_two[0 if power >= 0 else 1],
+        high + power * log_two[1 if power >= 0 else 0],
+    )
+
+
+def _source_spectral_enclosure(
+    original: tuple[tuple[Fraction, ...], ...], /
+) -> _HermitianSpectralEnclosure:
+    """Bound eigenframe nonorthogonality and the exact residual to the source."""
+    dimension = len(original)
+    floating = np.asarray(original, dtype=np.float64)
+    if not np.all(np.isfinite(floating)):
+        raise ValueError(
+            "_source_spectral_enclosure.original must convert to finite binary64 entries."
+        )
+    spectrum = HermitianSpectrum(jnp.asarray(floating, dtype=jnp.float64))
+    if not bool(np.asarray(spectrum.valid)):
+        raise ValueError("_source_spectral_enclosure.spectrum must be valid.")
+    values = tuple(Fraction(float(value)) for value in np.asarray(spectrum.eigenvalues))
+    vectors = tuple(
+        tuple(Fraction(float(value)) for value in row)
+        for row in np.asarray(spectrum.eigenvectors)
+    )
+    transpose = tuple(zip(*vectors, strict=True))
+    identity = tuple(
+        tuple(Fraction(int(i == j)) for j in range(dimension))
+        for i in range(dimension)
+    )
+    gram = _exact_matrix_product(transpose, vectors)
+    orthogonality = matrix_norm_enclosure(
+        tuple(
+            tuple(gram[i][j] - identity[i][j] for j in range(dimension))
+            for i in range(dimension)
+        )
+    )
+    if orthogonality >= 1:
+        raise ValueError(
+            "_source_spectral_enclosure.eigenvectors do not admit a certified polar factor."
+        )
+    vector_norm = fraction_sqrt_interval(1 + orthogonality)[1]
+    polar_error = orthogonality / (
+        1 + fraction_sqrt_interval(1 - orthogonality)[0]
+    )
+    reconstruction = _exact_matrix_product(
+        tuple(
+            tuple(vectors[i][j] * values[j] for j in range(dimension))
+            for i in range(dimension)
+        ),
+        transpose,
+    )
+    residual = matrix_norm_enclosure(
+        tuple(
+            tuple(original[i][j] - reconstruction[i][j] for j in range(dimension))
+            for i in range(dimension)
+        )
+    )
+    residual += max(abs(value) for value in values) * polar_error * (vector_norm + 1)
+    return _HermitianSpectralEnclosure(values, vectors, vector_norm, polar_error, residual)
+
+
+def _scalar_exp_enclosure(value: Fraction, /) -> tuple[Fraction, Fraction]:
+    """Bound the exponential by its Taylor partial sum and a rational tail."""
+    radius = abs(value)
+    terms = max(32, 4 * math.ceil(radius) + 16)
+    total, term = Fraction(1), Fraction(1)
+    for index in range(1, terms + 1):
+        term *= value / index
+        total += term
+    tail = (
+        Fraction(3) ** math.ceil(radius)
+        * radius ** (terms + 1)
+        / math.factorial(terms + 1)
+    )
+    return total, tail
+
+
+def _real_symmetric_binary64(values: ArrayLike, name: str, /) -> np.ndarray:
+    if np.iscomplexobj(values):
+        raise TypeError(f"{name} must be real-valued.")
+    source = np.asarray(values)
+    if source.ndim != 2 or source.shape[0] != source.shape[1] or source.shape[0] == 0:
+        raise ValueError(f"{name} must be a nonempty square matrix; got shape {source.shape}.")
+    matrix = np.asarray(source, dtype=np.float64)
+    if (
+        not np.all(np.isfinite(matrix))
+        or not np.array_equal(source, matrix)
+        or not np.array_equal(matrix, matrix.T)
+    ):
+        raise ValueError(
+            f"{name} must be finite, symmetric, and exactly represented in binary64."
+        )
+    return matrix
+
+
+def hermitian_log_enclosure(
+    values: ArrayLike, /
+) -> HermitianFunctionEnclosure:
+    """Enclose log of a real symmetric positive-definite binary64 matrix.
+
+    The returned rational matrix is an approximation. Its operator-norm error
+    includes scalar-series tails, the numerical eigenframe residual, and
+    perturbation of the input spectrum.
+    """
+    metric = _real_symmetric_binary64(values, "hermitian_log_enclosure.values")
+    original = tuple(tuple(Fraction(float(value)) for value in row) for row in metric)
+    eigenvalues, vectors, vector_norm, polar_error, residual = _source_spectral_enclosure(
+        original
+    )
+    if min(eigenvalues) <= 0:
+        raise ValueError("hermitian_log_enclosure requires positive eigenvalues.")
+    minimum = min(eigenvalues) - residual
+    if minimum <= 0:
+        raise ValueError(
+            "hermitian_log_enclosure cannot prove a positive lower spectral bound."
+        )
+    intervals = tuple(_scalar_log_enclosure(value) for value in eigenvalues)
+    centers = tuple((low + high) / 2 for low, high in intervals)
+    transpose = tuple(zip(*vectors, strict=True))
+    matrix = _exact_matrix_product(
+        tuple(
+            tuple(vectors[i][j] * centers[j] for j in range(len(eigenvalues)))
+            for i in range(len(eigenvalues))
+        ),
+        transpose,
+    )
+    scalar_error = max((high - low) / 2 for low, high in intervals)
+    logarithm_norm = max(max(abs(low), abs(high)) for low, high in intervals)
+    error = (
+        residual / minimum
+        + logarithm_norm * polar_error * (vector_norm + 1)
+        + scalar_error * vector_norm * vector_norm
+    )
+    return HermitianFunctionEnclosure(matrix, error)
+
+
+def hermitian_exp_enclosure(
+    logarithm: HermitianFunctionEnclosure, /
+) -> tuple[tuple[tuple[Fraction, ...], ...], Fraction]:
+    """Enclose exp of a real symmetric rational matrix ball."""
+    if not isinstance(logarithm, HermitianFunctionEnclosure):
+        raise TypeError(
+            "hermitian_exp_enclosure.logarithm must be a HermitianFunctionEnclosure."
+        )
+    dimension = len(logarithm.matrix)
+    if (
+        dimension == 0
+        or any(len(row) != dimension for row in logarithm.matrix)
+        or logarithm.error < 0
+    ):
+        raise ValueError(
+            "hermitian_exp_enclosure.logarithm must contain a nonempty square matrix and a nonnegative error radius."
+        )
+    if any(
+        logarithm.matrix[i][j] != logarithm.matrix[j][i]
+        for i in range(dimension)
+        for j in range(dimension)
+    ):
+        raise ValueError("hermitian_exp_enclosure.logarithm.matrix must be symmetric.")
+    values, vectors, vector_norm, polar_error, residual = _source_spectral_enclosure(
+        logarithm.matrix
+    )
+    intervals = tuple(_scalar_exp_enclosure(value) for value in values)
+    centers = tuple(value for value, _ in intervals)
+    transpose = tuple(zip(*vectors, strict=True))
+    result = _exact_matrix_product(
+        tuple(
+            tuple(vectors[i][j] * centers[j] for j in range(dimension))
+            for i in range(dimension)
+        ),
+        transpose,
+    )
+    error = max(tail for _, tail in intervals) * vector_norm * vector_norm
+    exponential_norm = max(value + tail for value, tail in intervals)
+    error += exponential_norm * polar_error * (vector_norm + 1)
+    source_radius = residual + logarithm.error
+    exponent = max(0, math.ceil(max(values) + source_radius))
+    error += Fraction(3) ** exponent * source_radius
+    return result, error

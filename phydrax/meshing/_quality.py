@@ -35,6 +35,7 @@ from ..discretization._cell_geometry_validity import (
     polyhedral_star_tables,
     PolyhedralStarTables,
 )
+from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._motion_validity import reference_corner_frames
 from ..discretization._reference_cell import reference_cell_topology
@@ -144,6 +145,134 @@ class CellQualityReport(StrictModule, NonTrainableState):
                     )
                 ],
             }
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: CellQualityReport | CellQualityReportArchiveRecipe, /
+    ) -> CellQualityReport:
+        if type(value) is CellQualityReport:
+            stored = CellQualityReportArchiveRecipe.from_report(value)
+        elif type(value) is CellQualityReportArchiveRecipe:
+            stored = value
+        else:
+            raise TypeError(
+                "value must be CellQualityReport or CellQualityReportArchiveRecipe."
+            )
+        report = cls(stored.evaluation)
+        expected = CellQualityReportArchiveRecipe.from_report(report)
+        expected_summary = (
+            expected.minimum_measure,
+            expected.maximum_measure,
+            expected.minimum_mean_ratio,
+            expected.maximum_aspect_ratio,
+            expected.minimum_scaled_jacobian,
+            expected.maximum_condition_number,
+            expected.minimum_angle,
+            expected.maximum_angle,
+            expected.maximum_warpage,
+            expected.minimum_metric_quality,
+            expected.sampled_invalid_count,
+            expected.worst_cell_global_ids,
+            expected.report_id,
+        )
+        stored_summary = (
+            stored.minimum_measure,
+            stored.maximum_measure,
+            stored.minimum_mean_ratio,
+            stored.maximum_aspect_ratio,
+            stored.minimum_scaled_jacobian,
+            stored.maximum_condition_number,
+            stored.minimum_angle,
+            stored.maximum_angle,
+            stored.maximum_warpage,
+            stored.minimum_metric_quality,
+            stored.sampled_invalid_count,
+            stored.worst_cell_global_ids,
+            stored.report_id,
+        )
+        if (
+            array_tree_fingerprint(stored.evaluation)
+            != array_tree_fingerprint(report.evaluation)
+            or expected_summary != stored_summary
+        ):
+            raise ValueError(
+                "Stored quality report differs from recomputed evaluation evidence."
+            )
+        return report
+
+
+def _finite_quality_summary(value: float, name: str, /) -> float:
+    if not np.isfinite(value):
+        raise ValueError(f"CellQualityReport.{name} must be finite.")
+    return value
+
+
+def _nonapplicable_quality_summary(
+    value: float, samples: Array, name: str, /
+) -> float | None:
+    if np.isnan(value):
+        sample_values = np.asarray(samples, dtype=np.float64)
+        if sample_values.size and np.all(np.isnan(sample_values)):
+            return None
+        raise ValueError(
+            f"CellQualityReport.{name} is not a canonical non-applicable summary."
+        )
+    if not np.isfinite(value):
+        raise ValueError(f"CellQualityReport.{name} must be finite.")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class CellQualityReportArchiveRecipe:
+    """Quality summaries with None reserved for all-NaN non-applicable samples."""
+
+    evaluation: CellQualityEvaluation
+    minimum_measure: float
+    maximum_measure: float
+    minimum_mean_ratio: float
+    maximum_aspect_ratio: float
+    minimum_scaled_jacobian: float
+    maximum_condition_number: float
+    minimum_angle: float | None
+    maximum_angle: float | None
+    maximum_warpage: float
+    minimum_metric_quality: float | None
+    sampled_invalid_count: int
+    worst_cell_global_ids: tuple[int, ...]
+    report_id: str
+
+    @classmethod
+    def from_report(cls, value: CellQualityReport, /) -> CellQualityReportArchiveRecipe:
+        if type(value) is not CellQualityReport:
+            raise TypeError("value must be CellQualityReport.")
+        return cls(
+            value.evaluation,
+            _finite_quality_summary(value.minimum_measure, "minimum_measure"),
+            _finite_quality_summary(value.maximum_measure, "maximum_measure"),
+            _finite_quality_summary(value.minimum_mean_ratio, "minimum_mean_ratio"),
+            _finite_quality_summary(value.maximum_aspect_ratio, "maximum_aspect_ratio"),
+            _finite_quality_summary(
+                value.minimum_scaled_jacobian, "minimum_scaled_jacobian"
+            ),
+            _finite_quality_summary(
+                value.maximum_condition_number, "maximum_condition_number"
+            ),
+            _nonapplicable_quality_summary(
+                value.minimum_angle, value.evaluation.minimum_angle, "minimum_angle"
+            ),
+            _nonapplicable_quality_summary(
+                value.maximum_angle, value.evaluation.maximum_angle, "maximum_angle"
+            ),
+            _finite_quality_summary(value.maximum_warpage, "maximum_warpage"),
+            _nonapplicable_quality_summary(
+                value.minimum_metric_quality,
+                value.evaluation.metric_quality,
+                "minimum_metric_quality",
+            ),
+            value.sampled_invalid_count,
+            value.worst_cell_global_ids,
+            value.report_id,
         )
 
 
@@ -486,7 +615,7 @@ def _corner_measures(
     scaled = (
         determinant
         / jnp.maximum(jnp.prod(lengths, axis=-1), _tiny(points))
-        / table.ideal_scaled
+        / table.ideal_scaled[None, :]
     )
     target = ein.contract("ckad,kde->ckae", frames, table.ideal_inverse, backend="jax")
     gram = ein.contract("ckad,ckae->ckde", target, target, backend="jax")
@@ -637,7 +766,7 @@ def _volume_measure(kind: str, points: Array, /) -> Array:
         return _square_determinant(frames) / 6.0
     rule = _measure_rule(kind)
     jacobian = ein.contract("qnk,cna->cqak", rule.gradients, points, backend="jax")
-    return jnp.sum(_square_determinant(jacobian) * rule.weights, axis=1)
+    return jnp.sum(_square_determinant(jacobian) * rule.weights[None, :], axis=1)
 
 
 def _tetrahedron_shape(points: Array, volume: Array, lengths: Array, /) -> Any:
@@ -714,6 +843,7 @@ def _solid_quality(kind: str, points: Array, metric: Array | None, /) -> _BlockQ
 def _standard_block_quality(
     kind: str, points: Array, metric: Array | None, /
 ) -> _BlockQuality:
+    kind = kind if kind == "polygon" else reference_cell_topology(kind).family
     match kind:
         case "interval":
             return _interval_quality(points, metric)
@@ -1067,6 +1197,7 @@ class FiniteVolumeQualityEvaluation(StrictModule, NonTrainableState):
 
 def _block_centroids(kind: str, points: Array, /) -> tuple[Array, Array]:
     """Measure-weighted centroids of standard cells via star decomposition."""
+    kind = kind if kind == "polygon" else reference_cell_topology(kind).family
 
     if kind in ("triangle", "quadrilateral", "polygon"):
         center = jnp.mean(points, axis=1, keepdims=True)
@@ -1142,11 +1273,14 @@ def _facet_geometry(mesh: CellMesh, points: Array, /) -> tuple[Array, Array]:
 
     connectivity = mesh.connectivity
     if mesh.topological_dimension == 2:
-        if not isinstance(connectivity, PolygonalConnectivity):
+        if isinstance(connectivity, PolygonalConnectivity):
+            edges = np.asarray(connectivity.edges, dtype=np.int64)
+        elif isinstance(connectivity, SimplicialConnectivity):
+            edges = np.asarray(connectivity.entities[1], dtype=np.int64)
+        else:
             raise TypeError(
-                "Planar finite-volume quality requires polygonal connectivity."
+                "Planar finite-volume quality requires polygonal or simplex connectivity."
             )
-        edges = np.asarray(connectivity.edges, dtype=np.int64)
         start = points[edges[:, 0]]
         stop = points[edges[:, 1]]
         tangent = stop - start
@@ -1174,9 +1308,13 @@ def _facet_geometry(mesh: CellMesh, points: Array, /) -> tuple[Array, Array]:
             / jnp.maximum(area, _tiny(points))[:, None]
         )
         return centroid, jax.ops.segment_sum(fan, tables.face_corner_face, face_count)
-    if not isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+    if isinstance(connectivity, SimplicialConnectivity):
+        face_rows = connectivity.entities[2]
+    elif isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+        face_rows = connectivity.faces
+    else:
         raise TypeError("Finite-volume quality requires volume connectivity.")
-    loops = points[np.asarray(connectivity.faces, dtype=np.int64)]
+    loops = points[np.asarray(face_rows, dtype=np.int64)]
     center = jnp.mean(loops, axis=1, keepdims=True)
     following = jnp.roll(loops, -1, axis=1)
     fan = 0.5 * jnp.cross(loops - center, following - center)

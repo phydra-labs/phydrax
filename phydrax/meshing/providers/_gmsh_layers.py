@@ -31,8 +31,9 @@ from ._gmsh_evidence import _connectivity_face_incidents, _connectivity_face_row
 from ._gmsh_import import (
     _brep_model,
     _CadEntityMap,
-    _entity_scope,
     _resolve_entities,
+    _scope_for_entity,
+    _scope_indices,
     _source_scale,
 )
 
@@ -219,7 +220,11 @@ def _apply_planar_band_constraints(
                 "Each exact planar band layer must be one strip face.",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
-        surface = cad_entities.face_to_surface[layer.face_entity_ids[0].index]
+        source = bands.partition.model
+        face_scope = _scope_for_entity(source, 2, layer.face_entity_ids[0])
+        surface = _resolve_entities(
+            source, face_scope, cad_entities=cad_entities
+        )[0]
         boundary = gmsh.model.getBoundary(
             [(2, surface)], combined=False, oriented=False, recursive=False
         )
@@ -276,7 +281,12 @@ def _apply_planar_band_constraints(
             gmsh.model.mesh.setRecombine(2, surface)
         front_patch = bands.partition.patch(layer.front_patch_name)
         front_curves = tuple(
-            cad_entities.edge_to_curve[entity.index] for entity in front_patch.entity_ids
+            _resolve_entities(
+                source,
+                _scope_for_entity(source, 1, entity),
+                cad_entities=cad_entities,
+            )[0]
+            for entity in front_patch.entity_ids
         )
         if not front_curves:
             raise MeshingFailure(
@@ -468,7 +478,7 @@ def _certify_swept_volume(
 
 
 def _prepare_swept_geometry(
-    gmsh: Any, plan: Any, shape: Any, cad_entities: Any, /
+    gmsh: Any, plan: Any, cad_entities: Any, /
 ) -> Any:
     controls = plan.specification.layer_controls
     if not controls or any(
@@ -478,26 +488,26 @@ def _prepare_swept_geometry(
     source = _brep_model(plan.source)
     scale = _source_scale(source)
     if cad_entities is None:
-        volume_entities = tuple(gmsh.model.getEntities(3))
-        if source.topology.num_solids != 1 or len(volume_entities) != 1:
-            raise MeshingFailure(
-                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Non-semantic swept meshing requires one source solid.",
-                stage=MeshingStageKind.SCOPE_RESOLUTION.value,
-            )
-        face_to_surface = tuple(
-            _resolve_entities(gmsh, source, shape, _entity_scope(source, 2, (face,)))[0]
-            for face in range(source.report.num_faces)
+        raise MeshingFailure(
+            MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+            "Exact-sweep generation requires the checked source-to-import correspondence.",
+            stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
-        solid_to_volume = (int(volume_entities[0][1]),)
-    else:
-        face_to_surface = cad_entities.face_to_surface
-        solid_to_volume = cad_entities.solid_to_volume
+    face_to_surface = cad_entities.face_to_surface
+    solid_to_volume = cad_entities.solid_to_volume
     prepared = []
     for control_index, control in enumerate(controls):
-        solid_ids = np.asarray(control.volume_scope.entity_ids, dtype=np.int64)
-        source_faces = {int(value) for value in np.asarray(control.wall_scope.entity_ids)}
-        target_faces = {int(value) for value in np.asarray(control.cap_scope.entity_ids)}
+        solid_ids = _scope_indices(source, control.volume_scope, 3)
+        source_face_ids = _scope_indices(source, control.wall_scope, 2)
+        target_face_ids = _scope_indices(source, control.cap_scope, 2)
+        if solid_ids is None or source_face_ids is None or target_face_ids is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Exact-sweep scopes do not belong to the supplied BRep owner and revision.",
+                stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+            )
+        source_faces = {int(value) for value in source_face_ids}
+        target_faces = {int(value) for value in target_face_ids}
         thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
         levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
         for solid_value in solid_ids:
@@ -1170,6 +1180,7 @@ def _wall_fan_points(
 
 def _apply_boundary_layer_field(
     gmsh: Any,
+    source: BRepModel,
     specification: Any,
     cad_entities: _CadEntityMap | None,
     requested_kinds: set[str],
@@ -1190,10 +1201,9 @@ def _apply_boundary_layer_field(
         )
     curves = tuple(
         sorted(
-            {
-                int(cad_entities.edge_to_curve[int(edge)])
-                for edge in np.asarray(control.wall_scope.entity_ids)
-            }
+            _resolve_entities(
+                source, control.wall_scope, cad_entities=cad_entities
+            )
         )
     )
     thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)

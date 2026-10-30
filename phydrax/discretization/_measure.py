@@ -48,7 +48,8 @@ def _validate_host_measure(
         raise ValueError("Counting-measure active weights must equal one.")
     total = float(np.sum(active, dtype=np.float64))
     if normalization in ("physical", "probability") and not total > 0:
-        raise ValueError("Physical and probability measures require positive mass.")
+        if normalization != "physical" or np.asarray(values).size != 0:
+            raise ValueError("Physical and probability measures require positive mass.")
     if normalization == "probability" and not np.isclose(
         total, 1.0, rtol=tolerance, atol=tolerance
     ):
@@ -174,6 +175,8 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
             case "counting":
                 return valid & jnp.all(~active | (self.weights == 1))
             case "physical":
+                if self.weights.shape[0] == 0:
+                    return valid & jnp.all(~active | (self.weights >= 0))
                 return (
                     valid & jnp.all(~active | (self.weights >= 0)) & (self.total_mass > 0)
                 )

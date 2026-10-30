@@ -31,6 +31,52 @@ def _facade_dir() -> list[str]:
 # Re-exports load on first use, so importing one owner never imports the
 # whole package and its import cycles.
 _DEFERRED_EXPORTS = {
+    "CadCodecInvariantError": "._cad",
+    "CadCoverage": "._cad",
+    "CadCurveFitPolicy": "._cad",
+    "CadExportPolicy": "._cad",
+    "CadExportResult": "._cad",
+    "CadExportTolerances": "._cad",
+    "CadImportPolicy": "._cad",
+    "CadImportResult": "._cad",
+    "CadImportToleranceEvidence": "._cad",
+    "CadInterchangeError": "._cad",
+    "CadRefusal": "._cad",
+    "CadRefusalReason": "._cad",
+    "decode_cad_bytes": "._cad_io",
+    "read_cad": "._cad_io",
+    "read_cad_file": "._cad_io",
+    "STEP_ENTITY_COVERAGE": "._step",
+    "StepSchema": "._step",
+    "decode_step_bytes": "._step",
+    "decode_step_resource": "._step",
+    "read_step": "._step",
+    "write_step": "._step",
+    "decode_iges_bytes": "._iges",
+    "decode_iges_resource": "._iges",
+    "read_iges": "._iges",
+    "write_iges": "._iges",
+    "BRepTextVersion": "._cad_brep_text",
+    "decode_brep_text_bytes": "._cad_brep_text",
+    "decode_brep_text_resource": "._cad_brep_text",
+    "read_brep_text": "._cad_brep_text",
+    "write_brep_text": "._cad_brep_text",
+    "DxfExportResult": "._dxf",
+    "DxfImportError": "._dxf",
+    "DxfImportPolicy": "._dxf",
+    "DxfImportResult": "._dxf",
+    "decode_dxf_bytes": "._dxf",
+    "encode_dxf": "._dxf",
+    "read_dxf": "._dxf",
+    "write_dxf": "._dxf",
+    "explore_unique": "._cad_occt",
+    "shape_index": "._cad_occt",
+    "shape_digest": "._cad_occt",
+    "read_occt_shape": "._cad_occt",
+    "model_from_occt_shape": "._cad_occt",
+    "persist_occt_shape": "._cad_occt",
+    "PreparedOcctProjection": "._cad_occt_projection",
+    "prepare_occt_projection": "._cad_occt_projection",
     "decode_json_resource": ".._document_resource",
     "decode_text_resource": ".._document_resource",
     "decode_xml_resource": ".._document_resource",
@@ -318,6 +364,37 @@ if TYPE_CHECKING:
         NeutralBlackHoleArtifact,
     )
     from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
+    from ._cad import (
+        CadCodecInvariantError,
+        CadCoverage,
+        CadCurveFitPolicy,
+        CadExportPolicy,
+        CadExportResult,
+        CadExportTolerances,
+        CadImportPolicy,
+        CadImportResult,
+        CadImportToleranceEvidence,
+        CadInterchangeError,
+        CadRefusal,
+        CadRefusalReason,
+    )
+    from ._cad_brep_text import (
+        BRepTextVersion,
+        decode_brep_text_bytes,
+        decode_brep_text_resource,
+        read_brep_text,
+        write_brep_text,
+    )
+    from ._cad_io import decode_cad_bytes, read_cad, read_cad_file
+    from ._cad_occt import (
+        explore_unique,
+        model_from_occt_shape,
+        persist_occt_shape,
+        read_occt_shape,
+        shape_digest,
+        shape_index,
+    )
+    from ._cad_occt_projection import prepare_occt_projection, PreparedOcctProjection
     from ._catalog import (
         CarrierKind,
         format_capabilities,
@@ -336,6 +413,16 @@ if TYPE_CHECKING:
         execute_coordinate_transform,
         GeodeticDependencyError,
     )
+    from ._dxf import (
+        decode_dxf_bytes,
+        DxfExportResult,
+        DxfImportError,
+        DxfImportPolicy,
+        DxfImportResult,
+        encode_dxf,
+        read_dxf,
+        write_dxf,
+    )
     from ._electrical_formats import ElectricalTabularSurvey, read_electrical_survey_csv
     from ._em_formats import MTImpedanceData, read_edi_impedance, read_emtf_xml_impedance
     from ._geodetic_formats import (
@@ -352,6 +439,7 @@ if TYPE_CHECKING:
         GeospatialTransform,
         QualifiedGeospatialGrid,
     )
+    from ._iges import decode_iges_bytes, decode_iges_resource, read_iges, write_iges
     from ._inspection import (
         HostInspectionConversion,
         HostInspectionField,
@@ -467,6 +555,14 @@ if TYPE_CHECKING:
         read_segy_rev2,
         SEGYRev2IEEEProfile,
     )
+    from ._step import (
+        decode_step_bytes,
+        decode_step_resource,
+        read_step,
+        STEP_ENTITY_COVERAGE,
+        StepSchema,
+        write_step,
+    )
     from ._time_reference import (
         convert_time,
         LeapSecondTable,
@@ -488,6 +584,52 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "BRepTextVersion",
+    "CadCodecInvariantError",
+    "CadCoverage",
+    "CadCurveFitPolicy",
+    "CadExportPolicy",
+    "CadExportResult",
+    "CadExportTolerances",
+    "CadImportPolicy",
+    "CadImportResult",
+    "CadImportToleranceEvidence",
+    "CadInterchangeError",
+    "CadRefusal",
+    "CadRefusalReason",
+    "DxfExportResult",
+    "DxfImportError",
+    "DxfImportPolicy",
+    "DxfImportResult",
+    "PreparedOcctProjection",
+    "STEP_ENTITY_COVERAGE",
+    "StepSchema",
+    "decode_brep_text_bytes",
+    "decode_brep_text_resource",
+    "decode_cad_bytes",
+    "decode_dxf_bytes",
+    "decode_iges_bytes",
+    "decode_iges_resource",
+    "decode_step_bytes",
+    "decode_step_resource",
+    "encode_dxf",
+    "explore_unique",
+    "model_from_occt_shape",
+    "persist_occt_shape",
+    "prepare_occt_projection",
+    "read_brep_text",
+    "read_cad",
+    "read_cad_file",
+    "read_dxf",
+    "read_iges",
+    "read_occt_shape",
+    "read_step",
+    "shape_digest",
+    "shape_index",
+    "write_brep_text",
+    "write_dxf",
+    "write_iges",
+    "write_step",
     "dafoam",
     "geant4_detector_design",
     "hep",

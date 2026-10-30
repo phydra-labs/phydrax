@@ -91,6 +91,12 @@ def test_fem_local_adaptivity_scenario_1() -> None:
     assert jnp.allclose(dwr.absolute, jnp.asarray([1.5, 2.0]))
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
     accepted = phx.solver.FiniteElementAcceptedState(
         (mesh.coordinates[:, 0],),
         0.0,
@@ -98,6 +104,7 @@ def test_fem_local_adaptivity_scenario_1() -> None:
         mesh.topology_id,
         "prepared",
         "compiled",
+        field_layouts=(layout,),
     )
     transaction = phx.solver.FiniteElementTopologyTransaction(
         lambda candidate_mesh, fields, materials, lineage, args: False

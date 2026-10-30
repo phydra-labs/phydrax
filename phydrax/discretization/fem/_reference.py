@@ -25,6 +25,7 @@ from .._spaces import FieldRepresentation
 
 if TYPE_CHECKING:
     from ._form_elements import FormBasis
+    from ._nodal_reference import ExactNodalReferenceNode
 
 type ElementContinuity = Literal["conforming", "discontinuous"]
 type ElementConformity = Literal["H1", "Hcurl", "Hdiv", "L2", "HLambda"]
@@ -396,7 +397,7 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
             ),
             value_spec=scalar_spec,
         )
-    if cell in ("triangle", "tetrahedron") and order >= 0:
+    if cell in ("triangle", "tetrahedron", "simplex:2", "simplex:3") and order >= 0:
         from ._high_order import SimplexNodalFamily
 
         return SimplexNodalFamily(cell, order).finite_element()
@@ -411,6 +412,28 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
     raise ValueError(
         "Implemented Lagrange elements require a supported simplex/tensor cell and polynomial degree."
     )
+
+
+def lagrange_reference_node_data(
+    element: FiniteElementSpec, /
+) -> tuple[ExactNodalReferenceNode, ...]:
+    """Return exact point-functional sources and separate binary64 projections."""
+    from ._nodal_reference import finite_element_nodal_reference_data
+
+    return finite_element_nodal_reference_data(element)
+
+
+def canonical_nodal_entity_identity(
+    node: ExactNodalReferenceNode,
+    cell_vertex_global_ids: tuple[int, ...],
+    /,
+    *,
+    cell_global_id: int | None = None,
+) -> tuple[tuple[object, ...], tuple[int, ...]]:
+    """Canonicalize an exact scalar nodal functional by entity vertex identity."""
+    from ._nodal_reference import canonical_nodal_entity_identity as canonicalize
+
+    return canonicalize(node, cell_vertex_global_ids, cell_global_id=cell_global_id)
 
 
 def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
@@ -499,5 +522,6 @@ __all__ = [
     "ElementMapping",
     "FiniteElementSpec",
     "discontinuous_element",
-    "lagrange_element",
+    "canonical_nodal_entity_identity",
+    "lagrange_reference_node_data",
 ]

@@ -70,7 +70,6 @@ def _provenance(profile_id: Any = "profile:periodic") -> Any:
 def test_periodic_family_archive_round_trip_requires_matching_structure(
     tmp_path: Any,
 ) -> None:
-    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0], [0], source_size=1, target_size=1)
     plan = PeriodicTranslationFamilyPlan(relation, [[0]], [0])
     # ty: ignore[invalid-argument-type]

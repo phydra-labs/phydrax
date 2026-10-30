@@ -435,11 +435,9 @@ class GeneralizedKraynikReineltPlan(StrictModule, NonTrainableState):
         )
         if not math.isfinite(residual) or residual > tolerance_:
             raise ValueError("Reference lattice, flow, period, and remap do not recur.")
-        image_extent = max(1, math.ceil(0.5 + condition_limit * math.sqrt(3.0)))
         cell = PeriodicCell(
             vectors,
             maximum_condition_number=condition_limit,
-            maximum_image_count=(2 * image_extent + 1) ** 3,
         )
         self.cell_plan = EvolvingFlowCellPlan(
             cell,

@@ -35,7 +35,13 @@ from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace
 from ...typing import checked, parse
+from .._cell_locator import AbstractCellLocator, CellLocationStatus
 from .._integration_domain import IntegrationDomain
+from .._mapped_locator import (
+    MappedLocationPolicy,
+    PreparedMappedCellLocator,
+    PreparedMappedCellMap,
+)
 from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from .._side_actions import (
     FacetTraceRule,
@@ -45,13 +51,13 @@ from .._side_actions import (
     SideTraceQuantity,
 )
 from .._simplicial_locator import (
-    AbstractCellLocator,
-    CellLocationStatus,
     PreparedSimplicialCellLocator,
     SimplicialLocationPolicy,
 )
 from .._view_support import (
     cell_location_status,
+    MappedFieldSupport,
+    prepare_mapped_field_support,
     simplicial_mesh_support_geometry,
     verify_mesh_support_geometry,
 )
@@ -551,9 +557,19 @@ class FiniteElementFieldReconstructionKernel(
         )
         inverse_jacobian = None
         if axis is not None:
-            inverse_jacobian = self.locator.cell_map.evaluate(
-                self.locator.coordinates, flat_cells, reference
-            ).inverse_jacobian
+            if isinstance(self.locator, PreparedMappedCellLocator) and isinstance(
+                self.locator.cell_map, PreparedMappedCellMap
+            ):
+                inverse_jacobian = self.locator.inverse_jacobian(flat_cells, reference)
+            else:
+                cell_map = self.locator.cell_map
+                if not isinstance(cell_map, PreparedFiniteElementCellMap):
+                    raise TypeError(
+                        "FE derivative reconstruction requires an evaluable coordinate map."
+                    )
+                inverse_jacobian = cell_map.evaluate(
+                    self.locator.coordinates, flat_cells, reference
+                ).inverse_jacobian
         weights = finite_element_point_weights(
             self.element,
             self.orientations[flat_cells],
@@ -643,7 +659,7 @@ def prepare_finite_element_field_reconstruction(
     *,
     block_name: str | None = None,
     locator: AbstractCellLocator | None = None,
-    location_policy: SimplicialLocationPolicy | None = None,
+    location_policy: SimplicialLocationPolicy | MappedLocationPolicy | None = None,
     support_geometry: Any = None,
     value_port: ValuePort | None = None,
     runtime: FiniteElementRuntimeData | None = None,
@@ -651,16 +667,20 @@ def prepare_finite_element_field_reconstruction(
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced coordinate reconstruction of one FE field.
 
-    Arbitrary points are located on triangle/tetrahedron blocks by a
-    `PreparedSimplicialCellLocator` (built from `location_policy`);
-    quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
-    Other cell kinds require an explicit `locator` implementing
-    `AbstractCellLocator`. Default `support_geometry` is admitted from the mesh;
-    an explicit geometry must be covered by it (vertices inside, equal measure).
-    Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial pieces of the element
-    degree on affine cells and smooth pieces otherwise.
+    A complete host BVH query first selects every whole-source mapped cell whose
+    enclosure can contain the point. Affine simplex blocks retain the specialized
+    simplicial inverse; non-affine source maps, including high-order simplex
+    maps, use PreparedMappedCellLocator, which reports incomplete inverse and
+    candidate evidence rather than reducing the source map to its corners. An
+    explicit locator may provide another AbstractCellLocator for a supported
+    cell family. Default support geometry is admitted from the mesh; an explicit
+    geometry must be covered by it (vertices inside, equal measure). Regularity
+    is C^0 (H1) or C^-1 (L2) with polynomial pieces of the element degree on
+    affine cells and smooth pieces otherwise.
     """
     from ...geometry import CompiledGeometry
+    from ...geometry._contracts import compiled_geometry_identity
+    from ...geometry._domain_certification import DomainCoverageCertificate
 
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
@@ -675,6 +695,29 @@ def prepare_finite_element_field_reconstruction(
         block_index = dof_map.block_names.index(block_name)
     element = _field_element(discretization, field_name, block_index)
     realized = _realized_runtime(discretization, runtime)
+    mapped_coverage = isinstance(support_geometry, DomainCoverageCertificate)
+    mapped_support = isinstance(support_geometry, MappedFieldSupport)
+    exact_mesh = None
+    exact_geometry = None
+    if mapped_coverage:
+        exact_mesh = support_geometry.binding.mesh
+        exact_geometry = support_geometry.binding.geometry
+    elif mapped_support:
+        exact_mesh, exact_geometry = support_geometry.mesh, support_geometry.geometry
+    if mapped_coverage or mapped_support:
+        if (
+            exact_mesh is None
+            or exact_geometry is None
+            or exact_mesh.mesh_id != discretization.mesh.mesh_id
+            or exact_geometry.geometry_layout_id != realized.geometry_layout_id
+            or not np.array_equal(
+                np.asarray(exact_geometry.resolve(exact_mesh)[2]),
+                np.asarray(realized.coordinates),
+            )
+        ):
+            raise ValueError(
+                "Mapped query support must bind this exact FE mesh and coordinate geometry."
+            )
     if whole_mesh:
         if any(
             other.tabulator_id != element.tabulator_id
@@ -685,29 +728,92 @@ def prepare_finite_element_field_reconstruction(
             raise ValueError(
                 "A whole-support reconstruction requires one canonical reference field basis."
             )
-        cell_map = PreparedFiniteElementCellMap(discretization, None)
+        if mapped_support:
+            cell_map = support_geometry.locator.cell_map
+        else:
+            if mapped_coverage and any(
+                not isinstance(value, FiniteElementSpec)
+                for value in discretization.coordinate_elements
+            ):
+                raise ValueError(
+                    "Whole-mesh mapped support requires one composite exact coordinate map."
+                )
+            cell_map = PreparedFiniteElementCellMap(discretization, None)
         cell_dofs = jnp.concatenate(dof_map.cell_dofs, axis=0)
         cell_transforms = jnp.concatenate(dof_map.cell_transforms, axis=0)
         orientations = jnp.concatenate(dof_map.orientations, axis=0)
     else:
-        cell_map = PreparedFiniteElementCellMap(discretization, block_index)
+        if mapped_support:
+            cell_map = support_geometry.locator.cell_map
+        elif mapped_coverage:
+            if exact_geometry is None:
+                raise ValueError(
+                    "Mapped field support lost its exact coordinate geometry."
+                )
+            cell_map = PreparedMappedCellMap(
+                discretization.mesh, exact_geometry, block_index
+            )
+        else:
+            cell_map = PreparedFiniteElementCellMap(discretization, block_index)
         cell_dofs = dof_map.cell_dofs[block_index]
         cell_transforms = dof_map.cell_transforms[block_index]
         orientations = dof_map.orientations[block_index]
+    if mapped_support and location_policy is not None:
+        if not isinstance(location_policy, MappedLocationPolicy):
+            raise TypeError("MappedFieldSupport requires MappedLocationPolicy.")
+        if support_geometry.locator.policy.policy_id != location_policy.policy_id:
+            raise ValueError(
+                "MappedFieldSupport already binds a different inverse-location policy."
+            )
     if locator is None:
         kind = cell_map.coordinate_element.cell_kind
-        policy = (
-            SimplicialLocationPolicy(min(cell_map.cell_count, 16), 16, 1)
-            if location_policy is None
-            else location_policy
-        )
-        if kind in ("quadrilateral", "hexahedron") or kind.startswith("tensor:"):
-            from ._form_reconstruction import _TensorCellLocator
-
-            locator = _TensorCellLocator(cell_map, realized.coordinates, policy)
-        else:
+        simplex = (
+            kind in ("interval", "triangle", "tetrahedron") or kind.startswith("simplex:")
+        ) and cell_map.coordinate_element.degree == 1
+        if mapped_coverage or mapped_support:
+            if exact_geometry is None:
+                raise ValueError(
+                    "Mapped field support lost its exact coordinate geometry."
+                )
+            if location_policy is None:
+                mapped_policy = MappedLocationPolicy()
+            elif isinstance(location_policy, MappedLocationPolicy):
+                mapped_policy = location_policy
+            else:
+                raise TypeError("Mapped coordinate maps require MappedLocationPolicy.")
+            locator = PreparedMappedCellLocator(
+                cell_map,
+                realized.coordinates,
+                mapped_policy,
+                source_geometry=exact_geometry,
+            )
+        elif simplex:
+            if location_policy is None:
+                simplex_policy = SimplicialLocationPolicy(
+                    cell_map.cell_count,
+                    16,
+                    1 + len(reference_cell_topology(kind).vertices),
+                )
+            elif isinstance(location_policy, SimplicialLocationPolicy):
+                simplex_policy = location_policy
+            else:
+                raise TypeError("Affine simplex maps require SimplicialLocationPolicy.")
+            if not isinstance(cell_map, PreparedFiniteElementCellMap):
+                raise TypeError(
+                    "Simplicial point location requires a finite-element cell map."
+                )
             locator = PreparedSimplicialCellLocator(
-                cell_map, realized.coordinates, policy
+                cell_map, realized.coordinates, simplex_policy
+            )
+        else:
+            if location_policy is None:
+                mapped_policy = MappedLocationPolicy()
+            elif isinstance(location_policy, MappedLocationPolicy):
+                mapped_policy = location_policy
+            else:
+                raise TypeError("Mapped coordinate maps require MappedLocationPolicy.")
+            locator = PreparedMappedCellLocator(
+                cell_map, realized.coordinates, mapped_policy
             )
     elif not isinstance(locator, AbstractCellLocator):
         raise TypeError("locator must be an AbstractCellLocator or None.")
@@ -715,6 +821,29 @@ def prepare_finite_element_field_reconstruction(
         np.asarray(locator.coordinates), np.asarray(realized.coordinates)
     ):
         raise ValueError("The locator does not invert this FE block and runtime.")
+    if locator is not None and location_policy is not None:
+        if isinstance(locator, PreparedMappedCellLocator):
+            if not isinstance(location_policy, MappedLocationPolicy):
+                raise TypeError(
+                    "PreparedMappedCellLocator requires MappedLocationPolicy."
+                )
+            if locator.policy.policy_id != location_policy.policy_id:
+                raise ValueError(
+                    "The explicit mapped locator binds a different location policy."
+                )
+        elif isinstance(locator, PreparedSimplicialCellLocator):
+            if not isinstance(location_policy, SimplicialLocationPolicy):
+                raise TypeError(
+                    "PreparedSimplicialCellLocator requires SimplicialLocationPolicy."
+                )
+            if locator.policy.policy_id != location_policy.policy_id:
+                raise ValueError(
+                    "The explicit simplicial locator binds a different location policy."
+                )
+        else:
+            raise ValueError(
+                "location_policy applies only to the canonical mapped/simplex locators."
+            )
     space = _field_array_space(discretization, field_name)
     field_space_id = canonical_fingerprint(
         {
@@ -733,13 +862,37 @@ def prepare_finite_element_field_reconstruction(
     )
     if support_geometry is None:
         geometry = simplicial_mesh_support_geometry(locator, support_id)
+    elif isinstance(support_geometry, MappedFieldSupport):
+        support_geometry.require_locator(locator)
+        geometry = support_geometry
+    elif isinstance(support_geometry, DomainCoverageCertificate):
+        if exact_mesh is None or exact_geometry is None:
+            raise ValueError("Mapped field support must retain its exact mesh geometry.")
+        if not isinstance(locator, PreparedMappedCellLocator):
+            raise TypeError("Mapped coverage requires a PreparedMappedCellLocator.")
+        geometry = prepare_mapped_field_support(
+            exact_mesh, exact_geometry, locator, support_geometry
+        )
     elif isinstance(support_geometry, CompiledGeometry):
         verify_mesh_support_geometry(
             support_geometry, locator, tolerance=support_tolerance
         )
         geometry = support_geometry
     else:
-        raise TypeError("support_geometry must be a CompiledGeometry or None.")
+        raise TypeError(
+            "support_geometry must be a CompiledGeometry, mapped coverage certificate, or None."
+        )
+    support_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-support-binding",
+            "mesh_support": support_id,
+            "authority": (
+                geometry.support_id
+                if isinstance(geometry, MappedFieldSupport)
+                else compiled_geometry_identity(geometry)
+            ),
+        }
+    )
     continuity = 0 if element.conformity == "H1" else -1
     affine = cell_map.coordinate_element.degree == 1
     if element.degree == 0:

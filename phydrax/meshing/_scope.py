@@ -4,19 +4,187 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
+from typing import Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from numpy.typing import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
 from ..discretization import CellMesh, EntitySelection, EntitySet
-from ..typing import checked
+from ..geometry._source_identity import source_entity_id
+from ..typing import checked, ConvertibleToArray
+
+
+if TYPE_CHECKING:
+    from ..geometry.brep._differentiable import FixedTopologyBRepSource
+    from ..geometry.brep._model import BRepEntityId, BRepModel
+    from ..geometry.brep._source import BRepSource
+    from ..geometry.multiregion_surface._label_extraction import (
+        LabelFieldSurfaceExtractionResult,
+    )
+    from ..geometry.surface import SurfaceModel
+
+
+@runtime_checkable
+class _SourceEntityScopes(Protocol):
+    """An authoritative geometry source's prepared entity-ID projection."""
+
+    @property
+    def source_id(self) -> str: ...
+
+    @property
+    def source_revision(self) -> str: ...
+
+    def scope_entity_ids(self, dimension: int, /) -> np.ndarray: ...
+
+    def scope_entity_set_id(self, dimension: int, /) -> str: ...
+
+    def source_entity_key_for_scope(
+        self, dimension: int, entity_id: int, /
+    ) -> tuple[str, tuple[str, ...]]: ...
+
+
+def _geometry_model(
+    source: BRepModel | BRepSource | FixedTopologyBRepSource,
+    /,
+) -> BRepModel:
+    from ..geometry.brep._differentiable import FixedTopologyBRepSource
+    from ..geometry.brep._model import BRepModel
+    from ..geometry.brep._source import BRepSource
+
+    if isinstance(source, BRepModel):
+        return source
+    if isinstance(source, (BRepSource, FixedTopologyBRepSource)):
+        return source.model
+    raise TypeError("Geometry scopes require a BRep model or source.")
+
+
+def _source_scope_owner(
+    source: BRepModel
+    | BRepSource
+    | FixedTopologyBRepSource
+    | LabelFieldSurfaceExtractionResult
+    | _SourceEntityScopes,
+    /,
+) -> _SourceEntityScopes:
+    """Resolve source-owned entity banks without importing an external engine."""
+    if isinstance(source, _SourceEntityScopes):
+        return source
+    from ..geometry.brep._differentiable import FixedTopologyBRepSource
+    from ..geometry.brep._model import BRepModel
+    from ..geometry.brep._source import BRepSource
+
+    if isinstance(source, (BRepModel, BRepSource, FixedTopologyBRepSource)):
+        from ..geometry._meshing_domain import MeshingDomain
+
+        return MeshingDomain.from_brep(_geometry_model(source))
+    from ..geometry.multiregion_surface._label_extraction import (
+        LabelFieldSurfaceExtractionResult,
+    )
+
+    if isinstance(source, LabelFieldSurfaceExtractionResult):
+        from .providers._native_compartment import _normalize_label_field_source
+
+        return _normalize_label_field_source(source).source
+    raise TypeError("Geometry scopes require a declared source entity owner.")
+
+
+def _brep_scope_dimension(kind: str, /) -> int:
+    match kind:
+        case "vertex":
+            return 0
+        case "edge":
+            return 1
+        case "face":
+            return 2
+        case "solid":
+            return 3
+        case _:
+            raise ValueError("Unsupported BRep entity kind.")
+
+
+def _brep_scope_ids(
+    owner: _SourceEntityScopes,
+    entities: tuple[BRepEntityId, ...],
+    dimension: int | None,
+    /,
+) -> tuple[int, np.ndarray]:
+    """Resolve definition selectors only through unique declared occurrence uses."""
+    target = _brep_scope_dimension(entities[0].kind)
+    if dimension is not None and nonnegative_integer(dimension, "dimension") != target:
+        raise ValueError("The requested dimension disagrees with the BRep entity kind.")
+    if any(
+        entity.source_id != owner.source_id
+        or entity.source_revision != owner.source_revision
+        or entity.kind != entities[0].kind
+        for entity in entities
+    ):
+        raise ValueError(
+            "Geometry scopes require one entity kind from the actual source owner and revision."
+        )
+    bank = {
+        owner.source_entity_key_for_scope(target, int(identifier)): int(identifier)
+        for identifier in owner.scope_entity_ids(target)
+    }
+    paths = tuple(sorted({path for _, path in bank}))
+    selected: list[int] = []
+    for entity in entities:
+        candidate_paths = (entity.occurrence_path,) if entity.occurrence_path else paths
+        matches = []
+        for path in candidate_paths:
+            key = source_entity_id(
+                entity.source_id,
+                entity.source_revision,
+                entity.kind,
+                entity.index,
+                occurrence_path=path,
+            )
+            if (key, path) in bank:
+                matches.append(bank[(key, path)])
+        if len(matches) != 1:
+            raise ValueError(
+                "A BRep selector must resolve to exactly one declared occurrence; specify its occurrence path."
+            )
+        selected.append(matches[0])
+    return target, np.asarray(selected, dtype=np.int64)
+
+
+def _geometry_scope_ids(
+    owner: _SourceEntityScopes,
+    entity_ids: Sequence[BRepEntityId] | BRepEntityId | ArrayLike,
+    dimension: int | None,
+    /,
+) -> tuple[int, np.ndarray]:
+    from ..geometry.brep._model import BRepEntityId
+
+    if isinstance(entity_ids, BRepEntityId):
+        return _brep_scope_ids(owner, (entity_ids,), dimension)
+    if isinstance(entity_ids, Sequence) and any(
+        isinstance(value, BRepEntityId) for value in entity_ids
+    ):
+        selectors: list[BRepEntityId] = []
+        for value in entity_ids:
+            if not isinstance(value, BRepEntityId):
+                raise TypeError("BRep selectors cannot be mixed with numeric scope IDs.")
+            selectors.append(value)
+        return _brep_scope_ids(owner, tuple(selectors), dimension)
+    if dimension is None:
+        raise ValueError("A source entity bank requires an explicit dimension.")
+    target = nonnegative_integer(dimension, "dimension")
+    identifiers = np.atleast_1d(np.asarray(entity_ids))
+    if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
+        raise TypeError("Source entity IDs must form one integer vector.")
+    if not np.all(np.isin(identifiers, owner.scope_entity_ids(target))):
+        raise ValueError("Scope IDs must belong to the declared source entity bank.")
+    return target, identifiers
 
 
 class MeshingEntityKind(StrEnum):
@@ -45,7 +213,7 @@ class MeshingScope(StrictModule, NonTrainableState):
         entity_kind: MeshingEntityKind,
         entity_dimension: int,
         entity_set_id: str,
-        entity_ids: ArrayLike,
+        entity_ids: ConvertibleToArray,
         /,
     ) -> None:
         source = str(source_id).strip()
@@ -84,6 +252,103 @@ class MeshingScope(StrictModule, NonTrainableState):
                 "entity_ids": array_tree_fingerprint(identifiers),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshingScope], value: MeshingScope, /
+    ) -> MeshingScope:
+        if type(value) is not cls:
+            raise TypeError("value must be MeshingScope.")
+        if type(value.entity_dimension) is not int:
+            raise TypeError("Stored meshing scope dimension must be an int.")
+        stored_ids = np.asarray(value.entity_ids)
+        if stored_ids.ndim != 1 or stored_ids.dtype != np.dtype(np.int64):
+            raise TypeError("Stored meshing scope entity_ids must be int64.")
+        rebuilt = cls(
+            value.source_id,
+            value.source_revision,
+            value.entity_kind,
+            value.entity_dimension,
+            value.entity_set_id,
+            value.entity_ids,
+        )
+        if (
+            rebuilt.scope_id != value.scope_id
+            or rebuilt.source_id != value.source_id
+            or rebuilt.source_revision != value.source_revision
+            or rebuilt.entity_kind is not value.entity_kind
+            or rebuilt.entity_dimension != value.entity_dimension
+            or rebuilt.entity_set_id != value.entity_set_id
+            or not np.array_equal(
+                np.asarray(rebuilt.entity_ids), np.asarray(value.entity_ids)
+            )
+        ):
+            raise ValueError("Stored meshing scope differs from its exact entity bank.")
+        return rebuilt
+
+
+    @classmethod
+    def from_geometry(
+        cls,
+        source: BRepModel
+        | BRepSource
+        | FixedTopologyBRepSource
+        | LabelFieldSurfaceExtractionResult
+        | _SourceEntityScopes,
+        entity_ids: Sequence[BRepEntityId] | BRepEntityId | ArrayLike,
+        /,
+        *,
+        dimension: int | None = None,
+    ) -> MeshingScope:
+        """Bind exact source entities; ambiguous definition uses need an occurrence."""
+        owner = _source_scope_owner(source)
+        target, identifiers = _geometry_scope_ids(owner, entity_ids, dimension)
+        return cls(
+            owner.source_id,
+            owner.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            target,
+            owner.scope_entity_set_id(target),
+            identifiers,
+        )
+
+    @classmethod
+    def whole(
+        cls,
+        source: (
+            BRepModel
+            | BRepSource
+            | FixedTopologyBRepSource
+            | SurfaceModel
+            | CellMesh
+            | _SourceEntityScopes
+            | LabelFieldSurfaceExtractionResult
+        ),
+        dimension: int,
+        /,
+    ) -> MeshingScope:
+        """Select all active entities of an explicitly declared dimension."""
+        from ..geometry.surface import SurfaceModel
+
+        target = nonnegative_integer(dimension, "dimension")
+        if isinstance(source, (SurfaceModel, CellMesh)):
+            mesh = source.mesh if isinstance(source, SurfaceModel) else source
+            if target > mesh.topological_dimension:
+                raise ValueError(
+                    "The requested entity dimension is absent from the mesh."
+                )
+            entities = mesh.entity_set(target)
+            return cls(
+                mesh.mesh_id,
+                mesh.numeric_version,
+                MeshingEntityKind.MESH,
+                target,
+                entities.entity_set_id,
+                np.asarray(entities.entity_ids)[np.asarray(entities.active_mask)],
+            )
+        owner = _source_scope_owner(source)
+        return cls.from_geometry(owner, owner.scope_entity_ids(target), dimension=target)
 
     @classmethod
     @checked

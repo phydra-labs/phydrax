@@ -93,18 +93,6 @@ def _square_free_factors(values: Polynomial, /) -> tuple[tuple[Polynomial, int],
     return tuple(factors)
 
 
-def _positive_divisors(value: int, /) -> tuple[int, ...]:
-    value_ = abs(int(value))
-    if value_ == 0:
-        return (0,)
-    divisors = set()
-    candidate = 1
-    while candidate * candidate <= value_:
-        if value_ % candidate == 0:
-            divisors.add(candidate)
-            divisors.add(value_ // candidate)
-        candidate += 1
-    return tuple(sorted(divisors))
 
 
 def _integer_coefficients(values: Polynomial, /) -> tuple[int, ...]:
@@ -117,37 +105,6 @@ def _integer_coefficients(values: Polynomial, /) -> tuple[int, ...]:
         common = gcd(common, abs(value))
     common = max(common, 1)
     return tuple(value // common for value in integers)
-
-
-def _remove_rational_roots(
-    values: Polynomial,
-    /,
-) -> tuple[Polynomial, tuple[Fraction, ...]]:
-    polynomial = _trim(values)
-    roots: list[Fraction] = []
-    while _degree(polynomial) > 0 and polynomial[0] == 0:
-        roots.append(Fraction(0))
-        polynomial = _trim(polynomial[1:])
-    if _degree(polynomial) <= 0:
-        return polynomial, tuple(roots)
-    integers = _integer_coefficients(polynomial)
-    numerators = _positive_divisors(integers[0])
-    denominators = _positive_divisors(integers[-1])
-    candidates = sorted(
-        {
-            Fraction(sign * numerator, denominator)
-            for numerator in numerators
-            for denominator in denominators
-            if denominator
-            for sign in (-1, 1)
-        }
-    )
-    for root in candidates:
-        if _evaluate(polynomial, root) != 0:
-            continue
-        polynomial = _exact_quotient(polynomial, (-root, Fraction(1)))
-        roots.append(root)
-    return polynomial, tuple(sorted(roots))
 
 
 def _sturm_sequence(values: Polynomial, /) -> tuple[Polynomial, ...]:
@@ -177,37 +134,71 @@ def _root_count(
     return _variations(sequence, lower) - _variations(sequence, upper)
 
 
-def _irrational_intervals(
+def _sturm_root_intervals(
     values: Polynomial,
     tolerance: Fraction,
     /,
 ) -> tuple[tuple[Fraction, Fraction], ...]:
-    if _degree(values) <= 0:
-        return ()
-    leading = abs(values[-1])
-    bound = Fraction(1) + max((abs(value) / leading for value in values[:-1]), default=0)
-    bound = Fraction((bound.numerator + bound.denominator - 1) // bound.denominator + 1)
-    lower = -bound
-    upper = bound
-    while _evaluate(values, lower) == 0 or _evaluate(values, upper) == 0:
-        lower -= 1
-        upper += 1
-    sequence = _sturm_sequence(values)
-    pending = [(lower, upper, _root_count(sequence, lower, upper))]
-    intervals: list[tuple[Fraction, Fraction]] = []
-    while pending:
-        left, right, count = pending.pop()
-        if count == 0:
-            continue
-        if count == 1 and right - left <= tolerance:
-            intervals.append((left, right))
-            continue
-        midpoint = (left + right) / 2
-        left_count = _root_count(sequence, left, midpoint)
-        right_count = count - left_count
-        pending.append((midpoint, right, right_count))
-        pending.append((left, midpoint, left_count))
-    return tuple(sorted(intervals))
+    polynomial = _monic(values)
+    exact_roots: list[tuple[Fraction, Fraction]] = []
+    while _degree(polynomial) > 0:
+        integer_coefficients = _integer_coefficients(polynomial)
+        # A reduced rational root's denominator divides the primitive leading
+        # coefficient. Distinct such rationals with denominators <= Q differ by
+        # at least 1/Q**2; a narrower interval therefore permits continued-
+        # fraction reconstruction, which is accepted only after exact substitution.
+        maximum_root_denominator = abs(integer_coefficients[-1])
+        rational_separation = Fraction(
+            1, 2 * maximum_root_denominator * maximum_root_denominator
+        )
+        leading = abs(polynomial[-1])
+        bound = Fraction(1) + max(
+            (abs(value) / leading for value in polynomial[:-1]),
+            default=Fraction(0),
+        )
+        bound = Fraction(
+            (bound.numerator + bound.denominator - 1) // bound.denominator + 1
+        )
+        lower, upper = -bound, bound
+        while _evaluate(polynomial, lower) == 0 or _evaluate(polynomial, upper) == 0:
+            lower -= 1
+            upper += 1
+        sequence = _sturm_sequence(polynomial)
+        pending = [(lower, upper, _root_count(sequence, lower, upper))]
+        intervals: list[tuple[Fraction, Fraction]] = []
+        exact_root: Fraction | None = None
+        while pending:
+            left, right, count = pending.pop()
+            if count == 0:
+                continue
+            midpoint = (left + right) / 2
+            if _evaluate(polynomial, midpoint) == 0:
+                exact_root = midpoint
+                break
+            if count == 1 and right - left <= tolerance:
+                if right - left < rational_separation:
+                    reconstructed = midpoint.limit_denominator(
+                        maximum_root_denominator
+                    )
+                    if (
+                        left <= reconstructed <= right
+                        and _evaluate(polynomial, reconstructed) == 0
+                    ):
+                        exact_root = reconstructed
+                        break
+                    intervals.append((left, right))
+                    continue
+            left_count = _root_count(sequence, left, midpoint)
+            right_count = count - left_count
+            pending.append((midpoint, right, right_count))
+            pending.append((left, midpoint, left_count))
+        if exact_root is None:
+            return tuple(sorted((*exact_roots, *intervals)))
+        exact_roots.append((exact_root, exact_root))
+        polynomial = _exact_quotient(
+            polynomial, (-exact_root, Fraction(1))
+        )
+    return tuple(sorted(exact_roots))
 
 
 def isolate_real_roots(
@@ -221,11 +212,9 @@ def isolate_real_roots(
         raise ValueError("A nonzero coefficient sequence is required.")
     result: list[tuple[Fraction, Fraction, int]] = []
     for factor, multiplicity in _square_free_factors(polynomial):
-        remainder, rational_roots = _remove_rational_roots(factor)
-        result.extend((root, root, multiplicity) for root in rational_roots)
         result.extend(
             (lower, upper, multiplicity)
-            for lower, upper in _irrational_intervals(remainder, tolerance)
+            for lower, upper in _sturm_root_intervals(factor, tolerance)
         )
     return tuple(sorted(result, key=lambda item: (item[0], item[1])))
 

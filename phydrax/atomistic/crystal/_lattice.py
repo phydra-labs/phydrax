@@ -313,7 +313,6 @@ class SettingMetricChart(StrictModule, NonTrainableState):
         *,
         realization_tolerance: float | None = None,
         maximum_condition_number: float | None = None,
-        maximum_image_count: int = 4096,
     ) -> PeriodicCell:
         """Return the certified `PeriodicCell` of chart coordinates (host route).
 
@@ -332,7 +331,6 @@ class SettingMetricChart(StrictModule, NonTrainableState):
         return PeriodicCell(
             np.asarray(jax.device_get(result.vectors)),
             maximum_condition_number=maximum_condition_number,
-            maximum_image_count=maximum_image_count,
         )
 
 

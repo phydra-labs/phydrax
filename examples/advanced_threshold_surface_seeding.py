@@ -15,10 +15,7 @@ from phydrax.applications.foams import (
     FoamMaterialPlan,
     PreparedFoamEquilibrium,
 )
-from phydrax.geometry.multiregion_surface import (
-    MultiRegionSurfaceCapacityPlan,
-    MultiRegionSurfaceValidationPolicy,
-)
+from phydrax.geometry.multiregion_surface import MultiRegionSurfaceValidationPolicy
 
 
 RESOLUTION = 3
@@ -36,24 +33,14 @@ def _labels() -> np.ndarray:
 
 def run() -> dict[str, Any]:
     labels = _labels()
-    scale = RESOLUTION**3
-    capacity = MultiRegionSurfaceCapacityPlan(
-        vertex_capacity=48 * scale,
-        edge_capacity=144 * scale,
-        face_capacity=96 * scale,
-        region_capacity=4,
-        region_pair_capacity=6,
-        maximum_edge_valence=3,
-        maximum_vertex_region_pairs=6,
-        resource_id="threshold-surface-example",
-    )
     spacing = 1.0 / RESOLUTION
+    index_to_world = np.eye(4, dtype=np.float64)
+    index_to_world[:3, :3] *= spacing
+    index_to_world[:3, 3] = 0.5 * spacing
     label_ids = ("cell-a", "cell-b", "cell-c")
     extraction = td.LabelFieldSurfaceExtractionPlan(
         label_ids,
-        capacity,
-        spacing=(spacing, spacing, spacing),
-        origin=(0.5 * spacing, 0.5 * spacing, 0.5 * spacing),
+        index_to_world=index_to_world,
         validation_policy=MultiRegionSurfaceValidationPolicy(profile="dry_foam"),
     ).prepare(labels.shape)
     counts = np.bincount(labels.reshape(-1), minlength=len(label_ids))

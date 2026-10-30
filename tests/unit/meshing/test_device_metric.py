@@ -3,15 +3,18 @@
 #
 
 
+from fractions import Fraction
 from typing import Any
 
-import equinox as eqx
 import jax
 import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax.discretization import AdaptiveSimplexPolicy, AdaptiveSimplexStatus
+from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._periodic_cell import PeriodicCell
+from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.meshing import (
     adapt_device_metric,
     commit_device_metric_adaptation,
@@ -20,8 +23,6 @@ from phydrax.meshing import (
     MeshAdaptationRoute,
     MeshAdaptationStatus,
     MeshingEntityKind,
-    MeshingFailure,
-    MeshingFailureCategory,
     MeshingScope,
     MeshMetricField,
     MeshPatch,
@@ -31,6 +32,11 @@ from phydrax.meshing import (
     prepare_device_metric_adaptation,
     prepare_mesh_adaptation,
     RelocationMeshAdaptation,
+)
+from phydrax.meshing._device_metric import (
+    _compiled_adapt,
+    _work,
+    DeviceMetricEvidence,
 )
 
 
@@ -104,6 +110,49 @@ def _source(
     return phx.meshing.certify_cell_mesh(mesh, contract, patches=patches, zones=zones)
 
 
+def _periodic_source() -> Any:
+    shape = 3
+    vertex_rows = np.arange(shape**2, dtype=np.int64).reshape(shape, shape)
+    lattice = np.stack(
+        np.meshgrid(np.arange(shape), np.arange(shape), indexing="ij"), axis=-1
+    ).reshape((-1, 2))
+    coordinates = lattice.astype(np.float64) / 2.0
+    indices = np.arange(shape, dtype=np.int64)
+    representatives = vertex_rows[indices[:, None] % 2, indices[None, :] % 2].reshape(-1)
+    shifts = np.stack(
+        np.meshgrid(indices // 2, indices // 2, indexing="ij"), axis=-1
+    ).reshape((-1, 2))
+    triangles = []
+    for i in range(shape - 1):
+        for j in range(shape - 1):
+            a = int(vertex_rows[i, j])
+            b = int(vertex_rows[i + 1, j])
+            c = int(vertex_rows[i + 1, j + 1])
+            d = int(vertex_rows[i, j + 1])
+            triangles.extend(((a, b, c), (a, c, d)))
+    block = CellBlock(
+        "triangles",
+        "triangle",
+        np.asarray(triangles, dtype=np.int32),
+        global_ids=np.arange(100, 100 + len(triangles), dtype=np.int64),
+    )
+    vertex_ids = np.arange(shape**2, dtype=np.int64)
+    lifted = CellMesh(coordinates, (block,), vertex_global_ids=vertex_ids)
+    periodic = PeriodicMeshTopology(
+        lifted,
+        PeriodicCell(np.eye(2, dtype=np.float64)),
+        representatives,
+        shifts,
+    )
+    mesh = CellMesh(
+        coordinates,
+        (block,),
+        vertex_global_ids=vertex_ids,
+        periodic_topology=periodic,
+    )
+    return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+
+
 def _metric(source: Any, tensor: Any, /) -> Any:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
@@ -147,8 +196,14 @@ def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
 
 
 def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:
+    angle = np.deg2rad(31.0)
+    rotation = np.asarray(
+        ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
+    )
+    rotated = rotation @ np.diag((1.0 / 0.45**2, 1.0 / 0.22**2)) @ rotation.T
     for tensor, perturbation in [
         (np.eye(2) / 0.2**2, 0.0),
+        (rotated, 0.2),
         (np.diag((1.0 / 0.5**2, 1.0 / 0.1**2)), 0.3),
     ]:
         source = _source(perturbation=perturbation)
@@ -169,6 +224,11 @@ def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:
             return 2.0 + 3.0 * points[:, 0] - 1.5 * points[:, 1]
 
         target = result.target.mesh
+        if result.transfer is None:
+            assert not np.all(
+                np.any(np.asarray(result.stencil.valid, dtype=np.bool_), axis=1)
+            )
+            continue
         values = result.stencil.apply(
             np.asarray(source.mesh.vertex_global_ids),
             field(np.asarray(source.mesh.coordinates)),
@@ -231,36 +291,76 @@ def test_device_metric_scenario_1() -> None:
         np.asarray(result.target.mesh.coordinates), np.asarray(source.mesh.coordinates)
     )
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
+    source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    source_coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    target_coordinates = np.asarray(result.target.mesh.coordinates, dtype=np.float64)
+    target_vertex_ids = np.asarray(result.target.mesh.vertex_global_ids, dtype=np.int64)
+    source_rows = {
+        int(identifier): row for row, identifier in enumerate(source_ids.tolist())
+    }
+    target_rows = {
+        int(identifier): row for row, identifier in enumerate(target_vertex_ids.tolist())
+    }
+    stencil = result.stencil
+    assert stencil is not None
+    target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
+    sources = np.asarray(stencil.source_global_ids, dtype=np.int64)
+    weights = np.asarray(stencil.weights, dtype=np.float64)
+    valid = np.asarray(stencil.valid, dtype=np.bool_)
+    for row, identifier in enumerate(target_ids.tolist()):
+        if not valid[row].any():
+            assert result.transfer is None
+            continue
+        exact_sum = sum(stencil.exact_weights[row], Fraction(0))
+        assert exact_sum == 1
+        source_row = source_rows.get(identifier)
+        if source_row is not None and not np.array_equal(
+            source_coordinates[source_row],
+            target_coordinates[target_rows[identifier]],
+        ):
+            support = sources[row, valid[row]]
+            assert not (
+                support.size == 1
+                and int(support[0]) == identifier
+                and weights[row, valid[row]][0] == 1.0
+            )
     source = _source()
     request = MetricMeshAdaptation(_metric(source, np.eye(2) / 0.2**2))
     tiny = AdaptiveSimplexPolicy(vertex_capacity=25, cell_capacity=32)
     prepared = prepare_device_metric_adaptation(source, request, policy=_policy(tiny))
+    overflow = _compiled_adapt(prepared.layout, prepared.state)
+    capacity_status = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    assert int(overflow.report.status) & capacity_status
+    assert not bool(overflow.report.failed)
+    source_work = _work(prepared.state)
+    rolled_back_work = _work(overflow.state)
+    for name in source_work._fields:
+        if name == "flags":
+            continue
+        np.testing.assert_array_equal(
+            np.asarray(jax.device_get(getattr(rolled_back_work, name))),
+            np.asarray(jax.device_get(getattr(source_work, name))),
+        )
     update = adapt_device_metric(prepared.layout, prepared.state)
     report = jax.device_get(update.report)
-    capacity = AdaptiveSimplexStatus.CAPACITY_EXCEEDED
 
-    assert AdaptiveSimplexStatus(int(report.status)) & capacity
-    assert report.failed
-    assert report.splits == report.collapses == report.flips == report.relocations == 0
-    assert AdaptiveSimplexStatus(int(update.state.status_flags)) & capacity
-    # Every array but the recorded status is rolled back to the input.
-    _assert_same_arrays(
-        prepared.state,
-        eqx.tree_at(lambda state: state.flags, update.state, prepared.state.flags),
-    )
-    refused = adapt_device_metric(prepared.layout, update.state)
-    assert AdaptiveSimplexStatus(int(refused.report.status)) & capacity
-    assert bool(refused.report.failed)
-    assert int(refused.report.passes) == int(refused.report.splits) == 0
-    _assert_same_arrays(update.state, refused.state)
-    with pytest.raises(MeshingFailure) as failure:
-        commit_device_metric_adaptation(prepared, update.state)
-    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
-    with pytest.raises(MeshingFailure) as failure:
-        execute_mesh_adaptation(
-            prepare_mesh_adaptation(source, request, policy=_policy(tiny))
-        )
-    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert not bool(report.failed)
+    assert int(report.splits) > 0
+    assert update.layout.vertex_capacity > prepared.layout.vertex_capacity
+    assert update.layout.cell_capacity > prepared.layout.cell_capacity
+    continued = adapt_device_metric(update.layout, update.state)
+    assert bool(jax.device_get(continued.report.converged))
+    assert int(jax.device_get(continued.report.passes)) == 0
+    result = commit_device_metric_adaptation(prepared, continued.state)
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert isinstance(result.evidence, DeviceMetricEvidence)
+    assert result.evidence.converged
+    default = _adapt(source, request)
+    assert isinstance(default.evidence, DeviceMetricEvidence)
+    assert result.target.mesh.mesh_id == default.target.mesh.mesh_id
+    assert result.result_id == default.result_id
+    assert result.evidence.evidence_id == default.evidence.evidence_id
+    result.target.audit.require_passed()
     source = _source()
     mesh = source.mesh
     edges = mesh.entity_set(1)
@@ -268,7 +368,6 @@ def test_device_metric_scenario_1() -> None:
     result = _adapt(
         source,
         MetricMeshAdaptation(_metric(source, np.eye(2) / 0.1**2)),
-        maximum_passes=1,
         relocation=False,
         protected_scopes=(protected,),
     )
@@ -319,3 +418,41 @@ def _assert_same_arrays(first: Any, second: Any, /) -> None:
         jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True
     ):
         np.testing.assert_array_equal(np.asarray(after), np.asarray(before))
+
+
+def test_device_metric_periodic_operations_preserve_complete_orbits() -> None:
+    source = _periodic_source()
+    angle = np.deg2rad(23.0)
+    rotation = np.asarray(
+        ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
+    )
+    tensor = rotation @ np.diag((1.0 / 0.25**2, 1.0 / 0.4**2)) @ rotation.T
+    result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
+
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert result.evidence.converged and result.evidence.splits > 0
+    target = result.target.mesh
+    assert target.periodic_topology is not None
+    target.periodic_topology.require_lifted(
+        target.topology, target.lifted_topology_id, target.blocks
+    )
+    target.periodic_topology.require_coordinates(target.coordinates)
+    lengths = _edge_metric_lengths(target, tensor)
+    assert np.all(lengths >= _LOWER) and np.all(lengths <= _UPPER)
+    np.testing.assert_allclose(np.sum(_signed_areas(target)), 1.0, rtol=0.0, atol=1e-12)
+
+
+def test_device_metric_rejects_non_equivariant_periodic_spd_data() -> None:
+    source = _periodic_source()
+    mesh = source.mesh
+    scope = _scope(mesh, 0, mesh.entity_set(0).entity_ids)
+    values = np.broadcast_to(
+        np.eye(2, dtype=np.float64), (mesh.vertex_global_ids.size, 2, 2)
+    ).copy()
+    values[-1, 0, 0] = 2.0
+    request = MetricMeshAdaptation(
+        MeshMetricField(scope, values, minimum_size=1.0e-3, maximum_size=10.0)
+    )
+
+    with pytest.raises(ValueError, match="equivariantly"):
+        prepare_device_metric_adaptation(source, request, policy=_policy())

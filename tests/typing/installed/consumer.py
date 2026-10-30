@@ -28,6 +28,7 @@ from phydrax.applications.incompressible_flow import (
 from phydrax.atomistic.crystal import CrystalPackingPlan, CrystalPackingRecipeReceipt
 from phydrax.discretization import (
     DistributedSpectralExecutionPlan,
+    iga as iga,
     mpm as mpm,
     particle as particle,
     spatial as spatial,
@@ -38,6 +39,7 @@ from phydrax.discretization import (
 )
 from phydrax.discretization.flip import FLIPViscousEvidence
 from phydrax.equations import ChemicalComponentCatalog
+from phydrax.geometry.brep import TSplineSurfacePatch
 from phydrax.linalg.svd import (
     prepare_svd,
     PreparedSVDSolve,
@@ -68,6 +70,35 @@ from phydrax.uq import CorrelatedRatioResult
 
 class ComponentDim(pt.Dim, minimum=1):
     """Number of chemical components."""
+
+
+def tspline_consumer(
+    control_points: jax.Array,
+    raw_weights: jax.Array,
+    query_points: jax.Array,
+) -> None:
+    mesh = iga.TMesh2D.tensor_product((0, 1), (0, 1))
+    carrier = TSplineSurfacePatch(
+        mesh,
+        control_points,
+        raw_weights,
+    )
+    trim = iga.UVTrimmedSurface(
+        iga.UVTrimLoop(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    )
+    plan = iga.TSplineIsogeometricPlan(
+        carrier,
+        trim=trim,
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(4),
+    )
+    prepared = plan.prepare(numeric_version="installed-consumer")
+    route = prepared.prepare_query_route(query_points)
+    assert_type(route, iga.TSplineQueryRoute)
+    assert_type(prepared.evaluate_geometry_route(route), iga.TSplineRationalJet)
+    assert_type(
+        prepared.evaluate_field_route("u", route, jnp.ones((mesh.coefficient_count,))),
+        jax.Array,
+    )
 
 
 def tensor_forms(

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Authoritative surface geometry, audits, selections, and intersections."""
+"""Authoritative surface geometry, triangle arrangements, Booleans, and audits."""
 
 from importlib import import_module
 from typing import Any
@@ -21,9 +21,86 @@ from ._contracts import (
     SurfaceSelection,
     SurfaceValidityCertificate,
 )
-from ._g1_multipatch import __all__ as _g1_multipatch_all
-from ._high_order import __all__ as _high_order_all
-from ._interop import __all__ as _interop_all
+
+
+_EXPORT_GROUPS = (
+    (
+        "._arrangement",
+        (
+            "arrange_triangle_surfaces",
+            "SurfaceArrangement",
+            "SurfaceArrangementError",
+            "SurfaceArrangementEvidence",
+            "SurfaceArrangementStatus",
+        ),
+    ),
+    (
+        "._boolean",
+        (
+            "surface_boolean",
+            "SurfaceBooleanError",
+            "SurfaceBooleanOperation",
+            "SurfaceBooleanResult",
+            "SurfaceBooleanStatus",
+            "SurfaceClosureEvidence",
+        ),
+    ),
+    (
+        "._g1_multipatch",
+        (
+            "BiquinticGluingBasis",
+            "BiquinticGluingConstraints",
+            "G1PatchStatus",
+            "GluingContinuity",
+            "PatchEdge",
+            "PatchTopologyError",
+            "PatchVertexKind",
+            "PreparedHalfEdgePatchTopology",
+            "ProjectedBiquinticCoefficients",
+            "SeamContinuityEvidence",
+            "UnsupportedG1TopologyError",
+        ),
+    ),
+    (
+        "._high_order",
+        (
+            "HighOrderDifferentiationError",
+            "HighOrderGeometryMismatchError",
+            "HighOrderSurfaceFrameEvidence",
+            "HighOrderSurfacePolicy",
+            "HighOrderSurfaceRealization",
+            "HighOrderSurfaceReport",
+            "HighOrderSurfaceSource",
+            "isoparametric_triangle_reference_nodes",
+            "realize_boundary_atlas",
+            "realize_bspline_surface",
+            "realize_isoparametric_triangles",
+        ),
+    ),
+    (
+        "._interop",
+        (
+            "PortableSurfaceField",
+            "SurfaceDataCorruptionError",
+            "SurfaceExportPolicy",
+            "SurfaceExportResult",
+            "SurfaceFieldAssociation",
+            "SurfaceFieldRecord",
+            "SurfaceFileFormat",
+            "SurfaceImportPolicy",
+            "SurfaceImportResult",
+            "SurfaceInteropError",
+            "SurfaceInteropReport",
+            "SurfaceLossyOperationError",
+            "SurfaceOrientationPolicy",
+            "SurfaceProviderUnavailableError",
+            "SurfaceResourceLimitError",
+            "SurfaceUnsupportedFormatError",
+            "export_surface",
+            "import_surface",
+        ),
+    ),
+)
 from ._intersection import (
     intersect_plane_surface,
     PlaneSectionEvidence,
@@ -34,18 +111,20 @@ from ._intersection import (
 from ._model import SurfaceModel, SurfaceRealization
 
 
-_FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop")
+_EXPORT_MODULE_BY_NAME = {
+    name: module_name for module_name, names in _EXPORT_GROUPS for name in names
+}
 
 
 def __getattr__(name: str) -> Any:
-    with process_numerics():
-        for module_name in reversed(_FACADE_EXPORT_MODULES):
-            module = import_module(module_name, __package__)
-            if name in module.__all__:
-                value = getattr(module, name)
-                globals()[name] = value
-                return value
+    module_name = _EXPORT_MODULE_BY_NAME.get(name)
+    if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        module = import_module(module_name, __package__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:
@@ -72,8 +151,4 @@ __all__ = [
     "SurfaceValidityCertificate",
     "intersect_plane_surface",
 ]
-__all__ += [
-    name
-    for name in (*_g1_multipatch_all, *_high_order_all, *_interop_all)
-    if name not in __all__
-]
+__all__ += [name for _, names in _EXPORT_GROUPS for name in names if name not in __all__]

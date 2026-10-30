@@ -450,7 +450,6 @@ def _resources_dict(resources: CrystalContactResources, /) -> dict[str, object]:
             _role_capacity_dict(item) for item in resources.role_capacities
         ],
         "skin": resources.skin,
-        "maximum_image_count": resources.maximum_image_count,
         "resources_id": resources.resources_id,
     }
 
@@ -811,7 +810,6 @@ _RESOURCE_FIELDS = frozenset(
         "search_capacities",
         "role_capacities",
         "skin",
-        "maximum_image_count",
         "resources_id",
     }
 )
@@ -829,7 +827,6 @@ def _resources_from(value: object, /) -> CrystalContactResources:
             _role_capacity_from(item) for item in _recipe_list(record["role_capacities"])
         ],
         skin=_real(record["skin"], "skin"),
-        maximum_image_count=_integer(record["maximum_image_count"], "image bound"),
     )
     _verified(record["resources_id"], resources.resources_id, "contact resources")
     return resources

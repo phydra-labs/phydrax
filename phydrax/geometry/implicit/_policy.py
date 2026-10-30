@@ -7,6 +7,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import IntFlag
+from typing import Literal, TypeAlias
+
+from ...typing import parse
 
 
 class ImplicitProjectionStatus(IntFlag):
@@ -59,17 +62,12 @@ class ImplicitProjectionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class ImplicitSurfacePolicy:
-    """Static resource and numerical policy for dense dual contouring."""
+    """Static numerical policy for fixed-topology dual contouring."""
 
     projection: ImplicitProjectionPolicy = field(default_factory=ImplicitProjectionPolicy)
     lattice_zero_tolerance: float = 1.0e-10
     qef_regularization: float = 5.0e-2
     minimum_face_area: float = 1.0e-12
-    maximum_lattice_points: int = 2_000_000
-    maximum_crossings: int = 1_000_000
-    maximum_vertices: int = 1_000_000
-    maximum_faces: int = 2_000_000
-    maximum_intersection_pairs: int = 2_000_000
     allow_approximate_zero_set: bool = False
     allow_nonsmooth_field: bool = False
 
@@ -83,18 +81,102 @@ class ImplicitSurfacePolicy:
         ):
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{name} must be finite and positive.")
+
+
+
+
+ImplicitDiscoveryEnclosure: TypeAlias = Literal["interval", "lipschitz", "sampled"]
+"""Bound source of adaptive discovery.
+
+``interval`` evaluates the scalar program with outward-rounded value and
+directional-gradient enclosures. ``lipschitz`` encloses values from the source
+certificate, but does not establish regularity. ``sampled`` is exploratory:
+samples are never promoted to an enclosure.
+"""
+
+ImplicitDiscoveryAccuracy: TypeAlias = Literal["certified", "enclosed", "sampled"]
+"""Achieved claim of adaptive discovery.
+
+``certified`` requires a rigorous whole-domain cover, regular zero-set charts,
+and an embedded closed extraction. ``enclosed`` means every possible zero is
+retained in a reported surface or unresolved region; it does not certify
+topology. ``sampled`` makes no whole-domain claim.
+"""
+
+
+class AdaptiveImplicitSurfaceStatus(IntFlag):
+    """Outcome flags of exhaustive adaptive implicit discovery."""
+
+    SUCCESS = 0
+    UNRESOLVED_BOXES = 1
+    PHYSICAL_RESOLUTION_REACHED = 2
+    REPRESENTABILITY_LIMIT_REACHED = 4
+    NO_SURFACE = 8
+    DOMAIN_BOUNDARY_CROSSING = 16
+    DEGENERATE_EXTRACTION = 32
+    SELF_INTERSECTION = 64
+    NONMANIFOLD_EXTRACTION = 128
+
+
+class AdaptiveImplicitBoxIssue(IntFlag):
+    """Why a final possible-zero box could not be resolved."""
+
+    NONE = 0
+    SINGULAR = 1
+    EDGE = 2
+    FACE = 4
+    MULTIPLE_SHEETS = 8
+    DOMAIN_BOUNDARY = 16
+    PHYSICAL_RESOLUTION = 32
+    REPRESENTABILITY = 64
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveImplicitSurfacePolicy:
+    """Numerical and physical-resolution policy for adaptive discovery.
+
+    ``relative_cell_diameter`` is a geometric stopping criterion, scaled by
+    the diagonal of the authored discovery domain. It is not a depth, leaf,
+    query, or allocation quota: all possible-zero boxes are traversed until
+    their topology is resolved or this physical resolution (or binary64
+    representability) prevents further subdivision.
+    """
+
+    enclosure: ImplicitDiscoveryEnclosure = "interval"
+    relative_cell_diameter: float = 1.0e-3
+    root_tolerance: float = 1.0e-10
+    minimum_face_area: float = 1.0e-14
+    allow_approximate_zero_set: bool = False
+    allow_nonsmooth_field: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "enclosure",
+            parse(self.enclosure, ImplicitDiscoveryEnclosure, "enclosure"),
+        )
         for name, value in (
-            ("maximum_lattice_points", self.maximum_lattice_points),
-            ("maximum_crossings", self.maximum_crossings),
-            ("maximum_vertices", self.maximum_vertices),
-            ("maximum_faces", self.maximum_faces),
-            ("maximum_intersection_pairs", self.maximum_intersection_pairs),
+            ("relative_cell_diameter", self.relative_cell_diameter),
+            ("root_tolerance", self.root_tolerance),
+            ("minimum_face_area", self.minimum_face_area),
         ):
-            if value <= 0:
-                raise ValueError(f"{name} must be positive.")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{name} must be a real scalar.")
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive.")
+        if not isinstance(self.allow_approximate_zero_set, bool):
+            raise TypeError("allow_approximate_zero_set must be a bool.")
+        if not isinstance(self.allow_nonsmooth_field, bool):
+            raise TypeError("allow_nonsmooth_field must be a bool.")
 
 
 __all__ = [
+    "AdaptiveImplicitBoxIssue",
+    "AdaptiveImplicitSurfacePolicy",
+    "AdaptiveImplicitSurfaceStatus",
+    "ImplicitDiscoveryAccuracy",
+    "ImplicitDiscoveryEnclosure",
+
     "ImplicitProjectionPolicy",
     "ImplicitProjectionStatus",
     "ImplicitSurfacePolicy",

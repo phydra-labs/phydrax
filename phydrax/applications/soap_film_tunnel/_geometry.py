@@ -90,8 +90,7 @@ class SoapFilmTunnelGeometry(StrictModule):
     ``mesh_size_m`` is the boundary spacing of the inlet, outlet and wires and
     sets the largest triangle area ``sqrt(3)/4 mesh_size^2``; the rim spacing
     is ``pi d / rim_segments``. Refinement grades the mesh between the two.
-    ``minimum_angle_degrees`` is the Ruppert/Chew quality target and
-    ``maximum_steiner_points`` bounds the inserted points.
+    ``minimum_angle_degrees`` is the Ruppert/Chew quality target.
     """
 
     length_m: float = eqx.field(static=True)
@@ -101,7 +100,6 @@ class SoapFilmTunnelGeometry(StrictModule):
     obstacle_center_m: tuple[float, float] | None = eqx.field(static=True)
     rim_segments: int = eqx.field(static=True)
     minimum_angle_degrees: float = eqx.field(static=True)
-    maximum_steiner_points: int = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
     def __init__(
@@ -115,7 +113,6 @@ class SoapFilmTunnelGeometry(StrictModule):
         obstacle_center_m: tuple[float, float] | None = None,
         rim_segments: int = 48,
         minimum_angle_degrees: float = 28.0,
-        maximum_steiner_points: int = 1_000_000,
     ) -> None:
         length = positive_finite_float(length_m, "length_m")
         width = positive_finite_float(width_m, "width_m")
@@ -128,7 +125,6 @@ class SoapFilmTunnelGeometry(StrictModule):
         angle = positive_finite_float(minimum_angle_degrees, "minimum_angle_degrees")
         if angle > 33.0:
             raise ValueError("minimum_angle_degrees above 33 does not terminate.")
-        steiner = positive_integer(maximum_steiner_points, "maximum_steiner_points")
         if (obstacle_diameter_m is None) != (obstacle_center_m is None):
             raise ValueError("Obstacle diameter and center must be given together.")
         diameter = (
@@ -154,7 +150,6 @@ class SoapFilmTunnelGeometry(StrictModule):
         self.obstacle_center_m = center
         self.rim_segments = segments
         self.minimum_angle_degrees = angle
-        self.maximum_steiner_points = steiner
         self.geometry_id = canonical_fingerprint(
             {
                 "kind": "soap-film-tunnel-geometry",
@@ -165,7 +160,6 @@ class SoapFilmTunnelGeometry(StrictModule):
                 "obstacle_center_m": center,
                 "rim_segments": segments,
                 "minimum_angle_degrees": angle,
-                "maximum_steiner_points": steiner,
             }
         )
 
@@ -185,7 +179,6 @@ class SoapFilmTunnelGeometry(StrictModule):
             holes=holes,
             min_angle=self.minimum_angle_degrees,
             max_area=0.25 * math.sqrt(3.0) * self.mesh_size_m**2,
-            max_steiner=self.maximum_steiner_points,
         )
         triangles = np.asarray(triangulation.triangles, dtype=np.int32)
         if np.unique(triangles).size != triangulation.points.shape[0]:

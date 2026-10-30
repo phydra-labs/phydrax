@@ -46,8 +46,7 @@ class _OversetPolicy:
     tolerance: float
     tolerance_id: str
     epoch_id: str
-    interpolation_policy: str
-    bounded: bool
+    policy_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,18 +108,11 @@ def _resolve_overset_policy(
     tolerance: float,
     tolerance_id: str | None,
     epoch_id: str | int,
-    interpolation_policy: str,
-    policy: str | None,
-    conservation_policy: str | None,
-    coverage_policy: str | None,
-    bounded_interpolation: bool | None,
-    bounded: bool | None,
 ) -> _OversetPolicy:
     if not isinstance(donor, UnstructuredFiniteVolumeDiscretization) or not isinstance(
         receptor, UnstructuredFiniteVolumeDiscretization
     ):
         raise TypeError("Overset donor and receptor must be unstructured FV geometry.")
-
     tolerance_ = float(tolerance)
     if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
         raise ValueError("Overset tolerance must be positive and finite.")
@@ -135,47 +127,14 @@ def _resolve_overset_policy(
         tolerance_id_ = str(tolerance_id)
         if not tolerance_id_:
             raise ValueError("Overset tolerance_id must be non-empty.")
-
-    policy_values = []
-    if interpolation_policy != "conservative":
-        policy_values.append(str(interpolation_policy).strip().lower())
-    if policy is not None:
-        policy_values.append(str(policy).strip().lower())
-    if conservation_policy is not None:
-        policy_values.append(str(conservation_policy).strip().lower())
-    if coverage_policy is not None:
-        policy_values.append(str(coverage_policy).strip().lower())
-    bounded_flags = [
-        bool(value) for value in (bounded_interpolation, bounded) if value is not None
-    ]
-    if bounded_flags:
-        policy_values.append(
-            "conservative_bounded" if bounded_flags[0] else "conservative"
-        )
-    if not policy_values:
-        policy_values = ["conservative"]
-    if any(value != policy_values[0] for value in policy_values[1:]):
-        raise ValueError("Overset interpolation policies must agree.")
-    policy_ = policy_values[0].replace("-", "_")
-    if policy_ in {"conservative_unbounded", "unbounded"}:
-        policy_ = "conservative"
-    elif policy_ in {
-        "bounded",
-        "bounded_conservative",
-        "conservative_bounded",
-    }:
-        policy_ = "conservative_bounded"
-    if policy_ not in {"conservative", "conservative_bounded"}:
-        raise ValueError(
-            "Overset policy must be conservative; nonconservative policies are not supported."
-        )
-    bounded_ = policy_ == "conservative_bounded"
-    requested_flags = [
-        bool(value) for value in (bounded_interpolation, bounded) if value is not None
-    ]
-    if requested_flags and any(value != bounded_ for value in requested_flags):
-        raise ValueError("bounded interpolation flags conflict with the overset policy.")
-    return _OversetPolicy(tolerance_, tolerance_id_, epoch_, policy_, bounded_)
+    policy_id = canonical_fingerprint(
+        {
+            "kind": "conservative-overlap-transfer",
+            "coverage": "complete",
+            "tolerance_id": tolerance_id_,
+        }
+    )
+    return _OversetPolicy(tolerance_, tolerance_id_, epoch_, policy_id)
 
 
 def _prepare_overset_routes(
@@ -770,13 +729,13 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
     receptor_face_cells: Array | None
     report: UnstructuredOversetReport
     face_artifact_id: str | None = eqx.field(static=True)
-    interpolation_policy: str = eqx.field(static=True)
-    bounded_interpolation: bool = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
     coverage_status: str = eqx.field(static=True)
     coverage_status_mask: Array
     tolerance: float = eqx.field(static=True)
     tolerance_id: str = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
+    native_connectivity_id: str | None = eqx.field(static=True)
     identity: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -819,31 +778,27 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         face_artifact_id: str | None = None,
         receptor_cells_are_global_ids: bool = False,
         union_volume_certificate: ArrayLike | None = None,
-        interpolation_policy: str = "conservative",
-        policy: str | None = None,
-        conservation_policy: str | None = None,
-        coverage_policy: str | None = None,
-        bounded_interpolation: bool | None = None,
-        bounded: bool | None = None,
+        native_connectivity_id: str | None = None,
     ) -> None:
+        if native_connectivity_id is not None and (
+            not isinstance(native_connectivity_id, str)
+            or not native_connectivity_id
+            or native_connectivity_id != native_connectivity_id.strip()
+        ):
+            raise ValueError(
+                "native_connectivity_id must be a nonempty canonical identifier or None."
+            )
         policy_data = _resolve_overset_policy(
             donor,
             receptor,
             tolerance=tolerance,
             tolerance_id=tolerance_id,
             epoch_id=epoch_id,
-            interpolation_policy=interpolation_policy,
-            policy=policy,
-            conservation_policy=conservation_policy,
-            coverage_policy=coverage_policy,
-            bounded_interpolation=bounded_interpolation,
-            bounded=bounded,
         )
         tolerance_ = policy_data.tolerance
         tolerance_id_ = policy_data.tolerance_id
         epoch_ = policy_data.epoch_id
-        policy_ = policy_data.interpolation_policy
-        bounded_ = policy_data.bounded
+        policy_id_ = policy_data.policy_id
         routes_data = _prepare_overset_routes(
             donor,
             receptor,
@@ -973,9 +928,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         )
         self.receptor_face_cells = None if face_cells is None else jnp.asarray(face_cells)
         self.face_artifact_id = face_artifact_id_
-        self.interpolation_policy = policy_
+        self.policy_id = policy_id_
         self.coverage_status_mask = jnp.asarray(coverage_status_mask)
-        self.bounded_interpolation = bounded_
         self.coverage_status = coverage_status_
         self.tolerance = tolerance_
         self.tolerance_id = tolerance_id_
@@ -1045,12 +999,14 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 "face_cells": (
                     None if face_cells is None else array_tree_fingerprint(face_cells)
                 ),
-                "policy": policy_,
+                "policy": policy_id_,
                 "tolerance": tolerance_,
                 "tolerance_id": tolerance_id_,
                 "epoch_id": epoch_,
+                "native_connectivity_id": native_connectivity_id,
             }
         )
+        self.native_connectivity_id = native_connectivity_id
         self.identity = identity
         self.plan_id = identity
 
@@ -1076,7 +1032,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Overset receptor geometry is stale.")
 
-    def interpolate(self, donor_cell_averages: ArrayLike, /) -> Array:
+    def remap_to_receptors(self, donor_cell_averages: ArrayLike, /) -> Array:
+        """Return conservative overlap averages for the complete receptor cover."""
         donor = jnp.asarray(donor_cell_averages)
         if donor.ndim < 1 or donor.shape[0] != self.donor_eligible.size:
             raise ValueError("Overset donor values must begin with donor cell count.")
@@ -1088,17 +1045,9 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             (self.receptor_cells.size,) + donor.shape[1:], dtype=donor.dtype
         )
         receptor = receptor.at[self.receptor_routes].add(weighted)
-        interpolated = receptor / self.receptor_volumes.astype(donor.dtype).reshape(
+        return receptor / self.receptor_volumes.astype(donor.dtype).reshape(
             (-1,) + trailing
         )
-        if self.bounded_interpolation:
-            lower = jnp.full(receptor.shape, jnp.inf, dtype=interpolated.dtype)
-            upper = jnp.full(receptor.shape, -jnp.inf, dtype=interpolated.dtype)
-            donor_routes = donor[self.donor_indices]
-            lower = lower.at[self.receptor_routes].min(donor_routes)
-            upper = upper.at[self.receptor_routes].max(donor_routes)
-            interpolated = jnp.minimum(jnp.maximum(interpolated, lower), upper)
-        return interpolated
 
     def apply(
         self, receptor_cell_averages: ArrayLike, donor_cell_averages: ArrayLike, /
@@ -1108,14 +1057,15 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Overset receptor values must begin with receptor cell count."
             )
-        interpolated = self.interpolate(donor_cell_averages)
-        return receptor.at[self.receptor_cells].set(interpolated)
+        remapped = self.remap_to_receptors(donor_cell_averages)
+        return receptor.at[self.receptor_cells].set(remapped)
 
     def conservation_defect(
-        self, donor_cell_averages: ArrayLike, interpolated_receptor: ArrayLike, /
+        self, donor_cell_averages: ArrayLike, remapped_receptor: ArrayLike, /
     ) -> Array:
+        """Return the content defect of the conservative physical overlap remap."""
         donor = jnp.asarray(donor_cell_averages)
-        receptor = jnp.asarray(interpolated_receptor)
+        receptor = jnp.asarray(remapped_receptor)
         if donor.ndim < 1 or donor.shape[0] != self.donor_eligible.size:
             raise ValueError("Overset donor values must begin with donor cell count.")
         if receptor.ndim < 1:

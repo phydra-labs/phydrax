@@ -1645,7 +1645,6 @@ def _multipole_route(
             real_space="explicit-image-reference",
             reciprocal_cutoff=args.reciprocal_cutoff,
             row_block=block,
-            maximum_image_count=args.maximum_image_count,
             maximum_workspace_bytes=args.multipole_workspace_bytes,
         )
     match case.route:
@@ -1663,7 +1662,6 @@ def _multipole_route(
                 real_space=real_space,
                 reciprocal_cutoff=args.reciprocal_cutoff,
                 row_block=block,
-                maximum_image_count=args.maximum_image_count,
                 maximum_workspace_bytes=args.multipole_workspace_bytes,
             )
         case "pme":
@@ -1679,7 +1677,6 @@ def _multipole_route(
                 real_space=real_space,
                 reciprocal_cutoff=args.reciprocal_cutoff,
                 row_block=block,
-                maximum_image_count=args.maximum_image_count,
                 maximum_workspace_bytes=args.multipole_workspace_bytes,
             )
     raise ValueError(f"Unknown multipole route {case.route!r}.")
@@ -3867,8 +3864,7 @@ def measure_case(
             "resources": "term-owned IMAGE_PAIR_SUM requirement served by the "
             "declared cell-list image source (see neighborhood_resources)"
             if case.real_space == "neighborhood"
-            else "bounded explicit image sum (maximum_image_count "
-            f"{args.maximum_image_count}, row_block "
+            else f"complete explicit image sum (row_block "
             f"{32 if case.row_block is None else case.row_block}); quadratic in atoms",
         }
     if case.stability is not None:
@@ -3994,7 +3990,6 @@ def _parser() -> argparse.ArgumentParser:
     add("--max-chunk-workspace-bytes", type=int, default=1 << 30)
     add("--max-retained-bytes", type=int, default=1 << 31)
     add("--multipole-workspace-bytes", type=int, default=1 << 28)
-    add("--maximum-image-count", type=int, default=4096)
     add("--native-comparison-extent", type=int, default=12)
     add(
         "--no-native-comparison",

@@ -1,0 +1,1701 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+"""Prove carrier correspondence and construct source-cylinder arrangements.
+
+Coincidence is a whole-carrier coefficient decision, never a tolerance test.
+The axial arrangement retains a lateral fragment for each source-membership
+cell; only caps separating two selected cells are canceled. Source
+curves, p-curves and face supports are retained independently of tessellation.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from fractions import Fraction
+from math import pi
+from typing import assert_never, Literal
+
+import equinox as eqx
+import jax.numpy as jnp
+import numpy as np
+from jax import Array
+
+from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ...typing import checked, parse
+from .._atlas import TrimDomain
+from .._cad_revision import (
+    AssociationCoverageEvidence,
+    AssociationGraph,
+    OccurrenceCorrespondence,
+    OccurrenceCorrespondenceTransaction,
+)
+from .._rational import exact_float, rational_vector
+from ._assembly import BRepAffinePlacement
+from ._boolean_core import (
+    line_chart_coefficients,
+    AffinePCurve,
+    boolean_face_chart_box,
+    BRepBooleanFailure,
+    BRepBooleanOperation,
+    BRepBooleanPolicy,
+    BRepBooleanResult,
+    entity_occurrence_index,
+    pcurve_periodic_source,
+    PeriodicPCurve,
+    selected,
+    source_assembly_occurrence_id,
+    source_lineage,
+    target_assembly_occurrence_id,
+)
+from ._carrier_pieces import carrier_payload
+from ._constructors import assemble_brep_model, brep_trim_domain, _Builder
+from ._exact import rational_determinant
+from ._intersection import NativePeriodEndpoint, RootEndpoint, endpoint_root_payload
+from ._intersection_curve import SurfaceRegion
+from ._correspondence import exact_source_lift
+from ._model import BRepCurve, BRepEntityId, BRepGeometry, BRepModel
+from ._patches import (
+    AbstractCurve,
+    AbstractSurfacePatch,
+    CircleCurve,
+    CylinderPatch,
+    LineCurve,
+    PlanePatch,
+    SpherePatch,
+)
+from ._placed import PlacedSurface, same_source_pose
+from ._root_bindings import BRepCurveSurfaceLift, BRepVertexRoot
+from ._sewing import BRepSewingLineage, sew_brep
+from ._source_correspondence import circle_correspondence
+from ._trim_helpers import PeriodOffset
+
+
+type _Vector = tuple[Fraction, ...]
+type _UVVector = tuple[Fraction, Fraction]
+type _Matrix = tuple[_UVVector, _UVVector]
+type _Parent = tuple[int, int]
+
+def _source_root_endpoint(value: object | None, /) -> RootEndpoint | None:
+    if value is None or isinstance(value, RootEndpoint):
+        return value
+    raise BRepBooleanFailure(
+        "CoincidentFaceArc source endpoint must retain a recognized exact root."
+    )
+
+
+def _source_vertex_root(value: object | None, /) -> BRepVertexRoot | None:
+    if value is None or isinstance(value, BRepVertexRoot):
+        return value
+    raise BRepBooleanFailure(
+        "CoincidentFaceArc source vertex must retain a recognized exact root."
+    )
+
+
+_IDENTITY: _Matrix = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+_ZERO: _UVVector = (Fraction(0), Fraction(0))
+_PERIOD = 2.0 * pi
+
+
+def _parallel_offset(
+    origin: _Vector, other: _Vector, axis: _Vector, /
+) -> Fraction | None:
+    pivot = next((index for index, value in enumerate(axis) if value != 0), None)
+    if pivot is None:
+        return None
+    offset = (other[pivot] - origin[pivot]) / axis[pivot]
+    return (
+        offset
+        if all(b - a == offset * k for a, b, k in zip(origin, other, axis, strict=True))
+        else None
+    )
+
+
+def _plane_coordinates(
+    first: _Vector, second: _Vector, value: _Vector, /
+) -> _UVVector | None:
+    # Host-only rational two-column coefficient identity, checked in all three rows.
+    for row, column in ((0, 1), (0, 2), (1, 2)):
+        determinant = first[row] * second[column] - first[column] * second[row]
+        if determinant == 0:
+            continue
+        u = (value[row] * second[column] - value[column] * second[row]) / determinant
+        v = (first[row] * value[column] - first[column] * value[row]) / determinant
+        if all(a * u + b * v == c for a, b, c in zip(first, second, value, strict=True)):
+            return u, v
+        return None
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class _AnalyticSupport:
+    family: Literal["plane", "cylinder", "sphere"]
+    origin: _Vector
+    axes: tuple[_Vector, ...]
+
+
+def _analytic_support(patch: AbstractSurfacePatch, /) -> _AnalyticSupport | None:
+    """Return rational coefficients of the authored carrier expression.
+
+    Authored binary coefficients are rational, but their products and sums
+    need not be binary-representable. Keep those products in Q throughout the
+    proof. Radius-folded axes describe the trigonometric expression;
+    orthogonality or normalization of a moved analytic copy is not assumed.
+    """
+    match patch:
+        case PlacedSurface():
+            source = _analytic_support(patch.definition)
+            if source is None:
+                return None
+            matrix = tuple(
+                rational_vector(row.reshape(-1)) for row in np.asarray(patch.rotation)
+            )
+            shift = rational_vector(np.asarray(patch.translation).reshape(-1))
+
+            def mapped(value: _Vector) -> _Vector:
+                return tuple(
+                    sum((a * b for a, b in zip(row, value, strict=True)), Fraction(0))
+                    for row in matrix
+                )
+
+            origin = tuple(
+                a + b for a, b in zip(mapped(source.origin), shift, strict=True)
+            )
+            return _AnalyticSupport(
+                source.family, origin, tuple(mapped(axis) for axis in source.axes)
+            )
+        case PlanePatch():
+            return _AnalyticSupport(
+                "plane",
+                rational_vector(np.asarray(patch.origin).reshape(-1)),
+                (
+                    rational_vector(np.asarray(patch.first_axis).reshape(-1)),
+                    rational_vector(np.asarray(patch.second_axis).reshape(-1)),
+                ),
+            )
+        case CylinderPatch() | SpherePatch():
+            radius = Fraction(float(patch.radius))
+            radial = tuple(
+                tuple(
+                    radius * value
+                    for value in rational_vector(np.asarray(axis).reshape(-1))
+                )
+                for axis in (patch.first_axis, patch.second_axis)
+            )
+            axis = rational_vector(np.asarray(patch.axis).reshape(-1))
+            match patch:
+                case CylinderPatch():
+                    return _AnalyticSupport(
+                        "cylinder",
+                        rational_vector(np.asarray(patch.origin).reshape(-1)),
+                        (*radial, axis),
+                    )
+                case SpherePatch():
+                    return _AnalyticSupport(
+                        "sphere",
+                        rational_vector(np.asarray(patch.center).reshape(-1)),
+                        (*radial, tuple(radius * value for value in axis)),
+                    )
+                case _:
+                    assert_never(patch)
+        case _:
+            return None
+
+
+class CoincidentSurfaceCorrespondence(StrictModule):
+    """Proof of ``first(q) == second(matrix q + offset)`` for every q.
+
+    The rational coefficients are host preparation metadata.
+    Transport refuses unrepresentable coefficients rather than rounding them.
+    A proof does not identify source entities: callers publish both parents.
+    """
+
+    first: AbstractSurfacePatch
+    second: AbstractSurfacePatch
+    matrix: _Matrix = eqx.field(static=True)
+    offset: _UVVector = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        first: AbstractSurfacePatch,
+        second: AbstractSurfacePatch,
+        matrix: _Matrix,
+        offset: _UVVector,
+    ) -> None:
+        proved = _surface_map(first, second)
+        if proved is None or proved != (matrix, offset):
+            raise ValueError(
+                f"CoincidentSurfaceCorrespondence.matrix_offset must prove carrier equality; got {(matrix, offset)!r}"
+            )
+        self.first, self.second = first, second
+        self.matrix, self.offset = matrix, offset
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "native-coincident-surface-correspondence",
+                "first": carrier_payload(first),
+                "second": carrier_payload(second),
+                "matrix": [
+                    [(value.numerator, value.denominator) for value in row]
+                    for row in matrix
+                ],
+                "offset": [(value.numerator, value.denominator) for value in offset],
+            }
+        )
+
+    @property
+    def orientation(self) -> int:
+        determinant = (
+            self.matrix[0][0] * self.matrix[1][1] - self.matrix[0][1] * self.matrix[1][0]
+        )
+        return 1 if determinant > 0 else -1
+
+
+def _surface_map(
+    first: AbstractSurfacePatch,
+    second: AbstractSurfacePatch,
+    /,
+) -> tuple[_Matrix, _UVVector] | None:
+    if canonical_fingerprint(carrier_payload(first)) == canonical_fingerprint(
+        carrier_payload(second)
+    ):
+        return _IDENTITY, _ZERO
+    if (
+        isinstance(first, PlacedSurface)
+        and isinstance(second, PlacedSurface)
+        and same_source_pose(first, second)
+    ):
+        return _surface_map(first.definition, second.definition)
+    a, b = _analytic_support(first), _analytic_support(second)
+    if a is None or b is None or a.family != b.family:
+        return None
+    if a.family == "plane":
+        first_axis, second_axis = b.axes[0], b.axes[1]
+        columns = tuple(
+            _plane_coordinates(first_axis, second_axis, axis) for axis in a.axes
+        )
+        delta = tuple(x - y for x, y in zip(a.origin, b.origin, strict=True))
+        offset = _plane_coordinates(first_axis, second_axis, delta)
+        if columns[0] is None or columns[1] is None or offset is None:
+            return None
+        matrix: _Matrix = ((columns[0][0], columns[1][0]), (columns[0][1], columns[1][1]))
+        if matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0] == 0:
+            return None
+        return matrix, offset
+    if a.family == "cylinder" and a.axes == b.axes:
+        shift = _parallel_offset(b.origin, a.origin, b.axes[2])
+        if shift is not None:
+            return _IDENTITY, (Fraction(0), shift)
+    if a.family == "sphere" and a.origin == b.origin and a.axes == b.axes:
+        return _IDENTITY, _ZERO
+    return None
+
+
+@checked
+def prove_surface_correspondence(
+    first: AbstractSurfacePatch,
+    second: AbstractSurfacePatch,
+    /,
+) -> CoincidentSurfaceCorrespondence | None:
+    """Prove carrier equality or equality of posed analytic coefficient expressions.
+
+    None means no identity has been proved, not that the supports are disjoint.
+    Rational/procedural carriers with unequal parameterizations require their
+    reparameterization certificate before a general DCEL overlay.
+    """
+    result = _surface_map(first, second)
+    return (
+        None
+        if result is None
+        else CoincidentSurfaceCorrespondence(first, second, *result)
+    )
+
+
+@checked
+def transport_coincident_pcurve(
+    proof: CoincidentSurfaceCorrespondence,
+    pcurve: AbstractCurve,
+    /,
+) -> AbstractCurve:
+    """Transport source p-curves by the proved chart map without changing parameters or roots.
+
+    A general overlay must carry this proof alongside the source endpoint
+    roots: a transformed numerical coordinate is not a new endpoint identity.
+    """
+    if pcurve.ambient_dimension != 2:
+        f"transport_coincident_pcurve.pcurve must have ambient dimension 2; got {pcurve.ambient_dimension}"
+    if proof.matrix == _IDENTITY and proof.offset == _ZERO:
+        return pcurve
+    return AffinePCurve(
+        pcurve,
+        np.asarray(proof.matrix, dtype=np.object_),
+        np.asarray(proof.offset, dtype=np.object_),
+    )
+
+
+class CoincidentFaceArc(StrictModule):
+    """Retain an authored coedge in the proved common chart.
+
+    ``sense`` orients its DCEL loop; ``source_sense`` retains 3D traversal.
+    Endpoint carriers, roots and vertex identities retain their source identity.
+    """
+
+    pcurve: AbstractCurve
+    source_pcurve: AbstractCurve
+    curve: BRepCurve | None
+    transport: CoincidentSurfaceCorrespondence
+    edge_roots: tuple[RootEndpoint | None, RootEndpoint | None]
+    coedge_roots: tuple[RootEndpoint | None, RootEndpoint | None]
+    vertex_roots: tuple[BRepVertexRoot | None, BRepVertexRoot | None]
+    face_id: BRepEntityId = eqx.field(static=True)
+    edge_id: BRepEntityId = eqx.field(static=True)
+    vertex_ids: tuple[BRepEntityId, BRepEntityId] = eqx.field(static=True)
+    coedge: int = eqx.field(static=True)
+    source_sense: int = eqx.field(static=True)
+    sense: int = eqx.field(static=True)
+    parameter_range: tuple[float, float] = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        model: BRepModel,
+        face: int,
+        coedge: int,
+        transport: CoincidentSurfaceCorrespondence,
+    ) -> None:
+        geometry = model.geometry
+        if geometry is None or not 0 <= face < len(geometry.face_loops):
+            raise ValueError(
+                f"CoincidentFaceArc.face must index a source face with geometry; got {face}"
+            )
+        if not any(coedge in loop for loop in geometry.face_loops[face]):
+            raise ValueError(
+                f"CoincidentFaceArc.coedge must belong to face {face}; got {coedge}"
+            )
+        if canonical_fingerprint(
+            carrier_payload(model.patches[face])
+        ) != canonical_fingerprint(carrier_payload(transport.first)):
+            raise ValueError(
+                "CoincidentFaceArc.transport.first must match the source face carrier; got a different carrier"
+            )
+        edge = geometry.coedge_edges[coedge]
+        curve_index = geometry.edge_curves[edge]
+        start, end = geometry.edge_vertices[edge]
+        source_pcurve = geometry.pcurves[coedge]
+        self.pcurve = transport_coincident_pcurve(transport, source_pcurve)
+        self.source_pcurve = source_pcurve
+        self.curve = None if curve_index < 0 else geometry.curves[curve_index]
+        self.transport = transport
+        edge_roots = geometry.edge_endpoint_roots[edge]
+        coedge_roots = geometry.coedge_endpoint_roots[coedge]
+        self.edge_roots = (
+            _source_root_endpoint(edge_roots[0]),
+            _source_root_endpoint(edge_roots[1]),
+        )
+        self.coedge_roots = (
+            _source_root_endpoint(coedge_roots[0]),
+            _source_root_endpoint(coedge_roots[1]),
+        )
+        self.vertex_roots = (
+            _source_vertex_root(geometry.vertex_roots[start]),
+            _source_vertex_root(geometry.vertex_roots[end]),
+        )
+        self.face_id = model.face_ids[face]
+        self.edge_id = model.edge_ids[edge]
+        self.vertex_ids = model.vertex_ids[start], model.vertex_ids[end]
+        self.coedge = coedge
+        self.source_sense = geometry.coedge_senses[coedge]
+        self.sense = self.source_sense * transport.orientation
+        first, last = np.asarray(geometry.edge_ranges[edge])
+        self.parameter_range = float(first), float(last)
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "native-coincident-face-arc",
+                "source": model.source_revision,
+                "face": face,
+                "coedge": coedge,
+                "edge": edge,
+                "transport": transport.certificate_id,
+                "source_pcurve": carrier_payload(source_pcurve),
+            }
+        )
+
+    def parameter_enclosure(
+        self,
+    ) -> tuple[float, float]:
+        first, last = self.parameter_range
+        first_root, last_root = self.coedge_roots
+        if first_root is not None:
+            first = first_root.parameter_enclosure()[0]
+        if last_root is not None:
+            last = last_root.parameter_enclosure()[1]
+        return first, last
+
+    def enclosure(
+        self,
+    ) -> np.ndarray:
+        return self.pcurve.bounding_box(
+            *self.parameter_enclosure(),
+        )
+
+
+def _face_coorientations(
+    model: BRepModel,
+    face: int,
+    chart_orientation: int,
+) -> tuple[tuple[BRepEntityId, int], ...]:
+    result = []
+    for solid in model.topology.face_solids[face]:
+        faces = model.topology.solid_faces[solid]
+        incidence = model.topology.solid_face_orientations[solid][faces.index(face)]
+        orientation = incidence * int(float(model.orientation[face])) * chart_orientation
+        result.append((model.solid_ids[solid], orientation))
+    return tuple(result)
+
+
+class CoincidentFaceOverlay(StrictModule):
+    """Retain trim worksets and material-side facts on a proved common support.
+
+    All outer/hole coedges and source roots are retained. Bounds cover the whole
+    source/target trim carriers, not sampled overlap. Parent DCEL owns certified
+    open-cell trim membership; coorientation facts apply only to those cells.
+    Domains use each source raw UV chart; only arc worksets/bounds are in the
+    common first chart. Background membership includes solids not incident to
+    the selected faces and is never inferred from an absent trim arc.
+    """
+
+    correspondence: CoincidentSurfaceCorrespondence
+    first_loops: tuple[tuple[CoincidentFaceArc, ...], ...]
+    second_loops: tuple[tuple[CoincidentFaceArc, ...], ...]
+    first_domain: TrimDomain
+    second_domain: TrimDomain
+    parameter_bounds: Array
+    first_face_id: BRepEntityId = eqx.field(static=True)
+    second_face_id: BRepEntityId = eqx.field(static=True)
+    first_coorientations: tuple[tuple[BRepEntityId, int], ...] = eqx.field(static=True)
+    second_coorientations: tuple[tuple[BRepEntityId, int], ...] = eqx.field(static=True)
+    first_background_required: bool = eqx.field(static=True)
+    second_background_required: bool = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        first: BRepModel,
+        first_face: int,
+        second: BRepModel,
+        second_face: int,
+        correspondence: CoincidentSurfaceCorrespondence,
+        policy: BRepBooleanPolicy,
+    ) -> None:
+        first_geometry, second_geometry = first.geometry, second.geometry
+        if first_geometry is None or second_geometry is None:
+            raise ValueError(
+                "CoincidentFaceOverlay.models.geometry must contain source trims; got None"
+            )
+        if not 0 <= first_face < len(first.patches) or not 0 <= second_face < len(
+            second.patches
+        ):
+            raise ValueError(
+                f"CoincidentFaceOverlay.faces must index their source models; got {(first_face, second_face)}"
+            )
+        if canonical_fingerprint(
+            carrier_payload(correspondence.first)
+        ) != canonical_fingerprint(
+            carrier_payload(second.patches[second_face])
+        ) or canonical_fingerprint(
+            carrier_payload(correspondence.second)
+        ) != canonical_fingerprint(carrier_payload(first.patches[first_face])):
+            raise ValueError(
+                "CoincidentFaceOverlay.correspondence must map the selected second face to the first; got different carriers"
+            )
+        identity = CoincidentSurfaceCorrespondence(
+            first.patches[first_face],
+            first.patches[first_face],
+            _IDENTITY,
+            _ZERO,
+        )
+        first_loops = tuple(
+            tuple(
+                CoincidentFaceArc(first, first_face, coedge, identity)
+                for coedge in loop
+            )
+            for loop in first_geometry.face_loops[first_face]
+        )
+        second_loops = tuple(
+            tuple(
+                CoincidentFaceArc(second, second_face, coedge, correspondence)
+                for coedge in (
+                    loop if correspondence.orientation > 0 else tuple(reversed(loop))
+                )
+            )
+            for loop in second_geometry.face_loops[second_face]
+        )
+        boxes = np.stack(
+            tuple(
+                arc.enclosure()
+                for loops in (first_loops, second_loops)
+                for loop in loops
+                for arc in loop
+            )
+        )
+        self.correspondence = correspondence
+        self.first_loops, self.second_loops = first_loops, second_loops
+        self.first_domain = brep_trim_domain(
+            first_geometry,
+            first_face,
+            first.patches[first_face],
+            tolerance=policy.trim_resolution,
+        )
+        self.second_domain = brep_trim_domain(
+            second_geometry,
+            second_face,
+            second.patches[second_face],
+            tolerance=policy.trim_resolution,
+        )
+        self.parameter_bounds = jnp.asarray(
+            np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0))),
+            dtype=jnp.float64,
+        )
+        self.first_face_id, self.second_face_id = (
+            first.face_ids[first_face],
+            second.face_ids[second_face],
+        )
+        self.first_coorientations = _face_coorientations(first, first_face, 1)
+        self.second_coorientations = _face_coorientations(
+            second, second_face, correspondence.orientation
+        )
+        self.first_background_required = (
+            len(self.first_coorientations) != first.topology.num_solids
+        )
+        self.second_background_required = (
+            len(self.second_coorientations) != second.topology.num_solids
+        )
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "native-complete-coincident-face-overlay",
+                "first": (first.source_revision, first_face),
+                "second": (second.source_revision, second_face),
+                "correspondence": correspondence.certificate_id,
+                "first_loops": tuple(
+                    tuple(arc.certificate_id for arc in loop) for loop in first_loops
+                ),
+                "second_loops": tuple(
+                    tuple(arc.certificate_id for arc in loop) for loop in second_loops
+                ),
+                "first_coorientations": tuple(
+                    (entity.index, orientation)
+                    for entity, orientation in self.first_coorientations
+                ),
+                "second_coorientations": tuple(
+                    (entity.index, orientation)
+                    for entity, orientation in self.second_coorientations
+                ),
+                "background_required": (
+                    self.first_background_required,
+                    self.second_background_required,
+                ),
+            }
+        )
+
+    @property
+    def coorientation_pairs(self) -> tuple[tuple[BRepEntityId, BRepEntityId, int], ...]:
+        """Return same (+1) or opposed (-1) material sides for each solid owner."""
+        return tuple(
+            (first, second, a * b)
+            for first, a in self.first_coorientations
+            for second, b in self.second_coorientations
+        )
+
+
+@checked
+def prepare_coincident_face_overlay(
+    first: BRepModel,
+    first_face: int,
+    second: BRepModel,
+    second_face: int,
+    /,
+    *,
+    policy: BRepBooleanPolicy,
+) -> CoincidentFaceOverlay | None:
+    """Prepare source trim arcs and material coorientations for the parent DCEL."""
+    if first.coordinate_contract.spatial_id != second.coordinate_contract.spatial_id:
+        raise ValueError(
+            "prepare_coincident_face_overlay.operands must share a coordinate contract; got different spatial IDs"
+        )
+    if (
+        isinstance(first_face, bool)
+        or not isinstance(first_face, int)
+        or isinstance(second_face, bool)
+        or not isinstance(second_face, int)
+    ):
+        raise TypeError(
+            f"prepare_coincident_face_overlay.faces must be integer indices; got {(first_face, second_face)!r}"
+        )
+    if not 0 <= first_face < len(first.patches) or not 0 <= second_face < len(
+        second.patches
+    ):
+        raise ValueError(
+            f"prepare_coincident_face_overlay.faces must index their source models; got {(first_face, second_face)}"
+        )
+    proof = prove_surface_correspondence(
+        second.patches[second_face], first.patches[first_face]
+    )
+    if proof is None:
+        return None
+    if first.geometry is None or second.geometry is None:
+        raise BRepBooleanFailure(
+            "prepare_coincident_face_overlay.models.geometry must contain source trims; got None"
+        )
+    count = sum(
+        len(loop)
+        for geometry, face in (
+            (first.geometry, first_face),
+            (second.geometry, second_face),
+        )
+        for loop in geometry.face_loops[face]
+    )
+    return CoincidentFaceOverlay(first, first_face, second, second_face, proof, policy)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceEdgeFacePairCoverage:
+    """Certify that an authored edge covers the plane/cylinder support intersection."""
+
+    faces: tuple[BRepEntityId, BRepEntityId]
+    source_edge: _Parent
+    edge_id: BRepEntityId
+    lifts: tuple[BRepCurveSurfaceLift, BRepCurveSurfaceLift]
+    parameter_roots: tuple[NativePeriodEndpoint, NativePeriodEndpoint]
+    axial_parameter: Fraction
+    plane_coefficients: tuple[Fraction, Fraction, Fraction]
+    certificate_id: str
+
+
+def _native_cylinder_ring_chart(model: BRepModel, face: int) -> bool:
+    """Ground a 0/one-turn chart in authored scalar roots, not float extent."""
+
+    geometry = model.geometry
+    if geometry is None:
+        return False
+    bounds = boolean_face_chart_box(model, face)
+    if bounds[0, 0] != 0.0 or bounds[1, 0] != _PERIOD:
+        return False
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            roots = geometry.coedge_endpoint_roots[coedge]
+            if not all(isinstance(root, NativePeriodEndpoint) for root in roots):
+                continue
+            first, last = roots
+            if not isinstance(first, NativePeriodEndpoint) or not isinstance(
+                last, NativePeriodEndpoint
+            ):
+                continue
+            if first.exact_parameter != Fraction(
+                0
+            ) or last.exact_parameter != PeriodOffset(Fraction(0), Fraction(1)):
+                continue
+            pcurve = geometry.pcurves[coedge]
+            if not isinstance(pcurve, AbstractCurve):
+                continue
+            coefficients = line_chart_coefficients(pcurve)
+            if (
+                coefficients is not None
+                and coefficients[0][0] == 0
+                and coefficients[1] == (Fraction(1), Fraction(0))
+            ):
+                return True
+    return False
+
+
+def prove_source_ring_pair_coverage(
+    models: tuple[BRepModel, ...],
+    pair: tuple[_Parent, _Parent],
+    source_edge: _Parent,
+    pcurves: tuple[AbstractCurve, AbstractCurve],
+) -> SourceEdgeFacePairCoverage | None:
+    """Prove the whole support intersection is one represented native ring.
+
+    The plane's radial coefficients vanish in rational arithmetic and its axial
+    coefficient is nonzero, so every solution has one fixed cylinder height.
+    An authored one-turn edge with proved source lifts covers every angle.
+    Parent graph coverage must also retain this edge on both source faces.
+    """
+    supports = tuple(
+        _analytic_support(models[operand].patches[face]) for operand, face in pair
+    )
+    cylinder = next(
+        (
+            index
+            for index, support in enumerate(supports)
+            if support is not None and support.family == "cylinder"
+        ),
+        None,
+    )
+    plane = next(
+        (
+            index
+            for index, support in enumerate(supports)
+            if support is not None and support.family == "plane"
+        ),
+        None,
+    )
+    if cylinder is None or plane is None:
+        return None
+    cylindrical, planar = supports[cylinder], supports[plane]
+    if cylindrical is None or planar is None:
+        return None
+    coefficients = tuple(
+        rational_determinant(planar.axes[0], planar.axes[1], axis)
+        for axis in cylindrical.axes
+    )
+    if coefficients[0] != 0 or coefficients[1] != 0 or coefficients[2] == 0:
+        return None
+    delta = tuple(a - b for a, b in zip(cylindrical.origin, planar.origin, strict=True))
+    height = (
+        -rational_determinant(planar.axes[0], planar.axes[1], delta) / coefficients[2]
+    )
+    cylinder_owner = pair[cylinder]
+    if not _native_cylinder_ring_chart(models[cylinder_owner[0]], cylinder_owner[1]):
+        return None
+    geometry = models[source_edge[0]].geometry
+    if geometry is None or geometry.edge_curves[source_edge[1]] < 0:
+        return None
+    curve = geometry.curves[geometry.edge_curves[source_edge[1]]]
+    if not isinstance(curve, AbstractCurve) or curve.native_period_symbol() != "two_pi":
+        return None
+    first_root, last_root = geometry.edge_endpoint_roots[source_edge[1]]
+    if not isinstance(first_root, NativePeriodEndpoint) or not isinstance(
+        last_root, NativePeriodEndpoint
+    ):
+        return None
+    if first_root.exact_parameter != Fraction(
+        0
+    ) or last_root.exact_parameter != PeriodOffset(Fraction(0), Fraction(1)):
+        return None
+    source_id = canonical_fingerprint(carrier_payload(curve))
+    if any(
+        canonical_fingerprint(carrier_payload(root.curve)) != source_id
+        for root in (first_root, last_root)
+    ):
+        return None
+    first, last = (
+        float(value) for value in np.asarray(geometry.edge_ranges)[source_edge[1]]
+    )
+    if first != first_root.parameter or last != last_root.parameter:
+        return None
+    regions = tuple(
+        SurfaceRegion(
+            models[operand].patches[face],
+            boolean_face_chart_box(models[operand], face),
+        )
+        for operand, face in pair
+    )
+    if not all(
+        exact_source_lift(curve, pcurve, region, first, last)
+        for pcurve, region in zip(pcurves, regions, strict=True)
+    ):
+        return None
+    lifts = (
+        BRepCurveSurfaceLift(
+            curve, regions[0].patch, pcurves[0], first, last, source_region=regions[0]
+        ),
+        BRepCurveSurfaceLift(
+            curve, regions[1].patch, pcurves[1], first, last, source_region=regions[1]
+        ),
+    )
+    faces = (
+        models[pair[0][0]].face_ids[pair[0][1]],
+        models[pair[1][0]].face_ids[pair[1][1]],
+    )
+    edge_id = models[source_edge[0]].edge_ids[source_edge[1]]
+    certificate = canonical_fingerprint(
+        {
+            "kind": "native-source-ring-complete-face-pair",
+            "faces": tuple(asdict(face) for face in faces),
+            "edge": asdict(edge_id),
+            "supports": tuple(
+                carrier_payload(models[operand].patches[face]) for operand, face in pair
+            ),
+            "plane_coefficients": tuple(
+                (value.numerator, value.denominator) for value in coefficients
+            ),
+            "height": (height.numerator, height.denominator),
+            "lifts": tuple(lift.root_id for lift in lifts),
+            "native_period_roots": (endpoint_root_payload(first_root), endpoint_root_payload(last_root)),
+        }
+    )
+    return SourceEdgeFacePairCoverage(
+        faces,
+        source_edge,
+        edge_id,
+        lifts,
+        (first_root, last_root),
+        height,
+        (coefficients[0], coefficients[1], coefficients[2]),
+        certificate,
+    )
+
+
+class CoincidentOpenCell(StrictModule):
+    """Oriented retention from parent-certified open-cell trim membership."""
+
+    first_material_sides: tuple[bool, bool] = eqx.field(static=True)
+    second_material_sides: tuple[bool, bool] = eqx.field(static=True)
+    orientation: int = eqx.field(static=True)
+    parents: tuple[BRepEntityId, ...] = eqx.field(static=True)
+    classification_id: str = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        overlay: CoincidentFaceOverlay,
+        operation: BRepBooleanOperation,
+        first_present: bool,
+        second_present: bool,
+        first_background_inside: bool | None,
+        second_background_inside: bool | None,
+        classification_id: str,
+    ) -> None:
+        operation_ = parse(operation, BRepBooleanOperation, "operation")
+        if not isinstance(classification_id, str) or not classification_id:
+            raise ValueError(
+                f"CoincidentOpenCell.classification_id must be a nonempty evidence ID; got {classification_id!r}"
+            )
+        for present, background, required in (
+            (first_present, first_background_inside, overlay.first_background_required),
+            (
+                second_present,
+                second_background_inside,
+                overlay.second_background_required,
+            ),
+        ):
+            if not isinstance(present, bool) or (
+                background is not None and not isinstance(background, bool)
+            ):
+                raise TypeError(
+                    f"CoincidentOpenCell.membership must contain boolean decisions; got {(present, background)!r}"
+                )
+            if (not present or required) and background is None:
+                raise ValueError(
+                    "CoincidentOpenCell.background must contain certified membership for absent faces or unowned solids; got None"
+                )
+        sides = []
+        for present, background, owners in (
+            (first_present, first_background_inside, overlay.first_coorientations),
+            (second_present, second_background_inside, overlay.second_coorientations),
+        ):
+            if present:
+                if not owners:
+                    raise BRepBooleanFailure(
+                        "CoincidentOpenCell.material_owners must declare a solid for a present face; got no owners"
+                    )
+                sides.append(
+                    (
+                        background is True or any(sign > 0 for _, sign in owners),
+                        background is True or any(sign < 0 for _, sign in owners),
+                    )
+                )
+            else:
+                sides.append((background is True, background is True))
+        negative = selected(
+            operation_,
+            tuple((operand, 0) for operand, side in enumerate(sides) if side[0]),
+        )
+        positive = selected(
+            operation_,
+            tuple((operand, 0) for operand, side in enumerate(sides) if side[1]),
+        )
+        orientation = (1 if negative else -1) if negative != positive else 0
+        self.first_material_sides, self.second_material_sides = sides[0], sides[1]
+        self.orientation = orientation
+        self.parents = (
+            ()
+            if orientation == 0
+            else tuple(
+                entity
+                for entity, present in (
+                    (overlay.first_face_id, first_present),
+                    (overlay.second_face_id, second_present),
+                )
+                if present
+            )
+        )
+        self.classification_id = classification_id
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "native-coincident-open-cell-retention",
+                "overlay": overlay.certificate_id,
+                "classification": classification_id,
+                "operation": operation_,
+                "present": (first_present, second_present),
+                "material_sides": tuple(sides),
+                "orientation": orientation,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _CylinderRegion:
+    model: int
+    lateral: int
+    patch: CylinderPatch
+    lower: Fraction
+    upper: Fraction
+    caps: tuple[int, int]
+    rings: tuple[int, int]
+    seam_edge: int
+    seam: LineCurve
+    seam_pcurve: LineCurve
+
+
+@checked
+def seam_is_exact(curve: LineCurve, pcurve: LineCurve, patch: CylinderPatch, /) -> bool:
+    uv = (
+        rational_vector(np.asarray(pcurve.origin).reshape(-1)),
+        rational_vector(np.asarray(pcurve.direction).reshape(-1)),
+    )
+    if uv[0][0] not in (Fraction(0), Fraction(_PERIOD)) or uv[1][0] != 0:
+        return False
+    radius = Fraction(float(patch.radius))
+    expected_origin = tuple(
+        a + radius * b + uv[0][1] * k
+        for a, b, k in zip(
+            rational_vector(np.asarray(patch.origin).reshape(-1)),
+            rational_vector(np.asarray(patch.first_axis).reshape(-1)),
+            rational_vector(np.asarray(patch.axis).reshape(-1)),
+            strict=True,
+        )
+    )
+    expected_direction = tuple(
+        uv[1][1] * k for k in rational_vector(np.asarray(patch.axis).reshape(-1))
+    )
+    return (
+        rational_vector(np.asarray(curve.origin).reshape(-1)) == expected_origin
+        and rational_vector(np.asarray(curve.direction).reshape(-1)) == expected_direction
+    )
+
+
+@checked
+def circle_vertex_is_exact(curve: CircleCurve, point: np.ndarray, /) -> bool:
+    radius = Fraction(float(curve.radius))
+    expected = tuple(
+        center + radius * axis
+        for center, axis in zip(
+            rational_vector(np.asarray(curve.center).reshape(-1)),
+            rational_vector(np.asarray(curve.first_axis).reshape(-1)),
+            strict=True,
+        )
+    )
+    return rational_vector(point.reshape(-1)) == expected
+
+
+@checked
+def cap_for_ring(model: BRepModel, lateral: int, edge: int, /) -> int | None:
+    geometry = model.geometry
+    if geometry is None:
+        return None
+    candidates = []
+    for face, loops in enumerate(geometry.face_loops):
+        if face == lateral or len(loops) != 1 or len(loops[0]) != 1:
+            continue
+        coedge = loops[0][0]
+        patch = model.patches[face]
+        pcurve = geometry.pcurves[coedge]
+        curve_index = geometry.edge_curves[edge]
+        if curve_index < 0:
+            continue
+        curve = geometry.curves[curve_index]
+        if (
+            geometry.coedge_edges[coedge] == edge
+            and geometry.coedge_senses[coedge] == 1
+            and isinstance(patch, PlanePatch)
+            and isinstance(pcurve, CircleCurve)
+            and isinstance(curve, CircleCurve)
+            and circle_correspondence(curve, pcurve, patch) == 0.0
+        ):
+            candidates.append(face)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+type _CylinderUV = tuple[Fraction | PeriodOffset, Fraction]
+
+
+class _CylinderCoedge(StrictModule):
+    edge: int
+    curve: BRepCurve
+    pcurve: AbstractCurve
+    base: LineCurve
+    shifts: tuple[int, int]
+    start: _CylinderUV
+    end: _CylinderUV
+
+
+def _prepare_cylinder_coedge(
+    geometry: BRepGeometry,
+    coedge: int,
+    patch: CylinderPatch,
+) -> _CylinderCoedge | None:
+    turn = PeriodOffset(Fraction(0), Fraction(1))
+    pcurve = geometry.pcurves[coedge]
+    source = pcurve_periodic_source(pcurve, patch)
+    if source is None:
+        return None
+    base, shifts = source
+    match base:
+        case LineCurve():
+            if shifts[1] != 0:
+                return None
+        case _:
+            return None
+    edge = geometry.coedge_edges[coedge]
+    curve_index = geometry.edge_curves[edge]
+    if curve_index < 0:
+        return None
+    curve = geometry.curves[curve_index]
+    first, last = map(float, np.asarray(geometry.edge_ranges)[edge])
+    origin, direction = (
+        rational_vector(np.asarray(base.origin).reshape(-1)),
+        rational_vector(np.asarray(base.direction).reshape(-1)),
+    )
+    start: tuple[Fraction | PeriodOffset, Fraction]
+    end: tuple[Fraction | PeriodOffset, Fraction]
+    match curve, pcurve:
+        case CircleCurve(), _:
+            if (
+                shifts != (0, 0)
+                or (first, last) != (0.0, _PERIOD)
+                or origin[0] != 0
+                or direction != (Fraction(1), Fraction(0))
+            ):
+                return None
+            start = Fraction(0), origin[1]
+            end = turn, origin[1]
+        case LineCurve(), PeriodicPCurve():
+            if shifts[0] not in (0, 1) or origin[0] != 0 or direction[0] != 0:
+                return None
+            u = Fraction(0) if shifts[0] == 0 else turn
+            start = u, origin[1] + Fraction(first) * direction[1]
+            end = u, origin[1] + Fraction(last) * direction[1]
+        case _:
+            return None
+    return _CylinderCoedge(
+        edge=edge,
+        curve=curve,
+        pcurve=pcurve,
+        base=base,
+        shifts=shifts,
+        start=start,
+        end=end,
+    )
+
+
+class _CylinderChart(StrictModule):
+    lateral: int
+    patch: CylinderPatch
+    lower: Fraction
+    upper: Fraction
+    coedges: tuple[_CylinderCoedge, ...]
+
+
+class _CylinderBoundary(StrictModule):
+    rings: tuple[int, int]
+    seam_edge: int
+    seam: LineCurve
+    seam_pcurve: LineCurve
+
+
+def _cylinder_chart(model: BRepModel, geometry: BRepGeometry) -> _CylinderChart | None:
+    laterals = [
+        (index, patch)
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, CylinderPatch)
+    ]
+    if len(laterals) != 1:
+        return None
+    lateral, patch = laterals[0]
+    bounds = np.asarray(model.parameter_bounds)[lateral]
+    if bounds[0, 0] != 0.0 or bounds[1, 0] != _PERIOD or bounds[0, 1] >= bounds[1, 1]:
+        return None
+    lower, upper = Fraction(float(bounds[0, 1])), Fraction(float(bounds[1, 1]))
+    loops = geometry.face_loops[lateral]
+    if len(loops) != 1 or len(loops[0]) != 4:
+        return None
+    coefficients = []
+    prepared: list[_CylinderCoedge] = []
+    turn = PeriodOffset(Fraction(0), Fraction(1))
+    for coedge in loops[0]:
+        value = _prepare_cylinder_coedge(geometry, coedge, patch)
+        if value is None:
+            return None
+        prepared.append(value)
+        coefficients.append(
+            (value.start, value.end)
+            if geometry.coedge_senses[coedge] > 0
+            else (value.end, value.start)
+        )
+    corners = ((Fraction(0), lower), (turn, lower), (turn, upper), (Fraction(0), upper))
+    expected = tuple((corners[index], corners[(index + 1) % 4]) for index in range(4))
+    if tuple(coefficients) not in tuple(
+        expected[index:] + expected[:index] for index in range(4)
+    ):
+        return None
+    return _CylinderChart(
+        lateral=lateral, patch=patch, lower=lower, upper=upper, coedges=tuple(prepared)
+    )
+
+
+def _cylinder_boundary(
+    geometry: BRepGeometry, chart: _CylinderChart
+) -> _CylinderBoundary | None:
+    patch = chart.patch
+    rings: dict[Fraction, int] = {}
+    seam: tuple[LineCurve, LineCurve] | None = None
+    seam_edges = set()
+    for coedge in chart.coedges:
+        edge, curve, pcurve = coedge.edge, coedge.curve, coedge.pcurve
+        base, shifts = coedge.base, coedge.shifts
+        match curve, pcurve:
+            case CircleCurve(), _:
+                if (
+                    circle_correspondence(curve, base, patch) != 0.0
+                    or geometry.edge_vertices[edge][0] != geometry.edge_vertices[edge][1]
+                ):
+                    return None
+                if not circle_vertex_is_exact(
+                    curve,
+                    np.asarray(geometry.vertex_points[geometry.edge_vertices[edge][0]]),
+                ):
+                    return None
+                rings[Fraction(float(base.origin[1]))] = edge
+            case LineCurve(), PeriodicPCurve() if seam_is_exact(curve, base, patch):
+                seam_edges.add(edge)
+                if shifts == (0, 0):
+                    seam = curve, base
+            case _:
+                return None
+    if set(rings) != {chart.lower, chart.upper} or seam is None or len(seam_edges) != 1:
+        return None
+    return _CylinderBoundary(
+        rings=(rings[chart.lower], rings[chart.upper]),
+        seam_edge=next(iter(seam_edges)),
+        seam=seam[0],
+        seam_pcurve=seam[1],
+    )
+
+
+def _cylinder_cap_orientations(
+    model: BRepModel, chart: _CylinderChart, caps: tuple[int, int]
+) -> bool:
+    patch = chart.patch
+    handedness = rational_determinant(
+        rational_vector(np.asarray(patch.first_axis).reshape(-1)),
+        rational_vector(np.asarray(patch.second_axis).reshape(-1)),
+        rational_vector(np.asarray(patch.axis).reshape(-1)),
+    )
+    if handedness == 0 or float(model.orientation[chart.lateral]) != (
+        1.0 if handedness > 0 else -1.0
+    ):
+        return False
+    for face, side in ((caps[0], -1), (caps[1], 1)):
+        match model.patches[face]:
+            case PlanePatch() as cap:
+                normal = rational_determinant(
+                    rational_vector(np.asarray(cap.first_axis).reshape(-1)),
+                    rational_vector(np.asarray(cap.second_axis).reshape(-1)),
+                    rational_vector(np.asarray(patch.axis).reshape(-1)),
+                )
+                if normal == 0 or (
+                    normal * Fraction(float(model.orientation[face])) > 0
+                ) != (side > 0):
+                    return False
+            case _:
+                return False
+    return True
+
+
+def _cylinder_region(model: BRepModel, operand: int, /) -> _CylinderRegion | None:
+    geometry = model.geometry
+    single_unplaced = False
+    if geometry is not None:
+        occurrence_iterator = geometry.iter_occurrences()
+        occurrence = next(occurrence_iterator, None)
+        extra_occurrence = next(occurrence_iterator, None)
+        single_unplaced = (
+            occurrence is not None
+            and extra_occurrence is None
+            and occurrence.solid_index == 0
+            and occurrence.placement == BRepAffinePlacement.identity()
+        )
+    if (
+        geometry is None
+        or model.topology.num_solids != 1
+        or len(model.patches) != 3
+        or geometry.solid_shells != ((0,),)
+        or len(geometry.shell_faces) != 1
+        or set(geometry.shell_faces[0]) != {0, 1, 2}
+        or geometry.shell_orientations[0] != (1, 1, 1)
+        or not single_unplaced
+        or any(root is not None for root in geometry.vertex_roots)
+        or any(root is not None for pair in geometry.edge_endpoint_roots for root in pair)
+    ):
+        return None
+    chart = _cylinder_chart(model, geometry)
+    if chart is None:
+        return None
+    boundary = _cylinder_boundary(geometry, chart)
+    if boundary is None:
+        return None
+    first_cap = cap_for_ring(model, chart.lateral, boundary.rings[0])
+    last_cap = cap_for_ring(model, chart.lateral, boundary.rings[1])
+    if first_cap is None or last_cap is None:
+        return None
+    caps = first_cap, last_cap
+    if not _cylinder_cap_orientations(model, chart, caps):
+        return None
+    return _CylinderRegion(
+        operand,
+        chart.lateral,
+        chart.patch,
+        chart.lower,
+        chart.upper,
+        caps,
+        boundary.rings,
+        boundary.seam_edge,
+        boundary.seam,
+        boundary.seam_pcurve,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AxialCell:
+    lower: Fraction
+    upper: Fraction
+    members: tuple[_Parent, ...]
+
+
+def _axial_components(
+    regions: tuple[_CylinderRegion, _CylinderRegion],
+    shift: Fraction,
+    operation: BRepBooleanOperation,
+) -> tuple[tuple[_AxialCell, ...], ...]:
+    intervals = (
+        (regions[0].lower, regions[0].upper),
+        (regions[1].lower + shift, regions[1].upper + shift),
+    )
+    coordinates = sorted({value for interval in intervals for value in interval})
+    components: list[list[_AxialCell]] = []
+    for lower, upper in zip(coordinates[:-1], coordinates[1:], strict=True):
+        members = tuple(
+            (operand, 0)
+            for operand, (first, last) in enumerate(intervals)
+            if first <= lower and upper <= last
+        )
+        if not selected(operation, members):
+            continue
+        cell = _AxialCell(lower, upper, members)
+        if components and components[-1][-1].upper == lower:
+            components[-1].append(cell)
+        else:
+            components.append([cell])
+    return tuple(tuple(component) for component in components)
+
+
+def _source_rings(
+    regions: tuple[_CylinderRegion, _CylinderRegion],
+    shift: Fraction,
+) -> dict[Fraction, tuple[tuple[_CylinderRegion, int, int], ...]]:
+    result: dict[Fraction, list[tuple[_CylinderRegion, int, int]]] = {}
+    for region, offset in zip(regions, (Fraction(0), shift), strict=True):
+        for value, cap, ring in zip(
+            (region.lower, region.upper), region.caps, region.rings, strict=True
+        ):
+            result.setdefault(value + offset, []).append((region, cap, ring))
+    return {value: tuple(entries) for value, entries in result.items()}
+
+
+def _source_entity(model: BRepModel, kind: str, index: int, /) -> BRepEntityId:
+    geometry = model.geometry
+    if geometry is None:
+        raise BRepBooleanFailure(
+            "coincident_boolean_brep.source.geometry must contain source entities; got None"
+        )
+    matches = {
+        record.member
+        for record in geometry.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        )
+        if record.container == record.member
+        and record.member.kind == kind
+        and record.member.index == index
+    }
+    if len(matches) != 1:
+        raise BRepBooleanFailure(
+            "coincident_boolean_brep.source_entity must have one exact source occurrence",
+            tuple(sorted(str(entity) for entity in matches)),
+        )
+    return next(iter(matches))
+
+def _same_periodic_angle(value: Fraction | PeriodOffset, /) -> bool:
+    if isinstance(value, PeriodOffset):
+        return value.rational == 0 and value.turns.denominator == 1
+    return value == 0
+
+def _stage_component(
+    builder: _Builder,
+    models: tuple[BRepModel, BRepModel],
+    regions: tuple[_CylinderRegion, _CylinderRegion],
+    cells: tuple[_AxialCell, ...],
+    rings: dict[Fraction, tuple[tuple[_CylinderRegion, int, int], ...]],
+    parents: list[tuple[_Parent, ...]],
+    edge_sources: list[set[tuple[int, BRepEntityId]]],
+    vertex_sources: list[set[tuple[int, BRepEntityId]]],
+    seam_lineage_operands: tuple[int, ...],
+) -> tuple[int, ...]:
+    region = regions[0]
+    faces = []
+    ring_edges: dict[Fraction, int] = {}
+    ring_vertices: dict[Fraction, int] = {}
+    for value in (cells[0].lower, *(cell.upper for cell in cells)):
+        source, _, edge = rings[value][0]
+        geometry = models[source.model].geometry
+        if geometry is None:
+            raise BRepBooleanFailure(
+                "coincident_boolean_brep.source.geometry must contain boundary carriers; got None"
+            )
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        vertex_index = geometry.edge_vertices[edge][0]
+        vertex = builder.vertex(
+            np.asarray(geometry.vertex_points[vertex_index]),
+            exact_point=geometry.vertex_exact_points[vertex_index],
+            root=geometry.vertex_roots[vertex_index],
+        )
+        vertex_sources.append(
+            {(source.model, _source_entity(models[source.model], "vertex", vertex_index))}
+        )
+        ring_vertices[value] = vertex
+        ring_edges[value] = builder.edge(
+            curve,
+            0.0,
+            _PERIOD,
+            vertex,
+            vertex,
+            endpoint_roots=geometry.edge_endpoint_roots[edge],
+        )
+        edge_sources.append(
+            {
+                (ring_source.model, _source_entity(models[ring_source.model], "edge", ring_edge))
+                for ring_source, _, ring_edge in rings[value]
+            }
+        )
+    lateral_sign = int(float(models[region.model].orientation[region.lateral]))
+    seam_origin = rational_vector(np.asarray(region.seam_pcurve.origin).reshape(-1))[1]
+    seam_slope = rational_vector(np.asarray(region.seam_pcurve.direction).reshape(-1))[1]
+    for cell in cells:
+        lower, upper = (
+            exact_float(
+                cell.lower,
+                error=BRepBooleanFailure,
+                message="coincident chart coefficient needs an exact rational parameter carrier",
+            ),
+            exact_float(
+                cell.upper,
+                error=BRepBooleanFailure,
+                message="coincident chart coefficient needs an exact rational parameter carrier",
+            ),
+        )
+        first, last = (
+            (cell.lower - seam_origin) / seam_slope,
+            (cell.upper - seam_origin) / seam_slope,
+        )
+        start, end = ring_vertices[cell.lower], ring_vertices[cell.upper]
+        if seam_slope < 0:
+            first, last, start, end = last, first, end, start
+        edge = builder.edge(
+            region.seam,
+            exact_float(
+                first,
+                error=BRepBooleanFailure,
+                message="coincident chart coefficient needs an exact rational parameter carrier",
+            ),
+            exact_float(
+                last,
+                error=BRepBooleanFailure,
+                message="coincident chart coefficient needs an exact rational parameter carrier",
+            ),
+            start,
+            end,
+        )
+        edge_sources.append(
+            {
+                (operand, _source_entity(models[operand], "edge", regions[operand].seam_edge))
+                for operand, _ in cell.members
+                if operand in seam_lineage_operands
+            }
+        )
+        sense = 1 if seam_slope > 0 else -1
+        loop = [
+            builder.coedge(
+                ring_edges[cell.lower],
+                1,
+                LineCurve((0.0, lower), (1.0, 0.0)),
+            ),
+            builder.coedge(
+                edge,
+                sense,
+                PeriodicPCurve(region.seam_pcurve, region.patch, period_shifts=(1, 0)),
+            ),
+            builder.coedge(
+                ring_edges[cell.upper],
+                -1,
+                LineCurve((0.0, upper), (1.0, 0.0)),
+            ),
+            builder.coedge(
+                edge,
+                -sense,
+                PeriodicPCurve(region.seam_pcurve, region.patch, period_shifts=(0, 0)),
+            ),
+        ]
+        faces.append(
+            builder.face(
+                region.patch,
+                np.asarray(((0.0, lower), (_PERIOD, upper)), dtype=np.float64),
+                lateral_sign,
+                models[region.model].physical_tags[region.lateral],
+                [loop],
+            )
+        )
+        parents.append(
+            tuple((operand, regions[operand].lateral) for operand, _ in cell.members)
+        )
+    for value, side in ((cells[0].lower, -1), (cells[-1].upper, 1)):
+        source, cap, _ = rings[value][0]
+        model = models[source.model]
+        geometry = model.geometry
+        if geometry is None:
+            raise BRepBooleanFailure(
+                "coincident_boolean_brep.source.geometry must contain cap incidence; got None"
+            )
+        original = geometry.face_loops[cap][0][0]
+        patch = model.patches[cap]
+        if not isinstance(patch, PlanePatch):
+            raise BRepBooleanFailure(
+                f"coincident_boolean_brep.cap must be a plane; got {type(patch).__name__}"
+            )
+        normal = rational_determinant(
+            rational_vector(np.asarray(patch.first_axis).reshape(-1)),
+            rational_vector(np.asarray(patch.second_axis).reshape(-1)),
+            rational_vector(np.asarray(region.patch.axis).reshape(-1)),
+        )
+        sign = side * (1 if normal > 0 else -1)
+        coedge = builder.coedge(
+            ring_edges[value],
+            1,
+            geometry.pcurves[original],
+            endpoint_roots=geometry.coedge_endpoint_roots[original],
+        )
+        faces.append(
+            builder.face(
+                patch,
+                np.asarray(model.parameter_bounds)[cap],
+                sign,
+                model.physical_tags[cap],
+                [[coedge]],
+            )
+        )
+        parents.append(
+            tuple((entry.model, parent_cap) for entry, parent_cap, _ in rings[value])
+        )
+    return tuple(faces)
+
+
+def _coincidence_graph(
+    models: tuple[BRepModel, BRepModel],
+    model: BRepModel,
+    parents: tuple[tuple[_Parent, ...], ...],
+    components: tuple[tuple[_AxialCell, ...], ...],
+    certificate: str,
+    edge_sources: list[set[tuple[int, BRepEntityId]]],
+    vertex_sources: list[set[tuple[int, BRepEntityId]]],
+    sewing_lineage: BRepSewingLineage,
+) -> AssociationGraph:
+    from ._partition import cad_revision_from_brep_model
+
+    source = source_lineage(models, certificate)
+    target = cad_revision_from_brep_model(model)
+    target_index = entity_occurrence_index(model, target)
+    pairs: set[tuple[str, str]] = set()
+    for solid, (faces, cells) in enumerate(
+        zip(model.topology.solid_faces, components, strict=True)
+    ):
+        source_solids = {
+            member for cell in cells for member in cell.members
+        }
+        target_solid_entities = target_index.get(("solid", solid), ())
+        for target_solid_entity, target_solid_id in target_solid_entities:
+            target_assembly = target_assembly_occurrence_id(
+                target, model, target_solid_entity.occurrence_path
+            )
+            for operand, parent_solid in source_solids:
+                for source_solid in source.entities_for_index(
+                    operand, "solid", parent_solid
+                ):
+                    pairs.add(
+                        (source.occurrence_id(operand, source_solid), target_solid_id)
+                    )
+                    pairs.add(
+                        (
+                            source_assembly_occurrence_id(
+                                source,
+                                operand,
+                                models[operand],
+                                source_solid.occurrence_path,
+                            ),
+                            target_assembly,
+                        )
+                    )
+            for face in faces:
+                for operand, parent_face in parents[face]:
+                    for source_face in source.entities_for_solid(
+                        operand, "face", parent_face, 0
+                    ):
+                        for target_face, target_face_id in target_index.get(
+                            ("face", face), ()
+                        ):
+                            if target_face.occurrence_path == target_solid_entity.occurrence_path:
+                                pairs.add(
+                                    (
+                                        source.occurrence_id(operand, source_face),
+                                        target_face_id,
+                                    )
+                                )
+    for image in sewing_lineage.edge_images:
+        for operand, source_edge in edge_sources[image.source_edge]:
+            source_id = source.occurrence_id(operand, source_edge)
+            for _, target_edge_id in target_index.get(("edge", image.target_edge), ()):
+                pairs.add((source_id, target_edge_id))
+    for target_vertex, source_vertices in enumerate(sewing_lineage.vertex_sources):
+        for staging_vertex in source_vertices:
+            for operand, source_vertex in vertex_sources[staging_vertex]:
+                source_id = source.occurrence_id(operand, source_vertex)
+                for _, target_vertex_id in target_index.get(("vertex", target_vertex), ()):
+                    pairs.add((source_id, target_vertex_id))
+    transaction = OccurrenceCorrespondenceTransaction(
+        certificate,
+        source.revision.revision_id,
+        target.revision_id,
+        tuple(
+            OccurrenceCorrespondence(first, second, certificate)
+            for first, second in sorted(pairs)
+        ),
+        frozenset(),
+        frozenset(),
+        AssociationCoverageEvidence(
+            True, True, certificate, "native-exact-coincident-cad-arrangement"
+        ),
+    )
+    return AssociationGraph(source.revision, target, transaction)
+
+
+@checked
+def coincident_boolean_brep(
+    models: tuple[BRepModel, BRepModel],
+    operation: BRepBooleanOperation,
+    policy: BRepBooleanPolicy,
+) -> BRepBooleanResult | None:
+    """Compute the regularized Boolean for proved same-frame full native cylinders.
+
+    None is exclusively an admission outcome. Once the whole source carrier,
+    cap, periodic rectangle and outward-region proof succeeds, any exact
+    mathematical or representability failure raises without fallback.
+    Different radii/frames and non-analytic trims remain general-overlay inputs;
+    they are not declared coincident by this helper.
+    """
+    operation_ = parse(operation, BRepBooleanOperation, "operation")
+    if (
+        models[0].coordinate_contract.spatial_id
+        != models[1].coordinate_contract.spatial_id
+    ):
+        raise ValueError(
+            "coincident_boolean_brep.operands must share a coordinate contract; got different spatial IDs"
+        )
+    first, second = _cylinder_region(models[0], 0), _cylinder_region(models[1], 1)
+    if first is None or second is None:
+        return None
+    proof = prove_surface_correspondence(second.patch, first.patch)
+    if proof is None or proof.matrix != _IDENTITY:
+        return None
+    shift = proof.offset[1]
+    regions = first, second
+    seam_lineage_operands = (0, 1) if _same_periodic_angle(proof.offset[0]) else (0,)
+    components = _axial_components(regions, shift, operation_)
+    builder = _Builder()
+    parents: list[tuple[_Parent, ...]] = []
+    edge_sources: list[set[tuple[int, BRepEntityId]]] = []
+    vertex_sources: list[set[tuple[int, BRepEntityId]]] = []
+    rings = _source_rings(regions, shift)
+    solid_faces = tuple(
+        _stage_component(
+            builder,
+            models,
+            regions,
+            component,
+            rings,
+            parents,
+            edge_sources,
+            vertex_sources,
+            seam_lineage_operands,
+        )
+        for component in components
+    )
+    geometry, patches, bounds, signs, tags, trims = builder.geometry(solid=False)
+    sewn = sew_brep(geometry, signs, solid_faces, policy=policy.sewing)
+    certificate = canonical_fingerprint(
+        {
+            "kind": "native-exact-coincident-cad-boolean",
+            "operation": operation_,
+            "sources": tuple(model.model_id for model in models),
+            "support_proof": proof.certificate_id,
+            "geometry": sewn.geometry.geometry_id,
+            "parents": tuple(parents),
+            "sewing": sewn.certificate_id,
+            "repair": "none",
+        }
+    )
+    model = assemble_brep_model(
+        sewn.geometry,
+        patches,
+        bounds,
+        signs,
+        tags,
+        coordinate_contract=models[0].coordinate_contract,
+        source_id=f"native-boolean:{certificate}",
+        source_format="native-boolean",
+        source_digest=certificate,
+        import_policy_id=certificate,
+        tessellation=policy.tessellation,
+        curve_surface_tolerance=policy.construction_tolerance,
+        trim_domains=trims,
+    )
+    graph = _coincidence_graph(
+        models,
+        model,
+        tuple(parents),
+        components,
+        certificate,
+        edge_sources,
+        vertex_sources,
+        sewn.lineage,
+    )
+    mapped = {pair.source_occurrence_id for pair in graph.transaction.correspondences}
+    deleted = tuple(
+        occurrence.occurrence_id
+        for occurrence in graph.source_revision.occurrences
+        if occurrence.occurrence_id not in mapped
+    )
+    return BRepBooleanResult(model, graph, operation_, certificate, deleted)

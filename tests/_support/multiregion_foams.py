@@ -28,7 +28,6 @@ def dry_foam_capacity_plan(
         maximum_edge_valence=3,
         maximum_vertex_region_pairs=9,
         resource_id=resource,
-        event_capacity=16,
     )
 
 

@@ -436,7 +436,6 @@ def _default_remesh_capacity(
         region_pair_capacity=1,
         maximum_edge_valence=2,
         maximum_vertex_region_pairs=1,
-        event_capacity=1,
         resource_id="biomembrane-remesh",
     )
 
@@ -607,13 +606,11 @@ class BiomembranePlan(StrictModule, NonTrainableState):
             or capacity.region_pair_capacity != 1
             or capacity.maximum_edge_valence != 2
             or capacity.maximum_vertex_region_pairs != 1
-            or capacity.event_capacity < 1
             or capacity.coordinate_dtype != "float64"
         ):
             raise ValueError(
                 "remesh_capacity must fit the membrane and declare exactly two "
-                "regions, one pair/slot, edge valence two, float64 coordinates, "
-                "and at least one event."
+                "regions, one pair/slot, edge valence two, and float64 coordinates."
             )
         region_names = unique_identifiers(
             remesh_region_ids, "remesh_region_ids", allow_empty=False

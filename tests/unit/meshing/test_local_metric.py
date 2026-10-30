@@ -210,6 +210,23 @@ def test_local_metric_scenario_1() -> None:
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
+
+def test_local_metric_preserves_rotated_spd_tensor() -> None:
+    angle = np.deg2rad(31.0)
+    rotation = np.asarray(
+        ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
+    )
+    tensor = rotation @ np.diag((1.0 / 0.45**2, 1.0 / 0.22**2)) @ rotation.T
+    source = _source(perturbation=0.2)
+    result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
+
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert result.evidence.converged
+    lengths = _edge_metric_lengths(result.target.mesh, tensor)
+    assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
+    assert np.all(_signed_areas(result.target.mesh) > 0.0)
+    assert np.sum(_signed_areas(result.target.mesh)) == pytest.approx(1.0, abs=1.0e-14)
+
 def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
     source = _source(perturbation=0.3)
     result = _adapt(
@@ -235,3 +252,21 @@ def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
     ]
     expected = field(np.asarray(target_mesh.coordinates)[rows])
     np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
+
+
+def test_local_metric_disjoint_selection_exhausts_finite_candidates() -> None:
+    from phydrax.meshing._local_metric import _disjoint_selection
+
+    count = 130
+    operations = np.repeat(np.arange(count, dtype=np.int64), 2)
+    items = np.column_stack(
+        (np.arange(count, dtype=np.int64), np.arange(1, count + 1, dtype=np.int64))
+    ).reshape((-1,))
+    selected = _disjoint_selection(
+        np.arange(count, dtype=np.int64),
+        operations,
+        items,
+        count + 1,
+    )
+
+    np.testing.assert_array_equal(np.flatnonzero(selected), np.arange(0, count, 2))

@@ -661,7 +661,7 @@ def domain_plan(
         roles.append(
             AtomisticDomainRolePlan(
                 requirement,
-                periodic.image_stencil(radius, maximum_image_count=4096),
+                periodic.image_stencil(radius),
                 streaming=case.streaming,
                 skin=SKIN,
                 alias_capacity=local * 27,

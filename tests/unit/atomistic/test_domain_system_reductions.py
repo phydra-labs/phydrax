@@ -281,7 +281,7 @@ def _charge_field_case(
     pme_role = AtomisticDomainRolePlan(
         requirement,
         PeriodicCell(CELL).image_stencil(
-            requirement.bounded_cutoff() + 0.3, maximum_image_count=4096
+            requirement.bounded_cutoff() + 0.3
         ),
         streaming=StreamedRelationPlan(),
         skin=0.3,

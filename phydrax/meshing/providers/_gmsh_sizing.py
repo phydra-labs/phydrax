@@ -22,6 +22,7 @@ from .._contracts import (
 )
 from .._controls import BackgroundMetricControl, BackgroundMetricMode
 from .._metric import _host_spectrum
+from .._scope import MeshingScope
 from .._sizing import (
     CurvatureSizeControl,
     ProximitySizeControl,
@@ -34,7 +35,12 @@ from .._sizing import (
 )
 from .._trace import MeshingStageKind
 from ._gmsh_evidence import _EvidenceSection
-from ._gmsh_import import _CadEntityMap, _resolve_entities, _source_scale
+from ._gmsh_import import (
+    _CadEntityMap,
+    _resolve_entities,
+    _scope_indices,
+    _source_scale,
+)
 
 
 _LIST_NAMES = {
@@ -103,7 +109,6 @@ def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /) -> An
 def _uniform_size_fields(
     gmsh: Any,
     source: BRepModel,
-    shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     cad_entities: _CadEntityMap | None,
     outside_size: float,
@@ -126,7 +131,8 @@ def _uniform_size_fields(
                 "Semantic solid size fields require resolved CAD volume identities.",
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
-        solid_ids = np.arange(source.topology.num_solids, dtype=np.int64)
+        solid_scope = MeshingScope.whole(source, 3)
+        solid_ids = np.asarray(solid_scope.entity_ids, dtype=np.int64)
         resolved, _ = resolve_size_controls(
             controls,
             np.zeros((solid_ids.size, 1), dtype=np.float64),
@@ -138,9 +144,12 @@ def _uniform_size_fields(
         groups = tuple(
             (
                 float(value),
-                tuple(
-                    cad_entities.solid_to_volume[int(index)]
-                    for index in np.flatnonzero(values == value)
+                _resolve_entities(
+                    source,
+                    MeshingScope.from_geometry(
+                        source, solid_ids[values == value], dimension=3
+                    ),
+                    cad_entities=cad_entities,
                 ),
             )
             for value in np.unique(values)
@@ -156,23 +165,23 @@ def _uniform_size_fields(
             groups = [
                 (
                     outside_size,
-                    tuple(
-                        tag
-                        for _, tag in gmsh.model.getEntities(top_scope.entity_dimension)
+                    _resolve_entities(
+                        source, top_scope, cad_entities=cad_entities
                     ),
                     top_scope.entity_dimension,
                 )
             ]
         else:
-            groups = []
-            for control in controls:
-                dimension = control.scope.entity_dimension
-                tags = (
-                    tuple(tag for _, tag in gmsh.model.getEntities(dimension))
-                    if control.scope.scope_id == top_scope.scope_id
-                    else _resolve_entities(gmsh, source, shape, control.scope)
+            groups = [
+                (
+                    control.target_size,
+                    _resolve_entities(
+                        source, control.scope, cad_entities=cad_entities
+                    ),
+                    control.scope.entity_dimension,
                 )
-                groups.append((control.target_size, tags, dimension))
+                for control in controls
+            ]
     fields = []
     if semantic_volume:
         # ty: ignore[invalid-assignment]
@@ -257,13 +266,21 @@ def _proximity_gap(
 
 
 def _proximity_field(
-    gmsh: Any, source: BRepModel, shape: Any, control: ProximitySizeControl, /
+    gmsh: Any,
+    source: BRepModel,
+    control: ProximitySizeControl,
+    /,
+    cad_entities: _CadEntityMap | None = None,
 ) -> _ProximityField:
     """Local gap width is the sum of distances to both walls; size is gap / count."""
     dimension = control.source_scope.entity_dimension
     scale = _source_scale(source)
-    sources = _resolve_entities(gmsh, source, shape, control.source_scope)
-    targets = _resolve_entities(gmsh, source, shape, control.target_scope)
+    sources = _resolve_entities(
+        source, control.source_scope, cad_entities=cad_entities
+    )
+    targets = _resolve_entities(
+        source, control.target_scope, cad_entities=cad_entities
+    )
     gap = _proximity_gap(
         gmsh,
         dimension,
@@ -341,7 +358,6 @@ class _SizeFields:
 def _apply_size_fields(
     gmsh: Any,
     source: BRepModel,
-    shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     cad_entities: _CadEntityMap | None,
     outside_size: float,
@@ -359,10 +375,10 @@ def _apply_size_fields(
         gmsh.model.mesh.field.setAsBackgroundMesh(view.field)
         return _SizeFields((view.field,), (), view)
     fields = _uniform_size_fields(
-        gmsh, source, shape, specification, cad_entities, outside_size
+        gmsh, source, specification, cad_entities, outside_size
     )
     proximity = tuple(
-        _proximity_field(gmsh, source, shape, control)
+        _proximity_field(gmsh, source, control, cad_entities=cad_entities)
         for control in specification.size_controls
         if isinstance(control, ProximitySizeControl)
     )
@@ -454,6 +470,7 @@ def _semantic_size_compliance(
     mesh: CellMesh,
     specification: VolumeMeshingSpec,
     cell_solid_ids: np.ndarray,
+    source: BRepModel,
     /,
 ) -> tuple[list[str], tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -465,7 +482,13 @@ def _semantic_size_compliance(
             continue
         selected_edges = []
         cursor = 0
-        solid_ids = np.asarray(control.scope.entity_ids, dtype=np.int64)
+        solid_ids = _scope_indices(source, control.scope, 3)
+        if solid_ids is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "Solid size scope does not belong to the imported BRep owner and revision.",
+                stage=MeshingStageKind.SCOPE_RESOLUTION.value,
+            )
         for block in mesh.blocks:
             stop = cursor + block.cell_count
             selected = np.isin(cell_solid_ids[cursor:stop], solid_ids)

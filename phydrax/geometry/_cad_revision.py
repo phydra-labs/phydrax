@@ -139,8 +139,6 @@ class CADRevision:
         source_id = _identifier("source_id", self.source_id)
         provenance_id = _identifier("provenance_id", self.provenance_id)
         occurrences = tuple(self.occurrences)
-        if not occurrences:
-            raise ValueError("A CAD revision requires at least one occurrence.")
         if any(not isinstance(value, CADOccurrence) for value in occurrences):
             raise TypeError("occurrences must contain only CADOccurrence values.")
         if any(value.revision_id != revision_id for value in occurrences):

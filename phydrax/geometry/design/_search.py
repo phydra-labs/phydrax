@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -18,9 +19,13 @@ from ...optim._differential_evolution import _bounded_differential_evolution
 from ...typing import PRNGKey
 from ._constraints import DesignConstraintSystem
 from ._schema import DesignState, ParameterId
+from ._search_result import SketchSearchResult
+from ._sketch import Sketch
+from ._sketch_certificate import RootDOFEvidence
 
 
 SearchBounds = Mapping[ParameterId, tuple[ArrayLike, ArrayLike]]
+SketchSearchBounds = tuple[ArrayLike, ArrayLike]
 
 
 class _DesignObjective(StrictModule):
@@ -61,6 +66,7 @@ class DesignSearchResult(StrictModule):
     residual: Array
     residual_norm: Array
     objective: Array
+    root_evidence: RootDOFEvidence
     population_vectors: Array
     population_objectives: Array
     best_objective_history: Array
@@ -94,7 +100,10 @@ class DesignSearchResult(StrictModule):
         objective_evaluations: int,
         invalid_evaluations: int,
         design_signature: str,
+        root_evidence: RootDOFEvidence,
     ) -> None:
+        if not isinstance(root_evidence, RootDOFEvidence):
+            raise TypeError("root_evidence must be RootDOFEvidence.")
         residual_ = jnp.asarray(residual, dtype=jnp.float64).reshape((-1,))
         self.state = state
         self.residual = residual_
@@ -110,6 +119,7 @@ class DesignSearchResult(StrictModule):
         self.key = key
         self.search = search
         self.converged = bool(converged)
+        self.root_evidence = root_evidence
         self.termination_reason = str(termination_reason)
         self.generations = int(generations)
         self.objective_evaluations = int(objective_evaluations)
@@ -223,6 +233,7 @@ def search_design_constraints(
     key: PRNGKey,
     bounds: SearchBounds | None = None,
     initial_state: DesignState | None = None,
+    root_tolerance: float = 1e-9,
 ) -> DesignSearchResult:
     """Run bounded differential evolution over a compiled geometry design state."""
     if not isinstance(system, DesignConstraintSystem):
@@ -243,6 +254,8 @@ def search_design_constraints(
     state = system.geometry.state if initial_state is None else initial_state
     if not isinstance(state, DesignState):
         raise TypeError("initial_state must be a DesignState or None.")
+    if not np.isfinite(root_tolerance) or root_tolerance <= 0.0:
+        raise ValueError("root_tolerance must be finite and positive.")
     lower, upper, initial = _resolve_search_bounds(system, bounds, state)
     result = _bounded_differential_evolution(
         _DesignObjective(system, state),
@@ -255,6 +268,17 @@ def search_design_constraints(
     )
     best_state = system.unpack(result.best_vector, base_state=state)
     residual = system.residual(best_state)
+    coordinates = system.pack(best_state)
+    jacobian = jax.jacfwd(
+        lambda vector: system.residual(system.unpack(vector, base_state=state))
+    )(coordinates)
+    root_evidence = RootDOFEvidence(
+        system._problem_id(),
+        coordinates,
+        residual,
+        jacobian,
+        residual_tolerance=root_tolerance,
+    )
     no_valid_candidates = result.termination_reason == "no_valid_candidates"
     best_valid = (
         False
@@ -276,6 +300,7 @@ def search_design_constraints(
     return DesignSearchResult(
         state=best_state,
         residual=residual,
+        root_evidence=root_evidence,
         objective=objective,
         population_vectors=result.population_vectors,
         population_objectives=result.population_objectives,
@@ -293,4 +318,136 @@ def search_design_constraints(
     )
 
 
-__all__ = ["DesignSearchResult"]
+class _SketchObjective(StrictModule):
+    sketch: Sketch
+    point_size: int = eqx.field(static=True)
+
+    def __init__(self, sketch: Sketch, /) -> None:
+        self.sketch = sketch
+        self.point_size = sketch.points.size
+
+    def __call__(self, vector: Array, /) -> Array:
+        points = vector[: self.point_size].reshape(self.sketch.points.shape)
+        radii = vector[self.point_size :]
+        residual = self.sketch.residual(points, radii)
+        return jnp.sum(residual * residual)
+
+
+class _SketchValidity(StrictModule):
+    sketch: Sketch
+    point_size: int = eqx.field(static=True)
+
+    def __init__(self, sketch: Sketch, /) -> None:
+        self.sketch = sketch
+        self.point_size = sketch.points.size
+
+    def __call__(self, vector: Array, /) -> Array:
+        points = vector[: self.point_size].reshape(self.sketch.points.shape)
+        radii = vector[self.point_size :]
+        return (
+            jnp.all(jnp.isfinite(vector))
+            & jnp.all(radii > 0.0)
+            & jnp.all(jnp.isfinite(self.sketch.residual(points, radii)))
+        )
+
+
+def _resolve_sketch_bounds(
+    sketch: Sketch,
+    bounds: SketchSearchBounds,
+    /,
+) -> tuple[Array, Array, Array]:
+    if not isinstance(bounds, tuple) or len(bounds) != 2:
+        raise TypeError("bounds must be a (lower, upper) tuple.")
+    lower = np.asarray(bounds[0], dtype=np.float64).reshape((-1,))
+    upper = np.asarray(bounds[1], dtype=np.float64).reshape((-1,))
+    initial = np.asarray(
+        jnp.concatenate((sketch.points.reshape((-1,)), sketch.circle_radii)),
+        dtype=np.float64,
+    )
+    if initial.size == 0:
+        raise ValueError("Sketch search requires at least one variable.")
+    if lower.shape != initial.shape or upper.shape != initial.shape:
+        raise ValueError(f"Sketch search bounds must have shape {initial.shape}.")
+    if (
+        not np.all(np.isfinite(lower))
+        or not np.all(np.isfinite(upper))
+        or np.any(lower >= upper)
+    ):
+        raise ValueError("Sketch search bounds must be finite and strictly ordered.")
+    radius_start = sketch.points.size
+    if sketch.circle_radii.size and np.any(lower[radius_start:] <= 0.0):
+        raise ValueError("Circle-radius search bounds must remain strictly positive.")
+    if np.any(initial < lower) or np.any(initial > upper):
+        raise ValueError("The initial sketch state lies outside the search bounds.")
+    return (
+        jnp.asarray(lower, dtype=jnp.float64),
+        jnp.asarray(upper, dtype=jnp.float64),
+        jnp.asarray(initial, dtype=jnp.float64),
+    )
+
+
+def search_sketch(
+    sketch: Sketch,
+    search: DifferentialEvolutionSearch,
+    /,
+    *,
+    key: PRNGKey,
+    bounds: SketchSearchBounds,
+    max_iterations: int = 32,
+    tolerance: float = 1e-9,
+    damping: float = 1e-8,
+) -> SketchSearchResult:
+    """Search a finite sketch-coordinate box, then solve the selected root locally."""
+    if not isinstance(sketch, Sketch):
+        raise TypeError("sketch must be a Sketch.")
+    if not isinstance(search, DifferentialEvolutionSearch):
+        raise TypeError("search must be a DifferentialEvolutionSearch.")
+    if not sketch.constraints:
+        raise ValueError("Sketch search requires at least one constraint.")
+    if search.selection != "scalar" or search.objective_count != 1:
+        raise ValueError("Sketch search supports one scalar residual objective.")
+    lower, upper, initial = _resolve_sketch_bounds(sketch, bounds)
+    result = _bounded_differential_evolution(
+        _SketchObjective(sketch),
+        initial,
+        lower,
+        upper,
+        search,
+        key=key,
+        validity=_SketchValidity(sketch),
+    )
+    no_valid_candidates = result.termination_reason == "no_valid_candidates"
+    solution = (
+        None
+        if no_valid_candidates
+        else sketch.solve(
+            initial_coordinates=result.best_vector,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            damping=damping,
+        )
+    )
+    termination_reason = (
+        result.termination_reason
+        if no_valid_candidates or solution is None or bool(np.asarray(solution.converged))
+        else "best candidate did not converge to a sketch root"
+    )
+    return SketchSearchResult(
+        solution=solution,
+        population_vectors=result.population_vectors,
+        population_objectives=result.population_objectives,
+        best_objective_history=result.best_objective_history,
+        lower_bounds=result.lower_bounds,
+        upper_bounds=result.upper_bounds,
+        key=result.key,
+        search=result.search,
+        search_converged=result.converged,
+        termination_reason=termination_reason,
+        generations=result.generations,
+        objective_evaluations=result.objective_evaluations,
+        invalid_evaluations=result.invalid_evaluations,
+        design_signature=result.design_signature,
+    )
+
+
+__all__ = ["DesignSearchResult", "SketchSearchResult", "search_sketch"]

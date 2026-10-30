@@ -20,7 +20,6 @@ namespace {
 
 using namespace phx::mc;
 
-constexpr int64_t kUnlimited = std::numeric_limits<int64_t>::max();
 
 double uniform(std::uint64_t& state) {
   state = splitmix64(state);
@@ -56,16 +55,13 @@ struct Result {
 
 // Runs the triangulation and checks the mesh handle contract (dimension, points
 // copied unchanged, NULL handle on failure).
-Result run(const std::vector<double>& points, const std::vector<double>* weights,
-           int64_t max_tetrahedra = kUnlimited) {
-  int sentinel = 0;
-  phx_mc_mesh* mesh = reinterpret_cast<phx_mc_mesh*>(&sentinel);
+Result run(const std::vector<double>& points, const std::vector<double>* weights) {
+  phx_mc_mesh* mesh = nullptr;
   const int64_t count = static_cast<int64_t>(points.size() / 3);
   Result result;
   result.status = weights == nullptr
-                      ? phx_mc_delaunay_3d(count, points.data(), max_tetrahedra, &mesh)
-                      : phx_mc_regular_3d(count, points.data(), weights->data(),
-                                          max_tetrahedra, &mesh);
+                      ? phx_mc_delaunay_3d(count, points.data(), &mesh)
+                      : phx_mc_regular_3d(count, points.data(), weights->data(), &mesh);
   if (result.status != PHX_MC_OK) {
     PHX_CHECK(mesh == nullptr);
     return result;
@@ -76,12 +72,13 @@ Result run(const std::vector<double>& points, const std::vector<double>* weights
   result.input_point_count = phx_mc_mesh_input_point_count(mesh);
   PHX_CHECK(result.input_point_count == count);
   std::vector<double> copied(points.size());
-  phx_mc_mesh_copy_points(mesh, copied.data());
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, count, copied.data()) == PHX_MC_OK);
   PHX_CHECK(copied == points);
-  result.cells.resize(static_cast<std::size_t>(4 * phx_mc_mesh_cell_count(mesh)));
-  phx_mc_mesh_copy_cells(mesh, result.cells.data());
+  const int64_t cells = phx_mc_mesh_cell_count(mesh);
+  result.cells.resize(static_cast<std::size_t>(4 * cells));
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, cells, result.cells.data()) == PHX_MC_OK);
   result.vertex_map.resize(static_cast<std::size_t>(count));
-  phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, count, result.vertex_map.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   return result;
 }
@@ -434,7 +431,7 @@ void test_degenerate_inputs() {
   }
   PHX_CHECK(run(same, nullptr).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(phx_mc_delaunay_3d(0, nullptr, kUnlimited, &mesh) == PHX_MC_DEGENERATE_INPUT);
+  PHX_CHECK(phx_mc_delaunay_3d(0, nullptr, &mesh) == PHX_MC_DEGENERATE_INPUT);
   PHX_CHECK(mesh == nullptr);
   std::vector<double> weights(plane.size() / 3, 0.0);
   PHX_CHECK(run(plane, &weights).status == PHX_MC_DEGENERATE_INPUT);
@@ -615,38 +612,18 @@ void test_regular_redundant_points() {
   PHX_CHECK(again.cells == result.cells && again.vertex_map == result.vertex_map);
 }
 
-void test_max_tetrahedra() {
-  const std::vector<double> points = random_points(100, 13);
-  const Result full = run(points, nullptr);
-  PHX_CHECK(full.status == PHX_MC_OK);
-  const auto count = static_cast<int64_t>(cell_count(full));
-  const Result exact = run(points, nullptr, count);
-  PHX_CHECK(exact.status == PHX_MC_OK);
-  PHX_CHECK(exact.cells == full.cells);
-  PHX_CHECK(run(points, nullptr, count - 1).status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(run(points, nullptr, 0).status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(run(points, nullptr, 1).status == PHX_MC_CAPACITY_EXCEEDED);
-  const std::vector<double> weights(100, 0.0);
-  PHX_CHECK(run(points, &weights, count - 1).status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(run(points, &weights, count).status == PHX_MC_OK);
-}
 
 void test_status_codes() {
   const std::vector<double> points = random_points(10, 1);
   const std::vector<double> weights(10, 0.0);
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(phx_mc_delaunay_3d(10, points.data(), kUnlimited, nullptr) ==
-            PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_3d(10, nullptr, kUnlimited, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(10, points.data(), nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(10, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
-  PHX_CHECK(phx_mc_delaunay_3d(-1, points.data(), kUnlimited, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_3d(10, points.data(), -1, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_3d(int64_t{1} << 31, points.data(), kUnlimited, &mesh) ==
-            PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_regular_3d(10, points.data(), nullptr, kUnlimited, &mesh) ==
-            PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_regular_3d(10, points.data(), weights.data(), -5, &mesh) ==
-            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(-1, points.data(), &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(int64_t{1} << 31, points.data(), &mesh) ==
+            PHX_MC_INDEX_RANGE_ERROR);
+  PHX_CHECK(phx_mc_regular_3d(10, points.data(), nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
 
   std::vector<double> bad(points);
@@ -780,7 +757,6 @@ int main() {
   test_regular_zero_weights_match_delaunay();
   test_regular_center_point();
   test_regular_redundant_points();
-  test_max_tetrahedra();
   test_status_codes();
   test_performance();
   return phx::mc::test::finish("test_delaunay3d");

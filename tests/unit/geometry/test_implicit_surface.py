@@ -28,7 +28,6 @@ def test_implicit_surface_scenario_1() -> None:
     ).compile()
     policy = phx.geometry.ImplicitSurfacePolicy(
         projection=phx.geometry.ImplicitProjectionPolicy(trust_fraction=0.45),
-        maximum_intersection_pairs=500_000,
     )
     plan = phx.geometry.discover_implicit_surface(
         geometry,
@@ -74,7 +73,6 @@ def test_dual_surface_derivative_and_refresh_status_are_explicit() -> None:
         _grid(),
         policy=phx.geometry.ImplicitSurfacePolicy(
             projection=phx.geometry.ImplicitProjectionPolicy(trust_fraction=0.45),
-            maximum_intersection_pairs=500_000,
         ),
         source_id="sphere-surface",
     )

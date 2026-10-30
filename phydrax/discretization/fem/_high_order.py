@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from fractions import Fraction
 from math import comb, factorial, sqrt
 from numbers import Integral
 from typing import final, Literal
@@ -579,6 +580,61 @@ def _simplex_node_tuples(order: int, dimension: int, /) -> tuple[tuple[int, ...]
     return tuple(generate(order, dimension))
 
 
+def _canonical_simplex_reference_nodes(
+    order: int,
+    dimension: int,
+    node_tuples: tuple[tuple[int, ...], ...],
+    reference_nodes: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Preserve entity support in the canonical binary64 execution projection."""
+    if order == 0:
+        return reference_nodes
+    barycentric = _unit_to_barycentric(2.0 * reference_nodes.T - 1.0).T
+    lobatto = np.asarray(legendre_rule_data(order + 1, "lobatto").nodes, dtype=np.float64)
+    edge_parameters = np.empty((order + 1,), dtype=np.float64)
+    edge_parameters[0] = 0.0
+    edge_parameters[order] = 1.0
+    # This symmetric dyadic construction selects the established binary64 shadow;
+    # exact LGL source nodes are retained independently by the nodal expression owner.
+    denominator = 1 << 53
+    for index in range(1, order):
+        opposite = order - index
+        if index > opposite:
+            continue
+        if index == opposite:
+            edge_parameters[index] = 0.5
+        else:
+            projection_source = (
+                Fraction.from_float(float(lobatto[index])) + Fraction(1)
+            ) / 2
+            numerator = round(projection_source * denominator)
+            parameter = Fraction(numerator, denominator)
+            edge_parameters[index] = float(parameter)
+            edge_parameters[opposite] = float(Fraction(1) - parameter)
+    for row, index in enumerate(node_tuples):
+        integer_barycentric = (order - sum(index), *index)
+        support = tuple(
+            axis for axis, value in enumerate(integer_barycentric) if value > 0
+        )
+        if len(support) == 1:
+            barycentric[row] = 0.0
+            barycentric[row, support[0]] = 1.0
+        elif len(support) == 2:
+            first, second = support
+            parameter_index = integer_barycentric[second]
+            barycentric[row] = 0.0
+            barycentric[row, first] = edge_parameters[order - parameter_index]
+            barycentric[row, second] = edge_parameters[parameter_index]
+        else:
+            for axis, value in enumerate(integer_barycentric):
+                if value == 0:
+                    barycentric[row, axis] = 0.0
+            total = float(np.sum(barycentric[row]))
+            barycentric[row, support] /= total
+    return barycentric[:, 1:]
+
+
 def _unit_to_barycentric(unit: np.ndarray, /) -> np.ndarray:
     tail = 0.5 * (unit + 1.0)
     return np.vstack((1.0 - np.sum(tail, axis=0), tail))
@@ -713,6 +769,15 @@ def _warp_and_blend_nodes(
     raise ValueError("Warp-and-blend nodes require dimension two or three.")
 
 
+def _simplex_nodal_dimension(cell_kind: str, /) -> int | None:
+    return {
+        "triangle": 2,
+        "simplex:2": 2,
+        "tetrahedron": 3,
+        "simplex:3": 3,
+    }.get(cell_kind)
+
+
 @final
 class SimplexNodalFamily(StrictModule, NonTrainableState):
     """Warp-and-blend simplex nodes with an orthonormal modal tabulation."""
@@ -728,18 +793,31 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
     def __init__(self, cell_kind: str, order: int, /) -> None:
         cell = str(cell_kind)
         p = int(order)
-        dimension = {"triangle": 2, "tetrahedron": 3}.get(cell)
+        dimension = _simplex_nodal_dimension(cell)
         if dimension is None or p < 0:
             raise ValueError(
-                "Simplex nodal families require triangle/tetrahedron and p>=0."
+                "Simplex nodal families require triangle/tetrahedron or simplex:2/simplex:3 and p>=0."
             )
         node_tuples = _simplex_node_tuples(p, dimension)
         space_dimension = comb(p + dimension, dimension)
         if p == 0:
             nodes = np.full((1, dimension), 1.0 / (dimension + 1.0))
+        elif p == 1 and dimension == 2:
+            nodes = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+        elif p == 1:
+            nodes = np.asarray(
+                (
+                    (0.0, 0.0, 0.0),
+                    (1.0, 0.0, 0.0),
+                    (0.0, 1.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                ),
+                dtype=np.float64,
+            )
         else:
             unit_nodes = _warp_and_blend_nodes(dimension, p, node_tuples)
             nodes = 0.5 * (unit_nodes.T + 1.0)
+        nodes = _canonical_simplex_reference_nodes(p, dimension, node_tuples, nodes)
         barycentric_nodes = np.concatenate(
             (1.0 - np.sum(nodes, axis=1, keepdims=True), nodes),
             axis=1,
@@ -781,7 +859,9 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points)
-        dimension = {"triangle": 2, "tetrahedron": 3}[self.cell_kind]
+        dimension = _simplex_nodal_dimension(self.cell_kind)
+        if dimension is None:
+            raise ValueError("Simplex nodal family has an invalid cell kind.")
         if points_.ndim != 2 or points_.shape[-1] != dimension:
             raise ValueError("Simplex tabulation points have incompatible shape.")
         if not jnp.issubdtype(points_.dtype, jnp.inexact):

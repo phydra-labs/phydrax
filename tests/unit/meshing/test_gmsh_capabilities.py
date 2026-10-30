@@ -14,6 +14,8 @@ from OCP.gp import gp_Pnt
 from OCP.TopoDS import TopoDS_Compound
 
 import phydrax as phx
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import persist_occt_shape
 
 
 pytestmark = [
@@ -35,18 +37,20 @@ def _face(points: Any) -> Any:
 
 
 def _persist(shape: Any, path: Any, *, overwrite: Any = False) -> Any:
-    return phx.geometry.persist_occt_shape(
+    return persist_occt_shape(
         shape,
         path,
         coordinate_contract=_CONTRACT,
-        linear_deflection=0.01,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.01,
+            angular_deflection=0.2,
+        ),
         overwrite=overwrite,
     )
 
 
-def _surface_spec(provider: Any, source: Any, size: Any, **kwargs: Any) -> Any:
-    scope = provider.whole_scope(source, 2)
+def _surface_spec(source: Any, size: Any, **kwargs: Any) -> Any:
+    scope = phx.meshing.MeshingScope.whole(source, 2)
     return phx.meshing.SurfaceMeshingSpec(
         phx.meshing.CellMeshingTarget(
             2, 3, phx.meshing.CellFamilyPolicy(required=("triangle",))
@@ -58,9 +62,9 @@ def _surface_spec(provider: Any, source: Any, size: Any, **kwargs: Any) -> Any:
 
 
 def _volume_spec(
-    provider: Any, source: Any, size: Any, *, order: Any = 1, deterministic: Any = True
+    source: Any, size: Any, *, order: Any = 1, deterministic: Any = True
 ) -> Any:
-    scope = provider.whole_scope(source, 3)
+    scope = phx.meshing.MeshingScope.whole(source, 3)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -133,7 +137,7 @@ def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
     )
 
     result = provider.plan(
-        square, _surface_spec(provider, square, 0.5), background_metric=control
+        square, _surface_spec(square, 0.5), background_metric=control
     ).execute()
 
     first, second = _mesh_edges(result)
@@ -156,34 +160,35 @@ def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) ->
     )
 
     report = provider.validate(
-        cube, _volume_spec(provider, cube, 0.5), background_metric=control
+        cube, _volume_spec(cube, 0.5), background_metric=control
     )
 
     assert not report.supported
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        provider.plan(cube, _volume_spec(provider, cube, 0.5), background_metric=control)
+        provider.plan(cube, _volume_spec(cube, 0.5), background_metric=control)
     assert (
         failure.value.category
         is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
     )
 
 
-def _channel_walls(provider: Any, source: Any) -> Any:
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopoDS import TopoDS
-
-    from phydrax.geometry.brep._occt import _explore_unique, read_occt_shape
-
-    shape, _, _ = read_occt_shape(source.report.source_id)
+def _channel_walls(source: Any) -> Any:
+    geometry = source.geometry
+    ranges = np.asarray(geometry.edge_ranges)
     walls = {0.45: [], 0.55: []}
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
-        curve = BRepAdaptor_Curve(edge)
-        ends = (curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()))
+    for index, curve_index in enumerate(geometry.edge_curves):
+        if curve_index < 0:
+            continue
+        endpoints = np.asarray(
+            geometry.curves[curve_index].evaluate(ranges[index]), dtype=np.float64
+        )
         for height, selected in walls.items():
-            if all(abs(point.Y() - height) < 1.0e-9 for point in ends):
+            if np.all(np.abs(endpoints[:, 1] - height) < 1.0e-9):
                 selected.append(source.edge_ids[index])
-    return tuple(provider.entity_scope(source, walls[height]) for height in (0.45, 0.55))
+    return tuple(
+        phx.meshing.MeshingScope.from_geometry(source, tuple(walls[height]))
+        for height in (0.45, 0.55)
+    )
 
 
 def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
@@ -203,7 +208,7 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
     )
     source = _persist(_face(outline), tmp_path / "dumbbell.brep")
     provider = phx.meshing.GmshProvider()
-    lower, upper = _channel_walls(provider, source)
+    lower, upper = _channel_walls(source)
     tolerance = phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5)
 
     def channel_edges(result: Any) -> Any:
@@ -213,9 +218,9 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
         return np.linalg.norm(second - first, axis=1)[inside]
 
     coarse = provider.plan(
-        source, _surface_spec(provider, source, 0.3, size_compliance=tolerance)
+        source, _surface_spec(source, 0.3, size_compliance=tolerance)
     ).execute()
-    specification = _surface_spec(provider, source, 0.3, size_compliance=tolerance)
+    specification = _surface_spec(source, 0.3, size_compliance=tolerance)
     refined_specification = phx.meshing.SurfaceMeshingSpec(
         specification.target,
         specification.scope,
@@ -248,12 +253,12 @@ def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path: Any) -> N
         index for index, owners in enumerate(source.topology.edge_faces) if not owners
     )
     feature = phx.meshing.ProtectedFeature(
-        provider.entity_scope(source, source.edge_ids[free]),
+        phx.meshing.MeshingScope.from_geometry(source, source.edge_ids[free]),
         phx.meshing.FeatureKind.CURVE,
     )
 
     result = provider.plan(
-        source, _surface_spec(provider, source, 0.2, protected_features=(feature,))
+        source, _surface_spec(source, 0.2, protected_features=(feature,))
     ).execute()
 
     first, second = _mesh_edges(result)
@@ -307,7 +312,7 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(
 ) -> None:
     source = _stl_cube(tmp_path / "cube.stl")
     provider = phx.meshing.GmshProvider()
-    surface = _surface_spec(provider, source, 0.2)
+    surface = _surface_spec(source, 0.2)
     source_mesh = source.mesh
     assert source_mesh is not None
     specification = phx.meshing.SurfaceRemeshingSpec(surface, source_mesh.mesh_id)
@@ -359,7 +364,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     )
 
     result = provider.plan(
-        source, _volume_spec(provider, source, 0.6, order=order)
+        source, _volume_spec(source, 0.6, order=order)
     ).execute()
 
     achieved = dict(result.compliance.achieved)
@@ -389,7 +394,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     assert abs(curved_volume - np.pi) < 0.1 * abs(straight_volume - np.pi)
 
 
-def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones(
+def test_real_session_import_cache_uses_revision_bound_native_export(
     tmp_path: Any,
 ) -> None:
     path = tmp_path / "cube.brep"
@@ -400,20 +405,24 @@ def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones
 
     with provider.open_session() as session:
         first = session.execute(
-            provider.plan(source, _volume_spec(provider, source, 0.5))
+            provider.plan(source, _volume_spec(source, 0.5))
         )
         second = session.execute(
-            provider.plan(source, _volume_spec(provider, source, 0.4))
+            provider.plan(source, _volume_spec(source, 0.4))
         )
         assert (session.import_cache_misses, session.import_cache_hits) == (1, 1)
-        assert session.cached_source_revisions == (source.report.source_revision,)
+        assert session.cached_source_revisions == (source.model.source_revision,)
+        # Replacing the original path cannot mutate the immutable BRepSource model.
         _persist(BRepPrimAPI_MakeBox(2.0, 1.0, 1.0).Shape(), path, overwrite=True)
-        with pytest.raises(phx.meshing.MeshingFailure) as failure:
-            session.execute(provider.plan(source, _volume_spec(provider, source, 0.5)))
-        assert session.cached_source_revisions == ()
+        third = session.execute(provider.plan(source, _volume_spec(source, 0.5)))
+        assert (session.import_cache_misses, session.import_cache_hits) == (1, 2)
+        assert session.cached_source_revisions == (source.model.source_revision,)
 
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.INVALID_SOURCE
-    assert first.compliance.passed and second.compliance.passed
+    assert (
+        first.compliance.passed
+        and second.compliance.passed
+        and third.compliance.passed
+    )
     assert first.mesh.mesh_id != second.mesh.mesh_id
 
 
@@ -429,8 +438,8 @@ def test_real_hxt_threads_follow_the_explicit_resource_policy(tmp_path: Any) -> 
         )
     )
 
-    assert not provider.validate(source, _volume_spec(provider, source, 0.3)).supported
-    plan = provider.plan(source, _volume_spec(provider, source, 0.3, deterministic=False))
+    assert not provider.validate(source, _volume_spec(source, 0.3)).supported
+    plan = provider.plan(source, _volume_spec(source, 0.3, deterministic=False))
     with provider.open_session() as session:
         with pytest.raises(phx.meshing.MeshingFailure) as failure:
             session.execute(plan)

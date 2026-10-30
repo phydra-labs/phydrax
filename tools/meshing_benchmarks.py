@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
+import platform
 import shutil
+from fractions import Fraction
+from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
-from typing import Any
+from typing import Any, TypedDict
 
 import equinox as eqx
 import jax
@@ -25,6 +29,7 @@ from phydrax._bvh import (
     prepare_bvh,
     refit_packed_bvh_bounds,
 )
+from phydrax._meshcore import PlcRecovery3D, TetMeshArrays
 from phydrax.meshing._quality import _standard_block_quality
 
 
@@ -60,7 +65,7 @@ def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRe
     )
 
 
-def _planar_partition(count: int, destination: Path) -> Any:
+def _planar_partition(count: int) -> Any:
     contract = _contract()
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0),
@@ -83,39 +88,31 @@ def _planar_partition(count: int, destination: Path) -> Any:
         operands,
         phx.geometry.BRepPartitionPolicy(region_precedence=tuple(reversed(region_names))),
     )
-    return embedding, plan, phx.geometry.partition_planar(plan, destination=destination)
+    return embedding, plan, phx.geometry.partition_planar(plan)
 
 
-def _persist_shape(
-    shape: Any, path: Path, contract: phx.SpatialCoordinateContract
-) -> Any:
-    return phx.geometry.persist_occt_shape(shape, path, coordinate_contract=contract)
-
-
-def _cad_partition(count: int, destination: Path) -> Any:
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-    from OCP.gp import gp_Pnt
-
+def _cad_partition(count: int) -> Any:
     contract = _contract()
     region_names = tuple(f"region-{index}" for index in range(count))
-    operands = []
-    for index, name in enumerate(region_names):
-        shape = BRepPrimAPI_MakeBox(gp_Pnt(float(index), 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
-        operands.append(
-            phx.geometry.BRepPartitionOperand(
-                name,
-                _persist_shape(shape, destination / f"{name}.brep", contract),
-                phx.geometry.BRepPartitionRole.REGION,
-            )
+    operands = tuple(
+        phx.geometry.BRepPartitionOperand(
+            name,
+            phx.geometry.brep_box(
+                (float(index), 0.0, 0.0),
+                (float(index + 1), 1.0, 1.0),
+                coordinate_contract=contract,
+                source_id=name,
+            ),
+            phx.geometry.BRepPartitionRole.REGION,
         )
+        for index, name in enumerate(region_names)
+    )
     plan = phx.geometry.BRepPartitionPlan(
         contract,
-        tuple(operands),
+        operands,
         phx.geometry.BRepPartitionPolicy(region_precedence=tuple(reversed(region_names))),
     )
-    return plan, phx.geometry.partition_brep(
-        plan, destination=destination / "result.brep"
-    )
+    return plan, phx.geometry.partition_brep(plan)
 
 
 def _layout_bytes(count: int) -> bytes:
@@ -199,6 +196,7 @@ def benchmark_native_meshing(resolution: int, repeats: int) -> dict[str, object]
             "Native meshing benchmark failed certification or linear transfer."
         )
     return {
+        "status": "passed",
         "resolution": resolution,
         "stages_seconds": {
             "construction": construction_seconds,
@@ -225,14 +223,12 @@ def benchmark_native_meshing(resolution: int, repeats: int) -> dict[str, object]
 
 def benchmark_cad_partition(resolution: int) -> dict[str, object]:
     count = max(2, resolution)
-    with TemporaryDirectory(prefix="phydrax-cad-partition-benchmark-") as temporary:
-        root = Path(temporary)
-        (plan, result), total_seconds = _timed(lambda: _cad_partition(count, root))
+    (plan, result), total_seconds = _timed(lambda: _cad_partition(count))
     if result.topological_dimension != 3 or not result.named_solid_entity_ids:
         raise RuntimeError("CAD partition benchmark did not create solid regions.")
     return {
         "resolution": resolution,
-        "stages_seconds": {"persist_and_partition": total_seconds},
+        "stages_seconds": {"partition": total_seconds},
         "identity": {
             "plan": plan.plan_id,
             "model": result.model.model_id,
@@ -250,16 +246,17 @@ def benchmark_cad_partition(resolution: int) -> dict[str, object]:
 
 def benchmark_planar_semantic(resolution: int) -> dict[str, object]:
     count = max(2, resolution)
-    with TemporaryDirectory(prefix="phydrax-planar-semantic-benchmark-") as temporary:
-        root = Path(temporary) / "planar.brep"
+    with TemporaryDirectory(prefix="phydrax-planar-semantic-benchmark-"):
         (embedding, plan, partition), partition_seconds = _timed(
-            lambda: _planar_partition(count, root)
+            lambda: _planar_partition(count)
         )
         provider = phx.meshing.GmshProvider()
-        scope = provider.whole_scope(partition, 2)
+        scope = phx.meshing.MeshingScope.whole(partition.model, 2)
         regions = tuple(
             phx.meshing.RegionControl(
-                provider.entity_scope(partition, region.entity_ids),
+                phx.meshing.MeshingScope.from_geometry(
+                    partition.model, region.entity_ids
+                ),
                 region.name,
                 f"material:{region.name}",
                 phx.meshing.RegionRole.SOLID,
@@ -269,7 +266,7 @@ def benchmark_planar_semantic(resolution: int) -> dict[str, object]:
         patches = tuple(
             phx.meshing.PatchControl(
                 patch.name,
-                provider.entity_scope(partition, patch.entity_ids),
+                phx.meshing.MeshingScope.from_geometry(partition.model, patch.entity_ids),
                 patch.adjacent_region_ids,
             )
             for patch in partition.patches
@@ -326,7 +323,7 @@ def benchmark_planar_semantic(resolution: int) -> dict[str, object]:
 
 
 def benchmark_layout_decode(resolution: int) -> dict[str, object]:
-    limits = phx.interchange.ResourceLimits(
+    input_limits = phx.interchange.ResourceLimits(
         max_bytes=1_000_000,
         max_depth=4,
         max_nodes=10_000,
@@ -336,7 +333,7 @@ def benchmark_layout_decode(resolution: int) -> dict[str, object]:
     policy = phx.interchange.LayoutImportPolicy(
         phx.interchange.LayoutFormat.GDSII,
         _contract(),
-        limits,
+        input_limits,
         top_cell="TOP",
     )
     payload, encoding_seconds = _timed(lambda: _layout_bytes(max(1, resolution)))
@@ -371,61 +368,61 @@ def benchmark_layout_decode(resolution: int) -> dict[str, object]:
 
 
 def benchmark_planar_band(resolution: int) -> dict[str, object]:
-    with TemporaryDirectory(prefix="phydrax-planar-band-benchmark-") as temporary:
-        root = Path(temporary)
-        embedding, _plan, partition = _planar_partition(2, root / "planar.brep")
-        patch = next(
-            value for value in partition.patches if len(value.adjacent_region_ids) == 2
-        )
-        schedule = phx.meshing.LayerSchedule.geometric(
-            max(1, resolution), 0.02, growth_rate=1.0
-        )
-        control = phx.meshing.PlanarBandControl(
-            patch.name,
-            {name: schedule for name in patch.adjacent_region_ids},
-            0.1,
-        )
-        plan = phx.meshing.PlanarBandPlan(partition, embedding, (control,))
-        band_result, preparation_seconds = _timed(
-            lambda: phx.meshing.prepare_planar_bands(
-                plan, destination=root / "bands.brep"
-            )
-        )
-        provider = phx.meshing.GmshProvider()
-        scope = provider.whole_scope(band_result, 2)
-        regions = tuple(
-            phx.meshing.RegionControl(
-                provider.entity_scope(band_result, region.entity_ids),
-                region.name,
-                f"material:{region.name}",
-                phx.meshing.RegionRole.SOLID,
-            )
-            for region in band_result.partition.regions
-        )
-        patches = tuple(
-            phx.meshing.PatchControl(
-                value.name,
-                provider.entity_scope(band_result, value.entity_ids),
-                value.adjacent_region_ids,
-            )
-            for value in band_result.partition.patches
-            if len(set(value.adjacent_region_ids)) == len(value.adjacent_region_ids)
-        )
-        specification = phx.meshing.SurfaceMeshingSpec(
-            phx.meshing.CellMeshingTarget(
-                2,
-                2,
-                phx.meshing.CellFamilyPolicy(required=("quadrilateral",)),
+    embedding, _plan, partition = _planar_partition(2)
+    patch = next(
+        value for value in partition.patches if len(value.adjacent_region_ids) == 2
+    )
+    schedule = phx.meshing.LayerSchedule.geometric(
+        max(1, resolution), 0.02, growth_rate=1.0
+    )
+    control = phx.meshing.PlanarBandControl(
+        patch.name,
+        {name: schedule for name in patch.adjacent_region_ids},
+        0.1,
+    )
+    plan = phx.meshing.PlanarBandPlan(partition, embedding, (control,))
+    band_result, preparation_seconds = _timed(
+        lambda: phx.meshing.prepare_planar_bands(plan)
+    )
+    provider = phx.meshing.GmshProvider()
+    scope = phx.meshing.MeshingScope.whole(band_result.partition.model, 2)
+    regions = tuple(
+        phx.meshing.RegionControl(
+            phx.meshing.MeshingScope.from_geometry(
+                band_result.partition.model, region.entity_ids
             ),
-            scope,
-            planar_embedding=embedding,
-            size_controls=(phx.meshing.UniformSizeControl(scope, 0.1),),
-            region_controls=regions,
-            patch_controls=patches,
+            region.name,
+            f"material:{region.name}",
+            phx.meshing.RegionRole.SOLID,
         )
-        mesh_result, meshing_seconds = _timed(
-            provider.plan(band_result, specification).execute
+        for region in band_result.partition.regions
+    )
+    patches = tuple(
+        phx.meshing.PatchControl(
+            value.name,
+            phx.meshing.MeshingScope.from_geometry(
+                band_result.partition.model, value.entity_ids
+            ),
+            value.adjacent_region_ids,
         )
+        for value in band_result.partition.patches
+        if len(set(value.adjacent_region_ids)) == len(value.adjacent_region_ids)
+    )
+    specification = phx.meshing.SurfaceMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            2,
+            2,
+            phx.meshing.CellFamilyPolicy(required=("quadrilateral",)),
+        ),
+        scope,
+        planar_embedding=embedding,
+        size_controls=(phx.meshing.UniformSizeControl(scope, 0.1),),
+        region_controls=regions,
+        patch_controls=patches,
+    )
+    mesh_result, meshing_seconds = _timed(
+        provider.plan(band_result, specification).execute
+    )
     if (
         not band_result.layer_partitions
         or not mesh_result.audit.passed
@@ -440,9 +437,10 @@ def benchmark_planar_band(resolution: int) -> dict[str, object]:
         for layer in band_result.layer_partitions
     )
     return {
+        "status": "passed",
         "resolution": resolution,
         "stages_seconds": {
-            "preparation": preparation_seconds,
+            "in_memory_preparation": preparation_seconds,
             "gmsh_meshing": meshing_seconds,
         },
         "identity": {
@@ -466,7 +464,7 @@ def benchmark_planar_band(resolution: int) -> dict[str, object]:
 
 
 def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
-    from tools.meshing_qualification import _hybrid_gmsh_result
+    from tools.meshing_qualification.scenarios.providers import _hybrid_gmsh_result
 
     layer_count = max(1, resolution)
     schedule = phx.meshing.LayerSchedule.geometric(
@@ -732,7 +730,7 @@ def _planar_triangles(cells_per_axis: int, /) -> np.ndarray:
 
 
 def _array_bytes(tree: Any) -> int:
-    """Bytes of the distinct array leaves a result retains."""
+    """Logical bytes in distinct retained array leaves, excluding runtime overhead."""
     leaves = {id(leaf): leaf for leaf in jax.tree.leaves(eqx.filter(tree, eqx.is_array))}
     return sum(leaf.nbytes for leaf in leaves.values())
 
@@ -1153,10 +1151,10 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
 
 def _semantic_gmsh_specification(provider: Any, partition: Any) -> Any:
     source = partition.model
-    whole = provider.whole_scope(source, 3)
+    whole = phx.meshing.MeshingScope.whole(source, 3)
     regions = tuple(
         phx.meshing.RegionControl(
-            provider.entity_scope(source, region.entity_ids),
+            phx.meshing.MeshingScope.from_geometry(source, region.entity_ids),
             region.name,
             f"material:{region.name}",
             phx.meshing.RegionRole.SOLID,
@@ -1166,7 +1164,7 @@ def _semantic_gmsh_specification(provider: Any, partition: Any) -> Any:
     patches = tuple(
         phx.meshing.PatchControl(
             patch.name,
-            provider.entity_scope(source, patch.entity_ids),
+            phx.meshing.MeshingScope.from_geometry(source, patch.entity_ids),
             patch.adjacent_region_ids,
         )
         for patch in partition.patches
@@ -1199,18 +1197,14 @@ def _semantic_gmsh_plan(provider: Any, partition: Any) -> Any:
 def benchmark_gmsh_semantic(
     region_count: int,
     repeats: int,
-    directory: Path,
     /,
 ) -> dict[str, object]:
     provider = phx.meshing.GmshProvider()
     timings = {"partition": [], "plan": [], "execute": []}
     samples = []
     for repeat in range(repeats):
-        root = directory / f"regions-{region_count}-repeat-{repeat}"
-        root.mkdir(parents=True, exist_ok=False)
-        (_, partition), partition_seconds = _timed(
-            lambda root=root: _cad_partition(region_count, root)
-        )
+        jax.clear_caches()
+        (_, partition), partition_seconds = _timed(lambda: _cad_partition(region_count))
         timings["partition"].append(partition_seconds)
         (_specification, plan), plan_seconds = _timed(
             lambda partition=partition: _semantic_gmsh_plan(provider, partition)
@@ -1243,6 +1237,7 @@ def benchmark_gmsh_semantic(
             }
         )
     return {
+        "status": "passed",
         "regions": region_count,
         "repeats": repeats,
         "timings_seconds": {
@@ -1266,27 +1261,1357 @@ def _benchmark_gmsh_semantic_case(
     repeats: int,
     /,
 ) -> dict[str, object]:
-    with TemporaryDirectory(prefix="phydrax-gmsh-semantic-benchmark-") as temporary:
-        return benchmark_gmsh_semantic(
-            max(2, resolution),
-            repeats,
-            Path(temporary),
+    return benchmark_gmsh_semantic(max(2, resolution), repeats)
+
+
+def _comparison_result_record(
+    provider_name: str, plan: Any, result: Any, partition: Any, /
+) -> dict[str, object]:
+    if not result.audit.passed or not result.compliance.passed:
+        raise RuntimeError(f"{provider_name} comparison failed audit or compliance.")
+    region_count = sum(
+        zone.role is phx.meshing.MeshZoneRole.REGION for zone in result.zones
+    )
+    if region_count != len(partition.regions):
+        raise RuntimeError(f"{provider_name} comparison lost semantic source regions.")
+    measured_volume = float(np.sum(np.asarray(result.quality.evaluation.measures)))
+    expected_volume = float(len(partition.regions))
+    relative_volume_error = abs(measured_volume - expected_volume) / expected_volume
+    if relative_volume_error > 5.0e-8:
+        raise RuntimeError(
+            f"{provider_name} comparison lost source volume: {relative_volume_error:.6g}."
         )
+    runtime = getattr(result, "runtime", None)
+    return {
+        "provider": provider_name,
+        "provider_version": getattr(runtime, "actual_version", None),
+        "plan": plan.plan_id,
+        "resolved_route": getattr(
+            getattr(plan, "route", None),
+            "value",
+            str(getattr(plan, "route", "")),
+        ),
+        "result": result.result_id,
+        "audit_passed": result.audit.passed,
+        "compliance_passed": result.compliance.passed,
+        "source_revision": partition.model.source_revision,
+        "regions": region_count,
+        "patches": len(result.patches),
+        "cells": result.mesh.entity_set(3).count,
+        "measured_volume": measured_volume,
+        "relative_volume_error": relative_volume_error,
+        "minimum_mean_ratio": result.quality.minimum_mean_ratio,
+        "logical_retained_array_bytes": _array_bytes(result),
+    }
 
 
-def _compiled_cost(compiled_entry: Any, *arguments: Any) -> dict[str, object]:
-    """Lowering and compile time plus compiler memory of one compiled entry."""
+def benchmark_native_gmsh_comparison(resolution: int, repeats: int) -> dict[str, object]:
+    """Compare native and optional Gmsh plans on identical partitioned CAD."""
+
+    if resolution < 1 or repeats < 1:
+        raise ValueError("resolution and repeats must be positive.")
+    missing = _missing_gmsh_dependencies()
+    if missing:
+        return {
+            "scenario": "native-versus-gmsh-cad-meshing",
+            "status": "missing_dependency",
+            "resolution": resolution,
+            "repeats": repeats,
+            "missing_dependencies": missing,
+            "native_fallback": False,
+        }
+    from phydrax._meshcore import meshcore_identity
+
+    region_count = max(2, resolution)
+    native_provider = phx.meshing.NativeMeshingProvider()
+    gmsh_provider = phx.meshing.GmshProvider()
+    timings = {
+        "partition": [],
+        "request_preparation": [],
+        "native_plan_preparation": [],
+        "native_execution": [],
+        "gmsh_plan_preparation": [],
+        "gmsh_execution": [],
+    }
+    samples = []
+    for _ in range(repeats):
+        jax.clear_caches()
+        partition, elapsed = _timed(lambda: _cad_partition(region_count)[1])
+        timings["partition"].append(elapsed)
+        specification, elapsed = _timed(
+            lambda partition=partition: _semantic_gmsh_specification(
+                gmsh_provider, partition
+            )
+        )
+        timings["request_preparation"].append(elapsed)
+        native_plan, elapsed = _timed(
+            lambda partition=partition, specification=specification: native_provider.plan(
+                partition.model, specification
+            )
+        )
+        timings["native_plan_preparation"].append(elapsed)
+        gmsh_plan, elapsed = _timed(
+            lambda partition=partition, specification=specification: gmsh_provider.plan(
+                partition.model, specification
+            )
+        )
+        timings["gmsh_plan_preparation"].append(elapsed)
+        source_revision = partition.model.source_revision
+        native_result, elapsed = _timed(native_plan.execute)
+        timings["native_execution"].append(elapsed)
+        gmsh_result, elapsed = _timed(gmsh_plan.execute)
+        timings["gmsh_execution"].append(elapsed)
+        if partition.model.source_revision != source_revision:
+            raise RuntimeError("A CAD provider mutated the shared comparison source.")
+        samples.append(
+            {
+                "source_revision": source_revision,
+                "request": specification.specification_id,
+                "native": _comparison_result_record(
+                    "native", native_plan, native_result, partition
+                ),
+                "gmsh": _comparison_result_record(
+                    "gmsh", gmsh_plan, gmsh_result, partition
+                ),
+                "same_source": native_plan.source.source_revision
+                == gmsh_plan.source.source_revision
+                == source_revision,
+                "same_request": native_plan.specification.specification_id
+                == gmsh_plan.specification.specification_id
+                == specification.specification_id,
+            }
+        )
+    return {
+        "scenario": "native-versus-gmsh-cad-meshing",
+        "status": "passed",
+        "resolution": resolution,
+        "regions_per_sample": region_count,
+        "repeats": repeats,
+        "explicit_optional_comparison": True,
+        "provider_versions": {
+            "native_meshcore": meshcore_identity(),
+            "gmsh": samples[0]["gmsh"]["provider_version"],
+        },
+        "phase_seconds_samples": timings,
+        "phase_timing_ranges_seconds": {
+            name: _range(values) for name, values in timings.items()
+        },
+        "samples": samples,
+    }
+
+
+def _lower_compile(compiled_entry: Any, *arguments: Any) -> tuple[Any, dict[str, object]]:
+    """Lower and compile one real JAX entry and retain its executable."""
     lowered, lowering = _timed(lambda: compiled_entry.lower(*arguments))
     compiled, compile_seconds = _timed(lowered.compile)
-    # Equinox wraps the JAX stages; the compiler memory lives on the JAX object.
     memory = compiled.compiled.memory_analysis()
-    return {
+    return compiled, {
         "lowering_seconds": lowering,
         "compile_seconds": compile_seconds,
         "temporary_bytes": memory.temp_size_in_bytes,
         "output_bytes": memory.output_size_in_bytes,
         "argument_bytes": memory.argument_size_in_bytes,
         "generated_code_bytes": memory.generated_code_size_in_bytes,
+    }
+
+
+def _compiled_cost(compiled_entry: Any, *arguments: Any) -> dict[str, object]:
+    """Report compiler-measured lowering, compilation, and storage bytes."""
+    _, observations = _lower_compile(compiled_entry, *arguments)
+    return observations
+
+
+def _native_volume_specification(source: Any, target_size: float, /) -> Any:
+    scope = phx.meshing.MeshingScope.whole(source, 2)
+    return phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3,
+            3,
+            phx.meshing.CellFamilyPolicy(required=("tetrahedron",)),
+        ),
+        scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(scope, target_size),),
+        maximum_deviation=0.02,
+    )
+
+
+def _native_volume_result_record(
+    source: Any, plan: Any, result: Any, expected_volume: float, /
+) -> dict[str, object]:
+    measured_volume = float(np.sum(np.asarray(result.quality.evaluation.measures)))
+    relative_volume_error = abs(measured_volume - expected_volume) / expected_volume
+    if not result.audit.passed or not result.compliance.passed:
+        raise RuntimeError("Native CAD volume benchmark failed audit or compliance.")
+    if relative_volume_error > 5.0e-8:
+        raise RuntimeError(
+            "Native CAD volume differs from its exact source measure: "
+            f"{relative_volume_error:.6g}."
+        )
+    if not result.region_boundary_evidence:
+        raise RuntimeError("Native CAD volume omitted source-region boundary evidence.")
+    if any(block.cell_kind != "tetrahedron" for block in result.mesh.blocks):
+        raise RuntimeError("Native CAD volume did not preserve its required tetrahedra.")
+    return {
+        "status": "passed",
+        "identity": {
+            "source": source.source_id,
+            "source_revision": source.source_revision,
+            "source_geometry": source.geometry.geometry_id,
+            "plan": plan.plan_id,
+            "route": getattr(plan.route, "value", str(plan.route)),
+            "result": result.result_id,
+        },
+        "correctness": {
+            "audit_passed": result.audit.passed,
+            "compliance_passed": result.compliance.passed,
+            "expected_volume": expected_volume,
+            "measured_volume": measured_volume,
+            "relative_volume_error": relative_volume_error,
+            "source_region_boundary_count": len(result.region_boundary_evidence),
+        },
+        "counts": {
+            "vertices": result.mesh.entity_set(0).count,
+            "cells": result.mesh.entity_set(3).count,
+            "source_faces": source.topology.num_faces,
+            "source_solids": source.topology.num_solids,
+        },
+        "quality": {
+            "minimum_measure": result.quality.minimum_measure,
+            "minimum_mean_ratio": result.quality.minimum_mean_ratio,
+        },
+        "logical_retained_array_bytes": _array_bytes((source, plan, result)),
+    }
+
+
+def _changing_box_source(resolution: int, sample: int, repeats: int, /) -> Any:
+    extent = float(resolution) + float(sample + 1) / float(repeats + 1)
+    return phx.geometry.brep_box(
+        (0.0, 0.0, 0.0),
+        (extent, 1.0, 1.0),
+        coordinate_contract=_contract(),
+        source_id="benchmark:native-changing-box",
+    )
+
+
+def benchmark_native_cad_meshing(resolution: int, repeats: int) -> dict[str, object]:
+    """Scale a real native B-Rep volume route for fixed and changing sources."""
+    if resolution < 1 or repeats < 1:
+        raise ValueError("resolution and repeats must be positive.")
+    provider = phx.meshing.NativeMeshingProvider()
+    fixed_source, source_seconds = _timed(
+        lambda: phx.geometry.brep_box(
+            (0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0),
+            coordinate_contract=_contract(),
+            source_id="benchmark:native-fixed-box",
+        )
+    )
+    fixed_specification = _native_volume_specification(fixed_source, 2.0 / resolution)
+    fixed_plan, preparation_seconds = _timed(
+        lambda: provider.plan(fixed_source, fixed_specification)
+    )
+    fixed_result, first_execution_seconds = _timed(fixed_plan.execute)
+    fixed_record = _native_volume_result_record(
+        fixed_source, fixed_plan, fixed_result, 1.0
+    )
+    warm_execution_seconds = []
+    for _ in range(repeats):
+        warmed, elapsed = _timed(fixed_plan.execute)
+        _native_volume_result_record(fixed_source, fixed_plan, warmed, 1.0)
+        warm_execution_seconds.append(elapsed)
+
+    changing_records = []
+    changing_source_seconds = []
+    changing_preparation_seconds = []
+    changing_execution_seconds = []
+    for sample in range(repeats):
+        jax.clear_caches()
+        source, elapsed = _timed(
+            lambda sample=sample: _changing_box_source(resolution, sample, repeats)
+        )
+        changing_source_seconds.append(elapsed)
+        target_volume = float(resolution) + float(sample + 1) / float(repeats + 1)
+        specification = _native_volume_specification(source, 0.5)
+        plan, elapsed = _timed(
+            lambda source=source, specification=specification: provider.plan(
+                source, specification
+            )
+        )
+        changing_preparation_seconds.append(elapsed)
+        result, elapsed = _timed(plan.execute)
+        changing_execution_seconds.append(elapsed)
+        changing_record = _native_volume_result_record(
+            source, plan, result, target_volume
+        )
+        changing_records.append(changing_record)
+
+    return {
+        "scenario": "native-cad-volume-meshing",
+        "status": "passed",
+        "resolution": resolution,
+        "repeats": repeats,
+        "fixed_geometry": {
+            "phases_seconds": {
+                "source_construction": source_seconds,
+                "provider_preparation": preparation_seconds,
+                "first_prepared_execution": first_execution_seconds,
+                "warm_prepared_execution_samples": warm_execution_seconds,
+                "warm_prepared_execution_range": _range(warm_execution_seconds),
+            },
+            "result": fixed_record,
+        },
+        "changing_geometry": {
+            "phases_seconds_samples": {
+                "source_construction": changing_source_seconds,
+                "provider_preparation": changing_preparation_seconds,
+                "execution": changing_execution_seconds,
+            },
+            "timing_ranges_seconds": {
+                "source_construction": _range(changing_source_seconds),
+                "provider_preparation": _range(changing_preparation_seconds),
+                "execution": _range(changing_execution_seconds),
+            },
+            "samples": changing_records,
+        },
+    }
+
+
+def _native_array_bytes(record: PlcRecovery3D | TetMeshArrays, /) -> int:
+    return sum(value.nbytes for value in record if isinstance(value, np.ndarray))
+
+
+def _native_record_fingerprint(record: PlcRecovery3D | TetMeshArrays, /) -> str:
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+
+    arrays = {
+        name: array_tree_fingerprint(value)
+        for name in record._fields
+        if isinstance((value := getattr(record, name)), np.ndarray)
+    }
+    if isinstance(record, TetMeshArrays):
+        identity: dict[str, object] = {
+            "generation": record.generation,
+            "identity_bound": record.identity_bound,
+            "source_id": record.source_id,
+            "source_revision": record.source_revision,
+            "source_map_id": record.source_map_id,
+            "frame_id": record.frame_id,
+        }
+    else:
+        identity = {"status": record.status.name}
+    return canonical_fingerprint({"arrays": arrays, "identity": identity})
+
+
+def _native_source_bank_fingerprint(arrays: TetMeshArrays, /) -> str:
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+
+    names = (
+        "source_points",
+        "source_faces",
+        "source_face_group_rows",
+        "source_face_ids",
+        "source_face_tolerances",
+        "source_segments",
+        "source_segment_group_rows",
+        "source_segment_ids",
+        "source_segment_tolerances",
+    )
+    content = {name: array_tree_fingerprint(getattr(arrays, name)) for name in names}
+    return canonical_fingerprint(
+        {
+            "source": content,
+            "identity": {
+                "source_id": arrays.source_id,
+                "source_revision": arrays.source_revision,
+                "source_map_id": arrays.source_map_id,
+                "frame_id": arrays.frame_id,
+            },
+        }
+    )
+
+
+def _native_source_banks_equal(first: TetMeshArrays, second: TetMeshArrays, /) -> bool:
+    names = (
+        "source_points",
+        "source_faces",
+        "source_face_group_rows",
+        "source_face_ids",
+        "source_face_tolerances",
+        "source_segments",
+        "source_segment_group_rows",
+        "source_segment_ids",
+        "source_segment_tolerances",
+    )
+    return (
+        first.source_id,
+        first.source_revision,
+        first.source_map_id,
+        first.frame_id,
+    ) == (
+        second.source_id,
+        second.source_revision,
+        second.source_map_id,
+        second.frame_id,
+    ) and all(
+        np.array_equal(getattr(first, name), getattr(second, name)) for name in names
+    )
+
+
+def _native_original_witnesses_equal(
+    before: TetMeshArrays, after: TetMeshArrays, /
+) -> bool:
+    after_rows = {
+        int(identifier): row for row, identifier in enumerate(after.vertex_ids.tolist())
+    }
+    witness_names = (
+        "witness_strata",
+        "witness_entities",
+        "witness_parameters",
+        "witness_deviations",
+    )
+    for before_row, identifier in enumerate(before.vertex_ids.tolist()):
+        after_row = after_rows.get(int(identifier))
+        if after_row is None or any(
+            not np.array_equal(
+                getattr(before, name)[before_row],
+                getattr(after, name)[after_row],
+            )
+            for name in witness_names
+        ):
+            return False
+    return True
+
+
+class _NativeRefinementSample(TypedDict):
+    status: str
+    resolution: int
+    target_size: float
+    radius_edge_bound: float
+    surface_spacing_fraction: float
+    source_surface_target_edge_size: float
+    phases_seconds: dict[str, float]
+    identity: dict[str, object]
+    refinement: dict[str, object]
+    correctness: dict[str, object]
+    counts: dict[str, object]
+    logical_array_bytes: dict[str, int]
+
+
+def _native_brep_plc_refinement_sample(
+    resolution: int, target_size: float, /
+) -> _NativeRefinementSample:
+    from examples.native_brep_workflow import (
+        DEFAULT_MAXIMUM_DEVIATION,
+        DEFAULT_SURFACE_SPACING_FRACTION,
+        DEFAULT_VOLUME_SIZE,
+        prepare_workflow,
+    )
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+    from phydrax._meshcore import (
+        meshcore_identity,
+        MeshcoreStatus,
+        PlcBoundaryPolicy,
+        recover_plc_3d,
+        TetMesh3D,
+        TetMeshEditKind,
+        TetMeshEditStatus,
+    )
+    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+    from phydrax.meshing._volume_generation import (
+        _region_seed_points,
+        _size_field,
+        _source_rows,
+        _source_tables,
+    )
+    from phydrax.meshing.providers._native import (
+        _PreparedDirectBRepCadVolume,
+    )
+    from phydrax.meshing.providers._native_cad_volume import (
+        _translate_specification,
+        NativeCadVolumeSource,
+    )
+
+    if not np.isfinite(target_size) or target_size <= 0.0:
+        raise ValueError("PLC refinement target size must be finite and positive.")
+    surface_spacing_fraction = (
+        DEFAULT_SURFACE_SPACING_FRACTION
+        / float(resolution)
+        * (DEFAULT_VOLUME_SIZE / target_size)
+    )
+    if not 0.0 < surface_spacing_fraction < 1.0:
+        raise ValueError(
+            "The initial PLC resolution must produce a valid surface schedule."
+        )
+    (model, specification, plan), public_plan_preparation_seconds = _timed(
+        lambda: prepare_workflow(
+            size=target_size,
+            maximum_deviation=DEFAULT_MAXIMUM_DEVIATION,
+            surface_spacing_fraction=surface_spacing_fraction,
+        )
+    )
+    prepared = plan.prepared
+    if not isinstance(prepared, _PreparedDirectBRepCadVolume):
+        raise TypeError("The authored BRep workflow did not prepare direct CAD volume.")
+    surface_schedule = prepared.boundary_options.surface_schedule
+    volume_schedule = plan.route_options.volume_schedule
+    if surface_schedule is None or volume_schedule is None:
+        raise RuntimeError("The authored CAD plan omitted its resolved native schedules.")
+    if prepared.specification.specification_id != specification.specification_id:
+        raise RuntimeError("The prepared CAD route changed its authored volume request.")
+
+    boundary_construction, boundary_execution_seconds = _timed(
+        prepared.boundary_preparation.execute
+    )
+    boundary_result, boundary_acceptance_seconds = _timed(
+        lambda: _accept_native_construction(
+            boundary_construction,
+            prepared.boundary_specification,
+            _NATIVE_PROVIDER,
+            meshcore_identity(),
+            prepared.boundary_plan_id,
+            "parametric_surface",
+        )
+    )
+    if not boundary_result.audit.passed or not boundary_result.compliance.passed:
+        raise RuntimeError("Public BRep surface preparation failed acceptance.")
+    cad_source, cad_source_preparation_seconds = _timed(
+        lambda: NativeCadVolumeSource(
+            prepared.domain,
+            boundary_result,
+            maximum_deviation=None,
+            boundary="fixed",
+        )
+    )
+    plc_specification, scope_translation_seconds = _timed(
+        lambda: _translate_specification(cad_source, specification)
+    )
+    complex_ = cad_source.plc_source.complex
+    facet_tolerances = np.full((complex_.facet_count,), np.inf, dtype=np.float64)
+    segment_tolerances = np.full((complex_.segments.shape[0],), np.inf, dtype=np.float64)
+    for feature in plc_specification.protected_features:
+        identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+        match feature.scope.entity_dimension, feature.feature_kind.value:
+            case 2, "surface" | "material_interface":
+                rows = _source_rows(identifiers, complex_.facet_entity_ids, "facet")
+                facet_tolerances[rows] = np.minimum(
+                    facet_tolerances[rows], feature.maximum_deviation
+                )
+            case 1, "curve":
+                rows = _source_rows(identifiers, complex_.segment_entity_ids, "segment")
+                segment_tolerances[rows] = np.minimum(
+                    segment_tolerances[rows], feature.maximum_deviation
+                )
+            case _:
+                continue
+    facet_tolerances[~np.isfinite(facet_tolerances)] = 0.0
+    segment_tolerances[~np.isfinite(segment_tolerances)] = 0.0
+    native_boundary_policy = (
+        PlcBoundaryPolicy.FIXED
+        if complex_.boundary == "fixed"
+        else PlcBoundaryPolicy.CONFORMING
+    )
+    (seeds, seed_regions), region_seed_preparation_seconds = _timed(
+        lambda: _region_seed_points(complex_, plc_specification)
+    )
+    recovery, recovery_seconds = _timed(
+        lambda: recover_plc_3d(
+            complex_.vertices,
+            complex_.polygon_offsets,
+            complex_.polygon_vertices,
+            complex_.polygon_facets,
+            complex_.facet_regions,
+            segments=complex_.segments,
+            seeds=seeds,
+            seed_regions=seed_regions,
+            facet_tolerances=facet_tolerances,
+            segment_tolerances=segment_tolerances,
+            boundary_policy=native_boundary_policy,
+        )
+    )
+    if recovery.status is not MeshcoreStatus.OK:
+        raise RuntimeError(f"Native BRep PLC recovery returned {recovery.status.name}.")
+    tables, source_table_preparation_seconds = _timed(
+        lambda: _source_tables(complex_, plc_specification, recovery)
+    )
+    face_rows = np.asarray(recovery.face_sources, dtype=np.int64)
+    edge_rows = np.asarray(recovery.segment_sources, dtype=np.int64)
+    if np.any((face_rows < 0) | (face_rows >= tables.facet_labels.size)) or np.any(
+        (edge_rows < 0) | (edge_rows >= tables.edge_labels.size)
+    ):
+        raise RuntimeError("Native BRep recovery lost its source facet/edge ancestry.")
+    live_face_sources = tables.facet_labels[face_rows]
+    live_segment_sources = tables.edge_labels[edge_rows]
+    source = tables.source
+    sizes, size_field_preparation_seconds = _timed(
+        lambda: _size_field(complex_, plc_specification, recovery, tables)
+    )
+    if sizes.shape != (recovery.points.shape[0],):
+        raise RuntimeError("Native BRep volume sizing does not align with PLC points.")
+
+    points = np.asarray(source.points, dtype=np.float64)
+    source_triangles = np.asarray(source.faces, dtype=np.int32)
+    source_face_group_rows = source.face_group_rows
+    source_face_ids = source.face_ids
+    segments = source.segments
+    source_segment_ids = source.segment_ids
+    facet_regions = np.asarray(complex_.facet_regions, dtype=np.int32)
+    input_counts = {
+        "input_points": int(complex_.vertices.shape[0]),
+        "input_polygons": int(complex_.polygon_facets.size),
+        "input_facets": int(complex_.facet_regions.shape[0]),
+        "input_segments": int(complex_.segments.shape[0]),
+        "accepted_surface_vertices": boundary_result.mesh.entity_set(0).count,
+        "accepted_surface_triangles": boundary_result.mesh.entity_set(2).count,
+    }
+    source_id = cad_source.source_id
+    source_revision = cad_source.source_revision
+    source_map_id = ""
+    frame_id = plan.coordinate_contract.spatial_id
+    source_vertex_authority = f"{len(complex_.vertex_ids)} BRep PLC source vertex IDs"
+    source_identity_fingerprint = canonical_fingerprint(
+        {
+            "kind": "native-brep-workflow-source",
+            "workflow_plan": plan.plan_id,
+            "boundary_plan": prepared.boundary_plan_id,
+            "boundary_result": boundary_result.result_id,
+            "cad_source_binding": cad_source.binding_id,
+            "source_id": source_id,
+            "source_revision": source_revision,
+            "coordinate_frame": frame_id,
+        }
+    )
+    source_oracle_fingerprint = canonical_fingerprint(
+        {
+            "domain": prepared.domain.domain_id,
+            "plc_complex": complex_.complex_id,
+            "source_facets": complex_.facet_ids,
+            "facet_occurrences": complex_.facet_occurrence_paths,
+            "source_segments": complex_.segment_ids,
+            "segment_occurrences": complex_.segment_occurrence_paths,
+            "source_triangle_ids": cad_source.source_triangle_ids,
+            "source_triangle_patches": array_tree_fingerprint(
+                cad_source.source_triangle_patches
+            ),
+            "source_triangle_parameters": array_tree_fingerprint(
+                cad_source.source_triangle_parameters
+            ),
+            "facet_regions": array_tree_fingerprint(facet_regions),
+        }
+    )
+    source_preparation_phases = {
+        "cad_to_plc_scope_translation": scope_translation_seconds,
+        "public_brep_and_volume_plan_preparation": public_plan_preparation_seconds,
+        "boundary_surface_execution": boundary_execution_seconds,
+        "boundary_surface_acceptance": boundary_acceptance_seconds,
+        "native_cad_volume_source_preparation": cad_source_preparation_seconds,
+        "region_seed_preparation": region_seed_preparation_seconds,
+        "plc_recovery": recovery_seconds,
+        "source_table_preparation": source_table_preparation_seconds,
+        "volume_size_field_preparation": size_field_preparation_seconds,
+    }
+    radius_edge_bound = volume_schedule.radius_edge_bound
+    state, state_preparation_seconds = _timed(
+        lambda: TetMesh3D(
+            recovery.points,
+            recovery.tetrahedra,
+            recovery.tetrahedron_regions,
+            recovery.faces,
+            live_face_sources,
+            recovery.segments,
+            live_segment_sources,
+            boundary_policy=native_boundary_policy,
+            protection_radii=recovery.protection_radii,
+            source=source,
+            source_id=source_id,
+            source_revision=source_revision,
+            source_map_id=source_map_id,
+            frame_id=frame_id,
+        )
+    )
+    try:
+        before, before_snapshot_seconds = _timed(state.arrays)
+        refinement, refinement_seconds = _timed(
+            lambda: state.refine(radius_edge_bound=radius_edge_bound, sizes=sizes)
+        )
+        after, after_snapshot_seconds = _timed(state.arrays)
+        evidence, source_evidence_seconds = _timed(state.source_evidence)
+        unmet, unmet_evidence_seconds = _timed(state.unmet)
+        verification_started = perf_counter()
+
+        if refinement.edit_status != TetMeshEditStatus.APPLIED:
+            raise RuntimeError(
+                f"Persistent PLC refinement returned {refinement.edit_status.name}."
+            )
+        if refinement.status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+            raise RuntimeError(
+                f"Persistent PLC refinement returned {refinement.status.name}."
+            )
+        if not before.identity_bound or not after.identity_bound:
+            raise RuntimeError("Persistent PLC state lost its explicit source identity.")
+        if not _native_source_banks_equal(before, after):
+            raise RuntimeError("Persistent PLC refinement changed owned source banks.")
+        if not np.array_equal(before.source_points, points):
+            raise RuntimeError(
+                "Persistent PLC state lost its original source point bank."
+            )
+        if not np.array_equal(before.source_faces, source_triangles):
+            raise RuntimeError("Persistent PLC state lost its source triangle atlas.")
+        if not np.array_equal(before.source_face_group_rows, source_face_group_rows):
+            raise RuntimeError("Persistent PLC state changed source facet groups.")
+        if not np.array_equal(before.source_segments, segments):
+            raise RuntimeError("Persistent PLC state lost its source segment bank.")
+        if not np.array_equal(before.source_segment_ids, source_segment_ids):
+            raise RuntimeError("Persistent PLC state changed source segment identities.")
+        allowed_region_labels = np.unique(facet_regions.reshape(-1))
+        if not np.isin(after.tetrahedron_regions, allowed_region_labels).all():
+            raise RuntimeError("Persistent PLC state invented a foreign material region.")
+        if (
+            not np.isin(live_face_sources, after.face_sources).all()
+            or not np.isin(after.face_sources, source_face_ids).all()
+        ):
+            raise RuntimeError("Refined PLC facets lost their source entity ancestry.")
+        if (
+            not np.isin(live_segment_sources, after.segment_sources).all()
+            or not np.isin(after.segment_sources, source_segment_ids).all()
+        ):
+            raise RuntimeError("Refined PLC segments lost their source entity ancestry.")
+        if not np.array_equal(
+            after.witness_deviations, evidence.witness_deviations
+        ) or not np.array_equal(after.witness_entities, evidence.witness_entities):
+            raise RuntimeError(
+                "Persistent source evidence differs from retained witnesses."
+            )
+        if not _native_original_witnesses_equal(before, after):
+            raise RuntimeError("Refinement changed an existing source witness.")
+        requested_source_bound = max(
+            float(np.max(before.source_face_tolerances, initial=0.0)),
+            float(np.max(before.source_segment_tolerances, initial=0.0)),
+        )
+        achieved_source_bound = float(np.max(after.witness_deviations, initial=0.0))
+        if (
+            evidence.requested_bound != requested_source_bound
+            or evidence.achieved_bound != achieved_source_bound
+            or not np.isfinite(evidence.achieved_bound)
+        ):
+            raise RuntimeError(
+                "Source deviation evidence differs from its retained banks."
+            )
+        if refinement.unmet_cells != np.unique(unmet.cell_ids).size:
+            raise RuntimeError("Refinement run status and unmet evidence disagree.")
+        if unmet.values.size and not np.all(np.isfinite(unmet.values)):
+            raise RuntimeError("Refinement unmet evidence contains nonfinite values.")
+
+        old_vertex_ids = set(int(value) for value in before.vertex_ids.tolist())
+        old_cell_ids = set(int(value) for value in before.cell_ids.tolist())
+        new_vertex_rows = np.flatnonzero(~np.isin(after.vertex_ids, before.vertex_ids))
+        new_cell_rows = np.flatnonzero(~np.isin(after.cell_ids, before.cell_ids))
+        vertex_ancestry_arities = np.diff(after.vertex_ancestry_offsets)[new_vertex_rows]
+        stellar_centers = 0
+        for row in new_vertex_rows.tolist():
+            first = int(after.vertex_ancestry_offsets[row])
+            last = int(after.vertex_ancestry_offsets[row + 1])
+            parent_ids = after.vertex_ancestor_ids[first:last]
+            weights = after.vertex_ancestry_weights[first:last]
+            if (
+                not parent_ids.size
+                or not set(int(value) for value in parent_ids.tolist()).issubset(
+                    old_vertex_ids
+                )
+                or not np.isfinite(weights).all()
+                or not np.isclose(float(np.sum(weights)), 1.0, rtol=0.0, atol=1.0e-12)
+            ):
+                raise RuntimeError(
+                    "Refined vertex ancestry is incomplete or inconsistent."
+                )
+            if parent_ids.size == 4:
+                if not np.array_equal(weights, np.full((4,), 0.25, dtype=np.float64)):
+                    raise RuntimeError(
+                        "Stellar center ancestry is not exact quarter weighting."
+                    )
+                stellar_centers += 1
+        before_regions = {
+            int(cell_id): int(region)
+            for cell_id, region in zip(
+                before.cell_ids.tolist(),
+                before.tetrahedron_regions.tolist(),
+                strict=True,
+            )
+        }
+        for row in new_cell_rows.tolist():
+            first = int(after.cell_ancestry_offsets[row])
+            last = int(after.cell_ancestry_offsets[row + 1])
+            parents = after.cell_ancestor_ids[first:last]
+            edit_kind = int(after.cell_ancestry_edit_kinds[row])
+            if (
+                parents.size != 1
+                or int(parents[0]) not in old_cell_ids
+                or int(after.tetrahedron_regions[row])
+                != before_regions.get(int(parents[0]))
+                or edit_kind != int(TetMeshEditKind.REFINE_CELL)
+            ):
+                raise RuntimeError(
+                    "Refined cell lacks its immediate parent/edit ancestry."
+                )
+        if refinement.inserted_vertices != new_vertex_rows.size:
+            raise RuntimeError(
+                "Refinement inserted-vertex count differs from live topology."
+            )
+
+        source_before_fingerprint = _native_source_bank_fingerprint(before)
+        source_after_fingerprint = _native_source_bank_fingerprint(after)
+        if source_before_fingerprint != source_after_fingerprint:
+            raise RuntimeError(
+                "Persistent PLC source identity changed during refinement."
+            )
+        source_evidence_fingerprint = canonical_fingerprint(
+            {
+                "requested_bound": evidence.requested_bound,
+                "achieved_bound": evidence.achieved_bound,
+                "witness_strata": array_tree_fingerprint(evidence.witness_strata),
+                "witness_entities": array_tree_fingerprint(evidence.witness_entities),
+                "witness_parameters": array_tree_fingerprint(evidence.witness_parameters),
+                "witness_deviations": array_tree_fingerprint(evidence.witness_deviations),
+            }
+        )
+        unmet_fingerprint = canonical_fingerprint(
+            {
+                "cell_ids": array_tree_fingerprint(unmet.cell_ids),
+                "criteria": array_tree_fingerprint(unmet.criteria),
+                "reasons": array_tree_fingerprint(unmet.reasons),
+                "values": array_tree_fingerprint(unmet.values),
+            }
+        )
+        verification_seconds = perf_counter() - verification_started
+        return {
+            "status": "passed",
+            "resolution": resolution,
+            "target_size": target_size,
+            "radius_edge_bound": radius_edge_bound,
+            "surface_spacing_fraction": surface_schedule.spacing_fraction,
+            "source_surface_target_edge_size": (
+                surface_schedule.spacing_fraction * target_size
+            ),
+            "phases_seconds": {
+                **source_preparation_phases,
+                "persistent_state_preparation": state_preparation_seconds,
+                "pre_refinement_snapshot": before_snapshot_seconds,
+                "persistent_refinement": refinement_seconds,
+                "post_refinement_snapshot": after_snapshot_seconds,
+                "source_evidence": source_evidence_seconds,
+                "unmet_evidence": unmet_evidence_seconds,
+                "postcondition_validation": verification_seconds,
+            },
+            "identity": {
+                "source_definition": source_identity_fingerprint,
+                "region_boundary_oracle": source_oracle_fingerprint,
+                "source_id": after.source_id,
+                "source_vertex_authority": source_vertex_authority,
+                "source_revision": after.source_revision,
+                "source_map_id": after.source_map_id,
+                "frame_id": after.frame_id,
+                "public_plan": plan.plan_id,
+                "volume_specification": specification.specification_id,
+                "plc_specification": plc_specification.specification_id,
+                "surface_schedule": surface_schedule.schedule_id,
+                "volume_schedule": volume_schedule.schedule_id,
+                "surface_spacing_fraction": surface_schedule.spacing_fraction,
+                "boundary_plan": prepared.boundary_plan_id,
+                "boundary_result": boundary_result.result_id,
+                "cad_source_binding": cad_source.binding_id,
+                "plc_complex_id": complex_.complex_id,
+                "source_banks_before": source_before_fingerprint,
+                "source_banks_after": source_after_fingerprint,
+                "source_evidence": source_evidence_fingerprint,
+                "unmet_evidence": unmet_fingerprint,
+                "post_refinement_state": _native_record_fingerprint(after),
+            },
+            "refinement": {
+                "radius_edge_bound": radius_edge_bound,
+                "volume_schedule": volume_schedule.schedule_id,
+                "edit_status": refinement.edit_status.name,
+                "recovery_status": recovery.status.name,
+                "status": refinement.status.name,
+                "inserted_vertices": refinement.inserted_vertices,
+                "unmet_cells": refinement.unmet_cells,
+                "unmet_evidence_count": int(unmet.cell_ids.size),
+                "unmet_criteria": {
+                    str(int(criterion)): int(count)
+                    for criterion, count in zip(
+                        *np.unique(unmet.criteria, return_counts=True),
+                        strict=True,
+                    )
+                },
+                "unmet_maximum": float(np.max(unmet.values, initial=0.0)),
+            },
+            "correctness": {
+                "source_banks_unchanged": True,
+                "source_identity_bound": True,
+                "source_triangle_atlas_preserved": True,
+                "source_entity_ancestry_preserved": True,
+                "source_witnesses_preserved": True,
+                "vertex_ancestry_valid": True,
+                "stellar_center_count": stellar_centers,
+                "cell_parent_and_edit_ancestry_valid": True,
+                "new_vertices": int(new_vertex_rows.size),
+                "new_cells": int(new_cell_rows.size),
+                "vertex_ancestry_arities": {
+                    str(int(arity)): int(count)
+                    for arity, count in zip(
+                        *np.unique(vertex_ancestry_arities, return_counts=True),
+                        strict=True,
+                    )
+                },
+            },
+            "counts": {
+                **input_counts,
+                "recovered_points": int(recovery.points.shape[0]),
+                "initial_tetrahedra": int(before.tetrahedra.shape[0]),
+                "final_points": int(after.points.shape[0]),
+                "final_tetrahedra": int(after.tetrahedra.shape[0]),
+                "source_faces": int(after.source_faces.shape[0]),
+                "source_segments": int(after.source_segments.shape[0]),
+                "tetrahedron_regions": {
+                    str(int(region)): int(count)
+                    for region, count in zip(
+                        *np.unique(after.tetrahedron_regions, return_counts=True),
+                        strict=True,
+                    )
+                },
+            },
+            "logical_array_bytes": {
+                "recovery_output": _native_array_bytes(recovery),
+                "pre_refinement_snapshot": _native_array_bytes(before),
+                "post_refinement_snapshot": _native_array_bytes(after),
+                "source_evidence": sum(
+                    value.nbytes
+                    for value in (
+                        evidence.witness_strata,
+                        evidence.witness_entities,
+                        evidence.witness_parameters,
+                        evidence.witness_deviations,
+                    )
+                ),
+                "unmet_evidence": sum(
+                    value.nbytes
+                    for value in (
+                        unmet.cell_ids,
+                        unmet.criteria,
+                        unmet.reasons,
+                        unmet.values,
+                    )
+                ),
+            },
+        }
+    finally:
+        state.close()
+
+
+def benchmark_native_brep_plc_refinement(
+    resolution: int,
+    repeats: int,
+    /,
+    *,
+    target_size: float | None = None,
+) -> dict[str, object]:
+    """Scale the public profile-extrusion PLC and its independent fill size."""
+    from examples.native_brep_workflow import DEFAULT_VOLUME_SIZE
+
+    if resolution < 1 or repeats < 1:
+        raise ValueError("resolution and repeats must be positive.")
+    target_size = DEFAULT_VOLUME_SIZE if target_size is None else float(target_size)
+    if not np.isfinite(target_size) or target_size <= 0.0:
+        raise ValueError("PLC refinement target size must be finite and positive.")
+    samples = []
+    for _ in range(repeats):
+        jax.clear_caches()
+        samples.append(_native_brep_plc_refinement_sample(resolution, target_size))
+    phase_names = tuple(samples[0]["phases_seconds"])
+    return {
+        "scenario": "native-brep-plc-refinement",
+        "status": "passed",
+        "resolution": resolution,
+        "target_size": target_size,
+        "repeats": repeats,
+        "source_preparation": "examples.native_brep_workflow.prepare_workflow",
+        "phase_seconds_samples": {
+            name: [sample["phases_seconds"][name] for sample in samples]
+            for name in phase_names
+        },
+        "phase_timing_ranges_seconds": {
+            name: _range([sample["phases_seconds"][name] for sample in samples])
+            for name in phase_names
+        },
+        "samples": samples,
+    }
+
+
+def _native_tspline_patch(resolution: int, /) -> tuple[Any, dict[str, float]]:
+    from phydrax._interpolation import TMesh2D
+    from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+    if resolution < 4:
+        raise ValueError("Native T-spline scaling requires at least four knot intervals.")
+    breaks = tuple(Fraction(index, resolution) for index in range(resolution + 1))
+    source_mesh, tensor_seconds = _timed(lambda: TMesh2D.tensor_product(breaks, breaks))
+    marked = min(
+        source_mesh.cells,
+        key=lambda cell: (
+            abs(float((cell.parameter_bounds[0] + cell.parameter_bounds[1]) / 2) - 0.5)
+            + abs(float((cell.parameter_bounds[2] + cell.parameter_bounds[3]) / 2) - 0.5)
+        ),
+    )
+    refinement, refinement_seconds = _timed(lambda: source_mesh.refine((marked.cell_id,)))
+    if not refinement.certificate.passed or refinement.refined_mesh.t_junction_count == 0:
+        raise RuntimeError("Native T-spline local refinement lost its ASTS witness.")
+    orientations = {
+        (extension.axis, extension.missing_direction)
+        for extension in refinement.refined_mesh.t_junction_extensions
+    }
+    expected_orientations = {
+        ("u", "left"),
+        ("u", "right"),
+        ("v", "down"),
+        ("v", "up"),
+    }
+    if not orientations.issuperset(expected_orientations):
+        raise RuntimeError("Native T-spline refinement lost a T-junction orientation.")
+    exact_control_points = tuple(
+        (u, v, u * v)
+        for u, v, _ in (
+            anchor.local_knots.greville_parameter for anchor in source_mesh.anchors
+        )
+    )
+    exact_weights = tuple(
+        Fraction(1) + Fraction(2) * u * (1 - u) * v * (1 - v)
+        for u, v, _ in exact_control_points
+    )
+    if len(set(exact_weights)) == 1 or any(weight <= 0 for weight in exact_weights):
+        raise RuntimeError(
+            "Native T-spline fixture requires positive nonuniform weights."
+        )
+    control_points = np.asarray(
+        [[float(value) for value in row] for row in exact_control_points],
+        dtype=np.float64,
+    )
+    weights = np.asarray([float(value) for value in exact_weights], dtype=np.float64)
+    surface, patch_seconds = _timed(
+        lambda: TSplineSurfacePatch(
+            refinement.refined_mesh,
+            control_points,
+            weights,
+            exact_control_points=exact_control_points,
+            exact_weights=exact_weights,
+            source_mesh=source_mesh,
+            transfer_plans=(refinement.transfer_plan,),
+            transfer_meshes=(source_mesh, refinement.refined_mesh),
+        )
+    )
+    return surface, {
+        "tensor_mesh": tensor_seconds,
+        "local_refinement": refinement_seconds,
+        "source_patch": patch_seconds,
+    }
+
+
+def _native_tspline_brep_model(surface: Any, contract: Any, /) -> Any:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.geometry.brep._model import BRepGeometry, BRepImportReport, BRepModel
+    from phydrax.geometry.brep._patches import LineCurve
+
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 1.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    edges = ((0, 1), (1, 2), (2, 3), (3, 0))
+    curves = tuple(
+        LineCurve(points[first], points[last] - points[first]) for first, last in edges
+    )
+    pcurves = (
+        LineCurve((0.0, 0.0), (1.0, 0.0)),
+        LineCurve((1.0, 0.0), (0.0, 1.0)),
+        LineCurve((1.0, 1.0), (-1.0, 0.0)),
+        LineCurve((0.0, 1.0), (0.0, -1.0)),
+    )
+    geometry = BRepGeometry(
+        vertex_points=points,
+        curves=curves,
+        edge_curves=(0, 1, 2, 3),
+        edge_ranges=np.tile(np.asarray((0.0, 1.0)), (4, 1)),
+        edge_vertices=edges,
+        pcurves=pcurves,
+        coedge_edges=(0, 1, 2, 3),
+        coedge_senses=(1, 1, 1, 1),
+        face_loops=(((0, 1, 2, 3),),),
+        shell_faces=(),
+        shell_orientations=(),
+        solid_shells=(),
+    )
+    source_digest = canonical_fingerprint(
+        {
+            "kind": "native-tspline-benchmark-source",
+            "surface_definition": surface.source_definition_id,
+            "boundary_points": points.tolist(),
+        }
+    )
+    import_policy_id = canonical_fingerprint({"kind": "native-tspline-benchmark-source"})
+    report = BRepImportReport(
+        source_id="benchmark:native-tspline-cad",
+        source_digest=source_digest,
+        source_format="native",
+        coordinate_contract=contract,
+        import_policy_id=import_policy_id,
+        num_solids=0,
+        num_faces=1,
+        num_edges=4,
+        num_vertices=4,
+    )
+    return BRepModel(
+        geometry=geometry,
+        patches=(surface,),
+        parameter_bounds=np.asarray((((0.0, 0.0), (1.0, 1.0)),)),
+        orientation=np.asarray((1.0,)),
+        trim_domains=None,
+        physical_tags=("analysis-surface",),
+        coordinate_contract=contract,
+        report=report,
+    )
+
+
+def _unit_tspline_source(points: Any, arguments: Any, /) -> Any:
+    del arguments
+    return jax.numpy.ones(points.shape[:-1], dtype=points.dtype)
+
+
+@eqx.filter_jit
+def _solve_tspline_poisson(problem: Any) -> tuple[Any, Any, Any, Any]:
+    operator, right_hand_side = problem.linear_system()
+    solve = phx.linalg.solve(operator, right_hand_side)
+    residual = jax.numpy.linalg.norm(problem.residual(solve.value))
+    rhs_norm = jax.numpy.linalg.norm(right_hand_side)
+    return solve.value, solve.successful, residual, rhs_norm
+
+
+def benchmark_native_tspline_cad_analysis(
+    resolution: int, repeats: int
+) -> dict[str, object]:
+    """Scale ASTS refinement, native CAD surface meshing, and IGA analysis."""
+    from phydrax.discretization import iga
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.geometry._source_fidelity import (
+        certify_source_fidelity,
+        validate_source_fidelity_witness,
+    )
+
+    if resolution < 4 or repeats < 1:
+        raise ValueError(
+            "T-spline resolution must be at least four and repeats positive."
+        )
+    contract = phx.SpatialCoordinateContract.si()
+    surface, source_phases = _native_tspline_patch(resolution)
+    model, cad_source_seconds = _timed(
+        lambda: _native_tspline_brep_model(surface, contract)
+    )
+    domain, domain_preparation_seconds = _timed(lambda: MeshingDomain.from_brep(model))
+    scope = phx.meshing.MeshingScope.whole(domain, 2)
+    specification = phx.meshing.SurfaceMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            2,
+            3,
+            phx.meshing.CellFamilyPolicy(required=("triangle",)),
+        ),
+        scope,
+        size_controls=(phx.meshing.UniformSizeControl(scope, 1.0 / resolution),),
+        maximum_deviation=0.025,
+    )
+    provider = phx.meshing.NativeMeshingProvider(
+        phx.meshing.NativeMeshingOptions("parametric_surface")
+    )
+    plan, provider_preparation_seconds = _timed(
+        lambda: provider.plan(domain, specification, coordinate_contract=contract)
+    )
+    native_result, native_execution_seconds = _timed(plan.execute)
+    surface_source = native_result.surface_source
+    certification = native_result.certification
+    if surface_source is None or certification is None or certification.fidelity is None:
+        raise RuntimeError("Native T-spline meshing omitted source-chart fidelity.")
+    if (
+        certification.inputs.source is None
+        or certification.inputs.fidelity_tolerance is None
+        or certification.inputs.fidelity_witness is None
+        or certification.inputs.fidelity_witness.witness_id
+        != surface_source.chart_witness.witness_id
+    ):
+        raise RuntimeError("T-spline result lost its source-bound fidelity premises.")
+    validate_source_fidelity_witness(
+        native_result.mesh,
+        native_result.geometry,
+        certification.inputs.source,
+        surface_source.chart_witness,
+    )
+    fidelity = certify_source_fidelity(
+        native_result.mesh,
+        native_result.geometry,
+        certification.inputs.source,
+        tolerance=certification.inputs.fidelity_tolerance,
+        maximum_normal_deviation=certification.inputs.maximum_normal_deviation,
+        witness=surface_source.chart_witness,
+    )
+    if (
+        fidelity.status != "certified"
+        or fidelity.certificate_id != certification.fidelity.certificate_id
+        or any(len(piece) != 3 for piece in surface_source.source_piece_ids)
+    ):
+        raise RuntimeError("T-spline CAD source fidelity or ancestry did not revalidate.")
+    if not native_result.audit.passed or not native_result.compliance.passed:
+        raise RuntimeError("Native T-spline surface meshing failed audit or compliance.")
+
+    trim = iga.UVTrimmedSurface(
+        iga.UVTrimLoop(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    )
+    iga_plan, iga_plan_seconds = _timed(
+        lambda: iga.TSplineIsogeometricPlan(
+            iga.TSplineGeometryState(surface),
+            trim=trim,
+            quadrature_policy=iga.IsogeometricQuadraturePolicy(6),
+        )
+    )
+    marked = min(
+        surface.mesh.cells,
+        key=lambda cell: (
+            abs(float((cell.parameter_bounds[0] + cell.parameter_bounds[1]) / 2) - 0.5)
+            + abs(float((cell.parameter_bounds[2] + cell.parameter_bounds[3]) / 2) - 0.5)
+        ),
+    )
+    refinement, iga_refinement_seconds = _timed(
+        lambda: iga_plan.refine((marked.cell_id,))
+    )
+    target_plan = refinement.target_plan
+    target_mesh = target_plan.geometry.mesh
+    full_tensor_count = (len(target_mesh.axis_breaks[0]) - 1) * (
+        len(target_mesh.axis_breaks[1]) - 1
+    )
+    if (
+        target_mesh.t_junction_count == 0
+        or target_mesh.cell_count >= full_tensor_count
+        or target_plan.geometry.surface_patch.source_mesh.mesh_id
+        != surface.source_mesh.mesh_id
+        or not target_plan.exact_geometry_certificate.passed
+        or not target_plan.geometry_certificate.passed
+    ):
+        raise RuntimeError("T-spline IGA refinement lost local source-map correctness.")
+    prepared, iga_preparation_seconds = _timed(target_plan.prepare)
+    source_term = phx.equations.coefficient(
+        _unit_tspline_source,
+        coefficient_id="native-tspline-benchmark-unit-source",
+    )
+    form = phx.equations.FiniteElementForm(
+        "native-tspline-benchmark-poisson",
+        "u",
+        (
+            phx.equations.DiffusionAction("u", 1.0),
+            phx.equations.SourceAction("u", source_term),
+        ),
+    )
+    finite_element_problem, equation_preparation_seconds = _timed(
+        lambda: phx.equations.compile_finite_element_problem(
+            form,
+            prepared,
+            constraint=prepared.homogeneous_trace_constraint("u"),
+            execution_policy=phx.equations.FiniteElementExecutionPolicy(
+                realization="matrix_free", local_kernel="dense"
+            ),
+        )
+    )
+    executable, compiler = _lower_compile(_solve_tspline_poisson, finite_element_problem)
+    solved, first_solve_seconds = _timed(
+        lambda: jax.block_until_ready(executable(finite_element_problem))
+    )
+    warm_solve_seconds = []
+    for _ in range(repeats):
+        _, elapsed = _timed(
+            lambda: jax.block_until_ready(executable(finite_element_problem))
+        )
+        warm_solve_seconds.append(elapsed)
+    solution, successful, residual_norm, rhs_norm = solved
+    normalized_residual = float(np.asarray(residual_norm)) / max(
+        float(np.asarray(rhs_norm)), 1.0
+    )
+    solution_norm = float(np.linalg.norm(np.asarray(solution)))
+    solve_successful = bool(np.all(np.asarray(successful)))
+    if not solve_successful or normalized_residual > 2.0e-8 or solution_norm == 0.0:
+        raise RuntimeError(
+            "Native T-spline CAD-derived Poisson field failed its residual oracle."
+        )
+
+    return {
+        "scenario": "native-tspline-cad-analysis",
+        "status": "passed",
+        "resolution": resolution,
+        "repeats": repeats,
+        "identity": {
+            "source": model.source_id,
+            "source_revision": model.source_revision,
+            "source_geometry": model.geometry.geometry_id,
+            "source_t_mesh": surface.source_mesh.mesh_id,
+            "source_patch": surface.source_definition_id,
+            "native_plan": plan.plan_id,
+            "native_result": native_result.result_id,
+            "source_fidelity": certification.fidelity.certificate_id,
+            "fidelity_revalidation": fidelity.certificate_id,
+            "iga_plan": target_plan.plan_id,
+            "iga_prepared": prepared.prepared_id,
+        },
+        "phases_seconds": {
+            **source_phases,
+            "cad_source_construction": cad_source_seconds,
+            "meshing_domain_preparation": domain_preparation_seconds,
+            "native_provider_preparation": provider_preparation_seconds,
+            "native_execution": native_execution_seconds,
+            "iga_plan_preparation": iga_plan_seconds,
+            "iga_local_refinement": iga_refinement_seconds,
+            "iga_discretization_preparation": iga_preparation_seconds,
+            "equation_preparation": equation_preparation_seconds,
+            "lowering_seconds": compiler["lowering_seconds"],
+            "compilation_seconds": compiler["compile_seconds"],
+            "first_solve_seconds": first_solve_seconds,
+            "warm_solve_samples_seconds": warm_solve_seconds,
+            "warm_solve_range_seconds": _range(warm_solve_seconds),
+        },
+        "compiler_memory_bytes": {
+            "temporary": compiler["temporary_bytes"],
+            "output": compiler["output_bytes"],
+            "arguments": compiler["argument_bytes"],
+            "generated_code": compiler["generated_code_bytes"],
+        },
+        "source_correctness": {
+            "audit_passed": native_result.audit.passed,
+            "compliance_passed": native_result.compliance.passed,
+            "fidelity_status": fidelity.status,
+            "source_chart_witness": surface_source.chart_witness.witness_id,
+            "source_piece_ancestry_count": len(surface_source.source_piece_ids),
+            "source_piece_ancestry_arity": sorted(
+                {len(piece) for piece in surface_source.source_piece_ids}
+            ),
+        },
+        "field_correctness": {
+            "solve_successful": solve_successful,
+            "normalized_residual": normalized_residual,
+            "solution_norm": solution_norm,
+        },
+        "counts": {
+            "source_cells": surface.mesh.cell_count,
+            "source_t_junctions": surface.mesh.t_junction_count,
+            "source_anchors": len(surface.mesh.anchors),
+            "meshed_vertices": native_result.mesh.entity_set(0).count,
+            "meshed_triangles": native_result.mesh.entity_set(2).count,
+            "iga_cells": target_mesh.cell_count,
+            "iga_t_junctions": target_mesh.t_junction_count,
+            "full_tensor_cells": full_tensor_count,
+        },
+        "logical_retained_array_bytes": _array_bytes(
+            (surface, model, native_result, prepared, finite_element_problem)
+        ),
     }
 
 
@@ -1557,7 +2882,10 @@ def benchmark_boundary_layer(resolution: int) -> dict[str, object]:
     the sampled quality evaluation of every layer cell through one module-level
     entry, which reports lowering, compile, cold, and warm execution.
     """
-    from tools.meshing_qualification import _advancing_layer_control, _layer_box_wall
+    from tools.meshing_qualification.scenarios.providers import (
+        _advancing_layer_control,
+        _layer_box_wall,
+    )
 
     count = max(1, round((resolution / 12) ** 0.5))
     schedule = phx.meshing.LayerSchedule.geometric(3, 0.01, growth_rate=1.2)
@@ -2286,6 +3614,59 @@ def _certification_route(mesh: Any, degree: int, name: str, /) -> Any:
     return stages, compiled, route
 
 
+def benchmark_global_embedding(resolution: int) -> dict[str, object]:
+    """Scale exact global contact certification on a conforming cube lattice."""
+    mesh, mesh_preparation = _timed(lambda: _cube_tetrahedra(resolution))
+    geometry, geometry_preparation = _timed(
+        lambda: phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+    validity, local_validity = _timed(
+        lambda: phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
+    )
+    if not validity.all_certified:
+        raise RuntimeError("Embedding benchmark requires positive source tetrahedra.")
+    certificate, cold = _timed(
+        lambda: phx.geometry.certify_global_embedding(mesh, geometry, validity)
+    )
+    repeated, warm = _timed(
+        lambda: phx.geometry.certify_global_embedding(mesh, geometry, validity)
+    )
+    if (
+        certificate.status != "certified"
+        or repeated.certificate_id != certificate.certificate_id
+    ):
+        raise RuntimeError("Embedding benchmark did not reproduce a certified proof.")
+    return {
+        "resolution": resolution,
+        "counts": {
+            "cells_per_axis": resolution,
+            "cells": mesh.connectivity.cell_count,
+            "vertices": mesh.coordinates.shape[0],
+            "boundary_facets": certificate.boundary_facet_count,
+        },
+        "identity": {
+            "mesh": mesh.mesh_id,
+            "geometry": validity.geometry_id,
+            "validity": validity.certificate_id,
+            "embedding": certificate.certificate_id,
+        },
+        "stages_seconds": {
+            "mesh_preparation": mesh_preparation,
+            "geometry_preparation": geometry_preparation,
+            "local_validity": local_validity,
+            "global_embedding_cold": cold,
+            "global_embedding_warm": warm,
+        },
+        "retained_bytes": {
+            "mesh": _array_bytes(mesh),
+            "geometry": _array_bytes(geometry),
+            "embedding": _array_bytes(certificate),
+        },
+        "compiler": None,
+        "execution": "host-exact; no compiled certification kernel",
+    }
+
+
 def benchmark_high_order_certification(resolution: int) -> dict[str, object]:
     """Bernstein validity certification of P2/P3 tetrahedra and Q2 hexahedra.
 
@@ -2467,15 +3848,100 @@ def benchmark_predicates(resolution: int) -> dict[str, object]:
     }
 
 
+def _installed_version(distribution: str, /) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _missing_gmsh_dependencies() -> tuple[str, ...]:
+    return tuple(
+        dependency for dependency in ("gmsh", "OCP") if find_spec(dependency) is None
+    )
+
+
+def _environment_identity() -> dict[str, object]:
+    from phydrax._meshcore import meshcore_available, meshcore_identity
+
+    available = meshcore_available()
+    devices = [
+        {
+            "platform": device.platform,
+            "kind": str(getattr(device, "device_kind", "")),
+            "id": int(device.id),
+        }
+        for device in jax.devices()
+    ]
+    return {
+        "python": {
+            "version": platform.python_version(),
+            "implementation": platform.python_implementation(),
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+        },
+        "phydrax": {
+            "distribution_version": _installed_version("phydrax"),
+            "module_origin": str(Path(phx.__file__).resolve()),
+        },
+        "packages": {
+            name: _installed_version(name)
+            for name in ("numpy", "jax", "equinox", "gmsh", "cadquery-ocp")
+        },
+        "jax": {
+            "backend": jax.default_backend(),
+            "devices": devices,
+            "x64_enabled": bool(jax.config.read("jax_enable_x64")),
+            "compilation_cache_enabled": bool(jax.config.jax_enable_compilation_cache),
+            "compilation_cache_directory": jax.config.values.get(
+                "jax_compilation_cache_dir"
+            ),
+        },
+        "meshcore": {
+            "available": available,
+            "identity": meshcore_identity() if available else None,
+        },
+    }
+
+
+def _run_case(name: str, resolution: int, repeats: int, /) -> dict[str, object]:
+    jax.clear_caches()
+    if name in {
+        "gmsh-semantic",
+        "gmsh-planar-semantic",
+        "gmsh-planar-band",
+        "gmsh-hybrid-slab",
+    }:
+        missing = _missing_gmsh_dependencies()
+        if missing:
+            return {
+                "scenario": name,
+                "status": "missing_dependency",
+                "resolution": resolution,
+                "repeats": repeats,
+                "missing_dependencies": missing,
+                "native_fallback": False,
+            }
+    return _CASES[name](resolution, repeats)
+
+
 def _repeated_case(
     runner: Any,
     resolution: int,
     repeats: int,
     /,
 ) -> dict[str, object]:
-    samples = [runner(resolution) for _ in range(repeats)]
+    samples = []
+    for _ in range(repeats):
+        jax.clear_caches()
+        samples.append(runner(resolution))
     timing_names = tuple(samples[0]["stages_seconds"])
     return {
+        "status": "passed",
         "resolution": resolution,
         "repeats": repeats,
         "samples": samples,
@@ -2490,13 +3956,21 @@ _CASES = {
     "native-meshing": lambda resolution, repeats: benchmark_native_meshing(
         resolution, repeats
     ),
+    "native-cad-meshing": lambda resolution, repeats: benchmark_native_cad_meshing(
+        resolution, repeats
+    ),
+    "native-brep-plc-refinement": benchmark_native_brep_plc_refinement,
+    "native-tspline-cad-analysis": lambda resolution, repeats: (
+        benchmark_native_tspline_cad_analysis(resolution, repeats)
+    ),
     "gmsh-semantic": _benchmark_gmsh_semantic_case,
+    "optional-gmsh-comparison": benchmark_native_gmsh_comparison,
     "cad-partition": lambda resolution, repeats: _repeated_case(
         benchmark_cad_partition,
         resolution,
         repeats,
     ),
-    "planar-semantic": lambda resolution, repeats: _repeated_case(
+    "gmsh-planar-semantic": lambda resolution, repeats: _repeated_case(
         benchmark_planar_semantic,
         resolution,
         repeats,
@@ -2506,12 +3980,12 @@ _CASES = {
         resolution,
         repeats,
     ),
-    "planar-band": lambda resolution, repeats: _repeated_case(
+    "gmsh-planar-band": lambda resolution, repeats: _repeated_case(
         benchmark_planar_band,
         resolution,
         repeats,
     ),
-    "hybrid-slab": lambda resolution, repeats: _repeated_case(
+    "gmsh-hybrid-slab": lambda resolution, repeats: _repeated_case(
         benchmark_hybrid_slab,
         resolution,
         repeats,
@@ -2582,6 +4056,9 @@ _CASES = {
         resolution,
         repeats,
     ),
+    "global-embedding": lambda resolution, repeats: _repeated_case(
+        benchmark_global_embedding, resolution, repeats
+    ),
     "predicates": lambda resolution, repeats: _repeated_case(
         benchmark_predicates,
         resolution,
@@ -2594,6 +4071,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--resolution", type=int, nargs="+", default=[8, 16])
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--plc-target-size",
+        type=float,
+        help="Explicit volume refinement size for native-brep-plc-refinement.",
+    )
     parser.add_argument(
         "--gmsh-semantic",
         action="store_true",
@@ -2609,17 +4091,59 @@ def main() -> None:
     if args.repeats < 1 or any(value < 1 for value in args.resolution):
         parser.error("resolutions and repeats must be positive")
     selected = ("native-meshing",) if args.case is None else tuple(args.case)
-    output = {
-        name: [_CASES[name](value, args.repeats) for value in args.resolution]
-        for name in selected
+    if args.plc_target_size is not None:
+        if "native-brep-plc-refinement" not in selected:
+            parser.error(
+                "--plc-target-size is only valid with --case native-brep-plc-refinement"
+            )
+        if not np.isfinite(args.plc_target_size) or args.plc_target_size <= 0.0:
+            parser.error("--plc-target-size must be finite and positive")
+    jax.config.update("jax_enable_compilation_cache", False)
+    output: dict[str, object] = {
+        "status": "completed",
+        "environment": _environment_identity(),
+        "cache_policy": {
+            "process_local_jax": "cleared before each case and independent cold sample; retained for labeled warm samples",
+            "persistent_jax": "disabled; lowering and compilation do not reuse persistent compiler artifacts",
+            "prepared_execution": "same immutable native plan or compiled executable reused for warm samples",
+        },
     }
+    for name in selected:
+        if name == "native-brep-plc-refinement":
+            samples = []
+            for value in args.resolution:
+                jax.clear_caches()
+                samples.append(
+                    benchmark_native_brep_plc_refinement(
+                        value, args.repeats, target_size=args.plc_target_size
+                    )
+                )
+            output[name] = samples
+        else:
+            output[name] = [
+                _run_case(name, value, args.repeats) for value in args.resolution
+            ]
     if args.gmsh_semantic:
-        with TemporaryDirectory(prefix="phydrax-gmsh-semantic-benchmark-") as temporary:
-            directory = Path(temporary)
+        missing = _missing_gmsh_dependencies()
+        if missing:
             output["gmsh_semantic"] = [
-                benchmark_gmsh_semantic(value, args.repeats, directory)
+                {
+                    "scenario": "gmsh-semantic",
+                    "status": "missing_dependency",
+                    "resolution": value,
+                    "repeats": args.repeats,
+                    "missing_dependencies": missing,
+                    "native_fallback": False,
+                }
                 for value in (2, 8, 32)
             ]
+        else:
+            output["gmsh_semantic"] = []
+            for value in (2, 8, 32):
+                jax.clear_caches()
+                output["gmsh_semantic"].append(
+                    benchmark_gmsh_semantic(value, args.repeats)
+                )
     print(json.dumps(output, indent=2))
 
 

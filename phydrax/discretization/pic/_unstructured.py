@@ -30,7 +30,8 @@ from ...linalg import (
     TolerancePolicy,
 )
 from ...typing import AnyDim, Bool, checked, Dim, Float, Int32, Scalar
-from .._simplicial_locator import CellLocationResult, PreparedSimplicialCellLocator
+from .._cell_locator import CellLocationResult
+from .._simplicial_locator import PreparedSimplicialCellLocator
 from ..particle import ParticlePopulationState
 from ._charge_state import PICChargeModelPlan, PICChargeState
 from ._method import PIC_CODE_RELATIVITY, RelativisticPushPlan

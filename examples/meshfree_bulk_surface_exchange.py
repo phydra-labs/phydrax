@@ -35,7 +35,7 @@ from phydrax.discretization.meshfree import (
     SurfacePointCloudPlan,
     SurfaceQuadraturePolicy,
 )
-from phydrax.geometry import Ball
+from phydrax.geometry import Ball, CompiledGeometry
 from phydrax.interfacial_transport import AdsorptionKinetics
 from phydrax.metrix import RegularLevelSetManifold
 from phydrax.solver.coupling import (
@@ -130,6 +130,8 @@ def prepare_workflow(
             )
         )
     support = Ball((0.0, 0.0, 0.0), 1.05).compile()
+    if not isinstance(support, CompiledGeometry):
+        raise TypeError("The analytic sphere requires compiled region support.")
     volume = 4 * np.pi / 3
     provisional = PointCloudPlan(
         bulk_points,
@@ -279,8 +281,11 @@ def run_workflow(
         prepared.surface.plan.neighbors,
         quadrature=prepared.surface.plan.quadrature,
     ).prepare()
+    moved_support = prepared.bulk.reconstruction.support_geometry
+    if not isinstance(moved_support, CompiledGeometry):
+        raise TypeError("Moved surface reconstruction requires compiled region support.")
     moved_view = moved_surface.prepare_field_reconstruction(
-        support_geometry=prepared.bulk.reconstruction.support_geometry,
+        support_geometry=moved_support,
     )
     moved_laplace = moved_surface.laplace_beltrami
     moved_operator = SparseCoordinateOperator(

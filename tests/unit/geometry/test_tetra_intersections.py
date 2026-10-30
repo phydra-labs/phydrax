@@ -14,7 +14,6 @@ from phydrax._geometry_predicates import PredicateMode
 from phydrax._meshcore import meshcore_available
 from phydrax.geometry._tetra_intersections import (
     intersect_tetrahedra,
-    TetraIntersectionLimits,
     TetraIntersectionStatus,
     TetraIntersectionTolerance,
 )
@@ -175,20 +174,6 @@ def test_disjoint_and_volume_conservation_bounds(unit_tetrahedron: Any) -> None:
     assert result.volume <= 1.0 / 6.0
 
 
-def test_candidate_and_topology_limits_are_explicit(unit_tetrahedron: Any) -> None:
-    candidate_limited = intersect_tetrahedra(
-        unit_tetrahedron,
-        unit_tetrahedron,
-        limits=TetraIntersectionLimits(max_candidates=3, max_vertices=64, max_faces=16),
-    )
-    topology_limited = intersect_tetrahedra(
-        unit_tetrahedron,
-        unit_tetrahedron,
-        limits=TetraIntersectionLimits(max_candidates=64, max_vertices=3, max_faces=16),
-    )
-
-    assert candidate_limited.status is TetraIntersectionStatus.CANDIDATE_LIMIT
-    assert topology_limited.status is TetraIntersectionStatus.CANDIDATE_LIMIT
 
 
 def test_volume_only_and_repeated_results_are_deterministic(

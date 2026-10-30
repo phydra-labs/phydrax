@@ -7,27 +7,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
-from OCP.BRepBuilderAPI import (
-    BRepBuilderAPI_MakeFace,
-    BRepBuilderAPI_MakePolygon,
-)
-from OCP.BRepCheck import BRepCheck_Analyzer
-from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCP.gp import gp_Pnt, gp_Vec
-
-
-if TYPE_CHECKING:
-    from OCP.TopoDS import TopoDS_Shape, TopoDS_Wire
 
 from ..._fingerprint import canonical_fingerprint
 from .._cad_revision import AssociationGraph, CADRevision
-from ..brep._model import BRepEntityId, BRepModel
-from ..brep._occt import persist_occt_shape
-from ..brep._partition import (
+from ..brep import (
+    BRepEntityId,
+    BRepModel,
     BRepPartitionOperand,
     BRepPartitionPatch,
     BRepPartitionPlan,
@@ -38,13 +25,20 @@ from ..brep._partition import (
     BRepPartitionRole,
     partition_brep,
 )
+from ..brep._constructors import (
+    brep_extrusion,
+    BRepTessellationPolicy,
+    PlanarProfile,
+    ProfileLoop,
+    ProfilePlane,
+)
 from ..simplicial import PlanarMeshRegion
 from ._stack import ProcessStack, ZInterval
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessStackResult:
-    """Persisted operands and authoritative final CAD partition history."""
+    """In-memory operands and authoritative final CAD partition history."""
 
     stack: ProcessStack
     partition: BRepPartitionResult
@@ -69,8 +63,10 @@ class ProcessStackResult:
             model.coordinate_contract.spatial_id != spatial_id for _, model in operands
         ):
             raise ValueError(
-                "Every persisted operand must use the stack coordinate contract."
+                "Every in-memory operand must use the stack coordinate contract."
             )
+        if self.partition.topological_dimension != 3:
+            raise ValueError("Process stack lowering must produce a 3D partition.")
         if self.partition.model.coordinate_contract.spatial_id != spatial_id:
             raise ValueError(
                 "The partition model must use the stack coordinate contract."
@@ -170,140 +166,80 @@ def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
     return tuple(loops)
 
 
-def _wire(points: np.ndarray, z: float, /) -> TopoDS_Wire:
-    builder = BRepBuilderAPI_MakePolygon()
-    for x, y in points:
-        builder.Add(gp_Pnt(float(x), float(y), z))
-    builder.Close()
-    if not builder.IsDone():
-        raise ValueError("OCCT could not construct a process footprint wire.")
-    return builder.Wire()
-
-
-def _vertical_extrusion(
-    footprint: PlanarMeshRegion, interval: ZInterval, /
-) -> TopoDS_Shape:
-    loops = _footprint_loops(footprint)
-    face_builder = BRepBuilderAPI_MakeFace(_wire(loops[0], interval.lower), True)
-    for hole in loops[1:]:
-        face_builder.Add(_wire(hole, interval.lower))
-    if not face_builder.IsDone():
-        raise ValueError("OCCT could not construct a process footprint face.")
-    prism = BRepPrimAPI_MakePrism(
-        face_builder.Face(),
-        gp_Vec(0.0, 0.0, interval.height),
-        True,
-    )
-    if not prism.IsDone():
-        raise ValueError("OCCT could not construct a vertical process extrusion.")
-    shape = prism.Shape()
-    if shape.IsNull() or not BRepCheck_Analyzer(shape).IsValid():
-        raise ValueError("Vertical process extrusion is not a valid OCCT solid.")
-    return shape
-
-
-def _persist_operand(
+def _in_memory_operand(
     operand_id: str,
-    fingerprint: str,
     footprint: PlanarMeshRegion,
     interval: ZInterval,
     stack: ProcessStack,
-    directory: Path,
-    index: int,
-    *,
-    overwrite: bool,
-    linear_deflection: float,
-    angular_deflection: float,
-    trim_samples_per_edge: int,
-) -> tuple[str, BRepModel]:
-    destination = directory / f"{index:04d}-{fingerprint[:16]}.brep"
-    model = persist_occt_shape(
-        _vertical_extrusion(footprint, interval),
-        destination,
+    tessellation: BRepTessellationPolicy,
+    /,
+) -> BRepModel:
+    loops = tuple(ProfileLoop.polygon(points) for points in _footprint_loops(footprint))
+    profile = PlanarProfile(
+        ProfilePlane((0.0, 0.0, interval.lower)),
+        loops[0],
+        holes=loops[1:],
+    )
+    model = brep_extrusion(
+        profile,
+        (0.0, 0.0, interval.height),
         coordinate_contract=stack.coordinate_contract,
-        overwrite=overwrite,
-        linear_deflection=linear_deflection,
-        angular_deflection=angular_deflection,
-        trim_samples_per_edge=trim_samples_per_edge,
+        tessellation=tessellation,
+        source_id=f"process-stack:{stack.stack_id}:{operand_id}",
     )
     if model.topology.num_solids != 1:
-        raise RuntimeError("A persisted process operand must contain exactly one solid.")
-    return operand_id, model
+        raise ValueError("A process stack operand must construct exactly one solid.")
+    return model
 
 
 def lower_process_stack(
     stack: ProcessStack,
-    destination: str | Path,
     /,
     *,
-    operand_directory: str | Path | None = None,
-    overwrite: bool = False,
-    run_parallel: bool = False,
     linear_deflection: float = 1e-3,
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> ProcessStackResult:
-    """Persist exact extrusions, partition them, and return exact named CAD history."""
+    """Construct process operands and partition them without persisting files."""
 
     if not isinstance(stack, ProcessStack):
         raise TypeError("stack must be a ProcessStack.")
-    if not isinstance(overwrite, bool) or not isinstance(run_parallel, bool):
-        raise TypeError("overwrite and run_parallel must be boolean.")
-    target = Path(destination).expanduser().resolve()
-    if target.suffix.lower() not in {".brep", ".brp"}:
-        raise ValueError("A process stack destination requires a .brep or .brp suffix.")
-    if target.exists() and not overwrite:
-        raise FileExistsError(target)
-    operand_root = (
-        target.parent / f".{target.stem}-operands"
-        if operand_directory is None
-        else Path(operand_directory).expanduser().resolve()
+    tessellation = BRepTessellationPolicy(
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
+        trim_samples_per_edge=trim_samples_per_edge,
     )
-    if operand_root == target:
-        raise ValueError("operand_directory must differ from the result destination.")
 
-    persisted: list[tuple[str, BRepModel]] = []
+    operands: list[tuple[str, BRepModel]] = []
     partition_operands: list[BRepPartitionOperand] = []
-    for index, region in enumerate(stack.regions):
-        operand_id, model = _persist_operand(
+    for region in stack.regions:
+        model = _in_memory_operand(
             region.region_id,
-            region.stack_region_id,
             region.footprint,
             region.z_interval,
             stack,
-            operand_root,
-            index,
-            overwrite=overwrite,
-            linear_deflection=linear_deflection,
-            angular_deflection=angular_deflection,
-            trim_samples_per_edge=trim_samples_per_edge,
+            tessellation,
         )
-        persisted.append((operand_id, model))
+        operands.append((region.region_id, model))
         partition_operands.append(
             BRepPartitionOperand(
-                operand_id,
+                region.region_id,
                 model,
                 BRepPartitionRole.REGION,
             )
         )
-    for void_index, void in enumerate(stack.voids, start=len(stack.regions)):
-        operand_id, model = _persist_operand(
+    for void in stack.voids:
+        model = _in_memory_operand(
             void.void_id,
-            void.stack_void_id,
             void.footprint,
             void.z_interval,
             stack,
-            operand_root,
-            void_index,
-            overwrite=overwrite,
-            linear_deflection=linear_deflection,
-            angular_deflection=angular_deflection,
-            trim_samples_per_edge=trim_samples_per_edge,
+            tessellation,
         )
-        persisted.append((operand_id, model))
+        operands.append((void.void_id, model))
         partition_operands.append(
             BRepPartitionOperand(
-                operand_id,
+                void.void_id,
                 model,
                 BRepPartitionRole.VOID,
                 target_region_ids=void.target_region_ids,
@@ -315,18 +251,10 @@ def lower_process_stack(
         tuple(partition_operands),
         BRepPartitionPolicy(
             stack.region_precedence,
-            overwrite=overwrite,
-            run_parallel=run_parallel,
         ),
     )
-    result = partition_brep(
-        plan,
-        destination=target,
-        linear_deflection=linear_deflection,
-        angular_deflection=angular_deflection,
-        trim_samples_per_edge=trim_samples_per_edge,
-    )
-    return ProcessStackResult(stack, result, tuple(persisted))
+    result = partition_brep(plan, tessellation=tessellation)
+    return ProcessStackResult(stack, result, tuple(operands))
 
 
 __all__ = ["ProcessStackResult", "lower_process_stack"]

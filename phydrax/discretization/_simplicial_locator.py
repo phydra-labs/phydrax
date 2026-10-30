@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import abc
-from enum import IntEnum
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -13,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.core import Tracer
 
 from phydrax.ein import contract
 
@@ -21,22 +19,18 @@ from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_b
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import Bool, checked, Dim, Float, Int32, Integer
+from ..typing import Bool, checked, ConvertibleToArray, Dim, Float, Int32, Integer
 from ._cell_geometry_validity import _bernstein_plan
+from ._cell_locator import (
+    AbstractCellLocator,
+    CellLocationResult,
+    CellLocationStatus,
+)
 from .fem._cell_map import PreparedFiniteElementCellMap
 
 
 # (reference points, converged, first converged iteration, ever-valid geometry)
 _NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
-
-
-class CellLocationStatus(IntEnum):
-    LOCATED = 0
-    OUTSIDE = 1
-    DEGENERATE_CELL = 2
-    NONFINITE = 3
-    RESOURCE_EXCEEDED = 4
-    INVERSE_MAP_EXHAUSTED = 5
 
 
 @final
@@ -86,33 +80,6 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
         )
 
 
-@final
-class CellLocationResult(StrictModule):
-    """Located cell, reference coordinates, and every containing candidate.
-
-    `cell_ids` is the lowest-index containing cell (`-1` when none).
-    `candidate_cells` lists each bounded candidate cell that contains the point
-    (`-1` otherwise) with its `candidate_reference` coordinates, so consumers
-    resolving non-smooth loci see every containing cell rather than one.
-    `candidate_count` is the number of containing candidates.
-    """
-
-    cell_ids: Array
-    reference_coordinates: Array
-    barycentric: Array
-    geometry_residual: Array
-    iterations: Array
-    jacobian_condition: Array
-    inside: Array
-    used_fallback: Array
-    candidate_count: Array
-    status: Array
-    successful: Array
-    candidate_cells: Array
-    candidate_reference: Array
-    locator_id: str = eqx.field(static=True)
-
-
 class SegmentPointDim(Dim):
     """Independently traversed trajectories."""
 
@@ -145,26 +112,6 @@ class SegmentLocationResult(StrictModule):
     overflow: Bool[SegmentPointDim]
     tied: Bool[SegmentPointDim, SegmentSlotDim]
     locator_id: str = eqx.field(static=True)
-
-
-class AbstractCellLocator(StrictModule):
-    """Inverse cell map of one prepared FE cell block.
-
-    `locate(points, cell_mask=None)` returns a `CellLocationResult` whose
-    candidates are restricted to cells where `cell_mask` is true. Simplicial
-    blocks use `PreparedSimplicialCellLocator`; other cell kinds require an
-    explicit implementation with the same result contract.
-    """
-
-    cell_map: eqx.AbstractVar[PreparedFiniteElementCellMap]
-    coordinates: eqx.AbstractVar[Array]
-    locator_id: eqx.AbstractVar[str]
-
-    @abc.abstractmethod
-    def locate(
-        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
-    ) -> CellLocationResult:
-        raise NotImplementedError
 
 
 def _certified_cell_bounds(
@@ -228,7 +175,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     def __init__(
         self,
         cell_map: PreparedFiniteElementCellMap,
-        coordinates: ArrayLike,
+        coordinates: ConvertibleToArray,
         policy: SimplicialLocationPolicy,
         /,
     ) -> None:
@@ -284,7 +231,11 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         return self.cell_map.coordinate_count
 
     def locate(
-        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+        self,
+        points: ConvertibleToArray,
+        /,
+        *,
+        cell_mask: ConvertibleToArray | None = None,
     ) -> CellLocationResult:
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
@@ -297,12 +248,22 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 )
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
-        candidates, candidate_valid, search_complete = point_select_leaf_items(
-            values,
-            bvh=self.bvh,
-            maximum_candidates=candidate_capacity,
-            tolerance=self.policy.reference_tolerance,
-        )
+        while True:
+            candidates, candidate_valid, search_complete = point_select_leaf_items(
+                values,
+                bvh=self.bvh,
+                maximum_candidates=candidate_capacity,
+                tolerance=self.policy.reference_tolerance,
+            )
+            if isinstance(values, Tracer) or bool(np.all(np.asarray(search_complete))):
+                break
+            if candidate_capacity == self.cell_count:
+                raise RuntimeError(
+                    "Complete BVH candidate search failed at full cell capacity."
+                )
+            candidate_capacity = min(
+                self.cell_count, max(candidate_capacity + 1, 2 * candidate_capacity)
+            )
         if cell_mask is not None:
             candidate_valid = (
                 candidate_valid & mask[jnp.where(candidate_valid, candidates, 0)]
@@ -430,7 +391,17 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         candidate_choice = flat_choice // seed_count
         seed_choice = flat_choice % seed_count
         rows = jnp.arange(point_count)
-        inside = jnp.any(accepted, axis=(1, 2)) & search_complete
+        converged_valid = converged.reshape(
+            (point_count, candidate_capacity, seed_count)
+        ) & (evaluation.valid & flat_candidate_valid).reshape(
+            (point_count, candidate_capacity, seed_count)
+        )
+        has_containing_candidate = jnp.any(accepted, axis=(1, 2))
+        candidate_inverse_resolved = jnp.any(converged_valid, axis=2)
+        candidates_complete = search_complete & jnp.all(
+            ~candidate_valid | candidate_inverse_resolved, axis=1
+        )
+        inside = has_containing_candidate & candidates_complete
         cell_ids = jnp.where(inside, candidates[rows, candidate_choice], -1)
         reference_result = reference_all[rows, candidate_choice, seed_choice]
         residual_result = residual_all[rows, candidate_choice, seed_choice]
@@ -446,25 +417,24 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             reference_all, candidate_seed[:, :, None, None], axis=2
         )[:, :, 0, :]
         candidate_cells = jnp.where(candidate_accepted, candidates, -1)
-        converged_valid = converged.reshape(
-            (point_count, candidate_capacity, seed_count)
-        ) & (evaluation.valid & flat_candidate_valid).reshape(
-            (point_count, candidate_capacity, seed_count)
-        )
         any_valid_geometry = jnp.any(
             ever_valid_geometry.reshape((point_count, candidate_capacity, seed_count)),
             axis=(1, 2),
         )
         has_candidates = jnp.any(candidate_valid, axis=1)
         outside_domain = (
-            (~inside)
-            & search_complete
+            (~has_containing_candidate)
+            & candidates_complete
             & ((~has_candidates) | jnp.any(converged_valid, axis=(1, 2)))
         )
         finite = jnp.all(jnp.isfinite(values), axis=-1)
-        candidate_exhausted = (~inside) & ~search_complete
+        candidate_exhausted = ~search_complete
         degenerate = (
-            (~inside) & has_candidates & ~any_valid_geometry & finite & search_complete
+            (~has_containing_candidate)
+            & has_candidates
+            & ~any_valid_geometry
+            & finite
+            & search_complete
         )
         status = jnp.where(
             ~finite,
@@ -480,7 +450,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                         int(CellLocationStatus.DEGENERATE_CELL),
                         jnp.where(
                             candidate_exhausted,
-                            int(CellLocationStatus.RESOURCE_EXCEEDED),
+                            int(CellLocationStatus.CANDIDATE_SEARCH_INCOMPLETE),
                             int(CellLocationStatus.INVERSE_MAP_EXHAUSTED),
                         ),
                     ),
@@ -501,6 +471,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             inside & finite,
             candidate_cells,
             jnp.where(candidate_accepted[:, :, None], candidate_reference, 0.0),
+            candidates_complete,
             self.locator_id,
         )
 
@@ -526,7 +497,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         """Return the single owning barycentric-gradient table, cell/local/ambient."""
         return self._affine_geometry()[1]
 
-    def affine_barycentric(self, points: ArrayLike, /) -> Array:
+    def affine_barycentric(self, points: ConvertibleToArray, /) -> Array:
         """Evaluate all affine cells, with shape (point, cell, local vertex)."""
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
@@ -537,8 +508,8 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
 
     def locate_segment(
         self,
-        start: ArrayLike,
-        end: ArrayLike,
+        start: ConvertibleToArray,
+        end: ConvertibleToArray,
         /,
         *,
         maximum_segments: int | None = None,

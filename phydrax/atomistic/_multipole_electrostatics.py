@@ -626,7 +626,6 @@ class ExplicitImagePairs(AbstractMultipolePairs):
         cell: PeriodicCell | None = None,
         cutoff: float | None = None,
         row_block: int = 32,
-        maximum_image_count: int = 4096,
         maximum_workspace_bytes: int = 1 << 28,
     ) -> None:
         capacity = _positive_int(site_capacity, "site_capacity")
@@ -638,11 +637,7 @@ class ExplicitImagePairs(AbstractMultipolePairs):
             if cutoff is None:
                 raise ValueError("A periodic explicit-image relation requires a cutoff.")
             stencil = cell.image_stencil(
-                _finite_positive(cutoff, "cutoff"),
-                maximum_image_count=_positive_int(
-                    maximum_image_count, "maximum_image_count"
-                ),
-                fractional_excursion=1.0,
+                _finite_positive(cutoff, "cutoff"), fractional_excursion=1.0
             )
         elif cutoff is not None:
             raise ValueError("A nonperiodic all-pairs relation is complete; omit cutoff.")
@@ -1367,7 +1362,6 @@ class _PeriodicRouteSettings(StrictModule, NonTrainableState):
     real_space: MultipoleRealSpace = eqx.field(static=True)
     reciprocal_cutoff: float | None = eqx.field(static=True)
     row_block: int = eqx.field(static=True)
-    maximum_image_count: int = eqx.field(static=True)
     maximum_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
@@ -1379,7 +1373,6 @@ class _PeriodicRouteSettings(StrictModule, NonTrainableState):
         real_space: MultipoleRealSpace,
         reciprocal_cutoff: float | None,
         row_block: int,
-        maximum_image_count: int,
         maximum_workspace_bytes: int,
     ) -> None:
         self.alpha = _finite_positive(alpha, "alpha")
@@ -1391,9 +1384,6 @@ class _PeriodicRouteSettings(StrictModule, NonTrainableState):
             else _finite_positive(reciprocal_cutoff, "reciprocal_cutoff")
         )
         self.row_block = _positive_int(row_block, "row_block")
-        self.maximum_image_count = _positive_int(
-            maximum_image_count, "maximum_image_count"
-        )
         self.maximum_workspace_bytes = _positive_int(
             maximum_workspace_bytes, "maximum_workspace_bytes"
         )
@@ -1407,7 +1397,6 @@ class _PeriodicRouteSettings(StrictModule, NonTrainableState):
             if self.reciprocal_cutoff is None
             else float(self.reciprocal_cutoff).hex(),
             "row_block": self.row_block,
-            "maximum_image_count": self.maximum_image_count,
             "maximum_workspace_bytes": self.maximum_workspace_bytes,
         }
 
@@ -1429,7 +1418,6 @@ class EwaldMultipoleRoute(StrictModule, NonTrainableState):
         real_space: MultipoleRealSpace = "explicit-image-reference",
         reciprocal_cutoff: float | None = None,
         row_block: int = 32,
-        maximum_image_count: int = 4096,
         maximum_workspace_bytes: int = 1 << 28,
     ) -> None:
         if not isinstance(modes, ReciprocalModeSetPlan):
@@ -1444,7 +1432,6 @@ class EwaldMultipoleRoute(StrictModule, NonTrainableState):
             real_space=real_space,
             reciprocal_cutoff=reciprocal_cutoff,
             row_block=row_block,
-            maximum_image_count=maximum_image_count,
             maximum_workspace_bytes=maximum_workspace_bytes,
         )
         self.modes = modes
@@ -1479,7 +1466,6 @@ class ParticleMeshMultipoleRoute(StrictModule, NonTrainableState):
         real_space: MultipoleRealSpace = "explicit-image-reference",
         reciprocal_cutoff: float | None = None,
         row_block: int = 32,
-        maximum_image_count: int = 4096,
         maximum_workspace_bytes: int = 1 << 28,
     ) -> None:
         if not isinstance(mesh, ReciprocalMeshPlan):
@@ -1490,7 +1476,6 @@ class ParticleMeshMultipoleRoute(StrictModule, NonTrainableState):
             real_space=real_space,
             reciprocal_cutoff=reciprocal_cutoff,
             row_block=row_block,
-            maximum_image_count=maximum_image_count,
             maximum_workspace_bytes=maximum_workspace_bytes,
         )
         self.mesh = mesh
@@ -1699,7 +1684,6 @@ class PreparedMultipoleElectrostatics(StrictModule, NonTrainableState):
                     cell=cell,
                     cutoff=settings.real_cutoff,
                     row_block=settings.row_block,
-                    maximum_image_count=settings.maximum_image_count,
                     maximum_workspace_bytes=settings.maximum_workspace_bytes,
                 )
         self.plan = plan

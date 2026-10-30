@@ -20,7 +20,7 @@ from ._basis import TensorSplineBasisSpec
 
 
 class NURBSGeometryState(StrictModule):
-    """Differentiable NURBS values with a unique mean-one positive weight gauge."""
+    """Differentiable NURBS values with authored positive weights preserved."""
 
     control_points: Array
     weights: Array
@@ -53,9 +53,8 @@ class NURBSGeometryState(StrictModule):
             jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
             "NURBS weights must be finite and strictly positive.",
         )
-        gauge = jnp.mean(weights_)
         self.control_points = points
-        self.weights = weights_ / gauge
+        self.weights = weights_
 
     @property
     def ambient_dimension(self) -> int:

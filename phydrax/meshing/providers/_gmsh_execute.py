@@ -69,6 +69,7 @@ from ._gmsh_import import (
     _CadImportCache,
     _resolve_cad_entity_map,
     _resolve_planar_cad_entity_map,
+    _source_entity_ids,
     _source_scale,
 )
 from ._gmsh_layers import (
@@ -98,7 +99,6 @@ from ._gmsh_sizing import (
 class _Generation:
     """Gmsh model state installed before mesh generation."""
 
-    shape: object
     dimension: int
     geometry_order: int
     semantic_volume: bool
@@ -175,16 +175,8 @@ def _prepare_generation(
 ) -> _Generation:
     source = plan.source
     specification = plan.specification
-    report = source.report
     entry = cache.acquire(source)
     shape = entry.shape
-    limits = specification.limits
-    if report.num_faces + report.num_edges + report.num_vertices > limits.maximum_faces:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "BRep entity count exceeds the meshing limit.",
-            stage=MeshingStageKind.SOURCE_INSPECTION.value,
-        )
     _, target, _, _ = _size_values(specification)
     dimension = specification.target.topological_dimension
     semantic_volume = isinstance(specification, VolumeMeshingSpec) and bool(
@@ -202,22 +194,39 @@ def _prepare_generation(
         *family_policy.preferred,
         *family_policy.allowed_transitions,
     }
+    needs_source_map = bool(
+        semantic_volume
+        or semantic_surface
+        or specification.size_controls
+        or specification.protected_features
+        or specification.periodic_constraints
+        or specification.layer_controls
+        or plan.planar_bands is not None
+    )
     _configure_options(gmsh, plan, background, requested_kinds)
-    cache.import_shapes(gmsh, entry)
-    if semantic_volume:
-        cad_entities = cache.entity_map(
-            entry, "volume", lambda: _resolve_cad_entity_map(gmsh, source, shape)
-        )
-    elif semantic_surface:
-        cad_entities = cache.entity_map(
-            entry, "planar", lambda: _resolve_planar_cad_entity_map(gmsh, source, shape)
-        )
+    cache.import_shapes(gmsh, entry, source, needs_source_map)
+    if needs_source_map:
+        if source.topology.num_solids:
+            cad_entities = cache.entity_map(
+                entry,
+                "volume",
+                lambda: _resolve_cad_entity_map(
+                    gmsh, source, shape, entry.source_tag_entities
+                ),
+            )
+        else:
+            cad_entities = cache.entity_map(
+                entry,
+                "planar",
+                lambda: _resolve_planar_cad_entity_map(
+                    gmsh, source, entry.source_tag_entities
+                ),
+            )
     else:
         cad_entities = None
     protected = _apply_protected_features(
         gmsh,
         source,
-        shape,
         specification,
         not (
             semantic_volume
@@ -228,18 +237,18 @@ def _prepare_generation(
                 and specification.layer_controls
             )
         ),
+        cad_entities=cad_entities,
     )
     size_fields = _apply_size_fields(
         gmsh,
         source,
-        shape,
         specification,
         cad_entities,
         1.0e22 if target is None else target,
         background,
     )
     sweep = (
-        _prepare_swept_geometry(gmsh, plan, shape, cad_entities)
+        _prepare_swept_geometry(gmsh, plan, cad_entities)
         if isinstance(specification, VolumeMeshingSpec)
         else None
     )
@@ -254,11 +263,10 @@ def _prepare_generation(
         target,
     )
     layer_field = _apply_boundary_layer_field(
-        gmsh, specification, cad_entities, requested_kinds
+        gmsh, source, specification, cad_entities, requested_kinds
     )
-    periodic_records = _set_periodic(gmsh, plan, shape)
+    periodic_records = _set_periodic(gmsh, plan, cad_entities=cad_entities)
     return _Generation(
-        shape,
         dimension,
         specification.target.geometry_order,
         semantic_volume,
@@ -276,18 +284,12 @@ def _prepare_generation(
 
 
 def _generate(gmsh: Any, plan: Any, generation: _Generation, /) -> None:
-    limits = plan.specification.limits
     top_entities = sorted(gmsh.model.getEntities(generation.dimension))
     if not top_entities:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
             "BRep source has no requested top-dimensional entities.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
-        )
-    if len(gmsh.model.getEntities()) > limits.maximum_faces:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Imported Gmsh entities exceed the declared limit.",
         )
     point_entities = gmsh.model.getEntities(0)
     if point_entities and generation.target is not None:
@@ -319,24 +321,13 @@ class _Extraction:
 
 
 def _extract(gmsh: Any, plan: Any, generation: _Generation, /) -> _Extraction:
-    limits = plan.specification.limits
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
     order = np.argsort(node_tags, kind="stable")
     node_tags = node_tags[order]
     points = np.asarray(node_coordinates, dtype=np.float64).reshape((-1, 3))[order]
-    if points.shape[0] > limits.maximum_vertices:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_vertices.",
-        )
     top = _element_rows(gmsh, generation.dimension, generation.geometry_order)
     cell_count = sum(rows.tags.size for rows in top)
-    if cell_count > limits.maximum_cells:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_cells.",
-        )
     native = _native_quality(gmsh, top)
     periodic = _audit_periodic(gmsh, generation.periodic_records, node_tags, points)
     layer_audit = _audit_layers(generation.sweep, top, node_tags, points)
@@ -466,7 +457,7 @@ def _canonical_mesh(
         mesh_points,
         tuple(blocks),
         vertex_global_ids=vertex_ids,
-        numeric_version=plan.source.report.source_revision,
+        numeric_version=plan.source.source_revision,
     )
     boundary_rows = (
         _element_rows(gmsh, 2, generation.geometry_order)
@@ -520,7 +511,7 @@ def _boundary_surface(
     )
     boundary_metadata = SurfaceMetadata(
         source_id=report.source_id,
-        source_revision=report.source_revision,
+        source_revision=plan.source.source_revision,
         coordinate_contract=plan.source.coordinate_contract,
         provenance=("gmsh-occ", plan.plan_id),
         cell_tags=("gmsh-occ-surface",) * boundary_triangles.shape[0],
@@ -531,7 +522,7 @@ def _boundary_surface(
         boundary_metadata,
         vertex_global_ids=canonical.vertex_ids,
         cell_global_ids=np.arange(boundary_triangles.shape[0], dtype=np.int64),
-        numeric_version=report.source_revision,
+        numeric_version=plan.source.source_revision,
         repair_orientation=True,
         orient_closed_outward=generation.dimension == 3,
     )
@@ -626,12 +617,10 @@ def _organize(
         cell_association = GeometryAssociation(
             GeometryAssociationKind.BREP,
             report.source_id,
-            report.source_revision,
+            plan.source.source_revision,
             cell_entity_set.entity_set_id,
             cell_entity_set.entity_ids,
-            tuple(
-                f"{report.source_revision}:solid:{int(owner)}" for owner in cell_solid_ids
-            ),
+            _source_entity_ids(plan.source, 3, cell_solid_ids),
             np.zeros((cell_solid_ids.size,), dtype=np.float64),
             exact=True,
             source_dimensions=np.full((cell_solid_ids.size,), 3, dtype=np.int8),
@@ -726,6 +715,7 @@ def _mesh_edges(mesh: CellMesh, /) -> np.ndarray:
 
 def _size_compliance(
     specification: Any,
+    source: Any,
     mesh: CellMesh,
     organization: _Organization,
     connectivity_edges: np.ndarray,
@@ -770,6 +760,7 @@ def _size_compliance(
             specification,
             # ty: ignore[invalid-argument-type]
             organization.cell_solid_ids,
+            source,
         )
         issues.extend(size_issues)
         requested.extend(local_requested)
@@ -847,6 +838,7 @@ def _size_compliance(
 
 def _audit_gmsh_mesh(
     specification: Any,
+    source: Any,
     specification_id: str,
     geometry: Any,
     organization: _Organization,
@@ -906,6 +898,7 @@ def _audit_gmsh_mesh(
         compliance_issues.append("cell_family")
     size = _size_compliance(
         specification,
+        source,
         mesh,
         organization,
         connectivity_edges,
@@ -950,7 +943,6 @@ def _stages(
     /,
 ) -> tuple[MeshingStageReport, ...]:
     specification = plan.specification
-    report = plan.source.report
     mesh = organization.mesh
     options = plan.options
     semantic_control_ids = (
@@ -974,7 +966,7 @@ def _stages(
         MeshingStageReport(
             MeshingStageKind.SOURCE_INSPECTION,
             MeshingStageStatus.PASSED,
-            input_ids=(report.source_revision,),
+            input_ids=(plan.source.source_revision,),
             output_ids=(plan.support.source_descriptor_id,),
         ),
         MeshingStageReport(
@@ -1146,8 +1138,9 @@ def _execute_brep(
         if size_fields.proximity or size_fields.background is not None
         else np.empty((0, 2), dtype=np.int32)
     )
+    tessellation = source.require_tessellation()
     metric_tolerance = (
-        report.linear_deflection * plan.options.association_tolerance_factor
+        tessellation.linear_deflection * plan.options.association_tolerance_factor
     )
     sections = (
         extraction.periodic,
@@ -1189,6 +1182,7 @@ def _execute_brep(
     )
     audit, compliance = _audit_gmsh_mesh(
         specification,
+        plan.source,
         specification.specification_id,
         geometry,
         organization,
@@ -1222,13 +1216,11 @@ def _execute_brep(
         version,
         MeshingExecutionMode.IN_PROCESS,
         deterministic=plan.options.num_threads == 1,
-        enforced_limits=("entities", "vertices", "cells"),
-        unenforced_limits=("provider_workspace", "converted_arrays", "wall_time"),
     )
     provenance = SemanticProvenance(
         {
             "kind": "gmsh-cell-meshing-result",
-            "source_revision": report.source_revision,
+            "source_revision": plan.source.source_revision,
             "plan": plan.plan_id,
             "mesh": mesh.mesh_id,
             "associations": tuple(
@@ -1256,4 +1248,5 @@ def _execute_brep(
         zones=organization.zones,
         attributes=organization.attributes,
         associations=organization.associations,
+        planar_embedding=embedding,
     )

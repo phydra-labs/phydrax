@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._external_runtime import NativeWorkerPolicy
 from phydrax.meshing import (
     MmgLagrangianMode,
     MmgLagrangianMotion,
@@ -342,21 +343,15 @@ def test_mmg_reuses_one_worker_session_across_adaptations() -> None:
 
 
 @requires_worker
-def test_mmg_timeout_refuses_and_relaunches_a_fresh_session() -> None:
+def test_mmg_timeout_is_enforced_by_worker_policy() -> None:
     source = phx.meshing.certify_cell_mesh(_mesh(*_grid(3, 2)), CONTRACT)
-    with MmgProvider() as provider:
+    with MmgProvider(
+        policy=NativeWorkerPolicy(operation_timeout_seconds=0.2)
+    ) as provider:
         with pytest.raises(Failure) as caught:
-            provider.adapt(
-                source,
-                metric=_uniform_metric(provider, source.mesh, 0.01),
-                limits=phx.meshing.MeshingLimits(maximum_wall_seconds=0.2),
-            )
+            provider.adapt(source, metric=_uniform_metric(provider, source.mesh, 0.01))
         assert caught.value.category is Category.TIMED_OUT
-        result = provider.adapt(
-            source, metric=_uniform_metric(provider, source.mesh, 0.4)
-        )
-        assert provider.worker.launches == 2
-    assert result.session.sequence == 1
+        assert provider.worker.launches == 1
 
 
 @requires_worker

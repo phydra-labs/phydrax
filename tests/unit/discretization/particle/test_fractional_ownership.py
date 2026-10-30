@@ -37,7 +37,7 @@ def test_alias_mask_reaches_every_receiver_owner_within_radius(
     cell = PeriodicCell(vectors, periodic_axes=periodic)
     partition = FractionalOwnerPartition(cell, counts)
     radius = 2.7
-    stencil = cell.image_stencil(radius, maximum_image_count=4096)
+    stencil = cell.image_stencil(radius)
     rng = np.random.default_rng(1)
     fractional = rng.uniform(0.0, 1.0, (24, 3))
     open_axes = ~np.asarray(periodic)

@@ -41,7 +41,6 @@ from ..._trainable import NonTrainableState
 from ..._validation import (
     canonical_identifier,
     nonnegative_integer,
-    positive_finite_float,
     unique_identifiers,
 )
 from ...typing import checked, Dim, HostInt64, Identifier, parse, Scope
@@ -76,10 +75,8 @@ class LabelFieldSurfaceExtractionStatus(IntEnum):
 
     ACCEPTED = 0
     NO_INTERFACE = 1
-    AMBIGUITY_CAPACITY_EXCEEDED = 2
-    CAPACITY_EXCEEDED = 3
-    UNSUPPORTED_VALENCE = 4
-    VALIDATION_FAILED = 5
+    UNSUPPORTED_VALENCE = 2
+    VALIDATION_FAILED = 3
 
 
 @final
@@ -171,14 +168,12 @@ class LabelFieldSurfaceLineage(StrictModule, NonTrainableState):
 
 @final
 class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
-    """Resource, ambiguity, geometry-error and validation evidence.
+    """Geometric and validation evidence for categorical image extraction.
 
-    ``source_*`` geometry is the independent axis-aligned voxel estimator of the
-    hard label field. ``extracted_*`` geometry is measured from the
-    junction-conforming marching-tetrahedra surface. Relative errors use
-    ``|a-b| / max(|a|, |b|)`` and therefore remain defined when deterministic
-    tetrahedral ambiguity resolution introduces a pair that had only diagonal
-    voxel contact.
+    Source measures use the complete image index-to-world affine; extracted
+    measures come from the junction-conforming tetrahedral interface. Relative
+    errors use ``|a-b| / max(|a|, |b|)`` and remain defined when deterministic
+    tetrahedralization introduces a pair that touched only diagonally.
     """
 
     __strict_contract__ = True
@@ -188,7 +183,6 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
     route: LabelFieldSurfaceExtractionRoute = eqx.field(static=True)
     ambiguous_cell_count: int = eqx.field(static=True)
     multi_label_tetrahedron_count: int = eqx.field(static=True)
-    ambiguity_capacity: int = eqx.field(static=True)
     ambiguity_resolved: bool = eqx.field(static=True)
     maximum_edge_valence: int = eqx.field(static=True)
     maximum_vertex_region_pairs: int = eqx.field(static=True)
@@ -214,7 +208,6 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
         route: LabelFieldSurfaceExtractionRoute,
         ambiguous_cell_count: int,
         multi_label_tetrahedron_count: int,
-        ambiguity_capacity: int,
         maximum_edge_valence: int,
         maximum_vertex_region_pairs: int,
         unsupported_edge_count: int,
@@ -243,17 +236,14 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
             and validation.self_intersection_checked
             and validation.intersecting_pair_count == 0
             and validation.uncertain_pair_count == 0
-            and not validation.candidate_capacity_exceeded
         )
         self.status = status
         self.accepted = accepted
         self.route = route_
         self.ambiguous_cell_count = ambiguous_cell_count
         self.multi_label_tetrahedron_count = multi_label_tetrahedron_count
-        self.ambiguity_capacity = ambiguity_capacity
         self.ambiguity_resolved = (
-            ambiguous_cell_count <= ambiguity_capacity
-            and status is not LabelFieldSurfaceExtractionStatus.NO_INTERFACE
+            status is not LabelFieldSurfaceExtractionStatus.NO_INTERFACE
         )
         self.maximum_edge_valence = maximum_edge_valence
         self.maximum_vertex_region_pairs = maximum_vertex_region_pairs
@@ -276,7 +266,7 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
                 "route": route_,
                 "ambiguous_cells": ambiguous_cell_count,
                 "multi_label_tetrahedra": multi_label_tetrahedron_count,
-                "capacity": capacity.resource_id,
+                "counts": capacity.required.as_mapping(),
                 "validation": None if validation is None else validation.evidence_id,
                 "lineage": lineage_id,
             }
@@ -342,25 +332,27 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
 
 @final
 class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
-    """Static identity, geometry, resource and validation policy for extraction.
+    """Source interpretation and validation policy for categorical extraction.
 
-    ``boundary_region_id`` may name one source label (that label becomes E's
-    unbounded boundary) or a new synthetic label. Every other active source
-    label becomes a finite E region with exactly the same stable identifier.
-    The output is always free-space: periodic wrapping is intentionally not
-    inferred from a threshold route because E has no unwrapped periodic volume
-    representation.
+    ``index_to_world`` is the homogeneous affine mapping image indices to
+    physical sample locations. The complete linear part is preserved,
+    including anisotropic scale, shear and reflection. ``boundary_region_id``
+    may name one source label or a new synthetic exterior. Every other present
+    categorical label is retained as its own finite material.
+
+    Sparse source sites must form a complete rectangular subimage. Omitted
+    samples are unknown, not background, and therefore cannot be used to erase
+    an unresolved or hidden material.
     """
 
     __strict_contract__ = True
 
     label_ids: tuple[str, ...] = eqx.field(static=True)
-    spacing: tuple[float, float, float] = eqx.field(static=True)
-    origin: tuple[float, float, float] = eqx.field(static=True)
+    index_to_world: tuple[tuple[float, float, float, float], ...] = eqx.field(
+        static=True
+    )
     boundary_region_id: str = eqx.field(static=True)
-    capacity_plan: MultiRegionSurfaceCapacityPlan
     validation_policy: MultiRegionSurfaceValidationPolicy
-    maximum_ambiguous_cells: int = eqx.field(static=True)
     source: Identifier = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
@@ -368,33 +360,46 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         label_ids: Sequence[str],
-        capacity_plan: MultiRegionSurfaceCapacityPlan,
         /,
         *,
-        spacing: tuple[float, float, float],
-        origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        index_to_world: ArrayLike,
         boundary_region_id: str = "ambient",
         validation_policy: MultiRegionSurfaceValidationPolicy | None = None,
-        maximum_ambiguous_cells: int = 1_000_000,
         source: str = "threshold-label-field",
     ) -> None:
         ids = unique_identifiers(label_ids, "label_ids")
-        if len(spacing) != 3:
-            raise ValueError("spacing must contain three Cartesian values.")
-        spacing_: tuple[float, float, float] = (
-            positive_finite_float(spacing[0], "spacing[0]"),
-            positive_finite_float(spacing[1], "spacing[1]"),
-            positive_finite_float(spacing[2], "spacing[2]"),
+        affine = np.asarray(index_to_world, dtype=np.float64)
+        if affine.shape != (4, 4) or not np.all(np.isfinite(affine)):
+            raise ValueError("index_to_world must be a finite homogeneous 4x4 affine.")
+        if not np.array_equal(affine[3], np.asarray((0.0, 0.0, 0.0, 1.0))):
+            raise ValueError(
+                "index_to_world must have homogeneous last row (0, 0, 0, 1)."
+            )
+        determinant = float(np.linalg.det(affine[:3, :3]))
+        if not math.isfinite(determinant) or determinant == 0.0:
+            raise ValueError(
+                "index_to_world must have a finite nonzero spatial determinant."
+            )
+        affine_: tuple[tuple[float, float, float, float], ...] = (
+            (
+                float(affine[0, 0]),
+                float(affine[0, 1]),
+                float(affine[0, 2]),
+                float(affine[0, 3]),
+            ),
+            (
+                float(affine[1, 0]),
+                float(affine[1, 1]),
+                float(affine[1, 2]),
+                float(affine[1, 3]),
+            ),
+            (
+                float(affine[2, 0]),
+                float(affine[2, 1]),
+                float(affine[2, 2]),
+                float(affine[2, 3]),
+            ),
         )
-        if len(origin) != 3:
-            raise ValueError("origin must contain three Cartesian values.")
-        origin_: tuple[float, float, float] = (
-            float(origin[0]),
-            float(origin[1]),
-            float(origin[2]),
-        )
-        if not all(math.isfinite(value) for value in origin_):
-            raise ValueError("origin values must be finite.")
         boundary = canonical_identifier(boundary_region_id, "boundary_region_id")
         policy = (
             MultiRegionSurfaceValidationPolicy()
@@ -410,28 +415,21 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
                 "Label-field extraction requires collision-certified validation; "
                 "check_self_intersection cannot be disabled."
             )
-        ambiguity = nonnegative_integer(
-            maximum_ambiguous_cells, "maximum_ambiguous_cells"
-        )
         source_ = canonical_identifier(source, "source")
         self.label_ids = ids
-        self.spacing = spacing_
-        self.origin = origin_
+        self.index_to_world = affine_
         self.boundary_region_id = boundary
-        self.capacity_plan = capacity_plan
         self.validation_policy = policy
-        self.maximum_ambiguous_cells = ambiguity
         self.source = source_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "label-field-surface-extraction-plan",
                 "label_ids": list(ids),
-                "spacing": list(spacing_),
-                "origin": list(origin_),
+                "index_to_world": [
+                    [float(value).hex() for value in row] for row in affine_
+                ],
                 "boundary_region_id": boundary,
-                "capacity_plan": capacity_plan.plan_id,
                 "validation_policy": policy.policy_id,
-                "maximum_ambiguous_cells": ambiguity,
                 "source": source_,
             }
         )
@@ -443,11 +441,10 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
         *,
         site_coordinates: ArrayLike | None = None,
     ) -> PreparedLabelFieldSurfaceExtraction:
-        """Prepare uniform sites or an explicit sparse subset of a 3D grid."""
+        """Prepare a complete image volume or rectangular subimage."""
         return PreparedLabelFieldSurfaceExtraction(
             self, grid_shape, site_coordinates=site_coordinates
         )
-
 
 @final
 class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
@@ -473,6 +470,8 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         *,
         site_coordinates: ArrayLike | None = None,
     ) -> None:
+        if not isinstance(plan, LabelFieldSurfaceExtractionPlan):
+            raise TypeError("plan must be a LabelFieldSurfaceExtractionPlan.")
         if len(grid_shape) != 3:
             raise ValueError("grid_shape must contain three dimensions.")
         shape: tuple[int, int, int] = (
@@ -499,18 +498,28 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
                 raise ValueError(
                     "site_coordinates must be an integer array with shape (sites, 3)."
                 )
-            coordinates_ = raw.astype(np.int64)
-            if coordinates_.shape[0] == 0:
+            if raw.shape[0] == 0:
                 raise ValueError("site_coordinates cannot be empty.")
-            bounds = np.asarray(shape, dtype=np.int64)
-            if np.any(coordinates_ < 0) or np.any(coordinates_ >= bounds):
+            if raw.dtype.kind == "i" and np.any(raw < 0):
                 raise ValueError("site_coordinates must lie inside grid_shape.")
+            if any(np.any(raw[:, axis] >= shape[axis]) for axis in range(3)):
+                raise ValueError("site_coordinates must lie inside grid_shape.")
+            coordinates_ = raw.astype(np.int64)
             order = np.lexsort(
                 (coordinates_[:, 2], coordinates_[:, 1], coordinates_[:, 0])
             )
             coordinates = coordinates_[order]
             if np.any(np.all(coordinates[1:] == coordinates[:-1], axis=1)):
                 raise ValueError("site_coordinates must be unique.")
+            offset = np.min(coordinates, axis=0)
+            upper = np.max(coordinates, axis=0)
+            dense_shape = tuple(int(value) for value in upper - offset + 1)
+            if coordinates.shape[0] != math.prod(dense_shape):
+                raise ValueError(
+                    "site_coordinates must contain every index in its rectangular "
+                    "subimage; missing categorical samples cannot be interpreted as "
+                    "background."
+                )
             source_shape = (coordinates.shape[0],)
             route = "sparse-grid"
         scope = Scope()
@@ -546,7 +555,8 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
 @dataclass(frozen=True, slots=True)
 class _RegionMap:
     dense_labels: np.ndarray
-    extraction_origin: tuple[float, float, float]
+    extraction_affine: tuple[tuple[float, float, float, float], ...]
+    lattice_offset: tuple[int, int, int]
     region_ids: tuple[str, ...]
     region_kinds: tuple[Literal["finite", "boundary"], ...]
     source_indices: tuple[int, ...]
@@ -567,6 +577,7 @@ class _DualSurface:
     positions: np.ndarray
     faces: np.ndarray
     face_labels: np.ndarray
+    vertex_source_keys: tuple[tuple[int, ...], ...]
 
 
 _TETRAHEDRON_PERMUTATIONS: tuple[tuple[int, int, int], ...] = tuple(
@@ -668,17 +679,40 @@ def _region_map(
         local_coordinates[:, 1],
         local_coordinates[:, 2],
     ] = mapped
-    extraction_origin: tuple[float, float, float] = (
-        plan.origin[0] + float(offset[0]) * plan.spacing[0],
-        plan.origin[1] + float(offset[1]) * plan.spacing[1],
-        plan.origin[2] + float(offset[2]) * plan.spacing[2],
+    source_affine = np.asarray(plan.index_to_world, dtype=np.float64)
+    linear = source_affine[:, :3]
+    extraction_translation = source_affine[:, 3] + linear @ offset
+    affine = np.column_stack((linear, extraction_translation))
+    if not np.all(np.isfinite(affine)):
+        raise ValueError("Image affine overflows physical coordinates in this subimage.")
+    extraction_affine: tuple[tuple[float, float, float, float], ...] = (
+        (
+            float(affine[0, 0]),
+            float(affine[0, 1]),
+            float(affine[0, 2]),
+            float(affine[0, 3]),
+        ),
+        (
+            float(affine[1, 0]),
+            float(affine[1, 1]),
+            float(affine[1, 2]),
+            float(affine[1, 3]),
+        ),
+        (
+            float(affine[2, 0]),
+            float(affine[2, 1]),
+            float(affine[2, 2]),
+            float(affine[2, 3]),
+        ),
     )
-    measure = math.prod(plan.spacing)
+    voxel_volume = abs(float(np.linalg.det(linear)))
     finite_volumes = tuple(
-        float(counts[source] * measure)
+        float(int(counts[source]) * voxel_volume)
         for region, source in enumerate(source_indices)
         if region != boundary and source >= 0
     )
+    if any(not math.isfinite(value) for value in finite_volumes):
+        raise ValueError("Image label volume is not finite in physical coordinates.")
     source_state_id = canonical_fingerprint(
         {
             "kind": "threshold-label-field-extraction-source",
@@ -696,7 +730,8 @@ def _region_map(
     )
     return _RegionMap(
         dense_labels=dense,
-        extraction_origin=extraction_origin,
+        extraction_affine=extraction_affine,
+        lattice_offset=(int(offset[0]), int(offset[1]), int(offset[2])),
         region_ids=region_ids,
         region_kinds=kinds,
         source_indices=source_indices,
@@ -819,23 +854,67 @@ def _tetrahedron_dual_position(
     raise RuntimeError("A dual point needs between two and four tetrahedron labels.")
 
 
+def _source_feature_key(
+    feature: int, local_vertices: Sequence[int], lattice_coordinates: np.ndarray, /
+) -> tuple[int, ...]:
+    coordinates = sorted(
+        tuple(int(value) for value in lattice_coordinates[index])
+        for index in local_vertices
+    )
+    return (feature, *(value for coordinate in coordinates for value in coordinate))
+
+
+def _source_vertex_ids(
+    keys: tuple[tuple[int, ...], ...], grid_shape: tuple[int, int, int], /
+) -> np.ndarray:
+    """Injectively encode lattice feature tags/corner masks into int64 IDs."""
+    padded_shape = tuple(value + 2 for value in grid_shape)
+    result = np.empty((len(keys),), dtype=np.int64)
+    maximum = int(np.iinfo(np.int64).max)
+    for index, key in enumerate(keys):
+        feature = int(key[0])
+        coordinates = np.asarray(key[1:], dtype=np.int64)
+        if feature not in (1, 2, 3) or coordinates.size % 3:
+            raise ValueError("Lattice source key has an unknown feature schema.")
+        coordinates = coordinates.reshape((-1, 3))
+        origin = np.min(coordinates, axis=0)
+        offsets = coordinates - origin
+        if np.any(offsets < 0) or np.any(offsets > 1):
+            raise ValueError("Lattice feature vertices must lie in one source cell.")
+        corner_mask = sum(
+            1 << (int(point[0]) * 4 + int(point[1]) * 2 + int(point[2]))
+            for point in offsets
+        )
+        anchor = origin + 1
+        if any(
+            not 0 <= int(anchor[axis]) < padded_shape[axis] for axis in range(3)
+        ):
+            raise ValueError("Lattice source key lies outside the prepared image grid.")
+        anchor_id = int(np.ravel_multi_index(tuple(anchor), padded_shape))
+        suffix = feature * 256 + corner_mask
+        if anchor_id > (maximum - suffix) // 1024:
+            raise OverflowError("Lattice source vertex identity exceeds int64 addressing.")
+        result[index] = anchor_id * 1024 + suffix
+    if np.unique(result).size != result.size:
+        raise RuntimeError("Lattice source vertex identity encoding collided.")
+    return result
+
+
 def _dual_surface(
     labels: np.ndarray,
-    origin: tuple[float, float, float],
-    spacing: tuple[float, float, float],
+    affine: tuple[tuple[float, float, float, float], ...],
+    lattice_offset: tuple[int, int, int],
     /,
 ) -> _DualSurface:
+    """Build a junction-conforming interface in physical image coordinates."""
     shape = labels.shape
-    lattice = np.stack(
-        np.meshgrid(
-            *(np.arange(value, dtype=np.float64) for value in shape),
-            indexing="ij",
-        ),
-        axis=-1,
-    ).reshape((-1, 3))
-    lattice = np.asarray(origin)[None, :] + (lattice - 1.0) * np.asarray(spacing)[None, :]
+    transform = np.asarray(affine, dtype=np.float64)
+    linear, translation = transform[:, :3], transform[:, 3]
+    corner_offsets = np.asarray(_CUBE_CORNERS, dtype=np.int64)
+    lattice_origin = np.asarray(lattice_offset, dtype=np.int64)
     flat_labels = labels.reshape(-1)
     positions: list[np.ndarray] = []
+    source_keys: list[tuple[int, ...]] = []
     faces: list[tuple[int, int, int]] = []
     face_labels: list[tuple[int, int]] = []
     edge_vertices: dict[tuple[int, ...], int] = {}
@@ -845,6 +924,7 @@ def _dual_surface(
         key: tuple[int, ...],
         table: dict[tuple[int, ...], int],
         position: np.ndarray,
+        source_key: tuple[int, ...],
         /,
     ) -> int:
         known = table.get(key)
@@ -852,52 +932,97 @@ def _dual_surface(
             return known
         index = len(positions)
         positions.append(position)
+        source_keys.append(source_key)
         table[key] = index
         return index
 
     for i in range(shape[0] - 1):
         for j in range(shape[1] - 1):
             for k in range(shape[2] - 1):
-                base = (i, j, k)
+                base = np.asarray((i, j, k), dtype=np.int64)
+                corner_coordinates = base[None, :] + corner_offsets
+                source_coordinates = corner_coordinates - 1 + lattice_origin
+                corner_indices = np.ravel_multi_index(
+                    (
+                        corner_coordinates[:, 0],
+                        corner_coordinates[:, 1],
+                        corner_coordinates[:, 2],
+                    ),
+                    shape,
+                ).astype(np.int64)
+                corner_labels = flat_labels[corner_indices]
+                lattice = (corner_coordinates.astype(np.float64) - 1.0) @ linear.T
+                lattice += translation
+                local_index = {
+                    int(global_index): local
+                    for local, global_index in enumerate(corner_indices)
+                }
                 for permutation in _TETRAHEDRON_PERMUTATIONS:
-                    tetrahedron = _tetrahedron_vertices(base, permutation, shape)
-                    tetrahedron_labels = flat_labels[list(tetrahedron)]
+                    tetrahedron = _tetrahedron_vertices(
+                        (i, j, k), permutation, shape
+                    )
+                    local_tetrahedron = (
+                        local_index[tetrahedron[0]],
+                        local_index[tetrahedron[1]],
+                        local_index[tetrahedron[2]],
+                        local_index[tetrahedron[3]],
+                    )
+                    tetrahedron_labels = corner_labels[list(local_tetrahedron)]
                     if np.all(tetrahedron_labels == tetrahedron_labels[0]):
                         continue
                     center = len(positions)
                     positions.append(
-                        _tetrahedron_dual_position(tetrahedron, lattice, flat_labels)
+                        _tetrahedron_dual_position(
+                            local_tetrahedron, lattice, corner_labels
+                        )
+                    )
+                    source_keys.append(
+                        _source_feature_key(3, local_tetrahedron, source_coordinates)
                     )
                     for local_face in _TETRAHEDRON_FACES:
+                        face_local = tuple(
+                            local_tetrahedron[index] for index in local_face
+                        )
                         primal_face = tuple(
-                            sorted(tetrahedron[index] for index in local_face)
+                            sorted(int(corner_indices[index]) for index in face_local)
                         )
                         differing: list[tuple[int, int]] = []
                         for local_first, local_second in _FACE_EDGES:
-                            first = tetrahedron[local_face[local_first]]
-                            second = tetrahedron[local_face[local_second]]
-                            if flat_labels[first] != flat_labels[second]:
+                            first = face_local[local_first]
+                            second = face_local[local_second]
+                            if corner_labels[first] != corner_labels[second]:
                                 differing.append((first, second))
                         if not differing:
                             continue
                         face_center = dual_vertex(
                             primal_face,
                             face_vertices,
-                            _interface_centroid(primal_face, lattice, flat_labels),
+                            _interface_centroid(face_local, lattice, corner_labels),
+                            _source_feature_key(2, face_local, source_coordinates),
                         )
-                        for first, second in differing:
-                            edge_key = sorted((first, second))
-                            primal_edge = (edge_key[0], edge_key[1])
+                        for first_local, second_local in differing:
+                            first = int(corner_indices[first_local])
+                            second = int(corner_indices[second_local])
+                            primal_edge = (
+                                (first, second) if first < second else (second, first)
+                            )
                             edge_center = dual_vertex(
                                 primal_edge,
                                 edge_vertices,
-                                0.5 * (lattice[first] + lattice[second]),
+                                0.5 * (lattice[first_local] + lattice[second_local]),
+                                _source_feature_key(
+                                    1, (first_local, second_local), source_coordinates
+                                ),
                             )
-                            first_label = int(flat_labels[first])
-                            second_label = int(flat_labels[second])
+                            first_label = int(corner_labels[first_local])
+                            second_label = int(corner_labels[second_local])
                             left, right = sorted((first_label, second_label))
-                            left_vertex = first if first_label == left else second
-                            right_vertex = second if first_label == left else first
+                            left_vertex = (
+                                first_local if first_label == left else second_local
+                            )
+                            right_vertex = (
+                                second_local if first_label == left else first_local
+                            )
                             triangle = [edge_center, face_center, center]
                             p0, p1, p2 = (positions[index] for index in triangle)
                             direction = lattice[right_vertex] - lattice[left_vertex]
@@ -912,23 +1037,31 @@ def _dual_surface(
         positions=np.asarray(positions, dtype=np.float64),
         faces=np.asarray(faces, dtype=np.int64),
         face_labels=np.asarray(face_labels, dtype=np.int64),
+        vertex_source_keys=tuple(source_keys),
     )
 
 
 def _source_pair_areas(
     labels: np.ndarray,
     boundary: int,
-    spacing: tuple[float, float, float],
+    affine: tuple[tuple[float, float, float, float], ...],
     /,
 ) -> dict[tuple[int, int], float]:
+    linear = np.asarray(affine, dtype=np.float64)[:, :3]
+    area_by_axis = (
+        float(np.linalg.norm(np.cross(linear[:, 1], linear[:, 2]))),
+        float(np.linalg.norm(np.cross(linear[:, 0], linear[:, 2]))),
+        float(np.linalg.norm(np.cross(linear[:, 0], linear[:, 1]))),
+    )
+    if any(not math.isfinite(area) or area <= 0.0 for area in area_by_axis):
+        raise ValueError("Image affine face areas are not representable in float64.")
     padded = np.pad(labels, 1, constant_values=boundary)
     result: dict[tuple[int, int], float] = {}
-    for axis in range(3):
+    for axis, area in enumerate(area_by_axis):
         lower = np.take(padded, np.arange(padded.shape[axis] - 1), axis=axis)
         upper = np.take(padded, np.arange(1, padded.shape[axis]), axis=axis)
         first = lower[lower != upper]
         second = upper[lower != upper]
-        area = math.prod(spacing[other] for other in range(3) if other != axis)
         for a, b in zip(first, second, strict=True):
             pair_values = sorted((int(a), int(b)))
             pair = (pair_values[0], pair_values[1])
@@ -972,6 +1105,23 @@ def _empty_counts(region_count: int, /) -> MultiRegionSurfaceCounts:
         region_pair=0,
         edge_valence=0,
         vertex_region_pairs=0,
+    )
+
+
+def _exact_capacity_plan(
+    counts: MultiRegionSurfaceCounts, region_count: int, source: str, /
+) -> MultiRegionSurfaceCapacityPlan:
+    """Allocate exact source-derived array shapes, not a caller-owned quota."""
+    return MultiRegionSurfaceCapacityPlan(
+        vertex_capacity=max(1, counts.vertex),
+        edge_capacity=max(1, counts.edge),
+        face_capacity=max(1, counts.face),
+        region_capacity=max(2, region_count),
+        region_pair_capacity=max(1, counts.region_pair),
+        maximum_edge_valence=max(1, counts.edge_valence),
+        maximum_vertex_region_pairs=max(1, counts.vertex_region_pairs),
+        resource_id=source,
+        index_dtype="int64",
     )
 
 
@@ -1021,7 +1171,6 @@ def _evidence(
         route=prepared.route,
         ambiguous_cell_count=ambiguous_cells,
         multi_label_tetrahedron_count=multi_label_tetrahedra,
-        ambiguity_capacity=prepared.plan.maximum_ambiguous_cells,
         maximum_edge_valence=counts.edge_valence,
         maximum_vertex_region_pairs=counts.vertex_region_pairs,
         unsupported_edge_count=unsupported,
@@ -1048,7 +1197,8 @@ def _extract(
     padded = np.pad(regions.dense_labels, 1, constant_values=regions.boundary_index)
     ambiguous, multi_label_tetrahedra = _ambiguities(padded)
     empty = _empty_counts(len(regions.region_ids))
-    empty_capacity = plan.capacity_plan.capacity_evidence(empty)
+    empty_plan = _exact_capacity_plan(empty, len(regions.region_ids), plan.source)
+    empty_capacity = empty_plan.capacity_evidence(empty)
     finite_count = sum(kind == "finite" for kind in regions.region_kinds)
     if finite_count == 0 or np.unique(padded).size < 2:
         lineage = _lineage(prepared, regions, None)
@@ -1064,35 +1214,28 @@ def _extract(
         return LabelFieldSurfaceExtractionResult(
             None, None, None, None, lineage, evidence
         )
-    if ambiguous > plan.maximum_ambiguous_cells:
-        lineage = _lineage(prepared, regions, None)
-        evidence = _evidence(
-            prepared,
-            lineage,
-            status=LabelFieldSurfaceExtractionStatus.AMBIGUITY_CAPACITY_EXCEEDED,
-            ambiguous_cells=ambiguous,
-            multi_label_tetrahedra=multi_label_tetrahedra,
-            counts=empty,
-            capacity=empty_capacity,
-        )
-        return LabelFieldSurfaceExtractionResult(
-            None, None, None, None, lineage, evidence
-        )
 
-    dual = _dual_surface(padded, regions.extraction_origin, plan.spacing)
+    dual = _dual_surface(
+        padded, regions.extraction_affine, regions.lattice_offset
+    )
     seed = MultiRegionSurfaceSeed(
         dual.positions,
         dual.faces,
         dual.face_labels,
         regions.region_ids,
         regions.region_kinds,
+        vertex_global_ids=_source_vertex_ids(
+            dual.vertex_source_keys, prepared.grid_shape
+        ),
+        vertex_source_keys=dual.vertex_source_keys,
         source=f"{plan.source}.multilabel-marching-tetrahedra",
     )
     counts = seed.counts()
-    capacity = plan.capacity_plan.capacity_evidence(counts)
+    capacity_plan = _exact_capacity_plan(counts, len(regions.region_ids), plan.source)
+    capacity = capacity_plan.capacity_evidence(counts)
     lineage = _lineage(prepared, regions, seed)
     source_pair_areas = _source_pair_areas(
-        regions.dense_labels, regions.boundary_index, plan.spacing
+        regions.dense_labels, regions.boundary_index, regions.extraction_affine
     )
     extracted_pair_areas = _extracted_pair_areas(dual)
     pair_indices = tuple(sorted(set(source_pair_areas) | set(extracted_pair_areas)))
@@ -1102,25 +1245,8 @@ def _extract(
     )
     source_areas = tuple(source_pair_areas.get(pair, 0.0) for pair in pair_indices)
     extracted_areas = tuple(extracted_pair_areas.get(pair, 0.0) for pair in pair_indices)
-    if not capacity.admitted:
-        evidence = _evidence(
-            prepared,
-            lineage,
-            status=LabelFieldSurfaceExtractionStatus.CAPACITY_EXCEEDED,
-            ambiguous_cells=ambiguous,
-            multi_label_tetrahedra=multi_label_tetrahedra,
-            counts=counts,
-            capacity=capacity,
-            source_volumes=regions.finite_source_volumes,
-            region_pairs=region_pairs,
-            source_areas=source_areas,
-            extracted_areas=extracted_areas,
-        )
-        return LabelFieldSurfaceExtractionResult(
-            seed, None, None, None, lineage, evidence
-        )
 
-    topology = seed.topology(plan.capacity_plan, epoch=regions.source_epoch)
+    topology = seed.topology(capacity_plan, epoch=regions.source_epoch)
     surface_state = seed.state(topology)
     validation = validate_multiregion_surface(
         topology, surface_state, policy=plan.validation_policy

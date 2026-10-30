@@ -48,12 +48,14 @@ from ..discretization import CellMesh
 from ..discretization._adaptive_simplex import maubach_bisection_tables
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._lineage import EntityLineageKind
+from ._periodic import PeriodicRefinementEdgeLock
 from ._topology_edit import (
+    CellTopologyEdit,
     entity_keys,
     EntityRelations,
     key_rows,
     PrescribedEntityIds,
-    SimplexTopologyEdit,
+    source_family_blocks,
 )
 
 
@@ -390,9 +392,12 @@ class BisectionEvidence(StrictModule, NonTrainableState):
 class BisectionOutcome(NamedTuple):
     """Topology edit, target hierarchy, and evidence of one bisection adaptation."""
 
-    edit: SimplexTopologyEdit
+    edit: CellTopologyEdit
     hierarchy: BisectionHierarchy
     evidence: BisectionEvidence
+    refinement_parent_cell_global_ids: np.ndarray
+    refinement_source_edge_global_ids: np.ndarray
+    refinement_edge_vertex_ids: np.ndarray
 
 
 # Vertices are addressed by compact indices during one adaptation: source
@@ -466,7 +471,6 @@ class _Request(NamedTuple):
     cell_classes: np.ndarray
     facet_keys: np.ndarray
     facet_classes: np.ndarray
-    limit: int
 
 
 class _Start(NamedTuple):
@@ -621,6 +625,70 @@ def _canonical(tuples: Any, tags: Any, odd: Any, dimension: int, /) -> Any:
     )
 
 
+def _periodic_locked_front(
+    source: _Source,
+    front: _Front,
+    request: _Request,
+    edge_lock: PeriodicRefinementEdgeLock,
+    /,
+) -> _Front:
+    if source.dimension not in (2, 3):
+        raise ValueError(
+            "Periodic edge-locked bisection requires triangle or tetrahedron cells."
+        )
+    cell_ids, selected_edges = edge_lock.require_source(source.mesh)
+    if not np.array_equal(cell_ids, request.refine_ids):
+        raise ValueError(
+            "Periodic edge lock cells must equal the explicit refinement marks."
+        )
+    edge_ids = np.asarray(source.mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edge_keys = entity_keys(source.mesh, 1)
+    endpoints_by_edge = {
+        int(identifier): tuple(int(value) for value in key if int(value) >= 0)
+        for key, identifier in zip(edge_keys, edge_ids, strict=True)
+    }
+    row_by_cell = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(front.cells.ids, dtype=np.int64))
+    }
+    tuples = np.array(front.cells.tuples, dtype=np.int64, copy=True)
+    tags = np.array(front.cells.tags, dtype=np.int64, copy=True)
+    for cell_id, edge_id in zip(cell_ids, selected_edges, strict=True):
+        row = row_by_cell.get(int(cell_id))
+        edge_vertices = endpoints_by_edge.get(int(edge_id))
+        if row is None or edge_vertices is None or len(edge_vertices) != 2:
+            raise ValueError("Periodic lock names a missing cell or source edge.")
+        compact = np.searchsorted(
+            source.vertex_ids, np.asarray(edge_vertices, dtype=np.int64)
+        )
+        if np.any(compact >= source.vertex_ids.size) or not np.array_equal(
+            source.vertex_ids[compact], np.asarray(edge_vertices, dtype=np.int64)
+        ):
+            raise ValueError(
+                "Periodic locked edge is absent from the source vertex bank."
+            )
+        cell_vertices = tuples[row]
+        if not np.all(np.isin(compact, cell_vertices)):
+            raise ValueError(
+                "Periodic locked edge is not a corner edge of its marked cell."
+            )
+        first, last = (int(value) for value in compact)
+        remaining = [
+            int(value) for value in cell_vertices if int(value) not in (first, last)
+        ]
+        desired = np.asarray((first, *remaining, last), dtype=np.int64)
+        tags[row] = source.dimension
+        canonical, _ = _canonical(
+            desired[None, :],
+            tags[row : row + 1],
+            np.zeros((1,), dtype=np.bool_),
+            source.dimension,
+        )
+        tuples[row] = canonical[0]
+    cells = front.cells._replace(tuples=tuples, tags=tags)
+    return front._replace(cells=cells)
+
+
 def _oriented_rows(tuples: np.ndarray, odd: np.ndarray, /) -> np.ndarray:
     rows = tuples.copy()
     rows[odd, -2] = tuples[odd, -1]
@@ -705,7 +773,6 @@ def _prepared_request(
     protected_vertices: np.ndarray,
     cell_classes: np.ndarray,
     facet_classes: np.ndarray,
-    maximum_closure_iterations: int,
     /,
 ) -> _Request:
     refine = _marked_ids(refine_cell_ids, source, "refine_cell_ids")
@@ -721,12 +788,6 @@ def _prepared_request(
         raise ValueError("protected_vertices must be a rank-1 ID array.")
     protected = np.zeros(source.vertex_ids.shape, dtype=np.bool_)
     protected[_compact_vertices(source, vertices, "protected_vertices")] = True
-    if isinstance(maximum_closure_iterations, bool) or not isinstance(
-        maximum_closure_iterations, (int, np.integer)
-    ):
-        raise TypeError("maximum_closure_iterations must be an integer.")
-    if maximum_closure_iterations < 1:
-        raise ValueError("maximum_closure_iterations must be positive.")
     mesh, dimension = source.mesh, source.dimension
     cell_order = np.searchsorted(source.cells.ids, entity_keys(mesh, dimension)[:, 0])
     classes = np.empty(source.cells.ids.shape, dtype=np.int64)
@@ -740,7 +801,6 @@ def _prepared_request(
         classes,
         facet_keys,
         _aligned_classes(facet_classes, facet_keys.shape[0], "facet_classes"),
-        int(maximum_closure_iterations),
     )
 
 
@@ -976,27 +1036,20 @@ def _closure(
     front: _Front,
     selected: np.ndarray,
     protected_codes: np.ndarray,
-    limit: int,
     dimension: int,
     /,
 ) -> tuple[_Front, _Records, int] | None:
-    """Bisect the selected cells, then every cell with a split edge, until conforming.
+    """Bisect selected cells until the refinement closure is conforming.
 
-    Returns ``None`` as soon as the closure would split a protected edge.
+    Returns ``None`` as soon as the closure would split a protected edge. The
+    Maubach compatibility invariant provides finite closure; a real storage or
+    index overflow is reported by the allocation/identifier owner instead of a
+    policy iteration quota.
     """
 
     records = _empty_records(dimension)
     iterations = 0
     while selected.size:
-        if iterations == limit:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                f"Bisection closure did not conform within {limit} iterations "
-                f"({front.cells.ids.size} active cells, {records.parent_ids.size} "
-                f"bisections, {selected.size} cells still non-conforming).",
-                stage="bisection-closure",
-                entity_ids=tuple(int(value) for value in front.cells.ids[selected]),
-            )
         iterations += 1
         front, record, created = _bisected(front, selected, iterations, dimension)
         if np.any(_members(protected_codes, created)):
@@ -1031,7 +1084,7 @@ def _admissible_marks(
     while pending:
         group = pending.pop()
         tests += 1
-        if _closure(front, group, protected, request.limit, dimension) is not None:
+        if _closure(front, group, protected, dimension) is not None:
             accepted.append(group)
         elif group.size == 1:
             rejected.append(group)
@@ -1045,9 +1098,7 @@ def _refinement(start: _Start, request: _Request, dimension: int, /) -> _Refinem
     accepted, rejected, tests = _admissible_marks(
         start.front, start.marks, request, dimension
     )
-    closure = _closure(
-        start.front, accepted, request.protected_codes, request.limit, dimension
-    )
+    closure = _closure(start.front, accepted, request.protected_codes, dimension)
     if closure is None:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,
@@ -1082,6 +1133,8 @@ def _labelled_start(
     request: _Request,
     compatibility: BisectionCompatibility,
     /,
+    *,
+    periodic_edge_lock: PeriodicRefinementEdgeLock | None = None,
 ) -> _Start:
     dimension = source.dimension
     if request.coarsen_ids.size:
@@ -1093,9 +1146,17 @@ def _labelled_start(
     front = _initial_front(
         cells, source.vertex_ids.size, int(cells.ids[-1]) + 1, dimension
     )
-    incompatible = _incompatible_facets(cells, dimension)
     uniform = False
+    if periodic_edge_lock is not None:
+        front = _periodic_locked_front(source, front, request, periodic_edge_lock)
+    incompatible = _incompatible_facets(front.cells, dimension)
     if incompatible:
+        if periodic_edge_lock is not None:
+            raise MeshingFailure(
+                MeshingFailureCategory.INVALID_SPECIFICATION,
+                "Locked periodic Maubach edges violate the local matching condition.",
+                stage="bisection-closure",
+            )
         match compatibility:
             case BisectionCompatibility.REJECT:
                 raise ValueError(
@@ -1107,7 +1168,7 @@ def _labelled_start(
             case BisectionCompatibility.UNIFORM_REFINEMENT:
                 pairs = _TABLES[dimension][3]
                 edges = _edge_codes(
-                    cells.rows[:, pairs[:, 0]], cells.rows[:, pairs[:, 1]]
+                    front.cells.rows[:, pairs[:, 0]], front.cells.rows[:, pairs[:, 1]]
                 )
                 if np.any(_members(request.protected_codes, edges)):
                     raise ValueError(
@@ -1490,18 +1551,13 @@ def _relations(
     def ids(values: np.ndarray) -> np.ndarray:
         return _global_vertices(values, source, start.next_vertex)
 
-    split_sources, split_weights = stencil
-    owner, column = np.nonzero((split_sources >= 0) & (split_weights > 0.0))
+    split_sources, _ = stencil
     records = [
-        _grouped_relations(
+        EntityRelations(
             0,
-            (
-                (
-                    source.vertex_ids[split_sources[owner, column]][:, None],
-                    ids(count + owner)[:, None],
-                    EntityLineageKind.SPLIT_FROM,
-                ),
-            ),
+            np.empty((0, 1), dtype=np.int64),
+            np.empty((0, 1), dtype=np.int64),
+            np.empty((0,), dtype=np.int32),
         )
     ]
     forward = np.full((count + split_sources.shape[0], dimension + 1), -1, np.int64)
@@ -1705,11 +1761,14 @@ def _edit(
     block_rows = tuple(
         np.flatnonzero(cells.blocks == index) for index in range(len(source.mesh.blocks))
     )
-    edit = SimplexTopologyEdit(
+    edit = CellTopologyEdit(
         coordinates,
         _global_vertices(ordered, source, start.next_vertex),
-        tuple(position[cells.rows[rows]].astype(np.int32) for rows in block_rows),
-        tuple(cells.ids[rows] for rows in block_rows),
+        source_family_blocks(
+            tuple((block.name, block.cell_kind) for block in source.mesh.blocks),
+            tuple(position[cells.rows[rows]].astype(np.int32) for rows in block_rows),
+            tuple(cells.ids[rows] for rows in block_rows),
+        ),
         sources,
         weights,
         valid,
@@ -1717,6 +1776,100 @@ def _edit(
         prescribed,
     )
     return edit, retired
+
+
+def _refinement_operation_rows(
+    source: _Source,
+    start: _Start,
+    refinement: _Refinement,
+    records: _Records,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Expose each retained split's source-cell orbit and exact endpoint ancestry."""
+    old_records = set(
+        int(value) for value in np.asarray(start.records.parent_ids, dtype=np.int64)
+    )
+    parent_ids = np.asarray(records.parent_ids, dtype=np.int64)
+    child_ids = np.asarray(records.child_ids, dtype=np.int64)
+    tags = np.asarray(records.tags, dtype=np.int64)
+    tuples = np.asarray(records.tuples, dtype=np.int64)
+    new_rows = [
+        row
+        for row, identifier in enumerate(parent_ids)
+        if int(identifier) not in old_records
+    ]
+    origin_by_cell = {
+        int(identifier): int(origin)
+        for identifier, origin in zip(
+            np.asarray(start.front.cells.ids, dtype=np.int64),
+            np.asarray(start.front.cells.origins, dtype=np.int64),
+            strict=True,
+        )
+    }
+    generated: list[tuple[int, int]] = []
+    pending = list(new_rows)
+    while pending:
+        remaining = []
+        for row in pending:
+            parent = int(parent_ids[row])
+            origin = origin_by_cell.get(parent)
+            if origin is None:
+                remaining.append(row)
+                continue
+            generated.append((row, origin))
+            for child in child_ids[row]:
+                origin_by_cell[int(child)] = origin
+        if len(remaining) == len(pending):
+            raise ValueError("A bisection split has no exact source cell-orbit ancestor.")
+        pending = remaining
+
+    source_count = source.vertex_ids.size
+    next_vertex = start.next_vertex
+    parents = np.asarray(refinement.front.growth.parents, dtype=np.int64)
+    weights = np.asarray(refinement.front.growth.weights, dtype=np.float64)
+    supports: dict[int, frozenset[int]] = {
+        row: frozenset((int(identifier),))
+        for row, identifier in enumerate(np.asarray(source.vertex_ids, dtype=np.int64))
+    }
+    for row in range(parents.shape[0]):
+        compact_id = source_count + row
+        support: set[int] = set()
+        for parent, weight in zip(parents[row], weights[row], strict=True):
+            if parent < 0 or weight == 0.0:
+                continue
+            inherited = supports.get(int(parent))
+            if inherited is None:
+                raise ValueError(
+                    "A bisection split vertex has unknown exact source stencil ancestry."
+                )
+            support.update(inherited)
+        supports[compact_id] = frozenset(support)
+
+    edge_lookup: dict[tuple[int, ...], int] = {}
+    source_edge_ids = np.asarray(source.mesh.entity_set(1).entity_ids, dtype=np.int64)
+    source_edge_keys = entity_keys(source.mesh, 1)
+    for key, identifier in zip(source_edge_keys, source_edge_ids, strict=True):
+        vertices = tuple(int(value) for value in key if int(value) >= 0)
+        edge_lookup[vertices] = int(identifier)
+
+    def global_vertex(compact: int, /) -> int:
+        if compact < source_count:
+            return int(source.vertex_ids[compact])
+        return int(next_vertex + compact - source_count)
+
+    split_parents = np.empty((len(generated),), dtype=np.int64)
+    split_source_edges = np.full((len(generated),), -1, dtype=np.int64)
+    split_vertices = np.empty((len(generated), 2), dtype=np.int64)
+    for output_row, (record_row, origin) in enumerate(generated):
+        tag = int(tags[record_row])
+        first, second = int(tuples[record_row, 0]), int(tuples[record_row, tag])
+        endpoints = tuple(sorted((global_vertex(first), global_vertex(second))))
+        split_parents[output_row] = origin
+        split_vertices[output_row] = endpoints
+        support = supports.get(first, frozenset()) | supports.get(second, frozenset())
+        if len(support) == 2:
+            split_source_edges[output_row] = edge_lookup.get(tuple(sorted(support)), -1)
+    return split_parents, split_source_edges, split_vertices
 
 
 def execute_bisection(
@@ -1731,7 +1884,7 @@ def execute_bisection(
     protected_vertices: np.ndarray,
     cell_classes: np.ndarray,
     facet_classes: np.ndarray,
-    maximum_closure_iterations: int,
+    periodic_edge_lock: PeriodicRefinementEdgeLock | None = None,
 ) -> BisectionOutcome:
     """Refine and coarsen one simplex mesh by compatible Maubach bisection.
 
@@ -1755,13 +1908,40 @@ def execute_bisection(
         protected_vertices,
         cell_classes,
         facet_classes,
-        maximum_closure_iterations,
     )
-    start = (
-        _labelled_start(source, request, compatibility)
-        if hierarchy is None
-        else _bound_start(source, request, hierarchy)
-    )
+    if periodic_edge_lock is not None and not isinstance(
+        periodic_edge_lock, PeriodicRefinementEdgeLock
+    ):
+        raise TypeError("periodic_edge_lock must be PeriodicRefinementEdgeLock or None.")
+    if (
+        source.mesh.periodic_topology is not None
+        and request.refine_ids.size
+        and periodic_edge_lock is None
+    ):
+        raise ValueError(
+            "Periodic bisection requires a source-bound selected-edge orbit lock."
+        )
+    if hierarchy is None:
+        start = _labelled_start(
+            source,
+            request,
+            compatibility,
+            periodic_edge_lock=periodic_edge_lock,
+        )
+    else:
+        start = _bound_start(source, request, hierarchy)
+        if periodic_edge_lock is not None:
+            front = _periodic_locked_front(
+                source, start.front, request, periodic_edge_lock
+            )
+            incompatible = _incompatible_facets(front.cells, dimension)
+            if incompatible:
+                raise MeshingFailure(
+                    MeshingFailureCategory.INVALID_SPECIFICATION,
+                    "Locked periodic Maubach edges violate the local matching condition.",
+                    stage="bisection-closure",
+                )
+            start = start._replace(front=front, compatible=True, incompatible=0)
     refinement = _refinement(start, request, dimension)
     blocked = np.isin(start.front.cells.ids, refinement.records.parent_ids)
     coarsening = _coarsening(start, request, blocked, dimension)
@@ -1785,10 +1965,31 @@ def execute_bisection(
         restored_cells=coarsening.restored.ids.size,
         rejected_coarsening_ids=coarsening.rejected_ids,
     )
+    refinement_parents, refinement_edges, refinement_edge_vertices = (
+        _refinement_operation_rows(source, start, refinement, records)
+    )
+    if periodic_edge_lock is not None:
+        locked_cells, locked_edges = periodic_edge_lock.require_source(mesh)
+        present = {
+            (int(parent), int(edge))
+            for parent, edge in zip(refinement_parents, refinement_edges, strict=True)
+        }
+        if any(
+            (int(parent), int(edge)) not in present
+            for parent, edge in zip(locked_cells, locked_edges, strict=True)
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.INVALID_SPECIFICATION,
+                "Periodic bisection did not execute every locked parent-edge pair.",
+                stage="bisection-closure",
+            )
     return BisectionOutcome(
         edit,
         _target_hierarchy(source, start, cells, records, retired, refinement.front),
         evidence,
+        refinement_parents,
+        refinement_edges,
+        refinement_edge_vertices,
     )
 
 

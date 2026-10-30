@@ -29,7 +29,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..._validation import nonnegative_integer, positive_finite_float, positive_integer
+from ..._validation import nonnegative_integer, positive_finite_float
 from ...discretization._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from ._contracts import (
     MultiRegionSurfaceCapacityEvidence,
@@ -68,8 +68,6 @@ class SurfaceEventStatus(IntEnum):
     ACCEPTED = 0
     NOT_TRIGGERED = 1
     CONFLICT = 2
-    EVENT_BUDGET_EXCEEDED = 3
-    CAPACITY_EXCEEDED = 4
     SUPPORT_INVALID = 5
     FEATURE_NOT_PRESERVED = 6
     LINK_CONDITION_VIOLATED = 7
@@ -84,7 +82,6 @@ class SurfaceEventStatus(IntEnum):
     VOLUME_RESTORATION_FAILED = 16
     LOCAL_INTERSECTION = 17
     CCD_NOT_CERTIFIED = 18
-    CERTIFICATE_CAPACITY_EXCEEDED = 19
 
 
 class SurfaceEventPassStatus(IntEnum):
@@ -92,7 +89,6 @@ class SurfaceEventPassStatus(IntEnum):
 
     COMMITTED = 0
     NO_ACCEPTED_EVENTS = 1
-    CAPACITY_EXCEEDED = 2
     CANDIDATE_VALIDATION_FAILED = 3
     TRANSFER_FAILED = 4
 
@@ -290,23 +286,23 @@ class SurfaceEventPolicy(StrictModule, NonTrainableState):
     the local valence guards); event policies require its self-intersection
     check because no topology mutation may bypass exact candidate validation.
     ``ccd`` certifies every local motion with conservative inclusion CCD;
-    ``ccd_candidate_capacity`` bounds the collision stencils examined per
-    motion (overflow refuses the event).
+    Candidate overflow grows private storage and retries the same motion until
+    the complete stencil is represented.
     ``fixed_vertex_ids`` (wire frames) are never moved or removed.
     ``restore_region_volumes`` restores the finite-region volumes changed by an
     event with a minimum-norm displacement of the event's free vertices to the
     relative tolerance ``volume_tolerance`` (relative to the cube of the local
-    edge length). ``maximum_normal_rotation`` (radians) refuses events that turn
+    edge length). The solver stops at tolerance or representable nonprogress
+    and refuses the latter with its best finite relative residual.
+    ``maximum_normal_rotation`` (radians) refuses events that turn
     a surviving or reconnected face by more than that angle.
     """
 
     validation: MultiRegionSurfaceValidationPolicy
     ccd: InclusionCCDPlan
-    ccd_candidate_capacity: int = eqx.field(static=True)
     fixed_vertex_ids: tuple[int, ...] = eqx.field(static=True)
     restore_region_volumes: bool = eqx.field(static=True)
     volume_tolerance: float = eqx.field(static=True)
-    maximum_restoration_iterations: int = eqx.field(static=True)
     maximum_normal_rotation: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
@@ -315,11 +311,9 @@ class SurfaceEventPolicy(StrictModule, NonTrainableState):
         *,
         validation: MultiRegionSurfaceValidationPolicy | None = None,
         ccd: InclusionCCDPlan | None = None,
-        ccd_candidate_capacity: int = 20_000,
         fixed_vertex_ids: Sequence[int] = (),
         restore_region_volumes: bool = True,
         volume_tolerance: float = 1.0e-12,
-        maximum_restoration_iterations: int = 8,
         maximum_normal_rotation: float = 0.5 * math.pi,
     ) -> None:
         validation_ = (
@@ -337,14 +331,10 @@ class SurfaceEventPolicy(StrictModule, NonTrainableState):
         ccd_ = InclusionCCDPlan() if ccd is None else ccd
         if not isinstance(ccd_, InclusionCCDPlan):
             raise TypeError("ccd must be an InclusionCCDPlan.")
-        capacity = positive_integer(ccd_candidate_capacity, "ccd_candidate_capacity")
         fixed = tuple(sorted(set(_id_tuple(fixed_vertex_ids, "fixed_vertex_ids"))))
         if not isinstance(restore_region_volumes, bool):
             raise TypeError("restore_region_volumes must be a bool.")
         tolerance = float(positive_finite_float(volume_tolerance, "volume_tolerance"))
-        iterations = positive_integer(
-            maximum_restoration_iterations, "maximum_restoration_iterations"
-        )
         rotation = float(
             positive_finite_float(maximum_normal_rotation, "maximum_normal_rotation")
         )
@@ -352,22 +342,18 @@ class SurfaceEventPolicy(StrictModule, NonTrainableState):
             raise ValueError("maximum_normal_rotation must not exceed pi.")
         self.validation = validation_
         self.ccd = ccd_
-        self.ccd_candidate_capacity = capacity
         self.fixed_vertex_ids = fixed
         self.restore_region_volumes = restore_region_volumes
         self.volume_tolerance = tolerance
-        self.maximum_restoration_iterations = iterations
         self.maximum_normal_rotation = rotation
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "surface-event-policy",
                 "validation": validation_.policy_id,
                 "ccd": ccd_.plan_id,
-                "ccd_candidate_capacity": capacity,
                 "fixed_vertex_ids": list(fixed),
                 "restore_region_volumes": restore_region_volumes,
                 "volume_tolerance": tolerance.hex(),
-                "maximum_restoration_iterations": iterations,
                 "maximum_normal_rotation": rotation.hex(),
             }
         )

@@ -90,6 +90,33 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SizeCompliancePolicy], value: SizeCompliancePolicy, /
+    ) -> SizeCompliancePolicy:
+        if type(value) is not cls:
+            raise TypeError("value must be SizeCompliancePolicy.")
+        if (
+            type(value.absolute_tolerance) is not float
+            or type(value.relative_tolerance) is not float
+            or type(value.target_statistics) is not tuple
+        ):
+            raise TypeError("Stored size-compliance fields are not canonical.")
+        rebuilt = cls(
+            absolute_tolerance=value.absolute_tolerance,
+            relative_tolerance=value.relative_tolerance,
+            target_statistics=value.target_statistics,
+        )
+        if (
+            rebuilt.policy_id != value.policy_id
+            or rebuilt.absolute_tolerance != value.absolute_tolerance
+            or rebuilt.relative_tolerance != value.relative_tolerance
+            or rebuilt.target_statistics != value.target_statistics
+        ):
+            raise ValueError("Stored size-compliance policy differs from its fields.")
+        return rebuilt
+
 
 def _size(value: float, name: str, /) -> float:
     result = float(value)
@@ -153,6 +180,47 @@ class UniformSizeControl(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[UniformSizeControl], value: UniformSizeControl, /
+    ) -> UniformSizeControl:
+        if type(value) is not cls:
+            raise TypeError("value must be UniformSizeControl.")
+        if (
+            type(value.target_size) is not float
+            or type(value.priority) is not int
+            or any(
+                item is not None and type(item) is not float
+                for item in (
+                    value.minimum_size,
+                    value.maximum_size,
+                    value.maximum_growth_rate,
+                )
+            )
+        ):
+            raise TypeError("Stored uniform size-control fields are not canonical.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.scope),
+            value.target_size,
+            minimum_size=value.minimum_size,
+            maximum_size=value.maximum_size,
+            maximum_growth_rate=value.maximum_growth_rate,
+            strength=value.strength,
+            priority=value.priority,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.target_size != value.target_size
+            or rebuilt.minimum_size != value.minimum_size
+            or rebuilt.maximum_size != value.maximum_size
+            or rebuilt.maximum_growth_rate != value.maximum_growth_rate
+            or rebuilt.strength is not value.strength
+            or rebuilt.priority != value.priority
+        ):
+            raise ValueError("Stored uniform size control differs from its fields.")
+        return rebuilt
+
 
 class CurvatureSizeControl(StrictModule, NonTrainableState):
     scope: MeshingScope
@@ -205,6 +273,44 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
                 "priority": int(priority),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[CurvatureSizeControl], value: CurvatureSizeControl, /
+    ) -> CurvatureSizeControl:
+        if type(value) is not cls:
+            raise TypeError("value must be CurvatureSizeControl.")
+        if (
+            type(value.normal_angle) is not float
+            or type(value.use_faceted_curvature) is not bool
+            or type(value.priority) is not int
+            or any(
+                item is not None and type(item) is not float
+                for item in (value.minimum_size, value.maximum_size)
+            )
+        ):
+            raise TypeError("Stored curvature size-control fields are not canonical.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.scope),
+            value.normal_angle,
+            minimum_size=value.minimum_size,
+            maximum_size=value.maximum_size,
+            use_faceted_curvature=value.use_faceted_curvature,
+            strength=value.strength,
+            priority=value.priority,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.normal_angle != value.normal_angle
+            or rebuilt.minimum_size != value.minimum_size
+            or rebuilt.maximum_size != value.maximum_size
+            or rebuilt.use_faceted_curvature != value.use_faceted_curvature
+            or rebuilt.strength is not value.strength
+            or rebuilt.priority != value.priority
+        ):
+            raise ValueError("Stored curvature size control differs from its fields.")
+        return rebuilt
 
 
 class ProximitySizeControl(StrictModule, NonTrainableState):
@@ -281,6 +387,46 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
                 "priority": int(priority),
             }
         )
+
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[ProximitySizeControl], value: ProximitySizeControl, /
+    ) -> ProximitySizeControl:
+        if type(value) is not cls:
+            raise TypeError("value must be ProximitySizeControl.")
+        if (
+            type(value.elements_per_gap) is not int
+            or type(value.opposite_normals_only) is not bool
+            or type(value.priority) is not int
+            or any(
+                item is not None and type(item) is not float
+                for item in (value.minimum_size, value.maximum_size)
+            )
+        ):
+            raise TypeError("Stored proximity size-control fields are not canonical.")
+        rebuilt = cls(
+            MeshingScope.from_stored_fields(value.source_scope),
+            MeshingScope.from_stored_fields(value.target_scope),
+            value.elements_per_gap,
+            minimum_size=value.minimum_size,
+            maximum_size=value.maximum_size,
+            opposite_normals_only=value.opposite_normals_only,
+            strength=value.strength,
+            priority=value.priority,
+        )
+        if (
+            rebuilt.control_id != value.control_id
+            or rebuilt.elements_per_gap != value.elements_per_gap
+            or rebuilt.minimum_size != value.minimum_size
+            or rebuilt.maximum_size != value.maximum_size
+            or rebuilt.opposite_normals_only != value.opposite_normals_only
+            or rebuilt.strength is not value.strength
+            or rebuilt.priority != value.priority
+        ):
+            raise ValueError("Stored proximity size control differs from its fields.")
+        return rebuilt
 
 
 SizeControl = UniformSizeControl | CurvatureSizeControl | ProximitySizeControl

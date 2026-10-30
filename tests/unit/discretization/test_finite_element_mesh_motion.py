@@ -139,7 +139,6 @@ def test_finite_element_mesh_motion_scenario_1() -> None:
     )
     polyhedron = phx.discretization.CellMesh.from_polyhedra(
         cube_coordinates,
-        # ty: ignore[invalid-argument-type]
         (
             (
                 (0, 3, 2, 1),

@@ -141,9 +141,19 @@ class MultiRegionSurfaceState(StrictModule):
 
     @checked
     def require_topology(self, topology: MultiRegionSurfaceTopology, /) -> None:
-        """Refuse a state that belongs to another topology or epoch."""
-        if self.topology_id != topology.topology_id or self.epoch != topology.epoch:
-            raise ValueError("State belongs to a different multiregion topology epoch.")
+        """Refuse a state from another topology epoch or storage layout."""
+        if (
+            self.topology_id != topology.topology_id
+            or self.epoch != topology.epoch
+            or self.vertex_capacity != topology.vertex_capacity
+            or self.slot_width != topology.slot_width
+            or self.region_capacity != topology.region_capacity
+            or np.dtype(self.positions.dtype)
+            != np.dtype(topology.plan.coordinate_dtype)
+        ):
+            raise ValueError(
+                "State belongs to a different multiregion topology epoch or storage layout."
+            )
 
 
 __all__ = ["MultiRegionSurfaceState"]

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import ConvertibleToArray
 
 
 # Concrete (host-prepared) topology is converted and validated with NumPy once
@@ -28,7 +29,7 @@ def _traced(*values: object) -> bool:
     return any(isinstance(value, jax_core.Tracer) for value in values)
 
 
-def _integer_indices(name: str, value: ArrayLike, /) -> Array:
+def _integer_indices(name: str, value: ConvertibleToArray, /) -> Array:
     if isinstance(value, jax_core.Tracer):
         if not jnp.issubdtype(value.dtype, jnp.integer):
             raise TypeError(f"{name} must have an integer dtype.")
@@ -99,8 +100,8 @@ class EdgeRelation(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source_indices: ArrayLike,
-        target_indices: ArrayLike,
+        source_indices: ConvertibleToArray,
+        target_indices: ConvertibleToArray,
         /,
         *,
         source_size: int,
@@ -120,11 +121,7 @@ class EdgeRelation(StrictModule, NonTrainableState):
             raise ValueError("Edge relation indices must be rank-1.")
         if source.shape != target.shape:
             raise ValueError("Edge relation source and target indices must match.")
-        if source.size > 0 and (source_count == 0 or target_count == 0):
-            raise ValueError(
-                "A non-empty edge relation requires non-empty source and target spaces."
-            )
-
+        # Zero-sized endpoints are valid only when the relation has no valid routes.
         route_valid = _valid_mask(valid, tuple(source.shape))
         self.source_indices = _check_bounds(
             "edge source index", source, route_valid, source_count
@@ -192,8 +189,8 @@ class RowRelation(StrictModule, NonTrainableState):
         case_shape: tuple[int, ...] = (),
     ) -> None:
         source_count = int(source_size)
-        if source_count <= 0:
-            raise ValueError("Row relation source_size must be positive.")
+        if source_count < 0:
+            raise ValueError("Row relation source_size must be non-negative.")
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("Row relation case dimensions must be positive.")
@@ -210,6 +207,7 @@ class RowRelation(StrictModule, NonTrainableState):
         if source.shape[-1] <= 0:
             raise ValueError("Row relation route width must be positive.")
 
+        # With source_size zero, the bounds check rejects every valid reference.
         route_valid = _valid_mask(valid, tuple(source.shape))
         self.source_indices = _check_bounds(
             "row source index", source, route_valid, source_count

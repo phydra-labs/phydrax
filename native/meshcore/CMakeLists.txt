@@ -30,26 +30,78 @@ endif()
 option(PHX_MC_BUILD_TESTS "Build the meshcore C++ unit tests" ${PHX_MC_TOP_LEVEL})
 option(PHX_MC_SANITIZE
   "Instrument the library and its tests with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+find_package(Threads REQUIRED)
 
 set(PHX_MC_SOURCES
+  src/arrangement.cpp
   src/cdt2d.cpp
   src/clip2d.cpp
   src/clip3d.cpp
   src/core_capi.cpp
+  src/tet_mesh_capi.cpp
   src/delaunay2d.cpp
   src/delaunay3d.cpp
+  src/feature_protection.cpp
+  src/graph_partition.cpp
+  src/hex_topology.cpp
+  src/quad_topology.cpp
+  src/interval_program.cpp
+  src/intersections.cpp
+  src/level_set.cpp
+  src/mixed_refinement.cpp
+  src/parallel.cpp
+  src/periodic.cpp
+  src/plc3d.cpp
+  src/power_diagram.cpp
   src/predicates.cpp
+  src/quadratic_bounds.cpp
+  src/restricted_delaunay.cpp
+  src/surface_envelope.cpp
+  src/surface_mesh.cpp
+  src/tet_mesh.cpp
+  src/tet_mesh_collapse.cpp
+  src/tet_mesh_export.cpp
+  src/tet_mesh_improvement.cpp
+  src/tet_mesh_insertion.cpp
+  src/tet_mesh_refinement.cpp
+  src/tet_mesh_source.cpp
+  src/tet_mesh_state.cpp
+  src/refine3d.cpp
+  src/improve3d.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
+  src/boundary_policy.hpp
   src/capi_guard.hpp
+  src/cavity.hpp
+  src/clip3d.hpp
   src/clip_common.hpp
+  src/dyadic.hpp
+  src/exact_line.hpp
+  src/exact_scalar.hpp
   src/expansion.hpp
+  src/exact_tetrahedra_arrangement.inc
+  src/facet_coverage.hpp
+  src/reference_tetrahedron_clip.inc
   src/filtered.hpp
+  src/floating_point_mode.hpp
+  src/geometry3.hpp
+  src/intersections.hpp
   src/mesh.hpp
+  src/parallel.hpp
+  src/plc3d.hpp
   src/predicates.hpp
+  src/restricted_delaunay.hpp
+  src/rounding.hpp
+  src/source_construction.hpp
+  src/tet_mesh.hpp
   src/spatial_sort.hpp
+  src/refine3d.hpp
+  src/improve3d.hpp
+  src/local_incidence.hpp
+  src/topology_keys.hpp
   src/triangulation2d.hpp
+  src/triangulation3d.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -72,11 +124,15 @@ else()
     list(APPEND PHX_MC_FP_FLAGS -msse2 -mfpmath=sse)
   endif()
 endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND PHX_MC_FP_FLAGS -fopenmp-simd)
+endif()
 
 add_library(phydrax_meshcore_objects OBJECT ${PHX_MC_SOURCES})
 set_target_properties(phydrax_meshcore_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(phydrax_meshcore_objects
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(phydrax_meshcore_objects PUBLIC Threads::Threads)
 target_compile_definitions(phydrax_meshcore_objects PUBLIC
   PHX_MC_BUILDING
   PHX_MC_VERSION="${PROJECT_VERSION}"
@@ -118,4 +174,24 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_clip)
   phx_mc_add_test(test_capi_guard)
+  phx_mc_add_test(test_cavity)
+  phx_mc_add_test(test_facet_coverage)
+  phx_mc_add_test(test_graph_partition)
+  phx_mc_add_test(test_intersections)
+  phx_mc_add_test(test_interval_program)
+  phx_mc_add_test(test_parallel)
+  phx_mc_add_test(test_plc3d)
+  phx_mc_add_test(test_quadratic_bounds)
+  phx_mc_add_test(test_quadratic_validity)
+  phx_mc_add_test(test_tetrahedra_arrangement)
+  phx_mc_add_test(test_level_set)
+  phx_mc_add_test(test_mixed_refinement)
+  phx_mc_add_test(test_periodic)
+  phx_mc_add_test(test_power_diagram)
+  phx_mc_add_test(test_restricted_delaunay)
+  phx_mc_add_test(test_tet_mesh)
+  phx_mc_add_test(test_improve3d)
+  phx_mc_add_test(test_hex_topology)
+  phx_mc_add_test(test_surface_envelope)
+  phx_mc_add_test(test_surface_mesh)
 endif()

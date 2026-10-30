@@ -127,6 +127,28 @@ def _normalized_triangles(vertices: np.ndarray, cells: np.ndarray, /) -> np.ndar
     return normalized
 
 
+def _validated_embedded_triangles(
+    vertices: np.ndarray, cells: np.ndarray, /
+) -> np.ndarray:
+    if cells.shape[0] == 0:
+        return cells
+    if cells.ndim != 2 or cells.shape[1] != 3:
+        raise ValueError("Embedded surface triangles must have shape (n, 3).")
+    if np.any(cells < 0) or np.any(cells >= vertices.shape[0]):
+        raise ValueError("Embedded surface triangle vertices are outside the mesh.")
+    points = vertices[cells]
+    first = points[:, 1] - points[:, 0]
+    second = points[:, 2] - points[:, 0]
+    double_area = np.linalg.norm(np.cross(first, second), axis=-1)
+    scale = np.max(np.linalg.norm(points - points[:, :1], axis=-1), axis=1)
+    tolerance = 64.0 * np.finfo(np.float64).eps * scale**2
+    if np.any(~np.isfinite(double_area)) or np.any(double_area <= tolerance):
+        raise ValueError("Embedded surface triangles require positive finite area.")
+    if np.unique(np.sort(cells, axis=1), axis=0).shape[0] != cells.shape[0]:
+        raise ValueError("Embedded surface triangles contain duplicates.")
+    return cells.copy()
+
+
 def _quadrilateral_shape_data(points: np.ndarray, /) -> Any:
     xi = points[:, 0]
     eta = points[:, 1]
@@ -178,11 +200,16 @@ def _cell_volume_quadrature(
             + ((1.0 - u) * v)[None, :, None]
             * (triangle_points[:, 2:3, :] - triangle_points[:, :1, :])
         )
-        triangle_jacobian = (triangle_points[:, 1, 0] - triangle_points[:, 0, 0]) * (
-            triangle_points[:, 2, 1] - triangle_points[:, 0, 1]
-        ) - (triangle_points[:, 1, 1] - triangle_points[:, 0, 1]) * (
-            triangle_points[:, 2, 0] - triangle_points[:, 0, 0]
-        )
+        first_tangent = triangle_points[:, 1] - triangle_points[:, 0]
+        second_tangent = triangle_points[:, 2] - triangle_points[:, 0]
+        if points.shape[-1] == 2:
+            triangle_jacobian = first_tangent[:, 0] * second_tangent[:, 1] - (
+                first_tangent[:, 1] * second_tangent[:, 0]
+            )
+        else:
+            triangle_jacobian = jnp.linalg.norm(
+                jnp.cross(first_tangent, second_tangent), axis=-1
+            )
         triangle_weights = (
             triangle_jacobian[:, None] * (1.0 - u)[None, :] * reference_weight[None, :]
         )
@@ -444,6 +471,78 @@ def _triangle_area_vectors(face_points: Array, /) -> Array:
     )
 
 
+def _embedded_triangle_geometry(
+    vertices: ArrayLike,
+    triangles: ArrayLike,
+    connectivity: PolygonalConnectivity,
+    owner: ArrayLike,
+    owner_sign: ArrayLike,
+    /,
+) -> Any:
+    points = jnp.asarray(vertices)
+    cells = jnp.asarray(triangles, dtype=jnp.int32)
+    cell_points = points[cells]
+    first_tangent = cell_points[:, 1] - cell_points[:, 0]
+    second_tangent = cell_points[:, 2] - cell_points[:, 0]
+    normal_area = jnp.cross(first_tangent, second_tangent)
+    double_area = jnp.linalg.norm(normal_area, axis=-1)
+    cell_areas = eqx.error_if(
+        0.5 * double_area,
+        jnp.any(~jnp.isfinite(double_area) | (double_area <= 0.0)),
+        "Embedded surface triangles require positive finite areas.",
+    )
+    normals = normal_area / double_area[:, None]
+    cell_centers = jnp.mean(cell_points, axis=1)
+    edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
+    edge_points = points[edges]
+    face_centers = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
+    tangent = edge_points[:, 1] - edge_points[:, 0]
+    owners = jnp.asarray(owner, dtype=jnp.int32)
+    canonical_area = jnp.cross(tangent, normals[owners])
+    area_vectors = jnp.asarray(owner_sign, dtype=points.dtype)[:, None] * canonical_area
+    face_measures = jnp.linalg.norm(area_vectors, axis=-1)
+    owner_centers = cell_centers[owners]
+    outward = jnp.sum((face_centers - owner_centers) * area_vectors, axis=-1)
+    area_vectors = eqx.error_if(
+        area_vectors,
+        jnp.any(~jnp.isfinite(face_measures) | (face_measures <= 0.0) | (outward <= 0.0)),
+        "Embedded surface conormals must be positive and owner-outward.",
+    )
+    valid = jnp.asarray(connectivity.cell_edge_valid)
+    cell_edges = jnp.asarray(connectivity.cell_edges, dtype=jnp.int32)
+    cell_signs = jnp.asarray(connectivity.cell_edge_signs, dtype=points.dtype)
+    cell_ids = jnp.broadcast_to(jnp.arange(cells.shape[0])[:, None], cell_edges.shape)
+    local_tangents = tangent[cell_edges]
+    local_area = jnp.cross(local_tangents, normals[:, None, :])
+    contributions = jnp.where(
+        valid[..., None],
+        cell_signs[..., None] * local_area,
+        jnp.zeros_like(local_area),
+    )
+    closure = (
+        jnp.zeros_like(cell_centers)
+        .at[cell_ids.reshape((-1,))]
+        .add(contributions.reshape((-1, points.shape[-1])))
+    )
+    gauss_offset = tangent / (2.0 * jnp.sqrt(jnp.asarray(3.0, dtype=points.dtype)))
+    quadrature_points = jnp.stack(
+        (face_centers - gauss_offset, face_centers + gauss_offset), axis=1
+    )
+    quadrature_weights = jnp.broadcast_to(
+        0.5 * face_measures[:, None], (face_measures.size, 2)
+    )
+    return (
+        cell_areas,
+        cell_centers,
+        face_centers,
+        area_vectors,
+        face_measures,
+        closure,
+        quadrature_points,
+        quadrature_weights,
+    )
+
+
 def _polygon_geometry(
     vertices: ArrayLike,
     triangles: ArrayLike,
@@ -456,6 +555,12 @@ def _polygon_geometry(
     points = jnp.asarray(vertices)
     triangle_cells = jnp.asarray(triangles, dtype=jnp.int32)
     quadrilateral_cells = jnp.asarray(quadrilaterals, dtype=jnp.int32)
+    if points.shape[1] == 3:
+        if quadrilateral_cells.shape[0]:
+            raise ValueError("Embedded surface FV currently accepts triangles only.")
+        return _embedded_triangle_geometry(
+            points, triangle_cells, connectivity, owner, owner_sign
+        )
     triangle_volume, triangle_center = _triangle_measures(points[triangle_cells])
 
     root = 1.0 / np.sqrt(3.0)
@@ -940,7 +1045,7 @@ class UnstructuredFiniteVolumeQualityReport(StrictModule):
 
 @dataclass(frozen=True, slots=True)
 class _PreparedUnstructuredFiniteVolumeData:
-    mesh: CellMesh
+    mesh: CellMesh | None
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -957,12 +1062,13 @@ class _PreparedUnstructuredFiniteVolumeData:
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...]
     plan_id: str
+    owner_local_view: Any | None = None
 
 
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
-    """Fixed-topology triangular, quadrilateral, mixed, or tetrahedral FV plan."""
+    """Fixed-topology planar polygons, embedded surface triangles, or tetrahedra."""
 
-    mesh: CellMesh
+    mesh: CellMesh | None
 
     vertices: Array
     triangles: Array
@@ -980,6 +1086,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    owner_local_view: Any | None = None
 
     def __init__(
         self,
@@ -1014,14 +1121,13 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             self.key = _prepared.key
             self.capabilities = _prepared.capabilities
             self.plan_id = _prepared.plan_id
+            self.owner_local_view = _prepared.owner_local_view
             return
         if vertices is None:
             raise TypeError("vertices must be supplied for direct construction.")
         points = np.asarray(vertices, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] not in (2, 3):
             raise ValueError("Unstructured FV vertices must have shape (n, 2) or (n, 3).")
-        if points.shape[0] < points.shape[1] + 1 or np.any(~np.isfinite(points)):
-            raise ValueError("Unstructured FV vertices must be finite and nonempty.")
         triangle_cells = (
             np.empty((0, 3), dtype=np.int32)
             if triangles is None
@@ -1037,6 +1143,15 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             if tetrahedra is None
             else np.asarray(tetrahedra, dtype=np.int32)
         )
+        minimum_vertices = (
+            3
+            if points.shape[1] == 3
+            and triangle_cells.shape[0]
+            and not tetrahedral_cells.shape[0]
+            else points.shape[1] + 1
+        )
+        if points.shape[0] < minimum_vertices or np.any(~np.isfinite(points)):
+            raise ValueError("Unstructured FV vertices must be finite and nonempty.")
         if points.shape[1] == 2:
             if tetrahedral_cells.shape[0]:
                 raise ValueError("Tetrahedra require three-dimensional vertices.")
@@ -1049,6 +1164,18 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             connectivity: Connectivity = polygonal_connectivity(
                 triangle_cells,
                 quadrilateral_cells,
+                points.shape[0],
+            )
+            dimension = 2
+            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+            boundary_mask = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
+        elif points.shape[1] == 3 and triangle_cells.shape[0]:
+            if quadrilateral_cells.shape[0] or tetrahedral_cells.shape[0]:
+                raise ValueError("Embedded surface FV currently accepts triangles only.")
+            triangle_cells = _validated_embedded_triangles(points, triangle_cells)
+            connectivity = polygonal_connectivity(
+                triangle_cells,
+                np.empty((0, 4), dtype=np.int32),
                 points.shape[0],
             )
             dimension = 2
@@ -1204,6 +1331,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 "geometry": geometry_id,
             }
         )
+        self.owner_local_view = None
 
     @classmethod
     @checked
@@ -1325,6 +1453,327 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         )
         return cls(None, _prepared=prepared)
 
+    @classmethod
+    @checked
+    def from_owner_local_geometry(
+        cls,
+        view: Any,
+        /,
+        *,
+        field_name: str = "state",
+        component_names: Sequence[str] = ("value",),
+    ) -> "UnstructuredFiniteVolumePlan":
+        """Lower one compact owner-local cell view without assembling a root mesh."""
+        from .._view_support import OwnerLocalCellGeometry
+
+        if not isinstance(view, OwnerLocalCellGeometry):
+            raise TypeError("view must be OwnerLocalCellGeometry.")
+        field = str(field_name)
+        if not field or field.strip() != field:
+            raise ValueError("field_name must be a non-empty exact identifier.")
+        components = _component_names(component_names)
+        dimension = view.topological_dimension
+        mesh, geometry = view.reconstruct_local_geometry()
+        if mesh is None:
+            if (
+                geometry is not None
+                or np.asarray(view.cell_ids).size
+                or np.asarray(view.vertex_ids).size
+            ):
+                raise ValueError(
+                    "Only a genuinely empty owner-local view has no carrier."
+                )
+            key = DiscretizationKey(
+                "unstructured_finite_volume", DiscretizationRole.PHYSICAL
+            )
+            capabilities = (
+                DiscretizationCapability.RECONSTRUCTION,
+                DiscretizationCapability.TRACE,
+                DiscretizationCapability.CONSERVATIVE_FLUX,
+                DiscretizationCapability.BOUNDARY_INTEGRAL,
+                DiscretizationCapability.MATRIX_FREE,
+                DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+            )
+            patch_names: tuple[str, ...] = ()
+            patch_faces: tuple[Array, ...] = ()
+            vertices = jnp.empty((0, dimension), dtype=jnp.float64)
+            triangles = jnp.empty((0, 3), dtype=jnp.int32)
+            quadrilaterals = jnp.empty((0, 4), dtype=jnp.int32)
+            tetrahedra = jnp.empty((0, 4), dtype=jnp.int32)
+            global_id_dtype = jnp.int64 if x64_enabled() else jnp.int32
+            vertex_ids = jnp.empty((0,), dtype=global_id_dtype)
+            cell_ids = jnp.empty((0,), dtype=global_id_dtype)
+            topology_id = canonical_fingerprint(
+                {
+                    "kind": "owner-local-empty-fv-topology",
+                    "source": view.source_topology_id,
+                    "view": view.local_view_id,
+                    "dimension": dimension,
+                }
+            )
+            geometry_id = canonical_fingerprint(
+                {
+                    "kind": "owner-local-empty-fv-geometry",
+                    "source": view.source_geometry_id,
+                    "layout": view.geometry_layout_id,
+                    "view": view.local_view_id,
+                }
+            )
+            prepared = _PreparedUnstructuredFiniteVolumeData(
+                mesh=None,
+                vertices=vertices,
+                triangles=triangles,
+                quadrilaterals=quadrilaterals,
+                tetrahedra=tetrahedra,
+                vertex_global_ids=vertex_ids,
+                cell_global_ids=cell_ids,
+                cell_dimension=dimension,
+                patch_names=patch_names,
+                patch_faces=patch_faces,
+                field_name=field,
+                component_names=components,
+                topology_id=topology_id,
+                geometry_id=geometry_id,
+                key=key,
+                capabilities=capabilities,
+                plan_id=canonical_fingerprint(
+                    {
+                        "kind": "owner-local-empty-fv-plan",
+                        "topology": topology_id,
+                        "geometry": geometry_id,
+                        "field": field,
+                        "components": components,
+                    }
+                ),
+                owner_local_view=view,
+            )
+            return cls(None, _prepared=prepared)
+        if geometry is None or view.local_mesh_id != mesh.mesh_id:
+            raise ValueError("Owner-local FV carrier lacks its exact local geometry map.")
+        cell_ids = np.asarray(
+            mesh.topology.entity_sets[dimension].entity_ids, dtype=np.int64
+        )
+        local_cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
+        local_owned = np.asarray(view.owned, dtype=np.bool_)
+        if cell_ids.shape != local_owned.shape or set(
+            int(value) for value in cell_ids
+        ) != set(int(value) for value in local_cell_ids):
+            raise ValueError("Owner-local FV cells differ from the accepted source view.")
+        offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
+        neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
+        if (
+            offsets.shape != (local_cell_ids.size + 1,)
+            or offsets[-1] != neighbor_ids.size
+        ):
+            raise ValueError("Owner-local FV neighbor metadata is malformed.")
+        available_cells = set(int(value) for value in local_cell_ids)
+        for row in np.flatnonzero(local_owned):
+            required = neighbor_ids[offsets[row] : offsets[row + 1]]
+            if any(int(identifier) not in available_cells for identifier in required):
+                raise ValueError(
+                    "Owner-local FV view omits a required owned-cell neighbor halo."
+                )
+        owned_by_id = {
+            int(identifier): bool(local_owned[row])
+            for row, identifier in enumerate(local_cell_ids)
+        }
+        if isinstance(mesh.connectivity, PolyhedralConnectivity):
+            connectivity = mesh.connectivity
+            owner = np.asarray(connectivity.face_owner, dtype=np.int32)
+            neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
+            boundary = np.flatnonzero(neighbor < 0)
+            cell_order = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+            physical = np.asarray(
+                [face for face in boundary if owned_by_id[int(cell_order[owner[face]])]],
+                dtype=np.int32,
+            )
+            artificial = np.asarray(
+                [
+                    face
+                    for face in boundary
+                    if not owned_by_id[int(cell_order[owner[face]])]
+                ],
+                dtype=np.int32,
+            )
+            plan = cls.from_cell_mesh(
+                mesh,
+                field_name=field,
+                component_names=components,
+                boundary_face_groups={
+                    "__physical_boundary__": physical,
+                    "__owner_local_halo__": artificial,
+                },
+            )
+        elif dimension == 2:
+            triangle_blocks = tuple(
+                block for block in mesh.blocks if block.cell_kind == "triangle"
+            )
+            quadrilateral_blocks = tuple(
+                block for block in mesh.blocks if block.cell_kind == "quadrilateral"
+            )
+            if len(triangle_blocks) + len(quadrilateral_blocks) != len(mesh.blocks):
+                raise ValueError(
+                    "Owner-local 2D FV currently requires canonical triangle/quadrilateral cells."
+                )
+            triangles = (
+                np.concatenate(
+                    [
+                        np.asarray(block.vertices, dtype=np.int32)
+                        for block in triangle_blocks
+                    ],
+                    axis=0,
+                )
+                if triangle_blocks
+                else np.empty((0, 3), dtype=np.int32)
+            )
+            quadrilaterals = (
+                np.concatenate(
+                    [
+                        np.asarray(block.vertices, dtype=np.int32)
+                        for block in quadrilateral_blocks
+                    ],
+                    axis=0,
+                )
+                if quadrilateral_blocks
+                else np.empty((0, 4), dtype=np.int32)
+            )
+            ordered_ids = np.concatenate(
+                [
+                    *(
+                        [
+                            np.asarray(block.global_ids, dtype=np.int64)
+                            for block in triangle_blocks
+                        ]
+                    ),
+                    *(
+                        [
+                            np.asarray(block.global_ids, dtype=np.int64)
+                            for block in quadrilateral_blocks
+                        ]
+                    ),
+                ]
+            )
+            base = cls(
+                np.asarray(mesh.coordinates),
+                triangles=triangles,
+                quadrilaterals=quadrilaterals,
+                vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+                cell_global_ids=ordered_ids,
+                field_name=field,
+                component_names=components,
+            )
+            base_mesh = base.mesh
+            if base_mesh is None:
+                raise ValueError(
+                    "Owner-local polygonal FV plans require a resident mesh."
+                )
+            connectivity = base_mesh.connectivity
+            if not isinstance(connectivity, PolygonalConnectivity):
+                raise TypeError(
+                    "Owner-local polygonal FV plans require polygonal topology."
+                )
+            owner, neighbor, _ = _owner_neighbor(connectivity, base.cell_global_ids.size)
+            boundary = np.flatnonzero(neighbor < 0)
+            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+            physical = np.asarray(
+                [face for face in boundary if owned_by_id[int(ordered_ids[owner[face]])]],
+                dtype=np.int32,
+            )
+            artificial = np.asarray(
+                [
+                    face
+                    for face in boundary
+                    if not owned_by_id[int(ordered_ids[owner[face]])]
+                ],
+                dtype=np.int32,
+            )
+            plan = cls(
+                np.asarray(mesh.coordinates),
+                triangles=triangles,
+                quadrilaterals=quadrilaterals,
+                vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+                cell_global_ids=ordered_ids,
+                boundary_patches={
+                    "__physical_boundary__": face_vertices[physical],
+                    "__owner_local_halo__": face_vertices[artificial],
+                },
+                field_name=field,
+                component_names=components,
+            )
+        elif dimension == 3 and all(
+            block.cell_kind == "tetrahedron" for block in mesh.blocks
+        ):
+            tetrahedra = np.concatenate(
+                [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks],
+                axis=0,
+            )
+            ordered_ids = np.concatenate(
+                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+            )
+            base = cls(
+                np.asarray(mesh.coordinates),
+                tetrahedra=tetrahedra,
+                vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+                cell_global_ids=ordered_ids,
+                field_name=field,
+                component_names=components,
+            )
+            base_mesh = base.mesh
+            if base_mesh is None:
+                raise ValueError(
+                    "Owner-local tetrahedral FV plans require a resident mesh."
+                )
+            connectivity = base_mesh.connectivity
+            if not isinstance(connectivity, TetrahedralConnectivity):
+                raise TypeError(
+                    "Owner-local tetrahedral FV plans require tetrahedral topology."
+                )
+            owner, neighbor, _ = _owner_neighbor(connectivity, base.cell_global_ids.size)
+            boundary = np.flatnonzero(neighbor < 0)
+            face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+            physical = np.asarray(
+                [face for face in boundary if owned_by_id[int(ordered_ids[owner[face]])]],
+                dtype=np.int32,
+            )
+            artificial = np.asarray(
+                [
+                    face
+                    for face in boundary
+                    if not owned_by_id[int(ordered_ids[owner[face]])]
+                ],
+                dtype=np.int32,
+            )
+            plan = cls(
+                np.asarray(mesh.coordinates),
+                tetrahedra=tetrahedra,
+                vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+                cell_global_ids=ordered_ids,
+                boundary_patches={
+                    "__physical_boundary__": face_vertices[physical],
+                    "__owner_local_halo__": face_vertices[artificial],
+                },
+                field_name=field,
+                component_names=components,
+            )
+        else:
+            raise ValueError(
+                "Owner-local unstructured FV requires triangles/quadrilaterals, tetrahedra, or polyhedral connectivity."
+            )
+        if plan.cell_global_ids.shape != (local_cell_ids.size,):
+            raise ValueError("Owner-local FV lowering changed the local cell count.")
+        owner_plan_id = canonical_fingerprint(
+            {
+                "kind": "owner-local-unstructured-fv-plan",
+                "plan": plan.plan_id,
+                "view": view.local_view_id,
+            }
+        )
+        return eqx.tree_at(
+            lambda prepared: (prepared.owner_local_view, prepared.plan_id),
+            plan,
+            (view, owner_plan_id),
+        )
+
     def prepare(self, /, *, numeric_version: str = "0") -> Any:
         return UnstructuredFiniteVolumeDiscretization(
             self, numeric_version=numeric_version
@@ -1332,7 +1781,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
 
 
 class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
-    mesh: CellMesh
+    mesh: CellMesh | None
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -1340,9 +1789,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     vertex_global_ids: Array
     cell_global_ids: Array
     cell_dimension: int = eqx.field(static=True)
-    topology: CellComplexTopology
-    connectivity: Connectivity
-    face_block: FiniteVolumeFaceBlock
+    topology: CellComplexTopology | None
+    connectivity: Connectivity | None
+    face_block: FiniteVolumeFaceBlock | None
     face_blocks: tuple[FiniteVolumeFaceBlock, ...]
     cell_volumes: Array
     cell_centers: Array
@@ -1362,15 +1811,16 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     boundary_patch_names: tuple[str, ...] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
-    cell_space: DiscreteFieldSpace
-    face_space: DiscreteFieldSpace
+    cell_space: DiscreteFieldSpace | None
+    face_space: DiscreteFieldSpace | None
     component_names: tuple[str, ...] = eqx.field(static=True)
     key: DiscretizationKey
-    support: DiscreteSupport
+    support: DiscreteSupport | None
     field_spaces: tuple[DiscreteFieldSpace, ...]
     measures: tuple[DiscreteMeasure, ...]
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    owner_local_view: Any | None
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
@@ -1381,6 +1831,103 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self, plan: UnstructuredFiniteVolumePlan, /, *, numeric_version: str = "0"
     ) -> None:
         mesh = plan.mesh
+        if mesh is None:
+            from .._view_support import OwnerLocalCellGeometry
+
+            view = plan.owner_local_view
+            if not isinstance(view, OwnerLocalCellGeometry) or (
+                np.asarray(view.cell_ids).size
+                or np.asarray(view.vertex_ids).size
+                or view.local_mesh_id is not None
+                or view.local_topology_id is not None
+                or view.local_geometry_id is not None
+            ):
+                raise ValueError(
+                    "A mesh-free FV plan requires a genuinely empty owner-local view."
+                )
+            version = str(numeric_version)
+            if not version:
+                raise ValueError("numeric_version must be non-empty.")
+            dimension = plan.cell_dimension
+            dtype = plan.vertices.dtype
+            index_dtype = jnp.int32
+            empty_ids = jnp.empty((0,), dtype=index_dtype)
+            empty_points = jnp.empty((0, dimension), dtype=dtype)
+            empty_quadrature_points = jnp.empty((0, 0, dimension), dtype=dtype)
+            empty_quadrature_weights = jnp.empty((0, 0), dtype=dtype)
+            empty_cell_quadrature_valid = jnp.empty((0, 0), dtype=jnp.bool_)
+            self.mesh = None
+            self.vertices = plan.vertices
+            self.triangles = plan.triangles
+            self.quadrilaterals = plan.quadrilaterals
+            self.tetrahedra = plan.tetrahedra
+            self.vertex_global_ids = plan.vertex_global_ids
+            self.cell_global_ids = plan.cell_global_ids
+            self.cell_dimension = dimension
+            self.topology = None
+            self.connectivity = None
+            self.face_block = None
+            self.face_blocks = ()
+            self.cell_volumes = jnp.empty((0,), dtype=dtype)
+            self.cell_centers = empty_points
+            self.cell_quadrature_points = empty_quadrature_points
+            self.cell_quadrature_weights = empty_quadrature_weights
+            self.cell_quadrature_valid = empty_cell_quadrature_valid
+            self.cell_quadrature_degree = 0
+            self.face_centers = empty_points
+            self.area_vectors = empty_points
+            self.face_measures = jnp.empty((0,), dtype=dtype)
+            self.face_quadrature_points = empty_quadrature_points
+            self.face_quadrature_weights = empty_quadrature_weights
+            self.owner_cells = empty_ids
+            self.owner_signs = jnp.empty((0,), dtype=dtype)
+            self.neighbor_cells = empty_ids
+            self.boundary_patch_ids = empty_ids
+            self.boundary_patch_names = plan.patch_names
+            self.topology_id = plan.topology_id
+            self.geometry_id = plan.geometry_id
+            self.cell_space = None
+            self.face_space = None
+            self.component_names = plan.component_names
+            self.key = plan.key
+            self.support = None
+            self.field_spaces = ()
+            self.measures = ()
+            self.capabilities = plan.capabilities
+            self.plan_id = plan.plan_id
+            self.owner_local_view = view
+            self.prepared_id = canonical_fingerprint(
+                {
+                    "kind": "prepared-empty-owner-local-fv",
+                    "plan": plan.plan_id,
+                    "view": view.local_view_id,
+                    "numeric_version": version,
+                }
+            )
+            self.numeric_version = version
+            self.preparation = PreparationReport(
+                capabilities=plan.capabilities,
+                diagnostics=("owner-local rank has no resident cells or vertices",),
+                resource_counts={"cells": 0, "vertices": 0, "faces": 0},
+                report_id=canonical_fingerprint(
+                    {
+                        "kind": "empty-owner-local-fv-preparation",
+                        "view": view.local_view_id,
+                        "plan": plan.plan_id,
+                    }
+                ),
+            )
+            zero = jnp.asarray(0.0, dtype=dtype)
+            self.quality = UnstructuredFiniteVolumeQualityReport(
+                minimum_cell_measure=zero,
+                maximum_cell_measure=zero,
+                minimum_face_measure=zero,
+                maximum_aspect_ratio=zero,
+                maximum_nonorthogonality_degrees=zero,
+                maximum_closure_residual=zero,
+                worst_cell=jnp.asarray(-1, dtype=jnp.int32),
+            )
+            return
         points = np.asarray(mesh.coordinates)
         connectivity = mesh.connectivity
         topology = mesh.topology
@@ -1613,6 +2160,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.measures = measures
         self.capabilities = capabilities
         self.plan_id = plan.plan_id
+        self.owner_local_view = plan.owner_local_view
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-finite-volume",
@@ -1642,6 +2190,49 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         """Return volume-normalized directional widths from control-volume faces."""
 
         dtype = self.cell_volumes.dtype
+        if self.cell_dimension == 2 and self.vertices.shape[-1] == 3:
+            cells = self.vertices[jnp.asarray(self.triangles, dtype=jnp.int32)]
+            first = cells[:, 1] - cells[:, 0]
+            second = cells[:, 2] - cells[:, 0]
+            normal_area = jnp.cross(first, second)
+            normals = normal_area / jnp.linalg.norm(normal_area, axis=-1, keepdims=True)
+            first_direction = first / jnp.linalg.norm(first, axis=-1, keepdims=True)
+            second_direction = jnp.cross(normals, first_direction)
+            tangents = jnp.stack(
+                (
+                    first,
+                    cells[:, 2] - cells[:, 1],
+                    cells[:, 0] - cells[:, 2],
+                ),
+                axis=1,
+            )
+            conormals = jnp.cross(tangents, normals[:, None, :])
+            projected_area = 0.5 * jnp.stack(
+                (
+                    jnp.sum(
+                        jnp.abs(
+                            jnp.sum(conormals * first_direction[:, None, :], axis=-1)
+                        ),
+                        axis=1,
+                    ),
+                    jnp.sum(
+                        jnp.abs(
+                            jnp.sum(conormals * second_direction[:, None, :], axis=-1)
+                        ),
+                        axis=1,
+                    ),
+                ),
+                axis=1,
+            )
+            projected_area = eqx.error_if(
+                projected_area,
+                jnp.any(~jnp.isfinite(projected_area) | (projected_area <= 0.0)),
+                "Intrinsic surface projected areas must be positive and finite.",
+            )
+            area = self.cell_volumes.astype(dtype)
+            raw_widths = area[:, None] / projected_area
+            normalization = (area / jnp.prod(raw_widths, axis=-1)) ** 0.5
+            return raw_widths * normalization[:, None]
         projected_area = jnp.zeros(
             (self.cell_count, self.cell_dimension),
             dtype=dtype,

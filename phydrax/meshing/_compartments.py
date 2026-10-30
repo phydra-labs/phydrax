@@ -1,428 +1,519 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Compartment-aware multi-surface tetrahedralization and zone certification."""
+"""Exact categorical-image boundary preparation for native PLC filling."""
 
 from __future__ import annotations
 
-import threading
-from dataclasses import dataclass, field
-from importlib import import_module, metadata
+import json
+from dataclasses import dataclass
+from fractions import Fraction
+from typing import Final
 
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
-from .._identity import SemanticProvenance
-from ..discretization import CellMesh, TetrahedralConnectivity
-from ..geometry import CompartmentComplex
-from ..geometry.surface import SurfaceModel
-from ..imaging import CompartmentSurfaceResult, LabelVolume
+from ..geometry._compartments import CompartmentMeshingSource
+from ..geometry._source_identity import source_entity_id
 from ..typing import checked
-from ._audit import CellMeshAuditPolicy
-from ._canonical import certify_cell_mesh
-from ._contracts import (
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-)
-from ._organization import MeshPatch, MeshZone, MeshZoneRole, validate_mesh_zones
-from ._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
-from ._scope import MeshingEntityKind, MeshingScope
-from ._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus, MeshingTrace
-from .providers._ftetwild import FTetWildOptions, FTetWildProvider
+from ._plc_source import PiecewiseLinearComplex
 
 
-_COMPARTMENT_FTETWILD_LOCK = threading.Lock()
+_FACE_AXES: Final[tuple[tuple[int, int], ...]] = ((1, 2), (2, 0), (0, 1))
 
 
 @dataclass(frozen=True, slots=True)
-class CompartmentMeshingSpec:
-    labels: LabelVolume
-    compartments: CompartmentComplex
-    outer_surface: SurfaceModel
-    interfaces: CompartmentSurfaceResult
-    target_edge_length: float
-    options: FTetWildOptions = field(default_factory=FTetWildOptions)
-    limits: MeshingLimits = field(default_factory=MeshingLimits)
-    audit_policy: CellMeshAuditPolicy = field(default_factory=CellMeshAuditPolicy)
-    specification_id: str = field(init=False)
+class CompartmentPlcPreparation:
+    """Source-lattice PLC plus its semantic facet-to-region table."""
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.labels, LabelVolume):
-            raise TypeError("labels must be LabelVolume.")
-        if not isinstance(self.compartments, CompartmentComplex):
-            raise TypeError("compartments must be CompartmentComplex.")
-        if self.compartments.source_revision != self.labels.label_volume_id:
-            raise ValueError("Compartment and label revisions differ.")
-        self.compartments.require_valid_adjacency()
-        if not isinstance(self.outer_surface, SurfaceModel):
-            raise TypeError("outer_surface must be SurfaceModel.")
-        if not isinstance(self.interfaces, CompartmentSurfaceResult):
-            raise TypeError("interfaces must be CompartmentSurfaceResult.")
-        if self.interfaces.complex.complex_id != self.compartments.complex_id:
-            raise ValueError("Interface surfaces and compartment complex differ.")
-        spatial = self.labels.asset.spatial_affine.coordinate_contract.spatial_id
-        if self.outer_surface.metadata.coordinate_contract.spatial_id != spatial or any(
-            value.surface.metadata.coordinate_contract.spatial_id != spatial
-            for value in self.interfaces.surfaces
-        ):
-            raise ValueError(
-                "Compartment surfaces and labels require one spatial contract."
-            )
-        target = float(self.target_edge_length)
-        if not np.isfinite(target) or target <= 0.0:
-            raise ValueError("target_edge_length must be finite and positive.")
-        if not isinstance(self.options, FTetWildOptions):
-            raise TypeError("options must be FTetWildOptions.")
-        if not isinstance(self.limits, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits.")
-        if not isinstance(self.audit_policy, CellMeshAuditPolicy):
-            raise TypeError("audit_policy must be CellMeshAuditPolicy.")
-        object.__setattr__(self, "target_edge_length", target)
-        object.__setattr__(
-            self,
-            "specification_id",
-            canonical_fingerprint(
-                {
-                    "kind": "compartment-meshing-specification",
-                    "labels": self.labels.label_volume_id,
-                    "compartments": self.compartments.complex_id,
-                    "outer_surface": self.outer_surface.mesh.mesh_id,
-                    "interfaces": self.interfaces.extraction_id,
-                    "target_edge_length": target.hex(),
-                    "options": (
-                        self.options.envelope_distance,
-                        self.options.maximum_iterations,
-                        self.options.stop_quality,
-                        self.options.maximum_threads,
-                        self.options.skip_simplify,
-                        self.options.coarsen,
-                    ),
-                }
-            ),
-        )
+    source_id: str
+    source_revision: str
+    complex: PiecewiseLinearComplex
+    lattice_vertex_keys: tuple[tuple[int, int, int], ...]
+    facet_interface_ids: tuple[str | None, ...]
+    facet_region_ids: tuple[tuple[str | None, str], ...]
+    preparation_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class CompartmentMeshingResult:
-    result: CellMeshingResult
-    zones: tuple[MeshZone, ...]
-    interfaces: tuple[MeshPatch, ...]
-    cell_compartment_ids: tuple[str, ...]
-    adjacency_pairs: tuple[tuple[str, str], ...]
-    specification_id: str
-    result_id: str
+def _ordered_pair(first: str, second: str, /) -> tuple[str, str]:
+    return (first, second) if first < second else (second, first)
 
 
-def _surface_arrays(surface: SurfaceModel, /) -> tuple[np.ndarray, np.ndarray]:
-    points = np.asarray(surface.mesh.coordinates, dtype=np.float64)
-    faces = np.concatenate(
-        [np.asarray(block.vertices, dtype=np.int32) for block in surface.mesh.blocks]
+def _image_face_corners(
+    index: tuple[int, int, int], axis: int, direction: int, /
+) -> tuple[tuple[int, int, int], ...]:
+    first_axis, second_axis = _FACE_AXES[axis]
+    center = [2 * value for value in index]
+    center[axis] += direction
+    corners = []
+    for first_sign, second_sign in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        point = center.copy()
+        point[first_axis] += first_sign
+        point[second_axis] += second_sign
+        corners.append((point[0], point[1], point[2]))
+    return tuple(corners)
+
+
+def _compartment_codes(
+    source: CompartmentMeshingSource, /
+) -> tuple[np.ndarray, tuple[str, ...], dict[tuple[str, str], tuple[str, str, str]]]:
+    source.validate_source_integrity()
+    labels = source.labels
+    values = np.asarray(labels.asset.values)
+    valid = np.asarray(labels.asset.valid_mask, dtype=np.bool_)
+    if values.ndim != 3 or valid.shape != values.shape:
+        raise ValueError("Compartment PLC preparation requires a valid 3D label volume.")
+
+    ontology = {
+        definition.label_id: definition.value for definition in labels.ontology.labels
+    }
+    region_ids = tuple(
+        definition.compartment_id for definition in source.compartments.compartments
     )
-    return points, faces
+    region_index = {name: index for index, name in enumerate(region_ids)}
+    value_to_region: dict[int, int] = {}
+    for definition in source.compartments.compartments:
+        region = region_index[definition.compartment_id]
+        for label_id in definition.label_ids:
+            value = int(ontology[label_id])
+            if value in value_to_region:
+                raise ValueError(
+                    "A categorical label cannot belong to multiple compartments."
+                )
+            value_to_region[value] = region
+
+    code = np.full(values.shape, -1, dtype=np.int64)
+    for value, region in value_to_region.items():
+        code[valid & (values == value)] = region
+
+    interfaces: dict[tuple[str, str], tuple[str, str, str]] = {}
+    for interface_id, first, second, _role, _required in source.interface_definitions:
+        pair = _ordered_pair(first, second)
+        if pair in interfaces:
+            raise ValueError("Compartment interface pairs must have one source identity.")
+        interfaces[pair] = (interface_id, first, second)
+    return code, region_ids, interfaces
 
 
-class FTetWildCompartmentProvider:
-    """Insert all compartment surfaces once, then classify tetrahedra by labels."""
+_Point2 = tuple[Fraction, Fraction]
 
-    @checked
-    def execute(
-        self, specification: CompartmentMeshingSpec, /
-    ) -> CompartmentMeshingResult:
-        surfaces = (specification.outer_surface,) + tuple(
-            value.surface for value in specification.interfaces.surfaces
-        )
-        vertices, faces = zip(
-            *(_surface_arrays(value) for value in surfaces), strict=True
-        )
-        outer_points = vertices[0]
-        diagonal = float(np.linalg.norm(np.ptp(outer_points, axis=0)))
-        if not np.isfinite(diagonal) or diagonal <= 0.0:
-            raise MeshingFailure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "Compartment outer-surface extent is invalid.",
-            )
-        if sum(len(value) for value in vertices) > specification.limits.maximum_vertices:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Compartment source exceeds the vertex budget.",
-            )
-        try:
-            native = import_module("wildmeshing")
-            version = metadata.version("wildmeshing")
-        except (ImportError, metadata.PackageNotFoundError) as error:
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "Install wildmeshing>=0.4.1 for compartment tetrahedralization.",
-            ) from error
-        options = specification.options
-        with _COMPARTMENT_FTETWILD_LOCK:
-            try:
-                tetrahedralizer = native.Tetrahedralizer(
-                    stop_quality=options.stop_quality,
-                    max_its=options.maximum_iterations,
-                    max_threads=options.maximum_threads,
-                    epsilon=options.envelope_distance / diagonal,
-                    edge_length_r=specification.target_edge_length / diagonal,
-                    skip_simplify=options.skip_simplify,
-                    coarsen=options.coarsen,
+
+def _signed_area2(polygon: tuple[_Point2, ...], /) -> Fraction:
+    return sum(
+        (
+            first[0] * second[1] - first[1] * second[0]
+            for first, second in zip(polygon, (*polygon[1:], polygon[0]), strict=True)
+        ),
+        Fraction(0),
+    )
+
+
+def _polygon_area(polygon: tuple[_Point2, ...], /) -> Fraction:
+    if len(polygon) < 3:
+        return Fraction(0)
+    return abs(_signed_area2(polygon)) / 2
+
+
+def _clip_axis(
+    polygon: tuple[_Point2, ...], axis: int, bound: int, keep_greater: bool, /
+) -> tuple[_Point2, ...]:
+    if not polygon:
+        return ()
+
+    def inside(point: _Point2, /) -> bool:
+        return point[axis] >= bound if keep_greater else point[axis] <= bound
+
+    output: list[_Point2] = []
+    previous = polygon[-1]
+    previous_inside = inside(previous)
+    for current in polygon:
+        current_inside = inside(current)
+        if current_inside != previous_inside:
+            denominator = current[axis] - previous[axis]
+            if denominator == 0:
+                raise ArithmeticError(
+                    "Exact polygon clipping encountered a parallel crossing."
                 )
-                tetrahedralizer.set_log_level(6)
-                tetrahedralizer.set_meshes(list(vertices), list(faces))
-                tetrahedralizer.tetrahedralize()
-                output_points, output_cells, _ = tetrahedralizer.get_tet_mesh(
-                    all_mesh=False,
-                    use_input_for_wn=True,
-                    manifold_surface=True,
-                    correct_surface_orientation=True,
+            parameter = Fraction(bound - previous[axis], denominator)
+            output.append(
+                (
+                    previous[0] + parameter * (current[0] - previous[0]),
+                    previous[1] + parameter * (current[1] - previous[1]),
                 )
-            except (RuntimeError, ValueError, TypeError) as error:
-                raise MeshingFailure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    f"fTetWild {version}: {error}",
-                ) from error
-        points = np.asarray(output_points, dtype=np.float64)
-        cells = np.asarray(output_cells)
-        if (
-            cells.ndim != 2
-            or cells.shape[1] != 4
-            or not np.issubdtype(cells.dtype, np.integer)
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.CONVERSION_FAILED,
-                "fTetWild returned non-tetrahedral compartment output.",
             )
-        used, remapped = np.unique(cells, return_inverse=True)
-        points = points[used]
-        cells = remapped.reshape(cells.shape)
-        determinant = np.linalg.det(points[cells[:, 1:]] - points[cells[:, :1]])
-        cells[determinant < 0.0, :2] = cells[determinant < 0.0, 1::-1]
-        mesh = CellMesh.from_tetrahedra(
-            points,
-            cells,
-            numeric_version=specification.specification_id,
-        )
-        if (
-            len(points) > specification.limits.maximum_vertices
-            or len(cells) > specification.limits.maximum_cells
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Compartment output exceeds entity budgets.",
+        if current_inside:
+            output.append(current)
+        previous = current
+        previous_inside = current_inside
+    return tuple(output)
+
+
+def _clip_rectangle(
+    polygon: tuple[_Point2, ...],
+    bounds: tuple[int, int, int, int],
+    /,
+) -> tuple[_Point2, ...]:
+    lower_u, upper_u, lower_v, upper_v = bounds
+    result = _clip_axis(polygon, 0, lower_u, True)
+    result = _clip_axis(result, 0, upper_u, False)
+    result = _clip_axis(result, 1, lower_v, True)
+    return _clip_axis(result, 1, upper_v, False)
+
+
+def _clip_convex_polygon(
+    subject: tuple[_Point2, ...], clipper: tuple[_Point2, ...], /
+) -> tuple[_Point2, ...]:
+    result = subject
+    orientation = 1 if _signed_area2(clipper) > 0 else -1
+    for first, second in zip(clipper, (*clipper[1:], clipper[0]), strict=True):
+        if not result:
+            return ()
+
+        def side(point: _Point2, /) -> Fraction:
+            return orientation * (
+                (second[0] - first[0]) * (point[1] - first[1])
+                - (second[1] - first[1]) * (point[0] - first[0])
             )
-        certified = certify_cell_mesh(
-            mesh,
-            specification.labels.asset.spatial_affine.coordinate_contract,
-            audit_policy=specification.audit_policy,
-        )
-        mesh = certified.mesh
-        points = np.asarray(mesh.coordinates)
-        cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
-        centroids = np.mean(points[cells], axis=1)
-        voxel = specification.labels.asset.spatial_affine.world_to_index(centroids)
-        nearest = np.rint(voxel).astype(np.int64)
-        image_shape = np.asarray(specification.labels.asset.values.shape[:3])
-        inside = np.all((nearest >= 0) & (nearest < image_shape), axis=1)
-        if not np.all(inside):
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A compartment cell centroid lies outside the segmentation image.",
-            )
-        labels = np.asarray(specification.labels.asset.values)[tuple(nearest.T)]
-        ontology_values = {
-            value.label_id: value.value for value in specification.labels.ontology.labels
-        }
-        label_to_compartment = {
-            ontology_values[label_id]: compartment.compartment_id
-            for compartment in specification.compartments.compartments
-            for label_id in compartment.label_ids
-        }
-        cell_compartment_ids = tuple(
-            label_to_compartment.get(int(value), "") for value in labels
-        )
-        if any(not value for value in cell_compartment_ids):
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A generated cell has no declared compartment label.",
-            )
-        cell_ids = np.asarray(mesh.entity_set(3).entity_ids)
-        zones = []
-        for compartment in specification.compartments.compartments:
-            mask = np.asarray(
-                [value == compartment.compartment_id for value in cell_compartment_ids],
-                dtype=np.bool_,
-            )
-            if not np.any(mask):
-                raise MeshingFailure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    f"Compartment {compartment.compartment_id!r} has no generated cells.",
-                )
-            scope = MeshingScope(
-                mesh.mesh_id,
-                mesh.numeric_version,
-                MeshingEntityKind.MESH,
-                3,
-                mesh.entity_set(3).entity_set_id,
-                cell_ids[mask],
-            )
-            zones.append(
-                MeshZone(compartment.compartment_id, MeshZoneRole.MATERIAL, scope)
-            )
-        zones_ = validate_mesh_zones(tuple(zones))
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, TetrahedralConnectivity):
-            raise RuntimeError(
-                "Certified compartment mesh lost tetrahedral connectivity."
-            )
-        incidents = [[] for _ in np.asarray(connectivity.faces)]
-        for cell_index, row in enumerate(np.asarray(connectivity.cell_faces)):
-            for face_index in row:
-                incidents[int(face_index)].append(cell_index)
-        face_ids = np.asarray(mesh.entity_set(2).entity_ids)
-        interface_definition = {
-            value.ordered_pair: value for value in specification.compartments.interfaces
-        }
-        face_by_interface = {
-            value.interface_id: [] for value in specification.compartments.interfaces
-        }
-        observed = set()
-        for face_index, adjacent in enumerate(incidents):
-            if len(adjacent) != 2:
-                continue
-            pair = tuple(
-                sorted(
+
+        output: list[_Point2] = []
+        previous = result[-1]
+        previous_side = side(previous)
+        previous_inside = previous_side >= 0
+        for current in result:
+            current_side = side(current)
+            current_inside = current_side >= 0
+            if current_inside != previous_inside:
+                denominator = previous_side - current_side
+                if denominator == 0:
+                    raise ArithmeticError(
+                        "Exact convex clipping encountered a parallel crossing."
+                    )
+                parameter = previous_side / denominator
+                output.append(
                     (
-                        cell_compartment_ids[adjacent[0]],
-                        cell_compartment_ids[adjacent[1]],
+                        previous[0] + parameter * (current[0] - previous[0]),
+                        previous[1] + parameter * (current[1] - previous[1]),
                     )
                 )
-            )
-            if pair[0] == pair[1]:
-                continue
-            observed.add(pair)
-            definition = interface_definition.get(pair)
-            if definition is None:
-                raise MeshingFailure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    f"Generated mesh contains forbidden compartment adjacency {pair}.",
-                )
-            face_by_interface[definition.interface_id].append(face_ids[face_index])
-        patches = []
-        for definition in specification.compartments.interfaces:
-            identifiers = np.asarray(
-                face_by_interface[definition.interface_id], dtype=np.int64
-            )
-            if definition.required and identifiers.size == 0:
-                raise MeshingFailure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    f"Required interface {definition.interface_id!r} is absent.",
-                )
-            if identifiers.size:
-                scope = MeshingScope(
-                    mesh.mesh_id,
-                    mesh.numeric_version,
-                    MeshingEntityKind.MESH,
-                    2,
-                    mesh.entity_set(2).entity_set_id,
-                    identifiers,
-                )
-                patches.append(MeshPatch(definition.interface_id, scope, connected=False))
-        expected = set(specification.compartments.adjacency.expected_pairs)
-        if not expected.issubset(observed):
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                f"Generated mesh misses required adjacency: required={sorted(expected)}, observed={sorted(observed)}.",
-            )
-        certified_semantics = certify_cell_mesh(
-            mesh,
-            specification.labels.asset.spatial_affine.coordinate_contract,
-            audit_policy=specification.audit_policy,
-            patches=tuple(patches),
-            zones=zones_,
-        )
-        provider = FTetWildProvider(specification.options).info
-        provenance = SemanticProvenance(
-            {
-                "kind": "ftetwild-compartment-mesh",
-                "specification": specification.specification_id,
-                "labels": specification.labels.label_volume_id,
-                "compartments": specification.compartments.complex_id,
-            }
-        )
-        compliance = MeshingComplianceReport(
-            specification.specification_id,
-            requested=(
-                ("target_edge_length", specification.target_edge_length),
-                ("compartment_count", float(len(zones_))),
-                ("required_interface_count", float(len(expected))),
-            ),
-            achieved=(
-                ("cell_count", float(mesh.entity_set(3).count)),
-                ("compartment_count", float(len(zones_))),
-                ("interface_count", float(len(patches))),
-            ),
-        )
-        trace = MeshingTrace(
-            (
-                MeshingStageReport(
-                    MeshingStageKind.VOLUME_FILL,
-                    MeshingStageStatus.PASSED,
-                    input_ids=(
-                        specification.outer_surface.mesh.mesh_id,
-                        specification.interfaces.extraction_id,
-                    ),
-                    output_ids=(mesh.mesh_id,),
-                    created_count=mesh.entity_set(3).count,
-                ),
-                *certified_semantics.trace.stages,
-            )
-        )
-        certified = CellMeshingResult(
-            certified_semantics.mesh,
-            certified_semantics.geometry,
-            certified_semantics.coordinate_contract,
-            certified_semantics.audit,
-            certified_semantics.quality,
-            compliance,
-            trace,
-            provider,
-            MeshingRuntimeInfo(
-                provider.provider_id,
-                f"wildmeshing {version}",
-                MeshingExecutionMode.IN_PROCESS,
-                deterministic=False,
-                enforced_limits=("input_entities", "output_entities"),
-                unenforced_limits=("native_workspace", "wall_time"),
-            ),
-            MeshingDerivativeMode.NONDIFFERENTIABLE,
-            provenance,
-            patches=tuple(patches),
-            zones=zones_,
-        )
-        result_id = canonical_fingerprint(
-            {
-                "kind": "compartment-meshing-result",
-                "specification": specification.specification_id,
-                "mesh": mesh.mesh_id,
-                "zones": [value.zone_id for value in zones_],
-                "patches": [value.patch_id for value in patches],
-            }
-        )
-        return CompartmentMeshingResult(
-            certified,
-            zones_,
-            tuple(patches),
-            cell_compartment_ids,
-            tuple(sorted(observed)),
-            specification.specification_id,
-            result_id,
-        )
+            if current_inside:
+                output.append(current)
+            previous = current
+            previous_side = current_side
+            previous_inside = current_inside
+        result = tuple(output)
+    return result
 
 
-__all__ = [
-    "CompartmentMeshingResult",
-    "CompartmentMeshingSpec",
-    "FTetWildCompartmentProvider",
-]
+def _verify_outer_surface_lattice(
+    source: CompartmentMeshingSource,
+    expected_faces: tuple[tuple[int, int, int, tuple[tuple[int, int, int], ...]], ...],
+    /,
+) -> None:
+    """Prove exact planar coverage by the supplied, independently meshed boundary."""
+    surface = source.outer_surface
+    coordinates = np.asarray(surface.mesh.coordinates, dtype=np.float64)
+    affine = source.labels.asset.spatial_affine
+    doubled = 2.0 * np.asarray(affine.world_to_index(coordinates), dtype=np.float64)
+    rounded = np.rint(doubled)
+    if (
+        not np.all(np.isfinite(doubled))
+        or np.any(rounded < np.iinfo(np.int64).min)
+        or np.any(rounded > np.iinfo(np.int64).max)
+    ):
+        raise ValueError("Outer surface vertices are outside the source lattice extent.")
+    lattice = rounded.astype(np.int64)
+    represented = np.asarray(affine.index_to_world(lattice.astype(np.float64) * 0.5))
+    if not np.array_equal(represented, coordinates):
+        raise ValueError(
+            "Outer surface coordinates must be exact affine realizations of source lattice points."
+        )
+
+    expected_by_plane: dict[tuple[int, int, int], list[tuple[int, int, int, int]]] = {}
+    for axis, plane, direction, loop in expected_faces:
+        first_axis, second_axis = _FACE_AXES[axis]
+        u = tuple(point[first_axis] for point in loop)
+        v = tuple(point[second_axis] for point in loop)
+        bounds = (min(u), max(u), min(v), max(v))
+        if bounds[1] - bounds[0] != 2 or bounds[3] - bounds[2] != 2:
+            raise ValueError("Source outer faces must be unit label-cell squares.")
+        group = (axis, plane, direction)
+        group_rectangles = expected_by_plane.setdefault(group, [])
+        if bounds in group_rectangles:
+            raise ValueError(
+                "Categorical image boundary repeats one oriented lattice face."
+            )
+        group_rectangles.append(bounds)
+
+    actual_by_plane: dict[tuple[int, int, int], list[tuple[_Point2, ...]]] = {}
+    reflected = np.linalg.det(affine.matrix[:3, :3]) < 0.0
+    for block in surface.mesh.blocks:
+        if block.cell_kind != "triangle":
+            raise ValueError("Outer compartment surface must use triangle cells.")
+        for face in np.asarray(block.vertices, dtype=np.int64).tolist():
+            keys = tuple(
+                tuple(int(value) for value in lattice[int(vertex)]) for vertex in face
+            )
+            constant_axes = tuple(
+                axis
+                for axis in range(3)
+                if keys[0][axis] == keys[1][axis] == keys[2][axis]
+            )
+            if len(constant_axes) != 1:
+                raise ValueError(
+                    "Every outer source triangle must lie in one image-cell face plane."
+                )
+            axis = constant_axes[0]
+            plane = keys[0][axis]
+            if plane % 2 == 0:
+                raise ValueError(
+                    "Outer source triangles must lie on voxel half-index planes."
+                )
+            first_axis, second_axis = _FACE_AXES[axis]
+            triangle = tuple(
+                (Fraction(point[first_axis]), Fraction(point[second_axis]))
+                for point in keys
+            )
+            signed_area = _signed_area2(triangle)
+            if signed_area == 0:
+                raise ValueError("Outer source triangles must be nondegenerate.")
+            direction = (1 if signed_area > 0 else -1) * (-1 if reflected else 1)
+            actual_by_plane.setdefault((axis, plane, direction), []).append(triangle)
+
+    if set(actual_by_plane) != set(expected_by_plane):
+        raise ValueError(
+            "Outer surface plane/orientation strata do not match the categorical image boundary."
+        )
+    for group, rectangles in expected_by_plane.items():
+        coverage = {rectangle: Fraction(0) for rectangle in rectangles}
+        clipped_by_rectangle: dict[
+            tuple[int, int, int, int], list[tuple[_Point2, ...]]
+        ] = {rectangle: [] for rectangle in rectangles}
+        for triangle in actual_by_plane[group]:
+            triangle_area = _polygon_area(triangle)
+            if triangle_area <= 0:
+                raise ValueError("Outer source triangles must have positive area.")
+            triangle_bounds = (
+                min(point[0] for point in triangle),
+                max(point[0] for point in triangle),
+                min(point[1] for point in triangle),
+                max(point[1] for point in triangle),
+            )
+            covered_area = Fraction(0)
+            for rectangle in rectangles:
+                if (
+                    triangle_bounds[1] <= rectangle[0]
+                    or triangle_bounds[0] >= rectangle[1]
+                    or triangle_bounds[3] <= rectangle[2]
+                    or triangle_bounds[2] >= rectangle[3]
+                ):
+                    continue
+                clipped = _clip_rectangle(triangle, rectangle)
+                area = _polygon_area(clipped)
+                if area:
+                    covered_area += area
+                    coverage[rectangle] += area
+                    clipped_by_rectangle[rectangle].append(clipped)
+            if covered_area != triangle_area:
+                raise ValueError(
+                    "An outer source triangle extends outside the categorical image boundary."
+                )
+        for rectangle, area in coverage.items():
+            if area != 4:
+                raise ValueError(
+                    "Outer source triangles do not exactly cover each categorical boundary face."
+                )
+            polygons = clipped_by_rectangle[rectangle]
+            for first in range(len(polygons)):
+                for second in range(first + 1, len(polygons)):
+                    if (
+                        _polygon_area(
+                            _clip_convex_polygon(polygons[first], polygons[second])
+                        )
+                        > 0
+                    ):
+                        raise ValueError(
+                            "Outer source triangles overlap in the categorical image boundary."
+                        )
+
+
+@checked
+def prepare_compartment_plc(
+    source: CompartmentMeshingSource,
+    /,
+) -> CompartmentPlcPreparation:
+    """Regenerate oriented exterior/material facets from categorical face incidence.
+
+    Vertex identity comes from doubled source-index lattice keys. Region sides
+    come from categorical voxel adjacency; no extracted mesh row or centroid
+    determines source identity or material ownership.
+    """
+    if not isinstance(source, CompartmentMeshingSource):
+        raise TypeError("source must be a CompartmentMeshingSource.")
+    if source.outer_geometry is not None:
+        raise ValueError(
+            "A mapped outer geometry needs a source-to-lattice coverage proof before image PLC construction."
+        )
+    code, region_ids, interfaces = _compartment_codes(source)
+    values: list[
+        tuple[
+            tuple[tuple[int, int, int], ...],
+            tuple[str, tuple[str, ...]],
+            tuple[int, int],
+            str | None,
+        ]
+    ] = []
+    region_index = {name: index for index, name in enumerate(region_ids)}
+    reflected = np.linalg.det(source.labels.asset.spatial_affine.matrix[:3, :3]) < 0.0
+    outer_faces: list[tuple[int, int, int, tuple[tuple[int, int, int], ...]]] = []
+    for index in np.ndindex(code.shape):
+        own = int(code[index])
+        if own < 0:
+            continue
+        for axis in range(3):
+            for direction in (-1, 1):
+                neighbor = list(index)
+                neighbor[axis] += direction
+                other = (
+                    int(code[tuple(neighbor)])
+                    if 0 <= neighbor[axis] < code.shape[axis]
+                    else -1
+                )
+                if other == own or (other >= 0 and direction < 0):
+                    continue
+                if other >= 0:
+                    pair = _ordered_pair(region_ids[other], region_ids[own])
+                    interface = interfaces.get(pair)
+                    if interface is None:
+                        first_region, second_region = pair
+                        interface_id = None
+                        interface_key = json.dumps(
+                            ["undeclared-interface-pair", list(pair)],
+                            separators=(",", ":"),
+                        )
+                        facet_interface_id = None
+                    else:
+                        interface_id, first_region, second_region = interface
+                        interface_key = interface_id
+                        facet_interface_id = interface_id
+                    sides = (
+                        region_index[second_region],
+                        region_index[first_region],
+                    )
+                    reverse = (first_region == region_ids[own]) ^ reflected
+                    facet_name = source_entity_id(
+                        source.source_id,
+                        source.source_revision,
+                        "compartment-interface-facet",
+                        interface_key,
+                    )
+                else:
+                    sides = (-1, own)
+                    reverse = (direction < 0) ^ reflected
+                    outer_key = json.dumps(
+                        [source.outer_surface.model_id, region_ids[own]],
+                        separators=(",", ":"),
+                    )
+                    facet_name = source_entity_id(
+                        source.source_id,
+                        source.source_revision,
+                        "compartment-outer-facet",
+                        outer_key,
+                    )
+                    facet_interface_id = None
+                loop = _image_face_corners(index, axis, direction)
+                if reverse:
+                    loop = tuple(reversed(loop))
+                if other < 0:
+                    outer_faces.append(
+                        (axis, 2 * index[axis] + direction, direction, loop)
+                    )
+                values.append((loop, (facet_name, ()), sides, facet_interface_id))
+
+    if not values:
+        raise ValueError("Categorical source contains no occupied compartment cells.")
+    _verify_outer_surface_lattice(source, tuple(outer_faces))
+
+    facet_keys = tuple(sorted({facet_key for _, facet_key, _, _ in values}))
+    facet_ids = tuple(name for name, _ in facet_keys)
+    facet_occurrence_paths = tuple(path for _, path in facet_keys)
+    facet_index = {key: row for row, key in enumerate(facet_keys)}
+    facet_regions: list[tuple[int, int]] = [(-1, -1)] * len(facet_keys)
+    facet_interface_ids: list[str | None] = [None] * len(facet_keys)
+    facet_region_ids: list[tuple[str | None, str] | None] = [None] * len(facet_keys)
+    polygon_facets: list[int] = []
+    loops: list[tuple[tuple[int, int, int], ...]] = []
+    vertex_keys = tuple(sorted({point for loop, _, _, _ in values for point in loop}))
+    vertex_index = {key: row for row, key in enumerate(vertex_keys)}
+    for loop, facet_key, sides, interface_id in values:
+        facet = facet_index[facet_key]
+        region_pair = (int(sides[0]), int(sides[1]))
+        named_pair = (
+            None if region_pair[0] < 0 else region_ids[region_pair[0]],
+            region_ids[region_pair[1]],
+        )
+        previous = facet_region_ids[facet]
+        if previous is not None and previous != named_pair:
+            raise ValueError(
+                "One compartment source facet cannot change region-side incidence."
+            )
+        facet_regions[facet] = region_pair
+        facet_region_ids[facet] = named_pair
+        facet_interface_ids[facet] = interface_id
+        loops.append(loop)
+        polygon_facets.append(facet)
+
+    vertices = source.labels.asset.spatial_affine.index_to_world(
+        np.asarray(vertex_keys, dtype=np.float64) * 0.5
+    )
+    vertex_ids = tuple(
+        source_entity_id(
+            source.source_id,
+            source.source_revision,
+            "lattice-vertex",
+            json.dumps(key, separators=(",", ":")),
+        )
+        for key in vertex_keys
+    )
+    complex_ = PiecewiseLinearComplex(
+        vertices,
+        tuple(
+            np.asarray([vertex_index[key] for key in loop], dtype=np.int64)
+            for loop in loops
+        ),
+        np.asarray(polygon_facets, dtype=np.int64),
+        np.asarray(facet_regions, dtype=np.int64),
+        region_ids,
+        segments=None,
+        vertex_ids=vertex_ids,
+        vertex_occurrence_paths=tuple(() for _ in vertex_ids),
+        facet_ids=facet_ids,
+        facet_occurrence_paths=facet_occurrence_paths,
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=tuple(() for _ in region_ids),
+        boundary="conforming",
+    )
+    preparation_id = canonical_fingerprint(
+        {
+            "kind": "compartment-plc-preparation",
+            "source": source.source_id,
+            "revision": source.source_revision,
+            "complex": complex_.complex_id,
+            "lattice_vertices": vertex_keys,
+            "facet_interfaces": tuple(facet_interface_ids),
+            "facet_region_ids": tuple(facet_region_ids),
+            "outer_surface": source.outer_surface.model_id,
+        }
+    )
+    return CompartmentPlcPreparation(
+        source.source_id,
+        source.source_revision,
+        complex_,
+        vertex_keys,
+        tuple(facet_interface_ids),
+        tuple(value for value in facet_region_ids if value is not None),
+        preparation_id,
+    )
+
+
+__all__ = ["CompartmentPlcPreparation", "prepare_compartment_plc"]

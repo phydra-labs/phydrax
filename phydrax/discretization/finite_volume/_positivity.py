@@ -731,6 +731,8 @@ class FluxPositivityPlan(StrictModule):
         local_euler_increment: ArrayLike,
         target_cell_volumes: ArrayLike,
         /,
+        *,
+        owned_cell_mask: ArrayLike | None = None,
     ) -> StageRatePositivityResult:
         """Blend aligned content rates and test the Euler target as cell averages."""
 
@@ -825,6 +827,38 @@ class FluxPositivityPlan(StrictModule):
             )
 
         active = high.active_cell_mask
+        if owned_cell_mask is None:
+            decision_active = active
+        else:
+            owned = jnp.asarray(owned_cell_mask)
+            if owned.shape != (high.cell_count,) or owned.dtype != jnp.bool_:
+                raise ValueError(
+                    "owned_cell_mask must be a boolean array with exact shape (cell_count,)."
+                )
+            decision_active = active & owned
+        if high.cell_count == 0:
+            one = jnp.asarray(1.0, dtype=content.dtype)
+            report = FiniteVolumeAdmissibilityReport(
+                high_order_valid=jnp.asarray(True),
+                fallback_valid=jnp.asarray(True),
+                blend_factor=one,
+                activated=jnp.asarray(False),
+                minimum_density=jnp.asarray(jnp.inf, dtype=content.dtype),
+                limited_state_valid=jnp.asarray(True),
+                secondary_reduction_applied=jnp.asarray(False),
+                secondary_reduction_factor=one,
+            )
+            return StageRatePositivityResult(
+                euler_content=content
+                + increment * high.scatter_content_rate(),
+                euler_cell_average=jnp.empty_like(content),
+                ledger=high,
+                report=report,
+                face_blend_factors=tuple(
+                    jnp.ones(block.owner_cells.shape, dtype=content.dtype)
+                    for block in high.blocks
+                ),
+            )
         active_components = active[:, None]
         safe_volumes = jnp.where(
             active,
@@ -836,19 +870,19 @@ class FluxPositivityPlan(StrictModule):
             average = candidate_content / safe_volumes[:, None]
             return jnp.where(active_components, average, jnp.zeros_like(average))
 
-        any_active = jnp.any(active)
-        first_active = jnp.argmax(active.astype(jnp.int32))
+        any_active = jnp.any(decision_active)
+        first_active = jnp.argmax(decision_active.astype(jnp.int32))
 
         def admissible_active_cells(candidate_average: Array, /) -> Array:
             def evaluate(_: None) -> Array:
                 seed = candidate_average[first_active]
                 safe_average = jnp.where(
-                    active_components,
+                    decision_active[:, None],
                     candidate_average,
                     seed[None, :],
                 )
                 return jnp.where(
-                    active,
+                    decision_active,
                     system.admissible(safe_average),
                     True,
                 )
@@ -1010,7 +1044,7 @@ class FluxPositivityPlan(StrictModule):
         limited_average = cell_average(limited_content)
         limited_valid = jnp.all(admissible_active_cells(limited_average))
         active_density = jnp.where(
-            active,
+            decision_active,
             limited_average[..., 0],
             jnp.asarray(jnp.inf, dtype=limited_average.dtype),
         )

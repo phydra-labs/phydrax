@@ -369,16 +369,6 @@ def _surface_audit(
     )
 
     boundary_edge_count = sum(len(incidents) == 1 for incidents in records.values())
-    capacity_pairs = (
-        (points.shape[0], policy.maximum_vertices),
-        (faces.shape[0], policy.maximum_cells),
-        (len(records), policy.maximum_edges),
-        (component_count, policy.maximum_components),
-        (boundary_edge_count, policy.maximum_boundary_edges),
-    )
-    capacity_valid = all(
-        limit is None or count <= limit for count, limit in capacity_pairs
-    )
     if model.interfaces:
         classification = "interface"
     elif component_count > 1:
@@ -399,8 +389,6 @@ def _surface_audit(
         issues.append("one or more triangle metrics are degenerate or non-finite")
     if not orientation_consistent:
         issues.append("adjacent triangles have inconsistent orientation")
-    if not capacity_valid:
-        issues.append("surface exceeds an audit capacity")
     if not volume_valid:
         issues.append("a closed component is below the minimum enclosed volume")
     if policy.require_outward_orientation and not outward_orientation_valid:
@@ -414,7 +402,6 @@ def _surface_audit(
         manifold=manifold,
         metric_valid=metric_valid,
         orientation_consistent=orientation_consistent,
-        capacity_valid=capacity_valid,
         outward_orientation_valid=outward_orientation_valid,
         face_areas=face_areas,
         component_ids=components,

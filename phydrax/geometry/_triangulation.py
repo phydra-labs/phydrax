@@ -52,10 +52,6 @@ from .._trainable import NonTrainableState
 from ..typing import parse
 
 
-_DEGENERATE_ALL_PAIRS_LIMIT = 512
-_CLIP_PLANE_BUDGET = 1 << 18
-
-
 TriangulationProvider: TypeAlias = Literal["meshcore", "qhull"]
 
 # Qhull's documented Delaunay defaults for two and three dimensions, passed
@@ -237,23 +233,24 @@ def _raise_for_items(status: np.ndarray, operation: str, /) -> None:
         return
     code = MeshcoreStatus(int(status[failed[0]]))
     match code:
-        case MeshcoreStatus.CAPACITY_EXCEEDED | MeshcoreStatus.INTERNAL_ERROR:
+        case (
+            MeshcoreStatus.CAPACITY_EXCEEDED
+            | MeshcoreStatus.ALLOCATION_FAILURE
+            | MeshcoreStatus.INTERNAL_ERROR
+        ):
             raise MeshcoreError(code, f"{operation}: cell {int(failed[0])} failed")
+        case MeshcoreStatus.UNRESOLVED:
+            raise MeshcoreError(code, f"{operation}: cell {int(failed[0])} is unresolved")
+        case MeshcoreStatus.INDEX_RANGE_ERROR:
+            raise OverflowError(f"{operation}: native index range exceeded")
         case _:
             raise ValueError(
                 f"{operation}: cell {int(failed[0])} has invalid input ({code.name})."
             )
 
 
-def _qhull_delaunay(
-    points: np.ndarray, max_simplices: int | None, /
-) -> tuple[np.ndarray, np.ndarray, int, int]:
-    """SciPy Qhull Delaunay in the canonical simplex convention.
-
-    Rows are sorted, then the last two vertices swap where needed for positive
-    orientation, and rows are ordered lexicographically. Points Qhull leaves
-    out map to their nearest vertex (``Qc``); identical ones are duplicates.
-    """
+def _qhull_delaunay(points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """SciPy Qhull Delaunay in the canonical simplex convention."""
     count, dimension = points.shape
     if count <= dimension:
         raise ValueError("Delaunay triangulation needs more points than dimensions.")
@@ -268,11 +265,6 @@ def _qhull_delaunay(
         :, [*range(dimension - 1), dimension, dimension - 1]
     ]
     simplices = simplices[np.lexsort(simplices.T[::-1])]
-    if max_simplices is not None and simplices.shape[0] > max_simplices:
-        raise MeshcoreError(
-            MeshcoreStatus.CAPACITY_EXCEEDED,
-            f"qhull delaunay: {simplices.shape[0]} simplices exceed max_simplices",
-        )
     vertex_map = np.arange(count, dtype=np.int32)
     duplicates = redundant = 0
     for point, _, nearest in np.asarray(triangulation.coplanar, dtype=np.int64):
@@ -311,7 +303,6 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
         points: object,
         /,
         *,
-        max_simplices: int | None = None,
         provider: TriangulationProvider = "meshcore",
     ) -> None:
         point_array = _point_array(points, "points", (2, 3))
@@ -321,18 +312,14 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
         match provider_:
             case "meshcore":
                 if dimension == 2:
-                    simplices, vertex_map = delaunay_2d(
-                        point_array, max_triangles=max_simplices
-                    )
+                    simplices, vertex_map = delaunay_2d(point_array)
                 else:
-                    simplices, vertex_map = delaunay_3d(
-                        point_array, max_tetrahedra=max_simplices
-                    )
+                    simplices, vertex_map = delaunay_3d(point_array)
                 duplicates = int(np.count_nonzero(vertex_map != np.arange(count)))
                 redundant = 0
             case "qhull":
                 simplices, vertex_map, duplicates, redundant = _qhull_delaunay(
-                    point_array, max_simplices
+                    point_array
                 )
             case unreachable:
                 assert_never(unreachable)
@@ -366,18 +353,14 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
 
 
 class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
-    """Constrained Delaunay triangulation refined by Ruppert/Chew insertion.
-
-    ``points`` holds the input points followed by Steiner points; every input
-    segment is a union of mesh edges, and ``segment_ids[t, k]`` is the input
-    segment carrying the edge opposite vertex ``k`` of triangle ``t`` (or -1).
-    ``evidence.status`` is ``ok`` or ``refinement_limit`` (valid conforming mesh
-    whose quality targets were not met within ``max_steiner`` insertions).
-    """
+    """Constrained Delaunay mesh and per-vertex source-edge ancestry."""
 
     points: np.ndarray
     triangles: np.ndarray
     segment_ids: np.ndarray
+    constraint_sources: np.ndarray
+    constraint_parents: np.ndarray
+    constraint_ratios: np.ndarray
     input_point_count: int = eqx.field(static=True)
     evidence: TriangulationEvidence
 
@@ -391,29 +374,34 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         keep_convex_hull: bool = False,
         min_angle: float = 0.0,
         max_area: float = math.inf,
-        max_steiner: int = 0,
-        max_triangles: int | None = None,
     ) -> None:
         point_array = _point_array(points, "points", (2,))
-        mesh_points, triangles, segment_ids, status = constrained_delaunay_2d(
+        native = constrained_delaunay_2d(
             point_array,
             segments,
             holes=holes,
             keep_convex_hull=keep_convex_hull,
             min_angle=min_angle,
             max_area=max_area,
-            max_steiner=max_steiner,
-            max_triangles=max_triangles,
         )
+        mesh_points = native.points
+        triangles = native.triangles
+        segment_ids = native.cell_segments
+        sources = native.constraint_sources
+        parents = native.constraint_parents
+        ratios = native.constraint_ratios
         count = point_array.shape[0]
         used = np.unique(triangles)
         self.points = _frozen(mesh_points)
         self.triangles = _frozen(triangles)
         self.segment_ids = _frozen(segment_ids)
+        self.constraint_sources = _frozen(sources)
+        self.constraint_parents = _frozen(parents)
+        self.constraint_ratios = _frozen(ratios)
         self.input_point_count = count
         self.evidence = TriangulationEvidence(
             route="constrained_delaunay_2d",
-            status=status,
+            status=native.status,
             input_point_count=count,
             vertex_count=used.size,
             duplicate_count=count - np.unique(point_array, axis=0).shape[0],
@@ -425,6 +413,9 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
                 "points": array_tree_fingerprint(mesh_points),
                 "triangles": array_tree_fingerprint(triangles),
                 "segment_ids": array_tree_fingerprint(segment_ids),
+                "constraint_sources": array_tree_fingerprint(sources),
+                "constraint_parents": array_tree_fingerprint(parents),
+                "constraint_ratios": array_tree_fingerprint(ratios),
             },
         )
 
@@ -854,45 +845,31 @@ def _clip_chunk(
     )
 
 
-def _diagram_cells(
-    box_lower: np.ndarray, box_upper: np.ndarray, planes: _Planes, active: np.ndarray, /
-) -> DiagramCells:
-    count = planes.offsets.shape[0] - 1
-    dimension = box_lower.shape[0]
-    plane_counts = np.diff(planes.offsets)
-    # Only active generators own cells.  They are clipped in chunks of similar
-    # plane count so the padded working set stays within an explicit budget.
-    active_cells = np.flatnonzero(active)
-    by_count = active_cells[np.argsort(plane_counts[active_cells], kind="stable")]
-    chunks: list[np.ndarray] = []
-    start = 0
-    while start < by_count.size:
-        stop = start + 1
-        while (
-            stop < by_count.size
-            and (stop + 1 - start) * max(1, int(plane_counts[by_count[stop]]))
-            <= _CLIP_PLANE_BUDGET
-        ):
-            stop += 1
-        chunks.append(by_count[start:stop])
-        start = stop
-    parts = [_clip_chunk(box_lower, box_upper, planes, chunk) for chunk in chunks]
-    inactive = np.flatnonzero(~active)
+def _empty_diagram_part(
+    inactive: np.ndarray, dimension: int, /
+) -> tuple[np.ndarray, ...]:
     empty = np.zeros((inactive.size,), dtype=np.int64)
-    parts.append(
-        (
-            empty,
-            np.zeros((0, dimension), dtype=np.float64),
-            empty,
-            np.zeros((0,), dtype=np.int64),
-            np.zeros((0,), dtype=np.int32),
-            np.zeros((0,), dtype=np.int64),
-            np.zeros((inactive.size,), dtype=np.float64),
-            np.zeros((inactive.size, dimension), dtype=np.float64),
-        )
+    return (
+        empty,
+        np.zeros((0, dimension), dtype=np.float64),
+        empty.copy(),
+        np.zeros((0,), dtype=np.int64),
+        np.zeros((0,), dtype=np.int32),
+        np.zeros((0,), dtype=np.int64),
+        np.zeros((inactive.size,), dtype=np.float64),
+        np.zeros((inactive.size, dimension), dtype=np.float64),
     )
-    chunk_cells = np.concatenate(chunks + [inactive])
-    order = np.argsort(chunk_cells, kind="stable")
+
+
+def _assemble_diagram_cells(
+    count: int,
+    dimension: int,
+    cell_batches: list[np.ndarray],
+    parts: list[tuple[np.ndarray, ...]],
+    /,
+) -> DiagramCells:
+    cell_ids = np.concatenate(cell_batches)
+    order = np.argsort(cell_ids, kind="stable")
     vertex_counts = np.concatenate([part[0] for part in parts])
     vertices = np.concatenate([part[1] for part in parts]).reshape((-1, dimension))
     face_counts = np.concatenate([part[2] for part in parts])
@@ -901,11 +878,9 @@ def _diagram_cells(
     face_local = np.concatenate([part[5] for part in parts])
     measures = np.concatenate([part[6] for part in parts])
     moments = np.concatenate([part[7] for part in parts]).reshape((-1, dimension))
-
     vertex_index = _ragged_order(vertex_counts, order)
     face_index = _ragged_order(face_counts, order)
-    incidence_counts_by_face = face_sizes
-    incidence_index = _ragged_order(incidence_counts_by_face, face_index)
+    incidence_index = _ragged_order(face_sizes, face_index)
     vertex_counts_ordered = vertex_counts[order]
     face_counts_ordered = face_counts[order]
     cell_vertex_offsets = _offsets(vertex_counts_ordered)
@@ -929,6 +904,61 @@ def _diagram_cells(
         measures_ordered,
         centroids,
     )
+
+
+def _diagram_cells(
+    box_lower: np.ndarray, box_upper: np.ndarray, planes: _Planes, active: np.ndarray, /
+) -> DiagramCells:
+    count = planes.offsets.shape[0] - 1
+    dimension = box_lower.shape[0]
+    active_cells = np.flatnonzero(active)
+    cell_batches: list[np.ndarray] = []
+    parts: list[tuple[np.ndarray, ...]] = []
+    for cell in active_cells:
+        batch = np.asarray((cell,), dtype=np.int64)
+        cell_batches.append(batch)
+        parts.append(_clip_chunk(box_lower, box_upper, planes, batch))
+    inactive = np.flatnonzero(~active)
+    cell_batches.append(inactive)
+    parts.append(_empty_diagram_part(inactive, dimension))
+    return _assemble_diagram_cells(count, dimension, cell_batches, parts)
+
+
+def _diagram_cells_all_pairs(
+    box_lower: np.ndarray,
+    box_upper: np.ndarray,
+    points: np.ndarray,
+    weights: np.ndarray | None,
+    sites: np.ndarray,
+    domain_normals: np.ndarray,
+    domain_offsets: np.ndarray,
+    active: np.ndarray,
+    /,
+) -> DiagramCells:
+    """Stream every degenerate-site bisector without a dense pair table."""
+
+    count, dimension = points.shape
+    site_rows = sites
+    one_active = np.zeros((count,), dtype=np.bool_)
+    cell_batches: list[np.ndarray] = []
+    parts: list[tuple[np.ndarray, ...]] = []
+    for cell in site_rows:
+        others = site_rows[site_rows != cell]
+        neighbors = np.empty((others.size, 2), dtype=np.int64)
+        neighbors[:, 0] = cell
+        neighbors[:, 1] = others
+        one_active[cell] = True
+        planes = _cell_planes(
+            points, weights, neighbors, domain_normals, domain_offsets, one_active
+        )
+        batch = np.asarray((cell,), dtype=np.int64)
+        cell_batches.append(batch)
+        parts.append(_clip_chunk(box_lower, box_upper, planes, batch))
+        one_active[cell] = False
+    inactive = np.flatnonzero(~active)
+    cell_batches.append(inactive)
+    parts.append(_empty_diagram_part(inactive, dimension))
+    return _assemble_diagram_cells(count, dimension, cell_batches, parts)
 
 
 def _domain(
@@ -965,23 +995,12 @@ def _domain(
     return lower, upper, normals, offsets
 
 
-def _all_pairs(count: int, /) -> np.ndarray:
-    if count > _DEGENERATE_ALL_PAIRS_LIMIT:
-        raise ValueError(
-            "Generators that do not span the space use the all-pairs bisector route, "
-            f"limited to {_DEGENERATE_ALL_PAIRS_LIMIT} generators."
-        )
-    first, second = np.triu_indices(count, k=1)
-    return np.stack((first, second), axis=1).astype(np.int64)
-
-
 class VoronoiDiagram(StrictModule, NonTrainableState):
-    """Bounded Voronoi cells of generators clipped to a box and convex domain.
+    """Bounded Voronoi cells clipped to a box and optional convex domain.
 
-    Cells are dual to the exact Delaunay triangulation (``dual``).  Generators
-    that do not span the space use every generator pair as a bisector
-    candidate (bounded route, ``dual is None``).  Duplicate generators keep one
-    representative cell; the others are empty.
+    Full-dimensional generators use their exact Delaunay dual. Degenerate
+    generator sets stream every required pairwise bisector without a dense
+    pair table.
     """
 
     points: np.ndarray
@@ -1008,6 +1027,8 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
             dual = DelaunayTriangulation(point_array)
             neighbors = _simplex_edges(dual.simplices)
             active = dual.vertex_map == np.arange(count)
+            planes = _cell_planes(point_array, None, neighbors, normals, offsets, active)
+            cells = _diagram_cells(lower, upper, planes, active)
             route = f"voronoi_{dimension}d"
         else:
             dual = None
@@ -1015,10 +1036,10 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
             active = np.zeros(count, dtype=np.bool_)
             active[representative] = True
             candidates = np.sort(np.flatnonzero(active))
-            neighbors = candidates[_all_pairs(candidates.size)]
-            route = f"voronoi_{dimension}d_all_pairs"
-        planes = _cell_planes(point_array, None, neighbors, normals, offsets, active)
-        cells = _diagram_cells(lower, upper, planes, active)
+            cells = _diagram_cells_all_pairs(
+                lower, upper, point_array, None, candidates, normals, offsets, active
+            )
+            route = f"voronoi_{dimension}d_all_pair_stream"
         self.points = point_array
         self.cells = cells
         self.dual = dual
@@ -1044,11 +1065,9 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
 class PowerDiagram(StrictModule, NonTrainableState):
     """Bounded power (Laguerre) cells of weighted generators.
 
-    The power distance of ``x`` to generator ``i`` is ``|x - p_i|^2 - w_i``.
-    Cells are dual to the exact regular triangulation (``dual_simplices``);
-    redundant generators (``dual_vertex_map == -1``) and lighter coincident
-    generators have empty cells.  Generators that do not span the space use the
-    bounded all-pairs route.
+    Full-dimensional cells use the exact regular triangulation. Degenerate
+    generator sets stream every required pairwise bisector without a dense
+    pair table.
     """
 
     points: np.ndarray
@@ -1068,7 +1087,6 @@ class PowerDiagram(StrictModule, NonTrainableState):
         box_upper: object,
         domain_normals: object | None = None,
         domain_offsets: object | None = None,
-        max_simplices: int | None = None,
     ) -> None:
         point_array = _point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
@@ -1087,18 +1105,18 @@ class PowerDiagram(StrictModule, NonTrainableState):
         )
         if _spans_space(point_array):
             if dimension == 2:
-                simplices, vertex_map = regular_2d(
-                    point_array, weight_array, max_triangles=max_simplices
-                )
+                simplices, vertex_map = regular_2d(point_array, weight_array)
             else:
-                simplices, vertex_map = regular_3d(
-                    point_array, weight_array, max_tetrahedra=max_simplices
-                )
+                simplices, vertex_map = regular_3d(point_array, weight_array)
             neighbors = _simplex_edges(simplices)
             active = vertex_map == np.arange(count)
             dual_simplices: np.ndarray | None = _frozen(simplices)
             dual_vertex_map: np.ndarray | None = _frozen(vertex_map)
             route = f"power_{dimension}d"
+            planes = _cell_planes(
+                point_array, weight_array, neighbors, normals, offsets, active
+            )
+            cells = _diagram_cells(lower, upper, planes, active)
         else:
             # Coincident generators: the heaviest (then smallest index) owns the cell.
             order = np.lexsort((np.arange(count), -weight_array, *point_array.T[::-1]))
@@ -1108,14 +1126,19 @@ class PowerDiagram(StrictModule, NonTrainableState):
             active = np.zeros(count, dtype=np.bool_)
             active[order[first]] = True
             candidates = np.sort(np.flatnonzero(active))
-            neighbors = candidates[_all_pairs(candidates.size)]
             dual_simplices = None
             dual_vertex_map = None
-            route = f"power_{dimension}d_all_pairs"
-        planes = _cell_planes(
-            point_array, weight_array, neighbors, normals, offsets, active
-        )
-        cells = _diagram_cells(lower, upper, planes, active)
+            route = f"power_{dimension}d_all_pair_stream"
+            cells = _diagram_cells_all_pairs(
+                lower,
+                upper,
+                point_array,
+                weight_array,
+                candidates,
+                normals,
+                offsets,
+                active,
+            )
         self.points = point_array
         self.weights = weight_array
         self.cells = cells

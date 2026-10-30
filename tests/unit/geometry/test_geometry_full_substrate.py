@@ -30,6 +30,13 @@ gp_Vec = _gp.gp_Vec
 
 import phydrax as phx
 from phydrax.geometry.brep import BRepBoundaryMap
+from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.interchange import (
+    CadImportPolicy,
+    model_from_occt_shape,
+    persist_occt_shape,
+    read_brep_text,
+)
 
 
 _SI_COORDINATES = phx.SpatialCoordinateContract.si()
@@ -160,11 +167,13 @@ def test_matrix_free_ddg_linear_precision() -> None:
 
 
 def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> None:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
     assert model.topology.num_faces == 6
     assert model.topology.num_edges == 12
@@ -176,7 +185,7 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
     assert model.topology.solid_face_orientations == ((1,) * model.topology.num_faces,)
     assert model.topology.face_solids == ((0,),) * model.topology.num_faces
     assert model.solid_ids == (
-        phx.geometry.BRepEntityId(model.source_revision, "solid", 0),
+        phx.geometry.BRepEntityId(model.source_id, model.source_revision, "solid", 0),
     )
 
     geometry = phx.geometry.BRepSource(model).compile()
@@ -205,45 +214,55 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
 
 def test_brep_identity_separates_physical_source_from_query_representation() -> None:
     source_digest = hashlib.sha256(b"physical-equivalent-cad").hexdigest()
-    baseline = phx.geometry.model_from_occt_shape(
+    baseline = model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_id="first-location",
         source_digest=source_digest,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
-    relocated = phx.geometry.model_from_occt_shape(
+    relocated = model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_id="second-location",
         source_digest=source_digest,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
-    refined = phx.geometry.model_from_occt_shape(
+    refined = model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_digest=source_digest,
-        linear_deflection=0.05,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.3,
+        ),
     )
-    reframed = phx.geometry.model_from_occt_shape(
+    reframed = model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=phx.SpatialCoordinateContract(
             phx.units.METER,
             reference_frame="body",
         ),
         source_digest=source_digest,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
-    rescaled = phx.geometry.model_from_occt_shape(
+    rescaled = model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
         source_digest=source_digest,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
 
     assert baseline.source_digest == source_digest
@@ -256,26 +275,30 @@ def test_brep_identity_separates_physical_source_from_query_representation() -> 
     assert baseline.source_revision == relocated.source_revision
     assert baseline.source_revision == refined.source_revision
     assert baseline.model_id != refined.model_id
-    assert baseline.import_policy_id == refined.import_policy_id
+    assert baseline.import_policy_id != refined.import_policy_id
     assert reframed.source_revision != baseline.source_revision
     assert rescaled.source_revision != baseline.source_revision
 
 
 def test_brep_entity_ids_reject_ambiguous_identity_components() -> None:
+    with pytest.raises(ValueError, match="source_id"):
+        phx.geometry.BRepEntityId("", "revision", "face", 0)
     with pytest.raises(ValueError, match="source_revision"):
-        phx.geometry.BRepEntityId("", "face", 0)
+        phx.geometry.BRepEntityId("owner", "", "face", 0)
     with pytest.raises(ValueError, match="kind"):
-        phx.geometry.BRepEntityId("revision", "shell", 0)
+        phx.geometry.BRepEntityId("owner", "revision", "shell", 0)
     with pytest.raises(ValueError, match="non-negative"):
-        phx.geometry.BRepEntityId("revision", "face", -1)
+        phx.geometry.BRepEntityId("owner", "revision", "face", -1)
 
 
 def test_occt_conformal_partition_preserves_shared_face_incidence() -> None:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         _conformal_two_box_partition(),
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
     topology = model.topology
     shared_faces = tuple(
@@ -310,12 +333,14 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     tmp_path: Any,
 ) -> None:
     destination = tmp_path / "shape.brep"
-    model = phx.geometry.persist_occt_shape(
+    model = persist_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
     published_bytes = destination.read_bytes()
     published_digest = hashlib.sha256(published_bytes).hexdigest()
@@ -325,31 +350,38 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     assert model.source_digest == published_digest
     assert model.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
     assert model.report.source_format == "brep"
-    reopened = phx.geometry.import_brep(
+    reopened = read_brep_text(
         destination,
-        coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
-    )
+        CadImportPolicy(
+            _SI_COORDINATES,
+            tessellation=BRepTessellationPolicy(
+                linear_deflection=0.1,
+                angular_deflection=0.3,
+            ),
+        ),
+        trusted_root=tmp_path,
+        source_length_unit=_SI_COORDINATES.length_unit,
+    ).model
     assert reopened.source_digest == model.source_digest
     assert reopened.source_revision == published_revision
     assert reopened.model_id == model.model_id
 
     with pytest.raises(FileExistsError):
-        phx.geometry.persist_occt_shape(
+        persist_occt_shape(
             bd.Box(2.0, 2.0, 3.0).wrapped,
             destination,
             coordinate_contract=_SI_COORDINATES,
         )
     assert destination.read_bytes() == published_bytes
 
-    replacement = phx.geometry.persist_occt_shape(
+    replacement = persist_occt_shape(
         bd.Box(2.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
-        overwrite=True,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
     replacement_digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     assert replacement.source_digest == replacement_digest
@@ -601,11 +633,8 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
     )
 
     singular = phx.geometry.BSplineCurve(
-        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [1.0, 0.0]],
-        # ty: ignore[invalid-argument-type]
         [1.0, -1.0],
-        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 1.0, 1.0],
         1,
     )
@@ -633,11 +662,13 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
         min_deg=2,
         max_deg=3,
     )
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         face.wrapped,
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.05,
-        angular_deflection=0.2,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.05,
+            angular_deflection=0.2,
+        ),
     )
     assert len(model.patches) == 1
     assert isinstance(model.patches[0], phx.geometry.BSplineSurfacePatch)
@@ -718,11 +749,13 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
             plane=bd.Plane(origin=(-0.1, 0.1, 1.7)),
         ),
     ]
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         bd.Solid.make_loft(wires).wrapped,
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.25,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.25,
+        ),
     )
     assert tuple(type(patch).__name__ for patch in model.patches) == (
         "BSplineSurfacePatch",
@@ -781,11 +814,13 @@ def test_level_set_domain_ansatz_factor_has_unit_boundary_jet() -> None:
 
 
 def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients() -> None:
-    model = phx.geometry.model_from_occt_shape(
+    model = model_from_occt_shape(
         bd.Sphere(1.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.15,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.15,
+            angular_deflection=0.3,
+        ),
     )
     geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
     radius_index = next(

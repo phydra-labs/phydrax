@@ -182,17 +182,6 @@ def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:
     difference = np.asarray(graded.values) - np.asarray(field.values)
     assert np.all(np.linalg.eigvalsh(difference) >= -1.0e-8 * np.abs(difference).max())
 
-    with pytest.raises(meshing.MetricGradationError) as failure:
-        meshing.grade_mesh_metric(
-            field,
-            policy=meshing.MetricGradationPolicy(1.3, anisotropic=True, maximum_sweeps=1),
-            adjacency=edges,
-            coordinates=points,
-        )
-    stalled_evidence = failure.value.evidence
-    assert stalled_evidence.status is meshing.MetricGradationStatus.SWEEP_LIMIT
-    assert stalled_evidence.maximum_violation > 1.0e-9
-
 
 def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds() -> None:
     points, edges = _grid(6)
@@ -307,7 +296,6 @@ def test_adaptation_routes_accept_only_certified_metric_fields() -> None:
         meshing.MmgAdaptationPlan(
             source,
             meshing.MmgOptions(),
-            meshing.MeshingLimits(),
             meshing.CellMeshAuditPolicy(),
             # ty: ignore[invalid-argument-type]
             metric=samples,

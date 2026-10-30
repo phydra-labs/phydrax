@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Sequence
 import time
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite
 
@@ -328,9 +328,7 @@ def route_batch_tuple(values: Sequence[ContactStencilBatch], /) -> RouteBatches:
         batch.kind != kind for batch, kind in zip(batches, ROUTE_KIND_ORDER, strict=True)
     ):
         raise ValueError("Epoch batches must follow the canonical route kind order.")
-    vertex_vertex, edge_vertex, edge_edge, face_vertex, vertex_plane, edge_plane = (
-        batches
-    )
+    vertex_vertex, edge_vertex, edge_edge, face_vertex, vertex_plane, edge_plane = batches
     return (
         vertex_vertex,
         edge_vertex,
@@ -434,9 +432,7 @@ def contact_route_families(
         families.append((ContactStencilKind.VERTEX_PLANE, all_vertices, planes, 1))
     else:
         raise TypeError("Unsupported contact primitive profile.")
-    return tuple(
-        family for family in families if family[1].size and family[2].size
-    )
+    return tuple(family for family in families if family[1].size and family[2].size)
 
 
 def contact_route_capacity_bounds(
@@ -556,7 +552,9 @@ def vertex_path_boxes(
     start = jnp.asarray(positions)
     if not jnp.issubdtype(start.dtype, jnp.floating):
         start = start.astype(jnp.float64)
-    end = start if end_positions is None else jnp.asarray(end_positions, dtype=start.dtype)
+    end = (
+        start if end_positions is None else jnp.asarray(end_positions, dtype=start.dtype)
+    )
     expected = (scene.vertex_count, scene.ambient_dimension)
     if start.shape != expected or end.shape != expected:
         raise ValueError(f"Contact search positions must have shape {expected}.")
@@ -859,12 +857,8 @@ def feature_boxes(
     table = jnp.asarray(endpoints, dtype=jnp.int32)
     present = table >= 0
     safe = jnp.clip(table, 0, vertex_lower.shape[0] - 1)
-    lower = jnp.min(
-        jnp.where(present[..., None], vertex_lower[safe], jnp.inf), axis=1
-    )
-    upper = jnp.max(
-        jnp.where(present[..., None], vertex_upper[safe], -jnp.inf), axis=1
-    )
+    lower = jnp.min(jnp.where(present[..., None], vertex_lower[safe], jnp.inf), axis=1)
+    upper = jnp.max(jnp.where(present[..., None], vertex_upper[safe], -jnp.inf), axis=1)
     return lower, upper
 
 
@@ -1101,15 +1095,14 @@ def _build_epoch(
     start, lower, upper = vertex_path_boxes(
         scene, positions, end_positions, path_enclosure
     )
-    end = start if end_positions is None else jnp.asarray(end_positions, dtype=start.dtype)
+    end = (
+        start if end_positions is None else jnp.asarray(end_positions, dtype=start.dtype)
+    )
     if not bool(enclosure_admits(path_enclosure, start, end, lower, upper)):
         raise ValueError(
-            "Contact search requires finite positions inside a successful path "
-            "enclosure."
+            "Contact search requires finite positions inside a successful path enclosure."
         )
-    extents, normals, offsets, geometry_valid = scene_route_geometry(
-        scene, start.dtype
-    )
+    extents, normals, offsets, geometry_valid = scene_route_geometry(scene, start.dtype)
     if not bool(geometry_valid):
         raise ValueError(
             "Contact search requires finite nonnegative contact extents and finite "

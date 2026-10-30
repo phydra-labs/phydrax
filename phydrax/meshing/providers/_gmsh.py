@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Sequence
 from importlib import import_module, util
 from typing import Any
 
@@ -21,7 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import finite_real_scalar
 from ...discretization import CellMesh
-from ...geometry.brep import BRepEntityId, BRepModel
+from ...geometry.brep import BRepModel
 from ...geometry.surface import SurfaceModel
 from ...logging import emit
 from ...typing import checked
@@ -43,8 +42,7 @@ from .._contracts import (
 from .._controls import BackgroundMetricControl, SurfaceReconstructionControl
 from .._planar_bands import PlanarBandResult
 from .._result import CellMeshingResult
-from .._scope import MeshingEntityKind, MeshingScope
-from .._session import AbstractMeshingSession, MeshingExecutionPolicy
+from .._session import AbstractMeshingSession
 from ._gmsh_boundary_layer import (
     _execute_layered_volume,
     _fill_boundary_layer_core,
@@ -102,7 +100,7 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "gmsh-meshing-plan",
-                "source_revision": model.report.source_revision,
+                "source_revision": model.source_revision,
                 "specification": specification.specification_id,
                 "options": options.options_id,
                 "support": support.report_id,
@@ -174,15 +172,18 @@ class GmshRemeshingPlan(StrictModule, NonTrainableState):
 class GmshSession(AbstractMeshingSession):
     """Exclusive owner of the process-global Gmsh state and its CAD import cache.
 
-    CAD imports are cached by source revision and coordinate contract; every
-    execution re-digests the persisted source bytes, so replaced bytes evict the
-    cached import and fail as an invalid source instead of reusing stale geometry.
+    CAD imports are cached by source owner, revision, and coordinate contract.
+    Cache misses export the current model to native BRep text, re-decode it, and
+    require an exact source_revision match before any Gmsh import.
+    Scoped plans bind exporter declaration references through source-directed OCC
+    inputs and the provider's explicit fragment correspondence; nonidentity assembly
+    placements and non-bijective maps refuse.
+
     """
 
     def __init__(
         self,
         provider: GmshProvider,
-        policy: MeshingExecutionPolicy,
         /,
         *,
         import_cache_capacity: int = 4,
@@ -190,11 +191,6 @@ class GmshSession(AbstractMeshingSession):
         capacity = int(import_cache_capacity)
         if capacity <= 0:
             raise ValueError("import_cache_capacity must be positive.")
-        if policy.execution_mode is not MeshingExecutionMode.IN_PROCESS:
-            raise MeshingFailure(
-                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                "Gmsh currently supports in-process execution only.",
-            )
         if util.find_spec("gmsh") is None:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_UNAVAILABLE,
@@ -217,7 +213,6 @@ class GmshSession(AbstractMeshingSession):
             _GMSH_LOCK.release()
             raise
         self._provider = provider
-        self._policy = policy
         self._gmsh = gmsh
         self._imports = _CadImportCache(capacity)
         self._closed = False
@@ -247,11 +242,6 @@ class GmshSession(AbstractMeshingSession):
             raise RuntimeError("Cannot execute with a closed Gmsh session.")
         if not isinstance(plan, (GmshMeshingPlan, GmshRemeshingPlan)):
             raise TypeError("plan must be GmshMeshingPlan or GmshRemeshingPlan.")
-        if plan.options.num_threads > self._policy.parallelism:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Gmsh options request more threads than the session execution policy permits.",
-            )
         info = self._provider.info
         match plan:
             case GmshMeshingPlan() if _layered_volume(plan):
@@ -365,90 +355,6 @@ class GmshProvider:
             execution_modes=(MeshingExecutionMode.IN_PROCESS,),
         )
 
-    def entity_scope(
-        self,
-        source: _BRepMeshingSource,
-        entity_ids: Sequence[BRepEntityId] | BRepEntityId,
-        /,
-    ) -> MeshingScope:
-        model = _brep_model(source)
-        entities = (
-            (entity_ids,) if isinstance(entity_ids, BRepEntityId) else tuple(entity_ids)
-        )
-        if not entities or not all(
-            isinstance(entity, BRepEntityId) for entity in entities
-        ):
-            raise TypeError("entity_ids must contain at least one BRepEntityId.")
-        revisions = {entity.source_revision for entity in entities}
-        kinds = {entity.kind for entity in entities}
-        if revisions != {model.report.source_revision} or len(kinds) != 1:
-            raise ValueError(
-                "BRep entity scopes require one kind from the supplied source revision."
-            )
-        kind = kinds.pop()
-        dimensions = {"vertex": 0, "edge": 1, "face": 2, "solid": 3}
-        counts = {
-            "vertex": model.report.num_vertices,
-            "edge": model.report.num_edges,
-            "face": model.report.num_faces,
-            "solid": model.topology.num_solids,
-        }
-        if kind not in dimensions:
-            raise ValueError(
-                "Gmsh BRep scopes support vertices, edges, faces, and solids."
-            )
-        identifiers = np.asarray(
-            tuple(entity.index for entity in entities), dtype=np.int64
-        )
-        if (
-            np.any(identifiers < 0)
-            or np.any(identifiers >= counts[kind])
-            or np.unique(identifiers).size != identifiers.size
-        ):
-            raise ValueError("BRep entity scope contains an out-of-range or repeated ID.")
-        dimension = dimensions[kind]
-        return MeshingScope(
-            model.report.source_id,
-            model.report.source_revision,
-            MeshingEntityKind.GEOMETRY,
-            dimension,
-            f"{model.report.source_revision}:brep:{dimension}",
-            identifiers,
-        )
-
-    def whole_scope(
-        self,
-        source: _BRepMeshingSource | SurfaceModel | CellMesh,
-        dimension: int,
-        /,
-    ) -> MeshingScope:
-        target = int(dimension)
-        if isinstance(source, (SurfaceModel, CellMesh)):
-            mesh = source.mesh if isinstance(source, SurfaceModel) else source
-            if target != 2 or mesh.topological_dimension != 2:
-                raise ValueError("Discrete surface scopes select dimension-two cells.")
-            cells = mesh.entity_set(2)
-            return MeshingScope(
-                mesh.mesh_id,
-                mesh.numeric_version,
-                MeshingEntityKind.MESH,
-                2,
-                cells.entity_set_id,
-                cells.entity_ids,
-            )
-        model = _brep_model(source)
-        entities = {
-            1: model.edge_ids,
-            2: model.face_ids,
-            3: model.solid_ids,
-        }
-        if target not in entities:
-            raise ValueError("Gmsh BRep scope dimension must be one, two, or three.")
-        if not entities[target]:
-            raise ValueError(
-                f"The BRep source contains no dimension-{target} entities to scope."
-            )
-        return self.entity_scope(model, entities[target])
 
     def inspect_source(
         self, source: _BRepMeshingSource | SurfaceModel | CellMesh, /
@@ -470,7 +376,7 @@ class GmshProvider:
         closed = model.topology.num_solids > 0
         return MeshingSourceDescriptor(
             model.report.source_id,
-            model.report.source_revision,
+            model.source_revision,
             MeshingSourceKind.BREP,
             3 if closed else 2,
             3,
@@ -564,15 +470,11 @@ class GmshProvider:
 
     def open_session(
         self,
-        policy: MeshingExecutionPolicy | None = None,
         /,
         *,
         import_cache_capacity: int = 4,
     ) -> GmshSession:
-        execution = MeshingExecutionPolicy() if policy is None else policy
-        if not isinstance(execution, MeshingExecutionPolicy):
-            raise TypeError("policy must be MeshingExecutionPolicy or None.")
-        return GmshSession(self, execution, import_cache_capacity=import_cache_capacity)
+        return GmshSession(self, import_cache_capacity=import_cache_capacity)
 
     def fill_boundary_layer_core(
         self,
@@ -584,9 +486,7 @@ class GmshProvider:
         # ty: ignore[invalid-return-type]
     ) -> CellMeshingResult:
         """Fill the core between native boundary layers and a fixed outer boundary."""
-        threads = self.options.num_threads
-        policy = MeshingExecutionPolicy(parallelism=threads, deterministic=threads == 1)
-        with self.open_session(policy) as session:
+        with self.open_session() as session:
             return session.fill_boundary_layer_core(
                 layers, boundary, maximum_size=maximum_size
             )
@@ -600,10 +500,8 @@ class GmshProvider:
             plan_id=plan.plan_id,
             provider="gmsh",
         )
-        threads = plan.options.num_threads
-        policy = MeshingExecutionPolicy(parallelism=threads, deterministic=threads == 1)
         try:
-            with self.open_session(policy) as session:
+            with self.open_session() as session:
                 result = session.execute(plan)
         except MeshingFailure as error:
             emit(

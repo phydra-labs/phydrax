@@ -752,6 +752,14 @@ differentiates it by the implicit function theorem.
 
 ---
 
+::: phydrax.solver.FiniteElementAcceptedState
+
+---
+
+::: phydrax.solver.FiniteElementAcceptedFieldLayout
+
+---
+
 ::: phydrax.solver.FiniteElementAcceptedStepSchedule
 
 ---
