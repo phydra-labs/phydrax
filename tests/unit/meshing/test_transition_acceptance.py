@@ -8,9 +8,10 @@ import pytest
 from jax import Array
 
 import phydrax as phx
-from phydrax.discretization import CellGeometrySpec, CellMesh
+from phydrax.discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
+from phydrax.discretization._cell_geometry import CellGeometryRestrictionSource
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._surface_chart_records import SurfaceChartWitness
 from phydrax.discretization.finite_volume._automatic_remap import (
@@ -134,6 +135,45 @@ def _bisection_hierarchy(
     return hierarchy
 
 
+def _with_root_restriction(
+    root_mesh: CellMesh,
+    root_geometry: CellGeometrySpec,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    reference_map: ReferenceCellMapWitnesses,
+    /,
+) -> CellGeometrySpec:
+    """Retain the exact child→root chart ancestry of one restricted child mesh."""
+    (block,) = mesh.blocks
+    (root_block,) = root_mesh.blocks
+    parents = np.asarray(reference_map.source_cell_ids, dtype=np.int64)
+    root_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(root_block.global_ids))
+    }
+    root_vertices = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)[
+        np.asarray(root_block.vertices, dtype=np.int64)
+    ]
+    restriction = CellGeometryRestrictionSource(
+        cell_geometry_id(root_geometry),
+        root_mesh.topology_id,
+        {block.name: parents},
+        {
+            block.name: np.stack(
+                [root_vertices[root_rows[int(parent)]] for parent in parents]
+            )
+        },
+        block_source_blocks={block.name: root_block.name},
+        block_parent_reference_maps={block.name: reference_map},
+    )
+    return CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        geometry.coordinates,
+        restriction_source=restriction,
+    )
+
+
 def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> None:
     source, domain = _certified_square()
     assert source.certification is not None and source.certification.passed
@@ -200,10 +240,13 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         root_geometry,
         _,
         source_mesh,
-        source_geometry,
+        restricted_geometry,
+        source_map,
         _,
-        _,
-    ) = make_curved_material_refinement()
+    ) = make_curved_material_refinement(exact_chart_arguments=True)
+    source_geometry = _with_root_restriction(
+        root_mesh, root_geometry, source_mesh, restricted_geometry, source_map
+    )
     occurrence = ("assembly-1", "occurrence-9")
     domain, _, _ = make_material_coverage_pair(
         root_mesh,
@@ -719,6 +762,7 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
         zones=organization.zones,
         labels=organization.labels,
         attributes=organization.attributes,
+        associations=organization.associations,
         surface_source=organization.surface_source,
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
@@ -737,7 +781,8 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
             MarkedMeshAdaptation(cell_ids),
             policy=MeshAdaptationPolicy(
                 MeshAdaptationRoute.NATIVE_BISECTION,
-                compatibility=phx.meshing.BisectionCompatibility.REJECT,
+                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+                association_transfer=phx.meshing.SurfaceAssociationTransfer(domain),
             ),
         )
     )
@@ -780,7 +825,8 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
             ),
             policy=MeshAdaptationPolicy(
                 MeshAdaptationRoute.NATIVE_BISECTION,
-                compatibility=phx.meshing.BisectionCompatibility.REJECT,
+                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+                association_transfer=phx.meshing.SurfaceAssociationTransfer(domain),
             ),
         )
     )
@@ -837,12 +883,18 @@ def _certified_curve_edge_triangle() -> tuple[
     reference_rows: list[tuple[tuple[Fraction, ...], ...]] = []
     parameter_rows: list[tuple[tuple[Fraction, ...], ...]] = []
     orientations: list[int] = []
-    if not isinstance(mesh.connectivity, SimplicialConnectivity):
-        raise TypeError(
-            "The curve chart fixture requires simplicial cell-edge incidence."
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolygonalConnectivity):
+        raise TypeError("The curve chart fixture requires polygonal edge incidence.")
+    edge_vertices = np.asarray(connectivity.edges, dtype=np.int64)
+    edge_by_vertices = {
+        frozenset(int(vertex_ids[int(value)]) for value in edge_vertices[row]): int(
+            identifier
         )
-    cell_edges = np.asarray(mesh.connectivity.cell_entities[1], dtype=np.int64)
-    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+        for row, identifier in enumerate(
+            np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64).tolist()
+        )
+    }
     cell_vertex_rows = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
     for cell_row in range(cell_vertex_rows.shape[0]):
         for local_edge, local_vertices in enumerate(topology.entities[1]):
@@ -866,7 +918,7 @@ def _certified_curve_edge_triangle() -> tuple[
             parameter_rows.append(parameters)
             orientations.append(1 if parameters[1][0] > parameters[0][0] else -1)
             cell_ids.append(int(mesh.blocks[0].global_ids[cell_row]))
-            entity_ids.append(int(edge_ids[int(cell_edges[cell_row, local_edge])]))
+            entity_ids.append(edge_by_vertices[frozenset(ordered_ids)])
             local_entity_indices.append(local_edge)
     if len(cell_ids) != 2:
         raise ValueError(
@@ -905,15 +957,26 @@ def _certified_curve_edge_triangle() -> tuple[
         source_parameter_rational_tokens=rational_chart_tokens(parameter_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
+    domain = PiecewiseLinearDomain(
+        points,
+        np.asarray(((0, 1), (1, 3), (3, 2), (2, 0)), dtype=np.int64),
+        np.asarray(((0, -1), (0, -1), (0, -1), (0, -1)), dtype=np.int64),
+        ("material",),
+        source_id=source.source_id,
+    )
     inputs = MeshCertificationInputs(
         mesh,
         geometry,
         MeshCertificationSchedule("planar"),
         source_id=source.source_id,
         source_revision=source.source_revision,
+        domain=domain,
+        cell_regions=np.zeros((2,), dtype=np.int64),
         source=source,
         fidelity_tolerance=0.0,
         fidelity_witness=witness,
+        junction_vertices=np.zeros((0,), dtype=np.int64),
+        protected_features=(),
     )
     result = certify_cell_mesh(
         mesh,
@@ -929,6 +992,37 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
     assert source.certification is not None and source.certification.passed
     source_cell_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
+
+    def cell_ids(result: CellMeshingResult) -> np.ndarray:
+        return np.concatenate(
+            tuple(
+                np.asarray(block.global_ids, dtype=np.int64)
+                for block in result.mesh.blocks
+            )
+        )
+
+    def parameter_values(result: CellMeshingResult) -> set[Fraction]:
+        report = result.certification
+        assert report is not None and report.passed
+        assert report.inputs.source is query
+        witness = report.inputs.fidelity_witness
+        assert isinstance(witness, SourceBoundaryChartWitness)
+        assert set(witness.source_entity_ids) == set(query.curve_entity_ids)
+        assert set(witness.source_chart_ids) == set(query.chart_ids)
+        assert any(
+            (1, 3) in point
+            for row in witness.source_parameter_rational_tokens
+            for point in row
+        )
+        return {
+            coordinate
+            for row in range(len(witness.source_chart_ids))
+            for point in witness.source_parameter_chart(row)
+            for coordinate in point
+        }
+
+    # The first generation splits the straight legs; the second splits both
+    # source-edge pieces at the non-dyadic chart midpoints 1/6 and 2/3.
     refined = execute_mesh_adaptation(
         prepare_mesh_adaptation(
             source,
@@ -936,50 +1030,37 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
             policy=policy,
         )
     )
-    assert (
-        refined.target.certification is not None and refined.target.certification.passed
-    )
-    refined_ids = np.concatenate(
-        tuple(
-            np.asarray(block.global_ids, dtype=np.int64)
-            for block in refined.target.mesh.blocks
-        )
-    )
-    coarsened = execute_mesh_adaptation(
+    refined = execute_mesh_adaptation(
         prepare_mesh_adaptation(
             refined.target,
             MarkedMeshAdaptation(
-                (), refined_ids, hierarchy=_bisection_hierarchy(refined)
+                cell_ids(refined.target), hierarchy=_bisection_hierarchy(refined)
             ),
             policy=policy,
         )
     )
-    report = coarsened.target.certification
-    assert report is not None and report.passed
-    assert report.inputs.source is query
-    witness = report.inputs.fidelity_witness
-    assert isinstance(witness, SourceBoundaryChartWitness)
-    assert set(witness.source_entity_ids) == set(query.curve_entity_ids)
-    assert set(witness.source_chart_ids) == set(query.chart_ids)
-
-    exact_parameter_values = {
-        coordinate
-        for row in range(len(witness.source_chart_ids))
-        for point in witness.source_parameter_chart(row)
-        for coordinate in point
-    }
-    assert exact_parameter_values == {
+    assert parameter_values(refined.target) == {
         Fraction(0),
         Fraction(1, 6),
         Fraction(1, 3),
         Fraction(2, 3),
         Fraction(1),
     }
-    assert any(
-        (1, 3) in point
-        for row in witness.source_parameter_rational_tokens
-        for point in row
+    coarsened = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            refined.target,
+            MarkedMeshAdaptation(
+                (), cell_ids(refined.target), hierarchy=_bisection_hierarchy(refined)
+            ),
+            policy=policy,
+        )
     )
+    assert coarsened.target.mesh.topology_id == source.mesh.topology_id
+    assert parameter_values(coarsened.target) == {
+        Fraction(0),
+        Fraction(1, 3),
+        Fraction(1),
+    }
     source.certification.revalidate(source.mesh, source.geometry)
     transition = coarsened.transition
     assert transition is not None
