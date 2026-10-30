@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import weakref
 from abc import abstractmethod
 from collections.abc import Sequence
 from fractions import Fraction
@@ -64,7 +65,9 @@ class TrimClassification(StrictModule):
     boundary: Array
     resolved: Array
 
-    def __init__(self, inside: ArrayLike, boundary: ArrayLike, resolved: ArrayLike) -> None:
+    def __init__(
+        self, inside: ArrayLike, boundary: ArrayLike, resolved: ArrayLike
+    ) -> None:
         inside_ = jnp.asarray(inside, dtype=jnp.bool_)
         boundary_ = jnp.asarray(boundary, dtype=jnp.bool_)
         resolved_ = jnp.asarray(resolved, dtype=jnp.bool_)
@@ -97,26 +100,88 @@ def _polygon_point_state(
     return inside, False
 
 
+class _SegmentEnclosures:
+    """Lazily refined, memoized enclosure tree of one immutable trim segment.
+
+    Subdivision is deterministic midpoint bisection of the unit interval, so
+    every box query descends the same nodes; each node box and endpoint value
+    is computed once per segment and shared by all queries.
+    """
+
+    __slots__ = ("boxes", "points")
+
+    def __init__(self) -> None:
+        self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
+        self.points: dict[float, np.ndarray | None] = {}
+
+
+# Keyed by segment identity; records hold only host arrays, never the segment,
+# and each entry is dropped when its segment is collected.
+_SEGMENT_ENCLOSURES: dict[int, _SegmentEnclosures] = {}
+
+
+def _segment_enclosures(segment: _CurveTrimSegment, /) -> _SegmentEnclosures:
+    key = id(segment)
+    record = _SEGMENT_ENCLOSURES.get(key)
+    if record is None:
+        record = _SegmentEnclosures()
+        _SEGMENT_ENCLOSURES[key] = record
+        weakref.finalize(segment, _SEGMENT_ENCLOSURES.pop, key, None)
+    return record
+
+
+def _segment_point(segment: _CurveTrimSegment, parameter: float, /) -> np.ndarray | None:
+    points = _segment_enclosures(segment).points
+    if parameter not in points:
+        try:
+            value = np.asarray(
+                segment.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
+                dtype=np.float64,
+            ).reshape(-1)
+        except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
+            points[parameter] = None
+        else:
+            if value.shape != (2,) or not np.all(np.isfinite(value)):
+                points[parameter] = None
+            else:
+                value.setflags(write=False)
+                points[parameter] = value
+    return points[parameter]
+
+
 def _curve_segment_box(
+    segment: _CurveTrimSegment, first: float, last: float, /
+) -> np.ndarray | None:
+    boxes = _segment_enclosures(segment).boxes
+    if (first, last) in boxes:
+        return boxes[first, last]
+    result = _compute_segment_box(segment, first, last)
+    if result is not None:
+        result.setflags(write=False)
+    boxes[first, last] = result
+    return result
+
+
+def _compute_segment_box(
     segment: _CurveTrimSegment, first: float, last: float, /
 ) -> np.ndarray | None:
     try:
         box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
-        endpoints = np.asarray(segment.evaluate(jnp.asarray((first, last))), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
         return None
+    start, end = _segment_point(segment, first), _segment_point(segment, last)
     if (
-        box.shape != (2, 2)
-        or endpoints.shape != (2, 2)
+        start is None
+        or end is None
+        or box.shape != (2, 2)
         or not np.all(np.isfinite(box))
-        or not np.all(np.isfinite(endpoints))
         or np.any(box[0] > box[1])
     ):
         return None
     return np.stack(
         (
-            np.minimum(box[0], np.min(endpoints, axis=0)),
-            np.maximum(box[1], np.max(endpoints, axis=0)),
+            np.minimum(box[0], np.minimum(start, end)),
+            np.maximum(box[1], np.maximum(start, end)),
         )
     )
 
@@ -125,52 +190,135 @@ def _boxes_disjoint(first: np.ndarray, second: np.ndarray, /) -> bool:
     return bool(np.any(first[1] < second[0]) or np.any(second[1] < first[0]))
 
 
+type _ChordPiece = tuple[float, float, np.ndarray]
+
+
+def _segment_chord_pieces(
+    segment: _CurveTrimSegment, query_box: np.ndarray, /
+) -> list[_ChordPiece] | None:
+    """Order parameter pieces whose source boxes all avoid the query box."""
+    pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
+    accepted: list[_ChordPiece] = []
+    while pending:
+        first, last, parent_box = pending.pop()
+        box = _curve_segment_box(segment, first, last)
+        if box is None:
+            return None
+        if _boxes_disjoint(box, query_box):
+            accepted.append((first, last, box))
+            continue
+        if parent_box is not None and np.array_equal(box, parent_box):
+            return None
+        middle = first + 0.5 * (last - first)
+        if middle <= first or middle >= last:
+            return None
+        left_box = _curve_segment_box(segment, first, middle)
+        right_box = _curve_segment_box(segment, middle, last)
+        if left_box is None or right_box is None:
+            return None
+        if (
+            not _boxes_disjoint(left_box, query_box) and np.array_equal(left_box, box)
+        ) or (
+            not _boxes_disjoint(right_box, query_box) and np.array_equal(right_box, box)
+        ):
+            return None
+        pending.append((middle, last, box))
+        pending.append((first, middle, box))
+    return accepted
+
+
+def _split_terminal_piece(
+    segment: _CurveTrimSegment,
+    pieces: list[_ChordPiece],
+    query_box: np.ndarray,
+    index: int,
+    /,
+) -> bool:
+    first, last, _ = pieces[index]
+    middle = first + 0.5 * (last - first)
+    if not first < middle < last:
+        return False
+    left = _curve_segment_box(segment, first, middle)
+    right = _curve_segment_box(segment, middle, last)
+    if (
+        left is None
+        or right is None
+        or not _boxes_disjoint(left, query_box)
+        or not _boxes_disjoint(right, query_box)
+    ):
+        return False
+    pieces[index : index + 1] = [(first, middle, left), (middle, last, right)]
+    return True
+
+
+def _junction_avoids_query(
+    incoming: np.ndarray, outgoing: np.ndarray, query_box: np.ndarray, /
+) -> bool | None:
+    """Decide whether a junction gap between two numeric chord ends is admissible.
+
+    Adjacent loop segments share one exact source root, contained in both end
+    boxes. The gap chord and both true end arcs then lie in the hull of those
+    boxes, so a hull avoiding the query preserves the winding parity. Disjoint
+    end boxes cannot share that root and refuse the loop.
+    """
+    if _boxes_disjoint(incoming, outgoing):
+        return None
+    hull = np.stack(
+        (np.minimum(incoming[0], outgoing[0]), np.maximum(incoming[1], outgoing[1]))
+    )
+    return _boxes_disjoint(hull, query_box)
+
+
 def _curve_loop_chords(
     loop: tuple[_CurveTrimSegment, ...], query_box: np.ndarray, /
 ) -> tuple[tuple[Fraction, Fraction], ...] | None:
-    points: list[np.ndarray] = []
+    pieces: list[list[_ChordPiece]] = []
     for segment in loop:
-        pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
-        accepted: list[tuple[np.ndarray, np.ndarray]] = []
-        while pending:
-            first, last, parent_box = pending.pop()
-            box = _curve_segment_box(segment, first, last)
-            if box is None:
+        accepted = _segment_chord_pieces(segment, query_box)
+        if not accepted:
+            return None
+        pieces.append(accepted)
+    count = len(loop)
+    for index in range(count):
+        previous = (index - 1) % count
+        while True:
+            incoming = pieces[previous][-1]
+            outgoing = pieces[index][0]
+            end = _segment_point(loop[previous], incoming[1])
+            start = _segment_point(loop[index], outgoing[0])
+            if end is None or start is None:
                 return None
-            if not _boxes_disjoint(box, query_box) and parent_box is not None and np.array_equal(box, parent_box):
+            if np.array_equal(end, start):
+                break
+            decision = _junction_avoids_query(incoming[2], outgoing[2], query_box)
+            if decision is None:
                 return None
-            if _boxes_disjoint(box, query_box):
-                endpoints = np.asarray(
-                    segment.evaluate(jnp.asarray((first, last))), dtype=np.float64
-                )
-                accepted.append((endpoints[0], endpoints[1]))
-                continue
-            middle = first + 0.5 * (last - first)
-            if middle <= first or middle >= last:
+            if decision:
+                break
+            split_incoming = _split_terminal_piece(
+                loop[previous], pieces[previous], query_box, -1
+            )
+            split_outgoing = _split_terminal_piece(
+                loop[index], pieces[index], query_box, 0
+            )
+            if not split_incoming and not split_outgoing:
                 return None
-            left_box = _curve_segment_box(segment, first, middle)
-            right_box = _curve_segment_box(segment, middle, last)
-            if left_box is None or right_box is None:
-                return None
-            if (
-                not _boxes_disjoint(left_box, query_box) and np.array_equal(left_box, box)
-            ) or (
-                not _boxes_disjoint(right_box, query_box) and np.array_equal(right_box, box)
-            ):
-                return None
-            pending.append((middle, last, box))
-            pending.append((first, middle, box))
-        for start, end in accepted:
-            if points and not np.array_equal(points[-1], start):
-                return None
-            if not points:
-                points.append(start)
-            points.append(end)
-    if len(points) < 4 or not np.array_equal(points[0], points[-1]):
-        return None
+    points: list[np.ndarray] = []
+    for segment, accepted in zip(loop, pieces, strict=True):
+        for first, last, _ in accepted:
+            for parameter in (first, last):
+                point = _segment_point(segment, parameter)
+                if point is None:
+                    return None
+                if not points or not np.array_equal(points[-1], point):
+                    points.append(point)
+    if len(points) > 1 and np.array_equal(points[0], points[-1]):
+        points.pop()
+    # The chord polygon is homotopic to the source loop in the query complement,
+    # so even a degenerate one or two vertex polygon carries the correct parity.
     return tuple(
         (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
-        for point in points[:-1]
+        for point in points
     )
 
 
@@ -218,9 +366,7 @@ def _curve_loops_avoid_box(
                 right = _curve_segment_box(segment, middle, last)
                 if left is None or right is None:
                     return False
-                if (
-                    not _boxes_disjoint(left, box) and np.array_equal(left, image)
-                ) or (
+                if (not _boxes_disjoint(left, box) and np.array_equal(left, image)) or (
                     not _boxes_disjoint(right, box) and np.array_equal(right, image)
                 ):
                     return False
@@ -253,7 +399,9 @@ class TrimDomain(StrictModule):
             from .brep._intersection_curve import CurveTrimSegment
 
             if outer is not None or holes:
-                raise ValueError("A TrimDomain must use either polygon loops or exact curve loops, not both.")
+                raise ValueError(
+                    "A TrimDomain must use either polygon loops or exact curve loops, not both."
+                )
             if any(
                 not loop
                 or any(
@@ -262,7 +410,9 @@ class TrimDomain(StrictModule):
                 )
                 for loop in loops
             ):
-                raise TypeError("TrimDomain.curve_loops must contain nonempty trim-segment loops.")
+                raise TypeError(
+                    "TrimDomain.curve_loops must contain nonempty trim-segment loops."
+                )
             self.outer = None
             self.holes = ()
             self.curve_loops = loops
@@ -273,7 +423,9 @@ class TrimDomain(StrictModule):
             )
             return
         if outer is None:
-            raise ValueError("A TrimDomain requires a polygon outer loop or exact curve loops.")
+            raise ValueError(
+                "A TrimDomain requires a polygon outer loop or exact curve loops."
+            )
         if _numeric_only:
             outer_ = jnp.asarray(outer, dtype=jnp.float64)
             holes_ = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in holes)
@@ -311,7 +463,9 @@ class TrimDomain(StrictModule):
             for hole in hole_hosts
         ):
             raise ValueError("Every trim hole must have shape (num_points >= 3, 2).")
-        if not np.all(np.isfinite(outer_host)) or any(not np.all(np.isfinite(hole)) for hole in hole_hosts):
+        if not np.all(np.isfinite(outer_host)) or any(
+            not np.all(np.isfinite(hole)) for hole in hole_hosts
+        ):
             raise ValueError("TrimDomain polygon coordinates must be finite.")
         self.outer = jnp.asarray(outer_host, dtype=jnp.float64)
         self.holes = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in hole_hosts)
@@ -377,7 +531,9 @@ class TrimDomain(StrictModule):
     def classify(self, points: npt.ArrayLike, /) -> TrimClassification:
         points_ = np.asarray(points, dtype=np.float64)
         if points_.ndim < 1 or points_.shape[-1] != 2 or not np.all(np.isfinite(points_)):
-            raise ValueError("TrimDomain.classify points must be finite with trailing dimension two.")
+            raise ValueError(
+                "TrimDomain.classify points must be finite with trailing dimension two."
+            )
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 2))
         inside = np.zeros((flat.shape[0],), dtype=np.bool_)
@@ -385,15 +541,18 @@ class TrimDomain(StrictModule):
         resolved = np.zeros_like(inside)
         if self.curve_loops:
             for index, point in enumerate(flat):
-                inside[index], boundary[index], resolved[index] = _curve_loops_point_state(
-                    self.curve_loops, point
+                inside[index], boundary[index], resolved[index] = (
+                    _curve_loops_point_state(self.curve_loops, point)
                 )
         else:
             assert self.outer is not None
             polygon_loops = (self.outer, *self.holes)
             rational_loops = tuple(
                 tuple(
-                    (Fraction.from_float(float(row[0])), Fraction.from_float(float(row[1])))
+                    (
+                        Fraction.from_float(float(row[0])),
+                        Fraction.from_float(float(row[1])),
+                    )
                     for row in np.asarray(loop, dtype=np.float64)
                 )
                 for loop in polygon_loops
@@ -403,12 +562,16 @@ class TrimDomain(StrictModule):
                     Fraction.from_float(float(point[0])),
                     Fraction.from_float(float(point[1])),
                 )
-                states = tuple(_polygon_point_state(query, loop) for loop in rational_loops)
+                states = tuple(
+                    _polygon_point_state(query, loop) for loop in rational_loops
+                )
                 boundary[index] = any(on_boundary for _, on_boundary in states)
                 if boundary[index]:
                     resolved[index] = True
                     continue
-                inside[index] = bool(states[0][0] and not any(state[0] for state in states[1:]))
+                inside[index] = bool(
+                    states[0][0] and not any(state[0] for state in states[1:])
+                )
                 resolved[index] = True
         return TrimClassification(
             inside.reshape(leading), boundary.reshape(leading), resolved.reshape(leading)
@@ -422,7 +585,9 @@ class TrimDomain(StrictModule):
             or not np.all(np.isfinite(boxes_))
             or np.any(boxes_[..., 0, :] > boxes_[..., 1, :])
         ):
-            raise ValueError("TrimDomain.classify_boxes requires finite ordered (..., 2, 2) boxes.")
+            raise ValueError(
+                "TrimDomain.classify_boxes requires finite ordered (..., 2, 2) boxes."
+            )
         leading = boxes_.shape[:-2]
         flat = boxes_.reshape((-1, 2, 2))
         inside = np.zeros((flat.shape[0],), dtype=np.bool_)
@@ -436,8 +601,12 @@ class TrimDomain(StrictModule):
                 clear = True
                 for loop in (self.outer, *self.holes):
                     vertices = np.asarray(loop, dtype=np.float64)
-                    for start, end in zip(vertices, np.roll(vertices, -1, axis=0), strict=True):
-                        segment_box = np.stack((np.minimum(start, end), np.maximum(start, end)))
+                    for start, end in zip(
+                        vertices, np.roll(vertices, -1, axis=0), strict=True
+                    ):
+                        segment_box = np.stack(
+                            (np.minimum(start, end), np.maximum(start, end))
+                        )
                         if not _boxes_disjoint(segment_box, box):
                             clear = False
                             break

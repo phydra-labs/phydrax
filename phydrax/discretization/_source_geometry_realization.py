@@ -11,10 +11,10 @@ from jax import Array
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import finite_real_scalar
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
-from .._validation import finite_real_scalar
 from ._cell_geometry import CellGeometrySpec
 from ._cell_geometry_transition_types import (
     CellGeometryTransition,
@@ -28,6 +28,7 @@ from ._coordinate_enclosure import (
     scale,
 )
 from ._mapped_geometry_measure import (
+    bernstein_reference_domain,
     certified_cell_measures,
     mapped_coordinate_expressions,
     mapped_geometry_cells,
@@ -112,7 +113,9 @@ class SourceGeometryRealization(StrictModule, NonTrainableState):
             or self.transition.evidence.kind != "source_realization"
             or self.transition.evidence.approximation_bound != self.maximum_displacement
         ):
-            raise ValueError("Source realization requires current certified endpoint proofs.")
+            raise ValueError(
+                "Source realization requires current certified endpoint proofs."
+            )
         source_count = self.source_embedding.cell_count
         target_count = self.target_embedding.cell_count
         arrays = tuple(
@@ -135,7 +138,9 @@ class SourceGeometryRealization(StrictModule, NonTrainableState):
             or np.any(arrays[2] < 0.0)
             or np.any(arrays[3] < 0.0)
         ):
-            raise ValueError("Source realization measures require positive finite enclosures.")
+            raise ValueError(
+                "Source realization measures require positive finite enclosures."
+            )
         expected = canonical_fingerprint(
             {
                 "kind": "source-geometry-realization",
@@ -150,7 +155,9 @@ class SourceGeometryRealization(StrictModule, NonTrainableState):
             }
         )
         if expected != self.realization_id:
-            raise ValueError("Source realization evidence differs from its retained measures.")
+            raise ValueError(
+                "Source realization evidence differs from its retained measures."
+            )
 
 
 def _require_common_reference_complex(source: CellMesh, target: CellMesh, /) -> None:
@@ -170,25 +177,9 @@ def _require_common_reference_complex(source: CellMesh, target: CellMesh, /) -> 
             or not np.array_equal(np.asarray(old.global_ids), np.asarray(new.global_ids))
             or not np.array_equal(np.asarray(old.vertices), np.asarray(new.vertices))
         ):
-            raise ValueError("Source realization must preserve oriented reference-cell identity.")
-
-
-def _domain(cell_kind: str, /) -> str:
-    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith(
-        "simplex:"
-    ):
-        return "simplex"
-    if cell_kind == "prism":
-        return "prism"
-    if cell_kind in (
-        "quadrilateral",
-        "hexahedron",
-        "tensor:1",
-        "tensor:2",
-        "tensor:3",
-    ):
-        return "box"
-    raise ValueError(f"Source realization does not support reference cell {cell_kind!r}.")
+            raise ValueError(
+                "Source realization must preserve oriented reference-cell identity."
+            )
 
 
 def _displacement_bound(
@@ -211,13 +202,15 @@ def _displacement_bound(
         old = mapped_coordinate_expressions(old_element, old_local, cell_row=old_row)
         new = mapped_coordinate_expressions(new_element, new_local, cell_row=new_row)
         dimension = reference_cell_topology(old_element.cell_kind).dimension
-        domain = _domain(old_element.cell_kind)
+        domain = bernstein_reference_domain(old_element.cell_kind)
         component_bounds = []
         for old_component, new_component in zip(old, new, strict=True):
             difference = add(new_component, scale(old_component, -1))
             lower, upper = polynomial_bounds(difference, domain, dimension)
             if not math.isfinite(lower) or not math.isfinite(upper):
-                raise ValueError("Source realization displacement has no finite enclosure.")
+                raise ValueError(
+                    "Source realization displacement has no finite enclosure."
+                )
             component_bounds.append(Fraction.from_float(max(abs(lower), abs(upper))))
         squared = sum((value * value for value in component_bounds), Fraction(0))
         maximum = max(maximum, fraction_sqrt_interval(squared)[1])

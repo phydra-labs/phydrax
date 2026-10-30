@@ -7,27 +7,27 @@ import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.discretization._cell_geometry import CellGeometryElement, CellGeometrySpec
+from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.meshing._mixed_adaptation import (
-    MixedAdaptationHierarchy,
-    MixedAdaptationOutcome,
-    MixedLayerColumns,
-    adapt_mixed_mesh,
-)
+from phydrax.discretization.fem import lagrange_element
 from phydrax.meshing._adaptation import (
+    execute_mesh_adaptation,
     MarkedMeshAdaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
-    execute_mesh_adaptation,
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._canonical import certify_cell_mesh
+from phydrax.meshing._mixed_adaptation import (
+    adapt_mixed_mesh,
+    MixedAdaptationHierarchy,
+    MixedAdaptationOutcome,
+    MixedLayerColumns,
+)
 from phydrax.meshing._topology_edit import assemble_topology_edit
 
-from phydrax.discretization.fem import lagrange_element
 
 pytestmark = pytest.mark.meshcore
 
@@ -49,8 +49,18 @@ def tet_prism_mesh() -> CellMesh:
     return CellMesh(
         points,
         (
-            CellBlock("tetrahedra", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32), global_ids=np.asarray((101,), dtype=np.int64)),
-            CellBlock("prisms", "prism", np.asarray(((0, 2, 1, 4, 5, 6),), dtype=np.int32), global_ids=np.asarray((202,), dtype=np.int64)),
+            CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+                global_ids=np.asarray((101,), dtype=np.int64),
+            ),
+            CellBlock(
+                "prisms",
+                "prism",
+                np.asarray(((0, 2, 1, 4, 5, 6),), dtype=np.int32),
+                global_ids=np.asarray((202,), dtype=np.int64),
+            ),
         ),
         vertex_global_ids=np.arange(700, 707, dtype=np.int64),
     )
@@ -73,8 +83,18 @@ def prism_pyramid_mesh() -> CellMesh:
     return CellMesh(
         points,
         (
-            CellBlock("prisms", "prism", np.asarray(((0, 1, 2, 3, 4, 5),), dtype=np.int32), global_ids=np.asarray((303,), dtype=np.int64)),
-            CellBlock("pyramids", "pyramid", np.asarray(((0, 1, 4, 3, 6),), dtype=np.int32), global_ids=np.asarray((404,), dtype=np.int64)),
+            CellBlock(
+                "prisms",
+                "prism",
+                np.asarray(((0, 1, 2, 3, 4, 5),), dtype=np.int32),
+                global_ids=np.asarray((303,), dtype=np.int64),
+            ),
+            CellBlock(
+                "pyramids",
+                "pyramid",
+                np.asarray(((0, 1, 4, 3, 6),), dtype=np.int32),
+                global_ids=np.asarray((404,), dtype=np.int64),
+            ),
         ),
         vertex_global_ids=np.arange(800, 807, dtype=np.int64),
     )
@@ -99,8 +119,18 @@ def hex_pyramid_mesh() -> CellMesh:
     return CellMesh(
         points,
         (
-            CellBlock("hexahedra", "hexahedron", np.asarray((tuple(range(8)),), dtype=np.int32), global_ids=np.asarray((505,), dtype=np.int64)),
-            CellBlock("pyramids", "pyramid", np.asarray(((4, 5, 6, 7, 8),), dtype=np.int32), global_ids=np.asarray((606,), dtype=np.int64)),
+            CellBlock(
+                "hexahedra",
+                "hexahedron",
+                np.asarray((tuple(range(8)),), dtype=np.int32),
+                global_ids=np.asarray((505,), dtype=np.int64),
+            ),
+            CellBlock(
+                "pyramids",
+                "pyramid",
+                np.asarray(((4, 5, 6, 7, 8),), dtype=np.int32),
+                global_ids=np.asarray((606,), dtype=np.int64),
+            ),
         ),
         vertex_global_ids=np.arange(900, 909, dtype=np.int64),
     )
@@ -165,7 +195,10 @@ def _assert_whole_cell_validity(mesh: CellMesh) -> None:
 
 def _interface_signatures(
     mesh: CellMesh, /, *, axis: int, coordinate: float
-) -> tuple[dict[str, set[tuple[tuple[float, ...], ...]]], dict[tuple[tuple[float, ...], ...], list[str]]]:
+) -> tuple[
+    dict[str, set[tuple[tuple[float, ...], ...]]],
+    dict[tuple[tuple[float, ...], ...], list[str]],
+]:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     signatures: dict[str, set[tuple[tuple[float, ...], ...]]] = defaultdict(set)
     occurrences: dict[tuple[tuple[float, ...], ...], list[str]] = defaultdict(list)
@@ -175,9 +208,15 @@ def _interface_signatures(
         for cell in cells:
             for local_face in topology.entities[2]:
                 face_points = points[cell[np.asarray(local_face, dtype=np.int64)]]
-                if not np.all(np.isclose(face_points[:, axis], coordinate, rtol=0.0, atol=1.0e-12)):
+                if not np.all(
+                    np.isclose(face_points[:, axis], coordinate, rtol=0.0, atol=1.0e-12)
+                ):
                     continue
-                signature = tuple(sorted(tuple(float(value) for value in point) for point in face_points))
+                signature = tuple(
+                    sorted(
+                        tuple(float(value) for value in point) for point in face_points
+                    )
+                )
                 signatures[block.cell_kind].add(signature)
                 occurrences[signature].append(block.cell_kind)
     return signatures, occurrences
@@ -192,7 +231,9 @@ def _assert_interface_matches(
     axis: int,
     coordinate: float,
 ) -> None:
-    signatures, occurrences = _interface_signatures(mesh, axis=axis, coordinate=coordinate)
+    signatures, occurrences = _interface_signatures(
+        mesh, axis=axis, coordinate=coordinate
+    )
     assert signatures[first_kind]
     assert signatures[first_kind] == signatures[second_kind]
     for signature in signatures[first_kind]:
@@ -209,14 +250,21 @@ def _assert_content_transfer(
     transfer = outcome.cell_content_transfer
     source_measures = _cell_measures(source)
     target_measures = _cell_measures(target)
-    densities = {cell_class: 1.75 + 0.8 * cell_class for cell_class in set(source_classes.values())}
+    densities = {
+        cell_class: 1.75 + 0.8 * cell_class for cell_class in set(source_classes.values())
+    }
     source_ids = transfer.source_cell_ids
     source_content = np.asarray(
-        [densities[source_classes[int(identifier)]] * source_measures[int(identifier)] for identifier in source_ids],
+        [
+            densities[source_classes[int(identifier)]] * source_measures[int(identifier)]
+            for identifier in source_ids
+        ],
         dtype=np.float64,
     )
     target_content = transfer.apply(source_ids, source_content)
-    target_classes = {cell.cell_id: cell.cell_class for cell in outcome.hierarchy.active_cells}
+    target_classes = {
+        cell.cell_id: cell.cell_class for cell in outcome.hierarchy.active_cells
+    }
     for row, identifier in enumerate(transfer.target_cell_ids):
         assert target_content[row] == pytest.approx(
             densities[target_classes[int(identifier)]] * target_measures[int(identifier)],
@@ -289,9 +337,7 @@ def test_tetrahedron_prism_face_closure_and_conservative_coarsening(
         np.asarray((4, 9), dtype=np.int64),
     )
     assert set(refined.evidence.closure_cell_ids.tolist()) == {202}
-    _assert_interface_matches(
-        fine, "tetrahedron", "prism", axis=2, coordinate=0.0
-    )
+    _assert_interface_matches(fine, "tetrahedron", "prism", axis=2, coordinate=0.0)
     assert sorted(refined.evidence.refined_cell_ids.tolist()) == [101]
     assert sorted(coarsened.evidence.coarsened_cell_ids.tolist()) == sorted(
         np.concatenate([np.asarray(block.global_ids) for block in fine.blocks]).tolist()
@@ -329,9 +375,7 @@ def test_prism_pyramid_face_closure_and_conservative_coarsening(
         np.asarray((3, 8), dtype=np.int64),
     )
     assert set(refined.evidence.closure_cell_ids.tolist()) == {404}
-    _assert_interface_matches(
-        fine, "prism", "pyramid", axis=1, coordinate=0.0
-    )
+    _assert_interface_matches(fine, "prism", "pyramid", axis=1, coordinate=0.0)
     assert sorted(refined.evidence.refined_cell_ids.tolist()) == [303]
     assert not coarsened.evidence.rejected_coarsening_ids.size
     assert {block.cell_kind for block in restored.blocks} == {"prism", "pyramid"}
@@ -361,9 +405,7 @@ def test_hex_pyramid_layers_keep_first_interval_and_region_interface(
     )
     assert set(refined.evidence.closure_cell_ids.tolist()) == {606}
     assert not refined.evidence.schedule_changed_cell_ids.size
-    _assert_interface_matches(
-        fine, "hexahedron", "pyramid", axis=2, coordinate=1.0
-    )
+    _assert_interface_matches(fine, "hexahedron", "pyramid", axis=2, coordinate=1.0)
     fine_layer_cells = [
         cell for cell in refined.hierarchy.active_cells if cell.column_id == 77
     ]
@@ -384,6 +426,7 @@ def test_hex_pyramid_layers_keep_first_interval_and_region_interface(
         "hexahedron",
         "pyramid",
     }
+
 
 def _curved_hex_pyramid_geometry(mesh: CellMesh) -> CellGeometrySpec:
     elements: dict[str, CellGeometryElement] = {}
@@ -448,15 +491,11 @@ def test_high_order_source_geometry_restricts_and_restores_mixed_parents(
     fine, _, _ = assemble_topology_edit(
         hex_pyramid_mesh, refined.edit, numeric_version="mixed-curved-refinement"
     )
-    fine_validity = certify_cell_geometry_validity(
-        refined.target_geometry, mesh=fine
-    )
+    fine_validity = certify_cell_geometry_validity(refined.target_geometry, mesh=fine)
     assert fine_validity.invalid_count == 0
     assert fine_validity.unresolved_count == 0
     hex_sibling = next(
-        record
-        for record in refined.hierarchy.siblings
-        if record.parent_id == 505
+        record for record in refined.hierarchy.siblings if record.parent_id == 505
     )
     parent_ids = np.full(
         (len(hex_sibling.child_ids),), hex_sibling.parent_id, dtype=np.int64
@@ -473,7 +512,7 @@ def test_high_order_source_geometry_restricts_and_restores_mixed_parents(
     fine_corner_images = refined.target_geometry.evaluate_exact(
         fine,
         np.asarray(hex_sibling.child_ids, dtype=np.int64),
-        tuple((local_corners,) for _ in hex_sibling.child_ids),
+        tuple(local_corners for _ in hex_sibling.child_ids),
     )
     assert fine_corner_images == source_corner_images
 
@@ -493,9 +532,7 @@ def test_high_order_source_geometry_restricts_and_restores_mixed_parents(
     assert fine_center_images == source_center_images
     assert any(
         float(image[0][1]) != pytest.approx(float(parent[1]))
-        for image, (parent,) in zip(
-            source_center_images, parent_centers, strict=True
-        )
+        for image, (parent,) in zip(source_center_images, parent_centers, strict=True)
     )
 
     fine_ids = np.concatenate(
@@ -575,16 +612,14 @@ def test_native_mixed_route_preserves_high_order_geometry_through_coarsening(
     assert actual_fine == expected_fine
 
     fine_cell_ids = np.concatenate(
-        tuple(
-            np.asarray(block.global_ids, dtype=np.int64)
-            for block in fine.mesh.blocks
-        )
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in fine.mesh.blocks)
     )
     coarsened = execute_mesh_adaptation(
         prepare_mesh_adaptation(
             fine,
             MarkedMeshAdaptation(
-                coarsen_cell_ids=fine_cell_ids,
+                (),
+                fine_cell_ids,
                 hierarchy=hierarchy,
             ),
             policy=policy,
@@ -592,8 +627,14 @@ def test_native_mixed_route_preserves_high_order_geometry_through_coarsening(
     )
     restored_geometry = coarsened.target.geometry
     assert coarsened.cell_content_transfer is not None
-    assert coarsened.target.certification is not None
-    coarsened.target.certification.require_passed()
+    # The source carries no acceptance inputs, so the route must not invent a
+    # certification; whole-cell validity of the restored curved map is checked.
+    assert coarsened.target.certification is None
+    restored_validity = certify_cell_geometry_validity(
+        restored_geometry, mesh=coarsened.target.mesh
+    )
+    assert restored_validity.invalid_count == 0
+    assert restored_validity.unresolved_count == 0
     for cell_id, (kind, _) in _cell_records(hex_pyramid_mesh).items():
         reference = (
             center
@@ -603,11 +644,11 @@ def test_native_mixed_route_preserves_high_order_geometry_through_coarsening(
         expected = source_geometry.evaluate_exact(
             hex_pyramid_mesh,
             np.asarray((cell_id,), dtype=np.int64),
-            (reference,),
+            ((reference,),),
         )
         actual = restored_geometry.evaluate_exact(
             coarsened.target.mesh,
             np.asarray((cell_id,), dtype=np.int64),
-            (reference,),
+            ((reference,),),
         )
         assert actual == expected

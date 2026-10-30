@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 
 _REPOSITORY_ROOT = Path(__file__).parents[2]
 _PROCESS_COUNT = 3
-_PROCESS_TIMEOUT_SECONDS = 900.0
+_PROCESS_TIMEOUT_SECONDS = 300.0
 
 
 def _launch_workers(scenario: str, /) -> tuple[dict[str, Any], ...]:
@@ -444,9 +444,7 @@ def _sphere_request() -> tuple[Any, Any, Any, Any]:
         source_id="distributed-three-patch-sphere",
         source_revision="sphere-r1",
         tolerance=1.0e-12,
-        corner_points=np.asarray(
-            ((0.0, 0.0, -1.0), (0.0, 0.0, 1.0)), dtype=np.float64
-        ),
+        corner_points=np.asarray(((0.0, 0.0, -1.0), (0.0, 0.0, 1.0)), dtype=np.float64),
     )
     scope = MeshingScope(
         domain.source_id,
@@ -502,7 +500,6 @@ def _surface_sphere_worker() -> dict[str, Any]:
                 "Surface generation requires the real three-process test group."
             )
         domain, specification, options, coordinate_contract = _sphere_request()
-        print(f"surface-worker rank={rank} phase=source-ready", file=sys.stderr, flush=True)
         devices = tuple(
             sorted(jax.devices(), key=lambda device: (device.process_index, device.id))
         )
@@ -520,12 +517,6 @@ def _surface_sphere_worker() -> dict[str, Any]:
             ),
             devices,
         )
-        print(f"surface-worker rank={rank} phase=group-ready", file=sys.stderr, flush=True)
-        print(
-            f"surface-worker rank={rank} phase=prepare-start",
-            file=sys.stderr,
-            flush=True,
-        )
         prepared = prepare_distributed_surface_generation(
             domain,
             specification,
@@ -539,22 +530,7 @@ def _surface_sphere_worker() -> dict[str, Any]:
             ),
             axis_name="sphere_surface_generation_test",
         )
-        print(
-            f"surface-worker rank={rank} phase=prepare-done",
-            file=sys.stderr,
-            flush=True,
-        )
-        print(
-            f"surface-worker rank={rank} phase=execute-start",
-            file=sys.stderr,
-            flush=True,
-        )
         generated = execute_distributed_surface_initial(prepared)
-        print(
-            f"surface-worker rank={rank} phase=execute-done",
-            file=sys.stderr,
-            flush=True,
-        )
         construction = generated.construction
         if construction is None:
             raise RuntimeError(
@@ -579,8 +555,7 @@ def _surface_sphere_worker() -> dict[str, Any]:
         chain_rows = dict(construction.curve_vertex_chains())
         shared_vertex_rows = {
             str(int(scope_curve_ids[curve])): [
-                generated.vertex_ids[int(vertex)]
-                for vertex in chain_rows[curve].tolist()
+                generated.vertex_ids[int(vertex)] for vertex in chain_rows[curve].tolist()
             ]
             for curve in chain_rows
             if int(scope_curve_ids[curve]) in shared_curve_ids

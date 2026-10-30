@@ -22,8 +22,8 @@ import phydrax.meshing._association as association_owner
 import phydrax.meshing._boundary_layer as boundary_layer_owner
 import phydrax.meshing._organization as organization_owner
 import phydrax.meshing._plc_source as plc_source_owner
-import phydrax.meshing._volume_generation as volume_generation_owner
 import phydrax.meshing._polyhedral_generation as polyhedral_generation_owner
+import phydrax.meshing._volume_generation as volume_generation_owner
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -86,9 +86,7 @@ class LayerCoreFace:
 
 
 @checked
-def polyhedral_cell_faces(
-    mesh: CellMesh, /
-) -> tuple[tuple[tuple[int, ...], ...], ...]:
+def polyhedral_cell_faces(mesh: CellMesh, /) -> tuple[tuple[tuple[int, ...], ...], ...]:
     """Return exact outward cell loops using canonical signed face incidence."""
     connectivity = mesh.connectivity
     if not isinstance(connectivity, cell_complex_owner.PolyhedralConnectivity):
@@ -101,16 +99,14 @@ def polyhedral_cell_faces(
     result: list[tuple[tuple[int, ...], ...]] = []
     for cell in range(connectivity.cell_count):
         loops: list[tuple[int, ...]] = []
-        for occurrence in range(
-            int(cell_offsets[cell]), int(cell_offsets[cell + 1])
-        ):
+        for occurrence in range(int(cell_offsets[cell]), int(cell_offsets[cell + 1])):
             face = int(cell_faces[occurrence])
             orientation = int(cell_signs[occurrence])
             if orientation not in (-1, 1):
-                raise ValueError("Polyhedral face-use orientation must be signed unit data.")
-            loop = face_vertices[
-                int(face_offsets[face]) : int(face_offsets[face + 1])
-            ]
+                raise ValueError(
+                    "Polyhedral face-use orientation must be signed unit data."
+                )
+            loop = face_vertices[int(face_offsets[face]) : int(face_offsets[face + 1])]
             if orientation < 0:
                 loop = loop[::-1]
             loops.append(tuple(int(value) for value in loop))
@@ -129,16 +125,11 @@ def faces(
     table: dict[tuple[int, ...], list[LayerCoreFace]] = {}
     if isinstance(mesh.connectivity, cell_complex_owner.PolyhedralConnectivity):
         connectivity = mesh.connectivity
-        connectivity_cell_ids = np.asarray(
-            connectivity.cell_global_ids, dtype=np.int64
-        )
+        connectivity_cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
         cell_faces_by_row = polyhedral_cell_faces(mesh)
         for cell_row, cell_id in enumerate(connectivity_cell_ids.tolist()):
             region_row = int(np.searchsorted(identifiers, cell_id))
-            if (
-                region_row == identifiers.size
-                or identifiers[region_row] != cell_id
-            ):
+            if region_row == identifiers.size or identifiers[region_row] != cell_id:
                 raise ValueError("A volume cell is absent from its canonical entity set.")
             for vertices in cell_faces_by_row[cell_row]:
                 key = tuple(sorted(vertices))

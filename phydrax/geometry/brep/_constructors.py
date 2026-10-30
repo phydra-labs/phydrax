@@ -408,12 +408,12 @@ class _Builder:
         default_factory=list
     )
     vertex_roots: list[BRepVertexRoot | None] = field(default_factory=list)
-    edge_endpoint_roots: list[
-        tuple[RootEndpoint | None, RootEndpoint | None]
-    ] = field(default_factory=list)
-    coedge_endpoint_roots: list[
-        tuple[RootEndpoint | None, RootEndpoint | None]
-    ] = field(default_factory=list)
+    edge_endpoint_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = field(
+        default_factory=list
+    )
+    coedge_endpoint_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = field(
+        default_factory=list
+    )
     curves: list[BRepCurve] = field(default_factory=list)
     edge_curves: list[int] = field(default_factory=list)
     edge_ranges: list[tuple[float, float]] = field(default_factory=list)
@@ -456,9 +456,7 @@ class _Builder:
         end: int,
         /,
         *,
-        endpoint_roots: tuple[
-            RootEndpoint | None, RootEndpoint | None
-        ] = (None, None),
+        endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (None, None),
     ) -> int:
         if not first < last:
             raise ValueError("A nondegenerate edge range must be increasing.")
@@ -480,9 +478,7 @@ class _Builder:
         last: float,
         /,
         *,
-        endpoint_roots: tuple[
-            RootEndpoint | None, RootEndpoint | None
-        ] = (None, None),
+        endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (None, None),
     ) -> int:
         if not first < last:
             raise ValueError("A degenerate edge range must be increasing.")
@@ -501,9 +497,7 @@ class _Builder:
         pcurve: BRepCurve,
         /,
         *,
-        endpoint_roots: tuple[
-            RootEndpoint | None, RootEndpoint | None
-        ] = (None, None),
+        endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (None, None),
     ) -> int:
         if sense not in (-1, 1) or pcurve.ambient_dimension != 2:
             raise ValueError("A coedge requires a 2D p-curve and orientation sign.")
@@ -1049,17 +1043,13 @@ def _segment_curve(
     return curve, segment.first, segment.last
 
 
-
-
 def _extrusion_patch(curve: AbstractCurve, vector: np.ndarray, /) -> AbstractSurfacePatch:
     if isinstance(curve, LineCurve):
         origin_shadow = tuple(
-            Fraction.from_float(float(value))
-            for value in np.asarray(curve.origin)
+            Fraction.from_float(float(value)) for value in np.asarray(curve.origin)
         )
         direction_shadow = tuple(
-            Fraction.from_float(float(value))
-            for value in np.asarray(curve.direction)
+            Fraction.from_float(float(value)) for value in np.asarray(curve.direction)
         )
         if (
             curve.origin_exact != origin_shadow
@@ -1071,17 +1061,12 @@ def _extrusion_patch(curve: AbstractCurve, vector: np.ndarray, /) -> AbstractSur
         origin = np.asarray(curve.first, dtype=np.float64)
         direction = np.asarray(curve.last, dtype=np.float64) - origin
         origin_shadow = tuple(Fraction.from_float(float(value)) for value in origin)
-        direction_shadow = tuple(
-            Fraction.from_float(float(value)) for value in direction
-        )
+        direction_shadow = tuple(Fraction.from_float(float(value)) for value in direction)
         exact_direction = tuple(
             last - first
             for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
         )
-        if (
-            curve.first_exact != origin_shadow
-            or exact_direction != direction_shadow
-        ):
+        if curve.first_exact != origin_shadow or exact_direction != direction_shadow:
             return ExtrusionSurface(curve, vector)
         return PlanePatch(origin, direction, vector)
     if not isinstance(curve, CircleCurve):
@@ -1702,6 +1687,7 @@ def _profile_endpoint_gap_rows(
             "PlanarProfile.endpoint_gap_bounds must align with every loop edge."
         )
     certified = []
+
     def exact_profile_endpoint_root(
         curve: AbstractCurve, point: tuple[float, float], parameter: float, /
     ) -> ConicParameterRoot | None:
@@ -1713,7 +1699,9 @@ def _profile_endpoint_gap_rows(
         first_axis = curve.first_axis_exact
         second_axis = curve.second_axis_exact
 
-        def dot(first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /) -> ExactScalar:
+        def dot(
+            first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+        ) -> ExactScalar:
             return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
         if (
@@ -1747,6 +1735,7 @@ def _profile_endpoint_gap_rows(
         ):
             return None
         return root
+
     for loop_index, loop in enumerate(loops):
         rows = []
         for edge, segment in enumerate(loop.segments):
@@ -1757,9 +1746,10 @@ def _profile_endpoint_gap_rows(
                 exact_profile_endpoint_root(curve, start, first),
                 exact_profile_endpoint_root(curve, end, last),
             )
-            roots: tuple[
-                NativePeriodEndpoint | None, NativePeriodEndpoint | None
-            ] = (None, None)
+            roots: tuple[NativePeriodEndpoint | None, NativePeriodEndpoint | None] = (
+                None,
+                None,
+            )
             if len(loop.vertices) == 1 and curve.native_period_symbol() == "two_pi":
                 rational = Fraction.from_float(float(first))
                 period_roots = (
@@ -2264,12 +2254,8 @@ def brep_extrusion(
             conic_carrier = isinstance(curve3d, (CircleCurve, EllipseCurve))
             base_roots = (
                 (
-                    ConicParameterRoot.from_exact_point(
-                        curve3d, base_start_exact, first
-                    ),
-                    ConicParameterRoot.from_exact_point(
-                        curve3d, base_end_exact, last
-                    ),
+                    ConicParameterRoot.from_exact_point(curve3d, base_start_exact, first),
+                    ConicParameterRoot.from_exact_point(curve3d, base_end_exact, last),
                 )
                 if conic_carrier
                 else (None, None)
@@ -2279,9 +2265,7 @@ def brep_extrusion(
                     ConicParameterRoot.from_exact_point(
                         top_curve3d, top_start_exact, first
                     ),
-                    ConicParameterRoot.from_exact_point(
-                        top_curve3d, top_end_exact, last
-                    ),
+                    ConicParameterRoot.from_exact_point(top_curve3d, top_end_exact, last),
                 )
                 if isinstance(top_curve3d, (CircleCurve, EllipseCurve))
                 else (None, None)
@@ -3012,6 +2996,7 @@ def brep_revolution(
             ((0, 1), (1, 0)),
             (0, 0),
         )
+
     for index, item in enumerate(profile_edges):
         if item is None:
             continue
@@ -3065,14 +3050,15 @@ def brep_revolution(
             and profile_last_root.turns - profile_first_root.turns == 1
         )
         if profile_turn_root:
-            last_ring_pcurve = PeriodicPCurve(
-                first_ring_pcurve, patch, (0, 1)
-            )
+            last_ring_pcurve = PeriodicPCurve(first_ring_pcurve, patch, (0, 1))
         else:
             if profile_first_root is not None:
                 bounds[0, 1] = min(bounds[0, 1], profile_first_root.parameter_lower)
             if profile_last_root is not None:
                 bounds[1, 1] = max(bounds[1, 1], profile_last_root.parameter_upper)
+        # The seam is traversed on both chart sheets: the forward use closes the
+        # authored loop one native turn later, the reverse use on the base sheet.
+        seam_pcurve = LineCurve((0.0, 0.0), (0.0, 1.0))
         coedges = [
             builder.coedge(
                 rotational_edges[index],
@@ -3082,7 +3068,7 @@ def brep_revolution(
             builder.coedge(
                 edge,
                 1,
-                LineCurve((0.0, 0.0), (0.0, 1.0)),
+                PeriodicPCurve(seam_pcurve, patch, (1, 0)),
             ),
             builder.coedge(
                 rotational_edges[next_index],
@@ -3092,7 +3078,7 @@ def brep_revolution(
             builder.coedge(
                 edge,
                 -1,
-                LineCurve((0.0, 0.0), (0.0, 1.0)),
+                seam_pcurve,
             ),
         ]
         orientation = _revolution_orientation(patch, profile.plane, first, last)
@@ -3126,9 +3112,7 @@ def brep_revolution(
             root = primary_root
             source_point = tuple(
                 first + exact_parameter * (last - first)
-                for first, last in zip(
-                    curve.first_exact, curve.last_exact, strict=True
-                )
+                for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
             )
             if source_point != point_exact:
                 return None
@@ -3147,9 +3131,7 @@ def brep_revolution(
         else:
             return None
         parameter_exact = (
-            None
-            if isinstance(curve, (CircleCurve, EllipseCurve))
-            else exact_parameter
+            None if isinstance(curve, (CircleCurve, EllipseCurve)) else exact_parameter
         )
         return ConicParameterEndpoint(root, curve, parameter_exact, point_exact)
 
@@ -3161,9 +3143,7 @@ def brep_revolution(
             continue
         _, first, last, curve = item
         incident_profile_endpoints[index].append((curve, first))
-        incident_profile_endpoints[(index + 1) % len(points2)].append(
-            (curve, last)
-        )
+        incident_profile_endpoints[(index + 1) % len(points2)].append((curve, last))
     for vertex, point_exact in enumerate(exact_points3):
         if not np.array_equal(
             np.asarray(tuple(float(value) for value in point_exact)),
@@ -3180,10 +3160,7 @@ def brep_revolution(
             rotational_root = ConicParameterRoot.from_exact_point(
                 rotational_curve, point_exact, 0.0
             )
-            if (
-                rotational_root is None
-                or rotational_root.exact_point() != point_exact
-            ):
+            if rotational_root is None or rotational_root.exact_point() != point_exact:
                 continue
             root_candidates.append(rotational_root)
         for curve, parameter in incident_profile_endpoints[vertex]:
@@ -3191,15 +3168,11 @@ def brep_revolution(
                 profile_root = ConicParameterRoot.from_exact_point(
                     curve, point_exact, parameter
                 )
-                if (
-                    profile_root is not None
-                    and profile_root.exact_point() == point_exact
-                ):
+                if profile_root is not None and profile_root.exact_point() == point_exact:
                     root_candidates.append(profile_root)
         for root in root_candidates:
             if all(
-                profile_endpoint_root(curve, point_exact, parameter, root)
-                is not None
+                profile_endpoint_root(curve, point_exact, parameter, root) is not None
                 for curve, parameter in incident_profile_endpoints[vertex]
             ):
                 builder.vertex_roots[vertex] = BRepVertexRoot(BRepConicVertex(root))
@@ -3237,9 +3210,7 @@ def brep_revolution(
         current_roots = builder.coedge_endpoint_roots[coedge]
         if any(isinstance(root, NativePeriodEndpoint) for root in current_roots):
             continue
-        if not any(
-            isinstance(root, ConicParameterEndpoint) for root in edge_roots
-        ):
+        if not any(isinstance(root, ConicParameterEndpoint) for root in edge_roots):
             continue
         pcurve = builder.pcurves[coedge]
         first_root, last_root = edge_roots
@@ -3290,9 +3261,7 @@ def brep_revolution(
         source_region = SurfaceRegion(
             patches[face], np.asarray(bounds[face], dtype=np.float64)
         )
-        first_parameter, last_parameter = (
-            float(value) for value in edge_ranges[edge]
-        )
+        first_parameter, last_parameter = (float(value) for value in edge_ranges[edge])
         squared = (
             Fraction(0)
             if exact_source_lift(
@@ -3917,8 +3886,7 @@ def _single_chart_sphere_offset(
             for first in range(3)
         )
         if gram != tuple(
-            tuple(Fraction(int(row == column)) for column in range(3))
-            for row in range(3)
+            tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
         ):
             return None
         rows = tuple(tuple(axes[column][row] for column in range(3)) for row in range(3))
@@ -3963,9 +3931,7 @@ def _single_chart_sphere_offset(
 
     bounds = np.asarray(model.parameter_bounds[0], dtype=np.float64)
     expected_symbols = (
-        ("two_pi", None)
-        if isinstance(patch, SpherePatch)
-        else ("two_pi", "two_pi")
+        ("two_pi", None) if isinstance(patch, SpherePatch) else ("two_pi", "two_pi")
     )
     if patch.native_period_symbols() != expected_symbols:
         return None
@@ -4003,9 +3969,10 @@ def _single_chart_sphere_offset(
         if profile_bounds != (-quarter_turn, quarter_turn):
             return None
         profile_axis = tuple(profile.second_axis_exact)
-        if profile_axis != sphere_axis_exact and tuple(
-            -value for value in profile_axis
-        ) != sphere_axis_exact:
+        if (
+            profile_axis != sphere_axis_exact
+            and tuple(-value for value in profile_axis) != sphere_axis_exact
+        ):
             return None
 
     uses: list[list[int]] = [[] for _ in geometry.edge_curves]
@@ -4111,10 +4078,9 @@ def _single_chart_sphere_offset(
         return None
     source_pole_roots: dict[int, BRepConicVertex] = {}
     if isinstance(patch, RevolutionSurface):
-        if (
-            not isinstance(profile_curve, CircleCurve)
-            or carrier_payload(profile_curve) != carrier_payload(patch.curve)
-        ):
+        if not isinstance(profile_curve, CircleCurve) or carrier_payload(
+            profile_curve
+        ) != carrier_payload(patch.curve):
             return None
         profile_vertices = geometry.edge_vertices[profile_edge]
         if len(set(profile_vertices)) != 2:
@@ -4143,15 +4109,13 @@ def _single_chart_sphere_offset(
                 return None
             for vertex, actual_pole in zip(profile_vertices, actual_poles, strict=True):
                 root = geometry.vertex_roots[vertex]
-                if (
-                    not isinstance(root, BRepVertexRoot)
-                    or not isinstance(root.primary, BRepConicVertex)
+                if not isinstance(root, BRepVertexRoot) or not isinstance(
+                    root.primary, BRepConicVertex
                 ):
                     return None
                 primary = root.primary
                 if (
-                    carrier_payload(primary.root.conic)
-                    != carrier_payload(profile_curve)
+                    carrier_payload(primary.root.conic) != carrier_payload(profile_curve)
                     or any(primary.offset_exact)
                     or primary.point_exact != actual_pole
                     or primary.root.exact_point() != primary.point_exact
@@ -4187,9 +4151,7 @@ def _single_chart_sphere_offset(
             return None
         fixed_longitudes.append(info[2])
         if has_source_pole_roots:
-            for endpoint, root in enumerate(
-                geometry.coedge_endpoint_roots[coedge]
-            ):
+            for endpoint, root in enumerate(geometry.coedge_endpoint_roots[coedge]):
                 vertex = geometry.edge_vertices[profile_edge][endpoint]
                 primary = source_pole_roots.get(vertex)
                 if (
@@ -4205,9 +4167,7 @@ def _single_chart_sphere_offset(
                     )
                 ):
                     return None
-        elif any(
-            root is not None for root in geometry.coedge_endpoint_roots[coedge]
-        ):
+        elif any(root is not None for root in geometry.coedge_endpoint_roots[coedge]):
             return None
     if (
         len(fixed_longitudes) != 2
@@ -4378,9 +4338,7 @@ def _single_chart_sphere_offset(
                 target_first = offset_pole_endpoint(
                     start, curve, first_root.parameter_exact
                 )
-                target_last = offset_pole_endpoint(
-                    end, curve, last_root.parameter_exact
-                )
+                target_last = offset_pole_endpoint(end, curve, last_root.parameter_exact)
                 if target_first is None or target_last is None:
                     return None
                 endpoint_roots = target_first, target_last

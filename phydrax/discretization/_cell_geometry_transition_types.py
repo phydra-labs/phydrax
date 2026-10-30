@@ -23,9 +23,9 @@ from ._cell_geometry import (
 from ._cell_geometry_validity import cell_geometry_id
 from ._cell_mesh import CellBlock, CellMesh
 from ._coordinate_enclosure import (
-    BernsteinDomain,
     add,
     axes,
+    BernsteinDomain,
     compose_expression,
     constant,
     ExactScalar,
@@ -37,10 +37,10 @@ from ._coordinate_enclosure import (
     scale,
 )
 from ._nested_reference_types import (
+    evaluate_reference_chart_arguments,
     exact_reference_cell_vertices,
     exact_reference_vertices,
     ExactReferenceChartExpression,
-    evaluate_reference_chart_arguments,
     NestedReferenceWitnesses,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
@@ -118,10 +118,14 @@ class CellGeometryTransitionEvidence(StrictModule, NonTrainableState):
             or int(value) < 0
             for value in values
         ):
-            raise ValueError("Geometry transition map counts must be nonnegative integers.")
+            raise ValueError(
+                "Geometry transition map counts must be nonnegative integers."
+            )
         kind = parse(kind, CellGeometryTransitionKind, "kind")
         if any(not np.isfinite(value) or value < 0.0 for value in residuals):
-            raise ValueError("Geometry transition error bounds must be finite and nonnegative.")
+            raise ValueError(
+                "Geometry transition error bounds must be finite and nonnegative."
+            )
         self.kind = kind
         self.reference_map_count = int(reference_map_count)
         self.refinement_map_count = int(refinement_map_count)
@@ -141,8 +145,6 @@ class CellGeometryTransitionEvidence(StrictModule, NonTrainableState):
         )
 
 
-
-
 def _cell_kinds(mesh: CellMesh) -> dict[int, str]:
     result: dict[int, str] = {}
     for block in mesh.blocks:
@@ -151,7 +153,9 @@ def _cell_kinds(mesh: CellMesh) -> dict[int, str]:
     return result
 
 
-def _require_geometry_realizes_mesh(mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
+def _require_geometry_realizes_mesh(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> None:
     elements, routes, coefficients = geometry.resolve(mesh)
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     coefficient_values = np.asarray(coefficients, dtype=np.float64)
@@ -162,20 +166,24 @@ def _require_geometry_realizes_mesh(mesh: CellMesh, geometry: CellGeometrySpec, 
             expected = points[cells]
             valid = np.asarray(block.vertex_valid, dtype=np.bool_)
             if not np.array_equal(local[valid], expected[valid]):
-                raise ValueError("Variable-topology coordinate elements must realize mesh vertices.")
+                raise ValueError(
+                    "Variable-topology coordinate elements must realize mesh vertices."
+                )
             continue
-        reference = np.asarray(reference_cell_topology(block.cell_kind).vertices, dtype=np.float64)
+        reference = np.asarray(
+            reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
+        )
         reference_rows = np.broadcast_to(reference, (block.cell_count, *reference.shape))
         actual = geometry.evaluate(mesh, np.asarray(block.global_ids), reference_rows)
         expected = points[cells]
         if not np.array_equal(actual, expected):
-            raise ValueError("Coordinate element corner images must equal mesh physical vertices.")
+            raise ValueError(
+                "Coordinate element corner images must equal mesh physical vertices."
+            )
 
 
 def _reference_map_groups(
-    value: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...]
-    | None,
+    value: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None,
     /,
 ) -> tuple[ReferenceCellMapWitnesses, ...]:
     if value is None:
@@ -186,22 +194,25 @@ def _reference_map_groups(
         or not groups
         or any(not isinstance(group, ReferenceCellMapWitnesses) for group in groups)
     ):
-        raise TypeError("reference_map must be one witness or a nonempty tuple of witnesses.")
+        raise TypeError(
+            "reference_map must be one witness or a nonempty tuple of witnesses."
+        )
     return groups
+
 
 def _reference_shape_polynomials(cell_kind: str, /) -> tuple[Expression, ...]:
     topology = reference_cell_topology(cell_kind)
     dimension = topology.dimension
     variables = axes(dimension)
     one = constant(Fraction(1), dimension)
-    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
+    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith(
+        "simplex:"
+    ):
         first = one
         for variable in variables:
             first = add(first, scale(variable, -1))
         return (first, *variables)
-    if cell_kind in (
-        "quadrilateral", "hexahedron", "tensor:1", "tensor:2", "tensor:3"
-    ):
+    if cell_kind in ("quadrilateral", "hexahedron", "tensor:1", "tensor:2", "tensor:3"):
         weights = []
         for vertex in topology.vertices:
             value = one
@@ -263,7 +274,9 @@ def _geometry_map_expressions(
         basis = coordinate_effective_basis(element, cell_row=local_row)
         coefficients = geometry.source_coordinates(np.asarray(route)[local_row])
         if len(basis) != len(coefficients):
-            raise ValueError("Coordinate basis and exact source coefficients are misaligned.")
+            raise ValueError(
+                "Coordinate basis and exact source coefficients are misaligned."
+            )
         return linear_combinations(
             basis,
             tuple(
@@ -333,7 +346,12 @@ def _require_exact_reference_group(
             arguments = tuple(
                 linear_combinations(
                     shapes,
-                    (tuple(reference_vertices[corner][axis] for corner in range(len(shapes))),),
+                    (
+                        tuple(
+                            reference_vertices[corner][axis]
+                            for corner in range(len(shapes))
+                        ),
+                    ),
                 )[0]
                 for axis in range(source_dimension)
             )
@@ -359,6 +377,7 @@ def _require_exact_reference_group(
             raise ValueError(
                 "Exact reference maps do not prove source/target coordinate-map equality."
             )
+
 
 def _nested_reference_groups(
     witnesses: NestedReferenceWitnesses,
@@ -416,9 +435,7 @@ def _nested_reference_groups(
 
 
 def _reference_map_identity(
-    value: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...]
-    | None,
+    value: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None,
     /,
 ) -> str | None:
     if value is None:
@@ -434,7 +451,10 @@ def _reference_map_identity(
                     "target_kind": group.target_cell_kind,
                     "source_kind": group.source_cell_kind,
                     "exact_vertices": tuple(
-                        tuple(tuple(str(coordinate) for coordinate in point) for point in cell)
+                        tuple(
+                            tuple(str(coordinate) for coordinate in point)
+                            for point in cell
+                        )
                         for cell in exact_reference_cell_vertices(group)
                     ),
                     "chart_arguments": reference_chart_arguments_identity(
@@ -472,9 +492,7 @@ type _SurfaceReconstructionChart = tuple[
 def _canonical_surface_reconstruction_maps(
     source_mesh: CellMesh,
     target_mesh: CellMesh,
-    value: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...]
-    | None,
+    value: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None,
     /,
 ) -> tuple[ReferenceCellMapWitnesses, ...]:
     if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
@@ -603,8 +621,7 @@ def _canonical_surface_reconstruction_maps(
 
 
 def _surface_reconstruction_rows(
-    reference_map: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...],
+    reference_map: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...],
     /,
 ) -> dict[int, _SurfaceReconstructionChart]:
     result: dict[int, _SurfaceReconstructionChart] = {}
@@ -664,15 +681,16 @@ def _reconstructed_surface_endpoints(
     source_mesh: CellMesh,
     source_geometry: CellGeometrySpec,
     target_topology: CellMesh,
-    reference_map: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...],
+    reference_map: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...],
     coordinate_degree: int,
     /,
 ) -> tuple[CellMesh, CellGeometrySpec]:
     from .fem._reference import lagrange_element
 
     if not isinstance(source_geometry, CellGeometrySpec):
-        raise TypeError("Surface reconstruction source geometry must be CellGeometrySpec.")
+        raise TypeError(
+            "Surface reconstruction source geometry must be CellGeometrySpec."
+        )
     if (
         isinstance(coordinate_degree, (bool, np.bool_))
         or not isinstance(coordinate_degree, (int, np.integer))
@@ -683,9 +701,7 @@ def _reconstructed_surface_endpoints(
     vertex_values: list[tuple[ExactScalar, ...] | None] = [
         None for _ in range(np.asarray(target_topology.vertex_global_ids).size)
     ]
-    nodal_values: dict[
-        tuple[str, int], tuple[tuple[ExactScalar, ...], ...]
-    ] = {}
+    nodal_values: dict[tuple[str, int], tuple[tuple[ExactScalar, ...], ...]] = {}
     elements: dict[str, CellGeometryElement] = {}
     vertex_dofs: dict[str, dict[int, int]] = {}
     for block in target_topology.blocks:
@@ -706,8 +722,8 @@ def _reconstructed_surface_endpoints(
                 "Target coordinate element has unresolved reference-node layout."
             )
         node_by_point = {
-            tuple(Fraction(float(value)) for value in point): row
-            for row, point in enumerate(nodes)
+            tuple(Fraction(value) for value in point): row
+            for row, point in enumerate(nodes.tolist())
         }
         topology = reference_cell_topology(block.cell_kind)
         local_vertex_by_dof: dict[int, int] = {}
@@ -799,10 +815,10 @@ def _reconstructed_surface_endpoints(
             raise ValueError("Surface reconstruction requires fixed-family target cells.")
         element = elements[block.name]
         local_vertex_by_dof = vertex_dofs[block.name]
-        route = np.empty(
-            (block.cell_count, element.local_dof_count), dtype=np.int32
+        route = np.empty((block.cell_count, element.local_dof_count), dtype=np.int32)
+        row_order = np.argsort(
+            np.asarray(block.global_ids, dtype=np.int64), kind="stable"
         )
-        row_order = np.argsort(np.asarray(block.global_ids, dtype=np.int64), kind="stable")
         for row_value in row_order:
             row = int(row_value)
             cell_vertices = np.asarray(block.vertices, dtype=np.int64)[row]
@@ -833,8 +849,7 @@ def _surface_reconstruction_bounds(
     source_geometry: CellGeometrySpec,
     target_mesh: CellMesh,
     target_geometry: CellGeometrySpec,
-    reference_map: ReferenceCellMapWitnesses
-    | tuple[ReferenceCellMapWitnesses, ...],
+    reference_map: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...],
     /,
 ) -> tuple[float, float]:
     chart_rows = _surface_reconstruction_rows(reference_map)
@@ -926,10 +941,10 @@ def _surface_shared_edge_continuity_bound(
     cell_expressions: dict[int, tuple[Expression, ...]] = {}
     for block in mesh.blocks:
         if not isinstance(block, CellBlock):
-            raise ValueError("Shared-edge continuity requires fixed-family surface cells.")
-        for row, cell_id_value in enumerate(
-            np.asarray(block.global_ids, dtype=np.int64)
-        ):
+            raise ValueError(
+                "Shared-edge continuity requires fixed-family surface cells."
+            )
+        for row, cell_id_value in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
             cell_id = int(cell_id_value)
             expressions = _geometry_map_expressions(
                 mesh,
@@ -1006,7 +1021,9 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
     target_topology_id: str = eqx.field(static=True)
     source_geometry_id: str = eqx.field(static=True)
     target_geometry_id: str = eqx.field(static=True)
-    reference_map: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None
+    reference_map: (
+        ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None
+    )
     refinement: NestedReferenceWitnesses | None
     coarsening: NestedReferenceWitnesses | None
     reference_map_id: str | None = eqx.field(static=True)
@@ -1060,16 +1077,26 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             validate_reference_cell_map_witnesses(group)
             source_ids = np.asarray(group.source_cell_ids, dtype=np.int64)
             target_ids = np.asarray(group.target_cell_ids, dtype=np.int64)
-            if any(int(identifier) not in source_kinds for identifier in source_ids) or any(
-                int(identifier) not in target_kinds for identifier in target_ids
-            ):
-                raise ValueError("Reference maps must bind present source and target cells.")
+            if any(
+                int(identifier) not in source_kinds for identifier in source_ids
+            ) or any(int(identifier) not in target_kinds for identifier in target_ids):
+                raise ValueError(
+                    "Reference maps must bind present source and target cells."
+                )
             if (
-                any(source_kinds[int(identifier)] != group.source_cell_kind for identifier in source_ids)
-                or any(target_kinds[int(identifier)] != group.target_cell_kind for identifier in target_ids)
+                any(
+                    source_kinds[int(identifier)] != group.source_cell_kind
+                    for identifier in source_ids
+                )
+                or any(
+                    target_kinds[int(identifier)] != group.target_cell_kind
+                    for identifier in target_ids
+                )
                 or seen_target_ids.intersection(map(int, target_ids))
             ):
-                raise ValueError("Reference maps must match unique endpoint cell families.")
+                raise ValueError(
+                    "Reference maps must match unique endpoint cell families."
+                )
             seen_target_ids.update(map(int, target_ids))
             if not bounded_reconstruction:
                 _require_exact_reference_group(
@@ -1090,14 +1117,18 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             if not set(fine_ids.tolist()) <= set(_cell_kinds(target_mesh)) or not set(
                 coarse_ids.tolist()
             ) <= set(_cell_kinds(source_mesh)):
-                raise ValueError("Refinement witnesses must bind target fine/source coarse cells.")
+                raise ValueError(
+                    "Refinement witnesses must bind target fine/source coarse cells."
+                )
         if coarsening is not None:
             fine_ids = np.asarray(coarsening.fine_cell_ids, dtype=np.int64)
             coarse_ids = np.asarray(coarsening.coarse_cell_ids, dtype=np.int64)
             if not set(fine_ids.tolist()) <= set(_cell_kinds(source_mesh)) or not set(
                 coarse_ids.tolist()
             ) <= set(_cell_kinds(target_mesh)):
-                raise ValueError("Coarsening witnesses must bind source fine/target coarse cells.")
+                raise ValueError(
+                    "Coarsening witnesses must bind source fine/target coarse cells."
+                )
         if reference_map is not None and refinement is not None:
             parent_by_target = {
                 int(target_id): int(source_id)
@@ -1120,9 +1151,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                     "Refinement and reference maps disagree on stable cell parents."
                 )
         if reference_map is None and refinement is not None:
-            for group in _nested_reference_groups(
-                refinement, source_mesh, target_mesh
-            ):
+            for group in _nested_reference_groups(refinement, source_mesh, target_mesh):
                 validate_reference_cell_map_witnesses(group)
                 _require_exact_reference_group(
                     source_mesh, source_geometry, target_mesh, target_geometry, group
@@ -1169,7 +1198,9 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             or evidence.coarsening_map_count
             != (0 if coarsening is None else len(coarsening.fine_cell_ids))
         ):
-            raise ValueError("Geometry transition evidence counts must match retained maps.")
+            raise ValueError(
+                "Geometry transition evidence counts must match retained maps."
+            )
         self.source_mesh = source_mesh
         self.target_mesh = target_mesh
         self.source_geometry = source_geometry
@@ -1209,8 +1240,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         target_topology: CellMesh,
         /,
         *,
-        reference_map: ReferenceCellMapWitnesses
-        | tuple[ReferenceCellMapWitnesses, ...],
+        reference_map: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...],
         maximum_displacement: float,
         maximum_continuity_residual: float,
         coordinate_degree: int = 1,

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,9 +11,9 @@ import pytest
 
 from phydrax._geometry_predicates import PredicateMode
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._cell_geometry import CellGeometrySpec
-from phydrax.meshing._periodic import periodic_entity_orbit_map
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._surface_chart_records import SurfaceChartWitness
 from phydrax.geometry import Sphere
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
@@ -23,47 +22,46 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
 )
-from phydrax.discretization._surface_chart_records import SurfaceChartWitness
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
-from phydrax.geometry.brep._patches import LineCurve, PlanePatch
 from phydrax.geometry.brep._constructors import brep_sphere, brep_torus
+from phydrax.geometry.brep._patches import LineCurve, PlanePatch
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
+)
+from phydrax.meshing._adaptation import (
+    execute_mesh_adaptation,
+    MeshAdaptationPolicy,
+    MeshAdaptationRoute,
+    MeshAdaptationStatus,
+    MetricMeshAdaptation,
+    prepare_mesh_adaptation,
 )
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     SurfaceMeshingSpec,
 )
-from phydrax.meshing._association import GeometryAssociationKind
-from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
-from phydrax.meshing._adaptation import (
-    MeshAdaptationPolicy,
-    MeshAdaptationRoute,
-    MeshAdaptationStatus,
-    MetricMeshAdaptation,
-    execute_mesh_adaptation,
-    prepare_mesh_adaptation,
-)
 from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
 from phydrax.meshing._metric import MeshMetricField, metric_edge_lengths
+from phydrax.meshing._periodic import periodic_entity_orbit_map
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
 from phydrax.meshing._surface_metric import (
-    SurfaceMetricOutcome,
-    SurfaceMetricStatus,
     execute_surface_metric_adaptation,
     prepare_implicit_surface_metric_source,
     prepare_surface_metric_source,
+    SurfaceMetricOutcome,
+    SurfaceMetricStatus,
 )
 from phydrax.meshing._topology_edit import (
-    TopologyEditBlock,
     assemble_topology_edit,
     entity_keys,
+    TopologyEditBlock,
 )
 from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
@@ -128,9 +126,11 @@ def _trimmed_sheet() -> tuple[MeshingDomain, CellMeshingResult]:
         "parametric_surface",
         surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
     )
-    source = NativeMeshingProvider(options).plan(
-        domain, specification, coordinate_contract=contract
-    ).execute()
+    source = (
+        NativeMeshingProvider(options)
+        .plan(domain, specification, coordinate_contract=contract)
+        .execute()
+    )
     if source.surface_source is None:
         raise AssertionError("Native trimmed-sheet acceptance lost its source charts.")
     return domain, source
@@ -212,19 +212,20 @@ def test_closed_brep_source_chart_metric_adaptation(family: str) -> None:
         )
     )
     target_cell_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks
+        )
     )
     np.testing.assert_array_equal(np.sort(mapped_cells), np.sort(target_cell_ids))
 
 
-def _implicit_sphere_source(
-) -> tuple[AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract]:
+def _implicit_sphere_source() -> tuple[
+    AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract
+]:
     contract = SpatialCoordinateContract.si()
     source_id = "surface-metric-implicit-sphere"
     revision = f"{source_id}-r1"
-    geometry = Sphere(
-        (0.0, 0.0, 0.0), 0.75, feature_id=source_id
-    ).compile()
+    geometry = Sphere((0.0, 0.0, 0.0), 0.75, feature_id=source_id).compile()
     profile = AnalyticImplicitProfile(
         geometry,
         contract,
@@ -274,17 +275,17 @@ def _implicit_sphere_source(
         "implicit_surface",
         implicit_policy=policy,
     )
-    source = NativeMeshingProvider(options).plan(
-        native_source, specification, coordinate_contract=contract
-    ).execute()
+    source = (
+        NativeMeshingProvider(options)
+        .plan(native_source, specification, coordinate_contract=contract)
+        .execute()
+    )
     return profile, source, contract
 
 
 def _anisotropic_metric(mesh: CellMesh, /) -> np.ndarray:
     tensor = np.diag(np.asarray((16.0, 20.0, 24.0), dtype=np.float64))
-    return np.broadcast_to(
-        tensor, (mesh.coordinates.shape[0], 3, 3)
-    ).copy()
+    return np.broadcast_to(tensor, (mesh.coordinates.shape[0], 3, 3)).copy()
 
 
 def _implicit_chart_points(
@@ -345,9 +346,7 @@ def _exact_target_points(
             np.full((3,), patches[row], dtype=np.int64), parameters
         )
         target_points = np.asarray(edit.coordinates)[cell_vertices]
-        np.testing.assert_allclose(
-            target_points, source_points, rtol=0.0, atol=2.0e-13
-        )
+        np.testing.assert_allclose(target_points, source_points, rtol=0.0, atol=2.0e-13)
 
 
 @pytest.mark.strict_jax
@@ -385,7 +384,9 @@ def test_open_trimmed_sheet_metric_statistics_match_independent_pullback(
             )
         ]
     )
-    np.testing.assert_allclose(prepared.pullback_metric, independent, rtol=2.0e-13, atol=2.0e-13)
+    np.testing.assert_allclose(
+        prepared.pullback_metric, independent, rtol=2.0e-13, atol=2.0e-13
+    )
     work_vertex_rows = {
         int(identifier): row
         for row, identifier in enumerate(
@@ -398,13 +399,19 @@ def test_open_trimmed_sheet_metric_statistics_match_independent_pullback(
         dtype=np.int64,
     )
     lengths = np.asarray(
-        metric_edge_lengths(independent, np.asarray(prepared.work_mesh.coordinates), edges),
+        metric_edge_lengths(
+            independent, np.asarray(prepared.work_mesh.coordinates), edges
+        ),
         dtype=np.float64,
     )
     measured = lengths[~prepared.source_protected_edges]
     lower, upper = 1.0 / np.sqrt(2.0), np.sqrt(2.0)
-    assert outcome.evidence.minimum_metric_length == pytest.approx(float(np.min(measured)))
-    assert outcome.evidence.maximum_metric_length == pytest.approx(float(np.max(measured)))
+    assert outcome.evidence.minimum_metric_length == pytest.approx(
+        float(np.min(measured))
+    )
+    assert outcome.evidence.maximum_metric_length == pytest.approx(
+        float(np.max(measured))
+    )
     assert outcome.evidence.unit_fraction == pytest.approx(
         float(np.mean((measured >= lower) & (measured <= upper)))
     )
@@ -440,7 +447,9 @@ def test_open_trimmed_sheet_adaptation_keeps_boundary_and_exact_source_points(
         )
     )
     target_cell_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks
+        )
     )
     np.testing.assert_array_equal(np.sort(mapped_cells), np.sort(target_cell_ids))
     _exact_target_points(outcome, domain)
@@ -475,7 +484,9 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     witness = certification.inputs.fidelity_witness
     fidelity_source = certification.inputs.source
     if not isinstance(witness, SourceBoundaryChartWitness) or fidelity_source is None:
-        raise AssertionError("Implicit sphere source lost its exact chart witness or query.")
+        raise AssertionError(
+            "Implicit sphere source lost its exact chart witness or query."
+        )
     prepared = prepare_implicit_surface_metric_source(
         mesh,
         source.geometry,
@@ -501,8 +512,13 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     target_witness = outcome.geometry.target_chart_witness
     if not isinstance(target_witness, SourceBoundaryChartWitness):
         raise AssertionError("Implicit metric adaptation lost its source-bound witness.")
-    if outcome.geometry.implicit_cell_keys is None or outcome.geometry.implicit_root_edge_keys is None:
-        raise AssertionError("Implicit metric adaptation lost root cell or edge ancestry.")
+    if (
+        outcome.geometry.implicit_cell_keys is None
+        or outcome.geometry.implicit_root_edge_keys is None
+    ):
+        raise AssertionError(
+            "Implicit metric adaptation lost root cell or edge ancestry."
+        )
     target_mesh, _, _ = assemble_topology_edit(
         mesh, outcome.edit, numeric_version="surface-metric-test"
     )
@@ -575,7 +591,9 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     assert result.transition.geometry_transition is not None
     assert result.surface_chart_witness is not None
     if not isinstance(result.surface_chart_witness, SourceBoundaryChartWitness):
-        raise AssertionError("Implicit metric finalization lost its exact source chart witness.")
+        raise AssertionError(
+            "Implicit metric finalization lost its exact source chart witness."
+        )
     target_certification = result.target.certification
     if target_certification is None:
         raise AssertionError("Implicit metric finalization lost source certification.")
@@ -619,7 +637,9 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     assert np.max(np.asarray(projected.residuals, dtype=np.float64)) <= tolerance
 
 
-def test_native_surface_metric_route_rebinds_trimmed_sheet_source_charts() -> None:
+def test_native_surface_metric_route_rebinds_trimmed_sheet_source_charts(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+) -> None:
     domain, source = _trimmed_sheet
     transfer = SurfaceAssociationTransfer(domain)
     transfer.validate_source(source)

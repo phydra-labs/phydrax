@@ -15,8 +15,8 @@ import numpy as np
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_mesh import CellMesh
 from ._polyhedral_adaptation_shared import (
-    PolyhedralAdaptationError,
     polyhedral_face_loops,
+    PolyhedralAdaptationError,
 )
 
 
@@ -30,6 +30,7 @@ class PolyhedralPlaneRestriction(NamedTuple):
     child_parent_ids: tuple[tuple[int, int], ...]
     maximum_coordinate_rounding_error: float
 
+
 def _point_bank(coordinates: np.ndarray, /) -> list[ExactPoint]:
     return [
         (Fraction(float(row[0])), Fraction(float(row[1])), Fraction(float(row[2])))
@@ -38,9 +39,7 @@ def _point_bank(coordinates: np.ndarray, /) -> list[ExactPoint]:
 
 
 def _plane_value(point: ExactPoint, plane: ExactPoint, offset: Fraction, /) -> Fraction:
-    return sum(
-        (plane[axis] * point[axis] for axis in range(3)), -offset
-    )
+    return sum((plane[axis] * point[axis] for axis in range(3)), -offset)
 
 
 def _cross(first: ExactPoint, second: ExactPoint, /) -> ExactPoint:
@@ -66,7 +65,9 @@ def _dot(first: ExactPoint, second: ExactPoint, /) -> Fraction:
 def _face_normal(face: tuple[int, ...], points: list[ExactPoint], /) -> ExactPoint:
     anchor = points[face[0]]
     for first, second in combinations(face[1:], 2):
-        normal = _cross(_difference(points[first], anchor), _difference(points[second], anchor))
+        normal = _cross(
+            _difference(points[first], anchor), _difference(points[second], anchor)
+        )
         if normal != (Fraction(0), Fraction(0), Fraction(0)):
             return normal
     raise PolyhedralAdaptationError("A cut polyhedral cell contains a degenerate face.")
@@ -87,9 +88,9 @@ def _turn(
     third: tuple[Fraction, Fraction],
     /,
 ) -> Fraction:
-    return (second[0] - first[0]) * (third[1] - first[1]) - (
-        second[1] - first[1]
-    ) * (third[0] - first[0])
+    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+        third[0] - first[0]
+    )
 
 
 def _require_convex_cell(
@@ -107,7 +108,7 @@ def _require_convex_cell(
             entity_ids=(cell_id,),
         )
     for face_array in cell:
-        face = tuple(int(value) for value in np.asarray(face))
+        face = tuple(int(value) for value in np.asarray(face_array))
         normal = _face_normal(face, points)
         pivot, first_axis, second_axis = _projection_axes(normal)
         anchor = points[face[0]]
@@ -118,11 +119,12 @@ def _require_convex_cell(
                     entity_ids=(cell_id,),
                 )
         projected = tuple(
-            (points[vertex][first_axis], points[vertex][second_axis])
-            for vertex in face
+            (points[vertex][first_axis], points[vertex][second_axis]) for vertex in face
         )
         turns = tuple(
-            _turn(projected[index - 1], projected[index], projected[(index + 1) % len(face)])
+            _turn(
+                projected[index - 1], projected[index], projected[(index + 1) % len(face)]
+            )
             for index in range(len(face))
         )
         if not any(value != 0 for value in turns) or any(
@@ -133,8 +135,7 @@ def _require_convex_cell(
                 entity_ids=(cell_id,),
             )
         if any(
-            _dot(normal, _difference(points[vertex], anchor)) > 0
-            for vertex in vertices
+            _dot(normal, _difference(points[vertex], anchor)) > 0 for vertex in vertices
         ):
             raise PolyhedralAdaptationError(
                 "Plane splitting currently requires each edited polyhedron to be convex.",
@@ -158,7 +159,8 @@ def _intersection(
         return first, next_vertex
     if second_value == 0:
         return second, next_vertex
-    edge = tuple(sorted((vertex_ids[first], vertex_ids[second])))
+    first_id, second_id = vertex_ids[first], vertex_ids[second]
+    edge = (min(first_id, second_id), max(first_id, second_id))
     existing = intersections.get(edge)
     if existing is not None:
         return existing, next_vertex
@@ -168,8 +170,7 @@ def _intersection(
         raise PolyhedralAdaptationError("A plane-edge intersection left its source edge.")
     start, end = points[first], points[second]
     point = tuple(
-        start[axis] + parameter * (end[axis] - start[axis])
-        for axis in range(3)
+        start[axis] + parameter * (end[axis] - start[axis]) for axis in range(3)
     )
     exact_point: ExactPoint = (point[0], point[1], point[2])
     if next_vertex > np.iinfo(np.int64).max:
@@ -179,11 +180,17 @@ def _intersection(
     values.append(Fraction(0))
     points.append(exact_point)
     vertex_ids.append(next_vertex)
-    first_weights = vertex_support.get(vertex_ids[first], {vertex_ids[first]: Fraction(1)})
-    second_weights = vertex_support.get(vertex_ids[second], {vertex_ids[second]: Fraction(1)})
+    first_weights = vertex_support.get(
+        vertex_ids[first], {vertex_ids[first]: Fraction(1)}
+    )
+    second_weights = vertex_support.get(
+        vertex_ids[second], {vertex_ids[second]: Fraction(1)}
+    )
     composed: dict[int, Fraction] = {}
     for source_id, weight in first_weights.items():
-        composed[source_id] = composed.get(source_id, Fraction(0)) + (1 - parameter) * weight
+        composed[source_id] = (
+            composed.get(source_id, Fraction(0)) + (1 - parameter) * weight
+        )
     for source_id, weight in second_weights.items():
         composed[source_id] = composed.get(source_id, Fraction(0)) + parameter * weight
     vertex_support[next_vertex] = {
@@ -231,7 +238,9 @@ def _clip_face(
     return np.asarray(cleaned, dtype=np.int32), next_vertex
 
 
-def _hull(points: tuple[tuple[Fraction, Fraction], ...], /) -> tuple[tuple[Fraction, Fraction], ...]:
+def _hull(
+    points: tuple[tuple[Fraction, Fraction], ...], /
+) -> tuple[tuple[Fraction, Fraction], ...]:
     unique = tuple(sorted(set(points)))
     if len(unique) < 3:
         return ()
@@ -258,12 +267,13 @@ def _ordered_section(
     pivot, first_axis, second_axis = _projection_axes(plane)
     ordered_vertices = tuple(sorted(section_vertices))
     projected = tuple(
-        (points[row][first_axis], points[row][second_axis])
-        for row in ordered_vertices
+        (points[row][first_axis], points[row][second_axis]) for row in ordered_vertices
     )
     projected_to_vertex = dict(zip(projected, ordered_vertices, strict=True))
     if len(projected_to_vertex) != len(projected):
-        raise PolyhedralAdaptationError("A plane section has coincident distinct vertices.")
+        raise PolyhedralAdaptationError(
+            "A plane section has coincident distinct vertices."
+        )
     hull = _hull(projected)
     if len(hull) < 3:
         raise PolyhedralAdaptationError("A cut cell has a degenerate plane section.")
@@ -290,7 +300,9 @@ def _ordered_section(
     return np.asarray(ordered, dtype=np.int32)
 
 
-def _signed_cell_volume(points: list[ExactPoint], faces: tuple[np.ndarray, ...], /) -> Fraction:
+def _signed_cell_volume(
+    points: list[ExactPoint], faces: tuple[np.ndarray, ...], /
+) -> Fraction:
     total = Fraction(0)
     for face in faces:
         loop = tuple(int(value) for value in face)
@@ -347,7 +359,7 @@ def restrict_polyhedral_plane(
         if min(signed) < 0 < max(signed):
             cut_cells.add(cell)
     if not cut_cells:
-        return PolyhedralPlaneRestriction(mesh, tuple(points), (), (), 0.0)
+        return PolyhedralPlaneRestriction(mesh, tuple(points), (), 0.0)
 
     for cell in sorted(cut_cells):
         cell_id = int(cell_ids[cell])
@@ -355,9 +367,11 @@ def restrict_polyhedral_plane(
         face_start = int(cell_face_offsets[cell])
         for local_face, face in enumerate(loops[cell]):
             face_values = tuple(values[int(vertex)] for vertex in face)
-            if min(face_values) < 0 < max(face_values) and int(
-                face_ids[int(cell_face_values[face_start + local_face])]
-            ) in protected_face_ids:
+            if (
+                min(face_values) < 0 < max(face_values)
+                and int(face_ids[int(cell_face_values[face_start + local_face])])
+                in protected_face_ids
+            ):
                 raise PolyhedralAdaptationError(
                     "A protected polyhedral face would be subdivided by the plane.",
                     entity_ids=(cell_id,),
@@ -399,9 +413,7 @@ def restrict_polyhedral_plane(
                 if clipped.size >= 3:
                     child_faces.append(clipped)
                     section_vertices.update(
-                        int(vertex)
-                        for vertex in clipped
-                        if values[int(vertex)] == 0
+                        int(vertex) for vertex in clipped if values[int(vertex)] == 0
                     )
             section = _ordered_section(section_vertices, side, exact_normal, points)
             child_faces.append(section)
@@ -423,7 +435,9 @@ def restrict_polyhedral_plane(
         sum(child_volumes[parent], Fraction(0)) != original_cell_volumes[parent]
         for parent in original_cell_volumes
     ):
-        raise PolyhedralAdaptationError("Plane clipping failed exact cell-volume conservation.")
+        raise PolyhedralAdaptationError(
+            "Plane clipping failed exact cell-volume conservation."
+        )
 
     rounded = np.asarray(
         [[float(value) for value in point] for point in points], dtype=np.float64

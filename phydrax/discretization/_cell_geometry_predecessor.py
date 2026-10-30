@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -19,16 +19,13 @@ from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
     CellVertexGeometryElement,
-    PerCellRestrictedCellGeometryElement,
-    ScalarCoordinateElement,
     coordinate_effective_basis,
     coordinate_execution_basis,
     coordinate_source_basis,
+    PerCellRestrictedCellGeometryElement,
+    ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import (
-    CellValidityCertificate,
-    CellValidityPolicy,
-    CellValidityStatus,
     _BlockCertificate,
     _certify_polygon_block,
     _certify_polyhedral_cells,
@@ -38,29 +35,42 @@ from ._cell_geometry_validity import (
     _polyhedral_coordinates,
     _source_proof_domain,
     cell_geometry_id,
+    CellValidityCertificate,
+    CellValidityStatus,
     polyhedral_star_tables,
 )
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import (
-    CoordinateSourceBank,
-    ExactScalar,
-    Expression,
-    RationalPolynomial,
     affine_map,
     coordinate_execution_map_expressions,
     coordinate_map_expressions,
     coordinate_point_rounding_error,
+    CoordinateSourceBank,
+    ExactScalar,
+    Expression,
+    RationalPolynomial,
 )
-from ._exact_algebraic_geometry import coefficient_endpoint
+from ._exact_algebraic_geometry import coefficient_endpoint, coefficient_payload
 
 
 _PREDECESSOR_TOKEN = object()
 
 
+def _polynomial_payload(
+    value: Mapping[tuple[int, ...], ExactScalar], /
+) -> tuple[tuple[tuple[int, ...], object], ...]:
+    return tuple(
+        (exponent, coefficient_payload(value[exponent])) for exponent in sorted(value)
+    )
+
+
 def _expression_payload(value: Expression, /) -> tuple[str, object]:
     if isinstance(value, RationalPolynomial):
-        return "rational", (dict(value.numerator), dict(value.denominator))
-    return "polynomial", dict(value)
+        return "rational", (
+            _polynomial_payload(value.numerator),
+            _polynomial_payload(value.denominator),
+        )
+    return "polynomial", _polynomial_payload(value)
 
 
 def _cell_keys(mesh: CellMesh, geometry: CellGeometrySpec, /) -> tuple[str, ...]:
@@ -99,7 +109,10 @@ def _cell_keys(mesh: CellMesh, geometry: CellGeometrySpec, /) -> tuple[str, ...]
                         "element_type": type(element).__qualname__,
                         "element_degree": degree,
                         "basis": basis_payload,
-                        "local_coefficients": local,
+                        "local_coefficients": tuple(
+                            tuple(coefficient_payload(value) for value in row)
+                            for row in local
+                        ),
                         "source_map": geometry.source_map_id,
                     }
                 )
@@ -278,7 +291,9 @@ class CellGeometryPredecessor(StrictModule, NonTrainableState):
         _construction_token: object | None = None,
     ) -> None:
         if _construction_token is not _PREDECESSOR_TOKEN:
-            raise TypeError("CellGeometryPredecessor must be issued by its preparation owner.")
+            raise TypeError(
+                "CellGeometryPredecessor must be issued by its preparation owner."
+            )
         self.source_mesh = source_mesh
         self.source_geometry = source_geometry
         self.source_validity = source_validity
@@ -294,8 +309,14 @@ class CellGeometryPredecessor(StrictModule, NonTrainableState):
         source_count = sum(block.cell_count for block in self.source_mesh.blocks)
         target_count = sum(block.cell_count for block in self.target_mesh.blocks)
         rows = np.asarray(self.source_rows, dtype=np.int64)
-        if rows.shape != (target_count,) or np.any(rows < -1) or np.any(rows >= source_count):
-            raise ValueError("Predecessor source rows must bind each target cell or use -1.")
+        if (
+            rows.shape != (target_count,)
+            or np.any(rows < -1)
+            or np.any(rows >= source_count)
+        ):
+            raise ValueError(
+                "Predecessor source rows must bind each target cell or use -1."
+            )
         expected = _predecessor_content_id(
             self.source_mesh,
             self.source_geometry,
@@ -315,7 +336,9 @@ class CellGeometryPredecessor(StrictModule, NonTrainableState):
         if expected_reused != self.reused_cell_ids:
             raise ValueError("Predecessor reused cell IDs disagree with its source rows.")
         if expected != self.predecessor_id:
-            raise ValueError("Cell geometry predecessor content changed after preparation.")
+            raise ValueError(
+                "Cell geometry predecessor content changed after preparation."
+            )
 
 
 @checked
@@ -389,9 +412,7 @@ def reuse_cell_geometry_validity(
     policy = source_validity.policy
     resolved_elements, resolved_routes, _ = geometry.resolve(mesh)
     elements = tuple(resolved_elements)
-    routes = tuple(
-        np.asarray(route, dtype=np.int64) for route in resolved_routes
-    )
+    routes = tuple(np.asarray(route, dtype=np.int64) for route in resolved_routes)
     names = tuple(block.name for block in mesh.blocks)
     kinds = tuple(block.cell_kind for block in mesh.blocks)
     context = _target_proof_context(geometry, names, elements, routes)
@@ -446,9 +467,7 @@ def reuse_cell_geometry_validity(
         source_stop = source_cursor + source_block.cell_count
         source_offsets[source_block.name] = (source_cursor, source_stop)
         source_cursor = source_stop
-    for name, kind, element, route in zip(
-        names, kinds, elements, routes, strict=True
-    ):
+    for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
         stop = cursor + cell_count
         changed_rows = np.flatnonzero(rows[cursor:stop] < 0)
@@ -546,9 +565,7 @@ def reuse_cell_geometry_validity(
                                 "Polyhedral geometry requires polyhedral mesh connectivity."
                             )
                         polyhedral_tables = polyhedral_star_tables(connectivity)
-                        polyhedral_points = _polyhedral_coordinates(
-                            mesh, routes, values
-                        )
+                        polyhedral_points = _polyhedral_coordinates(mesh, routes, values)
                     if polyhedral_points is None:
                         raise RuntimeError(
                             "Polyhedral coordinate preparation did not produce coordinates."
@@ -615,9 +632,7 @@ def reuse_cell_geometry_validity(
         source_proof=_BlockCertificate(
             source_status, source_lower, source_upper, source_depth
         ),
-        maximum_coefficient_rounding_error=(
-            context.maximum_coefficient_rounding_error
-        ),
+        maximum_coefficient_rounding_error=(context.maximum_coefficient_rounding_error),
         maximum_element_coefficient_rounding_error=(
             context.maximum_element_coefficient_rounding_error
         ),
@@ -626,9 +641,7 @@ def reuse_cell_geometry_validity(
         policy=policy,
         block_names=names,
         block_offsets=tuple(offsets),
-        unsupported_block_names=tuple(
-            name for name in names if name in unsupported
-        ),
+        unsupported_block_names=tuple(name for name in names if name in unsupported),
         geometry_id=cell_geometry_id(geometry),
         geometry_layout_id=geometry.geometry_layout_id,
         policy_id=policy.policy_id,

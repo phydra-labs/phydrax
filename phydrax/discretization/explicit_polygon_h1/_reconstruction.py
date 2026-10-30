@@ -30,6 +30,7 @@ from .._polygon_query import (
     PreparedPolygonMeshLocator,
     triangle_barycentric_gradients,
 )
+from .._views import FieldTracePolicy, PreparedFieldReconstruction
 from ._space import ExplicitPolygonH1Discretization, ExplicitPolygonH1RuntimeData
 
 
@@ -232,16 +233,14 @@ class _ExplicitPolygonH1TriangleBasis(AbstractPolygonLocalBasis, NonTrainableSta
     def weights(
         self, located: LocatedPolygonPoints, derivative: tuple[int, ...], /
     ) -> Array:
-        local = self.prolongation[
-            located.cells[:, None], located.triangle_vertices
-        ]
+        local = self.prolongation[located.cells[:, None], located.triangle_vertices]
         if sum(derivative) == 0:
             coordinates = located.barycentric
         else:
             axis = derivative.index(1)
-            coordinates = triangle_barycentric_gradients(
-                located.triangle_inverse
-            )[:, :, axis]
+            coordinates = triangle_barycentric_gradients(located.triangle_inverse)[
+                :, :, axis
+            ]
         return ein.contract("na,nal->nl", coordinates, local)
 
 
@@ -336,7 +335,9 @@ def prepare_explicit_polygon_h1_field_reconstruction(
     )
     return PreparedFieldReconstruction(
         kernel,
-        support_geometry=polygon_mesh_support_geometry(coordinates, cells, arity, support_id),
+        support_geometry=polygon_mesh_support_geometry(
+            coordinates, cells, arity, support_id
+        ),
         value_port=polygon_value_port(
             discretization.field.name,
             space.shape[1:],
