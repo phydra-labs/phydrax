@@ -1640,6 +1640,10 @@ certificates. `reconstruct_point_region` preserves the input digest and reports
 ROI/voxel filtering; `reconstruct_lidar_region` also retains acquisition
 lineage. Planar and DEM source construction uses native MeshCore predicates.
 These native source routes do not import PyVista, Open3D, or Qhull.
+The surface source of a reconstructed triangle complex is an exact
+`MeshingDomain`: each triangle chart evaluates in barycentric form, so every chart
+corner reproduces its authored vertex bit for bit, and shared corners are compared
+with zero tolerance.
 
 ## Native unsigned-distance surface envelopes
 
