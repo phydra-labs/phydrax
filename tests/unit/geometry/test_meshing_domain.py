@@ -292,9 +292,7 @@ def _square_domain() -> MeshingDomain:
     )
 
 
-def _rational_spline_surfaces() -> tuple[
-    BSplineSurfacePatch, TSplineSurfacePatch
-]:
+def _rational_spline_surfaces() -> tuple[BSplineSurfacePatch, TSplineSurfacePatch]:
     zero = Fraction(0)
     one = Fraction(1)
     knot = Fraction(1, 3)
@@ -389,10 +387,7 @@ def _expected_interpolation_error_squared(
     width_v = upper_v - lower_v
     denominator = Fraction(1) + lower_u
     x_error = width_u**2 / denominator**3
-    z_error = (
-        upper_v * width_u**2 / denominator**3
-        + width_u * width_v / denominator**2
-    )
+    z_error = upper_v * width_u**2 / denominator**3 + width_u * width_v / denominator**2
     return x_error**2 + z_error**2
 
 
@@ -445,9 +440,7 @@ def _assert_hessian_encloses_exact_extrema(
         (expected_du, expected_dv, expected_uu, expected_uv, expected_vv),
         strict=True,
     ):
-        for actual_component, expected_component in zip(
-            actual, expected, strict=True
-        ):
+        for actual_component, expected_component in zip(actual, expected, strict=True):
             assert actual_component[0] <= expected_component[0]
             assert actual_component[1] >= expected_component[1]
 
@@ -602,24 +595,16 @@ def test_brep_geometry_cannot_claim_exact_domain_authority() -> None:
 def _brep_model_for_source_leaf(leaf: str, /) -> BRepModel:
     contract = SpatialCoordinateContract.si()
     if leaf == "patch":
-        profile = PlanarProfile(
-            ProfilePlane(), ProfileLoop.circle((0.0, 0.0), 1.0)
-        )
-        model = brep_extrusion(
-            profile, (0.0, 0.0, 2.0), coordinate_contract=contract
-        )
+        profile = PlanarProfile(ProfilePlane(), ProfileLoop.circle((0.0, 0.0), 1.0))
+        model = brep_extrusion(profile, (0.0, 0.0, 2.0), coordinate_contract=contract)
         assert any(isinstance(patch, CylinderPatch) for patch in model.patches)
         return model
     if leaf == "geometry":
-        return brep_box(
-            (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract
-        )
+        return brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
     raise ValueError(f"Unknown BRep source leaf {leaf!r}.")
 
 
-def _mutate_brep_source_leaf(
-    model: BRepModel, leaf: str, /
-) -> BRepModel:
+def _mutate_brep_source_leaf(model: BRepModel, leaf: str, /) -> BRepModel:
     if leaf == "patch":
         patch_index, patch = next(
             (index, patch)
@@ -654,9 +639,7 @@ def test_meshing_domain_currentness_rechecks_brep_authority(leaf: str) -> None:
     model = _brep_model_for_source_leaf(leaf)
     domain = MeshingDomain.from_brep(model)
     stale_model = _mutate_brep_source_leaf(model, leaf)
-    stale_domain = eqx.tree_at(
-        lambda value: value.brep_authority, domain, stale_model
-    )
+    stale_domain = eqx.tree_at(lambda value: value.brep_authority, domain, stale_model)
 
     with pytest.raises(ValueError):
         stale_domain.require_current()
@@ -685,9 +668,9 @@ def test_meshing_domain_currentness_rechecks_trim_pcurve(use_kind: str) -> None:
         )
     )
     stale_domain = eqx.tree_at(
-        lambda value: value.patches[patch_index].loops[loop_index][
-            use_index
-        ].pcurve.origin,
+        lambda value: (
+            value.patches[patch_index].loops[loop_index][use_index].pcurve.origin
+        ),
         domain,
         pcurve.origin + jnp.asarray((0.125, 0.0)),
     )
@@ -750,12 +733,8 @@ def test_brep_domain_rejects_incomplete_or_misoriented_region_boundary(
 
 def test_brep_domain_rejects_source_and_region_keys_outside_occurrence_solids() -> None:
     contract = SpatialCoordinateContract.si()
-    first = brep_box(
-        (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract
-    )
-    second = brep_box(
-        (2.0, 0.0, 0.0), (3.0, 1.0, 1.0), coordinate_contract=contract
-    )
+    first = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    second = brep_box((2.0, 0.0, 0.0), (3.0, 1.0, 1.0), coordinate_contract=contract)
     model = boolean_brep(first, second, "union").model
     assert model.topology.num_solids == 2
     assert all(
@@ -882,10 +861,13 @@ def test_brep_bounded_root_placement_preserves_numeric_source_realization() -> N
     model = boolean_brep(first, second, "intersection").model
     geometry = model.geometry
     root_vertex: int | None = None
-    bounds: tuple[
-        tuple[Fraction, Fraction, Fraction],
-        tuple[Fraction, Fraction, Fraction],
-    ] | None = None
+    bounds: (
+        tuple[
+            tuple[Fraction, Fraction, Fraction],
+            tuple[Fraction, Fraction, Fraction],
+        ]
+        | None
+    ) = None
     for vertex, (exact, root) in enumerate(
         zip(geometry.vertex_exact_points, geometry.vertex_roots, strict=True)
     ):
@@ -901,15 +883,18 @@ def test_brep_bounded_root_placement_preserves_numeric_source_realization() -> N
         Fraction.from_float(float(value))
         for value in np.asarray(geometry.vertex_points[root_vertex])
     )
-    midpoint = tuple(
-        (low + high) / 2 for low, high in zip(lower, upper, strict=True)
-    )
+    midpoint = tuple((low + high) / 2 for low, high in zip(lower, upper, strict=True))
     candidate_axes = tuple(
-        axis for axis, (low, high) in enumerate(zip(lower, upper, strict=True))
+        axis
+        for axis, (low, high) in enumerate(zip(lower, upper, strict=True))
         if low < high
     )
     axis = next(
-        (candidate for candidate in candidate_axes if midpoint[candidate] != shadow[candidate]),
+        (
+            candidate
+            for candidate in candidate_axes
+            if midpoint[candidate] != shadow[candidate]
+        ),
         candidate_axes[0],
     )
     difference = midpoint[axis] - shadow[axis]
@@ -934,11 +919,7 @@ def test_brep_bounded_root_placement_preserves_numeric_source_realization() -> N
         )
     )
     graph = BRepAssemblyGraph(
-        (
-            BRepAssemblyUse(
-                "bounded-root-placement", placement, solid_index=solid
-            ),
-        ),
+        (BRepAssemblyUse("bounded-root-placement", placement, solid_index=solid),),
         (),
         len(geometry.solid_shells),
     )
@@ -1038,9 +1019,7 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
         (knot, three_quarters),
     )
     chart_bank = (crossing, touching)
-    sample = np.asarray(
-        ((1 / 6, 1 / 4), (1 / 3, 2 / 3), (3 / 4, 1 / 2))
-    )
+    sample = np.asarray(((1 / 6, 1 / 4), (1 / 3, 2 / 3), (3 / 4, 1 / 2)))
     expected_points = np.stack(
         (
             sample[:, 0] / (1.0 + sample[:, 0]),
@@ -1064,15 +1043,9 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
             intersected_u_spans = {
                 enclosure.span_parameter_bounds[0] for enclosure in enclosures
             }
-            assert any(
-                lower < knot == upper for lower, upper in intersected_u_spans
-            )
-            assert any(
-                lower == knot < upper for lower, upper in intersected_u_spans
-            )
-            assert all(
-                enclosure.positive_denominator for enclosure in enclosures
-            )
+            assert any(lower < knot == upper for lower, upper in intersected_u_spans)
+            assert any(lower == knot < upper for lower, upper in intersected_u_spans)
+            assert all(enclosure.positive_denominator for enclosure in enclosures)
 
         domain = _rational_spline_domain(surface, f"rational-source-{index}")
         bounds = domain.interpolation_bounds(0, chart_bank)
@@ -1080,9 +1053,7 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
         assert np.all(np.isfinite(bounds))
         for bound, chart in zip(bounds, chart_bank, strict=True):
             exact_float_bound = Fraction.from_float(float(bound))
-            assert exact_float_bound**2 >= _expected_interpolation_error_squared(
-                chart
-            )
+            assert exact_float_bound**2 >= _expected_interpolation_error_squared(chart)
 
         turns = domain.normal_turn_bounds(0, chart_bank)
         assert turns.shape == (2,)
@@ -1094,7 +1065,9 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
 def test_meshing_domain_preserves_trim_orientation_and_batched_queries() -> None:
     domain = _square_domain()
     point = domain.curve_atlas.map(jnp.asarray((0,)), jnp.asarray(((0.5,),)))
-    normals, regular = domain.oriented_normals(np.asarray((0,)), np.asarray(((0.5, 0.5),)))
+    normals, regular = domain.oriented_normals(
+        np.asarray((0,)), np.asarray(((0.5, 0.5),))
+    )
 
     np.testing.assert_array_equal(np.asarray(point), ((0.5, 0.0, 0.0),))
     np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0),))
@@ -1110,9 +1083,7 @@ def test_meshing_domain_entity_lookup_requires_occurrence_disambiguation() -> No
     )
     assert domain.resolve_entity_id(1, entity) == 0
     assert domain.resolve_entity_id(1, entity, occurrence_path=("instance-A",)) == 0
-    empty_occurrence = source_entity_id(
-        "square-source", "r1", "curve", 101
-    )
+    empty_occurrence = source_entity_id("square-source", "r1", "curve", 101)
     with pytest.raises(ValueError, match="uniquely"):
         domain.resolve_entity_id(1, empty_occurrence)
 
@@ -1145,6 +1116,7 @@ def test_meshing_domain_boundary_cover_and_normal_turn_are_continuous() -> None:
     assert distances.lower[1] <= 1.0 <= distances.upper[1]
     assert 0.0 <= turn[0] < 1.0e-10
 
+
 def test_meshing_domain_scope_banks_preserve_stable_keys_and_occurrences() -> None:
     domain = _square_domain()
     identifiers = np.asarray(domain.scope_entity_ids(1), dtype=np.int64)
@@ -1166,3 +1138,40 @@ def test_meshing_domain_scope_banks_preserve_stable_keys_and_occurrences() -> No
     assert domain.scope_entity_ids(2).shape == (1,)
     assert domain.scope_entity_ids(0).shape == (4,)
     assert domain.scope_entity_ids(3).shape == (0,)
+
+
+def test_meshing_domain_prepares_scope_banks_once_per_stratum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="scope-bank-box",
+    )
+    table = MeshingDomain._source_entity_table
+    calls = []
+
+    def counted_table(self: MeshingDomain, dimension: int, /):  # noqa: ANN202
+        calls.append(dimension)
+        return table(self, dimension)
+
+    monkeypatch.setattr(MeshingDomain, "_source_entity_table", counted_table)
+    domain = MeshingDomain.from_brep(model)
+    # Each method call rebuilds a bound-method pytree over the whole domain, so
+    # the bank preparation reads each stratum table a fixed number of times.
+    assert sorted(calls) == [0, 0, 1, 1, 2, 2, 3, 3]
+    monkeypatch.undo()
+
+    for dimension, count in enumerate((8, 12, 6, 1)):
+        keys = domain.stratum_entity_ids(dimension)
+        assert keys == tuple(domain.entity_id(dimension, slot) for slot in range(count))
+        assert (
+            domain.entity_ids(np.full((count,), dimension), np.arange(count)[::-1])
+            == keys[::-1]
+        )
+        assert set(domain.scope_entity_key_banks[dimension]) == set(
+            zip(keys, domain._source_entity_table(dimension)[2], strict=True)
+        )
+    with pytest.raises(ValueError, match="outside its source stratum"):
+        domain.entity_ids(np.asarray((2,)), np.asarray((6,)))
