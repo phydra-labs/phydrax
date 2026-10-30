@@ -213,7 +213,13 @@ def _point_in_declared_stratum(
     /,
 ) -> bool:
     if len(shared_ids) == 1:
-        return point == points_by_id[shared_ids[0]]
+        vertex = points_by_id[shared_ids[0]]
+        # Planar contacts are computed in R3 with z = 0.
+        if len(vertex) == 2 and len(point) == 3:
+            if point[2] != 0:
+                return False
+            point = point[0], point[1]
+        return point == vertex
     vertices = tuple(points_by_id[identifier] for identifier in shared_ids)
     dimension = len(vertices[0])
     if any(len(vertex) != dimension for vertex in vertices):

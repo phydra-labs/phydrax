@@ -1075,6 +1075,23 @@ def test_affine_planar_cells_certify_only_their_declared_shared_edge() -> None:
     restored.require_current(mesh, geometry)
 
 
+def test_planar_segments_sharing_one_vertex_certify_their_exact_corner() -> None:
+    # Planar segment contacts are lifted to R3 with z = 0; the shared corner
+    # must still match its planar vertex.
+    mesh = CellMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0))),
+        (CellBlock("segments", "interval", np.asarray(((0, 1), (1, 2)), np.int32)),),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status == "certified", certificate.findings
+    assert "exact_cell_contacts" in certificate.evaluated_checks
+
+
 def test_positive_local_jacobians_do_not_hide_overlapping_planar_cells() -> None:
     mesh, geometry, validity = _embedded_triangles(
         np.asarray(
