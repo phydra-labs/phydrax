@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
@@ -444,6 +445,96 @@ def _material_l_periodic_request() -> tuple[
         periodic_constraints=(periodic,),
     )
     return source, specification, periodic
+
+
+def test_material_l_polyhedral_fill_keeps_material_volumes_and_facet_areas() -> None:
+    source, periodic_specification, _ = _material_l_periodic_request()
+    specification = VolumeMeshingSpec(
+        periodic_specification.target,
+        periodic_specification.boundary_scope,
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
+        region_seeds=periodic_specification.region_seeds,
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
+        )
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+
+    mesh = result.mesh
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError("Material-L restricted-power fill must remain polyhedral.")
+    assert mesh.periodic_topology is None
+    assert result.certification is not None and result.certification.passed
+    assert result.audit.passed and result.compliance.passed
+    _assert_reciprocal_internal_faces(mesh)
+    finite_volume = prepare_polyhedral_finite_volume_geometry(mesh)
+    volumes = _independent_polyhedral_volumes(mesh)
+    np.testing.assert_allclose(
+        np.asarray(finite_volume.cell_volumes), volumes, rtol=0.0, atol=1e-12
+    )
+    # The authored L is a 2x1x1 base plus a 1x1x1 upper material block.
+    cell_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+        )
+    }
+    volumes_by_material = {
+        zone.material_id: float(
+            np.sum(
+                volumes[
+                    np.asarray(
+                        [
+                            cell_rows[int(identifier)]
+                            for identifier in np.asarray(
+                                zone.scope.entity_ids, dtype=np.int64
+                            )
+                        ],
+                        dtype=np.int64,
+                    )
+                ]
+            )
+        )
+        for zone in result.zones
+        if zone.material_id is not None
+    }
+    assert volumes_by_material == pytest.approx(
+        {"base-material": 2.0, "upper-material": 1.0}, rel=0.0, abs=1e-12
+    )
+    face_association = next(
+        association
+        for association in result.associations
+        if association.target_entity_set_id == mesh.entity_set(2).entity_set_id
+    )
+    face_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+        )
+    }
+    actual_area = sum(
+        _independent_face_area(mesh, face_rows[int(target_id)])
+        for target_id, role in zip(
+            np.asarray(face_association.target_global_ids, dtype=np.int64),
+            face_association.source_roles,
+            strict=True,
+        )
+        if role is GeometrySourceEntityRole.FACET
+    )
+    # Exterior area 14 of the L plus its 1x1 internal material-interface facet.
+    assert actual_area == pytest.approx(15.0, rel=0.0, abs=1e-12)
 
 
 def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -> None:

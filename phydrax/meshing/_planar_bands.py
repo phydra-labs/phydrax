@@ -25,8 +25,12 @@ from ..geometry.brep import (
     PlanarPartitionPlan,
 )
 from ..geometry.brep._constructors import BRepTessellationPolicy
-from ..geometry.brep._partition import BRepPartitionRole
-from ..geometry.brep._patches import LineCurve, PlanePatch
+from ..geometry.brep._partition import (
+    _entity_occurrence_id,
+    _entity_text,
+    BRepPartitionRole,
+)
+from ..geometry.brep._patches import ExactLineCurve, LineCurve, PlanePatch
 from ..geometry.simplicial import PlanarMeshRegion
 from ._controls import LayerSchedule
 
@@ -251,17 +255,26 @@ def _curve_segment(
     if curve_index < 0:
         raise ValueError("Planar bands support exact straight patch edges only.")
     curve = geometry.curves[curve_index]
-    if not isinstance(curve, LineCurve):
-        raise ValueError("Planar bands support exact straight patch edges only.")
     edge_range = np.asarray(geometry.edge_ranges[edge_index], dtype=np.float64)
-    curve_origin = np.asarray(curve.origin, dtype=np.float64)
-    curve_direction = np.asarray(curve.direction, dtype=np.float64)
-    world = np.stack(
-        (
-            curve_origin + edge_range[0] * curve_direction,
-            curve_origin + edge_range[1] * curve_direction,
+    if isinstance(curve, LineCurve):
+        curve_origin = np.asarray(curve.origin, dtype=np.float64)
+        curve_direction = np.asarray(curve.direction, dtype=np.float64)
+        world = np.stack(
+            (
+                curve_origin + edge_range[0] * curve_direction,
+                curve_origin + edge_range[1] * curve_direction,
+            )
         )
-    )
+    elif isinstance(curve, ExactLineCurve):
+        first = np.asarray(curve.first, dtype=np.float64)
+        last = np.asarray(curve.last, dtype=np.float64)
+        world = np.stack(
+            tuple(
+                (1.0 - parameter) * first + parameter * last for parameter in edge_range
+            )
+        )
+    else:
+        raise ValueError("Planar bands support exact straight patch edges only.")
     vertices = np.asarray(geometry.vertex_points, dtype=np.float64)
     endpoint_vertices = np.asarray(geometry.edge_vertices[edge_index], dtype=np.int64)
     endpoint_points = vertices[endpoint_vertices]
@@ -381,7 +394,11 @@ def _selection(
     partition: BRepPartitionResult, face_indices: tuple[int, ...], /
 ) -> CADSelectionSet:
     return CADSelectionSet.from_revision(
-        partition.revision, tuple(f"face:{index}" for index in face_indices)
+        partition.revision,
+        tuple(
+            _entity_occurrence_id(partition.model.face_ids[index])
+            for index in face_indices
+        ),
     )
 
 
@@ -426,10 +443,6 @@ def _rectangles_overlap(
         if overlap <= tolerance:
             return False
     return True
-
-
-def _entity_text(entity: BRepEntityId, /) -> str:
-    return f"{entity.source_revision}:{entity.kind}:{entity.index}"
 
 
 def _organized_partition(
@@ -648,6 +661,19 @@ def prepare_planar_bands(
                 original_segments,
             )
             cumulative = np.cumsum(np.asarray(schedule.thicknesses, dtype=np.float64))
+            # The outermost front must stay strictly inside the named face;
+            # otherwise the partition would leave the region no residual cell.
+            face_depth = max(
+                float(np.max((original_segments[edge] - segment[0]) @ inward))
+                for loop in source.model.geometry.face_loops[face_index]
+                for edge in (
+                    source.model.geometry.coedge_edges[coedge] for coedge in loop
+                )
+            )
+            if float(cumulative[-1]) >= face_depth - tolerance:
+                raise ValueError(
+                    "A planar-band front lacks exact clearance inside its named region."
+                )
             lower = 0.0
             for layer_index, upper_value in enumerate(cumulative):
                 upper = float(upper_value)

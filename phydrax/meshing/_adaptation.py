@@ -2417,6 +2417,12 @@ def _restricted_target_geometry(
             raise ValueError(
                 "A non-P1 source map needs exact reference ancestry for every target cell."
             ) from None
+    if coarsening is not None and _piecewise_linear_geometry(
+        source.mesh, source.geometry
+    ):
+        # A restored P1 parent is affine on its own exact corners; its children are
+        # distinct roots, so no single root chart exists or is needed.
+        return target, CellGeometrySpec.affine(target), reference_maps
     if coarsening is not None:
         source_identity_maps: dict[str, ReferenceCellMapWitnesses] = {}
         for block in source.mesh.blocks:

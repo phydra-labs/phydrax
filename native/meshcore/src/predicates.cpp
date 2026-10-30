@@ -693,4 +693,116 @@ Approx orient3d_approx(const double* a, const double* b, const double* c, const 
   return -orient3d_rows(x, y, z);
 }
 
+// ---------------------------------------------------------------- expansion coordinates
+
+namespace {
+
+// Determinant of the n x n submatrix of m (expansion entries) selected by
+// rows[0..n) and cols[0..n), by Laplace expansion along the first row.
+Expansion determinant_expansion(const Expansion m[4][4], const int* rows, const int* cols,
+                                int n) {
+  if (n == 1) return m[rows[0]][cols[0]];
+  Expansion total;
+  int minor_cols[4];
+  for (int j = 0; j < n; ++j) {
+    const Expansion& entry = m[rows[0]][cols[j]];
+    if (entry.is_zero()) continue;
+    int count = 0;
+    for (int k = 0; k < n; ++k) {
+      if (k != j) minor_cols[count++] = cols[k];
+    }
+    const Expansion minor = entry * determinant_expansion(m, rows + 1, minor_cols, n - 1);
+    total = (j % 2 == 0) ? total + minor : total - minor;
+  }
+  return total;
+}
+
+// orientation_sos_sign with expansion coordinates: the same rank order and
+// perturbation monomials, so mixed binary64/expansion evaluations simulate
+// one global perturbation.
+int orientation_sos_sign_expansion(const Expansion* const* points, const std::int64_t* ids,
+                                   int dimension, int* parity_out) {
+  int order[4];
+  const int points_count = dimension + 1;
+  *parity_out = rank_order(ids, points_count, order);
+  const int all_indices[4] = {0, 1, 2, 3};
+  for (const SosMonomial& monomial : sos_monomials(dimension)) {
+    Expansion matrix[4][4];
+    for (int r = 0; r < points_count; ++r) {
+      for (int j = 0; j < dimension; ++j) matrix[r][j] = points[order[r]][j];
+      matrix[r][dimension] = Expansion(1.0);
+    }
+    for (int k = 0; k < monomial.count; ++k) {
+      const int r = monomial.rank[k];
+      for (int j = 0; j <= dimension; ++j) {
+        matrix[r][j] = j == monomial.column[k] ? Expansion(1.0) : Expansion();
+      }
+    }
+    const int sign = determinant_expansion(matrix, all_indices, all_indices, points_count).sign();
+    if (sign != 0) return sign;
+  }
+  return 0;
+}
+
+}  // namespace
+
+int orient2d_sign(const Expansion* a, const Expansion* b, const Expansion* c) {
+  return ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).sign();
+}
+
+int orient3d_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                  const Expansion* d) {
+  const Expansion x[3] = {a[0] - d[0], b[0] - d[0], c[0] - d[0]};
+  const Expansion y[3] = {a[1] - d[1], b[1] - d[1], c[1] - d[1]};
+  const Expansion z[3] = {a[2] - d[2], b[2] - d[2], c[2] - d[2]};
+  return -orient3d_rows(x, y, z).sign();
+}
+
+int insphere_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                  const Expansion* d, const Expansion* e) {
+  const Expansion* p[4] = {a, b, c, d};
+  Expansion x[4], y[4], z[4], lift[4];
+  for (int k = 0; k < 4; ++k) {
+    x[k] = p[k][0] - e[0];
+    y[k] = p[k][1] - e[1];
+    z[k] = p[k][2] - e[2];
+    lift[k] = x[k] * x[k] + y[k] * y[k] + z[k] * z[k];
+  }
+  return -lifted3_rows(x, y, z, lift).sign();
+}
+
+int orient3d_sos_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                      const Expansion* d, std::int64_t ia, std::int64_t ib, std::int64_t ic,
+                      std::int64_t id) {
+  const int base = orient3d_sign(a, b, c, d);
+  if (base != 0) return base;
+  const Expansion* p[4] = {a, b, c, d};
+  const std::int64_t ids[4] = {ia, ib, ic, id};
+  int parity = 1;
+  const int sign = orientation_sos_sign_expansion(p, ids, 3, &parity);
+  return -parity * sign;
+}
+
+int insphere_sos_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                      const Expansion* d, const Expansion* e, std::int64_t ia,
+                      std::int64_t ib, std::int64_t ic, std::int64_t id, std::int64_t ie) {
+  const int base = insphere_sign(a, b, c, d, e);
+  if (base != 0) return base;
+  const Expansion* p[5] = {a, b, c, d, e};
+  const std::int64_t ids[5] = {ia, ib, ic, id, ie};
+  int order[5];
+  rank_order(ids, 5, order);
+  for (int k = 0; k < 5; ++k) {
+    const int t = order[k];
+    const Expansion* others[4];
+    int count = 0;
+    for (int s = 0; s < 5; ++s) {
+      if (s != t) others[count++] = p[s];
+    }
+    const int cofactor = orient3d_sign(others[0], others[1], others[2], others[3]);
+    if (cofactor != 0) return (t % 2 == 0) ? -cofactor : cofactor;
+  }
+  return 0;
+}
+
 }  // namespace phx::mc

@@ -387,13 +387,60 @@ def _association_for_dimension(
     dimension: int,
     /,
 ) -> GeometryAssociation:
+    """Return the single association that covers one entity dimension."""
     entity_set = mesh.entity_set(dimension)
-    for association in organization.associations:
-        if association.target_entity_set_id == entity_set.entity_set_id:
-            return association
-    raise ValueError(
-        f"Planar scaffold has no source association for dimension {dimension}."
+    matches = tuple(
+        association
+        for association in organization.associations
+        if association.target_entity_set_id == entity_set.entity_set_id
     )
+    if len(matches) != 1:
+        raise ValueError(
+            f"Scaffold needs exactly one source association for dimension {dimension}."
+        )
+    return matches[0]
+
+
+def _association_rows(
+    organization: NativeMeshOrganization,
+    mesh: CellMesh,
+    dimension: int,
+    /,
+) -> dict[int, tuple[GeometryAssociation, int]]:
+    """Map entity IDs to their association row across kind-split associations."""
+    entity_set = mesh.entity_set(dimension)
+    rows: dict[int, tuple[GeometryAssociation, int]] = {}
+    for association in organization.associations:
+        if association.target_entity_set_id != entity_set.entity_set_id:
+            continue
+        identifiers = np.asarray(association.target_global_ids, dtype=np.int64)
+        for row, identifier in enumerate(identifiers.tolist()):
+            if identifier in rows:
+                raise ValueError("Scaffold source associations repeat a target entity.")
+            rows[identifier] = (association, row)
+    if not rows:
+        raise ValueError(f"Scaffold has no source association for dimension {dimension}.")
+    return rows
+
+
+def _entity_source_ids(
+    organization: NativeMeshOrganization,
+    mesh: CellMesh,
+    dimension: int,
+    /,
+) -> tuple[str, ...]:
+    """Source entity IDs aligned with the mesh entity-set order."""
+    rows = _association_rows(organization, mesh, dimension)
+    result: list[str] = []
+    for identifier in np.asarray(
+        mesh.entity_set(dimension).entity_ids, dtype=np.int64
+    ).tolist():
+        record = rows.get(identifier)
+        if record is None:
+            raise ValueError("A scaffold entity lacks its source association.")
+        association, row = record
+        result.append(association.source_entity_ids[row])
+    return tuple(result)
 
 
 def _mesh_scope(
@@ -429,19 +476,11 @@ def _feature_scaffold_edges(
     }
     if not requested:
         return np.empty((0,), dtype=np.int64)
-    association = _association_for_dimension(scaffold.organization, scaffold.mesh, 1)
-    edge_ids = np.asarray(scaffold.mesh.entity_set(1).entity_ids, dtype=np.int64)
-    edge_rows = {int(identifier): row for row, identifier in enumerate(edge_ids.tolist())}
-    selected = {
-        edge_rows[int(identifier)]
-        for identifier, source_id in zip(
-            np.asarray(association.target_global_ids, dtype=np.int64).tolist(),
-            association.source_entity_ids,
-            strict=True,
-        )
-        if source_id in requested
-    }
-    return np.asarray(sorted(selected), dtype=np.int64)
+    edge_sources = _entity_source_ids(scaffold.organization, scaffold.mesh, 1)
+    return np.asarray(
+        [row for row, source_id in enumerate(edge_sources) if source_id in requested],
+        dtype=np.int64,
+    )
 
 
 def _entity_vertex_rows(mesh: CellMesh, dimension: int, /) -> np.ndarray:
@@ -538,25 +577,14 @@ def _quad_organization(
     base_edge_row = {
         tuple(map(int, edge)): row for row, edge in enumerate(base_edges.tolist())
     }
-    base_edge_association = _association_for_dimension(
-        scaffold.organization, base_mesh, 1
-    )
-    base_vertex_association = _association_for_dimension(
-        scaffold.organization, base_mesh, 0
-    )
-    edge_association_row = {
-        int(identifier): row
-        for row, identifier in enumerate(
-            np.asarray(base_edge_association.target_global_ids, dtype=np.int64).tolist()
-        )
-    }
-    vertex_association_row = {
-        int(identifier): row
-        for row, identifier in enumerate(
-            np.asarray(base_vertex_association.target_global_ids, dtype=np.int64).tolist()
-        )
-    }
+    # The planar scaffold splits each dimension by association kind: curve rows
+    # carry exact parameters, piecewise-linear rows carry vertex/region strata.
+    base_edge_rows = _association_rows(scaffold.organization, base_mesh, 1)
+    base_vertex_rows = _association_rows(scaffold.organization, base_mesh, 0)
     region_id = source.region_entity_id
+    region_path = source.source_entity_key_for_scope(
+        2, int(source.scope_entity_ids(2)[0])
+    )[1]
     target_edges = np.sort(_entity_vertex_rows(mesh, 1), axis=1)
     target_edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64)
@@ -571,53 +599,51 @@ def _quad_organization(
     vertex_roles: list[GeometrySourceEntityRole | None] = []
     vertex_residuals: list[float] = []
     vertex_parameters = np.full((target_vertex_ids.size, 2), np.nan, dtype=np.float64)
-    vertex_intervals: list[tuple[Fraction, Fraction] | None] = []
+    vertex_points: list[Fraction | None] = []
+    vertex_paths: list[tuple[str, ...]] = []
     for output_row, identifier in enumerate(target_vertex_ids.tolist()):
         vertex = vertex_row_by_id[int(identifier)]
         support = tuple(
             int(value) for value in supports[vertex].tolist() if int(value) >= 0
         )
         if len(support) == 1:
-            base_id = int(base_vertex_ids[support[0]])
-            row = vertex_association_row.get(base_id)
-            if row is not None:
-                vertex_source_ids.append(base_vertex_association.source_entity_ids[row])
-                vertex_roles.append(base_vertex_association.source_roles[row])
-                vertex_residuals.append(
-                    float(np.asarray(base_vertex_association.residuals)[row])
-                )
+            record = base_vertex_rows.get(int(base_vertex_ids[support[0]]))
+            if record is not None:
+                association, row = record
+                vertex_source_ids.append(association.source_entity_ids[row])
+                vertex_roles.append(association.source_roles[row])
+                vertex_residuals.append(float(np.asarray(association.residuals)[row]))
                 vertex_parameters[output_row] = np.asarray(
-                    base_vertex_association.parameters, dtype=np.float64
+                    association.parameters, dtype=np.float64
                 )[row]
-                vertex_intervals.append(
-                    base_vertex_association.source_parameter_intervals[row]
-                )
+                vertex_points.append(association.source_parameter_points[row])
+                vertex_paths.append(association.source_occurrence_paths[row])
                 continue
         edge_row = (
             base_edge_row.get(tuple(sorted(support))) if len(support) == 2 else None
         )
-        edge_identifier = None if edge_row is None else int(base_edge_ids[int(edge_row)])
-        association_row = (
-            None if edge_identifier is None else edge_association_row.get(edge_identifier)
+        record = (
+            None
+            if edge_row is None
+            else base_edge_rows.get(int(base_edge_ids[int(edge_row)]))
         )
-        if association_row is not None:
-            interval = base_edge_association.source_parameter_intervals[association_row]
+        if record is not None:
+            association, row = record
+            interval = association.source_parameter_intervals[row]
             if interval is not None:
-                vertex_source_ids.append(
-                    base_edge_association.source_entity_ids[association_row]
-                )
+                vertex_source_ids.append(association.source_entity_ids[row])
                 vertex_roles.append(GeometrySourceEntityRole.EDGE)
-                vertex_residuals.append(
-                    float(np.asarray(base_edge_association.residuals)[association_row])
-                )
+                vertex_residuals.append(float(np.asarray(association.residuals)[row]))
                 parameter = (interval[0] + interval[1]) / 2
                 vertex_parameters[output_row, 0] = float(parameter)
-                vertex_intervals.append((parameter, parameter))
+                vertex_points.append(parameter)
+                vertex_paths.append(association.source_occurrence_paths[row])
                 continue
         vertex_source_ids.append(region_id)
         vertex_roles.append(GeometrySourceEntityRole.REGION)
         vertex_residuals.append(0.0)
-        vertex_intervals.append(None)
+        vertex_points.append(None)
+        vertex_paths.append(region_path)
 
     target_edge_sources: list[str] = []
     target_edge_roles: list[GeometrySourceEntityRole | None] = []
@@ -625,6 +651,7 @@ def _quad_organization(
     target_edge_parameters = np.full((target_edge_ids.size, 2), np.nan, dtype=np.float64)
     target_edge_orientations = np.zeros((target_edge_ids.size,), dtype=np.int8)
     target_edge_intervals: list[tuple[Fraction, Fraction] | None] = []
+    target_edge_paths: list[tuple[str, ...]] = []
     for row, edge in enumerate(target_edges.tolist()):
         endpoint_supports = tuple(
             tuple(
@@ -634,23 +661,19 @@ def _quad_organization(
         )
         union = tuple(sorted(set(endpoint_supports[0]) | set(endpoint_supports[1])))
         base_row = base_edge_row.get(union) if len(union) == 2 else None
-        base_identifier = None if base_row is None else int(base_edge_ids[int(base_row)])
-        association_row = (
-            None if base_identifier is None else edge_association_row.get(base_identifier)
+        record = (
+            None
+            if base_row is None
+            else base_edge_rows.get(int(base_edge_ids[int(base_row)]))
         )
         interval = (
-            None
-            if association_row is None
-            else base_edge_association.source_parameter_intervals[association_row]
+            None if record is None else record[0].source_parameter_intervals[record[1]]
         )
-        if interval is not None:
-            if base_row is None or association_row is None:
-                raise ValueError("A source-edge interval lost its scaffold association.")
+        if record is not None and base_row is not None and interval is not None:
+            association, association_row = record
             base_pair = tuple(map(int, base_edges[int(base_row)].tolist()))
             orientation = int(
-                np.asarray(base_edge_association.orientations, dtype=np.int8)[
-                    association_row
-                ]
+                np.asarray(association.orientations, dtype=np.int8)[association_row]
             )
             directed_interval = interval if orientation >= 0 else interval[::-1]
 
@@ -666,54 +689,115 @@ def _quad_organization(
 
             first_parameter = endpoint_parameter(endpoint_supports[0])
             last_parameter = endpoint_parameter(endpoint_supports[1])
-            target_edge_sources.append(
-                base_edge_association.source_entity_ids[association_row]
-            )
+            target_edge_sources.append(association.source_entity_ids[association_row])
             target_edge_roles.append(GeometrySourceEntityRole.EDGE)
             target_edge_residuals.append(
-                float(np.asarray(base_edge_association.residuals)[association_row])
+                float(np.asarray(association.residuals)[association_row])
             )
             target_edge_parameters[row] = (
                 float(first_parameter),
                 float(last_parameter),
             )
             target_edge_orientations[row] = 1 if last_parameter > first_parameter else -1
-            target_edge_intervals.append((first_parameter, last_parameter))
+            # Intervals are increasing; direction lives in the edge orientation.
+            target_edge_intervals.append(
+                (
+                    min(first_parameter, last_parameter),
+                    max(first_parameter, last_parameter),
+                )
+            )
+            target_edge_paths.append(association.source_occurrence_paths[association_row])
         else:
             target_edge_sources.append(region_id)
             target_edge_roles.append(GeometrySourceEntityRole.REGION)
             target_edge_residuals.append(0.0)
             target_edge_intervals.append(None)
+            target_edge_paths.append(region_path)
 
     vertex_set = mesh.entity_set(0)
     edge_set = mesh.entity_set(1)
     cell_set = mesh.entity_set(2)
-    vertex_association = GeometryAssociation(
-        GeometryAssociationKind.PIECEWISE_LINEAR,
-        source.source_id,
-        source.source_revision,
+
+    def kind_split(
+        entity_set_id: str,
+        identifiers: np.ndarray,
+        curve_rows: np.ndarray,
+        sources: list[str],
+        roles: list[GeometrySourceEntityRole | None],
+        residuals: list[float],
+        parameters: np.ndarray,
+        paths: list[tuple[str, ...]],
+        /,
+        *,
+        intervals: list[tuple[Fraction, Fraction] | None] | None = None,
+        points: list[Fraction | None] | None = None,
+        orientations: np.ndarray | None = None,
+    ) -> tuple[GeometryAssociation, ...]:
+        """Curve rows keep exact parameters; the rest are piecewise-linear strata."""
+        result: list[GeometryAssociation] = []
+        residual_array = np.asarray(residuals, dtype=np.float64)
+        for kind, rows in (
+            (GeometryAssociationKind.CURVE, np.flatnonzero(curve_rows)),
+            (GeometryAssociationKind.PIECEWISE_LINEAR, np.flatnonzero(~curve_rows)),
+        ):
+            if not rows.size:
+                continue
+            selected = rows.tolist()
+            curve = kind is GeometryAssociationKind.CURVE
+            result.append(
+                GeometryAssociation(
+                    kind,
+                    source.source_id,
+                    source.source_revision,
+                    entity_set_id,
+                    identifiers[rows],
+                    tuple(sources[row] for row in selected),
+                    residual_array[rows],
+                    exact=bool(np.all(residual_array[rows] == 0.0)),
+                    source_roles=tuple(roles[row] for row in selected),
+                    parameters=parameters[rows] if curve else None,
+                    orientations=(
+                        None if orientations is None or not curve else orientations[rows]
+                    ),
+                    source_parameter_intervals=(
+                        None
+                        if intervals is None or not curve
+                        else tuple(intervals[row] for row in selected)
+                    ),
+                    source_parameter_points=(
+                        None
+                        if points is None or not curve
+                        else tuple(points[row] for row in selected)
+                    ),
+                    source_occurrence_paths=tuple(paths[row] for row in selected),
+                )
+            )
+        return tuple(result)
+
+    vertex_associations = kind_split(
         vertex_set.entity_set_id,
         target_vertex_ids,
-        tuple(vertex_source_ids),
-        np.asarray(vertex_residuals, dtype=np.float64),
-        exact=bool(np.all(np.asarray(vertex_residuals) == 0.0)),
-        source_roles=tuple(vertex_roles),
-        parameters=vertex_parameters,
-        source_parameter_intervals=tuple(vertex_intervals),
+        np.asarray([value is not None for value in vertex_points], dtype=np.bool_),
+        vertex_source_ids,
+        vertex_roles,
+        vertex_residuals,
+        vertex_parameters,
+        vertex_paths,
+        points=vertex_points,
     )
-    edge_association = GeometryAssociation(
-        GeometryAssociationKind.PIECEWISE_LINEAR,
-        source.source_id,
-        source.source_revision,
+    edge_associations = kind_split(
         edge_set.entity_set_id,
         target_edge_ids,
-        tuple(target_edge_sources),
-        np.asarray(target_edge_residuals, dtype=np.float64),
-        exact=bool(np.all(np.asarray(target_edge_residuals) == 0.0)),
-        source_roles=tuple(target_edge_roles),
-        parameters=target_edge_parameters,
+        np.asarray(
+            [value is not None for value in target_edge_intervals], dtype=np.bool_
+        ),
+        target_edge_sources,
+        target_edge_roles,
+        target_edge_residuals,
+        target_edge_parameters,
+        target_edge_paths,
+        intervals=target_edge_intervals,
         orientations=target_edge_orientations,
-        source_parameter_intervals=tuple(target_edge_intervals),
     )
     cell_ids = np.asarray(cell_set.entity_ids, dtype=np.int64)
     cell_association = GeometryAssociation(
@@ -744,7 +828,7 @@ def _quad_organization(
                 int(identifier)
                 for identifier, name in zip(
                     target_edge_ids.tolist(),
-                    edge_association.source_entity_ids,
+                    target_edge_sources,
                     strict=True,
                 )
                 if source_loop_by_name.get(name) == loop
@@ -758,7 +842,7 @@ def _quad_organization(
         [
             int(identifier)
             for identifier, name in zip(
-                target_edge_ids.tolist(), edge_association.source_entity_ids, strict=True
+                target_edge_ids.tolist(), target_edge_sources, strict=True
             )
             if source_loop_by_name.get(name) == -1
         ],
@@ -778,7 +862,7 @@ def _quad_organization(
                     int(identifier)
                     for identifier, name in zip(
                         target_edge_ids.tolist(),
-                        edge_association.source_entity_ids,
+                        target_edge_sources,
                         strict=True,
                     )
                     if name in selected_sources
@@ -803,7 +887,7 @@ def _quad_organization(
                     int(identifier)
                     for identifier, name in zip(
                         target_vertex_ids.tolist(),
-                        vertex_association.source_entity_ids,
+                        vertex_source_ids,
                         strict=True,
                     )
                     if name in selected_sources
@@ -824,7 +908,7 @@ def _quad_organization(
     return NativeMeshOrganization(
         patches=patches,
         labels=tuple(labels),
-        associations=(cell_association, edge_association, vertex_association),
+        associations=(cell_association, *edge_associations, *vertex_associations),
     )
 
 
@@ -853,8 +937,8 @@ def _quad_compliance(
     edge_pairs = np.sort(_entity_vertex_rows(mesh, 1), axis=1)
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     lengths = np.linalg.norm(points[edge_pairs[:, 1]] - points[edge_pairs[:, 0]], axis=1)
-    edge_association = _association_for_dimension(organization, mesh, 1)
-    vertex_association = _association_for_dimension(organization, mesh, 0)
+    edge_source_names = _entity_source_ids(organization, mesh, 1)
+    vertex_source_names = _entity_source_ids(organization, mesh, 0)
     source_edge_rows = {
         source_entity_id(
             source.source_id, source.source_revision, "edge", int(value)
@@ -864,11 +948,11 @@ def _quad_compliance(
         )
     }
     edge_sources = np.asarray(
-        [source_edge_rows.get(name, -1) for name in edge_association.source_entity_ids],
+        [source_edge_rows.get(name, -1) for name in edge_source_names],
         dtype=np.int64,
     )
     vertex_sources = np.asarray(
-        [source_edge_rows.get(name, -1) for name in vertex_association.source_entity_ids],
+        [source_edge_rows.get(name, -1) for name in vertex_source_names],
         dtype=np.int64,
     )
     midpoint = 0.5 * (points[edge_pairs[:, 0]] + points[edge_pairs[:, 1]])
@@ -2681,9 +2765,7 @@ def _mapped_domain_face_data(
     if source_facets.shape != root_face_ids.shape:
         raise ValueError("Mapped PLC/root facet relation is misaligned.")
     sides_by_face: dict[int, tuple[str | None, str | None]] = {}
-    paths_by_face: dict[
-        int, tuple[tuple[str, ...] | None, tuple[str, ...] | None]
-    ] = {}
+    paths_by_face: dict[int, tuple[tuple[str, ...] | None, tuple[str, ...] | None]] = {}
     for facet_row, root_face_id in zip(
         source_facets.tolist(), root_face_ids.tolist(), strict=True
     ):
@@ -2695,18 +2777,15 @@ def _mapped_domain_face_data(
             None if second_region < 0 else complex_.region_ids[second_region],
         )
         occurrence_paths = (
-            None
-            if first_region < 0
-            else complex_.region_occurrence_paths[first_region],
+            None if first_region < 0 else complex_.region_occurrence_paths[first_region],
             None
             if second_region < 0
             else complex_.region_occurrence_paths[second_region],
         )
         previous_sides = sides_by_face.get(int(root_face_id))
         previous_paths = paths_by_face.get(int(root_face_id))
-        if (
-            previous_sides is not None
-            and (previous_sides != sides or previous_paths != occurrence_paths)
+        if previous_sides is not None and (
+            previous_sides != sides or previous_paths != occurrence_paths
         ):
             raise ValueError(
                 "Mapped source facets on one root face disagree on oriented region occurrences."
@@ -4078,6 +4157,11 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
                 scoped_fidelity.append(
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
+        # The grid geometry is the exact per-cell restriction of the root source
+        # map, so its source deviation is zero. Without a requested bound the
+        # certificate proves that exact claim instead of an invented allowance.
+        requested = self.specification.maximum_deviation
+        fidelity_tolerance = 0.0 if requested is None else requested
         certification = NativeCertificationRequest(
             MeshCertificationSchedule("volume_plc"),
             self.source.source_id,
@@ -4085,7 +4169,7 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
             domain=self.source.domain,
             cell_regions=np.asarray(mapped.cell_regions, dtype=np.int64),
             fidelity_source=fidelity_source,
-            fidelity_tolerance=self.specification.maximum_deviation,
+            fidelity_tolerance=fidelity_tolerance,
             fidelity_witness=fidelity_witness,
             protected_features=self.specification.protected_features,
             scoped_fidelity=tuple(scoped_fidelity),

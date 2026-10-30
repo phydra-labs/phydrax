@@ -99,7 +99,9 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         method,
     ).dynamics
     if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
-        raise TypeError("Cold FV source compilation did not produce unstructured Euler dynamics.")
+        raise TypeError(
+            "Cold FV source compilation did not produce unstructured Euler dynamics."
+        )
     runtime = PreparedFiniteVolumeRuntime(
         dynamics,
         phx.discretization.FluxPositivityPlan(

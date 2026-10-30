@@ -62,7 +62,6 @@ if TYPE_CHECKING:
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
 
 
-
 class CellMeshAuditDisposition(StrEnum):
     """How one audit check affects the verdict.
 
@@ -264,7 +263,6 @@ def _connectivity_entries(mesh: CellMesh, /) -> int:
             + connectivity.cell_faces.size
         )
     raise TypeError("Unsupported CellMesh connectivity.")
-
 
 
 def _evidence_id(
@@ -688,21 +686,16 @@ def _periodic_self_intersection_evidence(
 ) -> tuple[int, bool]:
     contact_checks = ("periodic_cell_contact", "periodic_cell_lift_collision")
     periodic_findings = tuple(
-        finding
-        for finding in embedding.findings
-        if finding.check.startswith("periodic_")
+        finding for finding in embedding.findings if finding.check.startswith("periodic_")
     )
     violations = tuple(
         finding
         for finding in periodic_findings
         if finding.check in contact_checks and finding.status == "violated"
     )
-    complete = (
-        "periodic_exact_cell_contacts" in embedding.evaluated_checks
-        and all(
-            finding.check in contact_checks and finding.status == "violated"
-            for finding in periodic_findings
-        )
+    complete = "periodic_exact_cell_contacts" in embedding.evaluated_checks and all(
+        finding.check in contact_checks and finding.status == "violated"
+        for finding in periodic_findings
     )
     return len({finding.finding_id for finding in violations}), not complete
 
@@ -737,8 +730,8 @@ def _topology_findings(
         if periodic_embedding:
             if global_embedding is None:
                 raise RuntimeError("Periodic audit lost its quotient embedding proof.")
-            self_intersections, unresolved_contact = (
-                _periodic_self_intersection_evidence(global_embedding)
+            self_intersections, unresolved_contact = _periodic_self_intersection_evidence(
+                global_embedding
             )
             if unresolved_contact:
                 unresolved.append("self_intersection")
@@ -838,8 +831,19 @@ def audit_cell_mesh(
         from ..geometry._global_embedding import GlobalEmbeddingCertificate
 
         if not isinstance(global_embedding, GlobalEmbeddingCertificate):
-            raise TypeError("global_embedding must be GlobalEmbeddingCertificate or None.")
+            raise TypeError(
+                "global_embedding must be GlobalEmbeddingCertificate or None."
+            )
         global_embedding.require_current(mesh, geometry, validity=validity_)
+    elif (
+        mesh.periodic_topology is not None
+        and audit_policy.self_intersection != CellMeshAuditDisposition.SKIP
+    ):
+        # Lifted-image intersection tests cannot decide quotient overlap; the
+        # exact quotient embedding proof is the only periodic witness.
+        from ..geometry._global_embedding import certify_global_embedding
+
+        global_embedding = certify_global_embedding(mesh, geometry, validity_)
     topology_findings, unresolved_checks = _topology_findings(
         mesh, audit_policy, global_embedding=global_embedding
     )

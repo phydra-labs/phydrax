@@ -120,7 +120,9 @@ _CUBE_FACES = (
     (2, 3, 7, 6),
     (3, 0, 4, 7),
 )
-_CORNER_LOOKUP = {tuple(point.tolist()): index for index, point in enumerate(_CORNER_OFFSETS)}
+_CORNER_LOOKUP = {
+    tuple(point.tolist()): index for index, point in enumerate(_CORNER_OFFSETS)
+}
 _TETRAHEDRA = tuple(
     tuple(
         _CORNER_LOOKUP[tuple(point.tolist())]
@@ -182,7 +184,9 @@ class _FieldEnclosures:
     _values: PreparedIntervalFunction | None
     _gradients: PreparedIntervalFunction | None
 
-    def __init__(self, geometry: CompiledGeometry, selector: ImplicitDiscoveryEnclosure) -> None:
+    def __init__(
+        self, geometry: CompiledGeometry, selector: ImplicitDiscoveryEnclosure
+    ) -> None:
         self.geometry = geometry
         self.selector = selector
         self.certificate = geometry.field_certificate
@@ -229,7 +233,11 @@ class _FieldEnclosures:
 
     def point_values(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         values = np.asarray(points, dtype=np.float64)
-        if values.ndim != 2 or values.shape[1] != _DIMENSION or not np.all(np.isfinite(values)):
+        if (
+            values.ndim != 2
+            or values.shape[1] != _DIMENSION
+            or not np.all(np.isfinite(values))
+        ):
             raise ValueError("point queries must be finite with shape (N, 3).")
         if values.shape[0] == 0:
             return np.empty((0,), dtype=np.float64), np.empty((0,), dtype=np.float64)
@@ -238,7 +246,9 @@ class _FieldEnclosures:
             if program is None:
                 raise RuntimeError("Interval value function was not prepared.")
             lower, upper = _evaluate_interval_points(program, values)
-            return np.asarray(lower, dtype=np.float64).reshape((-1,)), np.asarray(upper, dtype=np.float64).reshape((-1,))
+            return np.asarray(lower, dtype=np.float64).reshape((-1,)), np.asarray(
+                upper, dtype=np.float64
+            ).reshape((-1,))
         sampled = self.field_values(values)
         if self.selector == "sampled":
             return sampled, sampled
@@ -253,13 +263,18 @@ class _FieldEnclosures:
             np.nextafter(sampled + error, np.inf),
         )
 
-
     def boxes(self, lower: np.ndarray, upper: np.ndarray) -> _BoxBounds:
         low = np.asarray(lower, dtype=np.float64)
         high = np.asarray(upper, dtype=np.float64)
         if low.ndim != 2 or high.shape != low.shape or low.shape[1] != 3:
-            raise ValueError("box queries require lower and upper arrays of shape (N, 3).")
-        if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)) or np.any(low > high):
+            raise ValueError(
+                "box queries require lower and upper arrays of shape (N, 3)."
+            )
+        if (
+            not np.all(np.isfinite(low))
+            or not np.all(np.isfinite(high))
+            or np.any(low > high)
+        ):
             raise ValueError("box queries require finite ordered bounds.")
         if low.shape[0] == 0:
             return _BoxBounds(
@@ -322,8 +337,12 @@ class _FieldEnclosures:
         error_value = float(error_bound)
         variation = np.nextafter(lipschitz_value * radius, np.inf)
         sampled = samples[0]
-        lower_values = np.nextafter(np.nextafter(sampled - variation, -np.inf) - error_value, -np.inf)
-        upper_values = np.nextafter(np.nextafter(sampled + variation, np.inf) + error_value, np.inf)
+        lower_values = np.nextafter(
+            np.nextafter(sampled - variation, -np.inf) - error_value, -np.inf
+        )
+        upper_values = np.nextafter(
+            np.nextafter(sampled + variation, np.inf) + error_value, np.inf
+        )
         gradient_lower = np.full((low.shape[0], 3), -lipschitz_value, dtype=np.float64)
         gradient_upper = np.full((low.shape[0], 3), lipschitz_value, dtype=np.float64)
         return _BoxBounds(lower_values, upper_values, gradient_lower, gradient_upper)
@@ -363,8 +382,12 @@ class AdaptiveImplicitCover(StrictModule, NonTrainableState):
         boxes_ = np.array(boxes, dtype=np.float64, copy=True).reshape((-1, 2, 3))
         lower = np.array(value_lower, dtype=np.float64, copy=True).reshape((-1,))
         upper = np.array(value_upper, dtype=np.float64, copy=True).reshape((-1,))
-        gradient_lower_ = np.array(gradient_lower, dtype=np.float64, copy=True).reshape((-1, 3))
-        gradient_upper_ = np.array(gradient_upper, dtype=np.float64, copy=True).reshape((-1, 3))
+        gradient_lower_ = np.array(gradient_lower, dtype=np.float64, copy=True).reshape(
+            (-1, 3)
+        )
+        gradient_upper_ = np.array(gradient_upper, dtype=np.float64, copy=True).reshape(
+            (-1, 3)
+        )
         domain_ = np.array(domain, dtype=np.float64, copy=True)
         if (
             lower.shape != (boxes_.shape[0],)
@@ -382,7 +405,9 @@ class AdaptiveImplicitCover(StrictModule, NonTrainableState):
             or np.any(lower > upper)
             or np.any(domain_[0] >= domain_[1])
         ):
-            raise ValueError("Adaptive cover arrays must retain aligned ordered enclosures.")
+            raise ValueError(
+                "Adaptive cover arrays must retain aligned ordered enclosures."
+            )
         for values in (boxes_, lower, upper, gradient_lower_, gradient_upper_, domain_):
             values.setflags(write=False)
         self.boxes = boxes_
@@ -404,7 +429,9 @@ class AdaptiveImplicitCover(StrictModule, NonTrainableState):
 
     def require_bound(self, source_id: str, state_id: str, /) -> None:
         if source_id != self.source_id or state_id != self.state_id:
-            raise ValueError("The adaptive cover is bound to a different source revision.")
+            raise ValueError(
+                "The adaptive cover is bound to a different source revision."
+            )
 
     @property
     def possible_zero_mask(self) -> np.ndarray:
@@ -431,7 +458,11 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         query_id: str,
     ) -> None:
         domain_ = np.array(domain, dtype=np.float64, copy=True)
-        if domain_.shape != (2, 3) or not np.all(np.isfinite(domain_)) or np.any(domain_[0] >= domain_[1]):
+        if (
+            domain_.shape != (2, 3)
+            or not np.all(np.isfinite(domain_))
+            or np.any(domain_[0] >= domain_[1])
+        ):
             raise ValueError("Implicit volume query domain must be finite and ordered.")
         domain_.setflags(write=False)
         self.geometry = geometry
@@ -451,18 +482,28 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         classes[~within] = int(ImplicitVolumeClass.UNKNOWN)
         return ImplicitVolumeClassification(classes, lower, upper, self.certified)
 
-    def classify_boxes(self, lower: ArrayLike, upper: ArrayLike, /) -> ImplicitVolumeClassification:
+    def classify_boxes(
+        self, lower: ArrayLike, upper: ArrayLike, /
+    ) -> ImplicitVolumeClassification:
         low = np.asarray(lower, dtype=np.float64)
         high = np.asarray(upper, dtype=np.float64)
         if low.ndim != 2 or high.shape != low.shape or low.shape[1] != 3:
-            raise ValueError("box queries require lower and upper arrays of shape (N, 3).")
-        if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)) or np.any(low > high):
+            raise ValueError(
+                "box queries require lower and upper arrays of shape (N, 3)."
+            )
+        if (
+            not np.all(np.isfinite(low))
+            or not np.all(np.isfinite(high))
+            or np.any(low > high)
+        ):
             raise ValueError("box queries require finite ordered bounds.")
         result = self.bounds.boxes(low, high)
         classes = _classes(result.value_lower, result.value_upper)
         within = np.all((low >= self.domain[0]) & (high <= self.domain[1]), axis=1)
         classes[~within] = int(ImplicitVolumeClass.UNKNOWN)
-        return ImplicitVolumeClassification(classes, result.value_lower, result.value_upper, self.certified)
+        return ImplicitVolumeClassification(
+            classes, result.value_lower, result.value_upper, self.certified
+        )
 
 
 def _classes(lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
@@ -499,7 +540,9 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
         maximum_surface_box_diagonal: float,
         evidence_id: str,
     ) -> None:
-        boxes = np.array(unresolved_boxes, dtype=np.float64, copy=True).reshape((-1, 2, 3))
+        boxes = np.array(unresolved_boxes, dtype=np.float64, copy=True).reshape(
+            (-1, 2, 3)
+        )
         issues = np.array(unresolved_issues, dtype=np.int64, copy=True).reshape((-1,))
         if (
             boxes.shape[0] != issues.shape[0]
@@ -507,7 +550,9 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
             or np.any(boxes[:, 0] > boxes[:, 1])
             or np.any(issues == 0)
         ):
-            raise ValueError("Adaptive evidence requires aligned unresolved boxes and nonzero issues.")
+            raise ValueError(
+                "Adaptive evidence requires aligned unresolved boxes and nonzero issues."
+            )
         boxes.setflags(write=False)
         issues.setflags(write=False)
         self.unresolved_boxes = boxes
@@ -598,31 +643,81 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
     ) -> None:
         arrays = {
             "domain": np.array(domain, dtype=np.float64, copy=True).reshape((2, 3)),
-            "cell_indices": np.array(cell_indices, dtype=np.int64, copy=True).reshape((-1, 4)),
-            "cell_boxes": np.array(cell_boxes, dtype=np.float64, copy=True).reshape((-1, 2, 3)),
-            "cell_issues": np.array(cell_issues, dtype=np.int64, copy=True).reshape((-1,)),
-            "cell_value_lower": np.array(cell_value_lower, dtype=np.float64, copy=True).reshape((-1,)),
-            "cell_value_upper": np.array(cell_value_upper, dtype=np.float64, copy=True).reshape((-1,)),
-            "cell_gradient_lower": np.array(cell_gradient_lower, dtype=np.float64, copy=True).reshape((-1, 3)),
-            "cell_gradient_upper": np.array(cell_gradient_upper, dtype=np.float64, copy=True).reshape((-1, 3)),
-            "cell_corner_ids": np.array(cell_corner_ids, dtype=np.int64, copy=True).reshape((-1, 8, 3)),
-            "corner_ids": np.array(corner_ids, dtype=np.int64, copy=True).reshape((-1, 3)),
-            "corner_coordinates": np.array(corner_coordinates, dtype=np.float64, copy=True).reshape((-1, 3)),
-            "corner_value_lower": np.array(corner_value_lower, dtype=np.float64, copy=True).reshape((-1,)),
-            "corner_value_upper": np.array(corner_value_upper, dtype=np.float64, copy=True).reshape((-1,)),
-            "corner_sampled_values": np.array(corner_sampled_values, dtype=np.float64, copy=True).reshape((-1,)),
-            "corner_signs": np.array(corner_signs, dtype=np.int8, copy=True).reshape((-1,)),
-            "tetrahedra": np.array(tetrahedra, dtype=np.int64, copy=True).reshape((-1, 4)),
-            "tetrahedron_cell_rows": np.array(tetrahedron_cell_rows, dtype=np.int64, copy=True).reshape((-1,)),
-            "root_edge_ids": np.array(root_edge_ids, dtype=np.int64, copy=True).reshape((-1, 2, 3)),
-            "root_brackets": np.array(root_brackets, dtype=np.float64, copy=True).reshape((-1, 2, 3)),
-            "root_points": np.array(root_points, dtype=np.float64, copy=True).reshape((-1, 3)),
-            "root_errors": np.array(root_errors, dtype=np.float64, copy=True).reshape((-1,)),
-            "root_issues": np.array(root_issues, dtype=np.int64, copy=True).reshape((-1,)),
-            "root_endpoint_value_lower": np.array(root_endpoint_value_lower, dtype=np.float64, copy=True).reshape((-1, 2)),
-            "root_endpoint_value_upper": np.array(root_endpoint_value_upper, dtype=np.float64, copy=True).reshape((-1, 2)),
-            "triangle_cell_rows": np.array(triangle_cell_rows, dtype=np.int64, copy=True).reshape((-1,)),
-            "triangle_root_edge_rows": np.array(triangle_root_edge_rows, dtype=np.int64, copy=True).reshape((-1, 3)),
+            "cell_indices": np.array(cell_indices, dtype=np.int64, copy=True).reshape(
+                (-1, 4)
+            ),
+            "cell_boxes": np.array(cell_boxes, dtype=np.float64, copy=True).reshape(
+                (-1, 2, 3)
+            ),
+            "cell_issues": np.array(cell_issues, dtype=np.int64, copy=True).reshape(
+                (-1,)
+            ),
+            "cell_value_lower": np.array(
+                cell_value_lower, dtype=np.float64, copy=True
+            ).reshape((-1,)),
+            "cell_value_upper": np.array(
+                cell_value_upper, dtype=np.float64, copy=True
+            ).reshape((-1,)),
+            "cell_gradient_lower": np.array(
+                cell_gradient_lower, dtype=np.float64, copy=True
+            ).reshape((-1, 3)),
+            "cell_gradient_upper": np.array(
+                cell_gradient_upper, dtype=np.float64, copy=True
+            ).reshape((-1, 3)),
+            "cell_corner_ids": np.array(
+                cell_corner_ids, dtype=np.int64, copy=True
+            ).reshape((-1, 8, 3)),
+            "corner_ids": np.array(corner_ids, dtype=np.int64, copy=True).reshape(
+                (-1, 3)
+            ),
+            "corner_coordinates": np.array(
+                corner_coordinates, dtype=np.float64, copy=True
+            ).reshape((-1, 3)),
+            "corner_value_lower": np.array(
+                corner_value_lower, dtype=np.float64, copy=True
+            ).reshape((-1,)),
+            "corner_value_upper": np.array(
+                corner_value_upper, dtype=np.float64, copy=True
+            ).reshape((-1,)),
+            "corner_sampled_values": np.array(
+                corner_sampled_values, dtype=np.float64, copy=True
+            ).reshape((-1,)),
+            "corner_signs": np.array(corner_signs, dtype=np.int8, copy=True).reshape(
+                (-1,)
+            ),
+            "tetrahedra": np.array(tetrahedra, dtype=np.int64, copy=True).reshape(
+                (-1, 4)
+            ),
+            "tetrahedron_cell_rows": np.array(
+                tetrahedron_cell_rows, dtype=np.int64, copy=True
+            ).reshape((-1,)),
+            "root_edge_ids": np.array(root_edge_ids, dtype=np.int64, copy=True).reshape(
+                (-1, 2, 3)
+            ),
+            "root_brackets": np.array(root_brackets, dtype=np.float64, copy=True).reshape(
+                (-1, 2, 3)
+            ),
+            "root_points": np.array(root_points, dtype=np.float64, copy=True).reshape(
+                (-1, 3)
+            ),
+            "root_errors": np.array(root_errors, dtype=np.float64, copy=True).reshape(
+                (-1,)
+            ),
+            "root_issues": np.array(root_issues, dtype=np.int64, copy=True).reshape(
+                (-1,)
+            ),
+            "root_endpoint_value_lower": np.array(
+                root_endpoint_value_lower, dtype=np.float64, copy=True
+            ).reshape((-1, 2)),
+            "root_endpoint_value_upper": np.array(
+                root_endpoint_value_upper, dtype=np.float64, copy=True
+            ).reshape((-1, 2)),
+            "triangle_cell_rows": np.array(
+                triangle_cell_rows, dtype=np.int64, copy=True
+            ).reshape((-1,)),
+            "triangle_root_edge_rows": np.array(
+                triangle_root_edge_rows, dtype=np.int64, copy=True
+            ).reshape((-1, 3)),
         }
         cell_count = arrays["cell_indices"].shape[0]
         corner_count = arrays["corner_ids"].shape[0]
@@ -652,20 +747,31 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
             or arrays["root_endpoint_value_upper"].shape != (root_count, 2)
             or arrays["triangle_cell_rows"].shape != (triangle_count,)
             or arrays["triangle_root_edge_rows"].shape != (triangle_count, 3)
-            or (arrays["tetrahedron_cell_rows"].size and (
-                np.min(arrays["tetrahedron_cell_rows"]) < 0
-                or np.max(arrays["tetrahedron_cell_rows"]) >= cell_count
-            ))
-            or (arrays["triangle_cell_rows"].size and (
-                np.min(arrays["triangle_cell_rows"]) < 0
-                or np.max(arrays["triangle_cell_rows"]) >= cell_count
-            ))
-            or (arrays["triangle_root_edge_rows"].size and (
-                np.min(arrays["triangle_root_edge_rows"]) < 0
-                or np.max(arrays["triangle_root_edge_rows"]) >= root_count
-            ))
+            or (
+                arrays["tetrahedron_cell_rows"].size
+                and (
+                    np.min(arrays["tetrahedron_cell_rows"]) < 0
+                    or np.max(arrays["tetrahedron_cell_rows"]) >= cell_count
+                )
+            )
+            or (
+                arrays["triangle_cell_rows"].size
+                and (
+                    np.min(arrays["triangle_cell_rows"]) < 0
+                    or np.max(arrays["triangle_cell_rows"]) >= cell_count
+                )
+            )
+            or (
+                arrays["triangle_root_edge_rows"].size
+                and (
+                    np.min(arrays["triangle_root_edge_rows"]) < 0
+                    or np.max(arrays["triangle_root_edge_rows"]) >= root_count
+                )
+            )
         ):
-            raise ValueError("The implicit boundary scaffold requires aligned IDs, intervals and ancestry.")
+            raise ValueError(
+                "The implicit boundary scaffold requires aligned IDs, intervals and ancestry."
+            )
         for name, values in arrays.items():
             values.setflags(write=False)
             setattr(self, name, values)
@@ -683,7 +789,11 @@ class AdaptiveImplicitSurfaceArchiveRecipe:
 
     def __post_init__(self) -> None:
         domain = np.array(self.domain, dtype=np.float64, copy=True)
-        if domain.shape != (2, 3) or not np.all(np.isfinite(domain)) or np.any(domain[0] >= domain[1]):
+        if (
+            domain.shape != (2, 3)
+            or not np.all(np.isfinite(domain))
+            or np.any(domain[0] >= domain[1])
+        ):
             raise ValueError("Adaptive archive domain must be finite and ordered.")
         domain.setflags(write=False)
         object.__setattr__(self, "domain", domain)
@@ -722,9 +832,15 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
         policy: AdaptiveImplicitSurfacePolicy,
         source_id: str,
     ) -> None:
-        feature_edges_ = np.array(feature_edges, dtype=np.int64, copy=True).reshape((-1, 2))
-        witness_boxes = np.array(boundary_witness_boxes, dtype=np.float64, copy=True).reshape((-1, 2, 3))
-        witnesses = np.array(boundary_witnesses, dtype=np.float64, copy=True).reshape((-1, 3))
+        feature_edges_ = np.array(feature_edges, dtype=np.int64, copy=True).reshape(
+            (-1, 2)
+        )
+        witness_boxes = np.array(
+            boundary_witness_boxes, dtype=np.float64, copy=True
+        ).reshape((-1, 2, 3))
+        witnesses = np.array(boundary_witnesses, dtype=np.float64, copy=True).reshape(
+            (-1, 3)
+        )
         errors = np.array(boundary_errors, dtype=np.float64, copy=True).reshape((-1,))
         if (
             witness_boxes.shape[0] != witnesses.shape[0]
@@ -735,7 +851,9 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
             or np.any(witness_boxes[:, 0] > witness_boxes[:, 1])
             or np.any(errors < 0.0)
         ):
-            raise ValueError("Adaptive surface root witnesses and their boxes must remain aligned.")
+            raise ValueError(
+                "Adaptive surface root witnesses and their boxes must remain aligned."
+            )
         for values in (feature_edges_, witness_boxes, witnesses, errors):
             values.setflags(write=False)
         self.mesh = mesh
@@ -779,7 +897,9 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
     def domain_id(self) -> str:
         """Identify the source region independently of discovery scheduling."""
         if not self.region_ids:
-            raise ValueError("An unestablished implicit source has no region-domain identity.")
+            raise ValueError(
+                "An unestablished implicit source has no region-domain identity."
+            )
         return canonical_fingerprint(
             {
                 "kind": "adaptive-implicit-region-domain",
@@ -799,10 +919,10 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
             self.policy,
             self.source_id,
         )
+
     @property
     def boundary_source(self) -> AdaptiveImplicitBoundarySource:
         return AdaptiveImplicitBoundarySource(self)
-
 
 
 @final
@@ -820,7 +940,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         if not isinstance(surface, AdaptiveImplicitSurface):
             raise TypeError("surface must be an AdaptiveImplicitSurface.")
         if frame_id is not None and (not isinstance(frame_id, str) or not frame_id):
-            raise ValueError("frame_id must be a non-empty source coordinate-frame identity.")
+            raise ValueError(
+                "frame_id must be a non-empty source coordinate-frame identity."
+            )
         self.surface = surface
         self.source_id = surface.source_id
         self.frame_id = "" if frame_id is None else frame_id
@@ -848,12 +970,16 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             or self.source_id != self.surface.source_id
             or self.ambient_dimension != _DIMENSION
         ):
-            raise ValueError("Adaptive implicit boundary query changed its discovery source.")
+            raise ValueError(
+                "Adaptive implicit boundary query changed its discovery source."
+            )
         fresh = AdaptiveImplicitBoundarySource(
             self.surface, None if not self.frame_id else self.frame_id
         )
         if fresh.source_revision != self.source_revision:
-            raise ValueError("Adaptive implicit boundary query no longer matches its discovery cover.")
+            raise ValueError(
+                "Adaptive implicit boundary query no longer matches its discovery cover."
+            )
 
     def project_boundary(
         self,
@@ -869,9 +995,13 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
 
         selected_frame = self.frame_id if frame_id is None else frame_id
         if self.frame_id and frame_id is not None and frame_id != self.frame_id:
-            raise ValueError("Adaptive implicit projection frame differs from its bound source frame.")
+            raise ValueError(
+                "Adaptive implicit projection frame differs from its bound source frame."
+            )
         if not selected_frame:
-            raise ValueError("Adaptive implicit projection requires an explicitly bound source frame.")
+            raise ValueError(
+                "Adaptive implicit projection requires an explicitly bound source frame."
+            )
         return project_adaptive_implicit_boundary(
             self,
             points,
@@ -901,9 +1031,7 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             gap = np.maximum(np.maximum(first_gap, second_gap), 0.0)
             sum_lower = np.zeros((values.shape[0],), dtype=np.float64)
             for axis in range(3):
-                squared_lower = np.nextafter(
-                    gap[:, axis] * gap[:, axis], 0.0
-                )
+                squared_lower = np.nextafter(gap[:, axis] * gap[:, axis], 0.0)
                 sum_lower = np.maximum(
                     np.nextafter(sum_lower + squared_lower, -np.inf),
                     0.0,
@@ -916,9 +1044,7 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
                 squared_upper = np.nextafter(delta * delta, np.inf)
                 sum_upper = np.zeros((values.shape[0],), dtype=np.float64)
                 for axis in range(3):
-                    sum_upper = np.nextafter(
-                        sum_upper + squared_upper[:, axis], np.inf
-                    )
+                    sum_upper = np.nextafter(sum_upper + squared_upper[:, axis], np.inf)
                 distance_upper = np.nextafter(
                     np.sqrt(np.nextafter(sum_upper, np.inf)), np.inf
                 )
@@ -934,8 +1060,6 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         )
         return SourceBoundaryDistance(lower, upper, semantics)
 
-
-
     def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
         """Grow the retained source cover until every physical radius is proved."""
         if isinstance(maximum_radius, (bool, np.bool_)):
@@ -950,7 +1074,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         domain = np.asarray(recipe.domain, dtype=np.float64)
         diameter = _norm_upper(domain[1] - domain[0])
         if not math.isfinite(diameter) or diameter <= 0.0:
-            raise ValueError("Adaptive source domain must have a finite positive diameter.")
+            raise ValueError(
+                "Adaptive source domain must have a finite positive diameter."
+            )
         target_relative = requested / diameter
         if not math.isfinite(target_relative) or target_relative <= 0.0:
             return self._cover_from(self.surface, requested)
@@ -997,9 +1123,10 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             relative = next_relative
             root_tolerance = next_tolerance
 
-
     @staticmethod
-    def _cover_from(surface: AdaptiveImplicitSurface, requested: float, /) -> SourceBoundarySamples:
+    def _cover_from(
+        surface: AdaptiveImplicitSurface, requested: float, /
+    ) -> SourceBoundarySamples:
         cover = surface.cover
         boxes = (
             np.empty((0, 2, 3), dtype=np.float64)
@@ -1015,7 +1142,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             or root_errors.shape != (root_count,)
             or root_boxes.shape != (root_count, 2, 3)
         ):
-            raise ValueError("Adaptive source witnesses and their physical boxes are incompatible.")
+            raise ValueError(
+                "Adaptive source witnesses and their physical boxes are incompatible."
+            )
         if root_count:
             extents = np.nextafter(root_boxes[:, 1] - root_boxes[:, 0], np.inf)
             squared = np.nextafter(extents * extents, np.inf)
@@ -1031,7 +1160,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             for row, box in enumerate(root_boxes)
         }
         if len(witness_by_box) != root_count:
-            raise ValueError("Adaptive source witness boxes must uniquely identify their roots.")
+            raise ValueError(
+                "Adaptive source witness boxes must uniquely identify their roots."
+            )
         assigned_roots = np.full((boxes.shape[0],), -1, dtype=np.int64)
         covering_radius = np.full((boxes.shape[0],), np.inf, dtype=np.float64)
         if root_count and boxes.shape[0]:
@@ -1052,17 +1183,11 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
                 if not candidate_rows.size:
                     continue
                 candidate_points = root_points[candidate_rows]
-                first_delta = np.nextafter(
-                    np.abs(candidate_points - box[0]), np.inf
-                )
-                second_delta = np.nextafter(
-                    np.abs(candidate_points - box[1]), np.inf
-                )
+                first_delta = np.nextafter(np.abs(candidate_points - box[0]), np.inf)
+                second_delta = np.nextafter(np.abs(candidate_points - box[1]), np.inf)
                 delta = np.maximum(first_delta, second_delta)
                 squared_upper = np.nextafter(delta * delta, np.inf)
-                distance_squared = np.zeros(
-                    (candidate_rows.size,), dtype=np.float64
-                )
+                distance_squared = np.zeros((candidate_rows.size,), dtype=np.float64)
                 for axis in range(3):
                     distance_squared = np.nextafter(
                         distance_squared + squared_upper[:, axis], np.inf
@@ -1093,7 +1218,6 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             complete=complete,
         )
 
-
     @staticmethod
     def _cover_refinement_terminal(surface: AdaptiveImplicitSurface, /) -> bool:
         terminal = (
@@ -1111,27 +1235,29 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         )
         if np.any(unresolved & terminal_issues):
             return True
-        refinement_issues = (
-            int(AdaptiveImplicitBoxIssue.EDGE)
-            | int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
+        refinement_issues = int(AdaptiveImplicitBoxIssue.EDGE) | int(
+            AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
         )
         refinement_mask = (unresolved & refinement_issues) != 0
         if not np.any(refinement_mask):
             return False
         boxes = np.asarray(surface.evidence.unresolved_boxes)[refinement_mask]
-        return max(
-            (_cell_diagonal(box[0], box[1]) for box in boxes),
-            default=0.0,
-        ) <= surface.policy.root_tolerance
-
-
+        return (
+            max(
+                (_cell_diagonal(box[0], box[1]) for box in boxes),
+                default=0.0,
+            )
+            <= surface.policy.root_tolerance
+        )
 
 
 def _state_identity(geometry: CompiledGeometry) -> str:
     return canonical_fingerprint(
         {
             "kind": "adaptive-implicit-state",
-            "kernel": type(geometry.kernel).__module__ + "." + type(geometry.kernel).__qualname__,
+            "kernel": type(geometry.kernel).__module__
+            + "."
+            + type(geometry.kernel).__qualname__,
             "state": array_tree_fingerprint(geometry.state),
         }
     )
@@ -1171,6 +1297,46 @@ def _outward_coordinate(value: Fraction, *, lower: bool) -> float:
     return rounded
 
 
+def _domain_boundary_faces(
+    cell: _Cell, domain: np.ndarray, /
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    """Closed faces of ``cell`` that lie on the discovery domain boundary."""
+    faces: list[tuple[np.ndarray, np.ndarray]] = []
+    for axis in range(3):
+        for side, value in ((0, cell.lower[axis]), (1, cell.upper[axis])):
+            if value != domain[side, axis]:
+                continue
+            lower = np.array(cell.lower, dtype=np.float64, copy=True)
+            upper = np.array(cell.upper, dtype=np.float64, copy=True)
+            lower[axis] = upper[axis] = value
+            faces.append((lower, upper))
+    return tuple(faces)
+
+
+def _faces_exclude_zero(
+    bounds: _FieldEnclosures, faces: tuple[tuple[np.ndarray, np.ndarray], ...], /
+) -> bool:
+    """Whether a rigorous value enclosure separates every face from the zero set.
+
+    A sign change inside a cell only crosses the domain boundary when the zero
+    set meets one of its boundary faces; a face enclosure of one strict sign
+    proves it does not.
+    """
+    if not bounds.value_rigorous:
+        return False
+    try:
+        face_bounds = bounds.boxes(
+            np.stack([lower for lower, _ in faces]),
+            np.stack([upper for _, upper in faces]),
+        )
+    except IntervalExtensionError:
+        # No interval extension over a face is no proof: the crossing stays flagged.
+        return False
+    lower = np.asarray(face_bounds.value_lower, dtype=np.float64)
+    upper = np.asarray(face_bounds.value_upper, dtype=np.float64)
+    return bool(np.all((lower > 0.0) | (upper < 0.0)))
+
+
 def _cell_box(
     prefix: _GridIndex, level: int, domain: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1185,7 +1351,9 @@ def _cell_box(
         )
         lower_values.append(_outward_coordinate(exact_lower, lower=True))
         upper_values.append(_outward_coordinate(exact_upper, lower=False))
-    return np.asarray(lower_values, dtype=np.float64), np.asarray(upper_values, dtype=np.float64)
+    return np.asarray(lower_values, dtype=np.float64), np.asarray(
+        upper_values, dtype=np.float64
+    )
 
 
 def _cell_diagonal(lower: np.ndarray, upper: np.ndarray) -> float:
@@ -1195,7 +1363,9 @@ def _cell_diagonal(lower: np.ndarray, upper: np.ndarray) -> float:
 def _target_level(domain: np.ndarray, relative_diameter: float) -> int:
     diagonal = _norm_upper(domain[1] - domain[0])
     if not math.isfinite(diagonal):
-        raise ValueError("The discovery-domain diagonal is not representable in binary64.")
+        raise ValueError(
+            "The discovery-domain diagonal is not representable in binary64."
+        )
     target = relative_diameter * diagonal
     level = max(0, math.ceil(-math.log2(relative_diameter)))
     if target == 0.0:
@@ -1248,7 +1418,9 @@ def _root_on_edges(
         or endpoints.shape[1:] != (2, 3)
         or signs.shape != endpoints.shape[:2]
     ):
-        raise ValueError("Root-edge endpoint arrays must have shapes (N, 2, 3) and (N, 2).")
+        raise ValueError(
+            "Root-edge endpoint arrays must have shapes (N, 2, 3) and (N, 2)."
+        )
     count = endpoints.shape[0]
     sign_low = signs[:, 0].copy()
     sign_high = signs[:, 1].copy()
@@ -1385,7 +1557,10 @@ def _root_on_edges(
 
 def _grid_point(index: _GridIndex, level: int, domain: np.ndarray) -> np.ndarray:
     return np.asarray(
-        [_grid_coordinate(index[axis], level, domain[0, axis], domain[1, axis]) for axis in range(3)],
+        [
+            _grid_coordinate(index[axis], level, domain[0, axis], domain[1, axis])
+            for axis in range(3)
+        ],
         dtype=np.float64,
     )
 
@@ -1394,9 +1569,7 @@ def _triangle_area(
     vertices: list[np.ndarray], triangle: tuple[int, int, int], /
 ) -> float:
     first, second, third = (vertices[index] for index in triangle)
-    return 0.5 * float(
-        np.linalg.norm(np.cross(second - first, third - first))
-    )
+    return 0.5 * float(np.linalg.norm(np.cross(second - first, third - first)))
 
 
 def _triangulate_polygon(
@@ -1420,9 +1593,7 @@ def _triangulate_polygon(
     points = np.asarray([vertices[index] for index in cycle], dtype=np.float64)
     center = np.mean(points, axis=0)
     centered = points - center
-    normal = np.sum(
-        np.cross(centered, np.roll(centered, -1, axis=0)), axis=0
-    )
+    normal = np.sum(np.cross(centered, np.roll(centered, -1, axis=0)), axis=0)
     normal_length = float(np.linalg.norm(normal))
     if not math.isfinite(normal_length) or normal_length == 0.0:
         return None
@@ -1441,10 +1612,7 @@ def _triangulate_polygon(
 
     def orient(first: int, second: int, third: int, /) -> float:
         a, b, c = planar[[first, second, third]]
-        return float(
-            (b[0] - a[0]) * (c[1] - a[1])
-            - (b[1] - a[1]) * (c[0] - a[0])
-        )
+        return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
 
     signed_area_twice = sum(
         planar[index, 0] * planar[(index + 1) % len(cycle), 1]
@@ -1480,9 +1648,7 @@ def _triangulate_polygon(
                 cycle[current],
                 cycle[following],
             )
-            ears.append(
-                (_triangle_area(vertices, triangle), position, triangle)
-            )
+            ears.append((_triangle_area(vertices, triangle), position, triangle))
         if not ears:
             return None
         _area, position, triangle = max(
@@ -1507,7 +1673,9 @@ def _triangulate_cell_band(
     signs: dict[_GridIndex, int],
     point_values: dict[_GridIndex, float],
     face_center_signs: dict[_GridFaceKey, int],
-    root_cache: dict[_GridEdge, tuple[np.ndarray, float, int, np.ndarray, np.ndarray, int, int]],
+    root_cache: dict[
+        _GridEdge, tuple[np.ndarray, float, int, np.ndarray, np.ndarray, int, int]
+    ],
     vertices: list[np.ndarray],
     vertex_errors: list[float],
     vertex_keys: dict[_GridEdge, int],
@@ -1518,9 +1686,7 @@ def _triangulate_cell_band(
     policy: AdaptiveImplicitSurfacePolicy,
 ) -> tuple[int, np.ndarray, float]:
     issue = 0
-    cell_signs = np.asarray(
-        [signs[index] for index in corner_indices], dtype=np.int8
-    )
+    cell_signs = np.asarray([signs[index] for index in corner_indices], dtype=np.int8)
     cell_values = np.asarray(
         [point_values[index] for index in corner_indices], dtype=np.float64
     )
@@ -1575,9 +1741,7 @@ def _triangulate_cell_band(
             first_corner = face[edge_position]
             second_corner = face[(edge_position + 1) % 4]
             if cell_signs[first_corner] != cell_signs[second_corner]:
-                face_roots[edge_position] = root_vertex(
-                    first_corner, second_corner
-                )
+                face_roots[edge_position] = root_vertex(first_corner, second_corner)
         crossing_count = len(face_roots)
         if crossing_count == 0:
             continue
@@ -1588,9 +1752,7 @@ def _triangulate_cell_band(
         if crossing_count != 4:
             issue |= int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
             continue
-        face_key = tuple(
-            sorted(corner_indices[corner] for corner in face)
-        )
+        face_key = tuple(sorted(corner_indices[corner] for corner in face))
         center_sign = face_center_signs.get(face_key, 0)
         if center_sign not in (-1, 1):
             issue |= int(AdaptiveImplicitBoxIssue.EDGE)
@@ -1605,9 +1767,7 @@ def _triangulate_cell_band(
     if not segments:
         issue |= int(AdaptiveImplicitBoxIssue.EDGE)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
 
@@ -1618,9 +1778,7 @@ def _triangulate_cell_band(
     if any(len(neighbors) != 2 for neighbors in adjacency.values()):
         issue |= int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
 
@@ -1644,9 +1802,7 @@ def _triangulate_cell_band(
         previous = start
         while current != start:
             neighbors = adjacency[current]
-            next_vertices = [
-                vertex for vertex in neighbors if vertex != previous
-            ]
+            next_vertices = [vertex for vertex in neighbors if vertex != previous]
             if len(next_vertices) != 1:
                 issue |= int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
                 break
@@ -1672,17 +1828,13 @@ def _triangulate_cell_band(
 
     if issue & int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS):
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
     if len(cycles) != 1:
         issue |= int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
 
@@ -1690,15 +1842,11 @@ def _triangulate_cell_band(
     for axis in range(3):
         lower_mean = float(np.mean(cell_values[_CORNER_OFFSETS[:, axis] == 0]))
         upper_mean = float(np.mean(cell_values[_CORNER_OFFSETS[:, axis] == 1]))
-        gradient[axis] = (upper_mean - lower_mean) / (
-            cell.upper[axis] - cell.lower[axis]
-        )
+        gradient[axis] = (upper_mean - lower_mean) / (cell.upper[axis] - cell.lower[axis])
     if not np.all(np.isfinite(gradient)) or float(np.linalg.norm(gradient)) == 0.0:
         issue |= int(AdaptiveImplicitBoxIssue.SINGULAR)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
 
@@ -1714,9 +1862,7 @@ def _triangulate_cell_band(
     if not math.isfinite(orientation) or orientation == 0.0:
         issue |= int(AdaptiveImplicitBoxIssue.SINGULAR)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
     if orientation < 0.0:
@@ -1725,18 +1871,12 @@ def _triangulate_cell_band(
     if triangles is None:
         issue |= int(AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS)
         witness = (
-            np.zeros(3, dtype=np.float64)
-            if first_witness is None
-            else first_witness
+            np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
     for triangle in triangles:
-        first_point, second_point, third_point = (
-            vertices[vertex] for vertex in triangle
-        )
-        normal = np.cross(
-            second_point - first_point, third_point - first_point
-        )
+        first_point, second_point, third_point = (vertices[vertex] for vertex in triangle)
+        normal = np.cross(second_point - first_point, third_point - first_point)
         area = 0.5 * float(np.linalg.norm(normal))
         if not math.isfinite(area) or area <= policy.minimum_face_area:
             issue |= int(AdaptiveImplicitBoxIssue.FACE)
@@ -1745,11 +1885,7 @@ def _triangulate_cell_band(
             triangle = (triangle[0], triangle[2], triangle[1])
         faces.append(triangle)
         triangle_cell_rows.append(cell_row)
-    witness = (
-        np.zeros(3, dtype=np.float64)
-        if first_witness is None
-        else first_witness
-    )
+    witness = np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
     return issue, witness, first_error
 
 
@@ -1801,25 +1937,44 @@ def _discover_adaptive_implicit_surface_once(
     if not isinstance(source_id, str) or not source_id:
         raise ValueError("source_id must be a non-empty string.")
     if geometry.ambient_dimension != 3 or geometry.kind is not GeometryKind.REGION:
-        raise ValueError("Adaptive implicit surface discovery requires a three-dimensional region.")
+        raise ValueError(
+            "Adaptive implicit surface discovery requires a three-dimensional region."
+        )
     if not bool(np.asarray(geometry.validity().accepted)):
         raise ValueError("geometry must have accepted validity evidence.")
     certificate = geometry.field_certificate
     if certificate.sign_reliability is SignReliability.UNRELIABLE:
         raise ValueError("Adaptive discovery requires reliable or heuristic field signs.")
-    if certificate.zero_set_accuracy is ZeroSetAccuracy.APPROXIMATE and not policy.allow_approximate_zero_set:
+    if (
+        certificate.zero_set_accuracy is ZeroSetAccuracy.APPROXIMATE
+        and not policy.allow_approximate_zero_set
+    ):
         raise ValueError("The policy must explicitly admit an approximate zero set.")
-    if certificate.regularity is FieldRegularity.NONSMOOTH and not policy.allow_nonsmooth_field:
+    if (
+        certificate.regularity is FieldRegularity.NONSMOOTH
+        and not policy.allow_nonsmooth_field
+    ):
         raise ValueError("The policy must explicitly admit a nonsmooth field.")
-    if policy.enclosure != "sampled" and certificate.sign_reliability is not SignReliability.RELIABLE:
+    if (
+        policy.enclosure != "sampled"
+        and certificate.sign_reliability is not SignReliability.RELIABLE
+    ):
         raise ValueError("A rigorous enclosure requires reliable field signs.")
     if policy.enclosure == "lipschitz" and (
         certificate.lipschitz_upper_bound is None or certificate.evaluation_error is None
     ):
-        raise ValueError("Lipschitz enclosure requires declared Lipschitz and evaluation-error bounds.")
+        raise ValueError(
+            "Lipschitz enclosure requires declared Lipschitz and evaluation-error bounds."
+        )
     domain_ = np.asarray(domain, dtype=np.float64)
-    if domain_.shape != (2, 3) or not np.all(np.isfinite(domain_)) or np.any(domain_[0] >= domain_[1]):
-        raise ValueError("domain must contain finite lower and upper corners with shape (2, 3).")
+    if (
+        domain_.shape != (2, 3)
+        or not np.all(np.isfinite(domain_))
+        or np.any(domain_[0] >= domain_[1])
+    ):
+        raise ValueError(
+            "domain must contain finite lower and upper corners with shape (2, 3)."
+        )
     if not np.all(np.isfinite(domain_[1] - domain_[0])):
         raise ValueError("domain extents must be representable in binary64.")
     bounds = _FieldEnclosures(geometry, policy.enclosure)
@@ -1868,9 +2023,7 @@ def _discover_adaptive_implicit_surface_once(
                 upper_rows.append(upper)
             if not valid_prefixes:
                 continue
-            box_bounds = bounds.boxes(
-                np.stack(lower_rows), np.stack(upper_rows)
-            )
+            box_bounds = bounds.boxes(np.stack(lower_rows), np.stack(upper_rows))
             for row, prefix in enumerate(valid_prefixes):
                 lower, upper = lower_rows[row], upper_rows[row]
                 lo = float(box_bounds.value_lower[row])
@@ -1963,24 +2116,34 @@ def _discover_adaptive_implicit_surface_once(
         level += 1
 
     unresolved: dict[tuple[int, _GridIndex], int] = {
-        (cell.level, cell.lower_index): cell.issue
-        for cell in surface_cells
-        if cell.issue
+        (cell.level, cell.lower_index): cell.issue for cell in surface_cells if cell.issue
     }
-    mesh_cells = [cell for cell in surface_cells if not cell.issue and cell.level == target_level]
-    corner_indices_by_cell = [_box_corner_indices(cell.lower_index) for cell in mesh_cells]
-    unique_corner_indices = sorted({point for cell_indices in corner_indices_by_cell for point in cell_indices})
+    mesh_cells = [
+        cell for cell in surface_cells if not cell.issue and cell.level == target_level
+    ]
+    corner_indices_by_cell = [
+        _box_corner_indices(cell.lower_index) for cell in mesh_cells
+    ]
+    unique_corner_indices = sorted(
+        {point for cell_indices in corner_indices_by_cell for point in cell_indices}
+    )
     corner_points = np.asarray(
         [_grid_point(index, target_level, domain_) for index in unique_corner_indices],
         dtype=np.float64,
     )
-    point_lower, point_upper = bounds.point_values(corner_points) if corner_points.size else (
-        np.empty((0,), dtype=np.float64),
-        np.empty((0,), dtype=np.float64),
+    point_lower, point_upper = (
+        bounds.point_values(corner_points)
+        if corner_points.size
+        else (
+            np.empty((0,), dtype=np.float64),
+            np.empty((0,), dtype=np.float64),
+        )
     )
     point_signs: dict[_GridIndex, int] = {}
     point_values: dict[_GridIndex, float] = {}
-    for index, lower_value, upper_value in zip(unique_corner_indices, point_lower, point_upper, strict=True):
+    for index, lower_value, upper_value in zip(
+        unique_corner_indices, point_lower, point_upper, strict=True
+    ):
         if upper_value < 0.0:
             point_signs[index] = -1
         elif lower_value > 0.0:
@@ -1989,10 +2152,10 @@ def _discover_adaptive_implicit_surface_once(
             point_signs[index] = 0
     if unique_corner_indices:
         sampled_values = bounds.field_values(corner_points)
-        point_values.update(zip(unique_corner_indices, sampled_values.tolist(), strict=True))
-    corner_row_by_index = {
-        index: row for row, index in enumerate(unique_corner_indices)
-    }
+        point_values.update(
+            zip(unique_corner_indices, sampled_values.tolist(), strict=True)
+        )
+    corner_row_by_index = {index: row for row, index in enumerate(unique_corner_indices)}
     face_center_points: dict[_GridFaceKey, np.ndarray] = {}
     for corners in corner_indices_by_cell:
         corner_signs = tuple(point_signs[index] for index in corners)
@@ -2000,20 +2163,15 @@ def _discover_adaptive_implicit_surface_once(
             continue
         for face in _CUBE_FACES:
             crossing_count = sum(
-                corner_signs[face[position]]
-                != corner_signs[face[(position + 1) % 4]]
+                corner_signs[face[position]] != corner_signs[face[(position + 1) % 4]]
                 for position in range(4)
             )
             if crossing_count != 4:
                 continue
             key = tuple(sorted(corners[position] for position in face))
             if key not in face_center_points:
-                face_rows = [
-                    corner_row_by_index[corners[position]] for position in face
-                ]
-                face_center_points[key] = np.mean(
-                    corner_points[face_rows], axis=0
-                )
+                face_rows = [corner_row_by_index[corners[position]] for position in face]
+                face_center_points[key] = np.mean(corner_points[face_rows], axis=0)
     face_center_keys = tuple(sorted(face_center_points))
     if face_center_keys:
         face_center_coordinates = np.asarray(
@@ -2048,10 +2206,8 @@ def _discover_adaptive_implicit_surface_once(
                 else AdaptiveImplicitBoxIssue.SINGULAR
             )
             continue
-        if any(
-            cell.lower[axis] == domain_[0, axis] or cell.upper[axis] == domain_[1, axis]
-            for axis in range(3)
-        ):
+        boundary_faces = _domain_boundary_faces(cell, domain_)
+        if boundary_faces and not _faces_exclude_zero(bounds, boundary_faces):
             unresolved[key] = int(AdaptiveImplicitBoxIssue.DOMAIN_BOUNDARY)
             status |= int(AdaptiveImplicitSurfaceStatus.DOMAIN_BOUNDARY_CROSSING)
 
@@ -2070,9 +2226,7 @@ def _discover_adaptive_implicit_surface_once(
     required_edges = sorted(
         {
             _edge_key(corners[first], corners[second])
-            for cell, corners in zip(
-                mesh_cells, corner_indices_by_cell, strict=True
-            )
+            for cell, corners in zip(mesh_cells, corner_indices_by_cell, strict=True)
             if (cell.level, cell.lower_index) not in unresolved
             for first, second in _CUBE_EDGES.tolist()
             if point_signs[corners[first]] != point_signs[corners[second]]
@@ -2090,10 +2244,7 @@ def _discover_adaptive_implicit_surface_once(
             dtype=np.float64,
         )
         endpoint_signs = np.asarray(
-            [
-                (point_signs[edge[0]], point_signs[edge[1]])
-                for edge in required_edges
-            ],
+            [(point_signs[edge[0]], point_signs[edge[1]]) for edge in required_edges],
             dtype=np.int8,
         )
         root_records = _root_on_edges(
@@ -2103,14 +2254,11 @@ def _discover_adaptive_implicit_surface_once(
             policy.root_tolerance,
         )
         root_cache.update(
-            {
-                edge: root
-                for edge, root in zip(
-                    required_edges, root_records, strict=True
-                )
-            }
+            {edge: root for edge, root in zip(required_edges, root_records, strict=True)}
         )
-    for cell_row, (cell, corners) in enumerate(zip(mesh_cells, corner_indices_by_cell, strict=True)):
+    for cell_row, (cell, corners) in enumerate(
+        zip(mesh_cells, corner_indices_by_cell, strict=True)
+    ):
         cell_key = (cell.level, cell.lower_index)
         if cell_key in unresolved:
             continue
@@ -2153,25 +2301,34 @@ def _discover_adaptive_implicit_surface_once(
             unresolved[cell_key] = issue
 
     unresolved_lookup = set(unresolved)
-    witness_rows = [
-        boundary_witnesses[key]
-        for key in sorted(boundary_witnesses)
-    ]
+    witness_rows = [boundary_witnesses[key] for key in sorted(boundary_witnesses)]
     if witness_rows:
-        witness_values = np.asarray([row[0] for row in witness_rows], dtype=np.float64).reshape((-1, 3))
+        witness_values = np.asarray(
+            [row[0] for row in witness_rows], dtype=np.float64
+        ).reshape((-1, 3))
         witness_errors = np.asarray([row[1] for row in witness_rows], dtype=np.float64)
-        witness_boxes = np.asarray([row[2] for row in witness_rows], dtype=np.float64).reshape((-1, 2, 3))
+        witness_boxes = np.asarray(
+            [row[2] for row in witness_rows], dtype=np.float64
+        ).reshape((-1, 2, 3))
     else:
         witness_values = np.empty((0, 3), dtype=np.float64)
         witness_errors = np.empty((0,), dtype=np.float64)
         witness_boxes = np.empty((0, 2, 3), dtype=np.float64)
 
     unresolved_boxes = np.asarray(
-        [np.stack((cell.lower, cell.upper)) for cell in surface_cells if (cell.level, cell.lower_index) in unresolved_lookup],
+        [
+            np.stack((cell.lower, cell.upper))
+            for cell in surface_cells
+            if (cell.level, cell.lower_index) in unresolved_lookup
+        ],
         dtype=np.float64,
     ).reshape((-1, 2, 3))
     unresolved_issues = np.asarray(
-        [unresolved[(cell.level, cell.lower_index)] for cell in surface_cells if (cell.level, cell.lower_index) in unresolved_lookup],
+        [
+            unresolved[(cell.level, cell.lower_index)]
+            for cell in surface_cells
+            if (cell.level, cell.lower_index) in unresolved_lookup
+        ],
         dtype=np.int64,
     )
     if unresolved_issues.size:
@@ -2211,7 +2368,10 @@ def _discover_adaptive_implicit_surface_once(
                 status |= int(AdaptiveImplicitSurfaceStatus.DEGENERATE_EXTRACTION)
 
     cell_corner_rows = np.asarray(
-        [[corner_row_by_index[index] for index in corners] for corners in corner_indices_by_cell],
+        [
+            [corner_row_by_index[index] for index in corners]
+            for corners in corner_indices_by_cell
+        ],
         dtype=np.int64,
     ).reshape((-1, 8))
     tetrahedra = np.asarray(
@@ -2222,7 +2382,9 @@ def _discover_adaptive_implicit_surface_once(
         ],
         dtype=np.int64,
     ).reshape((-1, 4))
-    tetrahedron_cell_rows = np.repeat(np.arange(len(mesh_cells), dtype=np.int64), len(_TETRAHEDRA))
+    tetrahedron_cell_rows = np.repeat(
+        np.arange(len(mesh_cells), dtype=np.int64), len(_TETRAHEDRA)
+    )
     root_edge_ids = sorted(root_cache)
     root_row_by_edge = {edge: row for row, edge in enumerate(root_edge_ids)}
     root_rows = [root_cache[edge] for edge in root_edge_ids]
@@ -2245,15 +2407,21 @@ def _discover_adaptive_implicit_surface_once(
             [unresolved.get((cell.level, cell.lower_index), 0) for cell in mesh_cells],
             dtype=np.int64,
         ),
-        cell_value_lower=np.asarray([cell.value_lower for cell in mesh_cells], dtype=np.float64),
-        cell_value_upper=np.asarray([cell.value_upper for cell in mesh_cells], dtype=np.float64),
+        cell_value_lower=np.asarray(
+            [cell.value_lower for cell in mesh_cells], dtype=np.float64
+        ),
+        cell_value_upper=np.asarray(
+            [cell.value_upper for cell in mesh_cells], dtype=np.float64
+        ),
         cell_gradient_lower=np.asarray(
             [cell.gradient_lower for cell in mesh_cells], dtype=np.float64
         ).reshape((-1, 3)),
         cell_gradient_upper=np.asarray(
             [cell.gradient_upper for cell in mesh_cells], dtype=np.float64
         ).reshape((-1, 3)),
-        cell_corner_ids=np.asarray(corner_indices_by_cell, dtype=np.int64).reshape((-1, 8, 3)),
+        cell_corner_ids=np.asarray(corner_indices_by_cell, dtype=np.int64).reshape(
+            (-1, 8, 3)
+        ),
         corner_ids=np.asarray(unique_corner_indices, dtype=np.int64).reshape((-1, 3)),
         corner_coordinates=corner_points,
         corner_value_lower=point_lower,
@@ -2270,15 +2438,23 @@ def _discover_adaptive_implicit_surface_once(
         root_brackets=np.asarray(
             [[root[3], root[4]] for root in root_rows], dtype=np.float64
         ).reshape((-1, 2, 3)),
-        root_points=np.asarray([root[0] for root in root_rows], dtype=np.float64).reshape((-1, 3)),
+        root_points=np.asarray([root[0] for root in root_rows], dtype=np.float64).reshape(
+            (-1, 3)
+        ),
         root_errors=np.asarray([root[1] for root in root_rows], dtype=np.float64),
         root_issues=np.asarray([root[2] for root in root_rows], dtype=np.int64),
         root_endpoint_value_lower=np.asarray(
-            [[point_lower[corner_row_by_index[index]] for index in edge] for edge in root_edge_ids],
+            [
+                [point_lower[corner_row_by_index[index]] for index in edge]
+                for edge in root_edge_ids
+            ],
             dtype=np.float64,
         ).reshape((-1, 2)),
         root_endpoint_value_upper=np.asarray(
-            [[point_upper[corner_row_by_index[index]] for index in edge] for edge in root_edge_ids],
+            [
+                [point_upper[corner_row_by_index[index]] for index in edge]
+                for edge in root_edge_ids
+            ],
             dtype=np.float64,
         ).reshape((-1, 2)),
         triangle_cell_rows=np.asarray(triangle_cell_rows, dtype=np.int64),
@@ -2290,12 +2466,25 @@ def _discover_adaptive_implicit_surface_once(
     ).reshape((-1, 2, 3))
     cover_lower = np.asarray([cell.value_lower for cell in cover_cells], dtype=np.float64)
     cover_upper = np.asarray([cell.value_upper for cell in cover_cells], dtype=np.float64)
-    cover_gradient_lower = np.asarray([cell.gradient_lower for cell in cover_cells], dtype=np.float64).reshape((-1, 3))
-    cover_gradient_upper = np.asarray([cell.gradient_upper for cell in cover_cells], dtype=np.float64).reshape((-1, 3))
+    cover_gradient_lower = np.asarray(
+        [cell.gradient_lower for cell in cover_cells], dtype=np.float64
+    ).reshape((-1, 3))
+    cover_gradient_upper = np.asarray(
+        [cell.gradient_upper for cell in cover_cells], dtype=np.float64
+    ).reshape((-1, 3))
     cover_complete = bool(source_in_domain)
     cover = None
     if bounds.value_rigorous:
-        cover_id = _cover_identity(cover_boxes, cover_lower, cover_upper, domain_, source_id, state_id, policy.enclosure, cover_complete)
+        cover_id = _cover_identity(
+            cover_boxes,
+            cover_lower,
+            cover_upper,
+            domain_,
+            source_id,
+            state_id,
+            policy.enclosure,
+            cover_complete,
+        )
         cover = AdaptiveImplicitCover(
             cover_boxes,
             cover_lower,
@@ -2310,8 +2499,15 @@ def _discover_adaptive_implicit_surface_once(
             True,
             cover_id,
         )
-    accuracy: ImplicitDiscoveryAccuracy = "sampled" if not bounds.value_rigorous else "enclosed"
-    if bounds.value_rigorous and not unresolved_issues.size and cover_complete and mesh is not None:
+    accuracy: ImplicitDiscoveryAccuracy = (
+        "sampled" if not bounds.value_rigorous else "enclosed"
+    )
+    if (
+        bounds.value_rigorous
+        and not unresolved_issues.size
+        and cover_complete
+        and mesh is not None
+    ):
         # Value enclosures and a watertight polygonization establish coverage;
         # the stronger source-isotopy claim remains deliberately withheld.
         accuracy = "enclosed"
@@ -2397,8 +2593,7 @@ def discover_adaptive_implicit_surface(
         )
         issues = np.asarray(surface.evidence.unresolved_issues, dtype=np.int64)
         refinable_issues = int(
-            AdaptiveImplicitBoxIssue.EDGE
-            | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
+            AdaptiveImplicitBoxIssue.EDGE | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
         )
         if issues.size == 0 or np.any(issues & ~refinable_issues):
             break

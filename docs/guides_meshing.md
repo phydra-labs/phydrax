@@ -316,6 +316,12 @@ It is an explicit topological correspondence: coordinate equality does not
 infer profile ancestry, and the map contributes to the source binding identity.
 The PWL boundary query must be full-scope and bound to that same domain.
 
+A graded `LayerSchedule` sweeps a whole slab natively without a core fill: the
+stations are the cumulative layer thicknesses, so the first-cell height is the
+first scheduled thickness exactly. Each PWL wall facet must map to one swept
+target face, so the domain carries a vertex at every station on its walls
+rather than one tall facet spanning several layers.
+
 The composed boundary witness keeps source-chart and target-reference
 coordinates distinct. A standard triangular boundary face of a 3D swept cell
 retains all three coordinates in the parent cell's 3D reference domain even
@@ -462,6 +468,13 @@ standard/polyhedral `CellMesh`; each cap facet must have one layer and one core
 incident cell. Missing authored core sites refuse rather than synthesizing a
 power source. This route currently refuses mapped or high-order polyhedral cores
 that cannot retain their exact geometry through the mixed assembly.
+Restricted-power generation joins every site's carrier pieces across
+unconstrained carrier faces and splits a site into per-tetrahedron pieces only
+when an authored segment or protected vertex lies off every facet polygon.
+Periodic PLC power quotients require the transformed source facets to have the
+exact transformed output face subdivision, not only matching vertices. Two
+polyhedra whose common interface is several coplanar faces declare contact only
+on their exact convex face union.
 `CAD_EXTRUSION` also admits a whole-solid sweep: if the authored slabs consume
 the controlled solid, the partition has no core solid, and the swept cap is a
 one-sided exterior patch. Source-solid volume must equal the sum of its slab
@@ -556,6 +569,16 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
+exact affine map of the edge onto its declared chart parameter range. Its rational
+coefficients make chart fidelity an exact polynomial bound per target edge, and its
+float realization reproduces both authored endpoints bit for bit. Point placement
+inverts the chart's adaptive size-density table panel by panel rather than
+re-integrating the chart for every bisection step. A hard `UniformSizeControl`
+target is compared with measured arc lengths at the `SizeCompliancePolicy`
+tolerances, which default to zero; a target such as 0.2 m that floating-point
+placement cannot reproduce exactly needs an explicit tolerance in the request.
+
 Native tetrahedral quality improvement follows fixed-boundary refinement. Each
 cell scores the worse of its dihedral-angle and radius-edge target fractions,
 1 when both targets hold. Every face flip, edge-ring reconnection, interior
@@ -641,6 +664,9 @@ source-bound obstruction; it does not fall back to one global frame or to
 tetrahedral dualization. `mapped_balanced_grid_hex` and `mapped_frame_grid_hex`
 are separate again: they subdivide an already mapped hexahedral root mesh and
 retain its exact root-face transitions.
+Their target geometry is the exact per-cell restriction of the root map, so a
+request without `maximum_deviation` is certified at zero source deviation; an
+explicit bound is honored as requested.
 
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
@@ -777,6 +803,26 @@ covolume. A periodic restriction premise retains the source proof and exact
 refinement transition, then certifies parent-volume partitions and boundary
 subdivision; the certificate, including its premise, round-trips through the
 model archive. Mapped restriction separately proves an exact common subcomplex.
+
+Affine periodic quotients may be partially periodic or rotational: a
+translational lattice of any rank up to the ambient dimension (for example, a
+z-periodic channel in 3D or an x-periodic strip in 2D) or a commuting proper
+`PeriodicIsometryGroup`, such as a quarter-turn wedge, including vertices on a
+fixed rotation axis. The exact image frame enumerates group actions only along
+periodic directions, every lifted triangle or tetrahedron is checked against
+each overlapping image, and the nonperiodic directions are closed by the
+quotient's oriented physical boundary. A mesh that wraps the quotient twice
+overlaps its own image and is refused as violated.
+
+Quotient cells may be convex vertex-defined polyhedra, as produced by the
+restricted-power polyhedral fill, and a single cell may span a whole period or
+touch a fixed rotation axis. The quotient is then a cell complex rather than a
+simplicial one: an edge may be a loop whose two ends lie in one vertex orbit,
+and a face may traverse an edge twice (the folded cap at a rotation axis). The
+boundary check therefore reads each boundary face's corners from its lifted
+representative and requires every boundary vertex to join all of its
+boundary edge ends (an edge plus its start or finish) into one cycle. Pinched
+quotients, such as two columns touching along one edge, are left unresolved.
 
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
@@ -916,8 +962,12 @@ bound to the source vertices). Routes:
 three-space using the retained source-chart UV coordinates. It pulls the full
 ambient SPD tensor back as `J.T @ M @ J`; anisotropy is never reduced to a scalar
 size. The route reuses the native local split, collapse, flip, and relocation
-operations, evaluating proposal vertices on the fixed source chart. Periodic UV
-seams use an exact quotient so every lifted edit is staged as one orbit.
+operations, evaluating proposal vertices on the fixed source chart. Regular
+periodic UV seams use an exact quotient so every lifted edit is staged as one
+orbit; a singular periodic direction, such as the polar axis of a sphere chart,
+is instead a fixed chart cut whose seam edges are protected. Every target vertex
+keeps an exact chart point on the source face shared by its parent cells, so a
+split of a source-cell interface stays on that exact edge.
 
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
@@ -1400,6 +1450,21 @@ the finalized target geometry, including high-order coordinate maps, and
 exposes `MixedCellContentTransfer` for conservative transfer of extensive
 per-cell quantities.
 
+Marked cells keep their preferred family refinement; face closure then chooses
+neighbor templates that match the refined shared faces, so a marked cell is
+never downgraded to a partial split to spare its neighbors. Every
+family-preserving template is an affine sub-cell of its parent, and target
+charts are the exact affine child-to-parent maps (pyramids included), composed
+with the source coordinate map. Coarsening restores a parent only when every
+sibling chart reconstructs one exact parent map. A source without acceptance
+inputs yields a target without a certification; whole-cell validity of the
+restricted map is still checked.
+
+Simplex coarsening of a piecewise-linear mesh keeps the restored parents affine
+on their exact corners; refine/coarsen round trips through the bisection
+hierarchy restore the original topology, coordinates, and global IDs exactly.
+Non-P1 coarsening requires one exact root chart per restored parent.
+
 `NATIVE_POLYHEDRAL` selects one explicit operation: `PLANE_SPLIT`,
 `AGGLOMERATE`, or `REGENERATE`. Plane splits and agglomerations retain exact
 cell lineage; site regeneration uses its authored successor sites and does not
@@ -1626,6 +1691,10 @@ certificates. `reconstruct_point_region` preserves the input digest and reports
 ROI/voxel filtering; `reconstruct_lidar_region` also retains acquisition
 lineage. Planar and DEM source construction uses native MeshCore predicates.
 These native source routes do not import PyVista, Open3D, or Qhull.
+The surface source of a reconstructed triangle complex is an exact
+`MeshingDomain`: each triangle chart evaluates in barycentric form, so every chart
+corner reproduces its authored vertex bit for bit, and shared corners are compared
+with zero tolerance.
 
 ## Native unsigned-distance surface envelopes
 
@@ -2086,9 +2155,11 @@ exchanges seam coordinates until the shared seam sets stop changing. Surface
 patches are assigned through the native graph partitioner. Each round, incident
 owners first union their shared source-curve samples through the curve steward
 and then regenerate their local charts from that common set, which is the serial
-chart fixed point; physical refinement runs once after the seams close and never
-splits a source curve, so the owner-local charts equal the serial charts patch by
-patch. These exchanges carry seam data and ownership metadata, not a global
+chart fixed point; physical refinement runs once after the seams close, so the
+owner-local charts equal the serial charts patch by patch. A refinement that
+would split a shared source curve is refused with `UNSUPPORTED_COMBINATION`
+rather than published without incident-owner agreement. These exchanges carry
+seam data and ownership metadata, not a global
 mesh or candidate table. Source and request identities must agree on every
 group member.
 

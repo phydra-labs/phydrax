@@ -342,11 +342,7 @@ def certify_affine_torus_degree(
         return PeriodicAffineDegreeResult(True, checks, tuple(findings))
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     points: dict[int, Point] = {}
-    representatives: dict[int, Point] = {}
-    area: ExactScalar = Fraction(0)
-    corner_records: list[_TriangleRecord] = []
-    orientation_records: list[tuple[int, _TriangleRecord]] = []
-    trace_records: list[tuple[int, int, tuple[int, int], _PointRecord]] = []
+    cell_rows: list[tuple[int, tuple[int, ...]]] = []
     for block in mesh.blocks:
         block_identifiers = np.asarray(block.global_ids, dtype=np.int64).tolist()
         block_vertices = np.asarray(block.vertices, dtype=np.int64).tolist()
@@ -354,7 +350,8 @@ def certify_affine_torus_degree(
             zip(block_identifiers, block_vertices, strict=True)
         ):
             cell = cells[actual_rows[(block.name, local_index)]]
-            if tuple(int(value) for value in vertices) != cell.vertex_indices:
+            corners = tuple(int(value) for value in vertices)
+            if corners != cell.vertex_indices:
                 findings.append(
                     _finding(
                         checks[1],
@@ -365,27 +362,8 @@ def certify_affine_torus_degree(
                     )
                 )
                 return PeriodicAffineDegreeResult(True, checks, tuple(findings))
-            exact = tuple((point[0], point[1]) for point in cell.corner_images)
-            corner_records.append(
-                tuple(tuple(_scalar_record(value) for value in point) for point in exact)
-            )
-            a, b, c = exact
-            signed = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-            if signed <= 0:
-                findings.append(
-                    _finding(
-                        checks[2],
-                        "violated",
-                        "cell",
-                        (int(identifier),),
-                        detail="An exact affine quotient triangle has nonpositive signed determinant.",
-                    )
-                )
-                return PeriodicAffineDegreeResult(True, checks, tuple(findings))
-            area += signed
-            orientation_records.append((int(identifier), corner_records[-1]))
-            for vertex, image in zip(vertices, exact, strict=True):
-                index = int(vertex)
+            for index, point in zip(corners, cell.corner_images, strict=True):
+                image = (point[0], point[1])
                 previous = points.get(index)
                 if previous is not None and previous != image:
                     findings.append(
@@ -399,37 +377,8 @@ def certify_affine_torus_degree(
                     )
                     return PeriodicAffineDegreeResult(True, checks, tuple(findings))
                 points[index] = image
-                root = int(roots[index])
-                shift = (int(shifts[index, 0]), int(shifts[index, 1]))
-                base = _translated_point(
-                    (image[0], image[1]),
-                    (-shift[0], -shift[1]),
-                    vectors,
-                )
-                prior = representatives.get(root)
-                if prior is not None and prior != base:
-                    findings.append(
-                        _finding(
-                            checks[1],
-                            "violated",
-                            "cell",
-                            (int(identifier),),
-                            detail="The affine source map is not equivariant with its declared lattice winding.",
-                        )
-                    )
-                    return PeriodicAffineDegreeResult(True, checks, tuple(findings))
-                representatives[root] = (base[0], base[1])
-                trace_records.append(
-                    (
-                        int(vertex_ids[index]),
-                        int(vertex_ids[root]),
-                        shift,
-                        tuple(_scalar_record(value) for value in base),
-                    )
-                )
-    if len(points) != vertex_count or set(representatives) != set(
-        np.unique(roots).tolist()
-    ):
+            cell_rows.append((int(identifier), corners))
+    if len(points) != vertex_count:
         findings.append(
             _finding(
                 checks[1],
@@ -440,7 +389,88 @@ def certify_affine_torus_degree(
         )
         return PeriodicAffineDegreeResult(True, checks, tuple(findings))
 
-    reason, bad_cells = _torus_manifold(cells, roots, shifts)
+    # Only root-relative lifts are reproducible in binary64 on non-dyadic
+    # lattices. The quotient map is therefore the root image translated exactly
+    # by each vertex winding, and every lifted image must be its correct rounding.
+    lifted: dict[int, Point] = {}
+    trace_records: list[tuple[int, int, tuple[int, int], _PointRecord]] = []
+    for index in range(vertex_count):
+        root = int(roots[index])
+        shift = (int(shifts[index, 0]), int(shifts[index, 1]))
+        exact = _translated_point(points[root], shift, vectors)
+        if (float(exact[0]), float(exact[1])) != (
+            float(points[index][0]),
+            float(points[index][1]),
+        ):
+            findings.append(
+                _finding(
+                    checks[1],
+                    "violated",
+                    "mesh",
+                    (int(vertex_ids[index]),),
+                    detail="A lifted vertex image is not the canonical rounding of its root image under its declared lattice winding.",
+                )
+            )
+            return PeriodicAffineDegreeResult(True, checks, tuple(findings))
+        lifted[index] = exact
+        trace_records.append(
+            (
+                int(vertex_ids[index]),
+                int(vertex_ids[root]),
+                shift,
+                tuple(_scalar_record(value) for value in points[root]),
+            )
+        )
+
+    # A lifted mesh may carry several images of one quotient cell; the degree,
+    # area, and manifold premises are statements about one image per orbit.
+    cell_lower, cell_upper = (int(value) for value in topology.lifted_offsets[2:4])
+    cell_orbit_by_id = dict(
+        zip(
+            np.asarray(topology.lifted_entity_ids[2], dtype=np.int64).tolist(),
+            (
+                np.asarray(topology.orbit_indices[cell_lower:cell_upper], dtype=np.int64)
+                - int(topology.quotient_offsets[2])
+            ).tolist(),
+            strict=True,
+        )
+    )
+    orbit_representative: dict[int, int] = {}
+    for identifier, _ in cell_rows:
+        orbit = cell_orbit_by_id[identifier]
+        orbit_representative[orbit] = min(
+            identifier, orbit_representative.get(orbit, identifier)
+        )
+    quotient_identifiers = frozenset(orbit_representative.values())
+    quotient_cells = tuple(
+        cell for cell in cells if cell.global_id in quotient_identifiers
+    )
+
+    area: ExactScalar = Fraction(0)
+    corner_records: list[_TriangleRecord] = []
+    orientation_records: list[tuple[int, _TriangleRecord]] = []
+    for identifier, corners in cell_rows:
+        a, b, c = (lifted[index] for index in corners)
+        corner_records.append(
+            tuple(tuple(_scalar_record(value) for value in point) for point in (a, b, c))
+        )
+        signed = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        if signed <= 0:
+            findings.append(
+                _finding(
+                    checks[2],
+                    "violated",
+                    "cell",
+                    (identifier,),
+                    detail="An exact affine quotient triangle has nonpositive signed determinant.",
+                )
+            )
+            return PeriodicAffineDegreeResult(True, checks, tuple(findings))
+        if identifier in quotient_identifiers:
+            area += signed
+        orientation_records.append((identifier, corner_records[-1]))
+
+    reason, bad_cells = _torus_manifold(quotient_cells, roots, shifts)
     if reason is not None:
         findings.append(
             _finding(
@@ -483,7 +513,7 @@ def certify_affine_torus_degree(
             "vertices": tuple(
                 sorted(
                     (root, tuple(sorted(link.items())))
-                    for root, link in _links(cells, roots, shifts).items()
+                    for root, link in _links(quotient_cells, roots, shifts).items()
                 )
             ),
         }

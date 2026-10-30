@@ -40,6 +40,7 @@ from ..discretization._periodic_exact import (
 from ..discretization._periodic_topology import (
     _canonical_unordered_form,
     _entity_vertex_rows,
+    _interleaved_key,
     _orientation_orders,
     PeriodicMeshTopology,
 )
@@ -47,9 +48,9 @@ from ..typing import checked
 
 
 if TYPE_CHECKING:
-
     from ._lineage import VertexInterpolationStencil
     from ._topology_edit import CellTopologyEdit
+
 
 class PeriodicPointOrbits(StrictModule, NonTrainableState):
     """Authored source sites in one full-rank periodic lattice."""
@@ -89,7 +90,9 @@ class PeriodicPointOrbits(StrictModule, NonTrainableState):
                 "Periodic source points must form a finite ambient point bank."
             )
         if raw_ids.shape != (coordinates.shape[0],) or raw_ids.dtype.kind not in "iu":
-            raise TypeError("point_ids must be one integer semantic identity per source point.")
+            raise TypeError(
+                "point_ids must be one integer semantic identity per source point."
+            )
         if (
             raw_ids.dtype.kind == "u"
             and raw_ids.size
@@ -101,7 +104,9 @@ class PeriodicPointOrbits(StrictModule, NonTrainableState):
             raise ValueError("point_ids must be unique nonnegative source identities.")
         fractional = np.asarray(cell.fractional(coordinates), dtype=np.float64)
         if fractional.shape != coordinates.shape or np.any(~np.isfinite(fractional)):
-            raise ValueError("Periodic source fractional coordinates must be finite and aligned.")
+            raise ValueError(
+                "Periodic source fractional coordinates must be finite and aligned."
+            )
         self.cell = cell
         self.points = jnp.asarray(coordinates)
         self.fractional_points = jnp.asarray(fractional)
@@ -164,9 +169,7 @@ class PeriodicMeshConstruction(StrictModule, NonTrainableState):
                 "kind": "periodic-mesh-construction",
                 "mesh": mesh.mesh_id,
                 "periodic_topology": mesh.periodic_topology.periodic_topology_id,
-                "geometry": None
-                if geometry is None
-                else geometry.geometry_layout_id,
+                "geometry": None if geometry is None else geometry.geometry_layout_id,
             }
         )
 
@@ -284,14 +287,18 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             or not isinstance(dimension, int)
             or dimension not in (2, 3)
         ):
-            raise ValueError("Owner-local periodic candidate rank or dimension is invalid.")
+            raise ValueError(
+                "Owner-local periodic candidate rank or dimension is invalid."
+            )
         if (
             not isinstance(periodic_cell, PeriodicCell)
             or periodic_cell.cell_id != periodic_cell_id
             or periodic_cell.ambient_dimension != dimension
             or not periodic_cell.fully_periodic
         ):
-            raise ValueError("Owner-local candidate periodic cell identity is inconsistent.")
+            raise ValueError(
+                "Owner-local candidate periodic cell identity is inconsistent."
+            )
         identities = (
             source_id,
             source_revision,
@@ -310,10 +317,14 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             geometry_layout_id,
         )
         if any(not isinstance(value, str) or not value for value in identities):
-            raise ValueError("Owner-local periodic candidate identities must be nonempty.")
+            raise ValueError(
+                "Owner-local periodic candidate identities must be nonempty."
+            )
         raw_points = np.asarray(source_point_coordinates)
         if raw_points.dtype.kind not in "iuf":
-            raise TypeError("Owner-local periodic coordinates must be real numeric values.")
+            raise TypeError(
+                "Owner-local periodic coordinates must be real numeric values."
+            )
         points = raw_points.astype(np.float64, copy=False)
         integer_banks = tuple(
             np.asarray(value)
@@ -336,7 +347,9 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             )
         )
         if any(value.dtype.kind not in "iu" for value in integer_banks):
-            raise TypeError("Owner-local periodic identities and offsets must be integer arrays.")
+            raise TypeError(
+                "Owner-local periodic identities and offsets must be integer arrays."
+            )
         if any(
             value.dtype.kind == "u"
             and value.size
@@ -353,7 +366,9 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             )
         )
         if any(value.dtype.kind != "i" for value in winding_banks):
-            raise TypeError("Owner-local periodic windings must be signed integer arrays.")
+            raise TypeError(
+                "Owner-local periodic windings must be signed integer arrays."
+            )
         owned_raw = np.asarray(source_owned)
         if owned_raw.dtype.kind != "b":
             raise TypeError("source_owned must be a boolean owner mask.")
@@ -391,10 +406,7 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
         )
         if any(
             value.size
-            and (
-                np.any(value < 0)
-                or int(np.max(value)) > np.iinfo(np.int32).max
-            )
+            and (np.any(value < 0) or int(np.max(value)) > np.iinfo(np.int32).max)
             for value in owner_banks
         ):
             raise ValueError("Owner-local periodic ranks must fit nonnegative int32.")
@@ -457,20 +469,28 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
                 or any(not isinstance(value, Fraction) for value in row)
                 for row in exact_vertex_coordinates
             )
-            or len(exact_cell_measures) != cell_ids_value.size
-            or any(
-                not isinstance(value, Fraction) or value <= 0
-                for value in exact_cell_measures
-            )
-            or any(
-                int(identifier) not in point_id_set
-                for identifier in (*key_sources, *vertex_sources)
-            )
         ):
-            raise ValueError("Owner-local periodic vertex or measure banks are inconsistent.")
-        expected_owned_ids = np.sort(
-            cell_ids_value[cell_owners == rank], kind="stable"
+            raise ValueError("Owner-local periodic vertex banks are inconsistent.")
+        if len(exact_cell_measures) != cell_ids_value.size or any(
+            not isinstance(value, Fraction) or value <= 0 for value in exact_cell_measures
+        ):
+            raise ValueError(
+                "Owner-local periodic exact cell measures are absent or nonpositive."
+            )
+        absent_sources = sorted(
+            {
+                int(identifier)
+                for identifier in (*key_sources, *vertex_sources)
+                if int(identifier) not in point_id_set
+            }
         )
+        if absent_sources:
+            raise ValueError(
+                "Owner-local periodic cell keys or vertices reference "
+                f"{len(absent_sources)} source points outside the resident point "
+                f"bank (first {absent_sources[:8]})."
+            )
+        expected_owned_ids = np.sort(cell_ids_value[cell_owners == rank], kind="stable")
         if (
             not np.array_equal(owned_cell_ids_value, expected_owned_ids)
             or owned_cell_owner_ranks.shape != owned_cell_ids_value.shape
@@ -501,7 +521,9 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             raise ValueError("Owned periodic graph IDs are absent from local cells.")
         if local_mesh is None:
             if cell_ids_value.size or vertex_ids_value.size:
-                raise ValueError("A nonempty periodic candidate requires its local CellMesh.")
+                raise ValueError(
+                    "A nonempty periodic candidate requires its local CellMesh."
+                )
         elif (
             not isinstance(local_mesh, CellMesh)
             or local_mesh.topological_dimension != dimension
@@ -510,9 +532,7 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
                 vertex_ids_value,
             )
             or not np.array_equal(
-                np.asarray(
-                    local_mesh.entity_set(dimension).entity_ids, dtype=np.int64
-                ),
+                np.asarray(local_mesh.entity_set(dimension).entity_ids, dtype=np.int64),
                 cell_ids_value,
             )
             or not np.array_equal(
@@ -523,7 +543,9 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
                 ),
             )
         ):
-            raise ValueError("Owner-local periodic candidate does not match its local CellMesh.")
+            raise ValueError(
+                "Owner-local periodic candidate does not match its local CellMesh."
+            )
         if local_mesh is None:
             source_local_mesh_id = None
             source_local_topology_id = None
@@ -556,9 +578,7 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
         self.exact_vertex_coordinates = exact_vertex_coordinates
         self.exact_cell_measures = exact_cell_measures
         self.owned_cell_ids = jnp.asarray(owned_cell_ids_value)
-        self.owned_cell_owner_ranks = jnp.asarray(
-            owned_cell_owner_ranks, dtype=jnp.int32
-        )
+        self.owned_cell_owner_ranks = jnp.asarray(owned_cell_owner_ranks, dtype=jnp.int32)
         self.owned_cell_weights = jnp.asarray(owned_weights, dtype=jnp.int64)
         self.cell_neighbor_offsets = jnp.asarray(neighbor_offsets)
         self.cell_neighbor_ids = jnp.asarray(neighbor_ids)
@@ -685,7 +705,9 @@ def _entity_layout(mesh: CellMesh, degree: int, /) -> _PeriodicEntityLayout:
         quotient_lower:quotient_upper
     ]
     entity_ids = np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
-    quotient_ids = np.asarray(topology.quotient.entity_sets[degree].entity_ids, dtype=np.int64)
+    quotient_ids = np.asarray(
+        topology.quotient.entity_sets[degree].entity_ids, dtype=np.int64
+    )
     if (
         orbit_rows.shape != entity_ids.shape
         or representative_rows.shape != quotient_ids.shape
@@ -693,8 +715,11 @@ def _entity_layout(mesh: CellMesh, degree: int, /) -> _PeriodicEntityLayout:
         or np.any((representative_rows < 0) | (representative_rows >= entity_ids.size))
         or np.unique(quotient_ids).size != quotient_ids.size
     ):
-        raise ValueError("Periodic quotient tables do not match their lifted entity sets.")
+        raise ValueError(
+            "Periodic quotient tables do not match their lifted entity sets."
+        )
     return _PeriodicEntityLayout(orbit_rows, representative_rows, quotient_ids)
+
 
 class PeriodicEntityOrbitMap(StrictModule, NonTrainableState):
     """Lifted entity-to-quotient actions with packed ragged corner permutations.
@@ -814,16 +839,17 @@ class PeriodicEntityOrbitMap(StrictModule, NonTrainableState):
             or topology.periodic_topology_id != self.periodic_topology_id
             or mesh.entity_set(self.degree).entity_set_id != self.entity_set_id
         ):
-            raise ValueError("Periodic entity map belongs to a different source mesh revision.")
+            raise ValueError(
+                "Periodic entity map belongs to a different source mesh revision."
+            )
 
     def lift_oriented_scalars(self, quotient_values: ArrayLike, /) -> np.ndarray:
         values = np.asarray(quotient_values)
         orbit = np.asarray(self.lifted_to_quotient, dtype=np.int64)
-        if (
-            values.ndim == 0
-            or values.shape[0] != self.quotient_entity_ids.shape[0]
-        ):
-            raise ValueError("Quotient coefficients must match the quotient entity count.")
+        if values.ndim == 0 or values.shape[0] != self.quotient_entity_ids.shape[0]:
+            raise ValueError(
+                "Quotient coefficients must match the quotient entity count."
+            )
         signs = np.asarray(self.orientation_signs, dtype=values.dtype)
         signs = signs.reshape((signs.size,) + (1,) * (values.ndim - 1))
         return values[orbit] * signs
@@ -844,13 +870,13 @@ class PeriodicEntityOrbitMap(StrictModule, NonTrainableState):
         else:
             consistent = np.array_equal(values, expanded)
         if not consistent:
-            raise ValueError("Lifted coefficients are not deck-equivariant on entity orbits.")
+            raise ValueError(
+                "Lifted coefficients are not deck-equivariant on entity orbits."
+            )
         return quotient
 
 
-def periodic_entity_orbit_map(
-    mesh: CellMesh, degree: int, /
-) -> PeriodicEntityOrbitMap:
+def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityOrbitMap:
     """Expose quotient IDs and packed per-row orientation, corner, and winding maps."""
     layout = _entity_layout(mesh, degree)
     topology = mesh.periodic_topology
@@ -858,7 +884,9 @@ def periodic_entity_orbit_map(
         raise RuntimeError("Periodic entity layout lost its quotient topology.")
     entity_vertices = _entity_vertex_rows(mesh)[degree]
     if len(entity_vertices) != layout.orbit_rows.size:
-        raise ValueError("Periodic entity corner rows do not match the lifted entity set.")
+        raise ValueError(
+            "Periodic entity corner rows do not match the lifted entity set."
+        )
     representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
     root_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)[representatives]
     vertex_shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
@@ -896,37 +924,40 @@ def periodic_entity_orbit_map(
                 identifiers, exponents, fixed_entities, orders
             )
             if not np.array_equal(np.asarray(key, dtype=np.int64), expected):
-                raise ValueError("Periodic polyhedron corner keys disagree with the quotient entity.")
+                raise ValueError(
+                    "Periodic polyhedron corner keys disagree with the quotient entity."
+                )
             if int(stored_signs[row]) != 1:
-                raise ValueError("Periodic polyhedron orientation must preserve its lifted cell orientation.")
+                raise ValueError(
+                    "Periodic polyhedron orientation must preserve its lifted cell orientation."
+                )
         else:
-            simplex = (
-                degree == mesh.topological_dimension
-                and cell_kind.startswith(("simplex:", "triangle", "tetrahedron"))
+            simplex = degree == mesh.topological_dimension and cell_kind.startswith(
+                ("simplex:", "triangle", "tetrahedron")
             )
             permutation = None
             for order, orientation in _orientation_orders(
                 vertices.size, simplex=simplex
             ):
-                permutation_rows = np.asarray(order, dtype=np.int64)
-                ranked_ids = identifiers[permutation_rows]
-                ranked_shifts = exponents[permutation_rows].copy()
-                ranked_fixed = fixed_entities[permutation_rows]
-                ranked_shifts[ranked_fixed] = 0
-                anchor = ranked_shifts[0]
-                relative = reduce_periodic_exponents(ranked_shifts - anchor, orders)
-                candidate = np.concatenate(
-                    (ranked_ids[:, None], relative), axis=1
-                ).reshape(-1)
-                if np.array_equal(candidate, expected):
+                # Same moving-vertex anchor convention as the quotient keys.
+                candidate, _ = _interleaved_key(
+                    identifiers, exponents, fixed_entities, order, orders
+                )
+                if np.array_equal(np.asarray(candidate, dtype=np.int64), expected):
+                    permutation_rows = np.asarray(order, dtype=np.int64)
                     if int(orientation) != int(stored_signs[row]):
-                        raise ValueError("Periodic corner permutation has an inconsistent orientation.")
+                        raise ValueError(
+                            "Periodic corner permutation has an inconsistent orientation."
+                        )
                     permutation = permutation_rows.astype(np.int32)
                     break
             if permutation is None:
                 raise ValueError("Periodic entity has no canonical corner permutation.")
         corner_rows.append(np.asarray(permutation, dtype=np.int32))
-    return PeriodicEntityOrbitMap(mesh, degree, layout, stored_signs, shifts, tuple(corner_rows))
+    return PeriodicEntityOrbitMap(
+        mesh, degree, layout, stored_signs, shifts, tuple(corner_rows)
+    )
+
 
 def transfer_periodic_p1_vertices(
     source: CellMesh,
@@ -956,7 +987,9 @@ def transfer_periodic_p1_vertices(
         or stencil.target_entity_set_id != target.entity_set(0).entity_set_id
         or not np.array_equal(np.asarray(stencil.target_global_ids), target_ids)
     ):
-        raise ValueError("Periodic P1 stencil endpoints do not match the source and target meshes.")
+        raise ValueError(
+            "Periodic P1 stencil endpoints do not match the source and target meshes."
+        )
     source_lifted = source_map.lift_oriented_scalars(source_quotient_values)
     target_lifted = stencil.apply(source_ids, source_lifted)
     return target_map.collapse_oriented_scalars(target_lifted)
@@ -1006,7 +1039,9 @@ class PeriodicOrbitClosure(StrictModule, NonTrainableState):
             or np.unique(closed).size != closed.size
             or np.any(~np.isin(requested, closed))
         ):
-            raise ValueError("Periodic orbit closure IDs must be unique and contain every request.")
+            raise ValueError(
+                "Periodic orbit closure IDs must be unique and contain every request."
+            )
         self.requested_global_ids = jnp.asarray(requested, dtype=jnp.int64)
         self.closed_global_ids = jnp.asarray(closed, dtype=jnp.int64)
         self.source_mesh_id = mesh.mesh_id
@@ -1033,9 +1068,7 @@ class PeriodicOrbitClosure(StrictModule, NonTrainableState):
             }
         )
 
-    def require_source(
-        self, mesh: CellMesh, degree: int, /
-    ) -> np.ndarray:
+    def require_source(self, mesh: CellMesh, degree: int, /) -> np.ndarray:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if (
@@ -1052,7 +1085,9 @@ class PeriodicOrbitClosure(StrictModule, NonTrainableState):
             )
             != self.periodic_topology_id
         ):
-            raise ValueError("Periodic orbit closure belongs to a different source mesh revision.")
+            raise ValueError(
+                "Periodic orbit closure belongs to a different source mesh revision."
+            )
         return np.asarray(self.closed_global_ids, dtype=np.int64)
 
 
@@ -1094,6 +1129,7 @@ def periodic_orbit_closure(
         closed = identifiers[np.isin(layout.orbit_rows, marked_orbits)]
     return PeriodicOrbitClosure(mesh, degree, requested, closed)
 
+
 class PeriodicRefinementEdgeLock(StrictModule, NonTrainableState):
     """One selected lifted edge per marked cell, closed over periodic orbits."""
 
@@ -1116,8 +1152,14 @@ class PeriodicRefinementEdgeLock(StrictModule, NonTrainableState):
     ) -> None:
         cells = np.asarray(cell_global_ids, dtype=np.int64)
         edges = np.asarray(selected_edge_global_ids, dtype=np.int64)
-        if cells.ndim != 1 or edges.shape != cells.shape or np.unique(cells).size != cells.size:
-            raise ValueError("A periodic edge lock needs one selected edge per unique cell.")
+        if (
+            cells.ndim != 1
+            or edges.shape != cells.shape
+            or np.unique(cells).size != cells.size
+        ):
+            raise ValueError(
+                "A periodic edge lock needs one selected edge per unique cell."
+            )
         if mesh.periodic_topology is None:
             raise ValueError("A periodic edge lock requires periodic source topology.")
         if cells.size:
@@ -1129,7 +1171,9 @@ class PeriodicRefinementEdgeLock(StrictModule, NonTrainableState):
         self.source_topology_id = mesh.topology_id
         self.source_lifted_topology_id = mesh.lifted_topology_id
         self.periodic_topology_id = mesh.periodic_topology.periodic_topology_id
-        self.cell_entity_set_id = mesh.entity_set(mesh.topological_dimension).entity_set_id
+        self.cell_entity_set_id = mesh.entity_set(
+            mesh.topological_dimension
+        ).entity_set_id
         self.edge_entity_set_id = mesh.entity_set(1).entity_set_id
         self.lock_id = canonical_fingerprint(
             {
@@ -1154,10 +1198,13 @@ class PeriodicRefinementEdgeLock(StrictModule, NonTrainableState):
             or mesh.topology_id != self.source_topology_id
             or mesh.lifted_topology_id != self.source_lifted_topology_id
             or mesh.periodic_topology.periodic_topology_id != self.periodic_topology_id
-            or mesh.entity_set(mesh.topological_dimension).entity_set_id != self.cell_entity_set_id
+            or mesh.entity_set(mesh.topological_dimension).entity_set_id
+            != self.cell_entity_set_id
             or mesh.entity_set(1).entity_set_id != self.edge_entity_set_id
         ):
-            raise ValueError("Periodic edge lock belongs to a different source mesh revision.")
+            raise ValueError(
+                "Periodic edge lock belongs to a different source mesh revision."
+            )
         cells = np.asarray(self.cell_global_ids, dtype=np.int64)
         edges = np.asarray(self.selected_edge_global_ids, dtype=np.int64)
         validated = prepare_periodic_refinement_edge_lock(mesh, cells, edges)
@@ -1182,10 +1229,10 @@ def prepare_periodic_refinement_edge_lock(
         raise ValueError("Periodic edge selection requires a periodic CellMesh.")
     dimension = mesh.topological_dimension
     cell_kind = {2: "triangle", 3: "tetrahedron"}.get(dimension)
-    if cell_kind is None or any(
-        block.cell_kind != cell_kind for block in mesh.blocks
-    ):
-        raise ValueError("Periodic bisection edge locks require triangle or tetrahedron topology.")
+    if cell_kind is None or any(block.cell_kind != cell_kind for block in mesh.blocks):
+        raise ValueError(
+            "Periodic bisection edge locks require triangle or tetrahedron topology."
+        )
     supplied_cells = np.asarray(cell_global_ids)
     supplied_edges = np.asarray(selected_edge_global_ids)
     if (
@@ -1208,10 +1255,7 @@ def prepare_periodic_refinement_edge_lock(
     edge_order = np.argsort(edge_ids, kind="stable")
     cell_positions = np.searchsorted(cell_ids[cell_order], cells)
     edge_positions = np.searchsorted(edge_ids[edge_order], edges)
-    if (
-        np.any(cell_positions >= cell_ids.size)
-        or np.any(edge_positions >= edge_ids.size)
-    ):
+    if np.any(cell_positions >= cell_ids.size) or np.any(edge_positions >= edge_ids.size):
         raise ValueError("Periodic bisection references an absent cell or edge.")
     cell_rows = cell_order[cell_positions]
     edge_rows = edge_order[edge_positions]
@@ -1226,23 +1270,33 @@ def prepare_periodic_refinement_edge_lock(
         mesh, dimension
     )
     if not np.array_equal(np.sort(requested_cells), np.sort(cells)):
-        raise ValueError("Periodic bisection cell marks must contain complete cell orbits.")
+        raise ValueError(
+            "Periodic bisection cell marks must contain complete cell orbits."
+        )
     connectivity_edges = _cell_edge_rows(mesh)
     edge_count = dimension * (dimension + 1) // 2
     if connectivity_edges.shape != (cell_ids.size, edge_count):
-        raise ValueError("Periodic cell-edge routes do not match lifted simplex identities.")
+        raise ValueError(
+            "Periodic cell-edge routes do not match lifted simplex identities."
+        )
     if np.any(~np.any(connectivity_edges[cell_rows] == edge_rows[:, None], axis=1)):
-        raise ValueError("Each selected bisection edge must be incident to its marked cell.")
+        raise ValueError(
+            "Each selected bisection edge must be incident to its marked cell."
+        )
 
     cell_orbits = cell_layout.orbit_rows[cell_rows]
     edge_orbits = edge_layout.orbit_rows[edge_rows]
     for orbit in np.unique(cell_orbits):
         members = cell_orbits == orbit
         if np.unique(edge_orbits[members]).size != 1:
-            raise ValueError("Cells in one periodic orbit selected different quotient edges.")
+            raise ValueError(
+                "Cells in one periodic orbit selected different quotient edges."
+            )
     requested_edges = periodic_orbit_closure(mesh, 1, edges).require_source(mesh, 1)
     if not np.array_equal(np.sort(requested_edges), np.sort(np.unique(edges))):
-        raise ValueError("Selected bisection edges must cover complete periodic edge orbits.")
+        raise ValueError(
+            "Selected bisection edges must cover complete periodic edge orbits."
+        )
     return PeriodicRefinementEdgeLock(mesh, cells, edges)
 
 
@@ -1276,13 +1330,12 @@ def _cell_edge_rows(mesh: CellMesh, /) -> np.ndarray:
         pairs = tuple(combinations((int(value) for value in vertices), 2))
         try:
             rows.append(
-                tuple(
-                    edge_row_by_vertices[tuple(sorted(pair))]
-                    for pair in pairs
-                )
+                tuple(edge_row_by_vertices[tuple(sorted(pair))] for pair in pairs)
             )
         except KeyError as error:
-            raise ValueError("Periodic cell edge is absent from canonical connectivity.") from error
+            raise ValueError(
+                "Periodic cell edge is absent from canonical connectivity."
+            ) from error
     return np.asarray(rows, dtype=np.int64)
 
 
@@ -1292,7 +1345,9 @@ def _periodic_quotient_adjacency(mesh: CellMesh, /) -> CellAdjacency:
     topology = mesh.periodic_topology.quotient
     dimension = mesh.topological_dimension
     if dimension <= 0:
-        raise ValueError("Periodic cell adjacency requires positive topological dimension.")
+        raise ValueError(
+            "Periodic cell adjacency requires positive topological dimension."
+        )
     incidence = topology.incidences[dimension - 1].relation
     valid = np.asarray(incidence.valid, dtype=np.bool_).reshape(-1)
     facets = np.asarray(incidence.source_indices, dtype=np.int64).reshape(-1)[valid]
@@ -1315,7 +1370,9 @@ def _periodic_quotient_adjacency(mesh: CellMesh, /) -> CellAdjacency:
     for start, stop in pairwise(starts):
         incident = np.unique(cells[int(start) : int(stop)])
         if incident.size > 2:
-            raise ValueError("A periodic quotient facet is incident to more than two cells.")
+            raise ValueError(
+                "A periodic quotient facet is incident to more than two cells."
+            )
         if incident.size == 2:
             pairs.append((int(incident[0]), int(incident[1])))
     return CellAdjacency(np.asarray(pairs, dtype=np.int64).reshape((-1, 2)), cell_count)
@@ -1344,11 +1401,7 @@ def _periodic_lifted_adjacency(
             )
         )
     lifted_count = resolved.orbit_rows.size
-    values = (
-        np.concatenate(pairs, axis=0)
-        if pairs
-        else np.zeros((0, 2), dtype=np.int64)
-    )
+    values = np.concatenate(pairs, axis=0) if pairs else np.zeros((0, 2), dtype=np.int64)
     return CellAdjacency(values, lifted_count)
 
 
@@ -1361,13 +1414,16 @@ def _periodic_quotient_weights(
         or np.any(~np.isfinite(weights))
         or np.any(weights <= 0.0)
     ):
-        raise ValueError("Periodic cell weights must be finite, positive, and lifted-order.")
+        raise ValueError(
+            "Periodic cell weights must be finite, positive, and lifted-order."
+        )
     counts = np.bincount(layout.orbit_rows, minlength=layout.entity_ids.size)
     if np.any(counts == 0):
         raise ValueError("Every periodic quotient cell requires a lifted representative.")
-    quotient_weights = np.bincount(
-        layout.orbit_rows, weights=weights, minlength=layout.entity_ids.size
-    ) / counts
+    quotient_weights = (
+        np.bincount(layout.orbit_rows, weights=weights, minlength=layout.entity_ids.size)
+        / counts
+    )
     if not np.allclose(
         weights,
         quotient_weights[layout.orbit_rows],
@@ -1375,7 +1431,9 @@ def _periodic_quotient_weights(
         atol=1.0e-14,
     ):
         raise ValueError("Load weights must agree across each periodic cell orbit.")
-    return quotient_weights, quotient_weights[layout.orbit_rows] / counts[layout.orbit_rows]
+    return quotient_weights, quotient_weights[layout.orbit_rows] / counts[
+        layout.orbit_rows
+    ]
 
 
 def _periodic_collapse_owners(
@@ -1436,6 +1494,8 @@ def _periodic_quotient_cell_centroids(
         )
         centroids[quotient_row] = np.mean(home_coordinates, axis=0)
     return centroids
+
+
 def _stencil_orbit_signature(
     representatives: np.ndarray,
     shifts: np.ndarray,
@@ -1453,7 +1513,9 @@ def _stencil_orbit_signature(
     identifiers = np.asarray(representatives, dtype=np.int64)[active]
     exponents = np.asarray(shifts, dtype=np.int64)[active]
     fixed_rows = np.asarray(fixed, dtype=np.bool_)[active]
-    exact_weights = tuple(value for value, use in zip(coefficients, active, strict=True) if use)
+    exact_weights = tuple(
+        value for value, use in zip(coefficients, active, strict=True) if use
+    )
     exponents = reduce_periodic_exponents(exponents, orders)
     exponents[fixed_rows] = 0
     choices = tuple(
@@ -1497,7 +1559,8 @@ def periodic_topology_after_edit(
     """Rebuild a quotient descriptor for an unbound lifted topology edit target.
 
     The default key is derived from source global IDs, winding, fixed-generator
-    status, and exact interpolation weights. Generated vertices whose source
+    status, and exact interpolation weights; a target vertex that retains a
+    source global ID keeps that source vertex orbit. Generated vertices whose source
     stencil omits a discrete ancestry coordinate may instead pass explicit
     ``vertex_orbit_keys``/``vertex_windings`` plus ``source_entity_degree``.
     Each explicit key starts with a source quotient entity ID; remaining columns
@@ -1506,7 +1569,9 @@ def periodic_topology_after_edit(
     identity through the canonical PeriodicMeshTopology constructor.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
-        raise TypeError("Periodic topology edits require source and target CellMesh values.")
+        raise TypeError(
+            "Periodic topology edits require source and target CellMesh values."
+        )
     source_topology = source.periodic_topology
     if source_topology is None:
         return None
@@ -1515,7 +1580,9 @@ def periodic_topology_after_edit(
     )
     source_topology.require_coordinates(source.coordinates)
     if target.periodic_topology is not None:
-        raise ValueError("target must be an unbound lifted mesh before periodic rebinding.")
+        raise ValueError(
+            "target must be an unbound lifted mesh before periodic rebinding."
+        )
     from ._lineage import VertexInterpolationStencil
 
     if not isinstance(stencil, VertexInterpolationStencil):
@@ -1526,19 +1593,21 @@ def periodic_topology_after_edit(
         stencil.source_entity_set_id != source_vertices.entity_set_id
         or stencil.target_entity_set_id != target_vertices.entity_set_id
     ):
-        raise ValueError("Vertex interpolation stencil endpoints do not match the edit meshes.")
+        raise ValueError(
+            "Vertex interpolation stencil endpoints do not match the edit meshes."
+        )
     target_ids = np.asarray(target_vertices.entity_ids, dtype=np.int64)
     if not np.array_equal(np.asarray(stencil.target_global_ids), target_ids):
-        raise ValueError("Periodic edit stencils must follow canonical target vertex order.")
+        raise ValueError(
+            "Periodic edit stencils must follow canonical target vertex order."
+        )
     source_ids = np.asarray(source_vertices.entity_ids, dtype=np.int64)
     source_order = np.argsort(source_ids, kind="stable")
     source_sorted = source_ids[source_order]
     stencil_source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)
     stencil_valid = np.asarray(stencil.valid, dtype=np.bool_)
     stencil_weights = np.asarray(stencil.weights, dtype=np.float64)
-    if not np.all(
-        np.any(stencil_valid & (stencil_weights != 0.0), axis=1)
-    ):
+    if not np.all(np.any(stencil_valid & (stencil_weights != 0.0), axis=1)):
         raise ValueError(
             "Every periodic target vertex requires source interpolation ancestry."
         )
@@ -1557,7 +1626,9 @@ def periodic_topology_after_edit(
         or shifts.shape[0] != source_ids.size
         or fixed.shape != shifts.shape
     ):
-        raise ValueError("Source periodic vertex orbits do not cover the lifted source mesh.")
+        raise ValueError(
+            "Source periodic vertex orbits do not cover the lifted source mesh."
+        )
     orders = identification_orders(source_topology.cell)
     signatures: list[
         tuple[int, ...] | tuple[tuple[int, tuple[int, ...], int, int], ...]
@@ -1605,7 +1676,9 @@ def periodic_topology_after_edit(
             windings.astype(np.int64, copy=False), orders
         )
         if np.any(keys < 0):
-            raise ValueError("Periodic vertex ancestry keys must be nonnegative source identities.")
+            raise ValueError(
+                "Periodic vertex ancestry keys must be nonnegative source identities."
+            )
         source_entity_ids = np.asarray(
             source_topology.quotient.entity_sets[degree].entity_ids, dtype=np.int64
         )
@@ -1615,14 +1688,20 @@ def periodic_topology_after_edit(
         bounded = np.minimum(key_positions, source_entity_ids.size - 1)
         quotient_rows = source_entity_order[bounded]
         if np.any(source_entity_sorted[bounded] != keys[:, 0]):
-            raise ValueError("Periodic vertex ancestry references an absent quotient source entity.")
+            raise ValueError(
+                "Periodic vertex ancestry references an absent quotient source entity."
+            )
         lifted_offsets = np.asarray(source_topology.lifted_offsets, dtype=np.int64)
         quotient_offsets = np.asarray(source_topology.quotient_offsets, dtype=np.int64)
         lower, upper = map(int, lifted_offsets[degree : degree + 2])
         quotient_lower = int(quotient_offsets[degree])
-        source_orbits = np.asarray(source_topology.orbit_indices, dtype=np.int64)[lower:upper]
+        source_orbits = np.asarray(source_topology.orbit_indices, dtype=np.int64)[
+            lower:upper
+        ]
         source_orbits -= quotient_lower
-        source_windings = np.asarray(source_topology.orbit_shifts, dtype=np.int64)[lower:upper]
+        source_windings = np.asarray(source_topology.orbit_shifts, dtype=np.int64)[
+            lower:upper
+        ]
         available: list[set[tuple[int, ...]]] = [
             set() for _ in range(source_entity_ids.size)
         ]
@@ -1638,20 +1717,35 @@ def periodic_topology_after_edit(
                 winding_mismatch = True
                 break
         if winding_mismatch:
-            raise ValueError("Target vertex winding is absent from its source entity orbit.")
+            raise ValueError(
+                "Target vertex winding is absent from its source entity orbit."
+            )
         signatures = [tuple(int(value) for value in row) for row in keys]
         anchors[:] = windings
     else:
         root_ids = source_ids[representatives]
         weights = np.asarray(stencil.weights, dtype=np.float64)
+        retained_positions = np.minimum(
+            np.searchsorted(source_sorted, target_ids), source_ids.size - 1
+        )
+        retained = source_sorted[retained_positions] == target_ids
+        unit_weight = np.ones((1,), dtype=np.float64)
         for target_row in range(target_ids.size):
-            active = stencil_valid[target_row]
-            rows = source_rows[target_row, active]
+            if retained[target_row]:
+                # A retained vertex keeps its identity and therefore its orbit;
+                # its transfer stencil (for example after relocation) is located
+                # independently per lifted image and is not orbit evidence.
+                rows = source_order[retained_positions[target_row : target_row + 1]]
+                row_weights = unit_weight
+            else:
+                active = stencil_valid[target_row]
+                rows = source_rows[target_row, active]
+                row_weights = weights[target_row, active]
             signature, anchor = _stencil_orbit_signature(
                 root_ids[rows],
                 shifts[rows],
                 fixed[rows],
-                weights[target_row, active],
+                row_weights,
                 orders,
             )
             signatures.append(signature)
@@ -1673,8 +1767,12 @@ def periodic_topology_after_edit(
     allocator = {}
     for degree, next_id in enumerate(source_topology.allocator_next_ids):
         if next_id >= 0:
-            target_entity_ids = np.asarray(target.entity_set(degree).entity_ids, dtype=np.int64)
-            allocator[degree] = max(int(next_id), int(np.max(target_entity_ids, initial=-1)) + 1)
+            target_entity_ids = np.asarray(
+                target.entity_set(degree).entity_ids, dtype=np.int64
+            )
+            allocator[degree] = max(
+                int(next_id), int(np.max(target_entity_ids, initial=-1)) + 1
+            )
     return PeriodicMeshTopology(
         target,
         source_topology.cell,
@@ -1682,6 +1780,7 @@ def periodic_topology_after_edit(
         target_shifts,
         entity_allocator_next_ids=allocator or None,
     )
+
 
 def _periodic_edge_operation_signatures(
     mesh: CellMesh, endpoint_vertex_ids: ArrayLike, /
@@ -1747,7 +1846,9 @@ class PeriodicCellEditCandidate(StrictModule, NonTrainableState):
         /,
     ) -> None:
         if source.periodic_topology is None or target.periodic_topology is None:
-            raise ValueError("A periodic edit candidate requires bound source and target meshes.")
+            raise ValueError(
+                "A periodic edit candidate requires bound source and target meshes."
+            )
         self.source = source
         self.target = target
         self.source_mesh_id = source.mesh_id
@@ -1779,7 +1880,9 @@ class PeriodicCellEditCandidate(StrictModule, NonTrainableState):
             or source.periodic_topology.periodic_topology_id
             != self.source_periodic_topology_id
         ):
-            raise ValueError("Periodic edit candidate belongs to a different source revision.")
+            raise ValueError(
+                "Periodic edit candidate belongs to a different source revision."
+            )
         topology = self.target.periodic_topology
         if topology is None:
             raise ValueError("Periodic edit target lost its quotient descriptor.")
@@ -1831,7 +1934,9 @@ def stage_periodic_refinement_candidate(
         or endpoints.shape != (parents.size, 2)
         or endpoints.dtype.kind not in "iu"
     ):
-        raise TypeError("Executed split IDs and endpoint pairs must be aligned integer arrays.")
+        raise TypeError(
+            "Executed split IDs and endpoint pairs must be aligned integer arrays."
+        )
     parents = parents.astype(np.int64, copy=False)
     source_edges = source_edges.astype(np.int64, copy=False)
     endpoints = endpoints.astype(np.int64, copy=False)
@@ -1840,7 +1945,9 @@ def stage_periodic_refinement_candidate(
 
     for cell_id, edge_id in zip(expected_cells, expected_edges, strict=True):
         if not np.any((parents == cell_id) & (source_edges == edge_id)):
-            raise ValueError("An initially locked bisection choice is absent from the staged edit.")
+            raise ValueError(
+                "An initially locked bisection choice is absent from the staged edit."
+            )
 
     source_cell_ids = np.asarray(
         source.entity_set(source.topological_dimension).entity_ids, dtype=np.int64
@@ -1848,7 +1955,9 @@ def stage_periodic_refinement_candidate(
     cell_order = np.argsort(source_cell_ids, kind="stable")
     parent_positions = np.searchsorted(source_cell_ids[cell_order], parents)
     if np.any(parent_positions >= source_cell_ids.size) or not np.array_equal(
-        source_cell_ids[cell_order[np.minimum(parent_positions, source_cell_ids.size - 1)]],
+        source_cell_ids[
+            cell_order[np.minimum(parent_positions, source_cell_ids.size - 1)]
+        ],
         parents,
     ):
         raise ValueError("Bisection parent IDs must retain their source-cell ancestry.")
@@ -1876,18 +1985,23 @@ def stage_periodic_refinement_candidate(
             source_edge_row = source_edge_order[source_edge_positions[row]]
             if (
                 source_edge_ids[source_edge_row] != source_edge_id
-                or tuple(int(value) for value in source_edge_pairs[source_edge_row]) != pair
+                or tuple(int(value) for value in source_edge_pairs[source_edge_row])
+                != pair
             ):
-                raise ValueError("Source edge IDs must match their exact endpoint identities.")
+                raise ValueError(
+                    "Source edge IDs must match their exact endpoint identities."
+                )
         elif pair in pair_to_edge_ids:
             raise ValueError("An existing source edge must retain its source edge ID.")
     lifted_source_edges = np.unique(source_edges[source_edges >= 0])
     if lifted_source_edges.size:
-        closed_edges = periodic_orbit_closure(source, 1, lifted_source_edges).require_source(
-            source, 1
-        )
+        closed_edges = periodic_orbit_closure(
+            source, 1, lifted_source_edges
+        ).require_source(source, 1)
         if not np.array_equal(np.sort(closed_edges), np.sort(lifted_source_edges)):
-            raise ValueError("Executed source-edge splits must include complete edge orbits.")
+            raise ValueError(
+                "Executed source-edge splits must include complete edge orbits."
+            )
     descriptor = periodic_topology_after_edit(
         source,
         target,
@@ -1917,7 +2031,9 @@ def stage_periodic_refinement_candidate(
     )
     descriptor.require_coordinates(bound_target.coordinates)
     if bound_target.lifted_topology_id != target.lifted_topology_id:
-        raise ValueError("Periodic rebinding changed the staged lifted topology identity.")
+        raise ValueError(
+            "Periodic rebinding changed the staged lifted topology identity."
+        )
     edge_signatures = _periodic_edge_operation_signatures(bound_target, endpoints)
     source_cell_layout = _periodic_cell_layout(source)
     if source_cell_layout is None:
@@ -1936,7 +2052,9 @@ def stage_periodic_refinement_candidate(
         if not member_operations[0] or any(
             operations != member_operations[0] for operations in member_operations[1:]
         ):
-            raise ValueError("Every lifted cell orbit must execute identical edge operations.")
+            raise ValueError(
+                "Every lifted cell orbit must execute identical edge operations."
+            )
     candidate = PeriodicCellEditCandidate(source, bound_target, edge_lock.lock_id)
     candidate.require_source(source)
     return candidate
@@ -1979,11 +2097,11 @@ def stage_periodic_topology_edit(
                 global_ids=block.cell_ids,
             )
         )
-    target_kind = {2: "triangle", 3: "tetrahedron"}.get(
-        source.topological_dimension
-    )
-    if target_kind is None or not blocks or any(
-        block.cell_kind != target_kind for block in blocks
+    target_kind = {2: "triangle", 3: "tetrahedron"}.get(source.topological_dimension)
+    if (
+        target_kind is None
+        or not blocks
+        or any(block.cell_kind != target_kind for block in blocks)
     ):
         raise ValueError(
             "Periodic topology edits require a full-dimensional triangle or tetrahedron target."
@@ -2011,7 +2129,9 @@ def stage_periodic_topology_edit(
         source_entity_degree=edit.source_entity_degree,
     )
     if descriptor is None:
-        raise ValueError("Periodic source edits must retain a periodic target descriptor.")
+        raise ValueError(
+            "Periodic source edits must retain a periodic target descriptor."
+        )
     target_entity_ids = {
         degree: np.asarray(target.entity_set(degree).entity_ids, dtype=np.int64)
         for degree in range(target.topological_dimension + 1)
@@ -2030,7 +2150,9 @@ def stage_periodic_topology_edit(
         raise ValueError("Periodic edit rebinding changed the lifted target identity.")
 
     if len(edit.relations) != source.topological_dimension + 1:
-        raise ValueError("Periodic topology edits need one lineage relation per entity degree.")
+        raise ValueError(
+            "Periodic topology edits need one lineage relation per entity degree."
+        )
     for degree, relation in enumerate(edit.relations):
         source_keys = np.asarray(relation.source_keys, dtype=np.int64)
         target_keys = np.asarray(relation.target_keys, dtype=np.int64)
@@ -2046,10 +2168,14 @@ def stage_periodic_topology_edit(
         source_rows = key_rows(entity_keys(source, degree), source_keys)
         target_rows = key_rows(entity_keys(bound, degree), target_keys)
         if np.any(source_rows < 0) or np.any(target_rows < 0):
-            raise ValueError("Periodic edit lineage names an absent source or target entity.")
+            raise ValueError(
+                "Periodic edit lineage names an absent source or target entity."
+            )
         source_layout = _entity_layout(source, degree)
         target_layout = _entity_layout(bound, degree)
-        target_quotient_ids = target_layout.entity_ids[target_layout.orbit_rows[target_rows]]
+        target_quotient_ids = target_layout.entity_ids[
+            target_layout.orbit_rows[target_rows]
+        ]
         operations: list[list[tuple[int, int]]] = [
             [] for _ in range(source_layout.orbit_rows.size)
         ]
@@ -2092,14 +2218,10 @@ def _periodic_geometry_after_reorder(
     for block in target.blocks:
         source_block, element, route = source_by_name[block.name]
         source_ids = np.asarray(source_block.global_ids, dtype=np.int64)
-        source_rows = {
-            int(identifier): row for row, identifier in enumerate(source_ids)
-        }
+        source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
 
         target_ids = np.asarray(block.global_ids, dtype=np.int64)
-        if source_rows.keys() != {
-            int(identifier) for identifier in target_ids
-        }:
+        if source_rows.keys() != {int(identifier) for identifier in target_ids}:
             raise ValueError(
                 "Periodic geometry cell identities changed during canonicalization."
             )
@@ -2127,12 +2249,8 @@ def _periodic_geometry_after_reorder(
             )
         target_elements[block.name] = element
         target_routes[block.name] = route[rows]
-    if not np.array_equal(
-        np.asarray(coordinates), np.asarray(target.coordinates)
-    ):
-        raise ValueError(
-            "Periodic geometry coordinates changed during canonicalization."
-        )
+    if not np.array_equal(np.asarray(coordinates), np.asarray(target.coordinates)):
+        raise ValueError("Periodic geometry coordinates changed during canonicalization.")
     return CellGeometrySpec(target_elements, target_routes, coordinates)
 
 
@@ -2190,9 +2308,7 @@ def _periodic_entity_global_ids_after_reorder(
             transported_layout.entity_ids.shape, -1, dtype=np.int64
         )
         source_to_anchored = np.full(source_entity_ids.shape, -1, dtype=np.int64)
-        anchored_to_source = np.full(
-            anchored_layout.entity_ids.shape, -1, dtype=np.int64
-        )
+        anchored_to_source = np.full(anchored_layout.entity_ids.shape, -1, dtype=np.int64)
         for target_row, identifier in enumerate(target_lifted_ids):
             source_row = source_rows_by_id[int(identifier)]
             source_orbit = int(source_layout.orbit_rows[source_row])
@@ -2234,16 +2350,12 @@ def _periodic_topology_after_reorder(
         )
     source_topology = source.periodic_topology
     if source_topology is None:
-        raise ValueError(
-            "Periodic canonicalization requires periodic source topology."
-        )
+        raise ValueError("Periodic canonicalization requires periodic source topology.")
     if target.periodic_topology is not None:
         raise ValueError(
             "Periodic canonicalization target must be an unbound lifted mesh."
         )
-    source_topology.require_lifted(
-        source.topology, source.topology_id, source.blocks
-    )
+    source_topology.require_lifted(source.topology, source.topology_id, source.blocks)
     source_topology.require_coordinates(source.coordinates)
 
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
@@ -2280,9 +2392,7 @@ def _periodic_topology_after_reorder(
     if not np.array_equal(
         target_vertex_ids[target_representatives], source_root_ids[source_rows]
     ):
-        raise ValueError(
-            "Periodic canonicalization changed source vertex occurrence."
-        )
+        raise ValueError("Periodic canonicalization changed source vertex occurrence.")
 
     from ._lineage import VertexInterpolationStencil
 
@@ -2358,7 +2468,9 @@ def periodic_delaunay_mesh(
     point_ids = np.asarray(source.point_ids, dtype=np.int64)
     point_order = np.argsort(point_ids, kind="stable")
     point_ids = point_ids[point_order]
-    points = np.ascontiguousarray(np.asarray(source.points, dtype=np.float64)[point_order])
+    points = np.ascontiguousarray(
+        np.asarray(source.points, dtype=np.float64)[point_order]
+    )
     fractional = np.ascontiguousarray(
         np.asarray(source.fractional_points, dtype=np.float64)[point_order]
     )
@@ -2397,21 +2509,25 @@ def periodic_delaunay_mesh(
     if np.any((cells < 0) | (cells >= point_ids.size)):
         raise ValueError("Native periodic Delaunay references an absent source orbit.")
     if not np.array_equal(np.unique(cells), np.arange(point_ids.size, dtype=np.int64)):
-        raise ValueError("Native periodic Delaunay did not retain every authored point orbit.")
+        raise ValueError(
+            "Native periodic Delaunay did not retain every authored point orbit."
+        )
     base_shifts = -np.floor(fractional).astype(np.int64)
     if np.any(np.abs(shifts) > np.iinfo(np.int32).max):
-        raise OverflowError("Native periodic Delaunay winding exceeds the mesh topology index range.")
+        raise OverflowError(
+            "Native periodic Delaunay winding exceeds the mesh topology index range."
+        )
     image_keys = {
         (int(point_ids[int(site)]), tuple(int(value) for value in shift))
-        for site, shift in zip(cells.reshape(-1), shifts.reshape((-1, dimension)), strict=True)
+        for site, shift in zip(
+            cells.reshape(-1), shifts.reshape((-1, dimension)), strict=True
+        )
     }
     keys_by_point: dict[int, list[tuple[int, tuple[int, ...]]]] = {}
     for key in image_keys:
         keys_by_point.setdefault(key[0], []).append(key)
     representative_key: dict[int, tuple[int, tuple[int, ...]]] = {}
-    point_row_by_id = {
-        int(identifier): row for row, identifier in enumerate(point_ids)
-    }
+    point_row_by_id = {int(identifier): row for row, identifier in enumerate(point_ids)}
     for identifier, keys in keys_by_point.items():
         row = point_row_by_id[identifier]
         base_key = (identifier, tuple(int(value) for value in base_shifts[row]))
@@ -2422,12 +2538,15 @@ def periodic_delaunay_mesh(
     generated_count = len(image_keys) - len(representative_keys)
     index_limit = int(np.iinfo(np.int64).max)
     if maximum_id > index_limit - generated_count - cells.shape[0] - 1:
-        raise OverflowError("Periodic semantic identities exceed the int64 mesh ID range.")
+        raise OverflowError(
+            "Periodic semantic identities exceed the int64 mesh ID range."
+        )
     vertex_ids = np.empty((len(ordered_keys),), dtype=np.int64)
     vertex_rows = {key: row for row, key in enumerate(ordered_keys)}
     root_rows = np.empty((len(ordered_keys),), dtype=np.int32)
     vertex_shifts = np.empty((len(ordered_keys), dimension), dtype=np.int64)
-    coordinates = np.empty((len(ordered_keys), dimension), dtype=np.float64)
+    root_windings = np.empty((len(ordered_keys), dimension), dtype=np.int64)
+    source_rows = np.empty((len(ordered_keys),), dtype=np.int64)
     next_vertex_id = maximum_id + 1
     for row, key in enumerate(ordered_keys):
         identifier, winding = key
@@ -2437,15 +2556,23 @@ def periodic_delaunay_mesh(
         vertex_shifts[row] = np.asarray(winding, dtype=np.int64) - np.asarray(
             root_key[1], dtype=np.int64
         )
-        vertex_ids[row] = (
-            identifier if key == root_key else next_vertex_id
-        )
+        vertex_ids[row] = identifier if key == root_key else next_vertex_id
         if key != root_key:
             next_vertex_id += 1
-        source_row = point_row_by_id[identifier]
-        coordinates[row] = points[source_row] + np.asarray(winding) @ lattice
+        source_rows[row] = point_row_by_id[identifier]
+        root_windings[row] = np.asarray(root_key[1], dtype=np.int64)
+    # One canonical lift owner: each root is the exact image of its authored
+    # point, and every other image is the exact image of its root, so the
+    # topology's orbit witness reproduces coordinates bit for bit.
+    coordinates = apply_periodic(
+        cell,
+        apply_periodic(cell, points[source_rows], root_windings),
+        vertex_shifts,
+    )
     if np.any(np.abs(vertex_shifts) > np.iinfo(np.int32).max):
-        raise OverflowError("Relative periodic winding exceeds the mesh topology index range.")
+        raise OverflowError(
+            "Relative periodic winding exceeds the mesh topology index range."
+        )
     lifted_cells = np.empty(cells.shape, dtype=np.int32)
     for cell_row in range(cells.shape[0]):
         for local_vertex in range(dimension + 1):

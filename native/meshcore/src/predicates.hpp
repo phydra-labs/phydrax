@@ -92,4 +92,20 @@ Expansion orient3d_exact(const double* a, const double* b, const double* c, cons
 Approx orient2d_approx(const double* a, const double* b, const double* c);
 Approx orient3d_approx(const double* a, const double* b, const double* c, const double* d);
 
+// Exact signs on points with expansion coordinates (two per point for
+// orient2d, three otherwise), with the conventions and the Simulation of
+// Simplicity scheme of the binary64 predicates above; used for vertices whose
+// exact position is a source construction rather than its binary64 carrier.
+int orient2d_sign(const Expansion* a, const Expansion* b, const Expansion* c);
+int orient3d_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                  const Expansion* d);
+int insphere_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                  const Expansion* d, const Expansion* e);
+int orient3d_sos_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                      const Expansion* d, std::int64_t ia, std::int64_t ib, std::int64_t ic,
+                      std::int64_t id);
+int insphere_sos_sign(const Expansion* a, const Expansion* b, const Expansion* c,
+                      const Expansion* d, const Expansion* e, std::int64_t ia,
+                      std::int64_t ib, std::int64_t ic, std::int64_t id, std::int64_t ie);
+
 }  // namespace phx::mc

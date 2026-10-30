@@ -74,7 +74,9 @@ def _fv_transport(
         method,
     ).dynamics
     if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
-        raise TypeError("Image material transport did not prepare unstructured FV dynamics.")
+        raise TypeError(
+            "Image material transport did not prepare unstructured FV dynamics."
+        )
     runtime = PreparedFiniteVolumeRuntime(
         dynamics,
         phx.discretization.FluxPositivityPlan(
@@ -323,10 +325,11 @@ def _run_image_profile(name: str, /, *, oblique: bool) -> dict[str, object]:
         expected_pairs.add((first, second) if first <= second else (second, first))
     actual_pairs: set[tuple[str, str]] = set()
     for patch in result.patches:
-        pair = patch.source_adjacent_region_ids
-        if pair is None or pair[0] is None or pair[1] is None:
+        if patch.source_adjacent_region_ids is None:
             raise RuntimeError(f"{name} source patch omitted exact adjacent region IDs.")
-        first, second = pair
+        first, second = patch.source_adjacent_region_ids
+        if first is None or second is None:
+            raise RuntimeError(f"{name} source patch omitted exact adjacent region IDs.")
         actual_pairs.add((first, second) if first <= second else (second, first))
     if actual_pairs != expected_pairs:
         raise RuntimeError(

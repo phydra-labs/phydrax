@@ -403,10 +403,46 @@ def test_pyramid_validity_matches_runtime_apex_derivative_support() -> None:
     certificate = D.certify_cell_geometry_validity(
         geometry, policy=D.CellValidityPolicy(relative_determinant_floor=0.0)
     )
-    assert int(certificate.source_status[0]) == Status.UNRESOLVED
-    assert int(certificate.execution_status[0]) == Status.UNRESOLVED
+    # Whole-cell validity holds on the closed collapsed cube; only pointwise apex
+    # tabulation is direction-dependent and refused at runtime.
+    assert int(certificate.source_status[0]) == Status.CERTIFIED_VALID
+    assert int(certificate.execution_status[0]) == Status.CERTIFIED_VALID
+    assert not bool(np.asarray(certificate.apex_derivative_unique)[0])
     with pytest.raises(ValueError, match="pyramid-apex continuation"):
         element.tabulate(np.asarray(((0.5, 0.5, 1.0),), dtype=np.float64))
+
+
+def _p1_pyramid_mesh(base: tuple[tuple[float, float], ...]) -> D.CellMesh:
+    points = np.asarray(
+        [(x, y, 0.0) for x, y in base] + [(0.25, 0.25, -0.25)], dtype=np.float64
+    )
+    return D.CellMesh(
+        points,
+        (D.CellBlock("pyramids", "pyramid", np.asarray(((0, 1, 2, 3, 4),), np.int32)),),
+    )
+
+
+def test_kite_pyramid_is_valid_with_direction_dependent_apex_jacobian() -> None:
+    # Tet-to-hex closure pyramid: tet corner, two edge midpoints, face centroid.
+    mesh = _p1_pyramid_mesh(((0.0, 0.0), (0.0, 0.5), (1 / 3, 1 / 3), (0.5, 0.0)))
+    certificate = D.certify_cell_geometry_validity(
+        D.CellGeometrySpec.affine(mesh),
+        mesh=mesh,
+        policy=D.CellValidityPolicy(relative_determinant_floor=0.0),
+    )
+    assert int(certificate.status[0]) == Status.CERTIFIED_VALID
+    assert not bool(np.asarray(certificate.apex_derivative_unique)[0])
+
+
+def test_folded_kite_pyramid_is_invalid() -> None:
+    # The third base corner crosses the opposite diagonal, folding the base.
+    mesh = _p1_pyramid_mesh(((0.0, 0.0), (0.0, 0.5), (0.1, 0.1), (0.5, 0.0)))
+    certificate = D.certify_cell_geometry_validity(
+        D.CellGeometrySpec.affine(mesh),
+        mesh=mesh,
+        policy=D.CellValidityPolicy(relative_determinant_floor=0.0),
+    )
+    assert int(certificate.status[0]) == Status.INVALID
 
 
 def test_pyramid_nonaffine_chart_has_a_supported_apex_jacobian() -> None:

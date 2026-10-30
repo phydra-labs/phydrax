@@ -15,9 +15,78 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "source_construction.hpp"
 #include "spatial_sort.hpp"
 
 namespace phx::mc {
+
+// Outcome of the shared checked cone insertion. Every refusal leaves the
+// complex unchanged except kInternal; callers choose their fallback
+// (refinement reports an unmet cell, Delaunay/PLC construction rebuilds).
+enum class ConeInsertion : std::uint8_t {
+  kApplied,
+  kInvertedCell,   // a finite cone cell is not exactly positively oriented
+  kRemovesVertex,  // a cavity vertex is absent from the cavity boundary
+  kSlotLimit,      // the slot bank cannot hold the cone
+  kInternal,       // the star link failed after the topology write
+};
+
+// The one incremental insertion commit used by Delaunay/PLC construction and
+// tetrahedral refinement: cone `cavity` (cells to remove, with `boundary` its
+// outward facets) to `center` after `positive` accepts each finite cone cell.
+// `positive` is the caller's exact orientation model (symbolically perturbed
+// for a Delaunay construction whose conflicts are perturbed, plain exact for a
+// mesh). A positive cone whose boundary is the cavity boundary tiles the
+// cavity, so `center` lies in its interior and every boundary facet is matched
+// once. Unless `allow_removed_vertices` (regular triangulations may bury a
+// point), every cavity vertex must remain on the cavity boundary.
+template <class Positive>
+ConeInsertion insert_checked_cone(TetrahedralComplex& complex, CavityEdit& edit,
+                                  const Positive& positive, int32_t center,
+                                  std::span<const int32_t> cavity,
+                                  std::span<const BoundaryFacet> boundary,
+                                  bool allow_removed_vertices) {
+  for (const BoundaryFacet& face : boundary) {
+    Tetrahedron cone = complex.tets[static_cast<std::size_t>(face.tet)];
+    cone.v[face.slot] = center;
+    if (is_ghost(cone)) continue;
+    if (!positive(cone.v)) return ConeInsertion::kInvertedCell;
+  }
+  if (!allow_removed_vertices) {
+    std::vector<int32_t> kept;
+    kept.reserve(3 * boundary.size());
+    for (const BoundaryFacet& face : boundary) {
+      const Tetrahedron& cell = complex.tets[static_cast<std::size_t>(face.tet)];
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot != face.slot) kept.push_back(cell.v[slot]);
+      }
+    }
+    std::sort(kept.begin(), kept.end());
+    for (int32_t t : cavity) {
+      for (int32_t vertex : complex.tets[static_cast<std::size_t>(t)].v) {
+        if (vertex >= 0 && !std::binary_search(kept.begin(), kept.end(), vertex)) {
+          return ConeInsertion::kRemovesVertex;
+        }
+      }
+    }
+  }
+  EditStatus status = edit.stage_cone(center, cavity, boundary);
+  if (status == EditStatus::kOk) status = edit.commit();
+  switch (status) {
+    case EditStatus::kOk: return ConeInsertion::kApplied;
+    case EditStatus::kSlotLimit:
+      edit.rollback();
+      return ConeInsertion::kSlotLimit;
+    case EditStatus::kNotLive:
+    case EditStatus::kDuplicate:
+    case EditStatus::kNonManifold:
+    case EditStatus::kBoundaryMismatch:
+    case EditStatus::kInverted:
+    case EditStatus::kConstraintViolation:
+    case EditStatus::kInternal: return ConeInsertion::kInternal;
+  }
+  return ConeInsertion::kInternal;
+}
 
 class Triangulation3D {
  public:
@@ -33,6 +102,9 @@ class Triangulation3D {
   void rebind(const double* points, int64_t vertex_count) noexcept {
     points_ = std::span<const double>(points, static_cast<std::size_t>(3 * vertex_count));
   }
+  // Exact positions of witnessed vertices; with a bank, every predicate tuple
+  // that contains a witnessed vertex evaluates its exact position.
+  void set_exact_points(const ExactVertexBank* bank) noexcept { exact_ = bank; }
 
   // Shift live tetrahedron references and per-point stamps for a point-bank
   // insertion; callers rebind the coordinate span before geometric use.
@@ -84,13 +156,13 @@ class Triangulation3D {
     const int32_t a = order[0];
     int32_t b = order[1];
     std::size_t third = 2;
-    while (third < count && geometry::collinear(point(a), point(b), point(order[third]))) ++third;
+    while (third < count && collinear(ref(a), ref(b), ref(order[third]))) ++third;
     if (third == count) return PHX_MC_DEGENERATE_INPUT;
     int32_t c = order[third];
     std::size_t fourth = third + 1;
     int sign = 0;
     while (fourth < count) {
-      sign = orient3d(point(a), point(b), point(c), point(order[fourth]));
+      sign = orient3d(ref(a), ref(b), ref(c), ref(order[fourth]));
       if (sign != 0) break;
       ++fourth;
     }
@@ -116,7 +188,9 @@ class Triangulation3D {
     }
   }
 
-  int32_t locate(const double* p) {
+  int32_t locate(const double* p) { return locate(ExactPointRef{p, nullptr}); }
+
+  int32_t locate(const ExactPointRef& p) {
     int32_t t = hint_;
     if (!complex_.live(t)) {
       t = -1;
@@ -163,17 +237,20 @@ class Triangulation3D {
   }
 
   int orient_with(const Tetrahedron& tetrahedron, int slot, const double* p) const {
-    const double* q[4];
-    for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : point(tetrahedron.v[k]);
+    return orient_with(tetrahedron, slot, ExactPointRef{p, nullptr});
+  }
+  int orient_with(const Tetrahedron& tetrahedron, int slot, const ExactPointRef& p) const {
+    ExactPointRef q[4];
+    for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : ref(tetrahedron.v[k]);
     return orient3d(q[0], q[1], q[2], q[3]);
   }
 
   int32_t insert(int32_t p, std::span<char> alive, int32_t* duplicate = nullptr) {
     next_stamp();
-    const int32_t origin = locate(point(p));
+    const int32_t origin = locate(ref(p));
     if (!valid_point_tet(origin)) return PHX_MC_INTERNAL_ERROR;
     if (duplicate != nullptr) {
-      *duplicate = coincident_vertex(origin, point(p));
+      *duplicate = coincident_vertex(origin, ref(p));
       if (*duplicate >= 0) {
         hint_ = origin;
         return PHX_MC_OK;
@@ -192,16 +269,30 @@ class Triangulation3D {
     if (status != PHX_MC_OK) return status;
     status = removed_vertices();
     if (status != PHX_MC_OK) return status;
-    EditStatus edit = EditStatus::kOk;
     if (constrained_facets_ == 0) {
-      edit = edit_.stage_cone(p, cavity_, boundary_);
+      // An inverted cone means the cavity was not star-shaped from p (the
+      // complex is no longer Delaunay); UNRESOLVED tells the caller to rebuild.
+      const ConeInsertion inserted = insert_checked_cone(
+          complex_, edit_,
+          [this](const int32_t* v) {
+            return orient3d_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), v[0], v[1], v[2],
+                                v[3]) > 0;
+          },
+          p, cavity_, boundary_, !removed_.empty());
+      switch (inserted) {
+        case ConeInsertion::kApplied: break;
+        case ConeInsertion::kInvertedCell:
+        case ConeInsertion::kRemovesVertex: return PHX_MC_UNRESOLVED;
+        case ConeInsertion::kSlotLimit: return PHX_MC_INDEX_RANGE_ERROR;
+        case ConeInsertion::kInternal: return PHX_MC_INTERNAL_ERROR;
+      }
     } else {
-      edit = stage_constrained(p);
-    }
-    if (edit == EditStatus::kOk) edit = edit_.commit();
-    if (edit != EditStatus::kOk) {
-      edit_.rollback();
-      return refuse(edit);
+      EditStatus edit = stage_constrained(p);
+      if (edit == EditStatus::kOk) edit = edit_.commit();
+      if (edit != EditStatus::kOk) {
+        edit_.rollback();
+        return refuse(edit);
+      }
     }
     for (int32_t vertex : removed_) alive[static_cast<std::size_t>(vertex)] = 0;
     largest_cavity_ = std::max(largest_cavity_, cavity_.size());
@@ -221,15 +312,18 @@ class Triangulation3D {
   const double* point(int32_t vertex) const {
     return points_.data() + 3 * static_cast<int64_t>(vertex);
   }
-  int32_t coincident_vertex(int32_t t, const double* p) const {
+  ExactPointRef ref(int32_t vertex) const {
+    return {point(vertex), exact_ == nullptr ? nullptr : exact_->position(vertex)};
+  }
+  int32_t coincident_vertex(int32_t t, const ExactPointRef& p) const {
     for (int32_t vertex : tet(t).v) {
-      if (vertex >= 0 && geometry::same_point(point(vertex), p)) return vertex;
+      if (vertex >= 0 && same_point(ref(vertex), p)) return vertex;
     }
     return -1;
   }
 
   bool find_facet(int32_t a, int32_t b, int32_t c, int32_t& t, int& slot) {
-    const int32_t start = locate(point(a));
+    const int32_t start = locate(ref(a));
     if (start < 0 || vertex_slot(tet(start), a) < 0) return false;
     next_stamp();
     stack_.clear();
@@ -327,8 +421,8 @@ class Triangulation3D {
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
-      return insphere_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
-                          v[0], v[1], v[2], v[3], p) > 0;
+      return insphere_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p), v[0], v[1], v[2],
+                          v[3], p) > 0;
     }
     return power3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
                        weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]],
@@ -346,7 +440,7 @@ class Triangulation3D {
     if (slot < 0) {
       result = finite_conflict(current, p);
     } else {
-      const int side = orient_with(current, slot, point(p));
+      const int side = orient_with(current, slot, ref(p));
       if (side > 0) {
         result = true;
       } else if (side == 0) {
@@ -436,7 +530,7 @@ class Triangulation3D {
       if (status != EditStatus::kOk) return status;
     }
     return edit_.validate([&](const int32_t* v) {
-      return orient3d(point(v[0]), point(v[1]), point(v[2]), point(v[3])) > 0;
+      return orient3d(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])) > 0;
     });
   }
   int32_t initialize(int32_t a, int32_t b, int32_t c, int32_t d) {
@@ -480,6 +574,7 @@ class Triangulation3D {
   }
 
   std::span<const double> points_;
+  const ExactVertexBank* exact_ = nullptr;
   std::span<const double> weights_;
   TetrahedralComplex complex_;
   CavityEdit edit_;

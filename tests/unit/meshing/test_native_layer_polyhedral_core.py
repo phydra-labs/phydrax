@@ -17,6 +17,7 @@ from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
     LayerSchedule,
+    MeshingEntityKind,
     MeshingFailure,
     MeshingFailureCategory,
     MeshingScope,
@@ -101,29 +102,14 @@ def _make_fixture() -> _LayerPolyhedralFixture:
         wall, mapped_source.source_id, mapped_source.source_revision
     )
     schedule = LayerSchedule.geometric(1, 0.02, growth_rate=1.2)
-    probe_control = BoundaryLayerControl(
+    # Native layer controls are realized on the wall mesh; the layer/core route
+    # binds them to the accepted layers by control identity.
+    control = BoundaryLayerControl(
         MeshingScope.whole(wall, 2),
         schedule,
         route=BoundaryLayerRoute.ADVANCING,
     )
-    probe_layers = prepare_boundary_layers(wall, probe_control)
-    probe_complex, probe_vertex_layer_ids = _mapped_core_cap_complex(
-        probe_layers,
-        mapped_source.reference.complex,
-        np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64),
-    )
-    probe_source = _bind_layer_source(
-        probe_layers, probe_complex, probe_vertex_layer_ids, charts, None
-    )
-    control = BoundaryLayerControl(
-        MeshingScope.whole(charts.domain, 2),
-        schedule,
-        route=BoundaryLayerRoute.ADVANCING,
-        volume_scope=MeshingScope.whole(probe_source, 3),
-    )
-    layers = prepare_boundary_layers(
-        wall, control, wall_association=charts.associations[0]
-    )
+    layers = prepare_boundary_layers(wall, control)
     complex_, vertex_layer_ids = _mapped_core_cap_complex(
         layers,
         mapped_source.reference.complex,
@@ -150,7 +136,7 @@ def _source_and_specification(
     *,
     include_power_source: bool,
 ) -> tuple[NativeLayerCoreSource, VolumeMeshingSpec]:
-    layers, layer_control, complex_, vertex_layer_ids, charts, power_source = fixture
+    layers, _, complex_, vertex_layer_ids, charts, power_source = fixture
     source = _bind_layer_source(
         layers,
         complex_,
@@ -158,7 +144,14 @@ def _source_and_specification(
         charts,
         power_source if include_power_source else None,
     )
-    boundary = MeshingScope.whole(source, 3)
+    boundary = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        np.asarray(complex_.facet_entity_ids, dtype=np.int64),
+    )
     layer_kinds = tuple(sorted({block.cell_kind for block in layers.mesh.blocks}))
     target = CellMeshingTarget(
         3,
@@ -189,7 +182,6 @@ def _source_and_specification(
             ),
         ),
         maximum_deviation=0.0,
-        layer_controls=(layer_control,),
     )
     return source, specification
 
@@ -219,12 +211,7 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     fixture = _make_fixture()
     source, specification = _source_and_specification(fixture, include_power_source=True)
     assert fixture.layers.control_id == fixture.control.control_id
-    assert specification.layer_controls == (fixture.control,)
-    assert specification.layer_controls[0].volume_scope is not None
-    assert (
-        specification.layer_controls[0].volume_scope.scope_id
-        == specification.boundary_scope.scope_id
-    )
+    assert specification.boundary_scope.entity_dimension == 2
     result = (
         NativeMeshingProvider(_options())
         .plan(source, specification, coordinate_contract=_COORDINATES)
@@ -243,10 +230,17 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     assert layer_ids.size == sum(block.cell_count for block in fixture.layers.mesh.blocks)
     assert core_ids.size == 1
     assert any(zone.name == fixture.complex.region_ids[0] for zone in result.zones)
-    assert all(
-        association.source_id == source.source_id
-        and association.source_revision == source.source_revision
+    # Layer cells keep exact lineage to the accepted layer result; every other
+    # association binds the layer/core source revision.
+    bindings = {
+        (association.source_id, association.source_revision)
         for association in result.associations
+    }
+    assert (source.source_id, source.source_revision) in bindings
+    assert all(
+        binding == (source.source_id, source.source_revision)
+        or binding[0] == fixture.layers.result_id
+        for binding in bindings
     )
 
     cap = fixture.layers.cap

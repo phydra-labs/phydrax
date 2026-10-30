@@ -131,7 +131,7 @@ def test_periodic_vertex_orbit_rejects_a_nonzero_one_ulp_mismatch() -> None:
         validate_periodic_vertex_orbits(
             coordinates,
             topology.cell,
-            topology.representatives,
+            topology.vertex_representatives,
             topology.vertex_shifts,
         )
 
@@ -155,9 +155,7 @@ def _periodic_tetra_mesh(shape: int = 3, /) -> CellMesh:
     shifts = np.stack(
         np.meshgrid(*(indices // 2 for _ in range(3)), indexing="ij"), axis=-1
     ).reshape((-1, 3))
-    representative_coordinates = (
-        (lattice % 2).astype(np.float64) / 2.0
-    ) @ vectors
+    representative_coordinates = ((lattice % 2).astype(np.float64) / 2.0) @ vectors
     coordinates = apply_periodic(
         periodic_cell,
         representative_coordinates[representatives],
@@ -175,7 +173,10 @@ def _periodic_tetra_mesh(shape: int = 3, /) -> CellMesh:
             tetrahedron = np.asarray(
                 [vertex_rows[tuple(row)] for row in path], dtype=np.int32
             )
-            if np.linalg.det(coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]]) < 0.0:
+            if (
+                np.linalg.det(coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]])
+                < 0.0
+            ):
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)
     block = CellBlock(
@@ -199,9 +200,8 @@ def _periodic_tetra_mesh(shape: int = 3, /) -> CellMesh:
         periodic_topology=topology,
     )
 
-def _periodic_grid_mesh(
-    subdivisions: int, /, *, perturbation: float = 0.0
-) -> CellMesh:
+
+def _periodic_grid_mesh(subdivisions: int, /, *, perturbation: float = 0.0) -> CellMesh:
     shape = 2 * subdivisions + 1
     vectors = np.asarray(((1.0, 0.2), (0.3, 1.1)), dtype=np.float64)
     periodic_cell = PeriodicCell(vectors)
@@ -277,6 +277,7 @@ def _periodic_boundary_controls(mesh: CellMesh) -> tuple[np.ndarray, np.ndarray]
         vertex_ids, boundary_vertices
     )
 
+
 def _periodic_metric_adaptation(
     mesh: CellMesh,
     metric: np.ndarray,
@@ -298,6 +299,7 @@ def _periodic_metric_adaptation(
         topology_operations=topology_operations,
         relocation=relocation,
     )
+
 
 def _require_periodic_outcome(mesh: CellMesh, outcome: Any, /) -> CellMesh:
     target = stage_periodic_topology_edit(mesh, outcome.edit)
@@ -326,6 +328,13 @@ def _reordered_periodic_mesh() -> CellMesh:
         selected = int(members[np.argmax(vertex_ids[members])])
         representatives[members] = selected
         shifts[members] = base_shifts[members] - base_shifts[selected]
+    # Re-rooting moves the canonical lift owner: every image is the exact
+    # image of its new root, which can differ from the old lift by roundoff.
+    vertex_coordinates = apply_periodic(
+        source_topology.cell,
+        np.asarray(base.coordinates, dtype=np.float64)[representatives],
+        shifts,
+    )
 
     source_block = base.blocks[0]
     cells = np.asarray(source_block.vertices, dtype=np.int32)
@@ -345,7 +354,7 @@ def _reordered_periodic_mesh() -> CellMesh:
         ),
     )
     lifted = CellMesh(
-        base.coordinates, blocks, vertex_global_ids=base.vertex_global_ids
+        vertex_coordinates, blocks, vertex_global_ids=base.vertex_global_ids
     )
     base_geometry = phx.discretization.CellGeometrySpec.affine(lifted)
     elements, routes, coordinates = base_geometry.resolve(lifted)
@@ -355,12 +364,12 @@ def _reordered_periodic_mesh() -> CellMesh:
         {(1, 0): Fraction(1)},
         {(0, 1): Fraction(1)},
     )
-    for block, source_element, route in zip(
-        lifted.blocks, elements, routes, strict=True
-    ):
+    for block, source_element, route in zip(lifted.blocks, elements, routes, strict=True):
         block_ids = np.asarray(block.global_ids, dtype=np.int64)
         if not isinstance(source_element, ScalarCoordinateElement):
-            raise TypeError("Periodic geometry fixture requires a scalar coordinate element.")
+            raise TypeError(
+                "Periodic geometry fixture requires a scalar coordinate element."
+            )
         geometry_elements[block.name] = PerCellRestrictedCellGeometryElement(
             source_element,
             block.cell_kind,
@@ -372,9 +381,7 @@ def _reordered_periodic_mesh() -> CellMesh:
     actual_geometry = phx.discretization.CellGeometrySpec(
         geometry_elements, geometry_routes, coordinates
     )
-    initial = PeriodicMeshTopology(
-        lifted, source_topology.cell, representatives, shifts
-    )
+    initial = PeriodicMeshTopology(lifted, source_topology.cell, representatives, shifts)
     quotient_ids = {
         degree: np.arange(
             100_000 * (degree + 1),
@@ -395,7 +402,7 @@ def _reordered_periodic_mesh() -> CellMesh:
         actual_geometry=actual_geometry,
     )
     return CellMesh(
-        base.coordinates,
+        vertex_coordinates,
         blocks,
         vertex_global_ids=base.vertex_global_ids,
         periodic_topology=topology,
@@ -452,27 +459,20 @@ def test_periodic_canonicalization_rebinds_reordered_quotient_mesh() -> None:
     cell_ids = np.concatenate(
         tuple(np.asarray(block.global_ids, dtype=np.int64) for block in source.blocks)
     )
-    reference_points = np.asarray(((0.2, 0.3), (0.3, 0.2)), dtype=np.float64)
+    reference_points = np.broadcast_to(
+        np.asarray(((0.2, 0.3), (0.3, 0.2)), dtype=np.float64),
+        (cell_ids.size, 2, 2),
+    )
     np.testing.assert_array_equal(
         source_geometry.evaluate(source, cell_ids, reference_points),
         target_geometry.evaluate(canonical, cell_ids, reference_points),
     )
-    assert (
-        target_topology.quotient.topology_id == source_topology.quotient.topology_id
-    )
+    assert target_topology.quotient.topology_id == source_topology.quotient.topology_id
 
-    source_lifted_offsets = np.asarray(
-        source_topology.lifted_offsets, dtype=np.int64
-    )
-    source_quotient_offsets = np.asarray(
-        source_topology.quotient_offsets, dtype=np.int64
-    )
-    target_lifted_offsets = np.asarray(
-        target_topology.lifted_offsets, dtype=np.int64
-    )
-    target_quotient_offsets = np.asarray(
-        target_topology.quotient_offsets, dtype=np.int64
-    )
+    source_lifted_offsets = np.asarray(source_topology.lifted_offsets, dtype=np.int64)
+    source_quotient_offsets = np.asarray(source_topology.quotient_offsets, dtype=np.int64)
+    target_lifted_offsets = np.asarray(target_topology.lifted_offsets, dtype=np.int64)
+    target_quotient_offsets = np.asarray(target_topology.quotient_offsets, dtype=np.int64)
     for degree in range(source.topological_dimension + 1):
         source_lifted_ids = np.asarray(
             source.entity_set(degree).entity_ids, dtype=np.int64
@@ -489,17 +489,13 @@ def test_periodic_canonicalization_rebinds_reordered_quotient_mesh() -> None:
             tuple(sorted(int(source_vertex_ids[int(vertex)]) for vertex in row)): int(
                 identifier
             )
-            for row, identifier in zip(
-                source_entity_rows, source_lifted_ids, strict=True
-            )
+            for row, identifier in zip(source_entity_rows, source_lifted_ids, strict=True)
         }
         target_ids_by_vertices = {
             tuple(sorted(int(target_vertex_ids[int(vertex)]) for vertex in row)): int(
                 identifier
             )
-            for row, identifier in zip(
-                target_entity_rows, target_lifted_ids, strict=True
-            )
+            for row, identifier in zip(target_entity_rows, target_lifted_ids, strict=True)
         }
         assert source_ids_by_vertices == target_ids_by_vertices
         source_rows = {
@@ -513,12 +509,18 @@ def test_periodic_canonicalization_rebinds_reordered_quotient_mesh() -> None:
             int, target_lifted_offsets[degree : degree + 2]
         )
         target_quotient_start = int(target_quotient_offsets[degree])
-        source_orbits = np.asarray(source_topology.orbit_indices, dtype=np.int64)[
-            source_lifted_start:source_lifted_stop
-        ] - source_quotient_start
-        target_orbits = np.asarray(target_topology.orbit_indices, dtype=np.int64)[
-            target_lifted_start:target_lifted_stop
-        ] - target_quotient_start
+        source_orbits = (
+            np.asarray(source_topology.orbit_indices, dtype=np.int64)[
+                source_lifted_start:source_lifted_stop
+            ]
+            - source_quotient_start
+        )
+        target_orbits = (
+            np.asarray(target_topology.orbit_indices, dtype=np.int64)[
+                target_lifted_start:target_lifted_stop
+            ]
+            - target_quotient_start
+        )
         source_quotient_ids = np.asarray(
             source_topology.quotient.entity_sets[degree].entity_ids, dtype=np.int64
         )
@@ -541,10 +543,7 @@ def test_periodic_canonicalization_rebinds_reordered_quotient_mesh() -> None:
             source_row = source_rows[int(identifier)]
             source_orbit = int(source_orbits[source_row])
             target_orbit = int(target_orbits[target_row])
-            assert (
-                source_quotient_ids[source_orbit]
-                == target_quotient_ids[target_orbit]
-            )
+            assert source_quotient_ids[source_orbit] == target_quotient_ids[target_orbit]
             assert source_orientations[source_row] == target_orientations[target_row]
             np.testing.assert_array_equal(
                 source_windings[source_row], target_windings[target_row]
@@ -588,7 +587,9 @@ def test_periodic_cell_partition_uses_quotient_and_synchronizes_lifted_owners() 
     )
     adjacency = _periodic_quotient_adjacency(mesh)
     pairs = adjacency.undirected_pairs()
-    expected_cut = np.count_nonzero(quotient_owner[pairs[:, 0]] != quotient_owner[pairs[:, 1]])
+    expected_cut = np.count_nonzero(
+        quotient_owner[pairs[:, 0]] != quotient_owner[pairs[:, 1]]
+    )
     assert int(distribution.evidence.edge_cut) == expected_cut
     assert len(distribution.halo_rows) == 2
 
@@ -609,7 +610,9 @@ def test_periodic_orbit_closure_keeps_distinct_winding_edges_separate() -> None:
     edge_count = topology.quotient.entity_sets[1].count
     for orbit in range(edge_count):
         row = quotient_start + orbit
-        key = tuple(int(value) for value in key_values[key_offsets[row] : key_offsets[row + 1]])
+        key = tuple(
+            int(value) for value in key_values[key_offsets[row] : key_offsets[row + 1]]
+        )
         vertices = np.asarray(key, dtype=np.int64).reshape((2, rank + 1))
         representative_pair = tuple(sorted(int(value) for value in vertices[:, 0]))
         same_representatives.setdefault(representative_pair, []).append((orbit, key))
@@ -683,6 +686,7 @@ def test_periodic_orbit_closure_keeps_distinct_winding_edges_separate() -> None:
     with pytest.raises(ValueError, match="different source mesh revision"):
         closure.require_source(stale, 1)
 
+
 def test_periodic_refinement_edge_lock_enforces_cell_and_edge_orbits() -> None:
     mesh = _skew_periodic_mesh()
     cell_layout = _periodic_cell_layout(mesh)
@@ -726,7 +730,9 @@ def test_periodic_refinement_edge_lock_enforces_cell_and_edge_orbits() -> None:
     assert selected_edges is not None
     locked_cells, locked_edges = prepared.require_source(mesh)
     np.testing.assert_array_equal(locked_cells, np.sort(selected_cells))
-    np.testing.assert_array_equal(locked_edges, selected_edges[np.argsort(selected_cells)])
+    np.testing.assert_array_equal(
+        locked_edges, selected_edges[np.argsort(selected_cells)]
+    )
 
     rows = np.flatnonzero(np.isin(cell_ids, selected_cells))
     source_edge_row = int(np.flatnonzero(edge_ids == selected_edges[0])[0])
@@ -752,6 +758,7 @@ def test_periodic_refinement_edge_lock_enforces_cell_and_edge_orbits() -> None:
 
     with pytest.raises(ValueError, match="different source mesh revision"):
         prepared.require_source(stale)
+
 
 def test_periodic_tetra_refinement_edge_lock_uses_all_six_cell_edges() -> None:
     mesh = _periodic_tetra_mesh()
@@ -789,22 +796,17 @@ def test_periodic_tetra_refinement_edge_lock_uses_all_six_cell_edges() -> None:
     locked_cells, locked_edges = lock.require_source(mesh)
     assert locked_cells.size == locked_edges.size
 
+
 def test_periodic_local_metric_stages_a_quotient_checked_outcome() -> None:
     mesh = _skew_periodic_mesh()
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     edges = np.stack(_entity_vertex_rows(mesh)[1])
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    scale = 0.5 * (
-        1.0 / np.sqrt(2.0) / np.min(lengths)
-        + np.sqrt(2.0) / np.max(lengths)
-    )
-    metric = np.broadcast_to(
-        scale**2 * np.eye(2), (points.shape[0], 2, 2)
-    ).copy()
+    scale = 0.5 * (1.0 / np.sqrt(2.0) / np.min(lengths) + np.sqrt(2.0) / np.max(lengths))
+    metric = np.broadcast_to(scale**2 * np.eye(2), (points.shape[0], 2, 2)).copy()
     metric_lengths = scale * lengths
     assert np.all(
-        (metric_lengths >= 1.0 / np.sqrt(2.0))
-        & (metric_lengths <= np.sqrt(2.0))
+        (metric_lengths >= 1.0 / np.sqrt(2.0)) & (metric_lengths <= np.sqrt(2.0))
     )
 
     outcome = execute_local_metric_adaptation(
@@ -851,6 +853,7 @@ def test_periodic_local_metric_stages_a_quotient_checked_outcome() -> None:
         )
     assert mesh.mesh_id == original_source_id
 
+
 def test_periodic_local_metric_commits_a_full_split_orbit() -> None:
     mesh = _skew_periodic_mesh()
     points = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -876,11 +879,10 @@ def test_periodic_local_metric_commits_a_full_split_orbit() -> None:
     assert target_topology is not None and source_topology is not None
     assert target_topology.vertex_orbit_count > source_topology.vertex_orbit_count
 
+
 def test_periodic_local_metric_commits_a_full_collapse_orbit() -> None:
     mesh = _periodic_grid_mesh(4, perturbation=0.02)
-    metric = np.broadcast_to(
-        0.01 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)
-    ).copy()
+    metric = np.broadcast_to(0.01 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)).copy()
     outcome = _periodic_metric_adaptation(
         mesh, metric, topology_operations=True, relocation=False
     )
@@ -899,13 +901,8 @@ def test_periodic_local_metric_commits_a_full_flip_orbit() -> None:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     edges = np.stack(_entity_vertex_rows(mesh)[1])
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    scale = 0.5 * (
-        1.0 / np.sqrt(2.0) / np.min(lengths)
-        + np.sqrt(2.0) / np.max(lengths)
-    )
-    metric = np.broadcast_to(
-        scale**2 * np.eye(2), (points.shape[0], 2, 2)
-    ).copy()
+    scale = 0.5 * (1.0 / np.sqrt(2.0) / np.min(lengths) + np.sqrt(2.0) / np.max(lengths))
+    metric = np.broadcast_to(scale**2 * np.eye(2), (points.shape[0], 2, 2)).copy()
     outcome = _periodic_metric_adaptation(
         mesh, metric, topology_operations=True, relocation=False
     )
@@ -917,9 +914,7 @@ def test_periodic_local_metric_commits_a_full_flip_orbit() -> None:
 
 def test_periodic_local_metric_commits_a_full_relocation_orbit() -> None:
     mesh = _periodic_grid_mesh(4, perturbation=0.08)
-    metric = np.broadcast_to(
-        4.0 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)
-    ).copy()
+    metric = np.broadcast_to(4.0 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)).copy()
     outcome = _periodic_metric_adaptation(
         mesh, metric, topology_operations=False, relocation=True
     )
@@ -945,13 +940,17 @@ def test_periodic_local_metric_commits_a_full_relocation_orbit() -> None:
             continue
         moved_rows.append(row)
         support = np.flatnonzero(stencil_valid[row])
-        assert sum(
-            (
-                Fraction.from_float(float(stencil_weights[row, column]))
-                for column in support.tolist()
-            ),
-            Fraction(0),
-        ) == 1
+        # Binary64 barycentric weights are roundings; the exact relocation
+        # stencil owns the partition of unity.
+        exact_weights = outcome.edit.stencil_exact_weights
+        assert exact_weights is not None
+        assert (
+            sum(
+                (exact_weights[row][column] for column in support.tolist()),
+                Fraction(0),
+            )
+            == 1
+        )
         assert not (
             support.size == 1
             and int(stencil_sources[row, support[0]]) == identifier
@@ -1014,9 +1013,7 @@ def test_periodic_explicit_ancestry_requires_real_stencil_support() -> None:
     quotient_ids = np.asarray(vertex_map.quotient_entity_ids, dtype=np.int64)[
         np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
     ]
-    keys = np.column_stack(
-        (quotient_ids, np.zeros((vertex_ids.size,), dtype=np.int64))
-    )
+    keys = np.column_stack((quotient_ids, np.zeros((vertex_ids.size,), dtype=np.int64)))
     windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
     target_set_id = target.entity_set(0).entity_set_id
     source_set_id = source.entity_set(0).entity_set_id
@@ -1092,23 +1089,28 @@ def test_native_periodic_delaunay_constructs_a_closed_skew_quotient() -> None:
         * (triangles[:, 2, 0] - triangles[:, 0, 0])
     )
     assert np.all(signed_areas > 0.0)
-    np.testing.assert_allclose(np.sum(signed_areas), cell.cell_measure, rtol=0.0, atol=1.0e-10)
+    np.testing.assert_allclose(
+        np.sum(signed_areas), cell.cell_measure, rtol=0.0, atol=1.0e-10
+    )
+
+
 def test_periodic_descriptor_rebuilds_new_vertices_from_edge_stencils() -> None:
     source = _skew_periodic_mesh()
     topology = source.periodic_topology
     assert topology is not None
     lifted_offsets = np.asarray(topology.lifted_offsets, dtype=np.int64)
     quotient_offsets = np.asarray(topology.quotient_offsets, dtype=np.int64)
-    edge_orbits = np.asarray(topology.orbit_indices, dtype=np.int64)[
-        lifted_offsets[1] : lifted_offsets[2]
-    ] - quotient_offsets[1]
+    edge_orbits = (
+        np.asarray(topology.orbit_indices, dtype=np.int64)[
+            lifted_offsets[1] : lifted_offsets[2]
+        ]
+        - quotient_offsets[1]
+    )
     orbit_counts = np.bincount(
         edge_orbits, minlength=topology.quotient.entity_sets[1].count
     )
     edge_orbit = int(np.flatnonzero(orbit_counts > 1)[0])
-    edge_rows = np.asarray(
-        _entity_vertex_rows(source)[1], dtype=object
-    )
+    edge_rows = np.asarray(_entity_vertex_rows(source)[1], dtype=object)
     members = np.flatnonzero(edge_orbits == edge_orbit)
     source_edge_ids = np.asarray(source.entity_set(1).entity_ids, dtype=np.int64)
     members = members[np.argsort(source_edge_ids[members], kind="stable")]
@@ -1120,16 +1122,27 @@ def test_periodic_descriptor_rebuilds_new_vertices_from_edge_stencils() -> None:
             np.arange(next_vertex_id, next_vertex_id + members.size, dtype=np.int64),
         )
     )
-    midpoint_coordinates = np.stack(
-        tuple(
-            np.mean(
-                np.asarray(source.coordinates)[
-                    np.asarray(edge_rows[int(edge_row)], dtype=np.int64)
-                ],
-                axis=0,
-            )
-            for edge_row in members
-        )
+    # The first new vertex is its orbit root; every other image is its exact
+    # lattice image, the one canonical lift the quotient descriptor accepts.
+    vertex_roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    vertex_shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    root_endpoints = np.asarray(edge_rows[int(members[0])], dtype=np.int64)
+    root_midpoint = np.mean(np.asarray(source.coordinates)[root_endpoints], axis=0)
+
+    def edge_translation(edge_row: int, /) -> np.ndarray:
+        endpoints = np.asarray(edge_rows[edge_row], dtype=np.int64)
+        for ordered in (endpoints, endpoints[::-1]):
+            deltas = vertex_shifts[ordered] - vertex_shifts[root_endpoints]
+            if np.array_equal(
+                vertex_roots[ordered], vertex_roots[root_endpoints]
+            ) and np.array_equal(deltas[0], deltas[1]):
+                return deltas[0]
+        raise ValueError("The edge-orbit member is not a lattice image of its root.")
+
+    midpoint_coordinates = apply_periodic(
+        topology.cell,
+        np.broadcast_to(root_midpoint, (members.size, root_midpoint.size)),
+        np.stack(tuple(edge_translation(int(edge_row)) for edge_row in members)),
     )
     target_coordinates = np.concatenate(
         (np.asarray(source.coordinates), midpoint_coordinates), axis=0
@@ -1164,9 +1177,19 @@ def test_periodic_descriptor_rebuilds_new_vertices_from_edge_stencils() -> None:
     assert isinstance(rebuilt, PeriodicMeshTopology)
     new_rows = np.arange(source_vertex_ids.size, target_vertex_ids.size)
     assert np.unique(np.asarray(rebuilt.vertex_representatives)[new_rows]).size == 1
-    assert np.unique(np.asarray(rebuilt.vertex_shifts)[new_rows], axis=0).shape[0] == members.size
-    assert rebuilt.quotient.entity_sets[0].count == topology.quotient.entity_sets[0].count + 1
-def test_periodic_halo_expansion_follows_discovered_orbits_without_global_gather() -> None:
+    assert (
+        np.unique(np.asarray(rebuilt.vertex_shifts)[new_rows], axis=0).shape[0]
+        == members.size
+    )
+    assert (
+        rebuilt.quotient.entity_sets[0].count
+        == topology.quotient.entity_sets[0].count + 1
+    )
+
+
+def test_periodic_halo_expansion_follows_discovered_orbits_without_global_gather() -> (
+    None
+):
     mesh = _skew_periodic_mesh()
     layout = _periodic_cell_layout(mesh)
     assert layout is not None
@@ -1217,7 +1240,9 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
             chosen_edges = []
             for row in rows:
                 edge_rows = cell_edges[row]
-                member = int(edge_rows[np.flatnonzero(edge_orbits[edge_rows] == edge_orbit)[0]])
+                member = int(
+                    edge_rows[np.flatnonzero(edge_orbits[edge_rows] == edge_orbit)[0]]
+                )
                 chosen_edges.append(int(source_edge_ids[member]))
             try:
                 lock = prepare_periodic_refinement_edge_lock(
@@ -1289,7 +1314,9 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
     assert np.all(np.isin(migrated_values, source_values))
 
     geometry_transition = transition.geometry_transition
-    assert geometry_transition is not None and geometry_transition.reference_map is not None
+    assert (
+        geometry_transition is not None and geometry_transition.reference_map is not None
+    )
     source_complex = phx.discretization.fem.FiniteElementDeRhamComplex(
         mesh,
         family="trimmed",
@@ -1329,7 +1356,10 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
     assert bool(advanced.committed)
     assert len(advanced.periodic_transfers) == 1
     quotient_transfer = advanced.periodic_transfers[0]
-    assert quotient_transfer.complex_map.source.space(1).size == quotient_state.fields[0].size
+    assert (
+        quotient_transfer.complex_map.source.space(1).size
+        == quotient_state.fields[0].size
+    )
     assert (
         quotient_transfer.complex_map.target.space(1).size
         == advanced.state.fields[0].size
@@ -1356,6 +1386,7 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
     assert isinstance(refused.diagnostics, str)
     assert "declared-de-rham-layout-transfer-refused" in refused.diagnostics
 
+
 def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
     source = _periodic_tetra_mesh()
     source_topology = source.periodic_topology
@@ -1370,7 +1401,9 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
     member_ids = np.asarray(vertex_map.lifted_entity_ids, dtype=np.int64)[member_rows]
     coordinate_row_by_id = {
         int(identifier): row
-        for row, identifier in enumerate(np.asarray(source.vertex_global_ids, dtype=np.int64))
+        for row, identifier in enumerate(
+            np.asarray(source.vertex_global_ids, dtype=np.int64)
+        )
     }
     target_coordinates = np.array(source.coordinates, dtype=np.float64, copy=True)
     target_rows = np.asarray(
@@ -1393,9 +1426,7 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
     selected_vertex_ids = set(map(int, member_ids))
     for degree in range(source.topological_dimension + 1):
         keys = np.asarray(entity_keys(source, degree), dtype=np.int64)
-        kinds = np.full(
-            (keys.shape[0],), EntityLineageKind.PRESERVED, dtype=np.int32
-        )
+        kinds = np.full((keys.shape[0],), EntityLineageKind.PRESERVED, dtype=np.int32)
         if degree == 0:
             kinds = np.asarray(
                 [
@@ -1523,7 +1554,6 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
         snapshot.periodic.identity_map.entity_maps[3].quotient_entity_ids,
         state.identity_map.entity_maps[3].quotient_entity_ids,
     )
-
 
 
 def test_periodic_tetra_distribution_keeps_owner_local_orbit_halos() -> None:
