@@ -901,8 +901,12 @@ bound to the source vertices). Routes:
 three-space using the retained source-chart UV coordinates. It pulls the full
 ambient SPD tensor back as `J.T @ M @ J`; anisotropy is never reduced to a scalar
 size. The route reuses the native local split, collapse, flip, and relocation
-operations, evaluating proposal vertices on the fixed source chart. Periodic UV
-seams use an exact quotient so every lifted edit is staged as one orbit.
+operations, evaluating proposal vertices on the fixed source chart. Regular
+periodic UV seams use an exact quotient so every lifted edit is staged as one
+orbit; a singular periodic direction, such as the polar axis of a sphere chart,
+is instead a fixed chart cut whose seam edges are protected. Every target vertex
+keeps an exact chart point on the source face shared by its parent cells, so a
+split of a source-cell interface stays on that exact edge.
 
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
