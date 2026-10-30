@@ -1,9 +1,10 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// One complete, source-aware stellar-refinement pass. Any remaining criterion
-// violation is reported as UNRESOLVED rather than hidden behind a pass quota.
+// Source-aware Delaunay refinement by checked circumcenter cavity insertion.
+// Any remaining criterion violation is reported per cell as UNRESOLVED.
 #include "refine3d.hpp"
+#include "improve3d.hpp"
 
 #include <algorithm>
 #include <array>
@@ -885,7 +886,14 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
             cone[static_cast<std::size_t>(corner)] =
                 corner == face ? center : mesh.point(tetrahedron.v[corner]);
           }
-          if (orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0) {
+          // Cells must be exactly positive and measurable by the quality
+          // criteria that follow refinement (finite shape, positive relative
+          // determinant, finite dihedral angles).
+          geometry::TetrahedronShape cone_shape;
+          if (orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0 ||
+              !geometry::tetrahedron_shape(cone.data(), cone_shape) ||
+              !(geometry::relative_determinant(cone.data()) > 0.0) ||
+              !std::isfinite(geometry::minimum_dihedral_degrees(cone.data()))) {
             drop = cell;
             break;
           }
