@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from fractions import Fraction
-from math import pi
+from math import inf, pi
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -21,6 +22,7 @@ from ..._strict import StrictModule
 from ..._validation import finite_real_scalar
 from .._atlas import TrimDomain
 from .._interval_enclosure import (
+    Interval,
     interval_add,
     interval_cos,
     interval_divide,
@@ -30,13 +32,18 @@ from .._interval_enclosure import (
     interval_square,
     interval_subtract,
 )
+from .._rational import fraction_down, fraction_up, rational_vector
 from ._edge_classification import _material_orientations
 from ._model import BRepEntityId, BRepModel
 from ._patches import (
     AbstractSurfacePatch,
+    CircleCurve,
     ConePatch,
     CylinderPatch,
+    ExactLineCurve,
+    LineCurve,
     PlanePatch,
+    RevolutionSurface,
     SpherePatch,
 )
 
@@ -75,30 +82,34 @@ def _direction(value: ArrayLike | tuple[float, float, float], /) -> np.ndarray:
     return scaled
 
 
-def _vector_interval(
-    values: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
+def _vector_interval(values: np.ndarray, /) -> Interval:
     host = np.asarray(values, dtype=np.float64)
     return host, host
 
 
-def _cross(
-    first: tuple[np.ndarray, np.ndarray],
-    second: tuple[np.ndarray, np.ndarray],
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
+def _scalar_interval(lower: float, upper: float, /) -> Interval:
+    return np.float64(lower), np.float64(upper)
+
+
+def _negate(value: Interval, /) -> Interval:
+    return np.negative(value[1]), np.negative(value[0])
+
+
+def _component(value: Interval, axis: int, /) -> Interval:
+    return np.asarray(value[0])[axis], np.asarray(value[1])[axis]
+
+
+def _cross(first: Interval, second: Interval, /) -> Interval:
     lower: list[np.ndarray] = []
     upper: list[np.ndarray] = []
     for axis in range(3):
         next_axis = (axis + 1) % 3
         last_axis = (axis + 2) % 3
         positive = interval_multiply(
-            (first[0][next_axis], first[1][next_axis]),
-            (second[0][last_axis], second[1][last_axis]),
+            _component(first, next_axis), _component(second, last_axis)
         )
         negative = interval_multiply(
-            (first[0][last_axis], first[1][last_axis]),
-            (second[0][next_axis], second[1][next_axis]),
+            _component(first, last_axis), _component(second, next_axis)
         )
         component = interval_subtract(positive, negative)
         lower.append(np.asarray(component[0]))
@@ -106,41 +117,293 @@ def _cross(
     return np.stack(lower), np.stack(upper)
 
 
-def _dot(
-    first: tuple[np.ndarray, np.ndarray],
-    second: tuple[np.ndarray, np.ndarray],
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    result: tuple[np.ndarray, np.ndarray] = (
-        np.asarray(0.0, dtype=np.float64), np.asarray(0.0, dtype=np.float64)
-    )
+def _dot(first: Interval, second: Interval, /) -> Interval:
+    result = _scalar_interval(0.0, 0.0)
     for axis in range(3):
         result = interval_add(
             result,
-            interval_multiply(
-                (first[0][axis], first[1][axis]),
-                (second[0][axis], second[1][axis]),
-            ),
+            interval_multiply(_component(first, axis), _component(second, axis)),
         )
     return np.asarray(result[0]), np.asarray(result[1])
 
 
-def _norm(value: tuple[np.ndarray, np.ndarray], /) -> tuple[float, float]:
-    squared: tuple[np.ndarray, np.ndarray] = (
-        np.asarray(0.0, dtype=np.float64), np.asarray(0.0, dtype=np.float64)
-    )
+def _norm(value: Interval, /) -> tuple[float, float]:
+    squared = _scalar_interval(0.0, 0.0)
     for axis in range(3):
-        squared = interval_add(
-            squared,
-            interval_square((value[0][axis], value[1][axis])),
-        )
+        squared = interval_add(squared, interval_square(_component(value, axis)))
     length = interval_sqrt(squared)
     return float(length[0]), float(length[1])
 
 
+type _ExactVector = tuple[Fraction, Fraction, Fraction]
+type _Cell = tuple[np.ndarray, tuple[float, float, bool]]
+
+
+@dataclass(frozen=True, slots=True)
+class _MeridianProfile:
+    """Exact data of a revolution profile lying in one plane through its axis.
+
+    With ``N`` the meridian-plane normal and ``m = N x axis``, the unnormalized
+    surface normal is ``(rho(v) / |N|^2) R_u(N x c'(v))`` where
+    ``rho(v) = (c(v) - origin) . m``. Its direction is regular through the axis.
+    """
+
+    axis: _ExactVector
+    axis_slack: float
+    circular: bool
+    radial: tuple[Fraction, Fraction, Fraction]
+    tangent: tuple[_ExactVector, _ExactVector, _ExactVector]
+    origin: _ExactVector
+    points: tuple[_ExactVector, _ExactVector, _ExactVector]
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalEnclosure:
+    vector: Interval
+    magnitude: tuple[float, float]
+    slack: float = 0.0
+
+
+def _exact_vector(values: object, /) -> _ExactVector | None:
+    if not isinstance(values, tuple) or len(values) != 3:
+        return None
+    if not all(isinstance(value, Fraction) for value in values):
+        return None
+    return values[0], values[1], values[2]
+
+
+def _exact_cross(first: _ExactVector, second: _ExactVector, /) -> _ExactVector:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _exact_dot(first: _ExactVector, second: _ExactVector, /) -> Fraction:
+    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
+
+def _exact_scale(scale: Fraction, vector: _ExactVector, /) -> _ExactVector:
+    return scale * vector[0], scale * vector[1], scale * vector[2]
+
+
+def _exact_interval(values: _ExactVector, /) -> Interval:
+    return (
+        np.asarray([fraction_down(value) for value in values], dtype=np.float64),
+        np.asarray([fraction_up(value) for value in values], dtype=np.float64),
+    )
+
+
+_ZERO_VECTOR: _ExactVector = (Fraction(0), Fraction(0), Fraction(0))
+
+
+def _meridian_profile(patch: RevolutionSurface, /) -> _MeridianProfile | None:
+    origin = rational_vector(np.asarray(patch.axis_origin, dtype=np.float64))
+    axis = rational_vector(np.asarray(patch.axis_direction, dtype=np.float64))
+    exact_axis: _ExactVector = (axis[0], axis[1], axis[2])
+    curve = patch.curve
+    if isinstance(curve, (LineCurve, ExactLineCurve)):
+        if isinstance(curve, LineCurve):
+            start = _exact_vector(curve.origin_exact)
+            step = _exact_vector(curve.direction_exact)
+        else:
+            start = _exact_vector(curve.first_exact)
+            last = _exact_vector(curve.last_exact)
+            step = (
+                None
+                if start is None or last is None
+                else (last[0] - start[0], last[1] - start[1], last[2] - start[2])
+            )
+        if start is None or step is None or step == _ZERO_VECTOR:
+            return None
+        relative = (start[0] - origin[0], start[1] - origin[1], start[2] - origin[2])
+        if _exact_dot(exact_axis, _exact_cross(relative, step)) != 0:
+            return None
+        plane = _exact_cross(exact_axis, relative)
+        if plane == _ZERO_VECTOR:
+            plane = _exact_cross(exact_axis, step)
+        if plane == _ZERO_VECTOR:
+            return None
+        radial = _exact_cross(plane, exact_axis)
+        radius = (_exact_dot(relative, radial), _exact_dot(step, radial), Fraction(0))
+        tangent = (_exact_cross(plane, step), _ZERO_VECTOR, _ZERO_VECTOR)
+        points = (relative, step, _ZERO_VECTOR)
+        circular = False
+    elif isinstance(curve, CircleCurve):
+        center = _exact_vector(curve.center_exact)
+        first = _exact_vector(curve.first_axis_exact)
+        second = _exact_vector(curve.second_axis_exact)
+        scale = curve.radius_exact
+        if center is None or first is None or second is None:
+            return None
+        if not isinstance(scale, Fraction):
+            return None
+        plane = _exact_cross(first, second)
+        relative = (center[0] - origin[0], center[1] - origin[1], center[2] - origin[2])
+        if (
+            plane == _ZERO_VECTOR
+            or _exact_dot(exact_axis, plane) != 0
+            or _exact_dot(relative, plane) != 0
+        ):
+            return None
+        radial = _exact_cross(plane, exact_axis)
+        radius = (
+            _exact_dot(relative, radial),
+            scale * _exact_dot(first, radial),
+            scale * _exact_dot(second, radial),
+        )
+        tangent = (
+            _ZERO_VECTOR,
+            _exact_scale(scale, _exact_cross(plane, second)),
+            _exact_scale(-scale, _exact_cross(plane, first)),
+        )
+        points = (relative, _exact_scale(scale, first), _exact_scale(scale, second))
+        circular = True
+    else:
+        return None
+    unit = _exact_dot(exact_axis, exact_axis) == 1
+    return _MeridianProfile(
+        exact_axis,
+        0.0 if unit else 64.0 * float(np.finfo(np.float64).eps),
+        circular,
+        radius,
+        tangent,
+        (origin[0], origin[1], origin[2]),
+        points,
+    )
+
+
+def _meridian_point_box(profile: _MeridianProfile, box: np.ndarray, /) -> np.ndarray:
+    """Enclose the surface points over ``box`` for singular-region reporting."""
+    angle = (np.float64(box[0, 0]), np.float64(box[1, 0]))
+    parameter = (np.float64(box[0, 1]), np.float64(box[1, 1]))
+    cosine, sine = interval_cos(angle), interval_sin(angle)
+    first, second = (
+        (interval_cos(parameter), interval_sin(parameter))
+        if profile.circular
+        else (parameter, _scalar_interval(0.0, 0.0))
+    )
+    points = interval_add(
+        interval_add(
+            _exact_interval(profile.origin),
+            _rotated(profile.points[0], profile.axis, cosine, sine),
+        ),
+        interval_add(
+            interval_multiply(
+                _rotated(profile.points[1], profile.axis, cosine, sine), first
+            ),
+            interval_multiply(
+                _rotated(profile.points[2], profile.axis, cosine, sine), second
+            ),
+        ),
+    )
+    lower = np.asarray(points[0], dtype=np.float64)
+    upper = np.asarray(points[1], dtype=np.float64)
+    slack = profile.axis_slack * float(np.max(np.abs(np.stack((lower, upper)))))
+    return np.stack((lower - slack, upper + slack))
+
+
+def _rotated(
+    vector: _ExactVector, axis: _ExactVector, cosine: Interval, sine: Interval, /
+) -> Interval:
+    """Enclose ``R_u vector`` with the axial component kept exact."""
+    scale = _exact_dot(axis, vector) / _exact_dot(axis, axis)
+    axial = _exact_scale(scale, axis)
+    normal = (vector[0] - axial[0], vector[1] - axial[1], vector[2] - axial[2])
+    return interval_add(
+        interval_add(
+            _exact_interval(axial),
+            interval_multiply(_exact_interval(normal), cosine),
+        ),
+        interval_multiply(_exact_interval(_exact_cross(axis, normal)), sine),
+    )
+
+
+def _meridian_normal(
+    profile: _MeridianProfile, box: np.ndarray, /
+) -> _NormalEnclosure | None:
+    parameter = (np.float64(box[0, 1]), np.float64(box[1, 1]))
+    angle = (np.float64(box[0, 0]), np.float64(box[1, 0]))
+    if profile.circular:
+        cosine, sine = interval_cos(parameter), interval_sin(parameter)
+        constant, cosine_part, sine_part = profile.radial
+        radius = interval_add(
+            interval_add(
+                _scalar_interval(fraction_down(constant), fraction_up(constant)),
+                interval_multiply(
+                    _scalar_interval(
+                        fraction_down(cosine_part), fraction_up(cosine_part)
+                    ),
+                    cosine,
+                ),
+            ),
+            interval_multiply(
+                _scalar_interval(fraction_down(sine_part), fraction_up(sine_part)),
+                sine,
+            ),
+        )
+        lower_radius, upper_radius = float(radius[0]), float(radius[1])
+        if lower_radius >= 0.0 and upper_radius > 0.0:
+            sign = 1
+        elif upper_radius <= 0.0 and lower_radius < 0.0:
+            sign = -1
+        else:
+            return None
+        tangent = interval_add(
+            interval_multiply(_exact_interval(profile.tangent[1]), cosine),
+            interval_multiply(_exact_interval(profile.tangent[2]), sine),
+        )
+        angle_cosine, angle_sine = interval_cos(angle), interval_sin(angle)
+        rotated = interval_add(
+            interval_multiply(
+                _rotated(profile.tangent[1], profile.axis, angle_cosine, angle_sine),
+                cosine,
+            ),
+            interval_multiply(
+                _rotated(profile.tangent[2], profile.axis, angle_cosine, angle_sine),
+                sine,
+            ),
+        )
+    else:
+        constant, slope, _ = profile.radial
+        endpoints = tuple(
+            constant + slope * Fraction.from_float(float(value)) for value in parameter
+        )
+        if all(value >= 0 for value in endpoints) and any(
+            value > 0 for value in endpoints
+        ):
+            sign = 1
+        elif all(value <= 0 for value in endpoints) and any(
+            value < 0 for value in endpoints
+        ):
+            sign = -1
+        else:
+            return None
+        tangent = _exact_interval(profile.tangent[0])
+        rotated = _rotated(
+            profile.tangent[0], profile.axis, interval_cos(angle), interval_sin(angle)
+        )
+    magnitude = _norm(tangent)
+    return _NormalEnclosure(
+        rotated if sign > 0 else _negate(rotated), magnitude, profile.axis_slack
+    )
+
+
 def _normal_interval(
     patch: AbstractSurfacePatch, box: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray] | None:
+) -> _NormalEnclosure | None:
+    if isinstance(patch, RevolutionSurface):
+        profile = _meridian_profile(patch)
+        if profile is not None:
+            return _meridian_normal(profile, box)
+    vector = _cartesian_normal_interval(patch, box)
+    return None if vector is None else _NormalEnclosure(vector, _norm(vector))
+
+
+def _cartesian_normal_interval(
+    patch: AbstractSurfacePatch, box: np.ndarray, /
+) -> Interval | None:
     if not patch.is_c1_on(box):
         return None
     if isinstance(patch, PlanePatch):
@@ -156,39 +419,42 @@ def _normal_interval(
         angle = (box[0, 0], box[1, 0])
         radial = interval_add(
             interval_multiply(
-                interval_cos(angle), _vector_interval(np.asarray(patch.first_axis)),
+                interval_cos(angle),
+                _vector_interval(np.asarray(patch.first_axis)),
             ),
             interval_multiply(
-                interval_sin(angle), _vector_interval(np.asarray(patch.second_axis)),
+                interval_sin(angle),
+                _vector_interval(np.asarray(patch.second_axis)),
             ),
         )
-        return radial if radius > 0.0 else (-radial[1], -radial[0])
+        return radial if radius > 0.0 else _negate(radial)
     if isinstance(patch, ConePatch):
         angle = (box[0, 0], box[1, 0])
         radial = interval_add(
             interval_multiply(
-                interval_cos(angle), _vector_interval(np.asarray(patch.first_axis)),
+                interval_cos(angle),
+                _vector_interval(np.asarray(patch.first_axis)),
             ),
             interval_multiply(
-                interval_sin(angle), _vector_interval(np.asarray(patch.second_axis)),
+                interval_sin(angle),
+                _vector_interval(np.asarray(patch.second_axis)),
             ),
         )
         semi = float(np.asarray(patch.semi_angle))
-        cosine = interval_cos((semi, semi))
-        sine = interval_sin((semi, semi))
-        axial = interval_multiply(
-            (-sine[1], -sine[0]), _vector_interval(np.asarray(patch.axis))
-        )
+        cosine = interval_cos(_scalar_interval(semi, semi))
+        sine = interval_sin(_scalar_interval(semi, semi))
+        axial = interval_multiply(_negate(sine), _vector_interval(np.asarray(patch.axis)))
         normal = interval_add(interval_multiply(cosine, radial), axial)
-        tangent = interval_divide(sine, interval_cos((semi, semi)))
+        tangent = interval_divide(sine, cosine)
         reference_radius = float(np.asarray(patch.reference_radius))
         radius = interval_add(
-            (np.asarray(reference_radius), np.asarray(reference_radius)),
+            _scalar_interval(reference_radius, reference_radius),
             interval_multiply((box[0, 1], box[1, 1]), tangent),
         )
-        if radius[0] <= 0.0 <= radius[1]:
+        lower_radius, upper_radius = float(radius[0]), float(radius[1])
+        if lower_radius <= 0.0 <= upper_radius:
             return None
-        return normal if radius[0] > 0.0 else (-normal[1], -normal[0])
+        return normal if lower_radius > 0.0 else _negate(normal)
     if isinstance(patch, SpherePatch):
         radius = float(np.asarray(patch.radius))
         if radius == 0.0:
@@ -197,19 +463,22 @@ def _normal_interval(
         latitude = (box[0, 1], box[1, 1])
         equatorial = interval_add(
             interval_multiply(
-                interval_cos(longitude), _vector_interval(np.asarray(patch.first_axis)),
+                interval_cos(longitude),
+                _vector_interval(np.asarray(patch.first_axis)),
             ),
             interval_multiply(
-                interval_sin(longitude), _vector_interval(np.asarray(patch.second_axis)),
+                interval_sin(longitude),
+                _vector_interval(np.asarray(patch.second_axis)),
             ),
         )
         radial = interval_add(
             interval_multiply(interval_cos(latitude), equatorial),
             interval_multiply(
-                interval_sin(latitude), _vector_interval(np.asarray(patch.axis)),
+                interval_sin(latitude),
+                _vector_interval(np.asarray(patch.axis)),
             ),
         )
-        return radial if radius > 0.0 else (-radial[1], -radial[0])
+        return radial if radius > 0.0 else _negate(radial)
     derivatives = patch.derivative_bounds(box)
     return _cross(
         (derivatives[0][:, 0], derivatives[1][:, 0]),
@@ -223,65 +492,94 @@ def _angle(
     orientation: float,
     direction: np.ndarray,
     /,
-) -> tuple[float, float]:
+) -> tuple[float, float, bool]:
+    """Return the angle enclosure and whether the normal is undefined on ``box``."""
     normal = _normal_interval(patch, box)
     if normal is None or not np.isfinite(orientation):
-        return 0.0, _PI
-    if orientation < 0.0:
-        normal = -normal[1], -normal[0]
-    magnitude = _norm(normal)
-    if not np.isfinite(magnitude[0]) or not np.isfinite(magnitude[1]) or magnitude[0] <= 0.0:
-        return 0.0, _PI
-    dot = _dot(normal, _vector_interval(direction))
+        return 0.0, _PI, True
+    vector = _negate(normal.vector) if orientation < 0.0 else normal.vector
+    magnitude = normal.magnitude
+    if (
+        not np.isfinite(magnitude[0])
+        or not np.isfinite(magnitude[1])
+        or magnitude[0] <= 0.0
+    ):
+        return 0.0, _PI, True
+    dot = _dot(vector, _vector_interval(direction))
     direction_norm = _norm(_vector_interval(direction))
-    denominator = interval_multiply(magnitude, direction_norm)
+    denominator = interval_multiply(
+        _scalar_interval(*magnitude), _scalar_interval(*direction_norm)
+    )
     cosine = interval_divide(dot, denominator)
-    lower_cosine = float(np.clip(cosine[0], -1.0, 1.0))
-    upper_cosine = float(np.clip(cosine[1], -1.0, 1.0))
+    lower_cosine = float(np.clip(float(cosine[0]) - normal.slack, -1.0, 1.0))
+    upper_cosine = float(np.clip(float(cosine[1]) + normal.slack, -1.0, 1.0))
     lower = float(np.nextafter(np.arccos(upper_cosine), -np.inf))
     upper = float(np.nextafter(np.arccos(lower_cosine), np.inf))
-    return max(0.0, lower), min(_PI, upper)
+    return max(0.0, lower), min(_PI, upper), False
 
 
-def _exact_vertical(
-    patch: AbstractSurfacePatch, direction: np.ndarray, /
-) -> bool:
+def _exact_vertical(patch: AbstractSurfacePatch, direction: np.ndarray, /) -> bool:
+    exact_direction = tuple(Fraction.from_float(float(value)) for value in direction)
+    if isinstance(patch, RevolutionSurface):
+        profile = _meridian_profile(patch)
+        if profile is None or profile.circular:
+            return False
+        axis = rational_vector(np.asarray(patch.axis_direction, dtype=np.float64))
+        exact_axis: _ExactVector = (axis[0], axis[1], axis[2])
+        pull: _ExactVector = (exact_direction[0], exact_direction[1], exact_direction[2])
+        # A meridian line parallel to the axis has radial normals only; they are all
+        # orthogonal to the pull exactly when the pull is parallel to the axis.
+        return profile.radial[1] == 0 and _exact_cross(pull, exact_axis) == _ZERO_VECTOR
     if not isinstance(patch, (PlanePatch, CylinderPatch)):
         return False
-    exact_direction = tuple(Fraction.from_float(float(value)) for value in direction)
     if isinstance(patch, PlanePatch):
-        first = tuple(Fraction.from_float(float(value)) for value in np.asarray(patch.first_axis))
-        second = tuple(Fraction.from_float(float(value)) for value in np.asarray(patch.second_axis))
+        first = tuple(
+            Fraction.from_float(float(value)) for value in np.asarray(patch.first_axis)
+        )
+        second = tuple(
+            Fraction.from_float(float(value)) for value in np.asarray(patch.second_axis)
+        )
         normal = (
             first[1] * second[2] - first[2] * second[1],
             first[2] * second[0] - first[0] * second[2],
             first[0] * second[1] - first[1] * second[0],
         )
-        return sum((a * b for a, b in zip(normal, exact_direction, strict=True)), Fraction(0)) == 0
-    first = tuple(Fraction.from_float(float(value)) for value in np.asarray(patch.first_axis))
-    second = tuple(Fraction.from_float(float(value)) for value in np.asarray(patch.second_axis))
+        return (
+            sum(
+                (a * b for a, b in zip(normal, exact_direction, strict=True)), Fraction(0)
+            )
+            == 0
+        )
+    first = tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(patch.first_axis)
+    )
+    second = tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(patch.second_axis)
+    )
     return all(
         sum((a * b for a, b in zip(axis, exact_direction, strict=True)), Fraction(0)) == 0
         for axis in (first, second)
     )
 
 
-def _trim_status(model: BRepModel, face: int, box: np.ndarray, /) -> bool | None:
+def _trim_excludes(model: BRepModel, face: int, box: np.ndarray, /) -> bool:
+    """Whether ``box`` is certified to lie outside the face trim."""
     domain: TrimDomain | None = model.trim_domains[face]
     if domain is None:
-        return True
+        return False
     bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     extent = bounds[1] - bounds[0]
     normalized = np.stack(((box[0] - bounds[0]) / extent, (box[1] - bounds[0]) / extent))
     result = domain.classify_boxes(normalized[None, ...])
-    if not bool(np.asarray(result.resolved[0])):
-        return None
-    return bool(np.asarray(result.inside[0]))
+    return bool(np.asarray(result.resolved[0])) and not bool(np.asarray(result.inside[0]))
 
 
-def _split(box: np.ndarray, bounds: np.ndarray, /) -> tuple[np.ndarray, np.ndarray] | None:
-    widths = (box[1] - box[0]) / (bounds[1] - bounds[0])
-    axis = int(np.argmax(widths))
+# Cells whose normal is undefined (axis folds, collapsed edges, non-C1 seams) are
+# subdivided only to this relative parameter width and then reported unresolved.
+_SINGULAR_RESOLUTION = 2.0**-8
+
+
+def _bisect(box: np.ndarray, axis: int, /) -> tuple[np.ndarray, np.ndarray] | None:
     low, high = box[0, axis], box[1, axis]
     middle = low + 0.5 * (high - low)
     if not low < middle < high:
@@ -323,58 +621,90 @@ def _face_range(
     patch = model.patches[face]
     vertical = _exact_vertical(patch, direction) and np.isfinite(orientation)
     bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
-    cells: list[tuple[np.ndarray, tuple[float, float], bool]] = []
+    extent = bounds[1] - bounds[0]
     critical = (pi / 2.0 - draft, pi / 2.0, *thresholds)
+    # A meridian revolution normal is singular only where the profile meets the
+    # axis, which depends on the profile parameter alone.
+    profile = _meridian_profile(patch) if isinstance(patch, RevolutionSurface) else None
+    singular_axis = None if profile is None else 1
+    cells: list[_Cell] = []
     root = bounds.copy()
-    trim = _trim_status(model, face, root)
-    if trim is not False:
-        cells.append((root, _angle(patch, root, orientation, direction), trim is None))
-    while cells:
-        lower = min(value[1][0] for value in cells)
-        upper = max(value[1][1] for value in cells)
-        candidates: list[int] = []
-        for index, (box, angle, trim_unknown) in enumerate(cells):
-            width = angle[1] - angle[0]
-            straddles = not vertical and width > angular_tolerance and any(
-                angle[0] <= value <= angle[1] for value in critical
+    if not _trim_excludes(model, face, root):
+        cells.append((root, _angle(patch, root, orientation, direction)))
+
+    def unresolved_cell(
+        angle: tuple[float, float, bool], lower: float, upper: float, /
+    ) -> bool:
+        if angle[2]:
+            return True
+        if vertical or angle[1] - angle[0] <= angular_tolerance:
+            return False
+        return (
+            angle[0] <= lower + angular_tolerance
+            or angle[1] >= upper - angular_tolerance
+            or any(angle[0] <= value <= angle[1] for value in critical)
+        )
+
+    def splittable_axes(box: np.ndarray, singular: bool, /) -> tuple[int, ...]:
+        widths = (box[1] - box[0]) / extent
+        if singular:
+            axes = (
+                (int(np.argmax(widths)),) if singular_axis is None else (singular_axis,)
             )
-            near_extreme = angle[0] <= lower + angular_tolerance or angle[1] >= upper - angular_tolerance
-            needs_tightening = width > angular_tolerance
-            if (needs_tightening and near_extreme) or straddles or (trim_unknown and needs_tightening):
-                if _split(box, bounds) is not None:
-                    candidates.append(index)
+            if all(widths[axis] <= _SINGULAR_RESOLUTION for axis in axes):
+                return ()
+        else:
+            # Widest normalized axis first so ties keep the isotropic order.
+            axes = tuple(int(axis) for axis in np.argsort(-widths, kind="stable"))
+        return tuple(axis for axis in axes if _bisect(box, axis) is not None)
+
+    def subdivide(box: np.ndarray, axes: tuple[int, ...], /) -> tuple[_Cell, ...]:
+        # Bisect along the axis whose children have the tightest enclosure: normal
+        # angles of revolved and extruded carriers often depend on one axis only.
+        best: tuple[_Cell, ...] | None = None
+        best_width = inf
+        for axis in axes:
+            halves = _bisect(box, axis)
+            if halves is None:
+                continue
+            children = tuple(
+                (child, _angle(patch, child, orientation, direction)) for child in halves
+            )
+            width = max(angle[1] - angle[0] for _, angle in children)
+            if best is None or width < best_width:
+                best, best_width = children, width
+        return () if best is None else best
+
+    while cells:
+        lower = min(angle[0] for _, angle in cells)
+        upper = max(angle[1] for _, angle in cells)
+        candidates: list[tuple[float, int, tuple[int, ...]]] = []
+        for index, (box, angle) in enumerate(cells):
+            if not unresolved_cell(angle, lower, upper):
+                continue
+            axes = splittable_axes(box, angle[2])
+            if axes:
+                candidates.append((angle[1] - angle[0], -index, axes))
         if not candidates:
             break
-        selected = max(candidates, key=lambda index: cells[index][1][1] - cells[index][1][0])
-        box, _, _ = cells.pop(selected)
-        children = _split(box, bounds)
-        if children is None:
-            cells.append((box, _angle(patch, box, orientation, direction), True))
-            continue
-        for child in reversed(children):
-            child_trim = _trim_status(model, face, child)
-            if child_trim is not False:
-                cells.append((child, _angle(patch, child, orientation, direction), child_trim is None))
-    lower = min((value[1][0] for value in cells), default=0.0)
-    upper = max((value[1][1] for value in cells), default=_PI)
-    unresolved = tuple(
-        value[0]
-        for value in cells
-        if (
-            (value[2] and not vertical)
-            or (
-                not vertical
-                and value[1][1] - value[1][0] > angular_tolerance
-                and (
-                    value[1][0] <= lower + angular_tolerance
-                    or value[1][1] >= upper - angular_tolerance
-                    or any(
-                        value[1][0] <= critical_value <= value[1][1]
-                        for critical_value in critical
-                    )
-                )
-            )
+        _, negative_index, axes = max(candidates, key=lambda row: row[:2])
+        box, _ = cells.pop(-negative_index)
+        cells.extend(
+            (child, angle)
+            for child, angle in reversed(subdivide(box, axes))
+            if not _trim_excludes(model, face, child)
         )
+    lower = min((angle[0] for _, angle in cells), default=0.0)
+    upper = max((angle[1] for _, angle in cells), default=_PI)
+    unresolved = tuple(
+        box for box, angle in cells if unresolved_cell(angle, lower, upper)
+    )
+    singular = tuple(
+        np.asarray(patch.bounding_box(box), dtype=np.float64)
+        if profile is None
+        else _meridian_point_box(profile, box)
+        for box, angle in cells
+        if angle[2]
     )
     status = _status(lower, upper, draft, bool(vertical), bool(unresolved))
     return BRepNormalRange(
@@ -383,7 +713,7 @@ def _face_range(
         status,
         jnp.asarray((lower, upper), dtype=jnp.float64),
         jnp.asarray(np.asarray(unresolved, dtype=np.float64).reshape((-1, 2, 2))),
-        jnp.zeros((0, 2, 3), dtype=jnp.float64),
+        jnp.asarray(np.asarray(singular, dtype=np.float64).reshape((-1, 2, 3))),
     )
 
 
@@ -410,7 +740,9 @@ def brep_normal_ranges(
         raise ValueError("normal.draft_angle must lie in [0, pi/2).")
     if tolerance <= 0.0:
         raise ValueError("normal.angular_tolerance must be finite and positive.")
-    thresholds = tuple(finite_real_scalar(value, "normal.angle_thresholds") for value in angle_thresholds)
+    thresholds = tuple(
+        finite_real_scalar(value, "normal.angle_thresholds") for value in angle_thresholds
+    )
     if any(value < 0.0 or value > pi for value in thresholds):
         raise ValueError("normal.angle_thresholds must lie in [0, pi].")
     vector = _direction(direction)
