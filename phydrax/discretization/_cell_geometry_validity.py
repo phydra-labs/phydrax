@@ -18,8 +18,12 @@ Rational pyramids are certified through the collapsed coordinates
 determinant pulled back to the unit cube is the numerator of the rational
 determinant divided by ``(1 - w)^2`` and is a tensor polynomial of degree
 ``(3k - 1, 3k - 1, 3k - 3)`` whose homogeneous Bernstein coefficients are bounded.
-Certification also requires unique exact apex continuations for every mapped
-coordinate and normalized Jacobian entry, matching coordinate tabulation.
+Certification requires a unique exact apex continuation of every mapped
+coordinate and positivity of the collapsed-cube Jacobian determinant on the
+closed cube, which covers every directional apex limit. A non-parallelogram base
+gives a direction-dependent apex Jacobian; such cells remain valid, and
+``apex_derivative_unique`` records the distinction because pointwise apex
+tabulation refuses them (collapsed quadrature never samples the apex).
 """
 
 from __future__ import annotations
@@ -185,6 +189,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     source_depth: Array
     maximum_coefficient_rounding_error: Array
     maximum_element_coefficient_rounding_error: Array
+    apex_derivative_unique: Array
     geometry: CellGeometrySpec
     mesh: CellMesh | None
     policy: CellValidityPolicy
@@ -212,6 +217,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         source_proof: _BlockCertificate,
         maximum_coefficient_rounding_error: float,
         maximum_element_coefficient_rounding_error: float,
+        apex_derivative_unique: ConvertibleToArray,
         geometry: CellGeometrySpec,
         mesh: CellMesh | None,
         policy: CellValidityPolicy,
@@ -235,6 +241,9 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         )
         if source.status.shape != execution.status.shape:
             raise ValueError("Source and execution proofs must cover the same cells.")
+        apex_unique = np.asarray(apex_derivative_unique)
+        if apex_unique.dtype != np.bool_ or apex_unique.shape != execution.status.shape:
+            raise ValueError("Apex derivative evidence must be one bool per cell.")
         if source.status is execution.status:
             status_ = execution.status
         else:
@@ -326,6 +335,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.maximum_element_coefficient_rounding_error = jnp.asarray(
             element_rounding_error, dtype=jnp.float64
         )
+        self.apex_derivative_unique = jnp.asarray(apex_unique, dtype=jnp.bool_)
         self.geometry = geometry
         self.mesh = mesh
         self.policy = policy
@@ -812,6 +822,13 @@ class _BlockCertificate:
     lower: np.ndarray
     upper: np.ndarray
     depth: np.ndarray
+    apex_derivative_unique: np.ndarray | None = None
+
+    def apex_flags(self) -> np.ndarray:
+        """Per-cell apex-derivative uniqueness; non-pyramid proofs are unique."""
+        if self.apex_derivative_unique is None:
+            return np.ones(self.status.shape, dtype=np.bool_)
+        return self.apex_derivative_unique
 
 
 def _normalize_proof_arrays(
@@ -1593,10 +1610,8 @@ def _certify_nonlinear_source_map(
             )
             for expression in expressions
         )
-        if any(
-            value.apex_value is None for row in normalized_derivatives for value in row
-        ):
-            return CellValidityStatus.UNRESOLVED, math.nan, math.nan, 0
+        # Normalized Jacobian entries live on the closed collapsed cube; a
+        # direction-dependent apex value is admitted (see apex_derivative_unique).
         jacobian = tuple(
             tuple(value.expression for value in row) for row in normalized_derivatives
         )
@@ -1652,6 +1667,8 @@ def _certify_source_block(
     lower = np.full(count, np.nan, dtype=np.float64)
     upper = np.full(count, np.nan, dtype=np.float64)
     depth = np.zeros(count, dtype=np.int64)
+    apex_unique = np.ones(count, dtype=np.bool_)
+    pyramid = reference_cell_topology(cell_kind).family == "pyramid"
     domain = _source_proof_domain(cell_kind)
     has_unsupported_map = False
     for row in range(routes.shape[0]):
@@ -1673,13 +1690,20 @@ def _certify_source_block(
                     expressions, cell_kind, domain, dimension, policy
                 )
             )
+            if pyramid:
+                apex_unique[row] = all(
+                    normalize_pyramid_reference_derivative(expression, axis).apex_value
+                    is not None
+                    for expression in expressions
+                    for axis in range(dimension)
+                )
             continue
         _, jacobian = affine
         status[row], determinant = _affine_quality(jacobian, dimension, policy)
         lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
         upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
     return (
-        _BlockCertificate(status, lower, upper, depth),
+        _BlockCertificate(status, lower, upper, depth, apex_unique),
         has_unsupported_map,
     )
 
@@ -2291,6 +2315,7 @@ def certify_cell_geometry_validity(
         np.concatenate([block.lower for block in blocks]),
         np.concatenate([block.upper for block in blocks]),
         np.concatenate([block.depth for block in blocks]),
+        np.concatenate([block.apex_flags() for block in blocks]),
     )
     source_proof = (
         _BlockCertificate(
@@ -2298,6 +2323,7 @@ def certify_cell_geometry_validity(
             np.concatenate([block.lower for block in source_blocks]),
             np.concatenate([block.upper for block in source_blocks]),
             np.concatenate([block.depth for block in source_blocks]),
+            np.concatenate([block.apex_flags() for block in source_blocks]),
         )
         if distinct_source
         else execution_proof
@@ -2314,6 +2340,7 @@ def certify_cell_geometry_validity(
         maximum_element_coefficient_rounding_error=coefficient_endpoint(
             element_rounding_error, upper=True, saturate=True
         ),
+        apex_derivative_unique=execution_proof.apex_flags() & source_proof.apex_flags(),
         geometry=spec,
         mesh=mesh_,
         policy=policy_,
