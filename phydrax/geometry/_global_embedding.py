@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from itertools import chain, combinations, product
 from typing import cast, Literal
@@ -58,11 +58,16 @@ from ..discretization._nested_reference import (
     nested_cell_reference_maps,
     validate_reference_cell_map_witnesses,
 )
+from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
 from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
 from ..linalg._exact import factor_exact_sparse, solve_exact
-from ._boundary_degree_embedding import build_oriented_boundary
+from ._boundary_degree_embedding import (
+    _face_trace_image_evidence,
+    build_oriented_boundary,
+)
 from ._embedding_cells import (
+    _cell_expressions,
     EmbeddingCell,
     prepare_embedding_cells,
     UnsupportedEmbeddingMap,
@@ -986,6 +991,71 @@ def _affine_chart_cell(
     )
 
 
+def _planar_faced_chart_cell(
+    cell: EmbeddingCell, arguments: tuple[Expression, ...], /
+) -> EmbeddingCell | None:
+    """Represent a non-affine restriction chart by its exact planar-faced image.
+
+    An injective chart whose every face trace is exactly its planar injective
+    corner polygon maps the closed reference cell onto the solid bounded by those
+    polygons. The chart image is therefore the vertex-defined polytope with the
+    chart corner images and the reference face loops, which the exact star
+    decomposition then tiles for contact comparison in root coordinates.
+    """
+    if (
+        cell.dimension != 3
+        or cell.pyramid_normalizations is not None
+        or not cell.facet_routes
+        or len(arguments) != 3
+        or any(not isinstance(expression, dict) for expression in arguments)
+    ):
+        return None
+    try:
+        corners = tuple(
+            tuple(evaluate_expression(expression, point) for expression in arguments)
+            for point in cell.reference_vertices
+        )
+        bounds = tuple(
+            polynomial_bounds(
+                expression, cast(BernsteinDomain, cell.domain), cell.dimension
+            )
+            for expression in arguments
+        )
+        chart = EmbeddingCell(
+            cell.global_id,
+            cell.block_name,
+            cell.local_index,
+            cell.kind,
+            cell.dimension,
+            cell.domain,
+            cell.vertex_indices,
+            cell.vertex_ids,
+            cell.reference_vertices,
+            arguments,
+            corners,
+            None,
+            None,
+            tuple(value[0] for value in bounds),
+            tuple(value[1] for value in bounds),
+            cell.facet_routes,
+        )
+        if prove_mapped_cell_injective(chart) is None:
+            return None
+        for face in cell.facet_routes:
+            if (
+                _face_trace_image_evidence(
+                    chart,
+                    tuple(cell.vertex_ids[index] for index in face),
+                    tuple(_point3(corners[index]) for index in face),
+                )
+                is None
+            ):
+                return None
+    except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+        return None
+    return replace(chart, coordinates=())
+
+
 def _inverse_affine_arguments(
     arguments: tuple[Expression, ...], dimension: int, /
 ) -> tuple[Expression, ...] | None:
@@ -1046,6 +1116,75 @@ def _inverse_affine_arguments(
     return tuple(result)
 
 
+def _block_root_chart_rows(
+    cell_kind: str,
+    cell_count: int,
+    element: object,
+    witness: ReferenceCellMapWitnesses | None,
+    parent_cell_ids: np.ndarray,
+    /,
+) -> tuple[tuple[int, int, str, tuple[Expression, ...]], ...]:
+    """Return ``(row, root cell ID, root kind, chart)`` for one block's cells.
+
+    Charts come from the restriction witness; a per-cell restricted element
+    without a witness carries its own exact root charts.
+    """
+    if witness is None:
+        if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            return ()
+        try:
+            return tuple(
+                (
+                    row,
+                    int(element.source_cell_ids[row]),
+                    element.source_element.cell_kind,
+                    tuple(element.chart_arguments(row)),
+                )
+                for row in range(cell_count)
+            )
+        except (IndexError, TypeError, ValueError):
+            return ()
+    try:
+        validate_reference_cell_map_witnesses(witness)
+        maps = nested_cell_reference_maps(witness)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return ()
+    if (
+        witness.target_cell_kind != cell_kind
+        or not np.array_equal(
+            np.asarray(witness.target_cell_ids, dtype=np.int64),
+            np.arange(cell_count, dtype=np.int64),
+        )
+        or not np.array_equal(
+            np.asarray(witness.source_cell_ids, dtype=np.int64), parent_cell_ids
+        )
+    ):
+        return ()
+    maps_by_target = {value.target_cell_id: value for value in maps}
+    rows: list[tuple[int, int, str, tuple[Expression, ...]]] = []
+    for row in range(cell_count):
+        chart = maps_by_target.get(row)
+        if (
+            chart is None
+            or chart.source_cell_id != int(parent_cell_ids[row])
+            or chart.arguments is None
+        ):
+            continue
+        arguments = cast(tuple[Expression, ...], tuple(chart.arguments))
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            try:
+                element_arguments = element.chart_arguments(row)
+            except (IndexError, TypeError, ValueError):
+                continue
+            if len(arguments) != len(element_arguments) or not all(
+                expression_equal(first, second)
+                for first, second in zip(arguments, element_arguments, strict=True)
+            ):
+                continue
+        rows.append((row, chart.source_cell_id, chart.source_cell_kind, arguments))
+    return tuple(rows)
+
+
 def _retained_root_charts(
     mesh: CellMesh, geometry: CellGeometrySpec, cells: tuple[EmbeddingCell, ...], /
 ) -> tuple[_RootChart | None, ...]:
@@ -1054,9 +1193,10 @@ def _retained_root_charts(
     if source is None:
         return tuple(None for _ in cells)
     try:
-        elements, _, _ = geometry.resolve(mesh)
+        elements, routes, _ = geometry.resolve(mesh)
     except (ValueError, TypeError, IndexError):
         return tuple(None for _ in cells)
+    coefficient_bank: tuple[tuple[CoordinateExactScalar, ...], ...] | None = None
     chart_witnesses = dict(
         zip(source.block_names, source.parent_reference_maps, strict=True)
     )
@@ -1071,84 +1211,70 @@ def _retained_root_charts(
         (cell.block_name, cell.local_index): index for index, cell in enumerate(cells)
     }
     result: list[_RootChart | None] = [None] * len(cells)
-    for block, element in zip(mesh.blocks, elements, strict=True):
-        witness = chart_witnesses.get(block.name)
-        if witness is None:
-            continue
-        try:
-            validate_reference_cell_map_witnesses(witness)
-            maps = nested_cell_reference_maps(witness)
-        except (TypeError, ValueError, ZeroDivisionError):
-            continue
-        if (
-            witness.target_cell_kind != block.cell_kind
-            or not np.array_equal(
-                np.asarray(witness.target_cell_ids, dtype=np.int64),
-                np.arange(block.cell_count, dtype=np.int64),
-            )
-            or not np.array_equal(
-                np.asarray(witness.source_cell_ids, dtype=np.int64),
-                parent_ids[block.name],
-            )
-        ):
-            continue
-        maps_by_target = {value.target_cell_id: value for value in maps}
-        for row, target_id in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
+    for block, element, block_route in zip(mesh.blocks, elements, routes, strict=True):
+        row_charts = _block_root_chart_rows(
+            block.cell_kind,
+            block.cell_count,
+            element,
+            chart_witnesses.get(block.name),
+            parent_ids[block.name],
+        )
+        for row, source_cell_id, source_cell_kind, arguments in row_charts:
             cell_index = cells_by_row.get((block.name, row))
-            if cell_index is None or int(target_id) != cells[cell_index].global_id:
-                continue
-            chart = maps_by_target.get(row)
-            if chart is None or chart.source_cell_id != int(parent_ids[block.name][row]):
+            if (
+                cell_index is None
+                or int(block.global_ids[row]) != cells[cell_index].global_id
+            ):
                 continue
             cell = cells[cell_index]
-            if chart.arguments is None:
-                continue
-            arguments = cast(tuple[Expression, ...], tuple(chart.arguments))
-            if isinstance(element, PerCellRestrictedCellGeometryElement):
-                try:
-                    element_arguments = element.chart_arguments(row)
-                    if len(arguments) != len(element_arguments) or not all(
-                        expression_equal(first, second)
-                        for first, second in zip(
-                            arguments, element_arguments, strict=True
-                        )
-                    ):
-                        continue
-                except (IndexError, TypeError, ValueError):
-                    continue
             inverse = _inverse_affine_arguments(arguments, cell.dimension)
-            if inverse is None:
-                continue
             try:
-                root_coordinates = tuple(
-                    compose_expression(expression, inverse)
-                    for expression in cell.coordinates
-                )
+                if inverse is not None:
+                    root_coordinates = tuple(
+                        compose_expression(expression, inverse)
+                        for expression in cell.coordinates
+                    )
+                elif isinstance(element, PerCellRestrictedCellGeometryElement):
+                    # A non-affine restriction chart (a dual hexahedron of a
+                    # root simplex) has no affine inverse; the common root map is
+                    # the source element on the cell's retained root route.
+                    if coefficient_bank is None:
+                        coefficient_bank = geometry.source_coordinates()
+                    root_coordinates = _cell_expressions(
+                        element.source_element,
+                        np.asarray(block_route, dtype=np.int64)[row],
+                        coefficient_bank,
+                        row,
+                    )
+                else:
+                    continue
                 composed = tuple(
                     compose_expression(expression, arguments)
                     for expression in root_coordinates
                 )
-                if not all(
+                if len(composed) != len(cell.coordinates) or not all(
                     expression_equal(first, second)
                     for first, second in zip(cell.coordinates, composed, strict=True)
                 ):
                     continue
-            except (TypeError, ValueError, ZeroDivisionError):
+            except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
                 continue
             root_cell = _root_reference_cell(
-                chart.source_cell_kind, root_coordinates, chart.source_cell_id
+                source_cell_kind, root_coordinates, source_cell_id
             )
             if root_cell is None:
                 continue
             result[cell_index] = _RootChart(
                 source.source_geometry_id,
                 source.source_topology_id,
-                chart.source_cell_id,
-                chart.source_cell_kind,
+                source_cell_id,
+                source_cell_kind,
                 arguments,
                 root_coordinates,
                 root_cell,
-                _affine_chart_cell(cell, arguments),
+                _affine_chart_cell(cell, arguments)
+                if inverse is not None
+                else _planar_faced_chart_cell(cell, arguments),
                 _root_map_injective(root_cell),
             )
     return tuple(result)
