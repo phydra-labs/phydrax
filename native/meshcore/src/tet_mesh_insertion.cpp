@@ -25,6 +25,8 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "facet_coverage.hpp"
+#include "improve3d.hpp"
+#include "refine3d.hpp"
 
 namespace phx::mc {
 namespace {
@@ -1037,6 +1039,158 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
   } catch (const std::length_error&) {
     return TetEditStatus::kIndexOverflow;
   }
+}
+
+// Visibility walk from `start` to `point` without crossing a constrained or
+// hull face, Bowyer-Watson growth across unconstrained faces by exact
+// insphere (seeded with the walked cells of the root's region when
+// `keep_walk`, so the cavity can replace the start cell even when its
+// circumsphere excludes `point`), then shrinking (dropping a cell and keeping
+// the root's component) until every cone cell is exactly positive and
+// measurable by the quality criteria (finite circumsphere, positive relative
+// determinant, finite dihedral angles) and every cavity vertex and
+// constrained segment stays on the cavity boundary. The root contains
+// `point`, so its cone is positive unless `point` is too close to its faces,
+// in which case the cavity is refused.
+TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* point,
+                                          bool keep_walk,
+                                          TetInsertionCavity& cavity) const {
+  cavity.cells.clear();
+  cavity.members.clear();
+  cavity.root = -1;
+  cavity.blocked_cell = -1;
+  cavity.blocked_face = -1;
+  std::int32_t current = start;
+  std::vector<std::int32_t> walk;
+  std::unordered_set<std::int32_t>& visited = cavity.members;
+  for (;;) {
+    if (!visited.insert(current).second) return TetCavityStatus::kRefused;
+    const Tetrahedron& cell = tet(current);
+    int exit_face = -1;
+    for (int face = 0; face < 4 && exit_face < 0; ++face) {
+      std::int32_t facet[3];
+      oriented_facet(cell.v, face, facet);
+      if (orient3d(this->point(facet[0]), this->point(facet[1]), this->point(facet[2]),
+                   point) < 0) {
+        exit_face = face;
+      }
+    }
+    if (exit_face < 0) break;
+    const std::int32_t next = cell.n[exit_face];
+    if (complex_.constraint(current, exit_face) != kNoConstraint || !complex_.live(next) ||
+        is_ghost(tet(next))) {
+      cavity.blocked_cell = current;
+      cavity.blocked_face = exit_face;
+      visited.clear();
+      return TetCavityStatus::kBlocked;
+    }
+    walk.push_back(current);
+    current = next;
+  }
+
+  const std::int32_t root = current;
+  std::vector<std::int32_t>& cells = cavity.cells;
+  std::unordered_set<std::int32_t>& members = cavity.members;
+  cells.assign(1, root);
+  members.clear();
+  members.insert(root);
+  std::vector<std::int32_t> stack(1, root);
+  if (keep_walk) {
+    for (std::int32_t cell : walk) {
+      if (complex_.region(cell) != complex_.region(root)) continue;
+      members.insert(cell);
+      cells.push_back(cell);
+      stack.push_back(cell);
+    }
+  }
+  while (!stack.empty()) {
+    const std::int32_t cell = stack.back();
+    stack.pop_back();
+    for (int face = 0; face < 4; ++face) {
+      const std::int32_t next = tet(cell).n[face];
+      if (complex_.constraint(cell, face) != kNoConstraint || !complex_.live(next) ||
+          is_ghost(tet(next)) || members.contains(next) ||
+          complex_.region(next) != complex_.region(root)) {
+        continue;
+      }
+      const Tetrahedron& candidate = tet(next);
+      if (insphere(this->point(candidate.v[0]), this->point(candidate.v[1]),
+                   this->point(candidate.v[2]), this->point(candidate.v[3]), point) > 0) {
+        members.insert(next);
+        cells.push_back(next);
+        stack.push_back(next);
+      }
+    }
+  }
+
+  for (;;) {
+    std::int32_t drop = -1;
+    std::set<std::uint64_t> kept_edges;
+    std::set<std::int32_t> boundary_vertices;
+    for (std::int32_t cell : cells) {
+      const Tetrahedron& tetrahedron = tet(cell);
+      for (int face = 0; face < 4 && drop < 0; ++face) {
+        if (members.contains(tetrahedron.n[face])) continue;
+        std::array<const double*, 4> cone{};
+        for (int corner = 0; corner < 4; ++corner) {
+          cone[static_cast<std::size_t>(corner)] =
+              corner == face ? point : this->point(tetrahedron.v[corner]);
+        }
+        geometry::TetrahedronShape cone_shape;
+        if (orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0 ||
+            !geometry::tetrahedron_shape(cone.data(), cone_shape) ||
+            !(geometry::relative_determinant(cone.data()) > 0.0) ||
+            !std::isfinite(geometry::minimum_dihedral_degrees(cone.data()))) {
+          drop = cell;
+          break;
+        }
+        std::int32_t facet[3];
+        oriented_facet(tetrahedron.v, face, facet);
+        for (int corner = 0; corner < 3; ++corner) {
+          boundary_vertices.insert(facet[corner]);
+          kept_edges.insert(edge_key(facet[corner], facet[(corner + 1) % 3]));
+        }
+      }
+      if (drop >= 0) break;
+    }
+    if (drop < 0) {
+      for (std::int32_t cell : cells) {
+        if (cell == root) continue;
+        const bool loses_vertex = std::any_of(
+            tet(cell).v, tet(cell).v + 4,
+            [&](std::int32_t vertex) { return !boundary_vertices.contains(vertex); });
+        const std::int32_t single[1]{cell};
+        if (loses_vertex || removes_constrained_segment(single, kept_edges)) {
+          drop = cell;
+          break;
+        }
+      }
+    }
+    if (drop < 0) break;
+    if (drop == root) {
+      cells.clear();
+      members.clear();
+      return TetCavityStatus::kRefused;
+    }
+    members.erase(drop);
+    std::unordered_set<std::int32_t> reached{root};
+    stack.assign(1, root);
+    std::vector<std::int32_t> connected{root};
+    while (!stack.empty()) {
+      const std::int32_t cell = stack.back();
+      stack.pop_back();
+      for (std::int32_t next : tet(cell).n) {
+        if (members.contains(next) && reached.insert(next).second) {
+          connected.push_back(next);
+          stack.push_back(next);
+        }
+      }
+    }
+    cells.swap(connected);
+    members.swap(reached);
+  }
+  cavity.root = root;
+  return TetCavityStatus::kFound;
 }
 
 bool TetMesh::validate_regions_and_constraints(
