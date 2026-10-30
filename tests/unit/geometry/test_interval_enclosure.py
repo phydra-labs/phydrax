@@ -133,6 +133,32 @@ def test_interval_repeated_multiply_preserves_square_dependency() -> None:
     assert upper[0, 0] >= 1.0
 
 
+def test_interval_real_power_of_sum_of_squares_encloses_origin_box() -> None:
+    def function(point: jax.Array) -> jax.Array:
+        planar = jnp.square(point[0]) + point[1] * point[1] + point[2] ** 4
+        return jnp.asarray((planar**0.75 - 0.25, planar ** (-0.5)))
+
+    prepared = prepare_interval_function(function, 3)
+    box_lower = np.asarray(((-0.5, -0.25, -0.125),), dtype=np.float64)
+    box_upper = np.asarray(((0.25, 0.5, 0.5),), dtype=np.float64)
+    lower, upper = prepared.evaluate(box_lower, box_upper)
+
+    planar_upper = 0.5**2 + 0.5**2 + 0.5**4
+    assert -0.25 - 1.0e-15 <= lower[0, 0] <= -0.25
+    assert upper[0, 0] >= planar_upper**0.75 - 0.25
+    assert lower[0, 1] <= planar_upper ** (-0.5)
+    assert upper[0, 1] == np.inf
+
+    def negative_base(point: jax.Array) -> jax.Array:
+        return jnp.asarray(((point[0] - 1.0) ** 0.5,))
+
+    with pytest.raises(IntervalExtensionError, match="nonnegative base"):
+        prepare_interval_function(negative_base, 1).evaluate(
+            np.asarray(((0.0,),), dtype=np.float64),
+            np.asarray(((0.5,),), dtype=np.float64),
+        )
+
+
 def test_interval_multiply_does_not_infer_correlation_from_equal_bounds() -> None:
     def function(point: jax.Array) -> jax.Array:
         return jnp.asarray((point[0] * point[1],))
