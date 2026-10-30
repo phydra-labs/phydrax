@@ -1,10 +1,23 @@
 from __future__ import annotations
 
+from typing import final
+
+import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, lax
 from jax.typing import ArrayLike
 
-from ._material_schedule import MaterialChainSchedule
+from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum_chunks
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...geometry._volume_material_map import VolumeMaterialChain
+from ._material_schedule import (
+    _mesh_cell_ids,
+    MaterialChainSchedule,
+    prepare_material_chain_schedule,
+)
 
 
 _ZERO_EXPONENT = -(1 << 60)
@@ -153,4 +166,195 @@ def material_chain_transpose(
     return _map_action(schedule, jnp.asarray(cotangents), transpose=True)
 
 
-__all__ = ["material_chain_apply", "material_chain_transpose"]
+@final
+class MaterialChainConservativeRemap(StrictModule, NonTrainableState):
+    """Material-following FV content transfer through one scheduled material chain.
+
+    The chain moves extensive content along the accepted material maps; cell
+    averages are converted through the endpoint FV cell volumes. ``source_rows``
+    and ``target_rows`` place the chain endpoint cell orders into the FV source
+    and target cell orders. ``source_coverage_defects`` is the per-source-cell
+    partition-of-unity defect of the composed extensive action, the evidence that
+    every unit of source content reaches the target exactly once.
+    """
+
+    schedule: MaterialChainSchedule
+    source_rows: Array
+    target_rows: Array
+    source_volumes: Array
+    target_volumes: Array
+    source_coverage_defects: Array
+    coverage_tolerance: float = eqx.field(static=True)
+    chain_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        schedule: MaterialChainSchedule,
+        source_rows: ArrayLike,
+        target_rows: ArrayLike,
+        source_volumes: ArrayLike,
+        target_volumes: ArrayLike,
+        /,
+        *,
+        chain_id: str,
+    ) -> None:
+        if not isinstance(schedule, MaterialChainSchedule):
+            raise TypeError("schedule must be a MaterialChainSchedule.")
+        sources = np.asarray(source_rows, dtype=np.int64)
+        targets = np.asarray(target_rows, dtype=np.int64)
+        source_volume = np.asarray(source_volumes, dtype=np.float64)
+        target_volume = np.asarray(target_volumes, dtype=np.float64)
+        if (
+            sources.shape != (schedule.source_count,)
+            or targets.shape != (schedule.target_count,)
+            or source_volume.shape != (schedule.source_count,)
+            or target_volume.shape != (schedule.target_count,)
+            or not np.array_equal(np.sort(sources), np.arange(sources.size))
+            or not np.array_equal(np.sort(targets), np.arange(targets.size))
+            or np.any(~np.isfinite(source_volume))
+            or np.any(~np.isfinite(target_volume))
+            or np.any(source_volume <= 0.0)
+            or np.any(target_volume <= 0.0)
+            or not isinstance(chain_id, str)
+            or not chain_id
+        ):
+            raise ValueError(
+                "Material-chain remap rows and volumes must bind the exact FV endpoints."
+            )
+        outflow = np.asarray(
+            material_chain_transpose(
+                schedule, jnp.ones((schedule.target_count,), dtype=jnp.float64)
+            ),
+            dtype=np.float64,
+        )
+        defects = outflow - 1.0
+        # Each composed edit rounds once per binary64 product and accumulation.
+        tolerance = float(
+            8.0
+            * schedule.map_count
+            * max(1, schedule.maximum_edges)
+            * np.finfo(np.float64).eps
+        )
+        self.schedule = schedule
+        self.source_rows = jnp.asarray(sources)
+        self.target_rows = jnp.asarray(targets)
+        self.source_volumes = jnp.asarray(source_volume)
+        self.target_volumes = jnp.asarray(target_volume)
+        self.source_coverage_defects = jnp.asarray(defects)
+        self.coverage_tolerance = tolerance
+        self.chain_id = chain_id
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "material-chain-conservative-remap",
+                "schedule": schedule.schedule_id,
+                "chain": chain_id,
+                "source_rows": sources,
+                "target_rows": targets,
+                "source_volumes": source_volume,
+                "target_volumes": target_volume,
+            }
+        )
+
+    @property
+    def coverage_error(self) -> Array:
+        """Largest partition-of-unity defect of the composed extensive action."""
+        return jnp.max(jnp.abs(self.source_coverage_defects))
+
+    @property
+    def coverage_passed(self) -> Array:
+        return self.coverage_error <= self.coverage_tolerance
+
+    def apply_content(self, source_content: ArrayLike, /) -> Array:
+        """Move extensive content from FV source rows to FV target rows."""
+        values = jnp.asarray(source_content)
+        if values.ndim == 0 or values.shape[0] != self.source_volumes.size:
+            raise ValueError("source_content must begin with the source cell count.")
+        moved = material_chain_apply(self.schedule, values[self.source_rows])
+        return (
+            jnp.zeros((self.target_volumes.size, *values.shape[1:]), dtype=moved.dtype)
+            .at[self.target_rows]
+            .set(moved)
+        )
+
+    def apply(self, source_cell_averages: ArrayLike, /) -> Array:
+        """Transfer material-following cell averages through extensive content."""
+        values = jnp.asarray(source_cell_averages)
+        if values.ndim == 0 or values.shape[0] != self.source_volumes.size:
+            raise ValueError("source_cell_averages must begin with source cell count.")
+        trailing = (1,) * (values.ndim - 1)
+        content = values * self.source_volumes.astype(values.dtype).reshape(
+            (-1, *trailing)
+        )
+        return self.apply_content(content) / self.target_volumes.astype(
+            values.dtype
+        ).reshape((-1, *trailing))
+
+    def conservation_defect(
+        self, source_cell_averages: ArrayLike, target_cell_averages: ArrayLike, /
+    ) -> Array:
+        """Compensated target-minus-source total content per field channel."""
+        source = jnp.asarray(source_cell_averages)
+        target = jnp.asarray(target_cell_averages)
+        if source.ndim == 0 or source.shape[0] != self.source_volumes.size:
+            raise ValueError("source_cell_averages must begin with source cell count.")
+        if target.ndim == 0 or target.shape[0] != self.target_volumes.size:
+            raise ValueError("target_cell_averages must begin with target cell count.")
+        source_terms = source * self.source_volumes.astype(source.dtype).reshape(
+            (-1,) + (1,) * (source.ndim - 1)
+        )
+        target_terms = target * self.target_volumes.astype(target.dtype).reshape(
+            (-1,) + (1,) * (target.ndim - 1)
+        )
+        return compensated_sum_chunks(
+            (target_terms, -source_terms), output_ndim=source.ndim - 1
+        )
+
+
+def prepare_material_chain_conservative_remap(
+    chain: VolumeMaterialChain,
+    source_cell_ids: ArrayLike,
+    target_cell_ids: ArrayLike,
+    source_volumes: ArrayLike,
+    target_volumes: ArrayLike,
+    /,
+) -> MaterialChainConservativeRemap:
+    """Bind one accepted material chain to FV source/target cell orders."""
+    if not isinstance(chain, VolumeMaterialChain):
+        raise TypeError("chain must be a VolumeMaterialChain.")
+    if not chain.maps:
+        raise ValueError("A material-chain remap requires at least one material map.")
+    chain_sources = _mesh_cell_ids(chain.maps[0].source_mesh)
+    chain_targets = _mesh_cell_ids(chain.maps[-1].target_mesh)
+    fv_sources = np.asarray(source_cell_ids, dtype=np.int64)
+    fv_targets = np.asarray(target_cell_ids, dtype=np.int64)
+    source_row_by_id = {int(value): row for row, value in enumerate(fv_sources)}
+    target_row_by_id = {int(value): row for row, value in enumerate(fv_targets)}
+    if (
+        fv_sources.ndim != 1
+        or fv_targets.ndim != 1
+        or len(source_row_by_id) != fv_sources.size
+        or len(target_row_by_id) != fv_targets.size
+        or set(source_row_by_id) != set(chain_sources.tolist())
+        or set(target_row_by_id) != set(chain_targets.tolist())
+    ):
+        raise ValueError(
+            "Material-chain remap cells differ from the chain endpoint meshes."
+        )
+    schedule = prepare_material_chain_schedule(chain, chain_sources, chain_targets)
+    return MaterialChainConservativeRemap(
+        schedule,
+        np.asarray([source_row_by_id[int(value)] for value in chain_sources]),
+        np.asarray([target_row_by_id[int(value)] for value in chain_targets]),
+        np.asarray(source_volumes, dtype=np.float64),
+        np.asarray(target_volumes, dtype=np.float64),
+        chain_id=chain.chain_id,
+    )
+
+
+__all__ = [
+    "MaterialChainConservativeRemap",
+    "material_chain_apply",
+    "material_chain_transpose",
+    "prepare_material_chain_conservative_remap",
+]

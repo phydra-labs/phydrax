@@ -8,9 +8,12 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from math import isfinite
-import numpy as np
 from numbers import Integral, Real
+
+import numpy as np
+
 from ...discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+
 
 type _ExactInput = Fraction | int | float | np.integer | np.floating
 
@@ -93,10 +96,7 @@ class BRepAffinePlacement:
             tuple(
                 tuple(
                     sum(
-                        (
-                            self.matrix[row][k] * inner.matrix[k][column]
-                            for k in range(4)
-                        ),
+                        (self.matrix[row][k] * inner.matrix[k][column] for k in range(4)),
                         Fraction(0),
                     )
                     for column in range(4)
@@ -119,10 +119,7 @@ class BRepAffinePlacement:
 
         def component(row: int, /) -> ExactScalar:
             return sum(
-                (
-                    self.matrix[row][column] * coordinates[column]
-                    for column in range(3)
-                ),
+                (self.matrix[row][column] * coordinates[column] for column in range(3)),
                 self.matrix[row][3],
             )
 
@@ -156,9 +153,13 @@ class BRepPlacementEvidence:
             raise TypeError("BRepPlacementEvidence bounds must be real scalar values.")
         values = tuple(float(value) for value in raw_values)
         if any(not isfinite(value) or value < 0.0 for value in values):
-            raise ValueError("BRepPlacementEvidence bounds must be finite and nonnegative.")
+            raise ValueError(
+                "BRepPlacementEvidence bounds must be finite and nonnegative."
+            )
         rotation, extent, point, translation = values
-        if Fraction(point) < Fraction(rotation) * Fraction(extent) + Fraction(translation):
+        if Fraction(point) < Fraction(rotation) * Fraction(extent) + Fraction(
+            translation
+        ):
             raise ValueError(
                 "BRepPlacementEvidence.point_deviation_bound must enclose rotation and translation error."
             )
@@ -169,9 +170,7 @@ class BRepPlacementEvidence:
         if self.entrywise_deviation_bounds is not None:
             raw_rows = tuple(tuple(row) for row in self.entrywise_deviation_bounds)
             if any(
-                isinstance(value, (bool, np.bool_))
-                for row in raw_rows
-                for value in row
+                isinstance(value, (bool, np.bool_)) for row in raw_rows for value in row
             ):
                 raise TypeError(
                     "BRepPlacementEvidence.entrywise_deviation_bounds cannot contain boolean values."
@@ -191,7 +190,10 @@ class BRepPlacementEvidence:
             translation_squared = sum(
                 (Fraction(row[3]) ** 2 for row in rows), Fraction(0)
             )
-            if Fraction(rotation) ** 2 < rotation_squared or Fraction(translation) ** 2 < translation_squared:
+            if (
+                Fraction(rotation) ** 2 < rotation_squared
+                or Fraction(translation) ** 2 < translation_squared
+            ):
                 raise ValueError(
                     "BRepPlacementEvidence scalar errors must enclose its entrywise bounds."
                 )
@@ -228,18 +230,12 @@ def _fraction_norm_upper(values: tuple[Fraction, ...], /) -> Fraction:
 
 def _rotation_norm(placement: BRepAffinePlacement, /) -> Fraction:
     return _fraction_norm_upper(
-        tuple(
-            placement.matrix[row][column]
-            for row in range(3)
-            for column in range(3)
-        )
+        tuple(placement.matrix[row][column] for row in range(3) for column in range(3))
     )
 
 
 def _translation_norm(placement: BRepAffinePlacement, /) -> Fraction:
-    return _fraction_norm_upper(
-        tuple(placement.matrix[row][3] for row in range(3))
-    )
+    return _fraction_norm_upper(tuple(placement.matrix[row][3] for row in range(3)))
 
 
 def _compose_placement_evidence(
@@ -284,6 +280,7 @@ def _compose_placement_evidence(
         translation_bound,
     )
 
+
 @dataclass(frozen=True, slots=True)
 class BRepAssemblyUse:
     """One named use of a solid or child definition with a local exact placement."""
@@ -297,7 +294,9 @@ class BRepAssemblyUse:
     def __post_init__(self) -> None:
         use_id = _identifier(self.use_id, "use_id")
         if (self.solid_index is None) == (self.definition_id is None):
-            raise ValueError("An assembly use must target exactly one solid or child definition.")
+            raise ValueError(
+                "An assembly use must target exactly one solid or child definition."
+            )
         if self.solid_index is not None and (
             isinstance(self.solid_index, bool)
             or not isinstance(self.solid_index, int)
@@ -373,9 +372,7 @@ class BRepAssemblyGraph:
     roots: tuple[BRepAssemblyUse, ...]
     definitions: tuple[BRepAssemblyDefinition, ...]
     solid_count: int
-    occurrence_evidence: tuple[
-        tuple[tuple[str, ...], BRepPlacementEvidence], ...
-    ] = ()
+    occurrence_evidence: tuple[tuple[tuple[str, ...], BRepPlacementEvidence], ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.solid_count, bool) or not isinstance(self.solid_count, int):
@@ -412,7 +409,9 @@ class BRepAssemblyGraph:
                 or any(not isinstance(part, str) or not part for part in row[0])
                 or not isinstance(row[1], BRepPlacementEvidence)
             ):
-                raise ValueError("Assembly occurrence evidence requires named paths and placement bounds.")
+                raise ValueError(
+                    "Assembly occurrence evidence requires named paths and placement bounds."
+                )
         if len({path for path, _ in evidence_rows}) != len(evidence_rows):
             raise ValueError("Assembly occurrence evidence paths must be unique.")
         object.__setattr__(self, "occurrence_evidence", tuple(sorted(evidence_rows)))
@@ -516,8 +515,7 @@ class BRepAssemblyGraph:
                 raise RuntimeError("Validated assembly use lost its target definition.")
             definition = definition_map[definition_id]
             stack.extend(
-                (child, path, placement, evidence)
-                for child in reversed(definition.uses)
+                (child, path, placement, evidence) for child in reversed(definition.uses)
             )
 
     def identity_payload(self) -> dict[str, object]:

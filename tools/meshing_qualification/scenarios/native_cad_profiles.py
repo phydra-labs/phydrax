@@ -287,6 +287,7 @@ def _roundtrip(
         "topology": _topology_record(imported.model),
     }
 
+
 def _boolean(
     first: phx.geometry.brep.BRepModel,
     second: phx.geometry.brep.BRepModel,
@@ -867,9 +868,7 @@ def _surface_case(model: phx.geometry.brep.BRepModel, size: float) -> dict[str, 
         or np.any(np.abs(points[:, 2] - 1.0) > 1.0e-10)
     )
     expected_faces = {domain.entity_id(2, patch) for patch in patches}
-    expected_face_indices = {
-        int(domain.source_indices[2][patch]) for patch in patches
-    }
+    expected_face_indices = {int(domain.source_indices[2][patch]) for patch in patches}
     face_associations = [
         association
         for association in result.associations
@@ -1394,7 +1393,6 @@ def _volume_run(
     }
 
 
-
 def _record_float(record: dict[str, object], name: str) -> float:
     value = record.get(name)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -1424,11 +1422,7 @@ def _intersection_loop_oracles(
                 f"CAD intersection loop {index} must be a record; got {type(raw_loop).__name__}."
             )
         side = raw_loop.get("side")
-        if (
-            isinstance(side, bool)
-            or not isinstance(side, int)
-            or side not in (-1, 1)
-        ):
+        if isinstance(side, bool) or not isinstance(side, int) or side not in (-1, 1):
             raise ValueError(
                 f"CAD intersection loop {index} side must be -1 or 1; got {side!r}."
             )
@@ -1466,10 +1460,9 @@ def _acceptance_failures(
             raise TypeError(
                 f"CAD acceptance failure {index} must contain string stage, type, and detail fields."
             )
-        failures.append(
-            {"stage": stage, "type": failure_type, "detail": detail}
-        )
+        failures.append({"stage": stage, "type": failure_type, "detail": detail})
     return failures
+
 
 def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, object]:
     fixture_case = (

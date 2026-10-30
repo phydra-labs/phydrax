@@ -2857,6 +2857,7 @@ def _finite_volume_archive_build_context(
 
         cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
         owned = np.asarray(view.owned, dtype=np.bool_)
+        graph_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
         offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
         neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
         neighbor_owner_ranks = np.asarray(
@@ -2865,20 +2866,21 @@ def _finite_volume_archive_build_context(
         )
         if (
             owned.shape != cell_ids.shape
-            or offsets.shape != (cell_ids.size + 1,)
+            or offsets.shape != (graph_ids.size + 1,)
             or offsets[-1] != neighbor_ids.size
             or neighbor_owner_ranks.shape != neighbor_ids.shape
+            or set(graph_ids.tolist()) != set(cell_ids[owned].tolist())
         ):
             raise ValueError("FV archive source neighbor metadata is malformed.")
         local_cells = set(int(identifier) for identifier in cell_ids.tolist())
         missing_records: list[tuple[int, int, int]] = []
-        for row in np.flatnonzero(owned):
+        for row, owned_cell_id in enumerate(graph_ids.tolist()):
             for neighbor_row in range(int(offsets[row]), int(offsets[row + 1])):
                 neighbor_id = int(neighbor_ids[neighbor_row])
                 if neighbor_id not in local_cells:
                     missing_records.append(
                         (
-                            int(cell_ids[row]),
+                            int(owned_cell_id),
                             neighbor_id,
                             int(neighbor_owner_ranks[neighbor_row]),
                         )

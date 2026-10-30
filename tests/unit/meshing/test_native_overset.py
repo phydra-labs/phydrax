@@ -105,6 +105,7 @@ def _native_pair() -> tuple[Any, Any, Any]:
     )
     return donor, receptor, connectivity
 
+
 def _poly_part(name: str, lower: Any, upper: Any) -> Any:
     unit = np.asarray(
         (
@@ -161,9 +162,13 @@ def test_mapped_locator_contains_whole_curved_source_map() -> None:
     located = locator.locate(point)
 
     assert np.asarray(located.candidates_complete).tolist() == [True]
-    assert np.asarray(located.status).tolist() == [int(phx.discretization.CellLocationStatus.LOCATED)]
+    assert np.asarray(located.status).tolist() == [
+        int(phx.discretization.CellLocationStatus.LOCATED)
+    ]
     assert np.asarray(located.candidate_cells)[0, 0] == 0
-    np.testing.assert_allclose(np.asarray(located.candidate_reference)[0, 0], reference[0], atol=1e-10)
+    np.testing.assert_allclose(
+        np.asarray(located.candidate_reference)[0, 0], reference[0], atol=1e-10
+    )
 
 
 def test_mapped_locator_reports_complete_multiple_inverse_roots_as_ambiguous() -> None:
@@ -297,9 +302,7 @@ def test_polyhedral_locator_classifies_nonconvex_authored_cell() -> None:
         )
         for index in range(polygon.shape[0])
     )
-    mesh = phx.discretization.CellMesh.from_polyhedra(
-        coordinates, (tuple(face_loops),)
-    )
+    mesh = phx.discretization.CellMesh.from_polyhedra(coordinates, (tuple(face_loops),))
     located = PreparedPolyhedralCellLocator(mesh).locate(
         np.asarray(
             (
@@ -513,7 +516,9 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         or group_ranks != (0, 1, 2)
         or len(jax.local_devices()) != 1
     ):
-        pytest.skip("This smoke requires three native process owners, one device per process.")
+        pytest.skip(
+            "This smoke requires three native process owners, one device per process."
+        )
     group = ExecutionGroup(
         ExecutionGroupSpec(
             "native-owner-local-overset-public-smoke",
@@ -551,8 +556,6 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         part
         for source_assembly in (donor_source, shadow_source, receptor_source)
         for part in source_assembly.parts
-        if np.asarray(part.carrier.cell_ids).size
-        or np.asarray(part.carrier.vertex_ids).size
     )
     manifests = tuple(
         manifest
@@ -568,7 +571,19 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
     views = {name: part.carrier for name, part in parts_by_name.items()}
     empty_rank_flags = np.asarray(
         multihost_utils.process_allgather(
-            np.asarray((int(partition == 2 and not local_parts),), dtype=np.int32)
+            np.asarray(
+                (
+                    int(
+                        partition == 2
+                        and not any(
+                            np.asarray(part.carrier.cell_ids).size
+                            or np.asarray(part.carrier.vertex_ids).size
+                            for part in local_parts
+                        )
+                    ),
+                ),
+                dtype=np.int32,
+            )
         )
     ).reshape((-1,))
     assert empty_rank_flags[2] == 1
@@ -678,10 +693,7 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
     stale_pair_available = partition != 0 or (
         donor_name in views
         and receptor_name in views
-        and any(
-            np.asarray(block.cell_ids).size
-            for block in views[receptor_name].blocks
-        )
+        and any(np.asarray(block.cell_ids).size for block in views[receptor_name].blocks)
     )
     stale_pair_flags = np.asarray(
         multihost_utils.process_allgather(
@@ -704,9 +716,7 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
                 )
             )
             try:
-                prepare_overset_field_transfer(
-                    candidate, {donor_name: stale}, "u"
-                )
+                prepare_overset_field_transfer(candidate, {donor_name: stale}, "u")
             except ValueError as error:
                 stale_binding_refused = "stale source/map/context identity" in str(error)
     stale_flags = np.asarray(
@@ -716,12 +726,8 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
     ).reshape((-1,))
     assert stale_flags[0] == 1
 
-    transfer = prepare_overset_field_transfer(
-        candidate, local_reconstructions, "u"
-    )
-    exchange = transfer.prepare_owner_local_exchange(
-        coefficient_ids, group, views
-    )
+    transfer = prepare_overset_field_transfer(candidate, local_reconstructions, "u")
+    exchange = transfer.prepare_owner_local_exchange(coefficient_ids, group, views)
     resolved = exchange.connectivity
     receptor_evidence = resolved.receptors_of(receptor_name)
     assert resolved.donor_search_complete
@@ -730,8 +736,7 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
     assert np.all(np.asarray(receptor_evidence.found))
     assert np.all(np.asarray(receptor_evidence.candidate_parts) == 2)
     assert np.all(
-        np.asarray(receptor_evidence.donor_parts)
-        == resolved.part_index(donor_name)
+        np.asarray(receptor_evidence.donor_parts) == resolved.part_index(donor_name)
     )
     digest = np.frombuffer(bytes.fromhex(resolved.connectivity_id), dtype=np.uint8)
     gathered_digests = np.asarray(multihost_utils.process_allgather(digest))
@@ -772,18 +777,10 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         for name in transposed
     )
     lhs = float(
-        np.sum(
-            np.asarray(
-                multihost_utils.process_allgather(np.asarray((local_lhs,)))
-            )
-        )
+        np.sum(np.asarray(multihost_utils.process_allgather(np.asarray((local_lhs,)))))
     )
     rhs = float(
-        np.sum(
-            np.asarray(
-                multihost_utils.process_allgather(np.asarray((local_rhs,)))
-            )
-        )
+        np.sum(np.asarray(multihost_utils.process_allgather(np.asarray((local_rhs,)))))
     )
 
     expected_by_receptor = {
@@ -799,7 +796,12 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
     for name, values in output.items():
         output_matches_winners &= np.allclose(
             np.asarray(values).reshape(-1),
-            np.asarray([expected_by_receptor[identifier] for identifier in local_receptor_ids[name]]),
+            np.asarray(
+                [
+                    expected_by_receptor[identifier]
+                    for identifier in local_receptor_ids[name]
+                ]
+            ),
             rtol=0,
             atol=0,
         )
@@ -836,21 +838,28 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         )
         status_by_cell = dict(
             zip(
-                np.asarray(resolved.blanking_of(donor_name).cell_ids, dtype=np.int64).tolist(),
-                np.asarray(resolved.blanking_of(donor_name).cell_status, dtype=np.int32).tolist(),
+                np.asarray(
+                    resolved.blanking_of(donor_name).cell_ids, dtype=np.int64
+                ).tolist(),
+                np.asarray(
+                    resolved.blanking_of(donor_name).cell_status, dtype=np.int32
+                ).tolist(),
                 strict=True,
             )
         )
         ambiguous_by_cell = dict(
             zip(
-                np.asarray(resolved.blanking_of(donor_name).cell_ids, dtype=np.int64).tolist(),
-                np.asarray(resolved.blanking_of(donor_name).ambiguous_cells, dtype=np.bool_).tolist(),
+                np.asarray(
+                    resolved.blanking_of(donor_name).cell_ids, dtype=np.int64
+                ).tolist(),
+                np.asarray(
+                    resolved.blanking_of(donor_name).ambiguous_cells, dtype=np.bool_
+                ).tolist(),
                 strict=True,
             )
         )
         locally_owned_winners_are_active = all(
-            status_by_cell[int(identifier)]
-            == int(OversetCellStatus.ACTIVE)
+            status_by_cell[int(identifier)] == int(OversetCellStatus.ACTIVE)
             and not ambiguous_by_cell[int(identifier)]
             for identifier in np.asarray(receptor_evidence.donor_cells, dtype=np.int64)
             if owner_by_cell.get(int(identifier)) == partition
@@ -921,9 +930,7 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         value_action="invariant",
     )
     with pytest.raises(OversetConnectivityError, match="orphan") as orphan_failure:
-        orphan_transfer.prepare_owner_local_exchange(
-            coefficient_ids, group, views
-        )
+        orphan_transfer.prepare_owner_local_exchange(coefficient_ids, group, views)
     assert orphan_failure.value.connectivity.donor_search_complete
     assert not orphan_failure.value.connectivity.complete
     assert orphan_failure.value.connectivity.orphan_count > 0
@@ -952,11 +959,11 @@ def test_native_field_action_and_transpose_are_exact() -> None:
     np.testing.assert_allclose(output, 1.0 + expected[:, 0] + 2.0 * expected[:, 1])
     dual = jnp.asarray((1.5, -0.25, 2.0))
     transpose = transfer.transpose({"receptor": dual})["donor"]
-    np.testing.assert_allclose(jnp.vdot(output, dual), jnp.vdot(field, transpose), atol=1e-12)
+    np.testing.assert_allclose(
+        jnp.vdot(output, dual), jnp.vdot(field, transpose), atol=1e-12
+    )
     invalid_cotangents = {
-        evidence.part_name: jnp.zeros(
-            (evidence.receptor_ids.size, *transfer.value_shape)
-        )
+        evidence.part_name: jnp.zeros((evidence.receptor_ids.size, *transfer.value_shape))
         for evidence in transfer.receptors
     }
     invalid_cotangents["receptor"] = jnp.zeros((2,))
@@ -978,7 +985,9 @@ def test_native_conservative_common_refinement_conserves_extensive_content() -> 
     target_content = remap.apply_extensive(source_content)
     action_evidence = remap.apply_extensive_with_evidence(source_content)
     np.testing.assert_allclose(action_evidence.values, target_content, atol=1e-12)
-    np.testing.assert_allclose(action_evidence.absolute_conservation_defect, 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        action_evidence.absolute_conservation_defect, 0.0, atol=1e-12
+    )
     np.testing.assert_allclose(target_content.sum(), source_content.sum(), atol=1e-12)
     np.testing.assert_allclose(remap.apply_intensive(jnp.full((2,), 3.5)), 3.5)
     target_dual = jnp.asarray((1.25, -0.75))
@@ -987,7 +996,6 @@ def test_native_conservative_common_refinement_conserves_extensive_content() -> 
         jnp.vdot(source_content, remap.apply_extensive_transpose(target_dual)),
         atol=1e-12,
     )
-
 
 
 def test_curved_common_root_overset_remap_conserves_extensive_content() -> None:
@@ -1013,9 +1021,7 @@ def test_curved_common_root_overset_remap_conserves_extensive_content() -> None:
     )
     source = MeshPart("curved-source", source_result)
     target = MeshPart("curved-target", target_result)
-    remap = prepare_overset_conservative_remap(
-        source, target, common_root=witness
-    )
+    remap = prepare_overset_conservative_remap(source, target, common_root=witness)
 
     assert remap.complete
     assert remap.integration_evidence is not None
@@ -1039,11 +1045,16 @@ def test_curved_common_root_overset_remap_conserves_extensive_content() -> None:
         atol=1e-12,
     )
 
+
 def test_orphaned_moving_overset_rebind_preserves_accepted_composition() -> None:
     _, receptor, connectivity = _native_pair()
-    composition = Composition(connectivity.composition_entries(), boundary_id="accepted-0")
+    composition = Composition(
+        connectivity.composition_entries(), boundary_id="accepted-0"
+    )
     monitor = phx.meshing.MeshMotionMonitor(receptor.carrier.mesh)
-    moved_coordinates = np.asarray(receptor.carrier.mesh.coordinates) + np.asarray((4.0, 0.0))
+    moved_coordinates = np.asarray(receptor.carrier.mesh.coordinates) + np.asarray(
+        (4.0, 0.0)
+    )
     advance = phx.meshing.advance_mesh_motion(
         monitor, receptor.carrier, moved_coordinates, boundary_residual=0.0
     )
@@ -1086,7 +1097,9 @@ def test_overset_motion_requires_accepted_source_bound_advance() -> None:
 
 def test_accepted_moving_overset_rebind_updates_interpolated_fields() -> None:
     donor, receptor, connectivity = _native_pair()
-    composition = Composition(connectivity.composition_entries(), boundary_id="accepted-0")
+    composition = Composition(
+        connectivity.composition_entries(), boundary_id="accepted-0"
+    )
     discretization = phx.discretization.FiniteElementPlan(
         donor.carrier.mesh,
         phx.discretization.FiniteElementFieldSpec(

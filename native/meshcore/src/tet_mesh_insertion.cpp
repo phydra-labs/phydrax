@@ -3,6 +3,7 @@
 //
 // Generation-checked edit batches and source/region-preserving cavity commits.
 #include "tet_mesh.hpp"
+#include "triangulation3d.hpp"
 
 #include <algorithm>
 #include <array>
@@ -589,6 +590,445 @@ TetEditStatus TetMesh::relocate_impl(
         vertex_edge_parameters_[slot] = 0.0;
       }
     }
+    ++generation_;
+    unmet_records_.clear();
+    return TetEditStatus::kApplied;
+  } catch (const std::bad_alloc&) {
+    return TetEditStatus::kAllocationFailure;
+  } catch (const std::length_error&) {
+    return TetEditStatus::kIndexOverflow;
+  }
+}
+
+// Validity of an interior reconnection or collapse is local. CavityEdit matches
+// every cavity boundary face, with its inherited constraint, to exactly one
+// replacement face, pairs every other replacement face with its reversed twin,
+// and checks exact positive orientation. A positive simplicial chain whose
+// boundary is the cavity boundary covers the cavity exactly once, so the
+// replacement tiles the cavity and conforms to the unchanged outside cells. A
+// collapsed vertex has dimension three and no source stratum, so no source
+// facet or segment contains it; it may not appear in a replacement cell, and
+// any cell of its star outside the cavity would leave an unmatched boundary
+// face containing it. Constrained interior faces must be reproduced, and an
+// edge removed by the edit must not be a constrained segment. All allocation
+// precedes the first topology write; staged ID records are rolled back if the
+// commit cannot start.
+TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
+  try {
+    const bool collapse = operation.kind == TetEditKind::kCollapse;
+    const bool reconnection = operation.kind == TetEditKind::kFlip23 ||
+                              operation.kind == TetEditKind::kFlip32 ||
+                              operation.kind == TetEditKind::kRingReconnect;
+    if ((!collapse && !reconnection) || periodic_identity_.bound ||
+        !periodic_orbits_.empty() || !quotient_cells_.empty() ||
+        operation.removed_cell_ids.empty() || operation.replacement_cells.empty() ||
+        !operation.changed_vertices.empty() || !operation.split_edges.empty() ||
+        !operation.removed_facet_ids.empty() || !operation.replacement_facets.empty() ||
+        !operation.removed_segment_ids.empty() ||
+        !operation.replacement_segments.empty() || !operation.periodic_members.empty() ||
+        !operation.removed_periodic_orbit_ids.empty() ||
+        !operation.replacement_periodic_orbits.empty() ||
+        !operation.removed_quotient_cell_ids.empty() ||
+        !operation.replacement_quotient_cells.empty() ||
+        !operation.replacement_periodic_entity_maps.empty()) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    std::int32_t removed_vertex = -1;
+    if (collapse) {
+      if (operation.removed_vertex_ids.size() != 1 ||
+          operation.collapse_pairs.size() != 1 ||
+          operation.collapse_pairs.front().removed_vertex_id !=
+              operation.removed_vertex_ids.front()) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      removed_vertex = vertex_slot(operation.removed_vertex_ids.front());
+      const std::int32_t survivor =
+          vertex_slot(operation.collapse_pairs.front().survivor_vertex_id);
+      if (!live_vertex(removed_vertex) || !live_vertex(survivor) ||
+          removed_vertex == survivor) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      if (protected_vertex(removed_vertex) || protection_radius(removed_vertex) > 0.0 ||
+          protected_vertex(survivor) || protection_radius(survivor) > 0.0) {
+        return TetEditStatus::kRejectedProtected;
+      }
+      if (vertex_dimension(removed_vertex) != 3 ||
+          witness(removed_vertex).stratum != SourceStratum::kNone) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    } else if (!operation.removed_vertex_ids.empty() || !operation.collapse_pairs.empty()) {
+      return TetEditStatus::kRejectedTopology;
+    }
+
+    std::vector<std::int32_t> removed_slots;
+    removed_slots.reserve(operation.removed_cell_ids.size());
+    std::int32_t region = kNoRegion;
+    for (std::uint64_t id : operation.removed_cell_ids) {
+      const std::int32_t slot = cell_slot(id);
+      if (slot < 0 || !complex_.live(slot) || is_ghost(tet(slot))) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      if (removed_slots.empty()) {
+        region = complex_.region(slot);
+      } else if (complex_.region(slot) != region) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      removed_slots.push_back(slot);
+    }
+    std::vector<std::int32_t> sorted_removed = removed_slots;
+    std::sort(sorted_removed.begin(), sorted_removed.end());
+    if (std::adjacent_find(sorted_removed.begin(), sorted_removed.end()) !=
+        sorted_removed.end()) {
+      return TetEditStatus::kRejectedTopology;
+    }
+
+    const std::size_t created = operation.replacement_cells.size();
+    std::vector<std::int32_t> replacement_vertices;
+    replacement_vertices.reserve(4 * created);
+    std::set<std::uint64_t> replacement_edges;
+    for (std::size_t row = 0; row < created; ++row) {
+      const TetEditCell& cell = operation.replacement_cells[row];
+      if (cell.id == std::numeric_limits<std::uint64_t>::max() ||
+          used_cell_ids_.contains(cell.id) || cell.region != region) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      for (std::size_t prior = 0; prior < row; ++prior) {
+        if (operation.replacement_cells[prior].id == cell.id) {
+          return TetEditStatus::kRejectedTopology;
+        }
+      }
+      for (std::size_t ancestor = 0; ancestor < cell.ancestor_cell_ids.size(); ++ancestor) {
+        const std::uint64_t id = cell.ancestor_cell_ids[ancestor];
+        if (!has_id(operation.removed_cell_ids, id) ||
+            has_id(std::span(cell.ancestor_cell_ids).first(ancestor), id)) {
+          return TetEditStatus::kRejectedTopology;
+        }
+      }
+      for (int corner = 0; corner < 4; ++corner) {
+        const std::int32_t slot = vertex_slot(cell.vertices[static_cast<std::size_t>(corner)]);
+        if (!live_vertex(slot) || slot == removed_vertex ||
+            cell.facet_sources[static_cast<std::size_t>(corner)] < kNoConstraint) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        replacement_vertices.push_back(slot);
+      }
+      const std::int32_t* local = replacement_vertices.data() + 4 * row;
+      for (int first = 0; first < 4; ++first) {
+        for (int second = first + 1; second < 4; ++second) {
+          replacement_edges.insert(edge_key(local[first], local[second]));
+        }
+      }
+    }
+    if (removes_constrained_segment(removed_slots, replacement_edges)) {
+      return TetEditStatus::kRejectedProtected;
+    }
+    if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+      return TetEditStatus::kIndexOverflow;
+    }
+
+    edit_.begin();
+    for (std::int32_t slot : removed_slots) {
+      const EditStatus status = edit_.remove(slot);
+      if (status != EditStatus::kOk) {
+        edit_.rollback();
+        return translate_edit_status(status);
+      }
+    }
+    for (std::size_t row = 0; row < created; ++row) {
+      const EditStatus status =
+          edit_.add(replacement_vertices.data() + 4 * row,
+                    operation.replacement_cells[row].facet_sources.data(), region);
+      if (status != EditStatus::kOk) {
+        edit_.rollback();
+        return translate_edit_status(status);
+      }
+    }
+    const EditStatus validated = edit_.validate(
+        [this](const std::int32_t* vertices) { return positive(vertices); });
+    if (validated != EditStatus::kOk) {
+      edit_.rollback();
+      return translate_edit_status(validated);
+    }
+
+    // CavityEdit::commit reuses removed slots, then free slots, then appends.
+    const std::size_t extra = created > removed_slots.size() ? created - removed_slots.size() : 0;
+    const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
+    const std::size_t cell_id_count = cell_ids_.size();
+    // Rows below `staged` may hold staged ID records; replacement IDs were
+    // unused, so erasing a row's keys removes only what this edit inserted.
+    std::size_t staged = 0;
+    const auto unstage = [&]() noexcept {
+      for (std::size_t row = 0; row < staged; ++row) {
+        const std::uint64_t id = operation.replacement_cells[row].id;
+        used_cell_ids_.erase(id);
+        cell_slots_.erase(id);
+        cell_ancestry_.erase(id);
+      }
+      cell_ids_.resize(cell_id_count);
+    };
+    EditStatus committed = EditStatus::kInternal;
+    try {
+      if (collapse) used_vertex_ids_.insert(vertex_id(removed_vertex));
+      cell_ids_.resize(complex_.tets.size() + fresh,
+                       std::numeric_limits<std::uint64_t>::max());
+      while (staged < created) {
+        const TetEditCell& cell = operation.replacement_cells[staged++];
+        used_cell_ids_.insert(cell.id);
+        cell_slots_.emplace(cell.id, -1);
+        cell_ancestry_.emplace(
+            cell.id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
+                                           cell.ancestor_cell_ids});
+      }
+      committed = edit_.commit();
+    } catch (...) {
+      edit_.rollback();
+      unstage();
+      throw;
+    }
+    if (committed != EditStatus::kOk) {
+      edit_.rollback();
+      unstage();
+      return translate_edit_status(committed);
+    }
+
+    for (std::uint64_t id : operation.removed_cell_ids) cell_slots_.erase(id);
+    for (std::int32_t slot : removed_slots) {
+      cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
+    }
+    const std::span<const std::int32_t> created_slots = edit_.created();
+    for (std::size_t row = 0; row < created; ++row) {
+      const std::uint64_t id = operation.replacement_cells[row].id;
+      const std::int32_t slot = created_slots[row];
+      cell_ids_[static_cast<std::size_t>(slot)] = id;
+      cell_slots_.find(id)->second = slot;
+      if (id >= next_cell_id_) next_cell_id_ = id + 1;
+    }
+    if (collapse) {
+      const std::uint64_t id = vertex_id(removed_vertex);
+      vertex_live_[static_cast<std::size_t>(removed_vertex)] = 0;
+      vertex_slots_.erase(id);
+      vertex_ancestry_.erase(id);
+    }
+    ++generation_;
+    unmet_records_.clear();
+    return TetEditStatus::kApplied;
+  } catch (const std::bad_alloc&) {
+    return TetEditStatus::kAllocationFailure;
+  } catch (const std::length_error&) {
+    return TetEditStatus::kIndexOverflow;
+  }
+}
+
+bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_slots,
+                                          const std::set<std::uint64_t>& kept_edges) const {
+  // Segment endpoints carry dimension at most one, so only such edges need
+  // the segment bank.
+  for (std::int32_t slot : removed_slots) {
+    const Tetrahedron& cell = tet(slot);
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        const std::int32_t a = cell.v[first];
+        const std::int32_t b = cell.v[second];
+        if (kept_edges.contains(edge_key(a, b)) || vertex_dimension(a) > 1 ||
+            vertex_dimension(b) > 1) {
+          continue;
+        }
+        const std::uint64_t id_a = vertex_id(a);
+        const std::uint64_t id_b = vertex_id(b);
+        if (std::any_of(segments_.begin(), segments_.end(),
+                        [&](const TetSnapshotSegment& segment) {
+                          return (segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
+                                 (segment.vertices[0] == id_b && segment.vertices[1] == id_a);
+                        })) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// A star-shaped cavity coned to a new interior vertex. Every cone cell must be
+// exactly positive; the cone then tiles the cavity (same chain argument as
+// replace_local_cavity), the new point lies in the cavity interior and so
+// coincides with no vertex, and every cavity vertex must remain on the
+// cavity boundary. Constrained faces may bound the cavity but not lie inside it.
+TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
+                                         std::span<const std::int32_t> cavity,
+                                         std::vector<std::uint64_t>& created_cells) {
+  created_cells.clear();
+  try {
+    if (periodic_identity_.bound || !periodic_orbits_.empty() || !quotient_cells_.empty() ||
+        cavity.empty()) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    if (vertex.id == std::numeric_limits<std::uint64_t>::max() ||
+        used_vertex_ids_.contains(vertex.id) || !vertex.ancestry.empty() ||
+        vertex.witness.stratum != SourceStratum::kNone || vertex.protected_vertex ||
+        vertex.protection_radius != 0.0 || vertex.has_edge_parameter) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    for (double coordinate : vertex.carrier) {
+      if (!std::isfinite(coordinate) || !coordinate_in_domain(coordinate)) {
+        return TetEditStatus::kInvalidGeometry;
+      }
+    }
+    if (vertex_ids_.size() >= static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+      return TetEditStatus::kIndexOverflow;
+    }
+
+    std::vector<std::int32_t> sorted_cavity(cavity.begin(), cavity.end());
+    std::sort(sorted_cavity.begin(), sorted_cavity.end());
+    if (std::adjacent_find(sorted_cavity.begin(), sorted_cavity.end()) != sorted_cavity.end()) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    const auto in_cavity = [&](std::int32_t slot) {
+      return std::binary_search(sorted_cavity.begin(), sorted_cavity.end(), slot);
+    };
+    std::int32_t region = kNoRegion;
+    std::vector<BoundaryFacet> boundary;
+    boundary.reserve(2 * cavity.size() + 2);
+    std::set<std::uint64_t> kept_edges;
+    std::vector<std::uint64_t> ancestors;
+    ancestors.reserve(cavity.size());
+    for (std::int32_t slot : cavity) {
+      if (!complex_.live(slot) || is_ghost(tet(slot))) return TetEditStatus::kRejectedTopology;
+      if (slot == cavity.front()) {
+        region = complex_.region(slot);
+      } else if (complex_.region(slot) != region) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      ancestors.push_back(cell_id(slot));
+      const Tetrahedron& cell = tet(slot);
+      for (int face = 0; face < 4; ++face) {
+        const std::int32_t outside = cell.n[face];
+        if (in_cavity(outside)) {
+          if (complex_.constraint(slot, face) != kNoConstraint) {
+            return TetEditStatus::kRejectedProtected;
+          }
+          continue;
+        }
+        if (!complex_.live(outside)) return TetEditStatus::kRejectedTopology;
+        const int back = neighbor_slot(tet(outside), slot);
+        if (back < 0) return TetEditStatus::kRejectedTopology;
+        boundary.push_back({slot, face, outside, back});
+        std::int32_t facet[3];
+        oriented_facet(cell.v, face, facet);
+        for (int corner = 0; corner < 3; ++corner) {
+          kept_edges.insert(edge_key(facet[corner], facet[(corner + 1) % 3]));
+        }
+      }
+    }
+    std::sort(ancestors.begin(), ancestors.end());
+    if (removes_constrained_segment(cavity, kept_edges)) {
+      return TetEditStatus::kRejectedProtected;
+    }
+    const std::int32_t center = static_cast<std::int32_t>(vertex_ids_.size());
+    if (boundary.size() > std::numeric_limits<std::uint64_t>::max() - next_cell_id_ ||
+        generation_ == std::numeric_limits<std::uint64_t>::max()) {
+      return TetEditStatus::kIndexOverflow;
+    }
+
+    // Stage the vertex record so exact orientation can address it; every
+    // staged record is removed again unless the cone commits.
+    const std::size_t vertex_count = vertex_ids_.size();
+    const std::size_t cell_id_count = cell_ids_.size();
+    std::size_t staged_cells = 0;
+    bool vertex_staged = false;
+    const auto unstage = [&]() noexcept {
+      for (std::size_t row = 0; row < staged_cells; ++row) {
+        const std::uint64_t id = next_cell_id_ + row;
+        used_cell_ids_.erase(id);
+        cell_slots_.erase(id);
+        cell_ancestry_.erase(id);
+      }
+      cell_ids_.resize(cell_id_count);
+      if (vertex_staged) {
+        vertex_slots_.erase(vertex.id);
+        used_vertex_ids_.erase(vertex.id);
+      }
+      points_.resize(3 * vertex_count);
+      vertex_ids_.resize(vertex_count);
+      vertex_live_.resize(vertex_count);
+      vertex_dimension_.resize(vertex_count);
+      protection_radii_.resize(vertex_count);
+      protected_vertices_.resize(vertex_count);
+      witnesses_.resize(vertex_count);
+      vertex_has_edge_parameter_.resize(vertex_count);
+      vertex_edge_endpoints_.resize(vertex_count);
+      vertex_edge_parameters_.resize(vertex_count);
+    };
+    ConeInsertion inserted = ConeInsertion::kInternal;
+    try {
+      points_.insert(points_.end(), vertex.carrier.begin(), vertex.carrier.end());
+      vertex_ids_.push_back(vertex.id);
+      vertex_live_.push_back(1);
+      vertex_dimension_.push_back(3);
+      protection_radii_.push_back(0.0);
+      protected_vertices_.push_back(0);
+      witnesses_.push_back(vertex.witness);
+      vertex_has_edge_parameter_.push_back(0);
+      vertex_edge_endpoints_.push_back({});
+      vertex_edge_parameters_.push_back(0.0);
+      vertex_staged = true;
+      vertex_slots_.emplace(vertex.id, center);
+      used_vertex_ids_.insert(vertex.id);
+      const std::size_t created = boundary.size();
+      const std::size_t extra = created > cavity.size() ? created - cavity.size() : 0;
+      const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
+      cell_ids_.resize(complex_.tets.size() + fresh, std::numeric_limits<std::uint64_t>::max());
+      while (staged_cells < created) {
+        const std::uint64_t id = next_cell_id_ + staged_cells++;
+        if (used_cell_ids_.contains(id)) {
+          --staged_cells;
+          unstage();
+          return TetEditStatus::kRejectedTopology;
+        }
+        used_cell_ids_.insert(id);
+        cell_slots_.emplace(id, -1);
+        cell_ancestry_.emplace(
+            id, TetCellAncestryRecord{static_cast<std::int32_t>(TetEditKind::kRefineCell),
+                                      ancestors});
+      }
+      created_cells.reserve(created);
+      inserted = insert_checked_cone(
+          complex_, edit_, [this](const std::int32_t* v) { return positive(v); }, center,
+          cavity, boundary, false);
+    } catch (...) {
+      edit_.rollback();
+      unstage();
+      throw;
+    }
+    switch (inserted) {
+      case ConeInsertion::kApplied: break;
+      case ConeInsertion::kInvertedCell:
+        unstage();
+        return TetEditStatus::kInvalidGeometry;
+      case ConeInsertion::kRemovesVertex:
+        unstage();
+        return TetEditStatus::kRejectedTopology;
+      case ConeInsertion::kSlotLimit:
+        unstage();
+        return TetEditStatus::kIndexOverflow;
+      case ConeInsertion::kInternal:
+        // Only the cone star link can fail after the topology write; exact
+        // positivity of every cone cell excludes it.
+        return TetEditStatus::kStaleGeneration;
+    }
+    for (std::int32_t slot : cavity) {
+      cell_slots_.erase(cell_id(slot));
+      cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
+    }
+    const std::span<const std::int32_t> created_slots = edit_.created();
+    for (std::size_t row = 0; row < created_slots.size(); ++row) {
+      const std::uint64_t id = next_cell_id_ + row;
+      const std::int32_t slot = created_slots[row];
+      cell_ids_[static_cast<std::size_t>(slot)] = id;
+      cell_slots_.find(id)->second = slot;
+      created_cells.push_back(id);
+    }
+    next_cell_id_ += created_slots.size();
+    if (vertex.id >= next_vertex_id_) next_vertex_id_ = vertex.id + 1;
     ++generation_;
     unmet_records_.clear();
     return TetEditStatus::kApplied;

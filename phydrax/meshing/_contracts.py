@@ -126,10 +126,8 @@ class MeshingFailureEvidence:
     def __init__(
         self,
         *,
-        requested_quantities: Mapping[str, float]
-        | Sequence[tuple[str, float]] = (),
-        achieved_quantities: Mapping[str, float]
-        | Sequence[tuple[str, float]] = (),
+        requested_quantities: Mapping[str, float] | Sequence[tuple[str, float]] = (),
+        achieved_quantities: Mapping[str, float] | Sequence[tuple[str, float]] = (),
         checkpoint: str = "",
         logical_findings: Sequence[str] = (),
     ) -> None:
@@ -164,8 +162,7 @@ class MeshingFailureEvidence:
                 "MeshingFailureEvidence.logical_findings must be a sequence of strings."
             )
         findings = tuple(
-            normalized_identifier(value, "logical finding")
-            for value in logical_findings
+            normalized_identifier(value, "logical finding") for value in logical_findings
         )
         requested = quantities(requested_quantities, "requested_quantities")
         achieved = quantities(achieved_quantities, "achieved_quantities")

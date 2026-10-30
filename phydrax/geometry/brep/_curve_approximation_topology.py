@@ -6,14 +6,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
 from ...typing import parse
-from ._curve_approximation_bounds import CoupledApproximationEvidence
+from ._curve_approximation_bounds import (
+    _lifted_point_box,
+    _parameter_enclosures,
+    _parameter_hull,
+    CoupledApproximationEvidence,
+    source_point_box,
+)
 from ._intersection_curve import IntersectionCurve, IntersectionSide
 from ._patches import AbstractCurve, BSplineCurve
 
@@ -56,7 +62,10 @@ class BranchApproximationTopologyEvidence:
             or first.shape != (count, 2, 2)
             or second.shape != (count, 2, 2)
             or axes.shape != (count, 3)
-            or any(not np.all(np.isfinite(value)) for value in (cells, spatial, first, second))
+            or any(
+                not np.all(np.isfinite(value))
+                for value in (cells, spatial, first, second)
+            )
             or np.any(cells[:, 0] >= cells[:, 1])
             or isinstance(self.separated_pairs, bool)
             or self.separated_pairs < 0
@@ -121,7 +130,9 @@ class BranchTrimSeparationEvidence:
             or rows.shape[1] != 4
             or not np.all(np.isfinite(rows))
         ):
-            raise ValueError("Branch trim-separation evidence must be finite and strictly positive.")
+            raise ValueError(
+                "Branch trim-separation evidence must be finite and strictly positive."
+            )
         immutable = np.frombuffer(rows.tobytes(), dtype=np.float64).reshape(rows.shape)
         object.__setattr__(self, "separation_lower_bound", value)
         object.__setattr__(self, "interval_evidence", immutable)
@@ -154,11 +165,6 @@ def _separation(first: np.ndarray, second: np.ndarray, /) -> float:
     return float(np.nextafter(np.max(gaps), -np.inf)) if np.any(gaps > 0.0) else 0.0
 
 
-def _source_parameters(source: IntersectionCurve, first: float, last: float, /) -> np.ndarray:
-    boxes = np.asarray(source.parameter_enclosures(first, last), dtype=np.float64)
-    return np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
-
-
 def _homotopy_boxes(
     source: IntersectionCurve,
     curve: BSplineCurve,
@@ -168,8 +174,11 @@ def _homotopy_boxes(
     last: float,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    spatial = _union(source.bounding_box(first, last), curve.bounding_box(first, last))
-    parameters = _source_parameters(source, first, last)
+    enclosures = _parameter_enclosures(source, first, last)
+    spatial = _union(
+        _lifted_point_box(source, enclosures), curve.bounding_box(first, last)
+    )
+    parameters = _parameter_hull(enclosures)
     first_fit = first_pcurve.bounding_box(first, last)
     second_fit = second_pcurve.bounding_box(first, last)
     return (
@@ -179,7 +188,9 @@ def _homotopy_boxes(
     )
 
 
-def _monotone_derivative(curve: BSplineCurve, first: float, last: float, /) -> tuple[int, int] | None:
+def _monotone_derivative(
+    curve: BSplineCurve, first: float, last: float, /
+) -> tuple[int, int] | None:
     lower, upper = curve.derivative_bounds(first, last)
     for axis in range(curve.ambient_dimension):
         if lower[axis] > 0.0:
@@ -205,17 +216,27 @@ def _cell_axes(
     start = np.asarray(source.chart_start[chart], dtype=np.float64)
     end = np.asarray(source.chart_end[chart], dtype=np.float64)
     sign = 1 if end[source_axis] > start[source_axis] else -1
-    pcurve, uv_axis = (first_pcurve, source_axis) if source_axis < 2 else (second_pcurve, source_axis - 2)
+    pcurve, uv_axis = (
+        (first_pcurve, source_axis)
+        if source_axis < 2
+        else (second_pcurve, source_axis - 2)
+    )
     lower, upper = pcurve.derivative_bounds(first, last)
     if sign > 0 and lower[uv_axis] <= 0.0 or sign < 0 and upper[uv_axis] >= 0.0:
         return None
     spatial_axis = _monotone_derivative(curve, first, last)
     if spatial_axis is None:
         return None
-    return source_axis, uv_axis + 1 if source_axis < 2 else uv_axis + 3, spatial_axis[0] + 1
+    return (
+        source_axis,
+        uv_axis + 1 if source_axis < 2 else uv_axis + 3,
+        spatial_axis[0] + 1,
+    )
 
 
-def _split(interval: tuple[float, float], /) -> tuple[tuple[float, float], tuple[float, float]] | None:
+def _split(
+    interval: tuple[float, float], /
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
     first, last = interval
     middle = first + 0.5 * (last - first)
     if not first < middle < last:
@@ -253,26 +274,35 @@ def certify_branch_approximation_topology(
 ) -> BranchApproximationTopologyEvidence:
     """Certify fitted local graph axes and continuous nonlocal branch separation."""
     if not source.fully_certified or source.branch_id != approximation.source_branch_id:
-        raise ValueError("Branch topology evidence must bind the same certified source branch.")
+        raise ValueError(
+            "Branch topology evidence must bind the same certified source branch."
+        )
     fit_identity = _approximation_identity(curve, first_pcurve, second_pcurve)
     if fit_identity != approximation.approximation_id:
-        raise ValueError("Branch topology evidence must bind the certified fitted carriers.")
-    if source.start_kind in ("singular", "uncertified") or source.end_kind in ("singular", "uncertified"):
+        raise ValueError(
+            "Branch topology evidence must bind the certified fitted carriers."
+        )
+    if source.start_kind in ("singular", "uncertified") or source.end_kind in (
+        "singular",
+        "uncertified",
+    ):
         raise BranchTopologyCertificationError(
             "Fitted branch topology requires regular or closed exact source endpoints.",
             interval=(0.0, float(source.num_charts)),
         )
-    intervals = [tuple(float(value) for value in row[:2]) for row in approximation.interval_evidence]
+    intervals: list[tuple[float, float]] = [
+        (float(row[0]), float(row[1])) for row in approximation.interval_evidence
+    ]
     while True:
         intervals.sort()
-        records: list[tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[int, int, int] | None]] = []
+        records: list[
+            tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[int, int, int] | None]
+        ] = []
         for first, last in intervals:
             boxes = _homotopy_boxes(
                 source, curve, first_pcurve, second_pcurve, first, last
             )
-            axes = _cell_axes(
-                source, curve, first_pcurve, second_pcurve, first, last
-            )
+            axes = _cell_axes(source, curve, first_pcurve, second_pcurve, first, last)
             records.append((boxes, axes))
         offenders: set[int] = {
             index for index, (_, axes) in enumerate(records) if axes is None
@@ -283,14 +313,18 @@ def certify_branch_approximation_topology(
             for second_index in range(first_index + 1, len(intervals)):
                 second_interval = intervals[second_index]
                 if _adjacent(first_interval, second_interval) or (
-                    source.closed and first_index == 0 and second_index == len(intervals) - 1
+                    source.closed
+                    and first_index == 0
+                    and second_index == len(intervals) - 1
                 ):
                     continue
                 first_boxes, _ = records[first_index]
                 second_boxes, _ = records[second_index]
                 spaces_separate = tuple(
                     _separation(first_box, second_box)
-                    for first_box, second_box in zip(first_boxes, second_boxes, strict=True)
+                    for first_box, second_box in zip(
+                        first_boxes, second_boxes, strict=True
+                    )
                 )
                 if all(value > 0.0 for value in spaces_separate):
                     separated_pairs += 1
@@ -299,7 +333,9 @@ def certify_branch_approximation_topology(
                     offenders.update((first_index, second_index))
         if not offenders:
             break
-        selected = max(offenders, key=lambda index: intervals[index][1] - intervals[index][0])
+        selected = max(
+            offenders, key=lambda index: intervals[index][1] - intervals[index][0]
+        )
         split = _split(intervals[selected])
         if split is None:
             raise BranchTopologyCertificationError(
@@ -308,11 +344,15 @@ def certify_branch_approximation_topology(
             )
         intervals[selected : selected + 1] = list(split)
     endpoint_boxes = (
-        source.bounding_box(0.0, 0.0),
-        source.bounding_box(float(source.num_charts), float(source.num_charts)),
+        source_point_box(source, 0.0, 0.0),
+        source_point_box(source, float(source.num_charts), float(source.num_charts)),
     )
-    for parameter, root_box in zip((0.0, float(source.num_charts)), endpoint_boxes, strict=True):
-        if not _overlap(np.asarray(curve.bounding_box(parameter, parameter)), np.asarray(root_box)):
+    for parameter, root_box in zip(
+        (0.0, float(source.num_charts)), endpoint_boxes, strict=True
+    ):
+        if not _overlap(
+            np.asarray(curve.bounding_box(parameter, parameter)), np.asarray(root_box)
+        ):
             raise BranchTopologyCertificationError(
                 "A fitted branch endpoint lost its exact source-root neighborhood.",
                 interval=(parameter, parameter),
@@ -349,8 +389,14 @@ def certify_branch_trim_separation(
         raise ValueError("Trim-separation range must be finite and increasing.")
     trim_box = np.asarray(trim.bounding_box(first, last), dtype=np.float64)
     if trim_box.shape != (2, 2) or not np.all(np.isfinite(trim_box)):
-        raise ValueError("Trim-separation requires a finite two-dimensional trim enclosure.")
-    boxes = evidence.first_homotopy_boxes if side_ == "first" else evidence.second_homotopy_boxes
+        raise ValueError(
+            "Trim-separation requires a finite two-dimensional trim enclosure."
+        )
+    boxes = (
+        evidence.first_homotopy_boxes
+        if side_ == "first"
+        else evidence.second_homotopy_boxes
+    )
     rows: list[tuple[float, float, float, float]] = []
     separation = math.inf
     for interval, box in zip(evidence.parameter_cells, boxes, strict=True):

@@ -2454,8 +2454,10 @@ def _triangle_boundary_curves(
 def _chart_curve_bounds(
     domain: domain_owner.MeshingDomain,
     chart: _ChartMesh,
+    interval_bounds: dict[tuple[int, Fraction, Fraction], float],
     /,
 ) -> dict[tuple[int, int], float]:
+    """Chord deviation bound of every trim edge; shared intervals are bounded once."""
     bounds: dict[tuple[int, int], float] = {}
     for edge, (curve, _occurrence, _first, _last) in chart.boundary_edges.items():
         first = chart.curve_parameters.get((edge[0], curve))
@@ -2466,11 +2468,56 @@ def _chart_curve_bounds(
                 category=MeshingFailureCategory.INVALID_SOURCE,
                 entity_ids=(int(curve),),
             )
-        deviation, _length = _curve_interval_bounds(
-            domain, curve, min(first, last), max(first, last)
-        )
+        key = (int(curve), min(first, last), max(first, last))
+        deviation = interval_bounds.get(key)
+        if deviation is None:
+            deviation, _length = _curve_interval_bounds(domain, curve, key[1], key[2])
+            interval_bounds[key] = deviation
         bounds[edge] = deviation
     return bounds
+
+
+type _CellBoundKey = tuple[int, tuple[_ChartUV, ...]]
+
+
+def _cached_cell_bounds(
+    domain: domain_owner.MeshingDomain,
+    chart: _ChartMesh,
+    parameters: np.ndarray,
+    cache: dict[_CellBoundKey, tuple[float, float]],
+    normal_turns: bool,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cell source interpolation and normal-turn bounds, evaluated once per cell.
+
+    Both source bounds are cellwise functions of the exact UV corners, so cells
+    retained across refinement rounds reuse their bound; new cells are bounded
+    together in one source batch.
+    """
+    keys = tuple(
+        (chart.patch, tuple(chart.points[row] for row in triangle))
+        for triangle in chart.triangles
+    )
+    missing = [row for row, key in enumerate(keys) if key not in cache]
+    if missing:
+        rows = np.asarray(missing, dtype=np.int64)
+        deviations = np.asarray(
+            domain.interpolation_bounds(chart.patch, parameters[rows]), dtype=np.float64
+        )
+        normals = (
+            np.asarray(
+                domain.normal_turn_bounds(chart.patch, parameters[rows]),
+                dtype=np.float64,
+            )
+            if normal_turns
+            else np.zeros((rows.size,), dtype=np.float64)
+        )
+        for row, deviation, normal in zip(
+            missing, deviations.tolist(), normals.tolist(), strict=True
+        ):
+            cache[keys[row]] = (deviation, normal)
+    values = np.asarray([cache[key] for key in keys], dtype=np.float64).reshape((-1, 2))
+    return values[:, 0], values[:, 1]
 
 
 def _refine_charts(
@@ -2536,6 +2583,15 @@ def _refine_charts(
                     feature.maximum_deviation,
                 )
 
+    # Trim-edge chord bounds change only when a round splits a trim edge, and each
+    # curve interval is bounded once. Unchanged cells keep their exact UV corners
+    # and therefore their source bounds.
+    interval_bounds: dict[tuple[int, Fraction, Fraction], float] = {}
+    curve_bounds_by_chart = tuple(
+        _chart_curve_bounds(domain, chart, interval_bounds) for chart in charts
+    )
+    trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
+    cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
     while True:
         triangles_by_chart = tuple(
             _chart_triangles(chart, mapping)
@@ -2574,17 +2630,18 @@ def _refine_charts(
             math.inf if fidelity_tolerance is None else fidelity_tolerance,
         )
         offset = 0
-        for chart in charts:
+        for chart, curve_bounds in zip(charts, curve_bounds_by_chart, strict=True):
             count = len(chart.triangles)
             local_parameters = chart_parameters[offset : offset + count]
-            deviations[offset : offset + count] = domain.interpolation_bounds(
-                chart.patch, local_parameters
+            deviations[offset : offset + count], normal_values = _cached_cell_bounds(
+                domain,
+                chart,
+                local_parameters,
+                cell_bounds,
+                specification.maximum_normal_deviation is not None,
             )
             if specification.maximum_normal_deviation is not None:
-                normal_bounds[offset : offset + count] = domain.normal_turn_bounds(
-                    chart.patch, local_parameters
-                )
-            curve_bounds = _chart_curve_bounds(domain, chart)
+                normal_bounds[offset : offset + count] = normal_values
             for row, triangle in enumerate(chart.triangles):
                 boundary_bound = max(
                     (
@@ -2655,22 +2712,15 @@ def _refine_charts(
                     (triangle[1], triangle[2]),
                     (triangle[2], triangle[0]),
                 )
-                interior = tuple(
-                    (index, edge)
-                    for index, edge in enumerate(local_edges)
-                    if _edge_key(*edge) not in chart.boundary_edges
+                # Bisect the longest edge. A trim edge is split through its
+                # canonical curve identity, so every chart using that curve
+                # interval receives the same exact midpoint parameter; cells
+                # along a long trim edge otherwise keep its chart extent and
+                # their source bound cannot decrease.
+                longest_index = max(
+                    range(3), key=lambda index: edge_lengths[global_cell, index]
                 )
-                if not interior:
-                    raise _failure(
-                        "a fully constrained surface cell violates its physical schedule",
-                        category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                        entity_ids=(int(chart.patch),),
-                    )
-                longest_edge = max(
-                    interior,
-                    key=lambda item: edge_lengths[global_cell, item[0]],
-                )[1]
-                split_edges.add(_local_edge_identity(chart, *longest_edge))
+                split_edges.add(_local_edge_identity(chart, *local_edges[longest_index]))
             cell_offset += len(chart.triangles)
 
         changed = False
@@ -2826,6 +2876,11 @@ def _refine_charts(
                     int(value) for value in np.unique(patches[bad]).tolist()
                 ),
             )
+        if any(identity[0] == 1 for identity in split_edges):
+            curve_bounds_by_chart = tuple(
+                _chart_curve_bounds(domain, chart, interval_bounds) for chart in charts
+            )
+            trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
 
     triangles_by_chart = tuple(
         _chart_triangles(chart, mapping)
@@ -2854,13 +2909,15 @@ def _refine_charts(
     for chart in charts:
         count = len(chart.triangles)
         parameters = triangle_parameters[offset : offset + count]
-        deviations[offset : offset + count] = domain.interpolation_bounds(
-            chart.patch, parameters
+        deviations[offset : offset + count], normal_values = _cached_cell_bounds(
+            domain,
+            chart,
+            parameters,
+            cell_bounds,
+            specification.maximum_normal_deviation is not None,
         )
         if specification.maximum_normal_deviation is not None:
-            normal_bounds[offset : offset + count] = domain.normal_turn_bounds(
-                chart.patch, parameters
-            )
+            normal_bounds[offset : offset + count] = normal_values
         deviations[offset : offset + count] = np.maximum(
             deviations[offset : offset + count], chart.pole_deviation_bound
         )
@@ -2869,8 +2926,15 @@ def _refine_charts(
     quality = _quality_angle_degrees(coordinates_array, triangles)
     curve_edge_bounds: dict[tuple[int, int, int], float] = {}
     cell_offset = 0
-    for chart, local_to_global in zip(charts, local_rows, strict=True):
-        bounds = _chart_curve_bounds(domain, chart)
+    for chart, local_to_global, bounds, edges in zip(
+        charts, local_rows, curve_bounds_by_chart, trim_edges, strict=True
+    ):
+        if frozenset(chart.boundary_edges) != edges:
+            raise _failure(
+                "physical surface refinement changed a fixed source trim edge",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(int(chart.patch),),
+            )
         for edge, (curve, _occurrence, _first, _last) in chart.boundary_edges.items():
             bound = bounds[edge]
             first_global, last_global = local_to_global[edge[0]], local_to_global[edge[1]]

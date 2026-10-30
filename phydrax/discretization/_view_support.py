@@ -798,6 +798,7 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
             from ..meshing._result import CellMeshingResult
             from ..meshing.providers._native_periodic import NativePeriodicSource
             from ._exact_power_geometry import ExactPowerCellGeometrySource
+
             if isinstance(
                 source_value,
                 (
@@ -1337,7 +1338,10 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
         elif adaptive_result is None:
             if graph_migration_evidence.target_part_id != identities["part_id"]:
                 raise ValueError("Graph migration evidence targets a different part.")
-            if graph_migration_evidence.target_directory_id != identities["distribution_id"]:
+            if (
+                graph_migration_evidence.target_directory_id
+                != identities["distribution_id"]
+            ):
                 raise ValueError(
                     "Graph migration evidence targets a different owner directory."
                 )
@@ -1449,10 +1453,14 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                     or any(not isinstance(value, Fraction) for value in point)
                     for point in exact_vertex_coordinate_offsets
                 )
-                or np.any(~np.isin(stencil_source_ids[stencil_valid], source_point_ids))
             ):
                 raise ValueError(
                     "Cumulative periodic coordinate ancestry differs from its exact source bank."
+                )
+            if np.any(~np.isin(stencil_source_ids[stencil_valid], source_point_ids)):
+                raise ValueError(
+                    "Cumulative periodic coordinate ancestry references roots outside "
+                    "its exact source bank."
                 )
         periodic_owner_route = periodic_topology_id is not None and not serial_source_view
         periodic_delaunay_route = periodic_owner_route and isinstance(

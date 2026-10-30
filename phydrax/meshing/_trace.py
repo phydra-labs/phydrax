@@ -91,14 +91,10 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
             tuple(float(component) for component in point) for point in locations
         )
         requested = (
-            ()
-            if failure_evidence is None
-            else failure_evidence.requested_quantities
+            () if failure_evidence is None else failure_evidence.requested_quantities
         )
         achieved = (
-            ()
-            if failure_evidence is None
-            else failure_evidence.achieved_quantities
+            () if failure_evidence is None else failure_evidence.achieved_quantities
         )
         checkpoint = "" if failure_evidence is None else failure_evidence.checkpoint
         findings = () if failure_evidence is None else failure_evidence.logical_findings
@@ -146,50 +142,6 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
             entity_ids=failure.entity_ids,
             locations=failure.locations,
             failure_evidence=failure.evidence,
-        )
-
-    def __init__(
-        self,
-        severity: MeshingDiagnosticSeverity,
-        message: str,
-        /,
-        *,
-        provider_code: str = "",
-        failure_category: MeshingFailureCategory | None = None,
-        entity_ids: tuple[int, ...] = (),
-        locations: tuple[tuple[float, ...], ...] = (),
-    ) -> None:
-        if not isinstance(severity, MeshingDiagnosticSeverity):
-            raise TypeError("severity must be MeshingDiagnosticSeverity.")
-        if failure_category is not None and not isinstance(
-            failure_category, MeshingFailureCategory
-        ):
-            raise TypeError("failure_category must be MeshingFailureCategory or None.")
-        text = str(message).strip()
-        if not text:
-            raise ValueError("Meshing diagnostic message must be non-empty.")
-        identifiers = tuple(entity_ids)
-        points = tuple(
-            tuple(float(component) for component in point) for point in locations
-        )
-        self.severity = severity
-        self.message = text
-        self.provider_code = str(provider_code)
-        self.failure_category = failure_category
-        self.entity_ids = identifiers
-        self.locations = points
-        self.diagnostic_id = canonical_fingerprint(
-            {
-                "kind": "meshing-diagnostic",
-                "severity": severity.value,
-                "message": text,
-                "provider_code": str(provider_code),
-                "failure_category": (
-                    None if failure_category is None else failure_category.value
-                ),
-                "entity_ids": identifiers,
-                "locations": points,
-            }
         )
 
 

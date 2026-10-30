@@ -173,7 +173,9 @@ def native_high_order_curving() -> dict[str, object]:
     for element in adapted.geometry.elements:
         degree = getattr(element, "degree", None)
         if not isinstance(degree, (int, np.integer)):
-            raise RuntimeError("Native bisection omitted degree-bearing geometry elements.")
+            raise RuntimeError(
+                "Native bisection omitted degree-bearing geometry elements."
+            )
         degree_values.append(int(degree))
     degrees = tuple(degree_values)
     if not degrees or max(degrees) < 2:
