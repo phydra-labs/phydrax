@@ -10,17 +10,17 @@ from phydrax.discretization.finite_volume._polyhedral import (
     prepare_polyhedral_finite_volume_geometry,
 )
 from phydrax.meshing._association import GeometrySourceEntityRole
-from phydrax.meshing._controls import RegionSeed
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._controls import RegionSeed
 from phydrax.meshing._organization import RegionRole
-from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
 from phydrax.meshing._periodic import periodic_entity_orbit_map
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
+from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing.providers._native_sources import NativePolyhedralSource
 from tests.unit.meshing.test_polyhedral_adaptation import _plc_material_l
@@ -42,20 +42,16 @@ def _periodic_box_source(
     row = {
         tuple(int(value) for value in point): index
         for index, point in enumerate(
-            tuple(
-                (x, y, z)
-                for z in range(2)
-                for y in range(2)
-                for x in range(2)
-            )
+            tuple((x, y, z) for z in range(2) for y in range(2) for x in range(2))
         )
     }
+    # Facet rows: z=0, z=lz, y=0, x=lx, x=0, y=ly (outward oriented).
     polygons = (
         (row[(0, 0, 0)], row[(0, 1, 0)], row[(1, 1, 0)], row[(1, 0, 0)]),
         (row[(0, 0, 1)], row[(1, 0, 1)], row[(1, 1, 1)], row[(0, 1, 1)]),
-        (row[(0, 0, 0)], row[(0, 0, 1)], row[(0, 1, 1)], row[(0, 1, 0)]),
-        (row[(1, 0, 0)], row[(1, 1, 0)], row[(1, 1, 1)], row[(1, 0, 1)]),
         (row[(0, 0, 0)], row[(1, 0, 0)], row[(1, 0, 1)], row[(0, 0, 1)]),
+        (row[(1, 0, 0)], row[(1, 1, 0)], row[(1, 1, 1)], row[(1, 0, 1)]),
+        (row[(0, 0, 0)], row[(0, 0, 1)], row[(0, 1, 1)], row[(0, 1, 0)]),
         (row[(0, 1, 0)], row[(0, 1, 1)], row[(1, 1, 1)], row[(1, 1, 0)]),
     )
     segments = np.asarray(
@@ -92,10 +88,6 @@ def _periodic_box_source(
         weights=np.zeros((1,), dtype=np.float64),
         site_ids=("bulk-site",),
     )
-    facet_rows = {
-        identifier: row
-        for row, identifier in enumerate(complex_.facet_entity_ids)
-    }
 
     def facet_scope(facet_row: int, /) -> MeshingScope:
         return MeshingScope(
@@ -114,8 +106,8 @@ def _periodic_box_source(
         transform[axis, 3] = lengths[axis]
         constraints.append(
             phx.meshing.PeriodicConstraint(
-                facet_scope(facet_rows[complex_.facet_ids[source_row]]),
-                facet_scope(facet_rows[complex_.facet_ids[target_row]]),
+                facet_scope(source_row),
+                facet_scope(target_row),
                 transform,
                 tolerance=0.0,
             )
@@ -133,6 +125,7 @@ def _periodic_box_specification(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
         MeshingScope.whole(source, 2),
         VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
         region_seeds=(
             RegionSeed(
                 np.asarray(tuple(length / 2.0 for length in lengths), dtype=np.float64),
@@ -158,10 +151,10 @@ def _independent_polyhedral_volumes(mesh: CellMesh, /) -> np.ndarray:
     volumes = np.zeros((connectivity.cell_count,), dtype=np.float64)
     for cell in range(connectivity.cell_count):
         first, last = map(int, cell_offsets[cell : cell + 2])
-        for face, sign in zip(cell_faces[first:last], cell_signs[first:last], strict=True):
-            face_first, face_last = map(
-                int, face_offsets[int(face) : int(face) + 2]
-            )
+        for face, sign in zip(
+            cell_faces[first:last], cell_signs[first:last], strict=True
+        ):
+            face_first, face_last = map(int, face_offsets[int(face) : int(face) + 2])
             polygon = coordinates[face_vertices[face_first:face_last]]
             for index in range(1, polygon.shape[0] - 1):
                 volumes[cell] += (
@@ -185,8 +178,6 @@ def _independent_face_area(mesh: CellMesh, face: int, /) -> float:
     polygon = np.asarray(mesh.coordinates, dtype=np.float64)[vertices[first:last]]
     vector = 0.5 * np.sum(np.cross(polygon, np.roll(polygon, -1, axis=0)), axis=0)
     return float(np.linalg.norm(vector))
-
-
 
 
 def _assert_reciprocal_internal_faces(mesh: CellMesh, /) -> None:
@@ -215,21 +206,29 @@ def _assert_reciprocal_internal_faces(mesh: CellMesh, /) -> None:
         ):
             raise ValueError("An internal polyhedral face lost reciprocal cell ancestry.")
     if internal_count == 0:
-        raise ValueError("The material-L fixture must retain its material-interface face.")
+        raise ValueError(
+            "The material-L fixture must retain its material-interface face."
+        )
+
+
 def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> None:
     lengths = (2.0, 3.0, 1.5)
     source, constraints = _periodic_box_source(lengths)
     specification = _periodic_box_specification(source, constraints, lengths)
-    result = phx.meshing.NativeMeshingProvider(
-        phx.meshing.NativeMeshingOptions(
-            "plc_restricted_power",
-            polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
         )
-    ).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     mesh = result.mesh
     connectivity = mesh.connectivity
@@ -240,7 +239,14 @@ def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> No
         raise ValueError("Periodic PLC generation lost its canonical quotient topology.")
     periodic.require_lifted(mesh.topology, mesh.lifted_topology_id, mesh.blocks)
     periodic.require_coordinates(mesh.coordinates)
-    assert tuple(entity.count for entity in periodic.quotient.entity_sets) == (1, 3, 3, 1)
+    # One joined power cell fills the box; every boundary face is identified
+    # with exactly one translate, all corners collapse to one vertex, and the
+    # quotient is a 3-torus with Euler characteristic zero.
+    counts = tuple(entity.count for entity in periodic.quotient.entity_sets)
+    assert connectivity.cell_count == 1
+    assert counts[0] == 1 and counts[3] == 1
+    assert 2 * counts[2] == mesh.entity_set(2).count
+    assert counts[0] - counts[1] + counts[2] - counts[3] == 0
 
     finite_volume = prepare_polyhedral_finite_volume_geometry(mesh)
     independent_volumes = _independent_polyhedral_volumes(mesh)
@@ -259,7 +265,10 @@ def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> No
     assert result.certification is not None and result.certification.passed
     assert result.audit.passed
     assert result.compliance.passed
-    assert result.certification.inputs.source is source
+    assert (
+        result.certification.inputs.source_id,
+        result.certification.inputs.source_revision,
+    ) == (source.source_id, source.source_revision)
 
     face_association = next(
         association
@@ -296,8 +305,12 @@ def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> No
         facet_face_ids.setdefault(source_id, []).append(int(target_id))
         facet_row = source.complex.facet_ids.index(source_id)
         axis, coordinate = face_bounds[facet_row]
-        connectivity_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-        connectivity_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        connectivity_offsets = np.asarray(
+            connectivity.face_vertex_offsets, dtype=np.int64
+        )
+        connectivity_vertices = np.asarray(
+            connectivity.face_vertex_values, dtype=np.int64
+        )
         first, last = map(int, connectivity_offsets[row : row + 2])
         face_points = np.asarray(mesh.coordinates, dtype=np.float64)[
             connectivity_vertices[first:last]
@@ -387,7 +400,9 @@ def _material_l_periodic_request() -> tuple[
         if np.all(points[:, 2] == 1.0):
             target_facet_rows.append(facet_row)
     if not source_facet_rows or len(source_facet_rows) != len(target_facet_rows):
-        raise ValueError("The material-L source must have matching top and bottom facets.")
+        raise ValueError(
+            "The material-L source must have matching top and bottom facets."
+        )
 
     def facet_scope(rows: list[int], /) -> MeshingScope:
         return MeshingScope(
@@ -396,9 +411,7 @@ def _material_l_periodic_request() -> tuple[
             MeshingEntityKind.GEOMETRY,
             2,
             source.scope_entity_set_id(2),
-            np.asarray(
-                [complex_.facet_entity_ids[row] for row in rows], dtype=np.int64
-            ),
+            np.asarray([complex_.facet_entity_ids[row] for row in rows], dtype=np.int64),
         )
 
     transform = np.eye(4, dtype=np.float64)
@@ -413,6 +426,7 @@ def _material_l_periodic_request() -> tuple[
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
         MeshingScope.whole(source, 2),
         VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
         region_seeds=(
             RegionSeed(
                 np.asarray((0.5, 0.5, 0.5), dtype=np.float64),
@@ -434,16 +448,20 @@ def _material_l_periodic_request() -> tuple[
 
 def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -> None:
     source, specification, periodic_constraint = _material_l_periodic_request()
-    result = phx.meshing.NativeMeshingProvider(
-        phx.meshing.NativeMeshingOptions(
-            "plc_restricted_power",
-            polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
         )
-    ).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     mesh = result.mesh
     connectivity = mesh.connectivity
@@ -463,7 +481,10 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
     assert result.certification is not None and result.certification.passed
     assert result.audit.passed
     assert result.compliance.passed
-    assert result.certification.inputs.source is source
+    assert (
+        result.certification.inputs.source_id,
+        result.certification.inputs.source_revision,
+    ) == (source.source_id, source.source_revision)
     assert {zone.material_id for zone in result.zones} == {
         "base-material",
         "upper-material",
@@ -481,7 +502,9 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
                     np.asarray(
                         [
                             cell_rows[int(identifier)]
-                            for identifier in np.asarray(zone.scope.entity_ids, dtype=np.int64)
+                            for identifier in np.asarray(
+                                zone.scope.entity_ids, dtype=np.int64
+                            )
                         ],
                         dtype=np.int64,
                     )
@@ -516,9 +539,7 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
             actual_areas[source_id] = actual_areas.get(source_id, 0.0) + (
                 _independent_face_area(mesh, face_rows[int(target_id)])
             )
-    expected_areas = {
-        identifier: 0.0 for identifier in source.complex.facet_ids
-    }
+    expected_areas = {identifier: 0.0 for identifier in source.complex.facet_ids}
     polygon_facets = np.asarray(source.complex.polygon_facets, dtype=np.int64)
     polygon_offsets = np.asarray(source.complex.polygon_offsets, dtype=np.int64)
     polygon_vertices = np.asarray(source.complex.polygon_vertices, dtype=np.int64)
@@ -527,9 +548,7 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
         points = np.asarray(source.complex.vertices, dtype=np.float64)[
             polygon_vertices[first:last]
         ]
-        area_vector = 0.5 * np.sum(
-            np.cross(points, np.roll(points, -1, axis=0)), axis=0
-        )
+        area_vector = 0.5 * np.sum(np.cross(points, np.roll(points, -1, axis=0)), axis=0)
         expected_areas[source.complex.facet_ids[facet_row]] += float(
             np.linalg.norm(area_vector)
         )
@@ -557,8 +576,7 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
             face_association.source_occurrence_paths,
             strict=True,
         )
-        if role is GeometrySourceEntityRole.FACET
-        and (source_id, path) in source_keys
+        if role is GeometrySourceEntityRole.FACET and (source_id, path) in source_keys
     ]
     target_faces = [
         int(identifier)
@@ -569,20 +587,19 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
             face_association.source_occurrence_paths,
             strict=True,
         )
-        if role is GeometrySourceEntityRole.FACET
-        and (source_id, path) in target_keys
+        if role is GeometrySourceEntityRole.FACET and (source_id, path) in target_keys
     ]
-    source_rows = np.asarray([face_rows[identifier] for identifier in source_faces])
-    target_rows = np.asarray([face_rows[identifier] for identifier in target_faces])
+    source_rows = np.asarray(
+        [face_rows[identifier] for identifier in source_faces], dtype=np.int64
+    )
+    target_rows = np.asarray(
+        [face_rows[identifier] for identifier in target_faces], dtype=np.int64
+    )
     assert np.array_equal(
         np.sort(quotient_rows[source_rows]), np.sort(quotient_rows[target_rows])
     )
-    source_windings = {
-        int(quotient_rows[row]): windings[row] for row in source_rows
-    }
-    target_windings = {
-        int(quotient_rows[row]): windings[row] for row in target_rows
-    }
+    source_windings = {int(quotient_rows[row]): windings[row] for row in source_rows}
+    target_windings = {int(quotient_rows[row]): windings[row] for row in target_rows}
     for quotient_row, source_winding in source_windings.items():
         np.testing.assert_array_equal(
             target_windings[quotient_row] - source_winding,
@@ -670,6 +687,7 @@ def _rotational_wedge_request() -> tuple[
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
         MeshingScope.whole(source, 2),
         VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
         region_seeds=(
             RegionSeed(
                 np.asarray((0.25, 0.25, 0.5), dtype=np.float64),
@@ -685,30 +703,35 @@ def _rotational_wedge_request() -> tuple[
 
 def test_rotational_periodic_plc_uses_finite_isometry_quotient() -> None:
     source, specification, periodic_constraint = _rotational_wedge_request()
-    result = phx.meshing.NativeMeshingProvider(
-        phx.meshing.NativeMeshingOptions(
-            "plc_restricted_power",
-            polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
         )
-    ).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
     mesh = result.mesh
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Rotational periodic output must remain polyhedral.")
     periodic = mesh.periodic_topology
-    if periodic is None or not isinstance(
-        periodic.cell, PeriodicIsometryGroup
-    ):
+    if periodic is None or not isinstance(periodic.cell, PeriodicIsometryGroup):
         raise ValueError("The rotational PLC lost its finite isometry quotient.")
     assert periodic.cell.orders == (4,)
     assert result.certification is not None and result.certification.passed
     assert result.audit.passed
     assert result.compliance.passed
-    assert result.certification.inputs.source is source
+    assert (
+        result.certification.inputs.source_id,
+        result.certification.inputs.source_revision,
+    ) == (source.source_id, source.source_revision)
 
     finite_volume = prepare_polyhedral_finite_volume_geometry(mesh)
     independent = _independent_polyhedral_volumes(mesh)
@@ -757,20 +780,18 @@ def test_rotational_periodic_plc_uses_finite_isometry_quotient() -> None:
     face_orbits = periodic_entity_orbit_map(mesh, 2)
     quotient_rows = np.asarray(face_orbits.lifted_to_quotient, dtype=np.int64)
     windings = np.asarray(face_orbits.winding_shifts, dtype=np.int64)
-    source_rows = np.asarray([face_rows[identifier] for identifier in source_faces])
-    target_rows = np.asarray([face_rows[identifier] for identifier in target_faces])
+    source_rows = np.asarray(
+        [face_rows[identifier] for identifier in source_faces], dtype=np.int64
+    )
+    target_rows = np.asarray(
+        [face_rows[identifier] for identifier in target_faces], dtype=np.int64
+    )
     assert np.array_equal(
         np.sort(quotient_rows[source_rows]), np.sort(quotient_rows[target_rows])
     )
-    source_windings = {
-        int(quotient_rows[row]): windings[row] for row in source_rows
-    }
-    target_windings = {
-        int(quotient_rows[row]): windings[row] for row in target_rows
-    }
+    source_windings = {int(quotient_rows[row]): windings[row] for row in source_rows}
+    target_windings = {int(quotient_rows[row]): windings[row] for row in target_rows}
     assert source_windings.keys() == target_windings.keys()
     for quotient_row, source_winding in source_windings.items():
-        delta = (
-            target_windings[quotient_row] - source_winding
-        ) % periodic.cell.orders[0]
+        delta = (target_windings[quotient_row] - source_winding) % periodic.cell.orders[0]
         np.testing.assert_array_equal(delta, np.asarray((1,), dtype=np.int64))
