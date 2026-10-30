@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -43,7 +43,10 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...geometry._atlas import AbstractBoundaryMap
-from ...geometry._curve_boundary import ParametricCurveBoundarySource
+from ...geometry._curve_boundary import (
+    ParametricCurveBoundarySource,
+    SegmentChartCurve,
+)
 from ...geometry._interval_enclosure import (
     IntervalExtensionError,
     prepare_interval_function,
@@ -53,7 +56,7 @@ from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
-from ...geometry.brep._patches import AbstractCurve, LineCurve
+from ...geometry.brep._patches import AbstractCurve
 from ...typing import checked
 from .._certification_schedule import MeshCertificationSchedule
 from .._controls import FeatureKind
@@ -104,30 +107,6 @@ class _AtlasCurveCarrier(AbstractCurve):
         return self.mapping.map(rows, local[..., None])
 
 
-@final
-class _SegmentCurveCarrier(AbstractCurve):
-    """One source SegmentMesh edge evaluated on its declared parameter range."""
-
-    line: LineCurve
-    first: float = eqx.field(static=True)
-    last: float = eqx.field(static=True)
-
-    def __init__(self, line: LineCurve, first: float, last: float, /) -> None:
-        self.line = line
-        self.first = first
-        self.last = last
-
-    @property
-    def ambient_dimension(self) -> int:
-        return self.line.ambient_dimension
-
-    def evaluate(self, parameters: Array, /) -> Array:
-        local = (jnp.asarray(parameters, dtype=jnp.float64) - self.first) / (
-            self.last - self.first
-        )
-        return self.line.evaluate(local)
-
-
 def _curve_source_query(
     prepared: PreparedCurveNetwork,
     selected_entity_ids: np.ndarray | None = None,
@@ -146,7 +125,9 @@ def _curve_source_query(
         )
     )
     if selected_rows.size == 0:
-        raise ValueError("A curve source query requires at least one selected authored chart.")
+        raise ValueError(
+            "A curve source query requires at least one selected authored chart."
+        )
     chart_rows = np.asarray(prepared.chart_rows, dtype=np.int64)[selected_rows]
     scope_ids = np.asarray(prepared.scope_entity_ids, dtype=np.int64)[selected_rows]
     source_ranges = np.asarray(prepared.source_ranges, dtype=np.float64)[selected_rows]
@@ -161,12 +142,9 @@ def _curve_source_query(
         source_vertices = np.asarray(source.curves.vertices, dtype=np.float64)
         source_edges = np.asarray(source.curves.edges, dtype=np.int64)
         carriers = tuple(
-            _SegmentCurveCarrier(
-                LineCurve(
-                    source_vertices[source_edges[chart, 0]],
-                    source_vertices[source_edges[chart, 1]]
-                    - source_vertices[source_edges[chart, 0]],
-                ),
+            SegmentChartCurve(
+                source_vertices[source_edges[chart, 0]],
+                source_vertices[source_edges[chart, 1]],
                 first,
                 last,
             )
@@ -188,17 +166,23 @@ def _curve_source_query(
                 vertex_row = int(source.curves.edges[chart, endpoint_side])
                 point_id = int(source.vertex_entity_ids[vertex_row])
                 point_key = source.source_entity_key_for_scope(0, point_id)
-                point = tuple(float(value) for value in source.curves.vertices[vertex_row])
+                point = tuple(
+                    float(value) for value in source.curves.vertices[vertex_row]
+                )
                 point_bounds = (point, point)
             elif source.chart_endpoint_ids:
                 authored_range = (
                     (0.0, 1.0)
                     if source.chart_parameter_ranges is None
-                    else tuple(float(value) for value in source.chart_parameter_ranges[chart])
+                    else tuple(
+                        float(value) for value in source.chart_parameter_ranges[chart]
+                    )
                 )
                 source_endpoint_side = (
-                    0 if parameter == authored_range[0]
-                    else 1 if parameter == authored_range[1]
+                    0
+                    if parameter == authored_range[0]
+                    else 1
+                    if parameter == authored_range[1]
                     else None
                 )
                 if source_endpoint_side is not None:
@@ -212,7 +196,9 @@ def _curve_source_query(
                         point_id = int(source.vertex_entity_ids[vertex_row])
                         point_key = source.source_entity_key_for_scope(0, point_id)
                         if source.gap_domain is not None:
-                            lower, upper = source.gap_domain.source_corner_point_bounds(vertex_row)
+                            lower, upper = source.gap_domain.source_corner_point_bounds(
+                                vertex_row
+                            )
                             lower_float = []
                             upper_float = []
                             for lo, hi in zip(lower, upper, strict=True):
@@ -468,12 +454,9 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
             jaxpr, tuple(np.asarray(value) for value in constants)
         )
         intervals = tuple(
-            (np.asarray(lower), np.asarray(upper))
-            for lower, upper in constant_intervals
+            (np.asarray(lower), np.asarray(upper)) for lower, upper in constant_intervals
         )
-        return PreparedIntervalFunction(
-            closed, 1, (output_dimension,), 1, intervals
-        )
+        return PreparedIntervalFunction(closed, 1, (output_dimension,), 1, intervals)
 
     def __init__(self, charts: CurveCharts, row: int, /) -> None:
         acceleration = prepare_interval_function(
@@ -1118,7 +1101,9 @@ def curve_support_issues(
             continue
         covered |= np.isin(selected, control_ids)
     if selected.size and not np.all(covered):
-        issues.append("an explicit physical resolution control on every selected source curve")
+        issues.append(
+            "an explicit physical resolution control on every selected source curve"
+        )
     for feature in specification.protected_features:
         feature_scope = feature.scope
         feature_ids = np.asarray(feature_scope.entity_ids, dtype=np.int64)
@@ -1218,11 +1203,17 @@ def _adaptive_integral(
     /,
     *,
     density: bool,
-) -> tuple[float, float, np.ndarray, np.ndarray]:
-    """Refine Gauss panels until the physical request's error estimate is met."""
+    intervals: int,
+) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
+    """Refine Gauss panels until the physical request's error estimate is met.
+
+    Returns the integral, its error estimate, the panel breaks, and the
+    cumulative integral and cumulative error estimate at every break.
+    """
     if lower == upper:
-        return 0.0, 0.0, np.asarray((lower, upper)), np.asarray((0.0, 0.0))
-    pieces = np.linspace(lower, upper, prepared.schedule.quadrature_intervals + 1)
+        zeros = np.zeros((2,), dtype=np.float64)
+        return 0.0, 0.0, np.asarray((lower, upper)), zeros, zeros
+    pieces = np.linspace(lower, upper, intervals + 1)
     panels = [
         (
             float(a),
@@ -1248,7 +1239,10 @@ def _adaptive_integral(
             cumulative = np.concatenate(
                 ([0.0], np.cumsum([panel[2] for panel in panels]))
             )
-            return total, error, breaks, cumulative
+            cumulative_errors = np.concatenate(
+                ([0.0], np.cumsum([panel[3] for panel in panels]))
+            )
+            return total, error, breaks, cumulative, cumulative_errors
         index = max(range(len(panels)), key=lambda item: panels[item][3])
         start, stop, _, _ = panels[index]
         middle = start + 0.5 * (stop - start)
@@ -1287,18 +1281,76 @@ def _adaptive_integral(
         panels[index : index + 1] = [left, right]
 
 
+class _DensityTable(NamedTuple):
+    """Adaptive cumulative size-density table of one source chart on ``[0, 1]``."""
+
+    breaks: np.ndarray
+    cumulative: np.ndarray
+    cumulative_errors: np.ndarray
+
+    @property
+    def mass(self) -> float:
+        return float(self.cumulative[-1])
+
+    @property
+    def error(self) -> float:
+        return float(self.cumulative_errors[-1])
+
+
+def _table_mass(
+    prepared: PreparedCurveNetwork,
+    row: int,
+    table: _DensityTable,
+    parameter: float,
+    tolerance: float,
+    /,
+) -> tuple[float, float, float]:
+    """Density mass on ``[0, parameter]`` and its two error parts.
+
+    The mass is the table prefix through the last whole panel plus one
+    in-panel integral. The error is returned as the prefix's cumulative panel
+    estimate and the in-panel estimate, so differences of two masses can
+    cancel the shared prefix exactly.
+    """
+    panel = int(np.searchsorted(table.breaks, parameter, side="right")) - 1
+    if panel >= table.breaks.size - 1:
+        return table.mass, table.error, 0.0
+    start = float(table.breaks[panel])
+    prefix = float(table.cumulative[panel])
+    prefix_error = float(table.cumulative_errors[panel])
+    if parameter == start:
+        return prefix, prefix_error, 0.0
+    local, local_error, _, _, _ = _adaptive_integral(
+        prepared, row, start, parameter, tolerance, density=True, intervals=1
+    )
+    return prefix + local, prefix_error, local_error
+
+
 def _place(
     prepared: PreparedCurveNetwork,
     row: int,
+    table: _DensityTable,
     lower: float,
     upper: float,
     fraction: float,
     /,
 ) -> float:
-    """Invert cumulative size density by bracketed bisection without a step ceiling."""
+    """Invert cumulative size density by bracketed bisection without a step ceiling.
+
+    Every bisection step integrates only inside one panel of the chart's
+    density table, so a placement costs one short integral per step rather
+    than a full re-integration of ``[lower, middle]``.
+    """
     tolerance = prepared.tolerance(row)
-    total, total_error, _, _ = _adaptive_integral(
-        prepared, row, lower, upper, tolerance, density=True
+    lower_mass, lower_prefix_error, lower_local_error = _table_mass(
+        prepared, row, table, lower, tolerance
+    )
+    upper_mass, upper_prefix_error, upper_local_error = _table_mass(
+        prepared, row, table, upper, tolerance
+    )
+    total = upper_mass - lower_mass
+    total_error = (
+        upper_prefix_error - lower_prefix_error + upper_local_error + lower_local_error
     )
     if not math.isfinite(total) or total <= 0.0:
         raise MeshingFailure(
@@ -1320,9 +1372,11 @@ def _place(
                 stage="curve_meshing",
                 entity_ids=(int(prepared.scope_entity_ids[row]),),
             )
-        partial, error, _, _ = _adaptive_integral(
-            prepared, row, lower, middle, tolerance, density=True
+        mass, prefix_error, local_error = _table_mass(
+            prepared, row, table, middle, tolerance
         )
+        partial = mass - lower_mass
+        error = prefix_error - lower_prefix_error + local_error + lower_local_error
         residual = partial - target
         if abs(residual) + error + fraction * total_error <= tolerance:
             return middle
@@ -1332,15 +1386,17 @@ def _place(
             right = middle
 
 
-def _density_tables(
-    prepared: PreparedCurveNetwork, /
-) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...], np.ndarray]:
-    breaks: list[np.ndarray] = []
-    tables: list[np.ndarray] = []
-    errors = np.empty((prepared.curve_entity_ids.size,), dtype=np.float64)
+def _density_tables(prepared: PreparedCurveNetwork, /) -> tuple[_DensityTable, ...]:
+    tables: list[_DensityTable] = []
     for row in range(prepared.curve_entity_ids.size):
-        total, error, row_breaks, table = _adaptive_integral(
-            prepared, row, 0.0, 1.0, prepared.tolerance(row), density=True
+        total, _, breaks, cumulative, cumulative_errors = _adaptive_integral(
+            prepared,
+            row,
+            0.0,
+            1.0,
+            prepared.tolerance(row),
+            density=True,
+            intervals=prepared.schedule.quadrature_intervals,
         )
         if total < 0.0 or not math.isfinite(total):
             raise MeshingFailure(
@@ -1350,10 +1406,8 @@ def _density_tables(
                 stage="curve_meshing",
                 entity_ids=(int(prepared.scope_entity_ids[row]),),
             )
-        breaks.append(row_breaks)
-        tables.append(table)
-        errors[row] = error
-    return tuple(breaks), tuple(tables), errors
+        tables.append(_DensityTable(breaks, cumulative, cumulative_errors))
+    return tuple(tables)
 
 
 def _source_fidelity_tolerance(specification: CurveMeshingSpec, /) -> float | None:
@@ -1467,7 +1521,8 @@ def _discretize(
     prepared: PreparedCurveNetwork,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    breaks, tables, integration_errors = _density_tables(prepared)
+    tables = _density_tables(prepared)
+    integration_errors = np.asarray([table.error for table in tables], dtype=np.float64)
     limits = _deviation_limits(prepared)
     parameters_by_chart: list[list[float]] = [
         [0.0, 1.0] for _ in prepared.curve_entity_ids
@@ -1487,7 +1542,7 @@ def _discretize(
             pair = (min(start, end), max(start, end))
             parallel_counts[pair] = parallel_counts.get(pair, 0) + 1
     for scope_id, rows in scope_rows.items():
-        masses = [float(tables[row][-1]) for row in rows]
+        masses = [tables[row].mass for row in rows]
         for row, mass in zip(rows, masses, strict=True):
             if mass <= 0.0:
                 raise MeshingFailure(
@@ -1513,7 +1568,9 @@ def _discretize(
         elif start >= 0 and end >= 0:
             minimum = max(
                 minimum,
-                2 if parallel_counts.get((min(start, end), max(start, end)), 0) > 1 else 1,
+                2
+                if parallel_counts.get((min(start, end), max(start, end)), 0) > 1
+                else 1,
             )
         count = max(math.ceil(total), minimum)
         prefixes = np.concatenate(([0.0], np.cumsum(masses)))
@@ -1526,7 +1583,7 @@ def _discretize(
                 continue
             row = rows[chart]
             parameters_by_chart[row].append(
-                _place(prepared, row, 0.0, 1.0, local_target / masses[chart])
+                _place(prepared, row, tables[row], 0.0, 1.0, local_target / masses[chart])
             )
         for row in rows:
             parameters = parameters_by_chart[row]
@@ -1545,7 +1602,9 @@ def _discretize(
                                 stage="curve_meshing",
                                 entity_ids=(scope_id,),
                             )
-                        split_parameters.append(_place(prepared, row, lower, upper, 0.5))
+                        split_parameters.append(
+                            _place(prepared, row, tables[row], lower, upper, 0.5)
+                        )
                 if not split_parameters:
                     break
                 existing = set(parameters)
@@ -2001,6 +2060,7 @@ def _curve_compliance(
             upper,
             prepared.physical_tolerance(row),
             density=False,
+            intervals=prepared.schedule.quadrature_intervals,
         )[0]
     for scope_id in dict.fromkeys(prepared.scope_entity_ids.tolist()):
         chart_rows = np.flatnonzero(prepared.scope_entity_ids == scope_id)
@@ -2196,7 +2256,9 @@ def _curve_chart_witness(
         or np.any(selected_rows >= rows.size)
         or np.unique(selected_rows).size != selected_rows.size
     ):
-        raise ValueError("Curve witness output selection must contain unique nonempty cell rows.")
+        raise ValueError(
+            "Curve witness output selection must contain unique nonempty cell rows."
+        )
     rows = rows[selected_rows]
     local_parameters = local_parameters[selected_rows]
     chart_ids: list[str] = []
@@ -2219,7 +2281,9 @@ def _curve_chart_witness(
         source_parameters[output_row, :, 0] = first + (last - first) * local_interval
     cell_ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)[selected_rows]
     if cell_ids.shape != (rows.size,):
-        raise ValueError("Curve witness requires one interval cell per source-parameter row.")
+        raise ValueError(
+            "Curve witness requires one interval cell per source-parameter row."
+        )
     target_reference = np.broadcast_to(
         np.asarray(((0.0,), (1.0,)), dtype=np.float64),
         (rows.size, 2, 1),
@@ -2258,7 +2322,11 @@ def _curve_point_witness(
     /,
 ) -> SourceBoundaryPointWitness:
     identifiers = np.asarray(requested_point_ids, dtype=np.int64)
-    if identifiers.ndim != 1 or identifiers.size == 0 or np.unique(identifiers).size != identifiers.size:
+    if (
+        identifiers.ndim != 1
+        or identifiers.size == 0
+        or np.unique(identifiers).size != identifiers.size
+    ):
         raise ValueError("Curve point witness needs unique authored source point IDs.")
     if len(vertex_source_ids) != mesh.coordinates.shape[0]:
         raise ValueError("Curve point ancestry must align with target mesh vertices.")
@@ -2272,7 +2340,9 @@ def _curve_point_witness(
             if int(identifier) in source_ids
         ]
         if len(matches) != 1:
-            raise ValueError("Every protected source point must map to one target vertex.")
+            raise ValueError(
+                "Every protected source point must map to one target vertex."
+            )
         target_rows.append(matches[0])
         entity_id, occurrence = source.source_entity_key_for_scope(0, int(identifier))
         entity_ids.append(entity_id)
@@ -2281,7 +2351,9 @@ def _curve_point_witness(
         np.asarray(target_rows, dtype=np.int64)
     ]
     if np.unique(target_ids).size != target_ids.size:
-        raise ValueError("Distinct protected source points cannot share one target vertex identity.")
+        raise ValueError(
+            "Distinct protected source points cannot share one target vertex identity."
+        )
     return SourceBoundaryPointWitness(
         mesh_id=mesh.mesh_id,
         geometry_id=cell_geometry_id(geometry),
@@ -2293,6 +2365,7 @@ def _curve_point_witness(
         source_entity_ids=tuple(entity_ids),
         occurrence_paths=tuple(occurrences),
     )
+
 
 @final
 class _PreparedCurveRoute(StrictModule, NonTrainableState):

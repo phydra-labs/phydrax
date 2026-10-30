@@ -556,6 +556,16 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
+exact affine map of the edge onto its declared chart parameter range. Its rational
+coefficients make chart fidelity an exact polynomial bound per target edge, and its
+float realization reproduces both authored endpoints bit for bit. Point placement
+inverts the chart's adaptive size-density table panel by panel rather than
+re-integrating the chart for every bisection step. A hard `UniformSizeControl`
+target is compared with measured arc lengths at the `SizeCompliancePolicy`
+tolerances, which default to zero; a target such as 0.2 m that floating-point
+placement cannot reproduce exactly needs an explicit tolerance in the request.
+
 Native tetrahedral quality improvement follows fixed-boundary refinement. Each
 cell scores the worse of its dihedral-angle and radius-edge target fractions,
 1 when both targets hold. Every face flip, edge-ring reconnection, interior
