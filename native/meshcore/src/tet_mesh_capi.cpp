@@ -1527,10 +1527,11 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
                                 double minimum_dihedral_degrees,
                                 double minimum_relative_determinant,
                                 int32_t* edit_status, int32_t* run_status,
-                                int64_t* collapsed_vertices, int64_t* relocated_vertices,
-                                int64_t* unmet_cells) {
+                                int64_t* inserted_vertices, int64_t* collapsed_vertices,
+                                int64_t* relocated_vertices, int64_t* unmet_cells) {
   if (mesh == nullptr || edit_status == nullptr || run_status == nullptr ||
-      collapsed_vertices == nullptr || relocated_vertices == nullptr || unmet_cells == nullptr ||
+      inserted_vertices == nullptr || collapsed_vertices == nullptr ||
+      relocated_vertices == nullptr || unmet_cells == nullptr ||
       !valid_identity_fields(identity_bound, source_id, source_id_length,
                              source_revision, source_revision_length, source_map_id,
                              source_map_id_length, frame_id, frame_id_length)) {
@@ -1538,6 +1539,7 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
   }
   *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
   *run_status = PHX_MC_UNRESOLVED;
+  *inserted_vertices = 0;
   *collapsed_vertices = 0;
   *relocated_vertices = 0;
   *unmet_cells = 0;
@@ -1553,7 +1555,7 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
         mesh->state,
         phx::mc::TetQualityRequest{radius_edge_bound, minimum_dihedral_degrees,
                                    minimum_relative_determinant},
-        *collapsed_vertices, *relocated_vertices, *unmet_cells);
+        *inserted_vertices, *collapsed_vertices, *relocated_vertices, *unmet_cells);
     *run_status = status;
     *edit_status = PHX_MC_TET_EDIT_APPLIED;
     return PHX_MC_OK;

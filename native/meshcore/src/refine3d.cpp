@@ -768,9 +768,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return distance_squared < radius_squared;
   };
 
-  std::vector<std::int32_t> cavity;
-  std::vector<std::int32_t> stack;
-  std::unordered_set<std::int32_t> in_cavity;
+  TetInsertionCavity cavity;
   std::vector<std::uint64_t> created_cells;
   while (!queue.empty()) {
     const std::uint64_t cell_id = queue.begin()->second;
@@ -793,43 +791,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       continue;
     }
 
-    // Visibility walk to the cell containing the circumcenter.
-    std::int32_t current = root_slot;
-    std::int32_t blocked_face = -1;
-    bool located = false;
-    in_cavity.clear();
-    for (;;) {
-      if (!in_cavity.insert(current).second) break;
-      const Tetrahedron& tetrahedron = mesh.tet(current);
-      int exit_face = -1;
-      for (int face = 0; face < 4 && exit_face < 0; ++face) {
-        std::int32_t facet[3];
-        oriented_facet(tetrahedron.v, face, facet);
-        if (orient3d(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
-                     center) < 0) {
-          exit_face = face;
-        }
-      }
-      if (exit_face < 0) {
-        located = true;
-        break;
-      }
-      const std::int32_t next = tetrahedron.n[exit_face];
-      if (mesh.complex_.constraint(current, exit_face) != kNoConstraint ||
-          !mesh.complex_.live(next) || is_ghost(mesh.tet(next))) {
-        blocked_face = exit_face;
-        break;
-      }
-      current = next;
+    const TetCavityStatus located = mesh.insertion_cavity(root_slot, center, false, cavity);
+    if (located == TetCavityStatus::kRefused) {
+      unmet_reasons[cell_id] = PHX_MC_TET_UNMET_REFUSED;
+      continue;
     }
-    if (!located) {
-      if (blocked_face < 0) {
-        unmet_reasons[cell_id] = PHX_MC_TET_UNMET_REFUSED;
-        continue;
-      }
+    if (located == TetCavityStatus::kBlocked) {
       bool split = false;
       if (boundary_splittable) {
-        const std::int32_t error = split_encroached_face(current, blocked_face, split);
+        const std::int32_t error =
+            split_encroached_face(cavity.blocked_cell, cavity.blocked_face, split);
         if (error != PHX_MC_OK) return error;
       }
       if (split) {
@@ -845,119 +816,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       continue;
     }
 
-    // Bowyer-Watson cavity across unconstrained faces.
-    const std::int32_t root = current;
-    cavity.assign(1, root);
-    stack.assign(1, root);
-    in_cavity.clear();
-    in_cavity.insert(root);
-    while (!stack.empty()) {
-      const std::int32_t cell = stack.back();
-      stack.pop_back();
-      for (int face = 0; face < 4; ++face) {
-        const std::int32_t next = mesh.tet(cell).n[face];
-        if (mesh.complex_.constraint(cell, face) != kNoConstraint ||
-            !mesh.complex_.live(next) || is_ghost(mesh.tet(next)) ||
-            in_cavity.contains(next)) {
-          continue;
-        }
-        const Tetrahedron& candidate = mesh.tet(next);
-        if (insphere(mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
-                     mesh.point(candidate.v[2]), mesh.point(candidate.v[3]), center) > 0) {
-          in_cavity.insert(next);
-          cavity.push_back(next);
-          stack.push_back(next);
-        }
-      }
-    }
-
-    // Shrink to a star-shaped cavity that keeps every vertex and constrained
-    // segment on its boundary; the root always qualifies.
-    for (;;) {
-      std::int32_t drop = -1;
-      std::set<std::uint64_t> kept_edges;
-      std::set<std::int32_t> boundary_vertices;
-      for (std::int32_t cell : cavity) {
-        const Tetrahedron& tetrahedron = mesh.tet(cell);
-        for (int face = 0; face < 4 && drop < 0; ++face) {
-          if (in_cavity.contains(tetrahedron.n[face])) continue;
-          std::array<const double*, 4> cone{};
-          for (int corner = 0; corner < 4; ++corner) {
-            cone[static_cast<std::size_t>(corner)] =
-                corner == face ? center : mesh.point(tetrahedron.v[corner]);
-          }
-          // Cells must be exactly positive and measurable by the quality
-          // criteria that follow refinement (finite shape, positive relative
-          // determinant, finite dihedral angles).
-          geometry::TetrahedronShape cone_shape;
-          if (orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0 ||
-              !geometry::tetrahedron_shape(cone.data(), cone_shape) ||
-              !(geometry::relative_determinant(cone.data()) > 0.0) ||
-              !std::isfinite(geometry::minimum_dihedral_degrees(cone.data()))) {
-            drop = cell;
-            break;
-          }
-          std::int32_t facet[3];
-          oriented_facet(tetrahedron.v, face, facet);
-          for (int corner = 0; corner < 3; ++corner) {
-            boundary_vertices.insert(facet[corner]);
-            const std::int32_t a = facet[corner];
-            const std::int32_t b = facet[(corner + 1) % 3];
-            kept_edges.insert(
-                (static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::min(a, b) + 1))
-                 << 32) |
-                static_cast<std::uint32_t>(std::max(a, b) + 1));
-          }
-        }
-        if (drop >= 0) break;
-      }
-      if (drop < 0) {
-        for (std::int32_t cell : cavity) {
-          if (cell == root) continue;
-          const bool loses_vertex = std::any_of(
-              mesh.tet(cell).v, mesh.tet(cell).v + 4,
-              [&](std::int32_t vertex) { return !boundary_vertices.contains(vertex); });
-          const std::int32_t single[1]{cell};
-          if (loses_vertex || mesh.removes_constrained_segment(single, kept_edges)) {
-            drop = cell;
-            break;
-          }
-        }
-      }
-      if (drop < 0) break;
-      if (drop == root) {
-        cavity.clear();
-        break;
-      }
-      // Keep the component of the root after removing `drop`.
-      in_cavity.erase(drop);
-      std::unordered_set<std::int32_t> reached{root};
-      stack.assign(1, root);
-      std::vector<std::int32_t> connected{root};
-      while (!stack.empty()) {
-        const std::int32_t cell = stack.back();
-        stack.pop_back();
-        for (std::int32_t next : mesh.tet(cell).n) {
-          if (in_cavity.contains(next) && reached.insert(next).second) {
-            connected.push_back(next);
-            stack.push_back(next);
-          }
-        }
-      }
-      cavity.swap(connected);
-      in_cavity.swap(reached);
-    }
-    if (cavity.empty()) {
-      unmet_reasons[cell_id] = PHX_MC_TET_UNMET_REFUSED;
-      continue;
-    }
-
     if (boundary_splittable) {
       std::int32_t encroached_cell = -1;
       int encroached_face = -1;
-      for (std::int32_t cell : cavity) {
+      for (std::int32_t cell : cavity.cells) {
         for (int face = 0; face < 4 && encroached_cell < 0; ++face) {
-          if (in_cavity.contains(mesh.tet(cell).n[face]) ||
+          if (cavity.members.contains(mesh.tet(cell).n[face]) ||
               mesh.complex_.constraint(cell, face) == kNoConstraint) {
             continue;
           }
@@ -990,7 +854,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     std::copy(shape.circumcenter.begin(), shape.circumcenter.end(), inserted.carrier.begin());
     double center_size = 0.0;
     const bool has_center_size = mean_target_size(parent.vertices, sizes, center_size);
-    const TetEditStatus status = mesh.insert_local_cone(inserted, cavity, created_cells);
+    const TetEditStatus status = mesh.insert_local_cone(inserted, cavity.cells, created_cells);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) {
