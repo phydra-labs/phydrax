@@ -8,6 +8,7 @@ import numpy as np
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+from phydrax.geometry._source_identity import source_entity_id
 from phydrax.geometry.reconstruction._boundary import ReconstructedTriangleBoundarySource
 from phydrax.geometry.reconstruction._core import (
     ReconstructedGeometrySource,
@@ -47,9 +48,7 @@ def _reconstructed_source(
         ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)),
         dtype=np.int32,
     )
-    region = MeshRegion(
-        jnp.asarray(vertices), jnp.asarray(faces), feature_id=feature_id
-    )
+    region = MeshRegion(jnp.asarray(vertices), jnp.asarray(faces), feature_id=feature_id)
     source_report = report or ReconstructionReport(
         source_kind="point_cloud",
         algorithm="screened-poisson-reconstruction",
@@ -126,12 +125,21 @@ def test_reconstructed_native_route_preserves_source_identity_and_metadata() -> 
         for identifier in source.scope_entity_ids(2)
     )
     assert len(set(source_keys)) == 4
-    assert all(name == "reconstructed_triangle" for name, _ in source_keys)
+    domain = source.meshing_domain
+    assert domain is not None
+    triangle_indices = domain.source_indices[2]
+    assert set(source_keys) == {
+        (
+            source_entity_id(
+                source.source_id, source.source_revision, "reconstructed_triangle", index
+            ),
+            (),
+        )
+        for index in triangle_indices
+    }
     assert source.scope_entity_ids(0).shape == (4,)
     assert source.scope_entity_ids(1).shape == (6,)
     assert source.scope_entity_ids(3).shape == (1,)
-    domain = source.meshing_domain
-    assert domain is not None
     assert domain.source_id == source.source_id
     assert domain.source_revision == source.source_revision
     assert domain.domain_id
@@ -264,9 +272,12 @@ def test_reconstructed_native_route_preserves_source_identity_and_metadata() -> 
     assert certification.fidelity_source.source_id == source.source_id
     assert certification.fidelity_source.source_revision == source.source_revision
     assert certification.fidelity_tolerance == 0.0
-    assert certification.fidelity_source.boundary_distance(
-        np.asarray(((0.0, 0.0, -1.0),))
-    ).semantics == "certified"
+    assert (
+        certification.fidelity_source.boundary_distance(
+            np.asarray(((0.0, 0.0, -1.0),))
+        ).semantics
+        == "certified"
+    )
     assert source.report.repair_interpretation == "poisson_inferred_closure"
 
 
@@ -286,9 +297,7 @@ def test_reconstruction_chart_witness_revalidates_persistent_triangle_keys() -> 
     assert witness is not None
     assert isinstance(witness, SourceBoundaryChartWitness)
     assert domain is not None
-    domain_query = MeshingDomainBoundarySource(
-        domain, tuple(range(len(domain.patches)))
-    )
+    domain_query = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
     assert witness.chart_dimension == 2
     assert witness.reference_dimension == 2
     assert witness.source_query_id == domain_query.source_scope_id
@@ -296,9 +305,7 @@ def test_reconstruction_chart_witness_revalidates_persistent_triangle_keys() -> 
     assert set(witness.source_entity_ids) == {
         domain.entity_id(2, row) for row in range(len(domain.patches))
     }
-    witness.require_current(
-        construction.mesh, construction.geometry, fidelity_source
-    )
+    witness.require_current(construction.mesh, construction.geometry, fidelity_source)
 
 
 def test_reconstructed_persistent_entities_survive_row_permutation() -> None:
@@ -448,13 +455,11 @@ def test_reconstructed_route_red_refines_without_leaving_source_triangles() -> N
 
 
 def test_reconstructed_public_plan_certifies_continuous_source_boundary() -> None:
-    source = _reconstructed_source(
-        feature_id="native-reconstructed-public-route"
-    )
+    source = _reconstructed_source(feature_id="native-reconstructed-public-route")
     contract = SpatialCoordinateContract.si()
-    plan = NativeMeshingProvider(
-        NativeMeshingOptions("reconstructed_surface")
-    ).plan(source, _specification(source), coordinate_contract=contract)
+    plan = NativeMeshingProvider(NativeMeshingOptions("reconstructed_surface")).plan(
+        source, _specification(source), coordinate_contract=contract
+    )
 
     assert plan.route == "reconstructed_surface"
     result = plan.execute()
@@ -479,9 +484,10 @@ def test_reconstructed_public_plan_certifies_continuous_source_boundary() -> Non
     assert boundary.metadata.source_id == source.source_id
     assert boundary.metadata.source_revision == source.source_revision
     assert boundary.metadata.coordinate_contract.spatial_id == contract.spatial_id
-    assert boundary.metadata.cell_tags == (
-        "reconstructed-surface",
-    ) * result.mesh.entity_set(2).count
+    assert (
+        boundary.metadata.cell_tags
+        == ("reconstructed-surface",) * result.mesh.entity_set(2).count
+    )
     assert result.audit.passed
     assert result.compliance.passed
     assert result.trace.successful
