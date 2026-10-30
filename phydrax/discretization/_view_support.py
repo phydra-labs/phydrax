@@ -3065,6 +3065,7 @@ def _materialize_owner_local_periodic_target(
 ) -> _OwnerLocalPeriodicTargetMaterialization:
     from ..meshing._lineage import VertexInterpolationStencil
     from ._exact_power_geometry import ExactPowerCellGeometrySource
+    from ._periodic_cell import PeriodicCell
     from ._periodic_exact import identification_orders, reduce_periodic_exponents
 
     if not isinstance(view, OwnerLocalCellGeometry):
@@ -3516,8 +3517,6 @@ class MappedFieldSupport(StrictModule, NonTrainableState):
     An optional original source query may refine wall membership only when it
     has the same physical source identity and revision as the mapped domain.
     """
-
-    __strict_contract__ = True
 
     mesh: CellMesh
     geometry: CellGeometrySpec

@@ -310,10 +310,11 @@ def validate_surface_source_pieces(
         if key in source_patch_scope_ids:
             raise ValueError("Source patch scope identity resolves to multiple IDs.")
         source_patch_scope_ids[key] = int(scope_id)
+    patch_keys = domain.stratum_entity_ids(2)
     source_patch_root_ids = np.asarray(
         [
             source_patch_scope_ids[
-                (domain.entity_id(2, patch), domain.source_occurrences[2][patch])
+                (patch_keys[patch], domain.source_occurrences[2][patch])
             ]
             for patch in range(len(domain.patches))
         ],
@@ -694,7 +695,8 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
 
     @property
     def source_patch_entity_ids(self) -> tuple[str, ...]:
-        return tuple(self.domain.entity_id(2, int(patch)) for patch in self.root_patches)
+        patch_keys = self.domain.stratum_entity_ids(2)
+        return tuple(patch_keys[int(patch)] for patch in self.root_patches)
 
     @property
     def source_occurrence_paths(self) -> tuple[tuple[str, ...], ...]:
@@ -1358,6 +1360,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 chart_witness.source_piece_ids,
                 exact_charts=exact_charts,
             )
+            patch_keys = self.domain.stratum_entity_ids(2)
             for row, cell_id in enumerate(chart_cell_ids.tolist()):
                 binding = chart_root_bindings[row]
                 if binding is None:
@@ -1379,8 +1382,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                     or chart_witness.source_piece_ids[row]
                     != self.root_source_cell_ids[root_row]
                     or patch != int(self.root_patches[root_row])
-                    or chart_witness.geometry_entity_ids[row]
-                    != self.domain.entity_id(2, patch)
+                    or chart_witness.geometry_entity_ids[row] != patch_keys[patch]
                     or chart_witness.occurrence_paths[row]
                     != self.domain.source_occurrences[2][patch]
                 ):

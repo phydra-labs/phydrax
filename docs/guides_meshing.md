@@ -222,6 +222,13 @@ Exact `MeshingDomain` BRep authority requires a retained `BRepModel`;
 `MeshingDomain.from_brep_geometry` input without its owning model is an unbound,
 generic conversion that checks endpoints only and confers no exact source authority.
 
+`MeshingDomain.stratum_entity_ids(dimension)` returns every canonical source key
+of one stratum in slot order, the same keys `entity_id(dimension, slot)` returns
+one at a time. Code that walks many slots reads the stratum once: each method
+call on an Equinox module rebuilds a bound-method pytree over the whole domain,
+so per-slot calls cost entities times patches. Scope banks are prepared this way,
+and their numeric IDs and the `domain_id` are unchanged.
+
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
 solids or faces and reversed boundary signs are refused.

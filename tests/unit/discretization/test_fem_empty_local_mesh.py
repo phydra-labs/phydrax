@@ -323,7 +323,7 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         target_shares=np.asarray((0.0, 0.0, 1.0), dtype=np.float64),
         maximum_imbalance=1.0,
         require_nonempty=False,
-        refinement_passes=0,
+        refinement_passes=1,
     )
     graph_evidence = partition_owner_local_finite_element_graph(
         source_view,
@@ -882,6 +882,7 @@ def _native_owner_local_fe_topology_worker() -> None:
         _compile_owner_local_problem,
         _current_group,
         _owner_local_views,
+        _periodic_p0_owner_integral,
         _solve_physical_problem,
         _source_composition,
     )
@@ -1347,6 +1348,48 @@ def _native_owner_local_fe_topology_worker() -> None:
     )
     if not float(np.max(nonconstant[:, 1]) - np.min(nonconstant[:, 0])) > 1.0e-5:
         raise RuntimeError("The conservative P0 test field is not genuinely nonconstant.")
+
+    # Independent oracle: the owned content integral (P0 average times cell measure,
+    # summed over every owner) of the nonconstant field is preserved exactly up to
+    # rounding of the absolute content.
+    def global_content(
+        view: Any, discretization: Any, identity: Any, values: Any
+    ) -> float:
+        return float(
+            np.sum(
+                multihost_utils.process_allgather(
+                    np.asarray(
+                        _periodic_p0_owner_integral(
+                            view, discretization, identity, values
+                        ),
+                        dtype=np.float64,
+                    )
+                )
+            )
+        )
+
+    source_content = global_content(
+        source_view, source_discretization, source_identities[1], source_fields[1]
+    )
+    source_absolute = global_content(
+        source_view,
+        source_discretization,
+        source_identities[1],
+        np.abs(np.asarray(source_fields[1], dtype=np.float64)),
+    )
+    target_content = global_content(
+        target_view,
+        target_discretization,
+        result.target_identity_plans[1],
+        result.state.fields[1],
+    )
+    if not source_absolute > 0.0 or abs(target_content - source_content) > (
+        64.0 * np.finfo(np.float64).eps * max(1.0, source_absolute)
+    ):
+        raise RuntimeError(
+            "Owner-local P0 adaptation changed the global nonconstant content: "
+            f"{source_content!r} -> {target_content!r}."
+        )
     print(
         json.dumps(
             {

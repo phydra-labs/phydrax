@@ -2785,11 +2785,20 @@ def _geometry(part: MeshPart, spec: OversetPartSpec, /) -> _PartGeometry:
             )
             exterior = discretization.exterior_facet_domain
             exterior_rows = np.asarray(exterior.entity_indices, dtype=np.int64)
-            positions = np.searchsorted(
-                exterior_rows, np.asarray(wall_rows, dtype=np.int64)
+            facet_ids = np.asarray(
+                mesh.entity_set(mesh.topological_dimension - 1).entity_ids,
+                dtype=np.int64,
             )
+            facet_order = np.argsort(facet_ids, kind="stable")
+            wall_indices = facet_order[
+                np.searchsorted(
+                    facet_ids[facet_order],
+                    np.asarray(spec.wall.entity_ids, dtype=np.int64),
+                )
+            ]
+            positions = np.searchsorted(exterior_rows, wall_indices)
             if np.any(positions >= exterior_rows.size) or not np.array_equal(
-                exterior_rows[positions], np.asarray(wall_rows, dtype=np.int64)
+                exterior_rows[positions], wall_indices
             ):
                 raise ValueError(
                     "Overset wall facets lack canonical exterior owner routes."
@@ -2890,7 +2899,7 @@ def _source_wall_bounds(
         )
     corners = np.asarray(
         [
-            [bounds[axis, bit] for axis, bit in enumerate(bits)]
+            [bounds[bit, axis] for axis, bit in enumerate(bits)]
             for bits in np.ndindex(*(2,) * dimension)
         ],
         dtype=np.float64,
