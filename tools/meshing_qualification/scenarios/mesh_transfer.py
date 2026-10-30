@@ -272,9 +272,6 @@ def _supermesh_case(
             "simplex_partition_maximum_relative_defect": partition_defect,
         },
         "pairs": {
-            "candidate": evidence.candidate_pair_count,
-            "accepted": evidence.accepted_pair_count,
-            "piece_pairs": evidence.piece_pair_count,
             # ty: ignore[unresolved-attribute]
             "entries": refinement.entry_count,
             "overlap_simplices": simplices.shape[0],
@@ -289,8 +286,6 @@ def _supermesh_case(
             "source_certify": source_certify,
             "target_certify": target_certify,
             "common_refinement": refinement_record,
-            "retained_bytes": evidence.retained_bytes,
-            "working_bytes": evidence.working_bytes,
         },
     }
 
@@ -745,12 +740,6 @@ def qualify_remap_p1() -> dict[str, object]:
             "l2_target_prepare": target_record,
             "l2_transfer_prepare": transfer_record,
             "l2_apply": projection_record,
-            "refinement_retained_bytes": evidence.retained_bytes,
-            "refinement_working_bytes": evidence.working_bytes,
-            # ty: ignore[unresolved-attribute]
-            "l2_refinement_retained_bytes": fem_refinement.evidence.retained_bytes,
-            # ty: ignore[unresolved-attribute]
-            "l2_refinement_working_bytes": fem_refinement.evidence.working_bytes,
         },
     }
 

@@ -12,7 +12,6 @@ import numpy as np
 import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import CellBlock, CellMesh
-from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import exact_periodic_element
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
@@ -290,19 +289,32 @@ def _periodic_constraint(
     raise RuntimeError("Authored periodic source has no nontrivial vertex winding pair.")
 
 
-def _source_feature_ids(mesh: CellMesh, /) -> np.ndarray:
-    connectivity = mesh.connectivity
-    if (
-        not isinstance(connectivity, SimplicialConnectivity)
-        or connectivity.dimension != 2
+def _edge_vertex_rows(mesh: CellMesh, /) -> list[list[int]]:
+    """Return each edge-row's two vertex rows from the mesh's vertex/edge incidence."""
+    if mesh.topological_dimension != 2:
+        raise RuntimeError("Periodic material features require a two-dimensional mesh.")
+    relation = mesh.topology.incidences[0].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    vertex_rows = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+    edge_rows = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+    edge_count = int(np.asarray(mesh.entity_set(1).entity_ids).size)
+    endpoints: list[list[int]] = [[] for _ in range(edge_count)]
+    for vertex_row, edge_row in zip(
+        vertex_rows.tolist(), edge_rows.tolist(), strict=True
     ):
-        raise RuntimeError("Periodic material features require triangle edge incidence.")
+        endpoints[edge_row].append(vertex_row)
+    if any(len(rows) != 2 for rows in endpoints):
+        raise RuntimeError(
+            "Mesh edge incidence does not bind exactly two vertices per edge."
+        )
+    return endpoints
+
+
+def _source_feature_ids(mesh: CellMesh, /) -> np.ndarray:
     edge_ids: list[int] = np.asarray(
         mesh.entity_set(1).entity_ids, dtype=np.int64
     ).tolist()
-    edge_rows: list[list[int]] = np.asarray(
-        connectivity.entities[1], dtype=np.int64
-    ).tolist()
+    edge_rows = _edge_vertex_rows(mesh)
     fractional = _fractional_coordinates(mesh)
     selected: list[int] = []
     for edge_id, endpoints in zip(edge_ids, edge_rows, strict=True):
@@ -678,17 +690,7 @@ def _check_material_mapping(
 def _material_interface_oracle(
     mesh: CellMesh, values_by_id: dict[int, int], /
 ) -> dict[str, Any]:
-    connectivity = mesh.connectivity
-    if (
-        not isinstance(connectivity, SimplicialConnectivity)
-        or connectivity.dimension != 2
-    ):
-        raise RuntimeError(
-            "Periodic material interfaces require triangle edge incidence."
-        )
-    edge_rows: list[list[int]] = np.asarray(
-        connectivity.entities[1], dtype=np.int64
-    ).tolist()
+    edge_rows = _edge_vertex_rows(mesh)
     edge_map = periodic_entity_orbit_map(mesh, 1)
     cell_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     cell_code = np.asarray(
