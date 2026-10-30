@@ -25,7 +25,6 @@ from phydrax.meshing._adaptation import (
     _identity_reference_maps_for_transition,
 )
 from phydrax.meshing._curving import _straight_geometry, HighOrderCurvingPolicy
-from phydrax.meshing._mixed_adaptation import MixedCoarseningMap
 from phydrax.meshing._layer_curving import (
     _compose_mapped_reference_maps,
     _implicit_source_faces,
@@ -42,6 +41,7 @@ from phydrax.meshing._layer_curving_records import (
     _prepare_barycentric_solver_3d,
     _reference_face_dofs,
 )
+from phydrax.meshing._mixed_adaptation import MixedCoarseningMap
 from tests._support.implicit_layer_curving_fixtures import (
     make_implicit_layer_curving_archive_case,
 )
@@ -72,8 +72,16 @@ def test_exact_layer_reference_map_uses_noncorner_local_coordinates() -> None:
         0,
         12,
         (0, 1, 2),
-        ((Fraction(0), Fraction(0), Fraction(0)), (Fraction(1), Fraction(0), Fraction(0)), (Fraction(0), Fraction(1), Fraction(0))),
-        ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0)), (Fraction(0), Fraction(1))),
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+        ),
+        (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+        ),
     )
     face_solver = _prepare_barycentric_solver_3d(face.target_reference_corners)
 
@@ -83,30 +91,26 @@ def test_exact_layer_reference_map_uses_noncorner_local_coordinates() -> None:
 
     tetrahedron = lagrange_element("tetrahedron", 3)
     nodal_data = lagrange_reference_node_data(tetrahedron)
-    face_node_dofs = _reference_face_dofs(
-        tetrahedron, face.target_reference_corners
-    )
-    algebraic_points: list[
-        tuple[ExactScalar, ExactScalar, ExactScalar]
-    ] = []
+    face_node_dofs = _reference_face_dofs(tetrahedron, face.target_reference_corners)
+    algebraic_points: list[tuple[ExactScalar, ExactScalar, ExactScalar]] = []
     for local_dof, _ in face_node_dofs:
         point = nodal_data[local_dof].exact_point
         if point is None:
             continue
         if len(point) != 3:
-            raise AssertionError("A tetrahedral Lagrange reference point has wrong dimension.")
+            raise AssertionError(
+                "A tetrahedral Lagrange reference point has wrong dimension."
+            )
         candidate = (point[0], point[1], point[2])
         if any(isinstance(value, RadicalElement) for value in candidate):
             algebraic_points.append(candidate)
     algebraic_point = next(iter(algebraic_points), None)
     if algebraic_point is None:
         raise AssertionError("Expected an algebraic tetrahedral face node.")
-    assert _source_parameter(
-        algebraic_point, face, face_solver
-    ) == (algebraic_point[0], algebraic_point[1])
-
-
-
+    assert _source_parameter(algebraic_point, face, face_solver) == (
+        algebraic_point[0],
+        algebraic_point[1],
+    )
 
 
 def test_general_simplex_lagrange_preserves_qualified_cell_kind_and_nodes() -> None:
@@ -126,6 +130,7 @@ def test_general_simplex_lagrange_preserves_qualified_cell_kind_and_nodes() -> N
         rtol=0.0,
         atol=1.0e-13,
     )
+
 
 def test_high_order_layer_face_nodes_include_vertex_and_edge_dofs() -> None:
     element = lagrange_element("prism", 2)
@@ -154,16 +159,10 @@ def test_layer_face_nodes_use_exact_lagrange_points_on_tet_and_prism_facets(
 ) -> None:
     element = lagrange_element(cell_kind, 3)
     node_data = lagrange_reference_node_data(element)
-    linear_node_data = lagrange_reference_node_data(
-        lagrange_element(cell_kind, 1)
-    )
+    linear_node_data = lagrange_reference_node_data(lagrange_element(cell_kind, 1))
     topology = reference_cell_topology(cell_kind)
-    gll_lower = RadicalElement(Fraction(1, 2)) - RadicalElement.sqrt(
-        Fraction(5)
-    ) / 10
-    gll_upper = RadicalElement(Fraction(1, 2)) + RadicalElement.sqrt(
-        Fraction(5)
-    ) / 10
+    gll_lower = RadicalElement(Fraction(1, 2)) - RadicalElement.sqrt(Fraction(5)) / 10
+    gll_upper = RadicalElement(Fraction(1, 2)) + RadicalElement.sqrt(Fraction(5)) / 10
     found_one_third_face_node = False
     found_gll_face_node = False
     for face_index, face in enumerate(topology.entities[2]):
@@ -188,9 +187,10 @@ def test_layer_face_nodes_use_exact_lagrange_points_on_tet_and_prism_facets(
         expected.update(element.entity_dofs[2][face_index])
 
         assert set(face_nodes) == expected
-        assert dict(
-            _reference_face_dofs(element, tuple(reversed(face_corners)))
-        ) == face_nodes
+        assert (
+            dict(_reference_face_dofs(element, tuple(reversed(face_corners))))
+            == face_nodes
+        )
         for local_dof, reference in face_nodes.items():
             exact_point = node_data[local_dof].exact_point
             assert exact_point is not None
@@ -213,9 +213,7 @@ def test_mapped_root_face_uv_preserves_algebraic_reference_points() -> None:
     root_face = int(query.polygon_root_face_global_ids[row])
     root_cell = int(query.polygon_root_cell_global_ids[row])
     local_face = int(query.polygon_root_local_face_indices[row])
-    topology = reference_cell_topology(
-        domain.reference_mesh.blocks[0].cell_kind
-    )
+    topology = reference_cell_topology(domain.reference_mesh.blocks[0].cell_kind)
     linear_node_data = lagrange_reference_node_data(
         lagrange_element(domain.reference_mesh.blocks[0].cell_kind, 1)
     )
@@ -226,12 +224,8 @@ def test_mapped_root_face_uv_preserves_algebraic_reference_points() -> None:
         assert exact_point is not None
         corners_list.append(_fraction3(exact_point))
     corners = tuple(corners_list)
-    weight_0 = RadicalElement(Fraction(1, 2)) - RadicalElement.sqrt(
-        Fraction(5)
-    ) / 10
-    weight_1 = RadicalElement(Fraction(1, 2)) + RadicalElement.sqrt(
-        Fraction(5)
-    ) / 10
+    weight_0 = RadicalElement(Fraction(1, 2)) - RadicalElement.sqrt(Fraction(5)) / 10
+    weight_1 = RadicalElement(Fraction(1, 2)) + RadicalElement.sqrt(Fraction(5)) / 10
     weights = (weight_0, weight_1, Fraction(0))
     root_point = tuple(
         sum((weights[index] * corners[index][axis] for index in range(3)), Fraction(0))
@@ -242,9 +236,7 @@ def test_mapped_root_face_uv_preserves_algebraic_reference_points() -> None:
         sum((weights[index] * corner_uv[index][axis] for index in range(3)), Fraction(0))
         for axis in range(2)
     )
-    actual_uv = query.root_face_uv(
-        root_face, root_cell, local_face, (root_point,)
-    )[0]
+    actual_uv = query.root_face_uv(root_face, root_cell, local_face, (root_point,))[0]
 
     assert any(isinstance(value, RadicalElement) for value in root_point)
     assert actual_uv == expected_uv
@@ -270,7 +262,7 @@ def test_mapped_layer_transition_composes_exact_target_to_root_maps() -> None:
         assert node.exact_point is not None
         corners_list.append(_fraction3(node.exact_point))
     corners = tuple(corners_list)
-    exact_zero: tuple[int, ...] = ()
+    exact_zero = (0, 0, 0)
     identity: tuple[Mapping[tuple[int, ...], Fraction], ...] = (
         {(1, 0, 0): Fraction(1)},
         {(0, 1, 0): Fraction(1)},
@@ -289,7 +281,9 @@ def test_mapped_layer_transition_composes_exact_target_to_root_maps() -> None:
     ) -> ReferenceCellMapWitnesses:
         def exact_fraction(value: object) -> Fraction:
             if not isinstance(value, Fraction):
-                raise ValueError("Affine test reference maps must retain rational values.")
+                raise ValueError(
+                    "Affine test reference maps must retain rational values."
+                )
             return value
 
         exact_vertices = tuple(
@@ -317,11 +311,13 @@ def test_mapped_layer_transition_composes_exact_target_to_root_maps() -> None:
         (bank(20, 10, identity),),
     )
     assert len(composed) == 1
-    mapping, = nested_cell_reference_maps(composed[0])
+    (mapping,) = nested_cell_reference_maps(composed[0])
     assert (mapping.target_cell_id, mapping.source_cell_id) == (30, 10)
-    assert mapping.evaluate(
-        (Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))
-    ) == (Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))
+    assert mapping.evaluate((Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))) == (
+        Fraction(1, 2),
+        Fraction(1, 2),
+        Fraction(1, 2),
+    )
     mixed_coarsening = MixedCoarseningMap(
         30,
         "cells",
@@ -335,11 +331,14 @@ def test_mapped_layer_transition_composes_exact_target_to_root_maps() -> None:
         mixed_coarsening_maps=(mixed_coarsening,),
     )
     assert len(mixed_composed) == 1
-    mixed_mapping, = nested_cell_reference_maps(mixed_composed[0])
+    (mixed_mapping,) = nested_cell_reference_maps(mixed_composed[0])
     assert (mixed_mapping.target_cell_id, mixed_mapping.source_cell_id) == (30, 10)
-    assert mixed_mapping.evaluate(
-        (Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))
-    ) == (Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))
+    assert mixed_mapping.evaluate((Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))) == (
+        Fraction(1, 2),
+        Fraction(1, 2),
+        Fraction(1, 2),
+    )
+
 
 @pytest.mark.parametrize("degree", (2, 3))
 def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
@@ -383,7 +382,10 @@ def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
         for witness in recomputed_embedding.witnesses
     )
     assert result.chart_witness is not None
-    assert result.source_fidelity is not None and result.source_fidelity.status == "certified"
+    assert (
+        result.source_fidelity is not None
+        and result.source_fidelity.status == "certified"
+    )
     assert result.source_evidence is not None
     evidence = result.source_evidence
     assert evidence.chart_column_identity.row_count == len(
@@ -465,7 +467,6 @@ def test_adaptive_implicit_layer_builds_and_revalidates_source_evidence() -> Non
     evidence.require_current(result.construction.mesh, result.candidate_geometry)
 
 
-
 def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
@@ -523,7 +524,9 @@ def test_layer_curving_source_revision_mismatch_rolls_back_unchanged() -> None:
     assert failure.value.result is result
 
 
-def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ancestry() -> None:
+def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ancestry() -> (
+    None
+):
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
     _surface, source, _contract, wall, _wall_geometry, root_witness = _adaptive_source()
@@ -608,7 +611,10 @@ def test_fixed_topology_layer_evidence_renews_from_exact_identity_maps() -> None
         reference_maps,
     )
 
-    assert renewed.chart_column_identity.identity_id == evidence.chart_column_identity.identity_id
+    assert (
+        renewed.chart_column_identity.identity_id
+        == evidence.chart_column_identity.identity_id
+    )
     renewed.require_current(mesh, geometry)
 
 
