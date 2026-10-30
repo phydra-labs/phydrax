@@ -412,11 +412,15 @@ def _reconstructed_triangle_point(values: np.ndarray, /) -> _ReconstructedTriang
 
 
 class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
-    """Affine unit-square chart trimmed to one retained source triangle."""
+    """Affine unit-square chart trimmed to one retained source triangle.
 
-    origin: Array
-    first: Array
-    second: Array
+    The chart evaluates in barycentric form, so every chart corner maps to its
+    authored vertex bit for bit. The edge-vector form ``p0 + u (p1 - p0)``
+    rounds ``p1 - p0`` and can miss the shared vertex by one unit in the last
+    place, which breaks exact corner identity between adjacent triangles.
+    """
+
+    corners: Array
     exact_corners: _ReconstructedTriangleCorners = eqx.field(static=True)
 
     def __init__(self, corners: np.ndarray, /) -> None:
@@ -430,9 +434,7 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
             _reconstructed_triangle_point(points[1]),
             _reconstructed_triangle_point(points[2]),
         )
-        self.origin = jnp.asarray(points[0], dtype=jnp.float64)
-        self.first = jnp.asarray(points[1] - points[0], dtype=jnp.float64)
-        self.second = jnp.asarray(points[2] - points[0], dtype=jnp.float64)
+        self.corners = jnp.asarray(points, dtype=jnp.float64)
 
     @property
     def parameter_domain(self, /) -> tuple[tuple[float, float], tuple[float, float]]:
@@ -440,10 +442,12 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
 
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=jnp.float64)
+        first = values[..., 0, None]
+        second = values[..., 1, None]
         return (
-            self.origin
-            + values[..., 0, None] * self.first
-            + values[..., 1, None] * self.second
+            (1.0 - first - second) * self.corners[0]
+            + first * self.corners[1]
+            + second * self.corners[2]
         )
 
 

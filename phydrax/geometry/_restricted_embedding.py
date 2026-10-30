@@ -6,14 +6,13 @@
 
 from __future__ import annotations
 
-from fractions import Fraction
-
 from ..discretization._coordinate_enclosure import (
     add,
     axes,
     compose,
     compose_expression,
     constant,
+    ExactScalar,
     Expression,
     expression_equal,
     normalize_pyramid_reference_expression,
@@ -25,7 +24,7 @@ from ._embedding_cells import EmbeddingCell
 
 
 def _affine_arguments(
-    points: tuple[tuple[Fraction, ...], ...], /
+    points: tuple[tuple[ExactScalar, ...], ...], /
 ) -> tuple[Polynomial, ...]:
     dimension = len(points[0])
     parameter_dimension = len(points) - 1
@@ -115,25 +114,66 @@ def _trace_arguments(
     return _affine_arguments(references)
 
 
+def _vertex_defined_trace(
+    cell: EmbeddingCell, ordered_ids: tuple[int, ...], /
+) -> tuple[Expression, ...] | None:
+    """Parameterize a vertex-defined polygon/polyhedron stratum from exact corners.
+
+    Segments and triangles are affine in their ordered corners. A cyclic quad
+    stratum uses the tensor-order bilinear map, matching the tensor parameters
+    used by mapped-cell trace arguments on the same ordered corners.
+    """
+    image_by_id = dict(zip(cell.vertex_ids, cell.corner_images, strict=True))
+    try:
+        images = tuple(image_by_id[identifier] for identifier in ordered_ids)
+    except KeyError:
+        return None
+    if len(images) in (2, 3):
+        return _affine_arguments(images)
+    if len(images) != 4:
+        return None
+    first, second, third, fourth = images
+    result: list[Expression] = []
+    for axis in range(len(first)):
+        expression: Polynomial = {(0, 0): first[axis]}
+        for exponent, coefficient in (
+            ((1, 0), second[axis] - first[axis]),
+            ((0, 1), fourth[axis] - first[axis]),
+            ((1, 1), third[axis] - second[axis] - fourth[axis] + first[axis]),
+        ):
+            if coefficient:
+                expression[exponent] = coefficient
+        result.append(expression)
+    return tuple(result)
+
+
+def _stratum_trace(
+    cell: EmbeddingCell, ordered_ids: tuple[int, ...], /
+) -> tuple[Expression, ...] | None:
+    if cell.kind in ("polygon", "polyhedron"):
+        return _vertex_defined_trace(cell, ordered_ids)
+    arguments = _trace_arguments(cell, ordered_ids)
+    if arguments is None:
+        return None
+    return tuple(_restrict(expression, arguments) for expression in cell.coordinates)
+
+
 def _trace_equal_on_stratum(
     first: EmbeddingCell,
     second: EmbeddingCell,
     ordered_ids: tuple[int, ...],
     /,
 ) -> bool | None:
-    first_arguments = _trace_arguments(first, ordered_ids)
-    second_arguments = _trace_arguments(second, ordered_ids)
-    if first_arguments is None or second_arguments is None:
-        return None
-    if len(first.coordinates) != len(second.coordinates):
-        return False
     try:
+        first_trace = _stratum_trace(first, ordered_ids)
+        second_trace = _stratum_trace(second, ordered_ids)
+        if first_trace is None or second_trace is None:
+            return None
+        if len(first_trace) != len(second_trace):
+            return False
         return all(
-            expression_equal(
-                _restrict(left, first_arguments),
-                _restrict(right, second_arguments),
-            )
-            for left, right in zip(first.coordinates, second.coordinates, strict=True)
+            expression_equal(left, right)
+            for left, right in zip(first_trace, second_trace, strict=True)
         )
     except (ValueError, ZeroDivisionError):
         return None

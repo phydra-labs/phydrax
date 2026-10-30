@@ -1021,9 +1021,92 @@ void test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming() 
             2 * fixed_result.segment_sources.size());
 }
 
-void test_conforming_unsplittable_edge_after_boundary_chain_split() {
-  // F lies outside AB. Its authored AFB face forces the AB split into the
-  // current boundary chain before the unsplittable AC recovery is attempted.
+// Scientific contract of a conforming recovery: positive cells of one
+// region, every source edge row published as a chain of tetrahedral edges
+// from its first to its last endpoint, every published witnessed vertex
+// exactly on its source entity (deviation zero; witnessed positions that are
+// not binary64 points are suppressed), and every facet present.
+void check_conforming_recovery(const PlcRecovery& result, std::size_t input_points,
+                               std::size_t facet_count) {
+  PHX_CHECK(result.witnesses.size() == result.points.size() / 3);
+  PHX_CHECK(result.segments.size() == 2 * result.segment_sources.size());
+  if (result.witnesses.size() != result.points.size() / 3 ||
+      result.segments.size() != 2 * result.segment_sources.size()) {
+    return;
+  }
+  const auto vertex_point = [&](int32_t vertex) {
+    return result.points.data() + 3 * static_cast<std::size_t>(vertex);
+  };
+  for (std::size_t vertex = input_points; vertex < result.witnesses.size(); ++vertex) {
+    const PlcRecoveryWitness& witness = result.witnesses[vertex];
+    if (witness.stratum == SourceStratum::kNone) continue;
+    PHX_CHECK(witness.deviation == 0.0);
+    const int32_t* corners_rows = witness.stratum == SourceStratum::kSegment
+        ? result.plc_edges.data() + 2 * static_cast<std::size_t>(witness.entity)
+        : result.input_triangles.data() + 3 * static_cast<std::size_t>(witness.entity);
+    const double* corners[3] = {vertex_point(corners_rows[0]), vertex_point(corners_rows[1]),
+                                witness.stratum == SourceStratum::kFacet
+                                    ? vertex_point(corners_rows[2]) : nullptr};
+    PHX_CHECK(on_source_entity(corners, witness.stratum,
+                               vertex_point(static_cast<int32_t>(vertex))));
+  }
+  std::set<std::pair<int32_t, int32_t>> tet_edges;
+  for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
+    const int32_t* tet = result.tets.data() + 4 * cell;
+    PHX_CHECK(orient3d(vertex_point(tet[0]), vertex_point(tet[1]), vertex_point(tet[2]),
+                       vertex_point(tet[3])) > 0);
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        tet_edges.insert({std::min(tet[i], tet[j]), std::max(tet[i], tet[j])});
+      }
+    }
+  }
+  std::map<int32_t, std::vector<std::pair<int32_t, int32_t>>> chains;
+  for (std::size_t row = 0; row < result.segment_sources.size(); ++row) {
+    const int32_t source = result.segment_sources[row];
+    PHX_CHECK(source >= 0 && source < static_cast<int32_t>(result.plc_edges.size() / 2));
+    const int32_t first = result.segments[2 * row];
+    const int32_t second = result.segments[2 * row + 1];
+    PHX_CHECK(tet_edges.contains({std::min(first, second), std::max(first, second)}));
+    chains[source].push_back({first, second});
+  }
+  for (const auto& [source, pieces] : chains) {
+    const int32_t last = result.plc_edges[2 * static_cast<std::size_t>(source) + 1];
+    int32_t at = result.plc_edges[2 * static_cast<std::size_t>(source)];
+    std::vector<char> used(pieces.size(), 0);
+    std::size_t walked = 0;
+    while (at != last && walked < pieces.size()) {
+      std::size_t next = pieces.size();
+      for (std::size_t row = 0; row < pieces.size() && next == pieces.size(); ++row) {
+        if (used[row] == 0 && (pieces[row].first == at || pieces[row].second == at)) next = row;
+      }
+      if (next == pieces.size()) break;
+      used[next] = 1;
+      at = pieces[next].first == at ? pieces[next].second : pieces[next].first;
+      ++walked;
+    }
+    PHX_CHECK(at == last);
+    PHX_CHECK(walked == pieces.size());
+  }
+  PHX_CHECK(result.face_sources.size() == result.faces.size() / 3);
+  PHX_CHECK(result.face_orientations.size() == result.face_sources.size());
+  std::vector<int32_t> facet_counts(facet_count, 0);
+  for (std::size_t row = 0; row < result.face_sources.size(); ++row) {
+    const int32_t facet = result.face_sources[row];
+    PHX_CHECK(facet >= 0 && facet < static_cast<int32_t>(facet_count));
+    PHX_CHECK(result.face_orientations[row] == 1);
+    if (facet >= 0 && facet < static_cast<int32_t>(facet_count)) {
+      ++facet_counts[static_cast<std::size_t>(facet)];
+    }
+  }
+  PHX_CHECK(std::all_of(facet_counts.begin(), facet_counts.end(),
+                        [](int32_t count) { return count > 0; }));
+}
+
+void test_conforming_missing_boundary_edges_recover_with_exact_witnesses() {
+  // Neither AB nor AC is an edge of the Delaunay tetrahedralization of the
+  // six points (F encroaches AB). Both must be recovered as conforming
+  // chains whose published vertices lie exactly on their sources.
   const std::array<double, 18> points{
       0.0, 0.25, 0.25,
       0.0, 17.0 / 64.0, 5.0 / 16.0,
@@ -1047,16 +1130,6 @@ void test_conforming_unsplittable_edge_after_boundary_chain_split() {
       std::swap(face[1], face[2]);
     }
   }
-  int32_t* first_base_face = triangles.data();
-  for (int side = 0; side < 3; ++side) {
-    const int next = (side + 1) % 3;
-    if ((first_base_face[side] == 0 && first_base_face[next] == 1) ||
-        (first_base_face[side] == 1 && first_base_face[next] == 0)) {
-      std::rotate(first_base_face, first_base_face + side,
-                  first_base_face + 3);
-      break;
-    }
-  }
   const std::array<int64_t, 9> offsets{0, 3, 6, 9, 12, 15, 18, 21, 24};
   const std::array<int32_t, 8> polygon_facets{0, 1, 2, 3, 4, 5, 6, 7};
   const std::array<int32_t, 16> facet_regions{
@@ -1072,43 +1145,6 @@ void test_conforming_unsplittable_edge_after_boundary_chain_split() {
   input.facet_regions = facet_regions.data();
   input.policy = BoundaryPolicy::kConforming;
 
-  PlcRecovery prepared;
-  const int32_t prepare_status = prepare_plc_source(input, prepared);
-  if (prepare_status != PHX_MC_OK) {
-    PHX_CHECK(prepare_status == PHX_MC_OK);
-    return;
-  }
-  const auto edge_row = [&](int32_t a, int32_t b) {
-    for (std::size_t row = 0; row < prepared.plc_edges.size() / 2; ++row) {
-      const int32_t first = prepared.plc_edges[2 * row];
-      const int32_t second = prepared.plc_edges[2 * row + 1];
-      if ((first == a && second == b) || (first == b && second == a)) return row;
-    }
-    return prepared.plc_edges.size() / 2;
-  };
-  const std::size_t ab_row = edge_row(0, 1);
-  const std::size_t ac_row = edge_row(0, 2);
-  PHX_CHECK(ab_row < ac_row);
-  if (ab_row >= prepared.plc_edges.size() / 2 ||
-      ac_row >= prepared.plc_edges.size() / 2) return;
-  const std::vector<double> protection =
-      protection_radii(points.data(), 6, prepared.plc_edges,
-                       prepared.input_triangles);
-  const auto split_is_representable = [&](std::size_t row) {
-    const int32_t first = prepared.plc_edges[2 * row];
-    const int32_t second = prepared.plc_edges[2 * row + 1];
-    const double* a = points.data() + 3 * static_cast<std::size_t>(first);
-    const double* b = points.data() + 3 * static_cast<std::size_t>(second);
-    double tolerance = 0.0;
-    const double target = split_target(
-        a, b, protection[static_cast<std::size_t>(first)],
-        protection[static_cast<std::size_t>(second)], tolerance);
-    double output[3]{};
-    return exact_segment_point(a, b, target, tolerance, output);
-  };
-  PHX_CHECK(split_is_representable(ab_row));
-  PHX_CHECK(!split_is_representable(ac_row));
-
   const std::array<int32_t, 6> order{0, 1, 2, 3, 4, 5};
   std::array<char, 6> alive{1, 1, 1, 1, 1, 1};
   Triangulation3D initial(points.data(), nullptr, 6);
@@ -1120,16 +1156,12 @@ void test_conforming_unsplittable_edge_after_boundary_chain_split() {
   const auto has_tet_edge = [](const TetrahedralComplex& complex,
                                int32_t first, int32_t second) {
     for (std::size_t row = 0; row < complex.tets.size(); ++row) {
-      const int32_t cell = static_cast<int32_t>(row);
       const Tetrahedron& tet = complex.tets[row];
-      if (!complex.live(cell) || is_ghost(tet)) continue;
-      bool has_first = false;
-      bool has_second = false;
-      for (int32_t vertex : tet.v) {
-        has_first = has_first || vertex == first;
-        has_second = has_second || vertex == second;
+      if (!complex.live(static_cast<int32_t>(row)) || is_ghost(tet)) continue;
+      if (std::find(tet.v, tet.v + 4, first) != tet.v + 4 &&
+          std::find(tet.v, tet.v + 4, second) != tet.v + 4) {
+        return true;
       }
-      if (has_first && has_second) return true;
     }
     return false;
   };
@@ -1137,9 +1169,8 @@ void test_conforming_unsplittable_edge_after_boundary_chain_split() {
   PHX_CHECK(!has_tet_edge(initial.complex(), 0, 2));
   Expansion initial_volume;
   for (std::size_t row = 0; row < initial.complex().tets.size(); ++row) {
-    const int32_t cell = static_cast<int32_t>(row);
     const Tetrahedron& tet = initial.complex().tets[row];
-    if (!initial.complex().live(cell) || is_ghost(tet)) continue;
+    if (!initial.complex().live(static_cast<int32_t>(row)) || is_ghost(tet)) continue;
     initial_volume = initial_volume + orient3d_exact(
         points.data() + 3 * tet.v[0], points.data() + 3 * tet.v[1],
         points.data() + 3 * tet.v[2], points.data() + 3 * tet.v[3]);
@@ -1148,137 +1179,26 @@ void test_conforming_unsplittable_edge_after_boundary_chain_split() {
   PlcRecovery result;
   const int32_t status = recover_plc(input, result);
   if (status != PHX_MC_OK) {
-    std::fprintf(stderr,
-                 "presplit boundary-chain source patch failed: status=%d "
-                 "reason=%d first=(%d,%lld)\n",
+    std::fprintf(stderr, "missing boundary edge recovery failed: status=%d reason=%d first=(%d,%lld)\n",
                  status, result.failure.reason, result.failure.first_kind,
                  static_cast<long long>(result.failure.first));
     PHX_CHECK(status == PHX_MC_OK);
     return;
   }
-  if (result.plc_edges.size() != prepared.plc_edges.size() ||
-      result.witnesses.size() != result.points.size() / 3 ||
-      result.segments.size() != 2 * result.segment_sources.size()) {
-    PHX_CHECK(result.plc_edges.size() == prepared.plc_edges.size());
-    PHX_CHECK(result.witnesses.size() == result.points.size() / 3);
-    PHX_CHECK(result.segments.size() == 2 * result.segment_sources.size());
-    return;
+  check_conforming_recovery(result, 6, 8);
+  std::set<int32_t> recovered_rows(result.segment_sources.begin(), result.segment_sources.end());
+  for (std::size_t row = 0; row < result.plc_edges.size() / 2; ++row) {
+    PHX_CHECK(recovered_rows.contains(static_cast<int32_t>(row)));
   }
-  bool ab_split = false;
-  bool ac_split = false;
-  for (std::size_t vertex = points.size() / 3;
-       vertex < result.witnesses.size(); ++vertex) {
-    const PlcRecoveryWitness& witness = result.witnesses[vertex];
-    if (witness.stratum != SourceStratum::kSegment) continue;
-    if (witness.entity == static_cast<int32_t>(ab_row)) {
-      ab_split = true;
-      const int32_t first = result.plc_edges[2 * ab_row];
-      const int32_t second = result.plc_edges[2 * ab_row + 1];
-      const double* a = points.data() + 3 * static_cast<std::size_t>(first);
-      const double* b = points.data() + 3 * static_cast<std::size_t>(second);
-      double expected[3]{};
-      PHX_CHECK(exact_segment_point(a, b, witness.parameters[0], 0.0, expected));
-      for (int axis = 0; axis < 3; ++axis) {
-        PHX_CHECK(result.points[3 * vertex + static_cast<std::size_t>(axis)] ==
-                  expected[axis]);
-      }
-    }
-    ac_split = ac_split || witness.entity == static_cast<int32_t>(ac_row);
-  }
-  PHX_CHECK(ab_split);
-  PHX_CHECK(!ac_split);
-  const auto result_has_tet_edge = [&](int32_t first, int32_t second) {
-    for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
-      const int32_t* tet = result.tets.data() + 4 * cell;
-      bool has_first = false;
-      bool has_second = false;
-      for (int slot = 0; slot < 4; ++slot) {
-        has_first = has_first || tet[slot] == first;
-        has_second = has_second || tet[slot] == second;
-      }
-      if (has_first && has_second) return true;
-    }
-    return false;
-  };
-  std::size_t ab_segments = 0;
-  std::size_t ac_segments = 0;
-  std::vector<std::pair<int32_t, int32_t>> ab_chain;
-  for (std::size_t row = 0; row < result.segment_sources.size(); ++row) {
-    const int32_t source = result.segment_sources[row];
-    PHX_CHECK(source >= 0 &&
-              source < static_cast<int32_t>(result.plc_edges.size() / 2));
-    if (source == static_cast<int32_t>(ab_row)) {
-      ++ab_segments;
-      const int32_t first = result.segments[2 * row];
-      const int32_t second = result.segments[2 * row + 1];
-      ab_chain.push_back({first, second});
-      PHX_CHECK(result_has_tet_edge(first, second));
-    }
-    if (source == static_cast<int32_t>(ac_row)) ++ac_segments;
-  }
-  PHX_CHECK(ab_segments >= 2);
-  PHX_CHECK(ac_segments == 1);
-  const int32_t ab_first = result.plc_edges[2 * ab_row];
-  const int32_t ab_last = result.plc_edges[2 * ab_row + 1];
-  std::vector<char> ab_used(ab_chain.size(), 0);
-  int32_t chain_vertex = ab_first;
-  std::size_t used_segments = 0;
-  while (chain_vertex != ab_last && used_segments < ab_chain.size()) {
-    std::size_t next_row = ab_chain.size();
-    for (std::size_t row = 0; row < ab_chain.size(); ++row) {
-      if (ab_used[row] != 0 ||
-          (ab_chain[row].first != chain_vertex &&
-           ab_chain[row].second != chain_vertex)) {
-        continue;
-      }
-      if (next_row != ab_chain.size()) {
-        PHX_CHECK(false);
-        break;
-      }
-      next_row = row;
-    }
-    if (next_row == ab_chain.size()) break;
-    ab_used[next_row] = 1;
-    chain_vertex = ab_chain[next_row].first == chain_vertex
-        ? ab_chain[next_row].second : ab_chain[next_row].first;
-    ++used_segments;
-  }
-  PHX_CHECK(chain_vertex == ab_last);
-  PHX_CHECK(used_segments == ab_segments);
-
-  bool ac_recovered = false;
   Expansion recovered_volume;
   for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
     const int32_t* tet = result.tets.data() + 4 * cell;
-    const Expansion volume = orient3d_exact(
+    PHX_CHECK(result.tet_regions[cell] == 1);
+    recovered_volume = recovered_volume + orient3d_exact(
         result.points.data() + 3 * tet[0], result.points.data() + 3 * tet[1],
         result.points.data() + 3 * tet[2], result.points.data() + 3 * tet[3]);
-    PHX_CHECK(volume.sign() > 0);
-    PHX_CHECK(result.tet_regions[cell] == 1);
-    recovered_volume = recovered_volume + volume;
-    bool has_first = false;
-    bool has_second = false;
-    for (int slot = 0; slot < 4; ++slot) {
-      has_first = has_first || tet[slot] == 0;
-      has_second = has_second || tet[slot] == 2;
-    }
-    ac_recovered = ac_recovered || (has_first && has_second);
   }
-  PHX_CHECK(ac_recovered);
   PHX_CHECK((recovered_volume - initial_volume).sign() == 0);
-  PHX_CHECK(result.face_sources.size() == result.faces.size() / 3);
-  PHX_CHECK(result.face_orientations.size() == result.face_sources.size());
-  std::array<int32_t, 8> facet_counts{};
-  for (std::size_t row = 0; row < result.face_sources.size(); ++row) {
-    const int32_t facet = result.face_sources[row];
-    PHX_CHECK(facet >= 0 && facet < static_cast<int32_t>(facet_counts.size()));
-    PHX_CHECK(result.face_orientations[row] == 1);
-    if (facet >= 0 && facet < static_cast<int32_t>(facet_counts.size())) {
-      ++facet_counts[static_cast<std::size_t>(facet)];
-    }
-  }
-  PHX_CHECK(std::all_of(facet_counts.begin(), facet_counts.end(),
-                        [](int32_t count) { return count > 0; }));
 }
 void test_conforming_representable_segment_prefers_vertex_cavity() {
   const double height = std::sqrt(3.0) / 2.0;
@@ -2455,7 +2375,7 @@ int main() {
   test_source_preparation_triangulates_and_compiles_plc_edges();
   test_conforming_nonrepresentable_segment_uses_vertex_cavity();
   test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming();
-  test_conforming_unsplittable_edge_after_boundary_chain_split();
+  test_conforming_missing_boundary_edges_recover_with_exact_witnesses();
   test_conforming_representable_segment_prefers_vertex_cavity();
   test_incremental_point_slot_reindexes_corners_and_rolls_back();
   test_external_cavity_replacement_reseeds_incremental_locate();

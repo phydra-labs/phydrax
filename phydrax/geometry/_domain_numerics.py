@@ -148,11 +148,17 @@ def polyhedral_vertex_coordinates(
                     )
             reference_points_list.append(tuple(exact_point))
         reference_points = tuple(reference_points_list)
+        vertex_interpolated = routes_host.shape[1] == len(reference_points)
         for row in range(block.cell_count):
             expressions = coordinate_maps[cursor]
-            if expressions is None or affine_map(expressions, 3) is None:
+            # Vertex-interpolated multilinear maps are fixed by their corners,
+            # so every face image is its corner interpolation; face planarity is
+            # proved where the face loops are consumed.
+            if expressions is None or (
+                not vertex_interpolated and affine_map(expressions, 3) is None
+            ):
                 raise ValueError(
-                    "Polyhedral coverage requires affine maps on fixed-cell blocks."
+                    "Polyhedral coverage requires vertex-interpolated or affine maps on fixed-cell blocks."
                 )
             for slot, reference_point in enumerate(reference_points):
                 retain(
@@ -170,8 +176,11 @@ def polyhedral_vertex_coordinates(
 
 def polyhedral_cell_measures(
     mesh: CellMesh, geometry: CellGeometrySpec, /
-) -> tuple[Fraction, ...]:
-    """Integrate oriented planar face loops as exact signed cell volumes."""
+) -> tuple[Fraction | None, ...]:
+    """Integrate oriented planar face loops as exact signed polyhedron volumes.
+
+    Fixed-reference cells have exact Jacobian integrals instead and stay ``None``.
+    """
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise ValueError("Exact polyhedral cell measures require PolyhedralConnectivity.")
@@ -181,8 +190,14 @@ def polyhedral_cell_measures(
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
     cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
     face_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
-    measures = []
+    cell_kinds = tuple(
+        block.cell_kind for block in mesh.blocks for _ in range(block.cell_count)
+    )
+    measures: list[Fraction | None] = []
     for cell in range(connectivity.cell_count):
+        if cell_kinds[cell] != "polyhedron":
+            measures.append(None)
+            continue
         volume = Fraction(0)
         for local_face, face in enumerate(
             cell_faces[cell_face_offsets[cell] : cell_face_offsets[cell + 1]]

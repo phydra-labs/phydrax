@@ -30,11 +30,11 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._curve_boundary import ParametricCurveBoundarySource
+from ._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from ._domain_boundary import MeshingDomainBoundarySource
-from ._meshing_domain import _outward_surface_parameter_box
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import IntervalExtensionError, prepare_interval_function
+from ._meshing_domain import _outward_surface_parameter_box
 from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import SourceBoundaryChartWitness
@@ -155,6 +155,8 @@ def _exact_line_data(
     from .brep._source_correspondence import _affine_curve_coefficients
 
     curve = source.curves[chart_row]
+    if isinstance(curve, SegmentChartCurve):
+        return curve.origin_exact, curve.direction_exact
     return _affine_curve_coefficients(curve, (Fraction(0),) * curve.ambient_dimension)
 
 
@@ -1097,7 +1099,11 @@ def certify_domain_surface_charts(
                     )
                 )
             continue
-        if exact_surface is None and unexpanded_exact_carrier and not has_exact_span_source:
+        if (
+            exact_surface is None
+            and unexpanded_exact_carrier
+            and not has_exact_span_source
+        ):
             for _ in rows:
                 findings.append(
                     MeshCertificateFinding(
@@ -1287,9 +1293,7 @@ def certify_domain_surface_charts(
                     target_vertex_coordinates[int(parent_vertex_ids[1])],
                     target_vertex_coordinates[int(parent_vertex_ids[2])],
                 )
-                target_reference = _exact_triangle2(
-                    witness.target_reference_chart(row)
-                )
+                target_reference = _exact_triangle2(witness.target_reference_chart(row))
                 corners = tuple(
                     tuple(
                         parent_corners[0][axis]

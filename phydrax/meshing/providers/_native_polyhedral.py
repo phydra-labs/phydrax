@@ -432,6 +432,8 @@ def _edge_association(
     face_edge_values = np.asarray(connectivity.face_edge_values, dtype=np.int64)
     face_regions: list[set[int]] = [set() for _ in range(connectivity.edge_count)]
     cell_regions = np.asarray(construction.cell_regions, dtype=np.int64)
+    face_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
+    edge_facets: list[set[int]] = [set() for _ in range(connectivity.edge_count)]
     for face, (start, stop) in enumerate(
         zip(face_edge_offsets[:-1], face_edge_offsets[1:], strict=True)
     ):
@@ -442,6 +444,8 @@ def _edge_association(
         adjacent = {int(cell_regions[cell]) for cell in owners if cell >= 0}
         for edge in face_edge_values[start:stop]:
             face_regions[int(edge)].update(adjacent)
+            if face_facets[face] >= 0:
+                edge_facets[int(edge)].add(int(face_facets[face]))
 
     complex_ = source.complex
     facet_keys = tuple(
@@ -547,6 +551,11 @@ def _edge_association(
                     common_facets = vertex_facet_keys.get(
                         first_key, set()
                     ) & vertex_facet_keys.get(second_key, set())
+                    # A carrier diagonal inside one facet touches only that
+                    # facet's recovered faces, which disambiguates corners
+                    # shared by several facets.
+                    if len(common_facets) > 1 and edge_facets[edge]:
+                        common_facets &= {facet_keys[row] for row in edge_facets[edge]}
                     if len(common_facets) == 1:
                         facet_key = next(iter(common_facets))
                         role, identifier, occurrence_path = (
@@ -596,6 +605,16 @@ def _edge_association(
                         second_id,
                         second_path,
                     )
+            if not identifier and len(edge_facets[edge]) == 1:
+                # Every recovered face around this edge lies on one PLC facet,
+                # so the edge is in that facet (a cross-facet edge would also
+                # bound another facet's faces or be an authored PLC edge).
+                facet_key = facet_keys[next(iter(edge_facets[edge]))]
+                role, identifier, occurrence_path = (
+                    GeometrySourceEntityRole.FACET,
+                    facet_key[0],
+                    facet_key[1],
+                )
             if not identifier:
                 adjacent_regions = face_regions[edge]
                 if len(adjacent_regions) == 1:
@@ -1112,33 +1131,38 @@ def _polyhedral_organization(
         labels.append(
             MeshLabel("internal_curve", _mesh_scope(mesh, 1, edge_ids[curve_rows]))
         )
-    site_weights = construction.site_weights[construction.cell_sites]
-    site_parent_rows = construction.site_parents[construction.cell_sites]
+    # Meshing scopes store sorted entity IDs; attribute values follow that order.
+    sorted_rows = np.argsort(cell_ids, kind="stable")
+    all_cells_scope = _mesh_scope(mesh, 3, cell_ids)
     attributes = [
         MeshAttribute(
-            "power_site_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.cell_sites,
-        ),
-        MeshAttribute(
-            "power_component_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.component_ids,
-        ),
-        MeshAttribute(
-            "power_site_parent_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_parent_rows,
-        ),
-        MeshAttribute(
-            "power_site_weight",
-            MeshAttributeRole.USER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_weights,
-        ),
+            name,
+            role,
+            all_cells_scope,
+            np.asarray(values)[sorted_rows],
+        )
+        for name, role, values in (
+            (
+                "power_site_index",
+                MeshAttributeRole.MARKER,
+                construction.cell_sites,
+            ),
+            (
+                "power_component_index",
+                MeshAttributeRole.MARKER,
+                construction.component_ids,
+            ),
+            (
+                "power_site_parent_index",
+                MeshAttributeRole.MARKER,
+                construction.site_parents[construction.cell_sites],
+            ),
+            (
+                "power_site_weight",
+                MeshAttributeRole.USER,
+                construction.site_weights[construction.cell_sites],
+            ),
+        )
     ]
     for site, site_id in enumerate(construction.site_ids):
         cells = np.flatnonzero(construction.cell_sites == site)

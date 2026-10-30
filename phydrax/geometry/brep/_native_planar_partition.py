@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
-from ...discretization._exact_algebraic_geometry import ExactScalar
+from ...discretization._exact_algebraic_geometry import (
+    coefficient_payload,
+    ExactScalar,
+)
+from .._atlas import TrimDomain
 from .._cad_revision import (
     AssociationCoverageEvidence,
     AssociationGraph,
@@ -22,19 +26,26 @@ from .._cad_revision import (
     OccurrenceCorrespondence,
     OccurrenceCorrespondenceTransaction,
 )
-from .._atlas import TrimDomain
-from ..simplicial import PlanarMeshRegion
 from .._planar_embedding import PlanarEmbedding
+from ..simplicial import PlanarMeshRegion
+from ._constructors import assemble_brep_model, BRepTessellationPolicy
 from ._intersection_curve import CurveTrimSegment
-from ._constructors import BRepTessellationPolicy, assemble_brep_model
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import ExactLineCurve, LineCurve, PlanePatch
-from ._planar_arrangement import Cell, Loops, Point, Segment, arrange, on_segment, rational_loops
+from ._planar_arrangement import (
+    arrange,
+    Cell,
+    Loops,
+    on_segment,
+    Point,
+    rational_loops,
+    Segment,
+)
+
 
 if TYPE_CHECKING:
     from ._partition import BRepPartitionResult
     from ._planar import PlanarPartitionOperand, PlanarPartitionPlan
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,13 +54,16 @@ class _PlanarSourceFace:
     face_index: int
     loops: Loops
     edge_segments: tuple[tuple[int, Segment], ...]
+    vertex_points: tuple[tuple[int, Point], ...]
     source_label: str
     source_face_occurrence: CADOccurrence | None = None
     source_edge_occurrences: tuple[tuple[int, CADOccurrence], ...] = ()
+    source_vertex_occurrences: tuple[tuple[int, CADOccurrence], ...] = ()
 
 
 def _fraction_point(point: np.ndarray, /) -> Point:
     return Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1]))
+
 
 def _rational_point3(
     point: tuple[ExactScalar, ...], /
@@ -65,6 +79,7 @@ def _rational_point3(
         raise ValueError("Planar B-rep source edges require rational exact endpoints.")
     return first, second, third
 
+
 def _world_exact(
     embedding: PlanarEmbedding, point: Point, /
 ) -> tuple[Fraction, Fraction, Fraction]:
@@ -78,7 +93,9 @@ def _world_exact(
     )
 
 
-def _mesh_source(source: PlanarMeshRegion, /) -> tuple[Loops, tuple[Segment, ...]]:
+def _mesh_source(
+    source: PlanarMeshRegion, /
+) -> tuple[Loops, tuple[Segment, ...], tuple[tuple[int, Point], ...]]:
     vertices = np.asarray(source.vertices, dtype=np.float64)
     edges = np.asarray(source.edges, dtype=np.int64)
     offsets = np.asarray(source.loop_offsets, dtype=np.int64)
@@ -99,6 +116,7 @@ def _mesh_source(source: PlanarMeshRegion, /) -> tuple[Loops, tuple[Segment, ...
         raise ValueError("Planar region source topology is malformed.")
     loops: list[tuple[Point, ...]] = []
     segments: list[Segment] = []
+    vertex_points: dict[int, Point] = {}
     for loop_index in range(len(offsets) - 1):
         loop_edges = edges[offsets[loop_index] : offsets[loop_index + 1]]
         if np.any(loop_edges[:, 1] != np.roll(loop_edges[:, 0], -1)):
@@ -111,7 +129,17 @@ def _mesh_source(source: PlanarMeshRegion, /) -> tuple[Loops, tuple[Segment, ...
             raise ValueError("Planar region loops cannot contain zero-length edges.")
         loops.append(tuple(first for first, _ in loop_segments))
         segments.extend(loop_segments)
-    return rational_loops(tuple(loops)), tuple(segments)
+        # Mesh vertex rows are the source vertex identities.
+        vertex_points.update(
+            (int(row), segment[0])
+            for row, segment in zip(loop_edges[:, 0], loop_segments, strict=True)
+        )
+    return (
+        rational_loops(tuple(loops)),
+        tuple(segments),
+        tuple(sorted(vertex_points.items())),
+    )
+
 
 def _exact_planar_point(
     point: tuple[Fraction, Fraction, Fraction], embedding: PlanarEmbedding, /
@@ -129,7 +157,9 @@ def _exact_planar_point(
     second_norm = dot(second_axis, second_axis)
     determinant = first_norm * second_norm - mixed * mixed
     if determinant == 0:
-        raise ValueError("The planar source embedding has a singular exact coordinate frame.")
+        raise ValueError(
+            "The planar source embedding has a singular exact coordinate frame."
+        )
     first_projection = dot(delta, first_axis)
     second_projection = dot(delta, second_axis)
     planar = (
@@ -141,7 +171,9 @@ def _exact_planar_point(
         for index in range(3)
     )
     if reconstructed != point:
-        raise ValueError("A planar B-rep source edge is not exactly in the operation embedding plane.")
+        raise ValueError(
+            "A planar B-rep source edge is not exactly in the operation embedding plane."
+        )
     return planar
 
 
@@ -186,12 +218,13 @@ def _brep_source_faces(
     geometry = model.geometry
     revision = cad_revision_from_brep_model(model)
     face_indices = {_entity_text(entity): entity.index for entity in model.face_ids}
-    edge_occurrences = {
-        occurrence.entity_id: occurrence
+    occurrences = {
+        (occurrence.kind, occurrence.entity_id): occurrence
         for occurrence in revision.occurrences
-        if occurrence.kind == "edge"
+        if occurrence.kind in ("edge", "vertex")
     }
     edge_texts = tuple(_entity_text(entity) for entity in model.edge_ids)
+    vertex_texts = tuple(_entity_text(entity) for entity in model.vertex_ids)
     planar_normal = _cross3(_vector3(embedding.x_axis), _vector3(embedding.y_axis))
     selection = operand.selection
     if selection is None:
@@ -203,20 +236,30 @@ def _brep_source_faces(
     ):
         face = face_indices.get(selector.entity_id)
         if face is None:
-            raise ValueError("A planar B-rep selection does not identify a native face row.")
+            raise ValueError(
+                "A planar B-rep selection does not identify a native face row."
+            )
         patch = model.patches[face]
         if not isinstance(patch, PlanePatch):
-            raise ValueError("Exact straight-loop planar partition admits only PlanePatch faces.")
+            raise ValueError(
+                "Exact straight-loop planar partition admits only PlanePatch faces."
+            )
         patch_normal = _cross3(_vector3(patch.first_axis), _vector3(patch.second_axis))
         if (
             patch_normal == (Fraction(0), Fraction(0), Fraction(0))
-            or _cross3(patch_normal, planar_normal) != (Fraction(0), Fraction(0), Fraction(0))
-            or _dot3(patch_normal, planar_normal) * int(np.asarray(model.orientation)[face]) <= 0
+            or _cross3(patch_normal, planar_normal)
+            != (Fraction(0), Fraction(0), Fraction(0))
+            or _dot3(patch_normal, planar_normal)
+            * int(np.asarray(model.orientation)[face])
+            <= 0
         ):
-            raise ValueError("A planar B-rep face orientation must agree with the operation embedding.")
+            raise ValueError(
+                "A planar B-rep face orientation must agree with the operation embedding."
+            )
         _exact_planar_point(_vector3(patch.origin), embedding)
         face_occurrence = revision.occurrence(selector.occurrence_id)
         edge_segments: dict[int, Segment] = {}
+        vertex_points: dict[int, Point] = {}
         for loop in geometry.face_loops[face]:
             for coedge in loop:
                 edge = geometry.coedge_edges[coedge]
@@ -243,10 +286,15 @@ def _brep_source_faces(
                 ):
                     vertex_exact = geometry.vertex_exact_points[point_index]
                     if vertex_exact is None or tuple(vertex_exact) != point_exact:
-                        raise ValueError("A planar B-rep line endpoint is not bound to its exact source vertex.")
+                        raise ValueError(
+                            "A planar B-rep line endpoint is not bound to its exact source vertex."
+                        )
                 edge_segments[edge] = (
                     _exact_planar_point(first_exact, embedding),
                     _exact_planar_point(last_exact, embedding),
+                )
+                vertex_points.update(
+                    zip(geometry.edge_vertices[edge], edge_segments[edge], strict=True)
                 )
         loops: list[tuple[Point, ...]] = []
         for loop in geometry.face_loops[face]:
@@ -254,24 +302,38 @@ def _brep_source_faces(
             for coedge in loop:
                 edge = geometry.coedge_edges[coedge]
                 segment = edge_segments[edge]
-                loop_points.append(segment[0 if geometry.coedge_senses[coedge] > 0 else 1])
+                loop_points.append(
+                    segment[0 if geometry.coedge_senses[coedge] > 0 else 1]
+                )
             loops.append(tuple(loop_points))
         source_loops = rational_loops(tuple(loops))
         source_edge_occurrences = []
         for edge in sorted(edge_segments):
-            occurrence = edge_occurrences.get(edge_texts[edge])
+            occurrence = occurrences.get(("edge", edge_texts[edge]))
             if occurrence is None:
-                raise ValueError("A selected planar B-rep edge has no source occurrence identity.")
+                raise ValueError(
+                    "A selected planar B-rep edge has no source occurrence identity."
+                )
             source_edge_occurrences.append((edge, occurrence))
+        source_vertex_occurrences = []
+        for vertex in sorted(vertex_points):
+            occurrence = occurrences.get(("vertex", vertex_texts[vertex]))
+            if occurrence is None:
+                raise ValueError(
+                    "A selected planar B-rep vertex has no source occurrence identity."
+                )
+            source_vertex_occurrences.append((vertex, occurrence))
         result.append(
             _PlanarSourceFace(
                 operand.operand_id,
                 face,
                 source_loops,
                 tuple(sorted(edge_segments.items())),
+                tuple(sorted(vertex_points.items())),
                 model.source_id,
                 face_occurrence,
                 tuple(source_edge_occurrences),
+                tuple(source_vertex_occurrences),
             )
         )
     return tuple(result)
@@ -282,20 +344,23 @@ def _planar_source_faces(plan: PlanarPartitionPlan, /) -> tuple[_PlanarSourceFac
     for operand in sorted(plan.operands, key=lambda value: value.operand_id):
         source = operand.source
         if isinstance(source, PlanarMeshRegion):
-            loops, segments = _mesh_source(source)
+            loops, segments, vertex_points = _mesh_source(source)
             sources.append(
                 _PlanarSourceFace(
                     operand.operand_id,
                     0,
                     loops,
                     tuple(enumerate(segments)),
+                    vertex_points,
                     source.feature_id,
                 )
             )
         elif isinstance(source, BRepModel):
             sources.extend(_brep_source_faces(operand, plan.embedding))
         else:
-            raise TypeError("Planar partition sources must be PlanarMeshRegion or BRepModel values.")
+            raise TypeError(
+                "Planar partition sources must be PlanarMeshRegion or BRepModel values."
+            )
     if not sources:
         raise ValueError("A planar partition requires at least one selected source face.")
     return tuple(sources)
@@ -303,6 +368,18 @@ def _planar_source_faces(plan: PlanarPartitionPlan, /) -> tuple[_PlanarSourceFac
 
 def _contains_segment(inner: Segment, outer: Segment, /) -> bool:
     return on_segment(inner[0], outer) and on_segment(inner[1], outer)
+
+
+type _ExactNested = Fraction | int | str | None | tuple[_ExactNested, ...]
+
+
+def _exact_payload(value: _ExactNested, /) -> object:
+    """Encode nested exact rational planar data as canonical identity payload."""
+    if isinstance(value, Fraction):
+        return coefficient_payload(value)
+    if isinstance(value, tuple):
+        return tuple(_exact_payload(item) for item in value)
+    return value
 
 
 def _source_revision(
@@ -319,14 +396,19 @@ def _source_revision(
                     source.operand_id,
                     source.face_index,
                     source.source_label,
-                    source.loops,
-                    source.edge_segments,
+                    _exact_payload(source.loops),
+                    _exact_payload(source.edge_segments),
+                    _exact_payload(source.vertex_points),
                     None
                     if source.source_face_occurrence is None
                     else source.source_face_occurrence.entity_id,
                     tuple(
                         (edge, occurrence.entity_id)
                         for edge, occurrence in source.source_edge_occurrences
+                    ),
+                    tuple(
+                        (vertex, occurrence.entity_id)
+                        for vertex, occurrence in source.source_vertex_occurrences
                     ),
                 )
                 for source in sources
@@ -336,6 +418,7 @@ def _source_revision(
     occurrences: list[CADOccurrence] = []
     identifiers: dict[tuple[str, str], str] = {}
     seen_source_edges: set[str] = set()
+    seen_source_vertices: set[str] = set()
     for source in sources:
         original_face = source.source_face_occurrence
         face_id = (
@@ -372,7 +455,9 @@ def _source_revision(
                     )
                     seen_source_edges.add(edge_id)
             else:
-                edge_id = f"operand:{source.operand_id}:source:{original_edge.occurrence_id}"
+                edge_id = (
+                    f"operand:{source.operand_id}:source:{original_edge.occurrence_id}"
+                )
                 if edge_id not in seen_source_edges:
                     occurrences.append(
                         CADOccurrence(
@@ -386,6 +471,34 @@ def _source_revision(
                     )
                     seen_source_edges.add(edge_id)
             identifiers[(source.operand_id, f"edge:{edge_index}")] = edge_id
+        original_vertices = dict(source.source_vertex_occurrences)
+        for vertex_index, _point in source.vertex_points:
+            original_vertex = original_vertices.get(vertex_index)
+            if original_vertex is None:
+                vertex_id = f"{face_id}/vertex:{vertex_index}"
+                occurrence = CADOccurrence(
+                    revision_id,
+                    vertex_id,
+                    f"{source.source_label}:vertex:{vertex_index}",
+                    "vertex",
+                    (face_id, vertex_id),
+                    face_id,
+                )
+            else:
+                vertex_id = (
+                    f"operand:{source.operand_id}:source:{original_vertex.occurrence_id}"
+                )
+                occurrence = CADOccurrence(
+                    revision_id,
+                    vertex_id,
+                    original_vertex.entity_id,
+                    "vertex",
+                    (vertex_id,),
+                )
+            if vertex_id not in seen_source_vertices:
+                occurrences.append(occurrence)
+                seen_source_vertices.add(vertex_id)
+            identifiers[(source.operand_id, f"vertex:{vertex_index}")] = vertex_id
     return (
         CADRevision(
             revision_id,
@@ -424,13 +537,12 @@ def _cells(
     return tuple(owners)
 
 
-
 def _build_model(
     plan: PlanarPartitionPlan,
     cells: tuple[tuple[Cell, str], ...],
     tessellation: BRepTessellationPolicy | None,
     /,
-) -> tuple[BRepModel, tuple[Segment, ...]]:
+) -> tuple[BRepModel, tuple[Segment, ...], tuple[Point, ...]]:
     embedding = plan.embedding
     vertices: list[Point] = []
     vertex_index: dict[Point, int] = {}
@@ -480,11 +592,14 @@ def _build_model(
                     edge_vertices.append((vertex(key[0]), vertex(key[1])))
                 coedge = len(coedge_edges)
                 coedge_edges.append(edge)
-                coedge_senses.append(1 if start == key[0] else -1)
-                pcurve = ExactLineCurve(start, end)
+                sense = 1 if start == key[0] else -1
+                coedge_senses.append(sense)
+                # The p-curve shares the edge's parameter; the coedge sense
+                # carries the loop traversal.
+                pcurve = ExactLineCurve(key[0], key[1])
                 pcurves.append(pcurve)
                 loop.append(coedge)
-                trim_loop.append(CurveTrimSegment(pcurve, 0.0, 1.0))
+                trim_loop.append(CurveTrimSegment(pcurve, 0.0, 1.0, reversed=sense < 0))
             face_coedge_loops.append(tuple(loop))
             trim_loops.append(tuple(trim_loop))
         face_loops.append(tuple(face_coedge_loops))
@@ -495,7 +610,10 @@ def _build_model(
         upper = tuple(max(point[axis] for point in face_points) for axis in range(2))
         bounds.append(
             np.asarray(
-                (tuple(float(value) for value in lower), tuple(float(value) for value in upper)),
+                (
+                    tuple(float(value) for value in lower),
+                    tuple(float(value) for value in upper),
+                ),
                 dtype=np.float64,
             )
         )
@@ -524,7 +642,7 @@ def _build_model(
         {
             "kind": "native-planar-partition",
             "plan": plan.plan_id,
-            "cells": tuple((cell.loops, owner) for cell, owner in cells),
+            "cells": tuple((_exact_payload(cell.loops), owner) for cell, owner in cells),
         }
     )
     model = assemble_brep_model(
@@ -539,7 +657,7 @@ def _build_model(
         tessellation=tessellation,
         trim_domains=tuple(trims),
     )
-    return model, tuple(edge_keys)
+    return model, tuple(edge_keys), tuple(vertices)
 
 
 def partition_native_planar_arrangement(
@@ -550,17 +668,19 @@ def partition_native_planar_arrangement(
 ) -> BRepPartitionResult:
     """Partition exact straight-loop sources by rational arrangement in memory."""
     from ._partition import (
+        _entity_text,
         BRepPartitionPatch,
         BRepPartitionRegion,
         BRepPartitionReport,
         BRepPartitionResult,
-        _entity_text,
         cad_revision_from_brep_model,
     )
 
     source_faces = _planar_source_faces(plan)
     cells = _cells(plan, source_faces)
-    model, target_edge_keys = _build_model(plan, cells, tessellation)
+    model, target_edge_keys, target_vertex_points = _build_model(
+        plan, cells, tessellation
+    )
     source_revision, source_ids = _source_revision(plan, source_faces)
     target_revision = cad_revision_from_brep_model(model)
     role_by_id = {operand.operand_id: operand.role.value for operand in plan.operands}
@@ -589,9 +709,12 @@ def partition_native_planar_arrangement(
                 occurrence.occurrence_id
             )
     target_edges: dict[int, list[str]] = {}
+    target_vertices: dict[int, list[str]] = {}
     for (kind, index, _path), occurrence_id in target_occurrences.items():
         if kind == "edge":
             target_edges.setdefault(index, []).append(occurrence_id)
+        elif kind == "vertex":
+            target_vertices.setdefault(index, []).append(occurrence_id)
     correspondence_pairs: set[tuple[str, str]] = set()
     for face_index, (cell, _) in enumerate(cells):
         target_face_id = target_occurrences[("face", face_index, ())]
@@ -611,6 +734,20 @@ def partition_native_planar_arrangement(
                     (source_id, target_id)
                     for target_id in target_edges.get(edge_index, ())
                 )
+    # A target vertex descends from every source vertex at its exact point;
+    # arrangement intersection vertices have no source vertex and are created.
+    source_vertices: dict[Point, set[str]] = {}
+    for source in source_faces:
+        for vertex_index, point in source.vertex_points:
+            source_vertices.setdefault(point, set()).add(
+                source_ids[(source.operand_id, f"vertex:{vertex_index}")]
+            )
+    for vertex_index, point in enumerate(target_vertex_points):
+        for source_id in source_vertices.get(point, ()):
+            correspondence_pairs.update(
+                (source_id, target_id)
+                for target_id in target_vertices.get(vertex_index, ())
+            )
     certificate_id = canonical_fingerprint(
         {
             "kind": "native-planar-arrangement-history",
@@ -631,20 +768,28 @@ def partition_native_planar_arrangement(
         tuple(correspondences),
         frozenset(),
         frozenset(),
-        AssociationCoverageEvidence(True, True, certificate_id, "native-planar-arrangement"),
+        AssociationCoverageEvidence(
+            True, True, certificate_id, "native-planar-arrangement"
+        ),
     )
     graph = AssociationGraph(source_revision, target_revision, transaction)
     regions = tuple(
         BRepPartitionRegion(
             name,
-            tuple(model.face_ids[index] for index, owner in enumerate(face_owner) if owner == name),
+            tuple(
+                model.face_ids[index]
+                for index, owner in enumerate(face_owner)
+                if owner == name
+            ),
             2,
         )
         for name in plan.policy.region_precedence
     )
     grouped_edges: dict[tuple[str, ...], list[BRepEntityId]] = {}
     for edge_index, faces in enumerate(model.topology.edge_faces):
-        adjacent = tuple(sorted((face_owner[index] for index in faces), key=rank.__getitem__))
+        adjacent = tuple(
+            sorted((face_owner[index] for index in faces), key=rank.__getitem__)
+        )
         if len(adjacent) not in (1, 2):
             raise RuntimeError("Native planar arrangement produced a nonmanifold edge.")
         grouped_edges.setdefault(adjacent, []).append(model.edge_ids[edge_index])
@@ -672,8 +817,14 @@ def partition_native_planar_arrangement(
         sum(value.kind == "face" for value in source_revision.occurrences),
         0,
         model.topology.num_faces,
-        sum(value.occurrence_id not in source_linked for value in source_revision.occurrences),
-        sum(value.occurrence_id not in target_linked for value in target_revision.occurrences),
+        sum(
+            value.occurrence_id not in source_linked
+            for value in source_revision.occurrences
+        ),
+        sum(
+            value.occurrence_id not in target_linked
+            for value in target_revision.occurrences
+        ),
         sum(value.kind == "edge" for value in source_revision.occurrences),
         model.topology.num_edges,
         2,

@@ -15,7 +15,7 @@ from jax.core import ShapedArray
 from jax.extend import core as jax_core
 from numpy.typing import NDArray
 
-from ._interval_enclosure import IntervalExtensionError
+from ._interval_enclosure import IntervalExtensionError, IntervalOperandIdentity
 
 
 type _Interval = tuple[np.ndarray | np.generic, np.ndarray | np.generic]
@@ -792,7 +792,9 @@ class _Builder:
         environment: dict[jax_core.Var, _Tensor] = {}
         environment.update(zip(jaxpr.constvars, constants, strict=True))
         environment.update(zip(jaxpr.invars, inputs, strict=True))
+        identity = IntervalOperandIdentity()
         for equation in jaxpr.eqns:
+            identity.record(equation)
             name = equation.primitive.name
             arguments = tuple(
                 environment[atom]
@@ -820,13 +822,7 @@ class _Builder:
                 output_shapes = tuple(
                     _real_shape(variable) for variable in equation.outvars
                 )
-                same_input = (
-                    name == "mul"
-                    and len(equation.invars) == 2
-                    and equation.invars[0] is equation.invars[1]
-                    and isinstance(equation.invars[0].aval, ShapedArray)
-                    and equation.invars[0].aval.dtype.kind == "f"
-                )
+                same_input = identity.is_square(equation)
                 outputs = self._lower_primitive(
                     name,
                     arguments,

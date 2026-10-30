@@ -63,6 +63,8 @@ type _PeriodicTetrahedron = tuple[
 
 type _LinkGerm = tuple[int, tuple[int, ...]]
 type _LinkEdge = tuple[_LinkGerm, _LinkGerm]
+# A quotient edge and the end (-1 start, +1 finish) meeting a vertex.
+type _EdgeEnd = tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,8 +117,8 @@ def _boundary_cycles_oriented(
     ):
         return None
     for edge in np.flatnonzero(edge_boundary):
-        endpoints = vertex_indices[on_boundary & (edge_indices == edge)]
-        if endpoints.size != 2 or endpoints[0] == endpoints[1]:
+        # A boundary loop (both ends in one vertex orbit) is a one-vertex circle.
+        if np.count_nonzero(on_boundary & (edge_indices == edge)) != 2:
             return None
     for vertex in np.flatnonzero(vertex_boundary):
         selected = on_boundary & (vertex_indices == vertex)
@@ -130,10 +132,141 @@ def _boundary_cycles_oriented(
     return "with_boundary"
 
 
+def _lifted_orbit_maps(
+    topology: PeriodicMeshTopology, degree: int, /
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Quotient rows and relative orientations of lifted entities of one degree."""
+    lifted_offsets = np.asarray(topology.lifted_offsets, dtype=np.int64)
+    quotient_offsets = np.asarray(topology.quotient_offsets, dtype=np.int64)
+    begin, end = map(int, lifted_offsets[degree : degree + 2])
+    orbits = (
+        np.asarray(topology.orbit_indices, dtype=np.int64)[begin:end]
+        - quotient_offsets[degree]
+    )
+    orientations = np.asarray(topology.orbit_orientations, dtype=np.int64)[begin:end]
+    return orbits, orientations
+
+
+def _boundary_vertex_links_are_cycles(
+    mesh: CellMesh,
+    topology: PeriodicMeshTopology,
+    face_boundary: NDArray[np.bool_],
+    edge_boundary: NDArray[np.bool_],
+    vertex_boundary: NDArray[np.bool_],
+    /,
+) -> bool:
+    """Require every quotient boundary vertex link to be one cycle of edge ends.
+
+    Quotient faces are polygons whose words may repeat an edge, and quotient
+    edges may be loops when a cell spans a whole period or meets a fixed axis.
+    Corners are therefore read from each face's lifted representative, where
+    the face is a simple vertex cycle. A corner joins two edge ends: the
+    quotient edge and the end (start or finish) that the lifted vertex maps to.
+    Each boundary vertex must collect all of its boundary edge ends into one
+    cycle, which makes the boundary surface a 2-manifold at that vertex and
+    distinguishes the two ends of a loop.
+    """
+    lifted = mesh.topology
+    if lifted.topology_id != topology.lifted_complex_id or len(lifted.incidences) < 2:
+        return False
+    vertex_orbits, vertex_orientations = _lifted_orbit_maps(topology, 0)
+    edge_orbits, edge_orientations = _lifted_orbit_maps(topology, 1)
+    face_representatives = np.asarray(topology.representatives, dtype=np.int64)[
+        int(topology.quotient_offsets[2]) : int(topology.quotient_offsets[3])
+    ]
+    if face_representatives.shape != face_boundary.shape:
+        return False
+
+    def rows(
+        degree: int, /
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
+        incidence = lifted.incidences[degree]
+        relation = incidence.relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        return (
+            np.asarray(relation.source_indices, dtype=np.int64)[valid],
+            np.asarray(relation.target_indices, dtype=np.int64)[valid],
+            np.asarray(incidence.signs, dtype=np.float64)[valid],
+        )
+
+    vertex_sources, vertex_edges, vertex_signs = rows(0)
+    edge_sources, edge_faces, _ = rows(1)
+    lifted_edge_ends: dict[int, list[tuple[int, int]]] = {}
+    for vertex, edge, sign in zip(
+        vertex_sources.tolist(), vertex_edges.tolist(), vertex_signs.tolist(), strict=True
+    ):
+        lifted_edge_ends.setdefault(edge, []).append((vertex, int(sign)))
+
+    links: dict[int, list[tuple[_EdgeEnd, _EdgeEnd]]] = {}
+    for face in np.flatnonzero(face_boundary).tolist():
+        face_edges = edge_sources[edge_faces == face_representatives[face]].tolist()
+        corners: dict[int, list[_EdgeEnd]] = {}
+        for edge in face_edges:
+            ends = lifted_edge_ends.get(edge, [])
+            if len(ends) != 2 or {sign for _, sign in ends} != {-1, 1}:
+                return False
+            for vertex, sign in ends:
+                end = (
+                    sign * int(edge_orientations[edge]) * int(vertex_orientations[vertex])
+                )
+                corners.setdefault(vertex, []).append((int(edge_orbits[edge]), end))
+        # The lifted face must be one simple polygon: as many corners as sides,
+        # each corner between exactly two sides.
+        if (
+            len(face_edges) < 3
+            or len(corners) != len(face_edges)
+            or any(len(ends) != 2 for ends in corners.values())
+        ):
+            return False
+        for vertex, (first, second) in corners.items():
+            links.setdefault(int(vertex_orbits[vertex]), []).append((first, second))
+
+    expected: dict[int, set[_EdgeEnd]] = {}
+    quotient_incidence = topology.quotient.incidences[0]
+    relation = quotient_incidence.relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    for vertex, edge, sign in zip(
+        np.asarray(relation.source_indices, dtype=np.int64)[valid].tolist(),
+        np.asarray(relation.target_indices, dtype=np.int64)[valid].tolist(),
+        np.asarray(quotient_incidence.signs, dtype=np.float64)[valid].tolist(),
+        strict=True,
+    ):
+        if edge_boundary[edge]:
+            expected.setdefault(vertex, set()).add((edge, int(sign)))
+    if set(links) != set(np.flatnonzero(vertex_boundary).tolist()):
+        return False
+    for vertex, link_edges in links.items():
+        degree: dict[_EdgeEnd, int] = {}
+        neighbors: dict[_EdgeEnd, set[_EdgeEnd]] = {}
+        for first, second in link_edges:
+            degree[first] = degree.get(first, 0) + 1
+            degree[second] = degree.get(second, 0) + 1
+            neighbors.setdefault(first, set()).add(second)
+            neighbors.setdefault(second, set()).add(first)
+        if set(degree) != expected.get(vertex, set()) or any(
+            count != 2 for count in degree.values()
+        ):
+            return False
+        pending = [next(iter(degree))]
+        visited: set[_EdgeEnd] = set()
+        while pending:
+            end = pending.pop()
+            if end not in visited:
+                visited.add(end)
+                pending.extend(neighbors[end] - visited)
+        if visited != set(degree):
+            return False
+    return True
+
+
 def _quotient_faces_pair_oriented(
-    topology: PeriodicMeshTopology, /
+    mesh: CellMesh, topology: PeriodicMeshTopology, /
 ) -> Literal["closed", "with_boundary"] | None:
-    """Classify closed and manifold-boundary oriented 2D/3D periodic quotients."""
+    """Classify closed and manifold-boundary oriented 2D/3D periodic quotients.
+
+    Quotient cells may be simplices or vertex-defined polygons/polyhedra; the
+    quotient may contain loop edges and faces whose words repeat an edge.
+    """
     quotient = topology.quotient
     dimension = topology.topological_dimension
     if dimension not in (2, 3) or len(quotient.entity_sets) < dimension + 1:
@@ -232,67 +365,18 @@ def _quotient_faces_pair_oriented(
         vertex_boundary, boundary_vertex_counts > 0
     ):
         return None
-    edge_vertices: list[list[int]] = [[] for _ in range(edge_count)]
-    for vertex, edge in zip(
-        vertex_indices[on_boundary_edge], edge_indices[on_boundary_edge], strict=True
-    ):
-        edge_vertices[int(edge)].append(int(vertex))
     for edge in np.flatnonzero(edge_boundary):
         selected = vertex_signs[on_boundary_edge & (edge_indices == edge)]
-        endpoints = edge_vertices[int(edge)]
         if (
-            len(endpoints) != 2
-            or endpoints[0] == endpoints[1]
-            or selected.size != 2
+            selected.size != 2
             or float(np.sum(selected)) != 0.0
             or np.any(np.abs(selected) != 1.0)
         ):
             return None
-
-    boundary_vertex_links: dict[int, dict[int, list[int]]] = {}
-    for face in np.flatnonzero(face_boundary):
-        face_edges = tuple(edge_sources[on_boundary & (edge_faces == face)])
-        if len(face_edges) != 3:
-            return None
-        face_vertices = {
-            vertex for edge in face_edges for vertex in edge_vertices[int(edge)]
-        }
-        if len(face_vertices) != 3:
-            return None
-        for vertex in face_vertices:
-            adjacent = tuple(
-                int(edge)
-                for edge in face_edges
-                if int(vertex) in edge_vertices[int(edge)]
-            )
-            if len(adjacent) != 2:
-                return None
-            link = boundary_vertex_links.setdefault(int(vertex), {})
-            link.setdefault(adjacent[0], []).append(adjacent[1])
-            link.setdefault(adjacent[1], []).append(adjacent[0])
-    for vertex in np.flatnonzero(vertex_boundary):
-        link = boundary_vertex_links.get(int(vertex))
-        expected_edges = {
-            edge
-            for edge in np.flatnonzero(edge_boundary)
-            if int(vertex) in edge_vertices[int(edge)]
-        }
-        if (
-            link is None
-            or set(link) != expected_edges
-            or any(len(neighbors) != 2 for neighbors in link.values())
-        ):
-            return None
-        pending = [next(iter(link))]
-        visited: set[int] = set()
-        while pending:
-            edge = pending.pop()
-            if edge in visited:
-                continue
-            visited.add(edge)
-            pending.extend(neighbor for neighbor in link[edge] if neighbor not in visited)
-        if visited != expected_edges:
-            return None
+    if not _boundary_vertex_links_are_cycles(
+        mesh, topology, face_boundary, edge_boundary, vertex_boundary
+    ):
+        return None
     return "with_boundary"
 
 
@@ -802,7 +886,7 @@ def certify_periodic_mapped_torus_degree(
     if (
         rebuilt.periodic_topology is None
         or rebuilt.periodic_topology.periodic_topology_id != topology.periodic_topology_id
-        or _quotient_faces_pair_oriented(topology) != "closed"
+        or _quotient_faces_pair_oriented(mesh, topology) != "closed"
     ):
         return PeriodicMappedDegreeResult(
             True,
@@ -952,7 +1036,7 @@ def certify_periodic_affine_embedding(
         )
     ):
         return PeriodicContactResult("unresolved", (unresolved,))
-    boundary_kind = _quotient_faces_pair_oriented(topology)
+    boundary_kind = _quotient_faces_pair_oriented(mesh, topology)
     if boundary_kind is None:
         finding = (
             "periodic_quotient_incidence_unresolved",
