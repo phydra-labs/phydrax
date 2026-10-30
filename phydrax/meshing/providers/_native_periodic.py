@@ -10054,11 +10054,10 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                 candidate["source_owned"] = candidate["point_owner_ranks"] == rank
                 source_authority_value = final_source
                 source_context_id = final_source.binding_id
-                (
-                    renewed_source_entry,
-                    renewed_source_composition,
-                    renewed_source_content_id,
-                ) = _owner_local_periodic_source_authority(
+                # The compact view keeps the authored source as its source value;
+                # migration lives only in the actual geometry authority. The
+                # migrated bank must still carry the same authored content.
+                _, _, renewed_source_content_id = _owner_local_periodic_source_authority(
                     final_source,
                     execution_group,
                     "periodic_owner_graph_source",
@@ -10067,8 +10066,6 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Graph repartition changed authored periodic source identity."
                     )
-                source_entry = renewed_source_entry
-                source_composition = renewed_source_composition
                 source_coordinate_stencil = mesh_data["source_coordinate_stencil"]
                 exact_vertex_coordinate_offsets = mesh_data[
                     "exact_vertex_coordinate_offsets"
