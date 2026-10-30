@@ -33,7 +33,10 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
 from ..discretization._reference_cell import reference_cell_topology
-from ..discretization._surface_chart_records import SurfaceChartWitness
+from ..discretization._surface_chart_records import (
+    _exact_chart_from_tokens,
+    SurfaceChartWitness,
+)
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._domain_boundary import MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
@@ -55,6 +58,7 @@ from ._planar_primitives import (
 )
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import (
+    _fractions_from_chart_tokens,
     SourceBoundaryChartCover,
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
@@ -281,7 +285,9 @@ def _surface_source_chart_rows(
             )
         patch_rows[row] = patch
     return patch_rows, tuple(
-        _exact_triangle2(witness.source_parameter_chart(row))
+        _exact_triangle2(
+            _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
+        )
         for row in range(len(patch_rows))
     )
 
@@ -437,7 +443,10 @@ def _partition_findings(
     source_triangles = dict(source.boundary_parameter_triangles())
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
-        charts = tuple(witness.exact_chart(row) for row in range(len(patches)))
+        charts = tuple(
+            _exact_chart_from_tokens(witness.chart_rational_tokens, row)
+            for row in range(len(patches))
+        )
     else:
         patches, charts = _surface_source_chart_rows(source, witness)
     target_triangles: dict[int, list[Triangle2]] = {}
@@ -982,7 +991,9 @@ def _validate_piecewise_linear_chart_witness(
         _curve_target_chart_rows(mesh, witness)
         by_chart: dict[str, list[tuple[Fraction, Fraction]]] = {}
         for row, chart_id in enumerate(witness.source_chart_ids):
-            parameters = witness.source_parameter_chart(row)
+            parameters = _fractions_from_chart_tokens(
+                witness.source_parameter_rational_tokens, row
+            )
             first, last = parameters[0][0], parameters[1][0]
             if first == last:
                 raise ValueError(
@@ -1029,7 +1040,9 @@ def _validate_piecewise_linear_chart_witness(
         (Fraction(0), Fraction(1)),
     )
     for row, chart_id in enumerate(witness.source_chart_ids):
-        parameters = _exact_triangle2(witness.source_parameter_chart(row))
+        parameters = _exact_triangle2(
+            _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
+        )
         by_chart.setdefault(chart_id, []).append(parameters)
         source_orientations.append(1 if _area2(parameters) > 0 else -1)
     if set(by_chart) != set(source.chart_ids):
@@ -1115,7 +1128,8 @@ def validate_source_fidelity_witness(
             np.asarray(witness.source_root_cell_ids),
             witness.source_piece_ids,
             exact_charts=tuple(
-                witness.exact_chart(row) for row in range(len(witness.source_piece_ids))
+                _exact_chart_from_tokens(witness.chart_rational_tokens, row)
+                for row in range(len(witness.source_piece_ids))
             ),
         )
         if renewed.witness_id != witness.witness_id:
@@ -1207,7 +1221,11 @@ def validate_source_fidelity_witness(
                 full_source=False,
             )
             parameters = tuple(
-                _exact_triangle2(witness.source_parameter_chart(row))
+                _exact_triangle2(
+                    _fractions_from_chart_tokens(
+                        witness.source_parameter_rational_tokens, row
+                    )
+                )
                 for row in range(len(witness.source_chart_ids))
             )
             source_orientation = tuple(
@@ -1374,7 +1392,10 @@ def _chart_point_tables(
     domain = source.domain
     witness_ids = _integer_vector(witness.cell_global_ids)
     witness_patches = _integer_vector(witness.patches)
-    witness_charts = tuple(witness.exact_chart(row) for row in range(len(witness_ids)))
+    witness_charts = tuple(
+        _exact_chart_from_tokens(witness.chart_rational_tokens, row)
+        for row in range(len(witness_ids))
+    )
     if (
         witness.domain_id != domain.domain_id
         or witness.geometry_id != cell_geometry_id(geometry)
@@ -1794,7 +1815,7 @@ def _validate_implicit_source_witness(
     witness_cell_keys = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
     witness_root_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
     witness_parameters = tuple(
-        witness.source_parameter_chart(row)
+        _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
         for row in range(len(witness.source_chart_ids))
     )
     standard_chart = (
@@ -1893,7 +1914,7 @@ def _curve_target_chart_rows(
         int(local_entity_values[row]) for row in range(local_entity_values.size)
     )
     references = tuple(
-        witness.target_reference_chart(row)
+        _fractions_from_chart_tokens(witness.target_reference_rational_tokens, row)
         for row in range(len(witness.source_chart_ids))
     )
     if len(set(zip(target_ids, witness.source_chart_ids, strict=True))) != len(
@@ -2004,7 +2025,9 @@ def _curve_target_chart_rows(
                 "Curve chart reference endpoints do not cover the complete target edge."
             )
         target_orientation = 1 if target_reference == expected else -1
-        parameter = witness.source_parameter_chart(row)
+        parameter = _fractions_from_chart_tokens(
+            witness.source_parameter_rational_tokens, row
+        )
         source_orientation = 1 if parameter[1][0] > parameter[0][0] else -1
         if int(witness.orientations[row]) != source_orientation * target_orientation:
             raise ValueError(
@@ -3265,7 +3288,9 @@ def _polyhedral_surface_target_chart_rows(
             "Polyhedral chart rows require target triangle IDs and 2D face charts."
         )
     reference_rows = tuple(
-        _exact_triangle2(witness.target_reference_chart(row))
+        _exact_triangle2(
+            _fractions_from_chart_tokens(witness.target_reference_rational_tokens, row)
+        )
         for row in range(len(witness.source_chart_ids))
     )
     parent_triangles_by_face: dict[int, dict[tuple[int, int, int], list[Triangle2]]] = {}
@@ -3371,7 +3396,12 @@ def _surface_target_chart_rows(
                 "Full-source surface chart witness must bind every target cell."
             )
         reference_triangles = tuple(
-            _exact_triangle2(witness.target_reference_chart(row)) for row in range(count)
+            _exact_triangle2(
+                _fractions_from_chart_tokens(
+                    witness.target_reference_rational_tokens, row
+                )
+            )
+            for row in range(count)
         )
         by_cell: dict[int, list[Triangle2]] = {}
         for row in range(count):
@@ -3431,7 +3461,10 @@ def _surface_target_chart_rows(
             )
 
     parent_reference_triangles = tuple(
-        _exact_triangle3(witness.target_reference_chart(row)) for row in range(count)
+        _exact_triangle3(
+            _fractions_from_chart_tokens(witness.target_reference_rational_tokens, row)
+        )
+        for row in range(count)
     )
     grouped: dict[tuple[int, int], list[Triangle2]] = {}
     domains: dict[tuple[int, int], tuple[Triangle2, ...]] = {}
@@ -4770,7 +4803,10 @@ def certify_source_fidelity(
     witness_patches = tuple(
         int(witness_patch_ids[row]) for row in range(witness_patch_ids.size)
     )
-    witness_charts = tuple(witness.exact_chart(row) for row in range(len(witness_ids)))
+    witness_charts = tuple(
+        _exact_chart_from_tokens(witness.chart_rational_tokens, row)
+        for row in range(len(witness_ids))
+    )
     by_patch: dict[int, list[tuple[int, Triangle2]]] = {}
     for cell_id, patch, chart in zip(
         witness_ids, witness_patches, witness_charts, strict=True
@@ -4829,9 +4865,7 @@ def certify_source_fidelity(
                     ],
                     dtype=np.float64,
                 )
-            source_intervals_by_row: list[
-                tuple[np.ndarray, np.ndarray] | None
-            ] = []
+            source_intervals_by_row: list[tuple[np.ndarray, np.ndarray] | None] = []
             for chart_row, (_, chart) in enumerate(chart_rows):
                 if exact_points_by_row[chart_row] is not None:
                     source_intervals_by_row.append(None)
@@ -4878,10 +4912,9 @@ def certify_source_fidelity(
                 )
             )
             continue
-        source_intervals_valid = (
-            len(source_intervals_by_row) == len(chart_rows)
-            and len(exact_points_by_row) == len(chart_rows)
-        )
+        source_intervals_valid = len(source_intervals_by_row) == len(chart_rows) and len(
+            exact_points_by_row
+        ) == len(chart_rows)
         for interval in source_intervals_by_row:
             if interval is None:
                 continue

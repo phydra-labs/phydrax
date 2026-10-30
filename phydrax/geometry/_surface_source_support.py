@@ -49,6 +49,7 @@ from ..discretization._coordinate_enclosure import (
 from ..discretization._exact_algebraic_geometry import coefficient_payload, RadicalElement
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._surface_chart_records import (
+    _exact_chart_from_tokens,
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
 )
@@ -1167,9 +1168,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             root_ids = root_result.root_cell_ids
             root_atlas_ids = root_result.root_cell_ids
             root_source_ids = root_result.root_source_cell_ids
-            bounds = tuple(
-                root_result.root_parameter_chart(row) for row in range(len(root_ids))
-            )
+            bounds = tuple(map(root_result.root_parameter_chart, range(len(root_ids))))
             coordinate_contract = root_result.coordinate_contract
         else:
             from ..meshing._result import CellMeshingResult
@@ -1195,9 +1194,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             root_atlas_ids = tuple(
                 int(value) for value in source_charts.source_root_cell_ids
             )
-            bounds = tuple(
-                source_charts.root_parameter_chart(row) for row in range(len(root_ids))
-            )
+            bounds = tuple(map(source_charts.root_parameter_chart, range(len(root_ids))))
             coordinate_contract = source_charts.coordinate_contract
         if len(root_atlas_ids) != len(root_ids):
             raise ValueError(
@@ -1340,7 +1337,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             chart_root_bindings = tuple(chart_witness.root_mesh_cell_bindings)
             chart_patches = np.asarray(chart_witness.patches, dtype=np.int64)
             exact_charts = tuple(
-                chart_witness.exact_chart(row) for row in range(chart_cell_ids.size)
+                map(chart_witness.exact_chart, range(chart_cell_ids.size))
             )
             if (
                 chart_cell_ids.shape != (len(target_cell_ids),)
@@ -1413,7 +1410,10 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                     cell_id = int(identifier)
                     root_row = root_row_by_id[cell_id]
                     if chart_witness is not None and (
-                        chart_witness.exact_chart(witness_row_by_cell[cell_id])
+                        _exact_chart_from_tokens(
+                            chart_witness.chart_rational_tokens,
+                            witness_row_by_cell[cell_id],
+                        )
                         != self.root_parameter_bounds[root_row]
                     ):
                         raise ValueError(
@@ -1615,7 +1615,9 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                         _root_reference_point(
                             self.root_parameter_bounds[root_row_in_bank], point
                         )
-                        for point in chart_witness.exact_chart(witness_row)
+                        for point in _exact_chart_from_tokens(
+                            chart_witness.chart_rational_tokens, witness_row
+                        )
                     )
                     arguments = _reference_chart_arguments(root_corners, block.cell_kind)
                 elif (
@@ -1699,7 +1701,10 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 )
                 if chart_witness is not None and (
                     witness_row is None
-                    or source_uv != chart_witness.exact_chart(witness_row)
+                    or source_uv
+                    != _exact_chart_from_tokens(
+                        chart_witness.chart_rational_tokens, witness_row
+                    )
                 ):
                     raise ValueError(
                         "Retained target geometry restriction disagrees with its canonical source chart."
