@@ -22,13 +22,13 @@ from phydrax.meshing import (
     MeshingScope,
     NativeMeshingOptions,
     NativeMeshingProvider,
+    prepare_boundary_layers,
     RegionRole,
     RegionSeed,
     SizeControlStrength,
     UniformSizeControl,
     VolumeFillStrategy,
     VolumeMeshingSpec,
-    prepare_boundary_layers,
 )
 from phydrax.meshing._boundary_layer import BoundaryLayerMesh
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
@@ -69,7 +69,9 @@ def _bind_layer_source(
     layer_cell_count = sum(block.cell_count for block in layers.mesh.blocks)
     cap = layers.cap
     if cap is None:
-        raise ValueError("Positive polyhedral core fixture requires the accepted layer cap.")
+        raise ValueError(
+            "Positive polyhedral core fixture requires the accepted layer cap."
+        )
     cap_cell_count = sum(block.cell_count for block in cap.blocks)
     return NativeLayerCoreSource(
         layers,
@@ -202,9 +204,7 @@ def _options() -> NativeMeshingOptions:
 
 def test_layer_core_refuses_polyhedral_fill_without_authored_power_source() -> None:
     fixture = _make_fixture()
-    source, specification = _source_and_specification(
-        fixture, include_power_source=False
-    )
+    source, specification = _source_and_specification(fixture, include_power_source=False)
 
     with pytest.raises(MeshingFailure) as failure:
         NativeMeshingProvider(_options()).plan(
@@ -217,9 +217,7 @@ def test_layer_core_refuses_polyhedral_fill_without_authored_power_source() -> N
 
 def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure() -> None:
     fixture = _make_fixture()
-    source, specification = _source_and_specification(
-        fixture, include_power_source=True
-    )
+    source, specification = _source_and_specification(fixture, include_power_source=True)
     assert fixture.layers.control_id == fixture.control.control_id
     assert specification.layer_controls == (fixture.control,)
     assert specification.layer_controls[0].volume_scope is not None
@@ -227,9 +225,11 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
         specification.layer_controls[0].volume_scope.scope_id
         == specification.boundary_scope.scope_id
     )
-    result = NativeMeshingProvider(_options()).plan(
-        source, specification, coordinate_contract=_COORDINATES
-    ).execute()
+    result = (
+        NativeMeshingProvider(_options())
+        .plan(source, specification, coordinate_contract=_COORDINATES)
+        .execute()
+    )
 
     assert result.certification is not None and result.certification.passed
     assert result.compliance.passed
@@ -283,14 +283,14 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     face_by_key = {
-        tuple(sorted(mesh_vertex_ids[face_vertices[start:stop]].tolist())): int(identifier)
+        tuple(sorted(mesh_vertex_ids[face_vertices[start:stop]].tolist())): int(
+            identifier
+        )
         for start, stop, identifier in zip(
             face_offsets[:-1], face_offsets[1:], face_ids, strict=True
         )
     }
-    assert {face_by_key[key] for key in expected_cap_keys} == set(
-        interface_ids.tolist()
-    )
+    assert {face_by_key[key] for key in expected_cap_keys} == set(interface_ids.tolist())
 
     finite_volume = prepare_polyhedral_finite_volume_geometry(result.mesh)
     assert finite_volume.mesh_id == result.mesh.mesh_id
@@ -300,7 +300,9 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     # the generated cell decomposition and FV divergence formulas.
     assert float(np.sum(cell_volumes)) == pytest.approx(1.0, rel=0.0, abs=1.0e-10)
     exterior_faces = np.flatnonzero(neighbor < 0)
-    face_centers = np.asarray(finite_volume.face_centers, dtype=np.float64)[exterior_faces]
+    face_centers = np.asarray(finite_volume.face_centers, dtype=np.float64)[
+        exterior_faces
+    ]
     exterior_measures = np.asarray(finite_volume.face_measures, dtype=np.float64)[
         exterior_faces
     ]

@@ -7,16 +7,14 @@ from phydrax.discretization import FieldQueryStatus
 from phydrax.discretization._polygon_query import PreparedPolygonMeshLocator
 
 
-def _winding_contains(
-    polygon: np.ndarray, point: np.ndarray, /
-) -> bool:
+def _winding_contains(polygon: np.ndarray, point: np.ndarray, /) -> bool:
     winding = 0
     for row in range(polygon.shape[0]):
         start = polygon[row]
         stop = polygon[(row + 1) % polygon.shape[0]]
-        cross = (stop[0] - start[0]) * (point[1] - start[1]) - (
-            stop[1] - start[1]
-        ) * (point[0] - start[0])
+        cross = (stop[0] - start[0]) * (point[1] - start[1]) - (stop[1] - start[1]) * (
+            point[0] - start[0]
+        )
         if start[1] <= point[1] < stop[1] and cross > 0.0:
             winding += 1
         elif stop[1] <= point[1] < start[1] and cross < 0.0:
@@ -37,7 +35,11 @@ def test_nonconvex_polygon_location_matches_independent_winding_oracle() -> None
         dtype=np.float64,
     )
     query = np.asarray(
-        [(x, y) for y in np.arange(0.125, 2.0, 0.25) for x in np.arange(-0.375, 2.5, 0.25)],
+        [
+            (x, y)
+            for y in np.arange(0.125, 2.0, 0.25)
+            for x in np.arange(-0.375, 2.5, 0.25)
+        ],
         dtype=np.float64,
     )
     cells = np.arange(polygon.shape[0], dtype=np.int32)[None, :]

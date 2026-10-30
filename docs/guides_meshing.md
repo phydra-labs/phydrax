@@ -556,6 +556,17 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+Native tetrahedral quality improvement follows fixed-boundary refinement. Each
+cell scores the worse of its dihedral-angle and radius-edge target fractions,
+1 when both targets hold. Every face flip, edge-ring reconnection, interior
+vertex collapse, and interior relocation is accepted only if the affected cells'
+worst-first sorted scores strictly improve, with relative-determinant validity
+and source constraints as hard requirements. That single order makes
+improvement terminate without pass, candidate, or time limits. Targets the
+edits cannot reach end valid but unmet: the run status is unresolved,
+`TetMesh3D.unmet()` reports each remaining cell and criterion, and volume routes
+refuse such a mesh rather than publish it.
+
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
 keeps the discovered route and triangle connectivity fixed while JAX
@@ -764,12 +775,16 @@ reference-face maps under periodic actions, checks the closed oriented quotient
 and local injectivity, and compares the mapped pullback volume with the lattice
 covolume. A periodic restriction premise retains the source proof and exact
 refinement transition, then certifies parent-volume partitions and boundary
-subdivision. Mapped restriction separately proves an exact common subcomplex.
+subdivision; the certificate, including its premise, round-trips through the
+model archive. Mapped restriction separately proves an exact common subcomplex.
 
 Reusable periodic image frames retain lifted-source roots, shifts, and group
-actions for translational lattices and isometry groups. Generic periodic power
-preparation uses exact representability/refusal semantics rather than an
-arbitrary image-count or work cap.
+actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
+admits exact screw generators whose finite linear-order power is a nonzero
+translation; orientation-reversing generators such as glide reflections are
+refused because their quotient cannot carry consistently oriented cells.
+Generic periodic power preparation uses exact representability/refusal
+semantics rather than an arbitrary image-count or work cap.
 
 ### Gmsh sizing, protection, generation, and remeshing
 
@@ -2068,9 +2083,12 @@ before collective acceptance. Planar tile and seam identities are determined by
 the source, request, and tile schedule; graph partitioning assigns the tiles to
 the current `ExecutionGroup`. Each owner triangulates only its tiles and
 exchanges seam coordinates until the shared seam sets stop changing. Surface
-patches are assigned through the native graph partitioner, and incident owners
-reconcile their shared source-curve samples before their local chart meshes are
-committed. These exchanges carry seam data and ownership metadata, not a global
+patches are assigned through the native graph partitioner. Each round, incident
+owners first union their shared source-curve samples through the curve steward
+and then regenerate their local charts from that common set, which is the serial
+chart fixed point; physical refinement runs once after the seams close and never
+splits a source curve, so the owner-local charts equal the serial charts patch by
+patch. These exchanges carry seam data and ownership metadata, not a global
 mesh or candidate table. Source and request identities must agree on every
 group member.
 

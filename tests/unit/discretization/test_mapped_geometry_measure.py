@@ -14,7 +14,7 @@ from phydrax.discretization.fem import lagrange_element
 def test_rational_mapped_cell_measure_matches_independent_gauss_quadrature() -> None:
     source_element = lagrange_element("hexahedron", 1)
     reference_nodes = np.asarray(source_element.reference_nodes, dtype=np.float64)
-    unit = {(0, 0, 0): Fraction(1)}
+    unit: dict[tuple[int, ...], Fraction] = {(0, 0, 0): Fraction(1)}
     element = RationalComposedCellGeometryElement(
         source_element,
         "hexahedron",
@@ -41,9 +41,7 @@ def test_rational_mapped_cell_measure_matches_independent_gauss_quadrature() -> 
     )
     geometry = CellGeometrySpec(
         {"mapped": element},
-        {
-            "mapped": np.arange(reference_nodes.shape[0], dtype=np.int64)[None, :]
-        },
+        {"mapped": np.arange(reference_nodes.shape[0], dtype=np.int64)[None, :]},
         reference_nodes,
     )
 
@@ -52,9 +50,7 @@ def test_rational_mapped_cell_measure_matches_independent_gauss_quadrature() -> 
     nodes, weights = np.polynomial.legendre.leggauss(96)
     unit_nodes = 0.5 * (nodes + 1.0)
     unit_weights = 0.5 * weights
-    independent = float(
-        np.dot(unit_weights, 1.0 / np.square(1.0 + unit_nodes))
-    )
+    independent = float(np.dot(unit_weights, 1.0 / np.square(1.0 + unit_nodes)))
     assert not measures.exact
     assert measures.values.shape == (1,)
     assert abs(float(measures.values[0]) - independent) <= (

@@ -518,7 +518,12 @@ def periodic_transition(
         )
     node = transition + 1
     if node == curve.num_charts:
-        incoming = np.asarray(curve.node_period_shifts[node, 0], dtype=np.int64)
+        # The closing node is the start root seen through the branch's
+        # closure deck; express its incoming gauge in the start-node frame.
+        incoming = (
+            np.asarray(curve.node_period_shifts[node, 0], dtype=np.int64)
+            + curve.closure_period_shifts()
+        )
         outgoing = np.asarray(curve.node_period_shifts[0, 1], dtype=np.int64)
     else:
         incoming = np.asarray(curve.node_period_shifts[node, 0], dtype=np.int64)
@@ -587,7 +592,13 @@ def branch_arc(
             (curve.branch_id,),
         )
     first_endpoint = TrimRootEndpoint(first_binding.primary, "first")
-    last_endpoint = TrimRootEndpoint(last_binding.primary, "first")
+    # A closed branch returns to its start root one branch period later; the
+    # terminal trim scalar retains that exact deck translation.
+    last_endpoint = TrimRootEndpoint(
+        last_binding.primary,
+        "first",
+        affine_parameter_offset=float(last - final),
+    )
     state.vertex_bindings.setdefault(first_vertex, first_binding)
     state.vertex_bindings.setdefault(last_vertex, last_binding)
     state.cuts[token] = [
@@ -1785,21 +1796,31 @@ class _BoundaryTopology(StrictModule):
                 raise BRepBooleanFailure(
                     "BRepBoolean.lineage.coincident_edge must reference an edge entity"
                 )
-            source_entities = {
-                (model_index, entity)
-                for model_index, model in enumerate(state.models)
-                if model.source_id == source.edge_id.source_id
-                and model.source_revision == source.edge_id.source_revision
-                for entity in self._entity_index_for_model(state, model_index).get(
-                    ("edge", source.edge_id.index), ()
-                )
-                if entity == source.edge_id
-            }
-            if not source_entities:
+            # A model-level edge id names every occurrence of that edge; keep
+            # exactly the occurrences that carry the overlaid source face.
+            coincident_entities: set[tuple[int, BRepEntityId]] = set()
+            for model_index, model in enumerate(state.models):
+                if (
+                    model.source_id != source.edge_id.source_id
+                    or model.source_revision != source.edge_id.source_revision
+                ):
+                    continue
+                index = self._entity_index_for_model(state, model_index)
+                face_paths = {
+                    entity.occurrence_path
+                    for entity in index.get(("face", source.face_id.index), ())
+                }
+                for entity in index.get(("edge", source.edge_id.index), ()):
+                    if entity == source.edge_id or (
+                        source.edge_id.occurrence_path == ()
+                        and entity.occurrence_path in face_paths
+                    ):
+                        coincident_entities.add((model_index, entity))
+            if not coincident_entities:
                 raise BRepBooleanFailure(
                     "BRepBoolean.lineage.coincident_edge must retain its exact source owner, revision, and occurrence"
                 )
-            self.edge_sources[edge].update(source_entities)
+            self.edge_sources[edge].update(coincident_entities)
         for endpoint, cut in enumerate(endpoints):
             if cut.endpoint is not None:
                 self.scalar_boxes.setdefault((edge, endpoint), []).append(
@@ -2391,28 +2412,37 @@ def _append_spatial_root_cuts(
         (source_box, opposite_box) if side == "first" else (opposite_box, source_box),
         axis=1,
     )
-    charts = [
-        chart
-        for chart in range(int(span_first), int(span_last))
-        if np.all(image[0] >= branch.chart_lower[chart])
-        and np.all(image[1] <= branch.chart_upper[chart])
-    ]
-    if not charts:
+    # A source root may sit on a chart node; its isolation box then meets both
+    # adjacent charts. Select the first meeting chart whose endpoint certifies
+    # the branch parameter (inside the chart or as the identified node).
+    branch_endpoint: BranchRootEndpoint | None = None
+    enclosure: tuple[float, float] | None = None
+    for chart in range(int(span_first), int(span_last)):
+        if np.any(image[1] < branch.chart_lower[chart]) or np.any(
+            image[0] > branch.chart_upper[chart]
+        ):
+            continue
+        candidate = BranchRootEndpoint(
+            spatial,
+            branch,
+            chart,
+            source_pcurve=source_pcurve,
+            source_side=side,
+            source_first=pair.whole_first,
+            source_last=pair.whole_last,
+        )
+        try:
+            enclosure = candidate.parameter_enclosure()
+        except ValueError:
+            continue
+        branch_endpoint = candidate
+        break
+    if branch_endpoint is None or enclosure is None:
         return
-    chart = charts[0]
-    branch_endpoint = BranchRootEndpoint(
-        spatial,
-        branch,
-        chart,
-        source_pcurve=source_pcurve,
-        source_side=side,
-        source_first=pair.whole_first,
-        source_last=pair.whole_last,
-    )
-    lower, upper = branch_endpoint.parameter_enclosure()
+    lower, upper = enclosure
     if upper < span_first or lower > span_last:
         return
-    parameter = min(span_last, max(span_first, float(spatial.parameters[0])))
+    parameter = min(span_last, max(span_first, lower + 0.5 * (upper - lower)))
     if not lower <= parameter <= upper:
         raise BRepBooleanFailure(
             "BRepBoolean.source_root.parameter must lie inside its enclosure; got an outside representative"
@@ -2577,6 +2607,7 @@ def boundary_spatial_events(
 
 class _SourceNodeGauge(StrictModule):
     shifts: np.ndarray
+    closing: bool
 
 
 def _branch_node_gauge(branch: IntersectionCurve, node: int, chart: int) -> np.ndarray:
@@ -2621,7 +2652,9 @@ def _certify_source_node_gauge(
             affine_transforms=endpoint.affine_transforms,
         )
         if candidate.certifies_point_root(matched_root):
-            return _SourceNodeGauge(shifts)
+            return _SourceNodeGauge(
+                shifts=shifts, closing=branch.closed and node == branch.num_charts
+            )
     raise BRepBooleanFailure(
         "BRepBoolean.branch_alias must retain a source-node gauge; got no matching gauge"
     )
@@ -2651,8 +2684,27 @@ def _transport_fixed_branch_cut(
         raise BRepBooleanFailure(
             "BRepBoolean.branch_alias.incident_endpoint must be an isolated integer branch node"
         )
-    target_gauge = _branch_node_gauge(endpoint.curve, int(point_parameter), chart)
-    shifts = endpoint.source_gauges() + target_gauge - source_gauge.shifts
+    curve = endpoint.curve
+    # A closed branch's terminal node is its start root on the closure sheet;
+    # gauges are expressed in the frame of the node as seen from this chart.
+    target_node = (
+        int(cut.parameter)
+        if float(cut.parameter).is_integer() and int(cut.parameter) in (chart, chart + 1)
+        else int(point_parameter)
+    )
+    target_gauge = _branch_node_gauge(curve, target_node, chart)
+    # Raw shifts exclude the source p-curve's own period gauge, which the
+    # transported endpoint re-derives from the same p-curve.
+    shifts = (
+        np.asarray(endpoint.periodic_shifts, dtype=np.int64)
+        + target_gauge
+        - source_gauge.shifts
+    )
+    if curve.closed:
+        target_closing = target_node == curve.num_charts
+        shifts = shifts + curve.closure_period_shifts() * (
+            int(target_closing) - int(source_gauge.closing)
+        )
     transported = BranchRootEndpoint(
         endpoint.root,
         endpoint.curve,

@@ -17,8 +17,8 @@ import phydrax.meshing._association as association_owner
 import phydrax.meshing._boundary_layer as boundary_layer_owner
 import phydrax.meshing._canonical as canonical_owner
 import phydrax.meshing._layer_core_topology as layer_topology
-import phydrax.meshing._volume_generation as volume_generation_owner
 import phydrax.meshing._polyhedral_generation as polyhedral_generation_owner
+import phydrax.meshing._volume_generation as volume_generation_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
 from .._strict import StrictModule
@@ -27,7 +27,9 @@ from ..discretization import CellMesh
 from ..typing import checked
 
 
-def _row_entity_vertex_keys(mesh: CellMesh, dimension: int, /) -> tuple[tuple[int, ...], ...]:
+def _row_entity_vertex_keys(
+    mesh: CellMesh, dimension: int, /
+) -> tuple[tuple[int, ...], ...]:
     """Return each entity's canonical key in mesh vertex-row coordinates."""
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     row_by_id = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
@@ -35,8 +37,6 @@ def _row_entity_vertex_keys(mesh: CellMesh, dimension: int, /) -> tuple[tuple[in
         tuple(sorted(row_by_id[identifier] for identifier in key))
         for key in canonical_owner._entity_vertex_keys(mesh, dimension)
     )
-
-
 
 
 @final
@@ -85,7 +85,9 @@ def layer_source_tables(
                 cap_keys[key] = oriented
     facet_indices = np.array(face_ids, dtype=np.int64, copy=True)
     if not set(cap_keys) <= set(face_rows):
-        raise ValueError("Every accepted cap facet must be present on the layer boundary.")
+        raise ValueError(
+            "Every accepted cap facet must be present on the layer boundary."
+        )
     triangles: list[tuple[int, int, int]] = []
     triangle_facets: list[int] = []
     incidence = np.empty((len(face_rows), 2), dtype=np.int64)
@@ -226,7 +228,9 @@ def _edge_witness_parameter(
         and entities[vertex] == source_segment_row
     ):
         return float(np.asarray(core.witness_parameters)[vertex, 0])
-    raise ValueError("A constrained segment endpoint lacks its exact source-edge witness.")
+    raise ValueError(
+        "A constrained segment endpoint lacks its exact source-edge witness."
+    )
 
 
 @checked
@@ -270,7 +274,9 @@ def layer_wall_associations(
             wall_points[wall_row].view(np.uint64),
             layer_points[int(layer_row)].view(np.uint64),
         ):
-            raise ValueError("Accepted layer wall vertices moved their source coordinates.")
+            raise ValueError(
+                "Accepted layer wall vertices moved their source coordinates."
+            )
         target_id = int(layer_vertex_ids[int(layer_row)])
         if target_id not in target_rows:
             raise ValueError("An accepted wall vertex is absent from the combined mesh.")
@@ -308,9 +314,7 @@ def _core_source_identity(
     ) -> tuple[str, tuple[str, ...]]:
         domain = source.source_domain
         if isinstance(domain, meshing_domain_owner.MeshingDomain):
-            domain.resolve_entity_id(
-                dimension, identity, occurrence_path=entity_path
-            )
+            domain.resolve_entity_id(dimension, identity, occurrence_path=entity_path)
         return identity, entity_path
 
     if dimension == 0:
@@ -321,7 +325,9 @@ def _core_source_identity(
             )
         }
         if (identifier, path) not in vertex_keys:
-            raise ValueError("A native core vertex lost its authored PLC source identity.")
+            raise ValueError(
+                "A native core vertex lost its authored PLC source identity."
+            )
         identity = source_identity_owner.source_entity_id(
             source.source_id,
             source.source_revision,
@@ -367,7 +373,9 @@ def _core_source_identity(
         external_path = source.core_facet_source_occurrence_paths[row]
         if external_id is not None:
             if external_path is None:
-                raise ValueError("A source-bound PLC facet is missing its occurrence path.")
+                raise ValueError(
+                    "A source-bound PLC facet is missing its occurrence path."
+                )
             return bind(external_id, tuple(external_path))
         if source.source_boundary_scope is not None:
             raise ValueError("A source-bound PLC facet has no stable source identity.")
@@ -392,7 +400,9 @@ def _core_source_identity(
         }
         row = region_rows.get((identifier, path))
         if row is None:
-            raise ValueError("A native core region lost its authored PLC source identity.")
+            raise ValueError(
+                "A native core region lost its authored PLC source identity."
+            )
         composite = int(np.asarray(source.core_region_map, dtype=np.int64)[row])
         region_id = int(source.region_entity_ids[composite])
         region_path = tuple(source.region_occurrence_paths[composite])
@@ -418,10 +428,14 @@ def _polyhedral_entity_id_maps(
     core_mesh = core.mesh
     core_vertex_ids = np.asarray(core_mesh.vertex_global_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
-    if core_vertex_map.shape != core_vertex_ids.shape or np.any(
-        core_vertex_map < 0
-    ) or np.any(core_vertex_map >= target_vertex_ids.size):
-        raise ValueError("Power-core vertex ancestry does not bind the mixed output mesh.")
+    if (
+        core_vertex_map.shape != core_vertex_ids.shape
+        or np.any(core_vertex_map < 0)
+        or np.any(core_vertex_map >= target_vertex_ids.size)
+    ):
+        raise ValueError(
+            "Power-core vertex ancestry does not bind the mixed output mesh."
+        )
     vertex_ids = {
         int(identifier): int(target_vertex_ids[int(row)])
         for identifier, row in zip(core_vertex_ids, core_vertex_map, strict=True)
@@ -432,7 +446,9 @@ def _polyhedral_entity_id_maps(
         target_ids = np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
         target_by_key = dict(zip(target_keys, target_ids.tolist(), strict=True))
         source_keys = canonical_owner._entity_vertex_keys(core_mesh, dimension)
-        source_ids = np.asarray(core_mesh.entity_set(dimension).entity_ids, dtype=np.int64)
+        source_ids = np.asarray(
+            core_mesh.entity_set(dimension).entity_ids, dtype=np.int64
+        )
         mapped: dict[int, int] = {}
         for identifier, key in zip(source_ids.tolist(), source_keys, strict=True):
             target_key = tuple(sorted(vertex_ids[int(vertex)] for vertex in key))
@@ -443,9 +459,7 @@ def _polyhedral_entity_id_maps(
                 )
             mapped[int(identifier)] = int(target_id)
         maps.append(mapped)
-    source_cells = np.sort(
-        np.asarray(core_mesh.entity_set(3).entity_ids, dtype=np.int64)
-    )
+    source_cells = np.sort(np.asarray(core_mesh.entity_set(3).entity_ids, dtype=np.int64))
     if core_cell_ids.shape != source_cells.shape:
         raise ValueError("Power-core cell identities do not align with the mixed mesh.")
     maps.append(
@@ -482,7 +496,9 @@ def _polyhedral_core_source_associations(
     """Transfer exact restricted-power ancestry onto canonical mixed-mesh entities."""
     power_source = source.core_power_source
     if power_source is None:
-        raise ValueError("Polyhedral layer/core associations require the authored power source.")
+        raise ValueError(
+            "Polyhedral layer/core associations require the authored power source."
+        )
     from .providers._native_polyhedral import _polyhedral_associations
 
     records = _polyhedral_associations(power_source, core)
@@ -492,13 +508,21 @@ def _polyhedral_core_source_associations(
     facet_rows = {
         (identifier, tuple(path)): row
         for row, (identifier, path) in enumerate(
-            zip(source.complex.facet_ids, source.complex.facet_occurrence_paths, strict=True)
+            zip(
+                source.complex.facet_ids,
+                source.complex.facet_occurrence_paths,
+                strict=True,
+            )
         )
     }
     region_rows = {
         (identifier, tuple(path)): row
         for row, (identifier, path) in enumerate(
-            zip(source.complex.region_ids, source.complex.region_occurrence_paths, strict=True)
+            zip(
+                source.complex.region_ids,
+                source.complex.region_occurrence_paths,
+                strict=True,
+            )
         )
     }
     rebound: list[association_owner.GeometryAssociation] = []
@@ -532,16 +556,22 @@ def _polyhedral_core_source_associations(
             if role is association_owner.GeometrySourceEntityRole.FACET:
                 facet_row = facet_rows.get((identifier, tuple(path)))
                 if facet_row is None:
-                    raise ValueError("Power-core facet association lost its PLC identity.")
+                    raise ValueError(
+                        "Power-core facet association lost its PLC identity."
+                    )
                 sides = tuple(
-                    None if int(region) < 0 else _polyhedral_region_identity(source, int(region))
+                    None
+                    if int(region) < 0
+                    else _polyhedral_region_identity(source, int(region))
                     for region in np.asarray(source.complex.facet_regions)[facet_row]
                 )
                 region_sides.append((sides[0], sides[1]))
             elif role is association_owner.GeometrySourceEntityRole.REGION:
                 region_row = region_rows.get((identifier, tuple(path)))
                 if region_row is None:
-                    raise ValueError("Power-core region association lost its PLC identity.")
+                    raise ValueError(
+                        "Power-core region association lost its PLC identity."
+                    )
                 region_id = _polyhedral_region_identity(source, region_row)
                 region_sides.append((region_id, region_id))
             else:
@@ -608,10 +638,9 @@ def core_source_associations(
     vertex_sources = tuple(core.vertex_source_ids)
     vertex_dimensions_all = np.asarray(core.vertex_dimension, dtype=np.int64)
     vertex_source_paths_all = tuple(core.vertex_source_occurrence_paths)
-    if (
-        vertex_dimensions_all.shape != (len(vertex_sources),)
-        or len(vertex_source_paths_all) != len(vertex_sources)
-    ):
+    if vertex_dimensions_all.shape != (len(vertex_sources),) or len(
+        vertex_source_paths_all
+    ) != len(vertex_sources):
         raise ValueError("Native core vertex source ancestry arrays are incompatible.")
     explicit_segment_count = complex_.segments.shape[0]
     derived_edge_keys = {
@@ -628,7 +657,8 @@ def core_source_associations(
             if identifier is not None
             and not (
                 int(vertex_dimensions_all[row]) == 1
-                and (str(identifier), tuple(vertex_source_paths_all[row])) in derived_edge_keys
+                and (str(identifier), tuple(vertex_source_paths_all[row]))
+                in derived_edge_keys
             )
         ],
         dtype=np.int64,
@@ -672,7 +702,9 @@ def core_source_associations(
                 vertex_source_ids,
                 vertex_residuals,
                 exact=bool(np.all(vertex_residuals == 0.0)),
-                source_roles=tuple(role_by_dimension[int(value)] for value in vertex_dimensions),
+                source_roles=tuple(
+                    role_by_dimension[int(value)] for value in vertex_dimensions
+                ),
                 source_occurrence_paths=vertex_paths,
                 orientations=np.zeros(vertex_targets.shape, dtype=np.int8),
             )
@@ -725,12 +757,12 @@ def core_source_associations(
         )
     ):
         raise ValueError("Native constrained-edge ancestry arrays are incompatible.")
-    raw_row_by_active = np.full(
-        (active_source_complex_rows.size,), -1, dtype=np.int64
-    )
+    raw_row_by_active = np.full((active_source_complex_rows.size,), -1, dtype=np.int64)
     for raw_row, active_row in enumerate(raw_to_active_rows.tolist()):
         if not 0 <= active_row < raw_row_by_active.size:
-            raise ValueError("A raw PLC carrier row lacks its active source-edge mapping.")
+            raise ValueError(
+                "A raw PLC carrier row lacks its active source-edge mapping."
+            )
         if raw_row_by_active[active_row] >= 0:
             raise ValueError("A source edge has multiple raw PLC carrier rows.")
         raw_row_by_active[active_row] = raw_row
@@ -744,7 +776,9 @@ def core_source_associations(
         )
         active_row = int(segment_active_rows[segment_row])
         if not 0 <= active_row < active_source_complex_rows.size:
-            raise ValueError("A constrained segment names an absent active source-edge row.")
+            raise ValueError(
+                "A constrained segment names an absent active source-edge row."
+            )
         raw_row = int(raw_row_by_active[active_row])
         complex_row = int(active_source_complex_rows[active_row])
         edge = active_source_vertices[active_row]
@@ -764,14 +798,14 @@ def core_source_associations(
         source_id, occurrence_path = _core_source_identity(
             source, 1, str(source_id), occurrence_path
         )
-        first_parameter = _edge_witness_parameter(
-            core, int(segment[0]), active_row, edge
-        )
+        first_parameter = _edge_witness_parameter(core, int(segment[0]), active_row, edge)
         second_parameter = _edge_witness_parameter(
             core, int(segment[1]), active_row, edge
         )
         if first_parameter == second_parameter:
-            raise ValueError("A constrained source segment has zero source-parameter extent.")
+            raise ValueError(
+                "A constrained source segment has zero source-parameter extent."
+            )
         combined_rows = np.asarray(
             (int(core_vertex_map[segment[0]]), int(core_vertex_map[segment[1]])),
             dtype=np.int64,
@@ -803,7 +837,8 @@ def core_source_associations(
                 (source_id,) * target_ids.size,
                 np.zeros(target_ids.shape, dtype=np.float64),
                 exact=True,
-                source_roles=(association_owner.GeometrySourceEntityRole.EDGE,) * target_ids.size,
+                source_roles=(association_owner.GeometrySourceEntityRole.EDGE,)
+                * target_ids.size,
                 source_occurrence_paths=(occurrence_path,) * target_ids.size,
                 orientations=np.asarray(
                     [targets[int(identifier)] for identifier in target_ids],
@@ -854,7 +889,9 @@ def core_source_associations(
         zip(boundary_faces, face_source_facets, face_orientations, strict=True)
     ):
         combined_rows = core_vertex_map[face]
-        global_vertices = np.asarray(target.vertex_global_ids, dtype=np.int64)[combined_rows]
+        global_vertices = np.asarray(target.vertex_global_ids, dtype=np.int64)[
+            combined_rows
+        ]
         face_targets.append(target_face_keys[tuple(sorted(global_vertices.tolist()))])
         inversions = sum(
             first > second
@@ -869,13 +906,15 @@ def core_source_associations(
             tuple(face_source_paths[face_row]),
         )
         face_entities.append(face_identity)
-        positive, negative = (
-            int(value) for value in complex_.facet_regions[int(facet)]
-        )
+        positive, negative = (int(value) for value in complex_.facet_regions[int(facet)])
         face_sides.append(
             (
-                None if negative < 0 else composite_region_ids[int(core_region_map[negative])],
-                None if positive < 0 else composite_region_ids[int(core_region_map[positive])],
+                None
+                if negative < 0
+                else composite_region_ids[int(core_region_map[negative])],
+                None
+                if positive < 0
+                else composite_region_ids[int(core_region_map[positive])],
             )
         )
         face_paths.append(face_path)
@@ -893,7 +932,8 @@ def core_source_associations(
                 tuple(face_entities),
                 np.zeros(target_ids.shape, dtype=np.float64),
                 exact=True,
-                source_roles=(association_owner.GeometrySourceEntityRole.FACET,) * target_ids.size,
+                source_roles=(association_owner.GeometrySourceEntityRole.FACET,)
+                * target_ids.size,
                 source_occurrence_paths=tuple(face_paths),
                 orientations=np.asarray(face_signs, dtype=np.int8),
                 source_region_sides=tuple(face_sides),
@@ -915,26 +955,21 @@ def core_source_associations(
             region_entities,
             np.zeros(cells.shape, dtype=np.float64),
             exact=True,
-            source_roles=(association_owner.GeometrySourceEntityRole.REGION,) * cells.size,
+            source_roles=(association_owner.GeometrySourceEntityRole.REGION,)
+            * cells.size,
             source_occurrence_paths=tuple(
                 source.region_occurrence_paths[int(region)] for region in combined_regions
             ),
             orientations=np.zeros(cells.shape, dtype=np.int8),
         )
     )
-    layer_vertex_columns = np.asarray(
-        source.layers.vertex_column_ids, dtype=np.int64
-    )
-    layer_vertex_ids = np.asarray(
-        source.layers.mesh.vertex_global_ids, dtype=np.int64
-    )
+    layer_vertex_columns = np.asarray(source.layers.vertex_column_ids, dtype=np.int64)
+    layer_vertex_ids = np.asarray(source.layers.mesh.vertex_global_ids, dtype=np.int64)
     if layer_vertex_columns.shape != layer_vertex_ids.shape:
         raise ValueError("Layer vertex column ancestry has incompatible extents.")
     generated_vertices = {
         int(identifier)
-        for identifier, column in zip(
-            layer_vertex_ids, layer_vertex_columns, strict=True
-        )
+        for identifier, column in zip(layer_vertex_ids, layer_vertex_columns, strict=True)
         if column >= 0
     }
     if generated_vertices:
@@ -954,7 +989,9 @@ def core_source_associations(
                     vertex_id = int(target_vertex_ids[vertex_row])
                     if vertex_id in generated_vertices:
                         vertex_regions.setdefault(vertex_id, set()).add(region)
-        existing_roles: dict[int, set[association_owner.GeometrySourceEntityRole | None]] = {}
+        existing_roles: dict[
+            int, set[association_owner.GeometrySourceEntityRole | None]
+        ] = {}
         vertex_set_id = target.entity_set(0).entity_set_id
         for association in records:
             if association.target_entity_set_id != vertex_set_id:
@@ -999,8 +1036,7 @@ def core_source_associations(
                 for region in interior_regions
             )
             paths = tuple(
-                source.region_occurrence_paths[region]
-                for region in interior_regions
+                source.region_occurrence_paths[region] for region in interior_regions
             )
             if isinstance(source.source_domain, meshing_domain_owner.MeshingDomain):
                 for identifier, path in zip(identifiers, paths, strict=True):

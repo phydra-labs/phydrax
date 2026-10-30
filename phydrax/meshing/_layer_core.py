@@ -10,6 +10,7 @@ import numpy as np
 
 import phydrax.discretization._cell_complex as cell_complex_owner
 import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._periodic_exact as periodic_exact_owner
 import phydrax.geometry._mapped_reference_domain as mapped_domain_owner
 import phydrax.geometry._source_identity as source_identity_owner
 import phydrax.meshing._canonical as canonical_owner
@@ -22,9 +23,9 @@ import phydrax.meshing._layer_core_regions as regions_owner
 import phydrax.meshing._layer_core_topology as layer_topology
 import phydrax.meshing._organization as organization_owner
 import phydrax.meshing._plc_source as plc_source_owner
+import phydrax.meshing._polyhedral_generation as polyhedral_generation_owner
 import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing._volume_generation as volume_generation_owner
-import phydrax.meshing._polyhedral_generation as polyhedral_generation_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
 from ..discretization import CellBlock, CellMesh
@@ -267,13 +268,14 @@ def _compose_polyhedral_layer_topology(
         or mapping.shape != (layers.complex.vertices.shape[0],)
         or np.any(mapping < 0)
     ):
-        raise ValueError("Polyhedral source-carrier ancestry does not align with the PLC.")
+        raise ValueError(
+            "Polyhedral source-carrier ancestry does not align with the PLC."
+        )
     carrier_rows = {int(identifier): row for row, identifier in enumerate(carrier_ids)}
-    source_vertex_rows = np.full(
-        (layers.complex.vertices.shape[0],), -1, dtype=np.int64
-    )
+    source_vertex_rows = np.full((layers.complex.vertices.shape[0],), -1, dtype=np.int64)
     core_vertex_map = np.full((core_points.shape[0],), -1, dtype=np.int64)
-    for core_row, carriers in enumerate(vertex_carriers):
+    for core_row in range(vertex_carriers.shape[0]):
+        carriers = vertex_carriers[core_row]
         active = carriers[carriers >= 0]
         if active.size != 1:
             continue
@@ -299,7 +301,9 @@ def _compose_polyhedral_layer_topology(
     core_cells = np.sort(np.asarray(core_mesh.entity_set(3).entity_ids, dtype=np.int64))
     core_start = int(layer_cells[-1]) + 1
     if core_cells.size and core_start + core_cells.size - 1 > np.iinfo(np.int64).max:
-        raise ValueError("The accepted layer cell identity range cannot contain core cells.")
+        raise ValueError(
+            "The accepted layer cell identity range cannot contain core cells."
+        )
     initial_extra = initial_points.shape[0] - layer_mesh.coordinates.shape[0]
     if initial_extra < 0:
         raise ValueError("Layer/core identity preparation lost accepted layer vertices.")
@@ -310,7 +314,9 @@ def _compose_polyhedral_layer_topology(
     )
     extra_vertices = initial_extra + generated.size
     if extra_vertices and next_vertex + extra_vertices - 1 > np.iinfo(np.int64).max:
-        raise ValueError("The accepted layer vertex identity range cannot contain core vertices.")
+        raise ValueError(
+            "The accepted layer vertex identity range cannot contain core vertices."
+        )
     vertex_ids = np.concatenate(
         (
             np.asarray(layer_mesh.vertex_global_ids, dtype=np.int64),
@@ -367,9 +373,10 @@ def _compose_polyhedral_layer_topology(
     )
     region_map = np.asarray(layers.core_region_map, dtype=np.int64)
     combined_regions = np.concatenate((layer_regions, region_map[core_regions]))
-    if combined_regions.shape != np.sort(
-        np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
-    ).shape:
+    if (
+        combined_regions.shape
+        != np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)).shape
+    ):
         raise ValueError("Layer and core region records do not cover the combined mesh.")
     return mesh, core_vertex_map, combined_regions, layer_cells, core_cell_ids
 
@@ -388,7 +395,9 @@ def _polyhedral_periodic_ancestry(
     core_periodic = core.mesh.periodic_topology
     if source_ancestry is None:
         if core_periodic is not None:
-            raise ValueError("Polyhedral core introduced periodic topology without layer ancestry.")
+            raise ValueError(
+                "Polyhedral core introduced periodic topology without layer ancestry."
+            )
         return None
     layer_periodic = source.layers.mesh.periodic_topology
     if layer_periodic is None or core_periodic is None:
@@ -403,9 +412,15 @@ def _polyhedral_periodic_ancestry(
         initial_points.shape[0],
         layer_periodic.cell.rank,
     ):
-        raise ValueError("Authored layer/core periodic ancestry has incompatible extents.")
-    if core_periodic.cell.cell_id != layer_periodic.cell.cell_id:
-        raise ValueError("Polyhedral core and accepted layers use different periodic cells.")
+        raise ValueError(
+            "Authored layer/core periodic ancestry has incompatible extents."
+        )
+    if periodic_exact_owner.identification_id(
+        core_periodic.cell
+    ) != periodic_exact_owner.identification_id(layer_periodic.cell):
+        raise ValueError(
+            "Polyhedral core and accepted layers use different periodic cells."
+        )
     roots = np.arange(point_count, dtype=np.int64)
     shifts = np.zeros((point_count, layer_periodic.cell.rank), dtype=np.int64)
     roots[: base_roots.size] = base_roots
@@ -415,18 +430,18 @@ def _polyhedral_periodic_ancestry(
         raise TypeError("Periodic power core must retain polyhedral connectivity.")
     carrier_ids = np.asarray(core.carrier.mesh.vertex_global_ids, dtype=np.int64)
     carrier_rows = {int(identifier): row for row, identifier in enumerate(carrier_ids)}
-    source_vertex_rows = np.full(
-        (source.complex.vertices.shape[0],), -1, dtype=np.int64
-    )
-    for core_row, carriers in enumerate(
-        np.asarray(core.restricted_cells.vertex_carriers, dtype=np.int64)
-    ):
+    source_vertex_rows = np.full((source.complex.vertices.shape[0],), -1, dtype=np.int64)
+    periodic_carriers = np.asarray(core.restricted_cells.vertex_carriers, dtype=np.int64)
+    for core_row in range(periodic_carriers.shape[0]):
+        carriers = periodic_carriers[core_row]
         active = carriers[carriers >= 0]
         if active.size != 1:
             continue
         carrier_row = carrier_rows.get(int(active[0]))
         if carrier_row is None:
-            raise ValueError("A periodic power vertex names an absent PLC carrier vertex.")
+            raise ValueError(
+                "A periodic power vertex names an absent PLC carrier vertex."
+            )
         source_vertex = int(input_vertices[carrier_row])
         if source_vertex >= 0:
             if source_vertex_rows[source_vertex] >= 0:
@@ -443,22 +458,26 @@ def _polyhedral_periodic_ancestry(
         or np.any(core_roots >= core_vertex_map.size)
     ):
         raise ValueError("Periodic power-core quotient arrays do not match its vertices.")
-    orders = periodic_topology_owner.identification_orders(layer_periodic.cell)
+    orders = periodic_exact_owner.identification_orders(layer_periodic.cell)
     offsets: dict[int, np.ndarray] = {}
     for source_vertex, core_row in enumerate(source_vertex_rows.tolist()):
         base_row = int(mapping[source_vertex])
         core_root = int(core_roots[core_row])
         target_root = int(core_vertex_map[core_root])
         if not 0 <= base_row < base_roots.size or not 0 <= target_root < base_roots.size:
-            raise ValueError("A periodic PLC seam root is absent from the authored layer bank.")
+            raise ValueError(
+                "A periodic PLC seam root is absent from the authored layer bank."
+            )
         if base_roots[base_row] != base_roots[target_root]:
             raise ValueError("Power-core periodic roots contradict authored layer seams.")
-        offset = periodic_topology_owner.reduce_periodic_exponents(
+        offset = periodic_exact_owner.reduce_periodic_exponents(
             base_shifts[base_row] - core_shifts[core_row], orders
         )
         previous = offsets.get(core_root)
         if previous is not None and not np.array_equal(previous, offset):
-            raise ValueError("Power-core periodic winding contradicts authored source ancestry.")
+            raise ValueError(
+                "Power-core periodic winding contradicts authored source ancestry."
+            )
         offsets[core_root] = offset
     for core_row, core_root_value in enumerate(core_roots.tolist()):
         target_row = int(core_vertex_map[core_row])
@@ -467,7 +486,7 @@ def _polyhedral_periodic_ancestry(
         offset = offsets.get(
             int(core_root_value), np.zeros((layer_periodic.cell.rank,), dtype=np.int64)
         )
-        shifts[target_row] = periodic_topology_owner.reduce_periodic_exponents(
+        shifts[target_row] = periodic_exact_owner.reduce_periodic_exponents(
             core_shifts[core_row] + offset, orders
         )
     for source_vertex, core_row in enumerate(source_vertex_rows.tolist()):
@@ -668,24 +687,26 @@ def _compose_organization(
         facet: set() for facet in range(complex_.facet_count)
     }
     if polyhedral_core is None:
-        for polygon, facet_value in zip(
-            polygons, complex_.polygon_facets, strict=True
-        ):
+        for polygon, facet_value in zip(polygons, complex_.polygon_facets, strict=True):
             facet = int(facet_value)
-            faces_by_facet[facet].add(
-                face_id(tuple(mapping[polygon].tolist()))
-            )
+            faces_by_facet[facet].add(face_id(tuple(mapping[polygon].tolist())))
     else:
         if core_vertex_map is None:
-            raise ValueError("Polyhedral organization requires exact core vertex ancestry.")
+            raise ValueError(
+                "Polyhedral organization requires exact core vertex ancestry."
+            )
         connectivity = polyhedral_core.mesh.connectivity
         if not isinstance(connectivity, cell_complex_owner.PolyhedralConnectivity):
-            raise TypeError("Polyhedral organization requires canonical face connectivity.")
+            raise TypeError(
+                "Polyhedral organization requires canonical face connectivity."
+            )
         offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
         source_facets = np.asarray(polyhedral_core.face_source_facets, dtype=np.int64)
         if source_facets.shape != (connectivity.face_count,):
-            raise ValueError("Power-core face ancestry does not align with its connectivity.")
+            raise ValueError(
+                "Power-core face ancestry does not align with its connectivity."
+            )
         for face, facet_value in enumerate(source_facets.tolist()):
             if facet_value < 0:
                 continue
@@ -790,11 +811,14 @@ def _generate_layer_core_unmapped(
     region_ids, core_region_map = regions_owner.prepare_layer_region_identity(
         complex_, layer_regions, source.region_ids, source.core_region_map
     )
-    polyhedral = core_spec.fill_strategy is contracts_owner.VolumeFillStrategy.POLYHEDRAL
-    mapping, cap_ids, polygons, initial_points = layer_topology.prepare_identity(
-        layers, complex_, source.vertex_layer_ids, source.cap_polygon_ids
-    )
-    if polyhedral:
+    power_request: (
+        tuple[
+            sources_owner.NativePolyhedralSource,
+            polyhedral_generation_owner.NativePolyhedralSchedule,
+        ]
+        | None
+    ) = None
+    if core_specification.fill_strategy is contracts_owner.VolumeFillStrategy.POLYHEDRAL:
         if source_domain is not None:
             raise contracts_owner.MeshingFailure(
                 contracts_owner.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -817,6 +841,16 @@ def _generate_layer_core_unmapped(
                 provider_code="native_layer_core_polyhedral",
                 stage="route_execution",
             )
+        power_request = (
+            power_source,
+            polyhedral_generation_owner.effective_polyhedral_schedule(
+                core_specification, polyhedral_schedule
+            ),
+        )
+    mapping, cap_ids, polygons, initial_points = layer_topology.prepare_identity(
+        layers, complex_, source.vertex_layer_ids, source.cap_polygon_ids
+    )
+    if power_request is not None:
         unmapped_vertices = mapping < 0
         if np.any(unmapped_vertices):
             mapping = mapping.copy()
@@ -841,29 +875,12 @@ def _generate_layer_core_unmapped(
         else mapped_geometry.source_map_id
     )
     polyhedral_core = None
-    if polyhedral:
-        if polyhedral_schedule is None:
-            raise contracts_owner.MeshingFailure(
-                contracts_owner.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Polyhedral layer/core fill requires an explicit power schedule.",
-                provider_code="native_layer_core_polyhedral",
-                stage="route_execution",
-            )
-        power_source = source.core_power_source
-        if power_source is None:
-            raise contracts_owner.MeshingFailure(
-                contracts_owner.MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                "Polyhedral layer/core fill requires an authored core power source.",
-                provider_code="native_layer_core_polyhedral",
-                stage="route_execution",
-            )
-        from .providers._native_polyhedral import _effective_schedule
-
-        effective_schedule = _effective_schedule(core_spec, polyhedral_schedule)
+    if power_request is not None:
+        power_source, power_schedule = power_request
         polyhedral_core = polyhedral_generation_owner.generate_polyhedral_volume(
             power_source,
-            core_spec,
-            effective_schedule,
+            core_specification,
+            power_schedule,
             frame_id=frame_id,
             volume_schedule=schedule,
         )
@@ -875,7 +892,7 @@ def _generate_layer_core_unmapped(
     else:
         carrier_core = volume_generation_owner.generate_plc_volume(
             complex_,
-            core_spec,
+            core_specification,
             schedule,
             source_id=source.source_id,
             source_revision=source.source_revision,
