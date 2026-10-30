@@ -2075,9 +2075,11 @@ exchanges seam coordinates until the shared seam sets stop changing. Surface
 patches are assigned through the native graph partitioner. Each round, incident
 owners first union their shared source-curve samples through the curve steward
 and then regenerate their local charts from that common set, which is the serial
-chart fixed point; physical refinement runs once after the seams close and never
-splits a source curve, so the owner-local charts equal the serial charts patch by
-patch. These exchanges carry seam data and ownership metadata, not a global
+chart fixed point; physical refinement runs once after the seams close, so the
+owner-local charts equal the serial charts patch by patch. A refinement that
+would split a shared source curve is refused with `UNSUPPORTED_COMBINATION`
+rather than published without incident-owner agreement. These exchanges carry
+seam data and ownership metadata, not a global
 mesh or candidate table. Source and request identities must agree on every
 group member.
 
