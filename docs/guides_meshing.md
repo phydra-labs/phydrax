@@ -556,6 +556,17 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+Native tetrahedral quality improvement follows fixed-boundary refinement. Each
+cell scores the worse of its dihedral-angle and radius-edge target fractions,
+1 when both targets hold. Every face flip, edge-ring reconnection, interior
+vertex collapse, and interior relocation is accepted only if the affected cells'
+worst-first sorted scores strictly improve, with relative-determinant validity
+and source constraints as hard requirements. That single order makes
+improvement terminate without pass, candidate, or time limits. Targets the
+edits cannot reach end valid but unmet: the run status is unresolved,
+`TetMesh3D.unmet()` reports each remaining cell and criterion, and volume routes
+refuse such a mesh rather than publish it.
+
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
 keeps the discovered route and triangle connectivity fixed while JAX
