@@ -39,6 +39,7 @@ from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers import NativeMeshingProvider
 from phydrax.meshing.providers._native_dual import (
     prepare_native_mapped_balanced_grid_hex,
     prepare_native_mapped_frame_grid_hex,
@@ -632,6 +633,36 @@ def test_mapped_grid_hex_routes_restrict_curved_source_maps(
     elements, _routes, _coordinates = construction.geometry.resolve(construction.mesh)
     assert isinstance(elements[0], PerCellRestrictedCellGeometryElement)
     assert construction.reference_maps
+
+
+@pytest.mark.parametrize("curved", (False, True))
+def test_mapped_grid_hex_certifies_exact_restriction_without_requested_deviation(
+    curved: bool,
+) -> None:
+    source, _domain = _mapped_cube_source(curved=curved)
+    seed = np.asarray((2.0, -1.0, 1.53125), dtype=np.float64) if curved else None
+    specification = _request(source, seed_point=seed, geometry_order=2 if curved else 1)
+    assert specification.maximum_deviation is None
+    prepared = prepare_native_mapped_balanced_grid_hex(
+        source,
+        specification,
+        NativeMeshingOptions("mapped_balanced_grid_hex"),
+        SpatialCoordinateContract.si(),
+    )
+    assert prepared.execute().certification.fidelity_tolerance == 0.0
+
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex"))
+        .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+
+    assert result.certification is not None
+    fidelity = result.certification.fidelity
+    assert fidelity is not None
+    assert fidelity.status == "certified"
+    assert fidelity.mesh_to_source_upper == 0.0
+    assert fidelity.source_to_mesh_upper == 0.0
 
 
 def test_mapped_grid_hex_retains_root_region_and_patch_controls() -> None:

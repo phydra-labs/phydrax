@@ -125,3 +125,62 @@ def test_open_cloud_completion_is_reported_as_inferred_not_observed() -> None:
     if not isinstance(reconstruction.source, MeshRegion):
         raise AssertionError("Surface reconstruction must retain its MeshRegion source.")
     assert np.asarray(reconstruction.source.vertices).shape[0] == report.output_vertices
+
+
+def test_triangle_charts_bind_shared_corners_exactly() -> None:
+    import jax.numpy as jnp
+
+    from phydrax.geometry.reconstruction._core import (
+        _ReconstructedTrianglePatch,
+        _triangle_complex_meshing_domain,
+    )
+
+    # 0.7 + (-0.06075031604080055 - 0.7) rounds away from -0.06075031604080055,
+    # so an edge-vector chart misses this shared corner by one unit in the last place.
+    vertices = np.asarray(
+        (
+            (0.1, -0.17805949718576636, 0.7),
+            (0.3, 0.2, -0.06075031604080055),
+            (-0.2, 0.4, 0.1),
+            (0.05, 0.1, 0.9),
+        ),
+        dtype=np.float64,
+    )
+    assert vertices[0, 2] + (vertices[1, 2] - vertices[0, 2]) != vertices[1, 2]
+    faces = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2)), dtype=np.int64)
+    chart_corners = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    for face in faces:
+        images = _ReconstructedTrianglePatch(vertices[face]).evaluate(chart_corners)
+        np.testing.assert_array_equal(np.asarray(images), vertices[face])
+    edges = np.asarray(
+        sorted(
+            {
+                (
+                    min(int(face[local]), int(face[local - 1])),
+                    max(int(face[local]), int(face[local - 1])),
+                )
+                for face in faces
+                for local in range(3)
+            }
+        ),
+        dtype=np.int64,
+    )
+    entity_ids = tuple(
+        np.arange(count, dtype=np.int64) for count in (4, edges.shape[0], 4)
+    )
+
+    domain = _triangle_complex_meshing_domain(
+        vertices,
+        faces,
+        edges,
+        "exact-corner-tetrahedron",
+        "revision-1",
+        "binding-1",
+        entity_ids,
+        0,
+        ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
+    )
+
+    assert domain.accuracy == "exact_represented"
+    assert domain.tolerance == 0.0
+    np.testing.assert_array_equal(np.asarray(domain.corner_points), vertices)

@@ -569,6 +569,16 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
+exact affine map of the edge onto its declared chart parameter range. Its rational
+coefficients make chart fidelity an exact polynomial bound per target edge, and its
+float realization reproduces both authored endpoints bit for bit. Point placement
+inverts the chart's adaptive size-density table panel by panel rather than
+re-integrating the chart for every bisection step. A hard `UniformSizeControl`
+target is compared with measured arc lengths at the `SizeCompliancePolicy`
+tolerances, which default to zero; a target such as 0.2 m that floating-point
+placement cannot reproduce exactly needs an explicit tolerance in the request.
+
 Native tetrahedral quality improvement follows fixed-boundary refinement. Each
 cell scores the worse of its dihedral-angle and radius-edge target fractions,
 1 when both targets hold. Every face flip, edge-ring reconnection, interior
@@ -654,6 +664,9 @@ source-bound obstruction; it does not fall back to one global frame or to
 tetrahedral dualization. `mapped_balanced_grid_hex` and `mapped_frame_grid_hex`
 are separate again: they subdivide an already mapped hexahedral root mesh and
 retain its exact root-face transitions.
+Their target geometry is the exact per-cell restriction of the root map, so a
+request without `maximum_deviation` is certified at zero source deviation; an
+explicit bound is honored as requested.
 
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
@@ -1678,6 +1691,10 @@ certificates. `reconstruct_point_region` preserves the input digest and reports
 ROI/voxel filtering; `reconstruct_lidar_region` also retains acquisition
 lineage. Planar and DEM source construction uses native MeshCore predicates.
 These native source routes do not import PyVista, Open3D, or Qhull.
+The surface source of a reconstructed triangle complex is an exact
+`MeshingDomain`: each triangle chart evaluates in barycentric form, so every chart
+corner reproduces its authored vertex bit for bit, and shared corners are compared
+with zero tolerance.
 
 ## Native unsigned-distance surface envelopes
 
