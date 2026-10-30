@@ -130,6 +130,44 @@ def _target_edge_parameter(
     return parameter
 
 
+def _trim_child_parameter(
+    edge_table: GeometryAssociation,
+    table_row: int,
+    vertex_id: int,
+    source_mesh: CellMesh,
+    source_edge_row: int,
+    stencil: VertexInterpolationStencil,
+    /,
+) -> Fraction:
+    """Exact source-curve parameter of a vertex created on one trim edge."""
+    interval = edge_table.source_parameter_intervals[table_row]
+    if interval is None:
+        raise ValueError(
+            "Trimmed curve-edge association requires exact source parameter intervals."
+        )
+    sign = int(np.asarray(edge_table.orientations, dtype=np.int8)[table_row])
+    if sign not in (-1, 1):
+        raise ValueError("Trimmed curve-edge parents must retain source orientation.")
+    endpoints = _simplex_edges(source_mesh)[source_edge_row]
+    source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    fraction = _target_edge_parameter(
+        vertex_id,
+        (int(source_vertex_ids[endpoints[0]]), int(source_vertex_ids[endpoints[1]])),
+        stencil,
+    )
+    if sign < 0:
+        fraction = 1 - fraction
+    return interval[0] + fraction * (interval[1] - interval[0])
+
+
+def _trim_curve_point(
+    domain: MeshingDomain, curve: int, parameter: Fraction, /
+) -> np.ndarray:
+    from .providers._native_surface import _source_curve_point
+
+    return np.asarray(_source_curve_point(domain, curve, parameter), dtype=np.float64)
+
+
 def _use_chart(use: PatchCurveUse, parameter: float, /) -> np.ndarray:
     native = use.first + parameter * (use.last - use.first)
     return np.asarray(
@@ -652,6 +690,31 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             parent_ids[target_row] = int(
                 source_mesh.entity_set(source_dimension).entity_ids[source_entity_row]
             )
+            if selected_table is edge_table and edge_table is not None:
+                # A bisected trim-edge child lies on the chord of its source
+                # edge, not on the patch: the trim curve continues past the
+                # chart boundary, so a closest-point query on the patch lands
+                # outside the trim. Its stratum is the source curve at the exact
+                # split parameter of the parent edge's source interval.
+                curve_parameter = _trim_child_parameter(
+                    edge_table,
+                    selected_table_row,
+                    identifier,
+                    source_mesh,
+                    source_entity_row,
+                    stencil,
+                )
+                curve_point = _trim_curve_point(
+                    self.domain, int(vertex_indices[target_row]), curve_parameter
+                )
+                parameters[target_row] = (float(curve_parameter), np.nan)
+                residuals[target_row] = float(
+                    np.linalg.norm(
+                        np.asarray(target_mesh.coordinates, dtype=np.float64)[target_row]
+                        - curve_point
+                    )
+                )
+                continue
             patch = self._patch_index(
                 int(vertex_dimensions[target_row]),
                 int(vertex_indices[target_row]),
