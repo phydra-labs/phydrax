@@ -4,11 +4,13 @@ from fractions import Fraction
 from itertools import product
 
 import numpy as np
+import pytest
 
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import (
     exact_periodic_element,
     PeriodicIsometryGroup,
+    PeriodicIsometryIdentityError,
 )
 from phydrax.geometry._periodic_image_frame import prepare_periodic_image_frame
 from phydrax.geometry._periodic_power_preparation import PeriodicPowerPreparation
@@ -124,6 +126,18 @@ def test_isometry_image_frame_retains_lift_actions_and_complete_support_images()
                 Fraction(int(value)) * exact_scale for value in image_coordinates[row]
             )
             assert actual == expected
+
+
+def test_glide_reflection_group_is_refused_as_orientation_reversing() -> None:
+    glide = np.eye(4, dtype=np.float64)
+    glide[0, 0] = -1.0
+    glide[2, 3] = 1.0
+
+    with pytest.raises(
+        PeriodicIsometryIdentityError,
+        match="Periodic generators must preserve orientation exactly.",
+    ):
+        PeriodicIsometryGroup(glide[None, :, :])
 
 
 def test_periodic_power_preparation_keeps_authored_sites_and_group_actions() -> None:

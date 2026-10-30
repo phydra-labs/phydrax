@@ -81,16 +81,13 @@ def _mapped_hexahedron(
 ) -> EmbeddingCell:
     topology = reference_cell_topology("hexahedron")
     references = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     corners = tuple(
         tuple(evaluate_expression(expression, point) for expression in coordinates)
         for point in references
     )
-    bounds = tuple(
-        polynomial_bounds(expression, "box", 3) for expression in coordinates
-    )
+    bounds = tuple(polynomial_bounds(expression, "box", 3) for expression in coordinates)
     return EmbeddingCell(
         global_id,
         "mapped",
@@ -119,8 +116,7 @@ def _mapped_tetrahedron(
 ) -> EmbeddingCell:
     topology = reference_cell_topology("tetrahedron")
     references = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     corners = tuple(
         tuple(evaluate_expression(expression, point) for expression in coordinates)
@@ -158,10 +154,7 @@ def _radical_linear_tetra_geometry(
     /,
 ) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:
     execution = np.asarray(
-        tuple(
-            tuple(float(value) for value in point)
-            for point in exact_coordinates
-        ),
+        tuple(tuple(float(value) for value in point) for point in exact_coordinates),
         dtype=np.float64,
     )
     cell_connectivity = np.asarray(cells, dtype=np.int32)
@@ -250,9 +243,7 @@ def _radical_curved_edge_geometry() -> tuple[
     )
     row_by_entity: dict[tuple[int, ...], int] = {}
     coordinate_rows: list[tuple[ExactScalar, ...]] = []
-    routes = np.empty(
-        (len(cell_vertices), element.local_dof_count), dtype=np.int32
-    )
+    routes = np.empty((len(cell_vertices), element.local_dof_count), dtype=np.int32)
     for cell_row, local_vertices in enumerate(cell_vertices):
         dof_entity: dict[int, tuple[int, ...]] = {}
         for vertex, dofs in enumerate(element.entity_dofs[0]):
@@ -288,10 +279,7 @@ def _radical_curved_edge_geometry() -> tuple[
             routes[cell_row, node.local_dof] = geometry_row
     exact_coordinates = tuple(coordinate_rows)
     execution_coordinates = np.asarray(
-        tuple(
-            tuple(float(value) for value in point)
-            for point in exact_coordinates
-        ),
+        tuple(tuple(float(value) for value in point) for point in exact_coordinates),
         dtype=np.float64,
     )
     source_map = _exact_coordinate_bank_source_map(
@@ -321,14 +309,12 @@ def _radical_boundary_contact_identity() -> str:
         (Fraction(0), Fraction(1), Fraction(0)),
         (Fraction(0), Fraction(0), Fraction(1)),
     )
-    degree_mesh, degree_geometry, degree_validity = (
-        _radical_linear_tetra_geometry(
-            degree_vertices,
-            ((0, 1, 2, 3),),
-            (131,),
-            (101, 103, 107, 109),
-            "radical-degree",
-        )
+    degree_mesh, degree_geometry, degree_validity = _radical_linear_tetra_geometry(
+        degree_vertices,
+        ((0, 1, 2, 3),),
+        (131,),
+        (101, 103, 107, 109),
+        "radical-degree",
     )
     degree_certificate = certify_global_embedding(
         degree_mesh, degree_geometry, degree_validity
@@ -343,14 +329,15 @@ def _radical_boundary_contact_identity() -> str:
         or not boundary.boundary_degree_one
         or boundary.shell_signed_measures != (root5 / 6,)
     ):
-        raise AssertionError("The radical affine tetrahedron lost its degree-one shell proof.")
+        raise AssertionError(
+            "The radical affine tetrahedron lost its degree-one shell proof."
+        )
     degree_witnesses = tuple(
         (witness.theorem, witness.witness_id, witness.exact_values)
         for witness in degree_certificate.witnesses
     )
     if not any(
-        theorem == "global_degree_one_injectivity"
-        for theorem, _, _ in degree_witnesses
+        theorem == "global_degree_one_injectivity" for theorem, _, _ in degree_witnesses
     ):
         raise AssertionError("The radical shell case omitted its global degree witness.")
 
@@ -358,9 +345,7 @@ def _radical_boundary_contact_identity() -> str:
     if not contact_validity.all_certified:
         raise AssertionError("The radical shared-edge cells lost local validity.")
     contact_cells = prepare_embedding_cells(contact_mesh, contact_geometry)
-    edge_witness = _shared_edge_separation(
-        contact_cells[0], contact_cells[1], (101, 103)
-    )
+    edge_witness = _shared_edge_separation(contact_cells[0], contact_cells[1], (101, 103))
     if (
         edge_witness is None
         or edge_witness[1] != -edge_witness[2]
@@ -368,7 +353,9 @@ def _radical_boundary_contact_identity() -> str:
         or not edge_witness[4]
         or not any(isinstance(value, RadicalElement) for value in edge_witness[0])
     ):
-        raise AssertionError("The radical shared edge did not retain its exact normal proof.")
+        raise AssertionError(
+            "The radical shared edge did not retain its exact normal proof."
+        )
     contact_values: list[str] = []
     contact_findings = _nonperiodic_contacts(
         contact_mesh,
@@ -381,8 +368,7 @@ def _radical_boundary_contact_identity() -> str:
             None
             if edge_witness is None
             else tuple(
-                _coordinate_coefficient_identity(value)
-                for value in edge_witness[0]
+                _coordinate_coefficient_identity(value) for value in edge_witness[0]
             )
         )
         trace_equal = restriction_trace_equal(
@@ -439,8 +425,7 @@ def _radical_boundary_contact_identity() -> str:
                 for value in boundary.shell_signed_measures
             ),
             "shared_edge_normal": tuple(
-                _coordinate_coefficient_identity(value)
-                for value in edge_witness[0]
+                _coordinate_coefficient_identity(value) for value in edge_witness[0]
             ),
             "shared_edge_sides": edge_witness[1:],
             "contact_proofs": tuple(contact_values),
@@ -501,11 +486,7 @@ def _radical_global_embedding_identity() -> tuple[
     )
     geometry = CellGeometrySpec(
         {"radical-tetrahedra": element},
-        {
-            "radical-tetrahedra": np.arange(
-                len(nodes), dtype=np.int32
-            )[None, :]
-        },
+        {"radical-tetrahedra": np.arange(len(nodes), dtype=np.int32)[None, :]},
         execution_coordinates,
         source_map=source_map,
         source_mesh=mesh,
@@ -521,7 +502,9 @@ def _radical_global_embedding_identity() -> tuple[
         for witness in certificate.witnesses
     )
     if not any(theorem == "mapped_cell_injective" for theorem, _, _ in witnesses):
-        raise AssertionError("The radical fixture did not retain its injectivity witness.")
+        raise AssertionError(
+            "The radical fixture did not retain its injectivity witness."
+        )
     return (
         str(certificate.status),
         certificate.certificate_id,
@@ -538,8 +521,7 @@ def _curved_p2_hexahedral_pair() -> tuple[CellMesh, CellGeometrySpec]:
     )
     topology = reference_cell_topology("hexahedron")
     reference_vertices = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     vertex_ids = (
         (0, 1, 2, 3, 100, 101, 102, 103),
@@ -571,9 +553,7 @@ def _curved_p2_hexahedral_pair() -> tuple[CellMesh, CellGeometrySpec]:
                 raise ValueError("Shared hexahedral corners must have exact images.")
             physical_vertices[identifier] = physical
     ordered_vertex_ids = tuple(sorted(physical_vertices))
-    vertex_rows = {
-        identifier: row for row, identifier in enumerate(ordered_vertex_ids)
-    }
+    vertex_rows = {identifier: row for row, identifier in enumerate(ordered_vertex_ids)}
     mesh = CellMesh(
         np.asarray(
             tuple(
@@ -599,9 +579,7 @@ def _curved_p2_hexahedral_pair() -> tuple[CellMesh, CellGeometrySpec]:
         vertex_global_ids=np.asarray(ordered_vertex_ids, dtype=np.int64),
     )
     coordinate_rows: list[tuple[int, ...]] = []
-    coordinate_indices: dict[
-        tuple[Fraction, Fraction, Fraction], int
-    ] = {}
+    coordinate_indices: dict[tuple[Fraction, Fraction, Fraction], int] = {}
     coordinate_values: list[tuple[Fraction, Fraction, Fraction]] = []
     for cell_index in range(2):
         route = []
@@ -618,16 +596,11 @@ def _curved_p2_hexahedral_pair() -> tuple[CellMesh, CellGeometrySpec]:
         {"curved": element},
         {"curved": np.asarray(coordinate_rows, dtype=np.int32)},
         np.asarray(
-            tuple(
-                tuple(float(value) for value in point)
-                for point in coordinate_values
-            ),
+            tuple(tuple(float(value) for value in point) for point in coordinate_values),
             dtype=np.float64,
         ),
     )
     return mesh, geometry
-
-
 
 
 def test_exact_center_jacobian_preconditioning_proves_mapped_injectivity() -> None:
@@ -643,8 +616,7 @@ def test_exact_center_jacobian_preconditioning_proves_mapped_injectivity() -> No
 
     topology = reference_cell_topology("quadrilateral")
     corner_references = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     mesh = CellMesh(
         np.asarray(tuple(image(point) for point in corner_references)),
@@ -658,15 +630,11 @@ def test_exact_center_jacobian_preconditioning_proves_mapped_injectivity() -> No
     )
     geometry = CellGeometrySpec(
         {"curved": element},
-        {
-            "curved": np.arange(
-                len(source_references), dtype=np.int32
-            )[None, :]
-        },
+        {"curved": np.arange(len(source_references), dtype=np.int32)[None, :]},
         np.asarray(tuple(image(point) for point in source_references)),
     )
 
-    cell, = prepare_embedding_cells(mesh, geometry)
+    (cell,) = prepare_embedding_cells(mesh, geometry)
     witness = prove_mapped_cell_injective(cell)
     validity = certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate = certify_global_embedding(mesh, geometry, validity)
@@ -680,8 +648,7 @@ def test_exact_center_jacobian_preconditioning_proves_mapped_injectivity() -> No
     assert validity.all_certified
     assert certificate.status == "certified", certificate.findings
     assert any(
-        witness.theorem == "mapped_cell_injective"
-        for witness in certificate.witnesses
+        witness.theorem == "mapped_cell_injective" for witness in certificate.witnesses
     )
 
 
@@ -698,8 +665,7 @@ def test_forward_reference_chart_composition_checks_exact_nonaffine_maps() -> No
         (2, 2, 2): Fraction(-1),
     }
     chart_x: dict[tuple[int, ...], ExactScalar] = {
-        exponent: amplitude * coefficient
-        for exponent, coefficient in bubble.items()
+        exponent: amplitude * coefficient for exponent, coefficient in bubble.items()
     }
     chart_x[(1, 0, 0)] = Fraction(1)
     chart_y: dict[tuple[int, ...], ExactScalar] = {(0, 1, 0): Fraction(1)}
@@ -787,6 +753,7 @@ def test_two_factor_edge_proof_rejects_an_extra_shared_facet() -> None:
     assert restriction_trace_equal(first, second, (100, 101)) is True
     assert _shared_edge_separation(first, second, (100, 101)) is None
 
+
 def test_curved_shared_edge_cone_separation_handles_two_factor_sign_changes() -> None:
     first_coordinates: tuple[Expression, ...] = (
         {(1, 0, 0): Fraction(1)},
@@ -841,9 +808,7 @@ def test_rotated_quad_trace_proves_exact_implicit_facet_separation() -> None:
             (1, 1, 0): Fraction(-1, 4),
         },
     )
-    first = _mapped_hexahedron(
-        601, (0, 1, 2, 3, 100, 101, 102, 103), first_coordinates
-    )
+    first = _mapped_hexahedron(601, (0, 1, 2, 3, 100, 101, 102, 103), first_coordinates)
     second = _mapped_hexahedron(
         602, (101, 102, 103, 100, 104, 105, 106, 107), second_coordinates
     )
@@ -880,8 +845,7 @@ def test_exact_p2_curved_facet_contacts_cold_recompute_without_root_source() -> 
         value for witness in certificate.witnesses for value in witness.exact_values
     )
     assert any(
-        "exact-opposite-side-curved-shared-facet" in value
-        for value in exact_values
+        "exact-opposite-side-curved-shared-facet" in value for value in exact_values
     )
     assert not any("same-root:" in value for value in exact_values)
 
@@ -929,7 +893,6 @@ def test_global_degree_refuses_mismatched_exact_interior_trace() -> None:
     )
 
 
-
 def _embedded_triangles(
     coordinates: np.ndarray, cells: tuple[tuple[int, int, int], ...]
 ) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:
@@ -963,8 +926,7 @@ def _curved_restricted_quadrilaterals(
 ) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:
     topology = reference_cell_topology("quadrilateral")
     target_references = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     source_element = lagrange_element("quadrilateral", 2)
     source_references = tuple(
@@ -1199,10 +1161,13 @@ def test_planar_nonlinear_boundary_face_requires_exact_image_proof() -> None:
     boundary = build_oriented_boundary(mesh, (cell,))
     assert boundary.status == "certified"
     assert boundary.boundary_degree_one
-    assert sum(
-        face.map_evidence[0] == "exact-planar-injective-face-image"
-        for face in boundary.faces
-    ) == 1
+    assert (
+        sum(
+            face.map_evidence[0] == "exact-planar-injective-face-image"
+            for face in boundary.faces
+        )
+        == 1
+    )
 
     evidence = _face_trace_image_evidence(cell, vertex_ids, points)
     assert evidence is not None
@@ -1221,20 +1186,15 @@ def test_planar_nonlinear_boundary_face_requires_exact_image_proof() -> None:
         tuple(folded.corner_images[index] for index in folded_facet),
     )
     first_image = tuple(
-        evaluate_expression(
-            expression, (Fraction(1, 4), Fraction(1, 2), Fraction(0))
-        )
+        evaluate_expression(expression, (Fraction(1, 4), Fraction(1, 2), Fraction(0)))
         for expression in folded.coordinates
     )
     second_image = tuple(
-        evaluate_expression(
-            expression, (Fraction(1, 2), Fraction(1, 2), Fraction(0))
-        )
+        evaluate_expression(expression, (Fraction(1, 2), Fraction(1, 2), Fraction(0)))
         for expression in folded.coordinates
     )
     assert first_image == second_image
     assert _face_trace_image_evidence(folded, folded_ids, folded_points) is None
-
 
     curved_z = add(z, scale(bubble, Fraction(1, 4)))
     nonplanar = _mapped_tetrahedron(2, (0, 1, 2, 3), (x, y, curved_z))
@@ -1248,9 +1208,7 @@ def test_planar_nonlinear_boundary_face_requires_exact_image_proof() -> None:
         tuple[Point3, ...],
         tuple(nonplanar.corner_images[index] for index in nonplanar_facet),
     )
-    assert _face_trace_image_evidence(
-        nonplanar, nonplanar_ids, nonplanar_points
-    ) is None
+    assert _face_trace_image_evidence(nonplanar, nonplanar_ids, nonplanar_points) is None
 
 
 def test_global_degree_one_certifies_nonlinear_map_with_affine_exterior() -> None:
@@ -1261,8 +1219,7 @@ def test_global_degree_one_certifies_nonlinear_map_with_affine_exterior() -> Non
         for point in np.asarray(element.reference_nodes)
     )
     vertices = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in topology.vertices
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
     lower = tuple(min(point[axis] for point in vertices) for axis in range(3))
     upper = tuple(max(point[axis] for point in vertices) for axis in range(3))
@@ -1361,8 +1318,7 @@ def test_global_degree_refuses_crossing_exterior_triangles() -> None:
     assert validity.all_certified
     assert certificate.status == "violated"
     assert any(
-        finding.check == "exterior_boundary_self_contact"
-        and finding.status == "violated"
+        finding.check == "exterior_boundary_self_contact" and finding.status == "violated"
         for finding in certificate.findings
     )
     assert not any(
@@ -1373,9 +1329,7 @@ def test_global_degree_refuses_crossing_exterior_triangles() -> None:
 
 def test_global_degree_never_masks_a_nonpositive_cell_jacobian() -> None:
     mesh, geometry, validity = _embedded_tetrahedra(
-        np.asarray(
-            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        ),
+        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         ((0, 2, 1, 3),),
     )
 
@@ -1391,7 +1345,6 @@ def test_global_degree_never_masks_a_nonpositive_cell_jacobian() -> None:
         witness.theorem == "global_degree_one_injectivity"
         for witness in certificate.witnesses
     )
-
 
 
 def test_affine_volume_cells_sharing_only_an_edge_still_certify() -> None:
@@ -1438,6 +1391,7 @@ def test_affine_volume_cells_sharing_only_a_vertex_still_certify() -> None:
     assert certificate.status == "certified", certificate.findings
     assert "exact_cell_contacts" in certificate.evaluated_checks
 
+
 def test_positive_tetrahedral_validity_does_not_hide_contained_overlap() -> None:
     large = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
@@ -1456,7 +1410,9 @@ def test_positive_tetrahedral_validity_does_not_hide_contained_overlap() -> None
 
 
 def test_affine_prism_uses_exact_cell_decomposition() -> None:
-    prism_coordinates = np.asarray(reference_cell_topology("prism").vertices, dtype=np.float64)
+    prism_coordinates = np.asarray(
+        reference_cell_topology("prism").vertices, dtype=np.float64
+    )
     prism = CellMesh(
         prism_coordinates,
         (CellBlock("prisms", "prism", np.arange(6, dtype=np.int32)[None, :]),),
@@ -1469,7 +1425,9 @@ def test_affine_prism_uses_exact_cell_decomposition() -> None:
     assert validity.all_certified and certificate.status == "certified"
 
 
-def _convex_cube_polyhedron() -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:
+def _convex_cube_polyhedron() -> tuple[
+    CellMesh, CellGeometrySpec, CellValidityCertificate
+]:
     coordinates = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -1516,7 +1474,9 @@ def test_single_curved_q2_cell_certifies_by_exact_local_and_global_proofs() -> N
 
     assert validity.all_certified
     assert certificate.status == "certified"
-    assert any(witness.theorem == "mapped_cell_injective" for witness in certificate.witnesses)
+    assert any(
+        witness.theorem == "mapped_cell_injective" for witness in certificate.witnesses
+    )
 
 
 def test_adjacent_curved_q2_cells_certify_exact_same_root_trace() -> None:
@@ -1554,7 +1514,9 @@ def test_adjacent_curved_cells_prove_the_shared_facet_without_root_ancestry() ->
     )
 
 
-def test_disjoint_curved_cells_with_overlapping_aabbs_use_exact_projection_bounds() -> None:
+def test_disjoint_curved_cells_with_overlapping_aabbs_use_exact_projection_bounds() -> (
+    None
+):
     element = lagrange_element("quadrilateral", 2)
     nodes = tuple(
         tuple(Fraction(float(value)) for value in point)
