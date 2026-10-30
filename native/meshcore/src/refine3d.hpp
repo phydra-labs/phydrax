@@ -4,6 +4,7 @@
 // Constrained tetrahedral refinement with explicit finite unresolved reporting.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 
@@ -18,6 +19,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
 
 namespace geometry {
 struct TetrahedronShape {
+  std::array<double, 3> circumcenter{};
   double circumradius = 0.0;
   double shortest_edge = 0.0;
   double radius_edge_ratio = 0.0;

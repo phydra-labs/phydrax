@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -391,6 +392,15 @@ class TetMesh {
   // Called only by LocalIncidence for an interior quality reconnection or
   // collapse; validation and commit touch only the cavity and its boundary.
   TetEditStatus replace_local_cavity(const TetEdit& operation);
+  // Called only by refinement: cones a star-shaped cavity to one new interior
+  // vertex; created cell IDs are returned in cone order.
+  TetEditStatus insert_local_cone(const TetEditVertex& vertex,
+                                  std::span<const std::int32_t> cavity,
+                                  std::vector<std::uint64_t>& created_cells);
+  // True if an edge of `removed_slots` absent from `kept_edges` (local edge
+  // keys) is a constrained segment.
+  bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
+                                   const std::set<std::uint64_t>& kept_edges) const;
   TetEditStatus apply_one_edit(const TetEdit& operation, TetEditResult& result);
   TetEditStatus validate_and_commit(TetMesh& staged, const TetEdit& operation,
                                     TetEditResult& result);
