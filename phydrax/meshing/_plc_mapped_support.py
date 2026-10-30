@@ -46,8 +46,9 @@ def classify_plc_carriers(
 
     Carrier values are native PLC-recovery vertex IDs; ``-1`` is padding. A
     singleton uses its authored vertex/edge/facet witness. Higher-dimensional
-    carriers first match constrained segments and faces, then the unique region
-    of their containing tetrahedra. Ambiguous material junctions fail closed.
+    carriers first match constrained segments and faces, then edges of exactly
+    one constrained facet (facet diagonals), then the unique region of their
+    containing tetrahedra. Ambiguous material junctions fail closed.
     """
     carriers = np.asarray(vertex_carriers)
     if not np.issubdtype(carriers.dtype, np.integer):
@@ -77,6 +78,7 @@ def classify_plc_carriers(
     ):
         segment_ids[_row_key(tuple(edge))] = (source_id, occurrence_path)
     face_ids: dict[tuple[int, ...], tuple[str, tuple[str, ...]]] = {}
+    face_edge_sources: dict[tuple[int, ...], set[tuple[str, tuple[str, ...]]]] = {}
     for face, source_id, occurrence_path in zip(
         boundary_faces.tolist(),
         face_source_ids,
@@ -84,6 +86,10 @@ def classify_plc_carriers(
         strict=True,
     ):
         face_ids[_row_key(tuple(face))] = (source_id, occurrence_path)
+        for edge in combinations(face, 2):
+            face_edge_sources.setdefault(_row_key(edge), set()).add(
+                (source_id, occurrence_path)
+            )
 
     simplex_regions: dict[tuple[int, ...], set[int]] = {}
     for cell, region in zip(tetrahedra.tolist(), cell_regions.tolist(), strict=True):
@@ -132,6 +138,19 @@ def classify_plc_carriers(
         source = face_ids.get(_row_key(rows)) if len(rows) == 3 else None
         if source is not None:
             source_id, occurrence_path = source
+            entities.append(source_id)
+            occurrence_paths.append(occurrence_path)
+            dimensions[vertex] = 2
+            deviations[vertex] = max(witness_deviations[row] for row in rows)
+            continue
+        # A constrained-facet edge that is not an authored segment is a facet
+        # diagonal; its unique incident facet is the carrier's source, even on a
+        # two-region interface where the containing tetrahedra are ambiguous.
+        facet_sources = (
+            face_edge_sources.get(_row_key(rows), set()) if len(rows) == 2 else set()
+        )
+        if len(facet_sources) == 1:
+            source_id, occurrence_path = next(iter(facet_sources))
             entities.append(source_id)
             occurrence_paths.append(occurrence_path)
             dimensions[vertex] = 2

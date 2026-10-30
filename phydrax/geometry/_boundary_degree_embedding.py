@@ -43,6 +43,7 @@ from ._exact_polyhedral_geometry import (
     triangle_contact_points3,
 )
 from ._mapped_embedding import prove_mapped_cell_injective
+from ._planar_chain_embedding import triangulate_planar_polygon
 from ._restricted_embedding import _trace_arguments, restriction_trace_equal
 
 
@@ -85,6 +86,7 @@ class OrientedBoundary:
     boundary_degree_one: bool
     findings: tuple[BoundaryFinding, ...]
 
+
 def _loop_relation(first: tuple[int, ...], second: tuple[int, ...]) -> int | None:
     if len(first) != len(second) or set(first) != set(second):
         return None
@@ -103,6 +105,9 @@ def _canonical_face_triangles(
     facet_id: int,
     vertex_ids: tuple[int, ...],
     points: tuple[Point3, ...],
+    /,
+    *,
+    vertex_defined: bool = False,
 ) -> tuple[BoundaryTriangle, ...]:
     if len(points) != len(vertex_ids):
         raise ValueError("Boundary face points must align with their vertex identities.")
@@ -115,17 +120,22 @@ def _canonical_face_triangles(
                 (points[0], points[1], points[2]),
             ),
         )
-    if len(vertex_ids) != 4:
+    if vertex_defined:
+        # Vertex-defined polyhedral faces are exact planar loops that may carry
+        # collinear vertices; their exact ear triangulation keeps the loop.
+        routes = triangulate_planar_polygon(points)
+    elif len(vertex_ids) != 4:
         raise ValueError(
             "Exact affine boundary route supports triangular and quadrilateral facets."
         )
-    first_diagonal = tuple(sorted((vertex_ids[0], vertex_ids[2])))
-    second_diagonal = tuple(sorted((vertex_ids[1], vertex_ids[3])))
-    routes = (
-        ((0, 1, 2), (0, 2, 3))
-        if first_diagonal <= second_diagonal
-        else ((0, 1, 3), (1, 2, 3))
-    )
+    else:
+        first_diagonal = tuple(sorted((vertex_ids[0], vertex_ids[2])))
+        second_diagonal = tuple(sorted((vertex_ids[1], vertex_ids[3])))
+        routes = (
+            ((0, 1, 2), (0, 2, 3))
+            if first_diagonal <= second_diagonal
+            else ((0, 1, 3), (1, 2, 3))
+        )
     return tuple(
         BoundaryTriangle(
             -1,
@@ -176,6 +186,8 @@ def _facet_identity_map(mesh: CellMesh) -> dict[frozenset[int], int]:
 def _cell_facets(cell: EmbeddingCell) -> tuple[tuple[int, ...], ...]:
     if cell.dimension != 3:
         raise ValueError("Boundary-degree cells must have topological dimension three.")
+    if cell.kind == "polyhedron":
+        return cell.facet_routes
     return tuple(
         tuple(int(value) for value in row)
         for row in reference_cell_topology(cell.kind).entities[2]
@@ -285,9 +297,7 @@ def _loop_has_edge(loop: tuple[int, ...], left: int, right: int, /) -> bool:
     )
 
 
-def _face_trace_is_affine(
-    cell: EmbeddingCell, vertex_ids: tuple[int, ...], /
-) -> bool:
+def _face_trace_is_affine(cell: EmbeddingCell, vertex_ids: tuple[int, ...], /) -> bool:
     if len(vertex_ids) not in (3, 4):
         return False
     if cell.affine:
@@ -311,8 +321,7 @@ def _face_trace_is_affine(
         return False
     try:
         trace = tuple(
-            compose_expression(expression, arguments)
-            for expression in cell.coordinates
+            compose_expression(expression, arguments) for expression in cell.coordinates
         )
         affine = affine_map(trace, 2)
     except (TypeError, ValueError, ZeroDivisionError):
@@ -341,6 +350,26 @@ def _exact_scalar_identity(value: ExactScalar, /) -> tuple[object, ...]:
     raise TypeError(f"Unsupported boundary-face scalar {type(value).__name__}.")
 
 
+def _vertex_defined_face_evidence(
+    points: tuple[Point3, ...], /
+) -> tuple[str, ...] | None:
+    """Prove a vertex-defined face loop is exactly planar with nonzero area."""
+    normal: Point3 = (Fraction(0), Fraction(0), Fraction(0))
+    for start, stop in zip(points, (*points[1:], points[0]), strict=True):
+        term = _cross3(start, stop)
+        normal = (normal[0] + term[0], normal[1] + term[1], normal[2] + term[2])
+    if not any(_sign(value) for value in normal):
+        return None
+    offset = _dot3(normal, points[0])
+    if any(_sign(_dot3(normal, point) - offset) for point in points):
+        return None
+    return (
+        "exact-vertex-defined-planar-face",
+        f"plane:{tuple(_exact_scalar_identity(value) for value in normal)}:"
+        f"offset:{_exact_scalar_identity(offset)}",
+    )
+
+
 def _face_trace_image_evidence(
     cell: EmbeddingCell,
     vertex_ids: tuple[int, ...],
@@ -350,6 +379,10 @@ def _face_trace_image_evidence(
     """Prove a face image is its exact planar corner polygon."""
     if _face_trace_is_affine(cell, vertex_ids):
         return ("exact-affine-face-image",)
+    if cell.kind == "polyhedron" and not cell.coordinates:
+        # A vertex-defined face is by definition its corner polygon; only its
+        # exact planarity and nonzero area remain to be proved.
+        return _vertex_defined_face_evidence(points)
     if (
         len(vertex_ids) not in (3, 4)
         or cell.pyramid_normalizations is not None
@@ -363,14 +396,11 @@ def _face_trace_image_evidence(
         return None
     try:
         trace = tuple(
-            compose_expression(expression, arguments)
-            for expression in cell.coordinates
+            compose_expression(expression, arguments) for expression in cell.coordinates
         )
     except (TypeError, ValueError, ZeroDivisionError):
         return None
-    if len(trace) != 3 or any(
-        not isinstance(expression, dict) for expression in trace
-    ):
+    if len(trace) != 3 or any(not isinstance(expression, dict) for expression in trace):
         return None
     trace_polynomials = tuple(
         cast(dict[tuple[int, ...], ExactScalar], expression) for expression in trace
@@ -421,9 +451,7 @@ def _face_trace_image_evidence(
         identifier: point for identifier, point in zip(vertex_ids, points, strict=True)
     }
     edge_evidence: list[str] = []
-    for left, right in zip(
-        vertex_ids, (*vertex_ids[1:], vertex_ids[0]), strict=True
-    ):
+    for left, right in zip(vertex_ids, (*vertex_ids[1:], vertex_ids[0]), strict=True):
         edge_arguments = _trace_arguments(cell, (left, right))
         if edge_arguments is None:
             return None
@@ -468,9 +496,7 @@ def _face_trace_image_evidence(
         )
         if any(not isinstance(expression, dict) for expression in differences):
             return None
-        difference_polynomials = tuple(
-            expression for expression in differences
-        )
+        difference_polynomials = tuple(expression for expression in differences)
         numerator = linear_combinations(difference_polynomials, (direction,))[0]
         parameter = scale(numerator, Fraction(1) / length_squared)
         if not isinstance(parameter, dict):
@@ -486,9 +512,7 @@ def _face_trace_image_evidence(
             )
             if not isinstance(line_residual, dict) or line_residual:
                 return None
-        derivative_controls = bernstein_coefficients(
-            derivative(parameter, 0), "box", 1
-        )
+        derivative_controls = bernstein_coefficients(derivative(parameter, 0), "box", 1)
         if not derivative_controls or any(
             _sign(value) <= 0 for value in derivative_controls
         ):
@@ -499,13 +523,10 @@ def _face_trace_image_evidence(
         )
     topology = reference_cell_topology(face_kind)
     face_references = tuple(
-        tuple(Fraction(float(value)) for value in row)
-        for row in topology.vertices
+        tuple(Fraction(float(value)) for value in row) for row in topology.vertices
     )
     face_corner_images = tuple(
-        tuple(
-            evaluate_expression(expression, point) for expression in trace_polynomials
-        )
+        tuple(evaluate_expression(expression, point) for expression in trace_polynomials)
         for point in face_references
     )
     bounds = tuple(
@@ -563,9 +584,7 @@ def _vertex_images(
     images: dict[int, Point3] = {}
     mismatched: set[int] = set()
     for cell in cells:
-        for identifier, point in zip(
-            cell.vertex_ids, cell.corner_images, strict=True
-        ):
+        for identifier, point in zip(cell.vertex_ids, cell.corner_images, strict=True):
             if len(point) != 3:
                 mismatched.add(identifier)
                 continue
@@ -576,9 +595,7 @@ def _vertex_images(
     return images, tuple(sorted(mismatched))
 
 
-def _cycle_from_edges(
-    edges: tuple[tuple[int, int], ...], /
-) -> tuple[int, ...] | None:
+def _cycle_from_edges(edges: tuple[tuple[int, int], ...], /) -> tuple[int, ...] | None:
     adjacency: dict[int, list[int]] = defaultdict(list)
     for left, right in edges:
         if left == right:
@@ -603,9 +620,7 @@ def _cycle_from_edges(
     return tuple(cycle) if len(cycle) == len(adjacency) else None
 
 
-def _connected_components(
-    adjacency: tuple[set[int], ...], /
-) -> int:
+def _connected_components(adjacency: tuple[set[int], ...], /) -> int:
     labels = [-1] * len(adjacency)
     count = 0
     for root in range(len(adjacency)):
@@ -623,18 +638,17 @@ def _connected_components(
     return count
 
 
-def _surface_link_is_manifold(
-    polygons: tuple[tuple[int, ...], ...], /
-) -> bool:
+def _surface_link_is_manifold(polygons: tuple[tuple[int, ...], ...], /) -> bool:
     if not polygons or any(
-        len(polygon) < 3 or len(set(polygon)) != len(polygon)
-        for polygon in polygons
+        len(polygon) < 3 or len(set(polygon)) != len(polygon) for polygon in polygons
     ):
         return False
     edge_faces: dict[tuple[int, int], list[int]] = defaultdict(list)
     for face_index, polygon in enumerate(polygons):
         for index, left in enumerate(polygon):
-            edge_faces[_edge(left, polygon[(index + 1) % len(polygon)])].append(face_index)
+            edge_faces[_edge(left, polygon[(index + 1) % len(polygon)])].append(
+                face_index
+            )
     if any(len(incident) not in (1, 2) for incident in edge_faces.values()):
         return False
     face_adjacency: list[set[int]] = [set() for _ in polygons]
@@ -652,10 +666,7 @@ def _surface_link_is_manifold(
     euler_characteristic = len(vertices) - len(edge_faces) + len(polygons)
     if not boundary_edges:
         return euler_characteristic == 2
-    return (
-        _cycle_from_edges(boundary_edges) is not None
-        and euler_characteristic == 1
-    )
+    return _cycle_from_edges(boundary_edges) is not None and euler_characteristic == 1
 
 
 def _volume_topology_findings(
@@ -722,9 +733,7 @@ def _volume_topology_findings(
                     )
                 )
                 continue
-            edge_link_cells[edge].append(
-                (incident_faces[0], incident_faces[1])
-            )
+            edge_link_cells[edge].append((incident_faces[0], incident_faces[1]))
 
     for identifier, polygons in vertex_link_faces.items():
         if not _surface_link_is_manifold(tuple(polygons)):
@@ -744,9 +753,7 @@ def _volume_topology_findings(
         if not nodes:
             continue
         boundary_nodes = {
-            face_key
-            for face_key in nodes
-            if len(occurrences.get(face_key, ())) == 1
+            face_key for face_key in nodes if len(occurrences.get(face_key, ())) == 1
         }
         degrees = tuple(len(adjacency[node]) for node in nodes)
         path_or_cycle = (
@@ -798,9 +805,7 @@ def _boundary_vertex_links_are_manifold(
     )
 
 
-def _shell_euler_characteristic(
-    faces: tuple[BoundaryFace, ...], /
-) -> int:
+def _shell_euler_characteristic(faces: tuple[BoundaryFace, ...], /) -> int:
     vertices = {identifier for face in faces for identifier in face.vertex_ids}
     edges = {
         _edge(face.vertex_ids[index], face.vertex_ids[(index + 1) % len(face.vertex_ids)])
@@ -991,9 +996,7 @@ def build_oriented_boundary(
                 )
             continue
         cell_index, vertex_ids, points = incident[0]
-        map_evidence = _face_trace_image_evidence(
-            cells[cell_index], vertex_ids, points
-        )
+        map_evidence = _face_trace_image_evidence(cells[cell_index], vertex_ids, points)
         if map_evidence is None:
             findings.append(
                 BoundaryFinding(
@@ -1003,7 +1006,12 @@ def build_oriented_boundary(
                 )
             )
         try:
-            triangles = _canonical_face_triangles(facet_id, vertex_ids, points)
+            triangles = _canonical_face_triangles(
+                facet_id,
+                vertex_ids,
+                points,
+                vertex_defined=cells[cell_index].kind == "polyhedron",
+            )
         except ValueError as error:
             findings.append(
                 BoundaryFinding("unsupported_boundary_facet", (facet_id,), str(error))
@@ -1114,9 +1122,7 @@ def build_oriented_boundary(
         for triangle in face_tuple[face_index].triangles
     )
     if planar_embedded_exterior:
-        findings.extend(
-            _boundary_triangle_contacts(face_tuple, triangles, vertex_images)
-        )
+        findings.extend(_boundary_triangle_contacts(face_tuple, triangles, vertex_images))
     degree_geometry_available = degree_topology_available and not any(
         finding.check
         in (

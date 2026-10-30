@@ -20,6 +20,7 @@ from ..geometry._domain_certification import (
     certify_domain_coverage,
     DomainCoverageCertificate,
 )
+from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._embedding_state import MeshCertificateFinding
 from ..geometry._global_embedding import (
     certify_global_embedding,
@@ -358,14 +359,25 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             if inputs.cell_regions is None:
                 raise ValueError("Domain coverage requires its material assignments.")
             if embedding.status == "certified":
+                coverage_source, coverage_fidelity = inputs.source, fidelity
+                if (
+                    isinstance(inputs.domain, PiecewiseLinearDomain)
+                    and inputs.source is not None
+                    and (inputs.source.source_id, inputs.source.source_revision)
+                    != (inputs.domain.source_id, inputs.domain.source_revision)
+                ):
+                    # A derived affine domain carries its own content revision.
+                    # Its coverage is an exact chain comparison that needs no
+                    # continuous source query; fidelity is certified separately.
+                    coverage_source, coverage_fidelity = None, None
                 coverage = certify_domain_coverage(
                     inputs.mesh,
                     inputs.geometry,
                     inputs.domain,
                     inputs.cell_regions,
                     embedding=embedding,
-                    source=inputs.source,
-                    fidelity=fidelity,
+                    source=coverage_source,
+                    fidelity=coverage_fidelity,
                     source_coverage_witness=inputs.source_coverage_witness,
                 )
                 findings.extend(coverage.findings)

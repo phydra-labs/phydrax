@@ -230,10 +230,17 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     assert layer_ids.size == sum(block.cell_count for block in fixture.layers.mesh.blocks)
     assert core_ids.size == 1
     assert any(zone.name == fixture.complex.region_ids[0] for zone in result.zones)
-    assert all(
-        association.source_id == source.source_id
-        and association.source_revision == source.source_revision
+    # Layer cells keep exact lineage to the accepted layer result; every other
+    # association binds the layer/core source revision.
+    bindings = {
+        (association.source_id, association.source_revision)
         for association in result.associations
+    }
+    assert (source.source_id, source.source_revision) in bindings
+    assert all(
+        binding == (source.source_id, source.source_revision)
+        or binding[0] == fixture.layers.result_id
+        for binding in bindings
     )
 
     cap = fixture.layers.cap
