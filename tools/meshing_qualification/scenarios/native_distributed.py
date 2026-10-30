@@ -25,6 +25,7 @@ def _worker() -> dict[str, object]:
         from phydrax._execution_resources import ExecutionGroupSpec
         from phydrax._execution_runtime import ExecutionGroup
         from phydrax._physical import SpatialCoordinateContract
+        from phydrax.discretization._view_support import OwnerLocalCellGeometry
         from phydrax.graph import GraphPartitionPlan
         from phydrax.meshing._contracts import (
             CellFamilyPolicy,
@@ -130,7 +131,7 @@ def _worker() -> dict[str, object]:
             )
             graph_plan = GraphPartitionPlan(
                 2,
-                target_shares=shares,
+                target_shares=np.asarray(shares, dtype=np.float64),
                 maximum_imbalance=1.5,
                 refinement_passes=4,
             )
@@ -148,6 +149,10 @@ def _worker() -> dict[str, object]:
                 )
             part = assembly.parts[0]
             view = part.carrier
+            if not isinstance(view, OwnerLocalCellGeometry):
+                raise RuntimeError(
+                    "Native periodic owner-local part did not carry owner-local geometry."
+                )
             directory_data = view.owner_directory_data
             if (
                 part.name != source_id
@@ -208,7 +213,7 @@ def _worker() -> dict[str, object]:
                     "profile": profile,
                     "source_id": source.source_id,
                     "source_revision": source.source_revision,
-                    "plan_id": plan.plan_id,
+                    "prepared_id": plan.prepared_id,
                     "graph_partition_id": graph_plan.plan_id,
                     "assembly_id": assembly.assembly_id,
                     "assembly_view_id": assembly.assembly_view_id,
@@ -331,10 +336,10 @@ def native_distributed_lifecycle() -> dict[str, object]:
         failures.append(
             "At least one process did not accept its native owner-local witness."
         )
-    expected_ranks = sorted(int(record["rank"]) for record in worker_records)
-    if expected_ranks != [0, 1]:
+    reported_ranks = [record.get("rank") for record in worker_records]
+    if sorted(rank for rank in reported_ranks if isinstance(rank, int)) != [0, 1]:
         failures.append(
-            f"Distributed worker records came from unexpected ranks {expected_ranks}."
+            f"Distributed worker records came from unexpected ranks {reported_ranks}."
         )
     return {
         "status": "failed",

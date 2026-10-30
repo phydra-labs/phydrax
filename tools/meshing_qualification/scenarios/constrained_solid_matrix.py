@@ -509,7 +509,9 @@ def _request(
     )
     patch_controls: list[PatchControl] = []
     interface_facets: list[int] = []
-    facet_regions = np.asarray(source_input.facet_regions, dtype=np.int64).reshape((-1, 2))
+    facet_regions = np.asarray(source_input.facet_regions, dtype=np.int64).reshape(
+        (-1, 2)
+    )
     for facet in range(facet_regions.shape[0]):
         positive = int(facet_regions[facet, 0])
         negative = int(facet_regions[facet, 1])
@@ -745,7 +747,9 @@ def _independent_region_oracle(
         raise RuntimeError("Native certification omitted per-cell source region labels.")
     native_coverage = certification.coverage
     if native_coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification is absent or did not pass.")
+        raise RuntimeError(
+            "Native domain-coverage certification is absent or did not pass."
+        )
     certified_regions = np.asarray(native_coverage.cell_regions, dtype=np.int64)
     if certified_regions.shape != independent_regions.shape:
         raise RuntimeError(
@@ -893,7 +897,9 @@ def _boundary_facet_oracle(
         )
     coverage = certification.coverage
     if coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification did not pass facet coverage.")
+        raise RuntimeError(
+            "Native domain-coverage certification did not pass facet coverage."
+        )
     cell_regions = np.asarray(coverage.cell_regions, dtype=np.int64)
     cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int64).reshape((-1, 4))
     adjacent_regions: list[set[int]] = [set() for _ in range(face_vertices.shape[0])]
@@ -1067,7 +1073,9 @@ def _material_control_oracle(
         )
     coverage = certification.coverage
     if coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification did not pass material checks.")
+        raise RuntimeError(
+            "Native domain-coverage certification did not pass material checks."
+        )
     cell_regions = np.asarray(coverage.cell_regions, dtype=np.int64)
     cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
     if cell_ids.shape != cell_regions.shape:

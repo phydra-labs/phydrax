@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ def _invoke(name: str, arguments: argparse.Namespace, /) -> dict[str, object]:
             "status": "failed",
             "error_type": type(error).__name__,
             "detail": str(error),
+            "traceback": traceback.format_exc(),
             "runtime": runtime_identity(),
         }
 
