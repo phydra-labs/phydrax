@@ -655,7 +655,7 @@ def _periodic_facets_pair(mesh: CellMesh, topology: PeriodicMeshTopology) -> boo
         return False
     from ._periodic_embedding import _quotient_faces_pair_oriented
 
-    return _quotient_faces_pair_oriented(topology) is not None
+    return _quotient_faces_pair_oriented(mesh, topology) is not None
 
 
 def _signed_boundary_faces(

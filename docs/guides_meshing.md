@@ -462,6 +462,13 @@ standard/polyhedral `CellMesh`; each cap facet must have one layer and one core
 incident cell. Missing authored core sites refuse rather than synthesizing a
 power source. This route currently refuses mapped or high-order polyhedral cores
 that cannot retain their exact geometry through the mixed assembly.
+Restricted-power generation joins every site's carrier pieces across
+unconstrained carrier faces and splits a site into per-tetrahedron pieces only
+when an authored segment or protected vertex lies off every facet polygon.
+Periodic PLC power quotients require the transformed source facets to have the
+exact transformed output face subdivision, not only matching vertices. Two
+polyhedra whose common interface is several coplanar faces declare contact only
+on their exact convex face union.
 `CAD_EXTRUSION` also admits a whole-solid sweep: if the authored slabs consume
 the controlled solid, the partition has no core solid, and the swept cap is a
 one-sided exterior patch. Source-solid volume must equal the sum of its slab
@@ -787,6 +794,16 @@ periodic directions, every lifted triangle or tetrahedron is checked against
 each overlapping image, and the nonperiodic directions are closed by the
 quotient's oriented physical boundary. A mesh that wraps the quotient twice
 overlaps its own image and is refused as violated.
+
+Quotient cells may be convex vertex-defined polyhedra, as produced by the
+restricted-power polyhedral fill, and a single cell may span a whole period or
+touch a fixed rotation axis. The quotient is then a cell complex rather than a
+simplicial one: an edge may be a loop whose two ends lie in one vertex orbit,
+and a face may traverse an edge twice (the folded cap at a rotation axis). The
+boundary check therefore reads each boundary face's corners from its lifted
+representative and requires every boundary vertex to join all of its
+boundary edge ends (an edge plus its start or finish) into one cycle. Pinched
+quotients, such as two columns touching along one edge, are left unresolved.
 
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
