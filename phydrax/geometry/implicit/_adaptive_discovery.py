@@ -1324,9 +1324,14 @@ def _faces_exclude_zero(
     """
     if not bounds.value_rigorous:
         return False
-    face_bounds = bounds.boxes(
-        np.stack([lower for lower, _ in faces]), np.stack([upper for _, upper in faces])
-    )
+    try:
+        face_bounds = bounds.boxes(
+            np.stack([lower for lower, _ in faces]),
+            np.stack([upper for _, upper in faces]),
+        )
+    except IntervalExtensionError:
+        # No interval extension over a face is no proof: the crossing stays flagged.
+        return False
     lower = np.asarray(face_bounds.value_lower, dtype=np.float64)
     upper = np.asarray(face_bounds.value_upper, dtype=np.float64)
     return bool(np.all((lower > 0.0) | (upper < 0.0)))
