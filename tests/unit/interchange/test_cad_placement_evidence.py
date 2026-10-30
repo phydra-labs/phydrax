@@ -57,6 +57,7 @@ def _independent_pose_error(
     points: np.ndarray,
     first_axis: tuple[float, float, float],
     rotation: np.ndarray,
+    actual_translation: np.ndarray,
     translation: tuple[float, float, float],
     /,
 ) -> float:
@@ -70,10 +71,12 @@ def _independent_pose_error(
             (Decimal(0), Decimal(0), Decimal(1)),
         )
         actual_rotation = tuple(
-            tuple(Decimal.from_float(float(value)) for value in row)
-            for row in rotation
+            tuple(Decimal.from_float(float(value)) for value in row) for row in rotation
         )
-        offset = tuple(Decimal.from_float(value) for value in translation)
+        offset = tuple(
+            Decimal.from_float(float(actual)) - Decimal.from_float(expected)
+            for actual, expected in zip(actual_translation, translation, strict=True)
+        )
         maximum = Decimal(0)
         for point in points:
             local = tuple(Decimal.from_float(float(value)) for value in point)
@@ -84,7 +87,7 @@ def _independent_pose_error(
                         * local[axis]
                         for axis in range(3)
                     ),
-                    Decimal(0),
+                    offset[row],
                 )
                 for row in range(3)
             )
@@ -138,6 +141,7 @@ def test_placement_evidence_is_bound_to_translated_rotated_occurrence() -> None:
         np.asarray(definition.geometry.vertex_points),
         first_axis,
         placement.rotation,
+        placement.translation,
         translation,
     )
 
