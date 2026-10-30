@@ -764,12 +764,16 @@ reference-face maps under periodic actions, checks the closed oriented quotient
 and local injectivity, and compares the mapped pullback volume with the lattice
 covolume. A periodic restriction premise retains the source proof and exact
 refinement transition, then certifies parent-volume partitions and boundary
-subdivision. Mapped restriction separately proves an exact common subcomplex.
+subdivision; the certificate, including its premise, round-trips through the
+model archive. Mapped restriction separately proves an exact common subcomplex.
 
 Reusable periodic image frames retain lifted-source roots, shifts, and group
-actions for translational lattices and isometry groups. Generic periodic power
-preparation uses exact representability/refusal semantics rather than an
-arbitrary image-count or work cap.
+actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
+admits exact screw generators whose finite linear-order power is a nonzero
+translation; orientation-reversing generators such as glide reflections are
+refused because their quotient cannot carry consistently oriented cells.
+Generic periodic power preparation uses exact representability/refusal
+semantics rather than an arbitrary image-count or work cap.
 
 ### Gmsh sizing, protection, generation, and remeshing
 

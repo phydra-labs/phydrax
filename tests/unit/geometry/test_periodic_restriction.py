@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import permutations, product
+from pathlib import Path
 
 import numpy as np
 
@@ -16,8 +17,16 @@ from phydrax.discretization._nested_reference_types import NestedReferenceWitnes
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.discretization.fem._reference import FiniteElementSpec
-from phydrax.geometry._global_embedding import certify_global_embedding
+from phydrax.geometry._global_embedding import (
+    certify_global_embedding,
+    GlobalEmbeddingCertificate,
+)
 from phydrax.geometry._periodic_restriction import PeriodicRestrictionPremise
+from phydrax.meshing._model_codec import (
+    read_model_artifact,
+    restore_model_archive_value,
+    write_model_artifact,
+)
 
 
 def _periodic_cube_tetrahedra() -> tuple[CellMesh, CellGeometrySpec]:
@@ -216,7 +225,9 @@ def _tetrahedron_volume(points: np.ndarray, /) -> Fraction:
     return abs(determinant) / 6
 
 
-def test_refined_periodic_tetrahedra_prove_exact_parent_volume_partition() -> None:
+def test_refined_periodic_tetrahedra_prove_exact_parent_volume_partition(
+    tmp_path: Path,
+) -> None:
     source, source_geometry = _periodic_cube_tetrahedra()
     source_validity = certify_cell_geometry_validity(source_geometry, mesh=source)
     source_embedding = certify_global_embedding(source, source_geometry, source_validity)
@@ -327,8 +338,25 @@ def test_refined_periodic_tetrahedra_prove_exact_parent_volume_partition() -> No
         "periodic_restriction_boundary_subdivision",
     } <= set(target_embedding.evaluated_checks)
 
+    archive = write_model_artifact(
+        tmp_path / "periodic-restriction-embedding.phx", target_embedding, limits=None
+    )
+    restored = read_model_artifact(
+        archive,
+        expected_type=GlobalEmbeddingCertificate,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.certificate_id == target_embedding.certificate_id
+    assert restored.periodic_restriction == evidence
+    assert restored.periodic_restriction_premise is not None
+    assert (
+        restored.periodic_restriction_premise.transition.transition_id
+        == transition.transition_id
+    )
 
-def test_periodic_mapped_refinement_proves_a_common_subcomplex() -> None:
+
+def test_periodic_mapped_refinement_proves_a_common_subcomplex(tmp_path: Path) -> None:
     from phydrax.geometry._domain_coverage import (
         certify_domain_coverage,
         PiecewiseLinearDomain,
@@ -478,6 +506,18 @@ def test_periodic_mapped_refinement_proves_a_common_subcomplex() -> None:
     assert evidence.source_regions == (0,)
     assert evidence.target_regions == (0, 0, 0, 0)
     assert independent_parent == independent_children == Fraction(1, 6)
+
+    archive = write_model_artifact(
+        tmp_path / "periodic-mapped-restriction.phx", evidence, limits=None
+    )
+    restored = read_model_artifact(
+        archive,
+        expected_type=type(evidence),
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.evidence_id == evidence.evidence_id
+    assert restored.direction == evidence.direction
 
 
 def _p2_local_entity_keys(

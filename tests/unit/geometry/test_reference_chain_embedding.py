@@ -38,7 +38,9 @@ from phydrax.geometry._reference_chain_embedding import (
 )
 
 
-def _two_adjacent_hexes() -> tuple[CellMesh, CellGeometrySpec, GlobalEmbeddingCertificate]:
+def _two_adjacent_hexes() -> tuple[
+    CellMesh, CellGeometrySpec, GlobalEmbeddingCertificate
+]:
     reference_vertices = np.asarray(
         reference_cell_topology("hexahedron").vertices, dtype=np.int64
     )
@@ -52,15 +54,12 @@ def _two_adjacent_hexes() -> tuple[CellMesh, CellGeometrySpec, GlobalEmbeddingCe
         dtype=np.float64,
     )
     row_by_point = {
-        tuple(int(value) for value in point): row
-        for row, point in enumerate(coordinates)
+        tuple(int(value) for value in point): row for row, point in enumerate(coordinates)
     }
     cells = np.asarray(
         tuple(
             tuple(
-                row_by_point[
-                    (origin + int(vertex[0]), int(vertex[1]), int(vertex[2]))
-                ]
+                row_by_point[(origin + int(vertex[0]), int(vertex[1]), int(vertex[2]))]
                 for vertex in reference_vertices
             )
             for origin in (0, 1)
@@ -100,9 +99,9 @@ def _target_partition(
     target_cells = np.asarray(parent_block.vertices, dtype=np.int64).copy()
     target_coordinates = np.asarray(parent_mesh.coordinates, dtype=np.float64).copy()
     target_vertex_ids = np.asarray(parent_mesh.vertex_global_ids, dtype=np.int64).copy()
-    parent_vertex_ids = np.asarray(
-        parent_mesh.vertex_global_ids, dtype=np.int64
-    )[np.asarray(parent_block.vertices, dtype=np.int64)]
+    parent_vertex_ids = np.asarray(parent_mesh.vertex_global_ids, dtype=np.int64)[
+        np.asarray(parent_block.vertices, dtype=np.int64)
+    ]
     for local_vertex in duplicate_local_vertices:
         duplicate_row = target_coordinates.shape[0]
         target_coordinates = np.concatenate(
@@ -156,6 +155,7 @@ def _target_partition(
     )
     return target_mesh, target_geometry, {"hexes": witness}
 
+
 def _mixed_hex_prism_partition(
     parent_mesh: CellMesh,
     parent_geometry: CellGeometrySpec,
@@ -200,9 +200,7 @@ def _mixed_hex_prism_partition(
         chart: tuple[Expression, ...],
         point: tuple[Fraction, ...],
     ) -> tuple[Fraction, Fraction, Fraction]:
-        values = tuple(
-            evaluate_expression(expression, point) for expression in chart
-        )
+        values = tuple(evaluate_expression(expression, point) for expression in chart)
         if not all(isinstance(value, Fraction) for value in values):
             raise ValueError("Mixed prism source corners must remain rational.")
         return cast(tuple[Fraction, Fraction, Fraction], values)
@@ -314,9 +312,7 @@ def _shared_source_face_local_vertices(parent_mesh: CellMesh) -> tuple[int, ...]
 
 def test_exact_two_parent_reference_chain_records_shared_strata() -> None:
     parent_mesh, parent_geometry, parent_embedding = _two_adjacent_hexes()
-    target_mesh, target_geometry, maps = _target_partition(
-        parent_mesh, parent_geometry
-    )
+    target_mesh, target_geometry, maps = _target_partition(parent_mesh, parent_geometry)
 
     certificate = certify_reference_chain_embedding(
         parent_mesh,
@@ -352,14 +348,17 @@ def test_exact_two_parent_reference_chain_records_shared_strata() -> None:
         for premise in premises
         if premise.target_entity_dimension > 0
     )
-    assert certificate.revalidate(
-        parent_mesh,
-        parent_geometry,
-        target_mesh,
-        target_geometry,
-        maps,
-        parent_embedding,
-    ).certificate_id == certificate.certificate_id
+    assert (
+        certificate.revalidate(
+            parent_mesh,
+            parent_geometry,
+            target_mesh,
+            target_geometry,
+            maps,
+            parent_embedding,
+        ).certificate_id
+        == certificate.certificate_id
+    )
 
 
 def test_mixed_hexahedron_prism_target_chain_is_certified() -> None:
@@ -446,9 +445,7 @@ def test_duplicated_target_strata_cannot_certify_shared_parent_strata(
 
 def test_duck_typed_parent_certificate_is_rejected() -> None:
     parent_mesh, parent_geometry, _ = _two_adjacent_hexes()
-    target_mesh, target_geometry, maps = _target_partition(
-        parent_mesh, parent_geometry
-    )
+    target_mesh, target_geometry, maps = _target_partition(parent_mesh, parent_geometry)
 
     class FakeParentCertificate:
         status = "certified"
@@ -489,9 +486,7 @@ def test_wrong_concrete_parent_certificate_is_rejected() -> None:
     assert wrong_validity.all_certified
     assert wrong_embedding.status == "certified", wrong_embedding.findings
 
-    target_mesh, target_geometry, maps = _target_partition(
-        parent_mesh, parent_geometry
-    )
+    target_mesh, target_geometry, maps = _target_partition(parent_mesh, parent_geometry)
     certificate = certify_reference_chain_embedding(
         parent_mesh,
         parent_geometry,
