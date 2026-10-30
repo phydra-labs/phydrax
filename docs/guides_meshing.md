@@ -778,6 +778,16 @@ refinement transition, then certifies parent-volume partitions and boundary
 subdivision; the certificate, including its premise, round-trips through the
 model archive. Mapped restriction separately proves an exact common subcomplex.
 
+Affine periodic quotients may be partially periodic or rotational: a
+translational lattice of any rank up to the ambient dimension (for example, a
+z-periodic channel in 3D or an x-periodic strip in 2D) or a commuting proper
+`PeriodicIsometryGroup`, such as a quarter-turn wedge, including vertices on a
+fixed rotation axis. The exact image frame enumerates group actions only along
+periodic directions, every lifted triangle or tetrahedron is checked against
+each overlapping image, and the nonperiodic directions are closed by the
+quotient's oriented physical boundary. A mesh that wraps the quotient twice
+overlaps its own image and is refused as violated.
+
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
 admits exact screw generators whose finite linear-order power is a nonzero
