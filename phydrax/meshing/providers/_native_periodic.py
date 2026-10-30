@@ -156,6 +156,11 @@ class _PeriodicGraphMigrationPayload(TypedDict):
     source_points: list[_PeriodicGraphSourcePointPayload]
 
 
+class _PeriodicHaloCellPayload(TypedDict):
+    cell: _PeriodicGraphCellPayload
+    source_points: list[_PeriodicGraphSourcePointPayload]
+
+
 class _OwnerLocalPeriodicMeshAuthority(NamedTuple):
     face_coverage_id: str
     local_cell_faces: _OwnerLocalPeriodicFaceRows
@@ -5393,6 +5398,47 @@ def _owner_local_periodic_delaunay_neighbor_halo(
             "neighbor_weights": [],
         }
 
+    # Halo cells reference authored sites outside a receiver's support bank
+    # (for example after graph migration); each response carries their
+    # canonical sender-independent rows with the authored owner rank.
+    bank_point_ids = np.asarray(candidate["point_ids"], dtype=np.int64)
+    bank_points = np.ascontiguousarray(
+        np.asarray(candidate["points"], dtype=np.float64).reshape(
+            (bank_point_ids.size, dimension)
+        )
+    )
+    bank_owner_ranks = np.asarray(candidate["point_owner_ranks"], dtype=np.int32)
+    source_point_bank: dict[int, _PeriodicGraphSourcePointPayload] = {
+        int(identifier): {
+            "point_id": int(identifier),
+            "owner_rank": int(owner),
+            "coordinate_bits": [int(value) for value in bits],
+        }
+        for identifier, owner, bits in zip(
+            bank_point_ids.tolist(),
+            bank_owner_ranks.tolist(),
+            bank_points.view(np.uint64).tolist(),
+            strict=True,
+        )
+    }
+
+    def referenced_source_points(
+        cell: _PeriodicGraphCellPayload, /
+    ) -> list[_PeriodicGraphSourcePointPayload]:
+        identifiers = set(int(value) for value in cell["key_source_ids"])
+        for vertex in cell["vertices"]:
+            identifiers.add(int(vertex["source_id"]))
+            ancestry = vertex["coordinate_ancestry"]
+            if ancestry is not None:
+                identifiers.update(int(value) for value in ancestry["source_ids"])
+        absent = sorted(identifiers.difference(source_point_bank))
+        if absent:
+            raise ValueError(
+                "Periodic neighbor-cell owner lacks referenced source points "
+                f"{absent[:8]}."
+            )
+        return [source_point_bank[identifier] for identifier in sorted(identifiers)]
+
     outgoing_requests = [
         np.asarray(sorted(missing_by_owner.get(owner, ())), dtype=np.int64).reshape(
             (-1, 1)
@@ -5417,7 +5463,11 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                 local_error = "Periodic neighbor-cell owner lacks its exact cell row."
                 continue
             try:
-                payload = cell_payload(row, int(requester))
+                cell = cell_payload(row, int(requester))
+                payload: _PeriodicHaloCellPayload = {
+                    "cell": cell,
+                    "source_points": referenced_source_points(cell),
+                }
                 raw = json.dumps(
                     payload,
                     sort_keys=True,
@@ -5486,10 +5536,19 @@ def _owner_local_periodic_delaunay_neighbor_halo(
         "coordinate_ancestry",
     }
     incoming_cells: dict[int, _PeriodicGraphCellPayload] = {}
+    resident_source_points = dict(source_point_bank)
     local_error = None
     for owner, bank in incoming_payloads.items():
         try:
-            records = decode_payloads(bank)
+            responses = decode_payloads(bank)
+            if any(
+                set(response) != {"cell", "source_points"}
+                or not isinstance(response["cell"], dict)
+                or not isinstance(response["source_points"], list)
+                for response in responses
+            ):
+                raise ValueError("Neighbor-cell response violates its exact schema.")
+            records = [response["cell"] for response in responses]
             expected = set(
                 int(value) for value in outgoing_requests[owner].reshape(-1).tolist()
             )
@@ -5513,6 +5572,28 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                 incoming_cells[int(record["cell_id"])] = cast(
                     _PeriodicGraphCellPayload, record
                 )
+            for response in responses:
+                for point in response["source_points"]:
+                    if (
+                        not isinstance(point, dict)
+                        or set(point) != {"point_id", "owner_rank", "coordinate_bits"}
+                        or not isinstance(point["coordinate_bits"], list)
+                        or len(point["coordinate_bits"]) != dimension
+                        or not 0 <= int(point["owner_rank"]) < owner_count
+                    ):
+                        raise ValueError(
+                            "Neighbor-cell source-point row violates its exact schema."
+                        )
+                    identifier = int(point["point_id"])
+                    previous = resident_source_points.get(identifier)
+                    if previous is not None and previous != point:
+                        raise ValueError(
+                            "Periodic neighbor cells disagree on an authored source "
+                            f"point ({identifier})."
+                        )
+                    resident_source_points[identifier] = cast(
+                        _PeriodicGraphSourcePointPayload, point
+                    )
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
     _owner_group_fail_if_any(
@@ -5918,6 +5999,48 @@ def _owner_local_periodic_delaunay_neighbor_halo(
     _owner_group_fail_if_any(
         local_error, execution_group, axis_name, "periodic neighbor halo materialization"
     )
+    from ._native_periodic_power import _owner_local_periodic_site_weights_for_support
+
+    union_ids = np.asarray(sorted(resident_source_points), dtype=np.int64)
+    union_owner_ranks = np.asarray(
+        [resident_source_points[int(value)]["owner_rank"] for value in union_ids],
+        dtype=np.int32,
+    )
+    union_site_weights = _owner_local_periodic_site_weights_for_support(
+        source,
+        union_ids,
+        union_owner_ranks,
+        rank,
+        execution_group,
+        axis_name=f"{axis_name}_halo_site_weights",
+    )
+    if union_ids.size == bank_point_ids.size:
+        return
+    union_points = (
+        np.asarray(
+            [
+                resident_source_points[int(value)]["coordinate_bits"]
+                for value in union_ids
+            ],
+            dtype=np.uint64,
+        )
+        .reshape((-1, dimension))
+        .view(np.float64)
+    )
+    # Halo-only sites are non-owned support of this view; their owner ranks are
+    # the authored owners carried by the sending cell owner.
+    mesh_data["expanded_source_authority"] = NativePeriodicSource(
+        PeriodicPointOrbits(source.domain.cell, union_points, union_ids),
+        source.source_id,
+        source.source_revision,
+        site_weights=union_site_weights,
+        point_owner_ranks=union_owner_ranks,
+    )
+    # The published view binds its source rows to this same unioned bank.
+    candidate["points"] = union_points
+    candidate["point_ids"] = union_ids
+    candidate["point_owner_ranks"] = union_owner_ranks
+    candidate["source_owned"] = union_owner_ranks == rank
 
 
 def _owner_local_periodic_mesh_authority(
@@ -9165,6 +9288,132 @@ def _repartition_owner_local_periodic_assembly(
     )
 
 
+def _owner_local_periodic_adaptive_target(
+    adaptive_execution: OwnerLocalPeriodicAdaptiveExecution,
+    source_coordinate_stencil: VertexInterpolationStencil | None,
+    exact_vertex_coordinate_offsets: tuple[tuple[Fraction, ...], ...] | None,
+    coordinate_root_bank: tuple[tuple[int, tuple[Fraction, ...]], ...],
+    source: NativePeriodicSource,
+    candidate: dict[str, Any],
+    source_entry: CompositionEntry,
+    source_content_id: str,
+    coordinate_contract_id: str,
+    specification_id: str,
+    route: str,
+    source_map_id: str | None,
+    source_context_id: str | None,
+    rank: int,
+    execution_group: ExecutionGroup,
+    periodic_cell: PeriodicCell,
+    /,
+) -> tuple[
+    dict[str, Any],
+    _OwnerLocalPeriodicMeshAuthority,
+    VertexInterpolationStencil | None,
+    tuple[tuple[Fraction, ...], ...] | None,
+]:
+    """Accept one size-controlled adaptation and bind its exact target authority."""
+    from .._distribution import _owner_group_fail_if_any
+
+    local_error = adaptive_execution.refusal
+    if local_error is None and not adaptive_execution.size_evidence.compliant:
+        local_error = "Periodic Delaunay target does not satisfy its exact size controls."
+    _owner_group_fail_if_any(
+        local_error,
+        execution_group,
+        "periodic_owner_adaptation_acceptance",
+        "periodic exact size compliance",
+    )
+    target_error = None
+    target_mesh_data: dict[str, Any]
+    try:
+        target_mesh_data = _owner_local_periodic_adaptive_mesh_data(
+            adaptive_execution,
+            periodic_cell,
+            rank,
+        )
+    except Exception as error:
+        target_error = f"{type(error).__name__}: {error}"
+        target_mesh_data = {}
+    _owner_group_fail_if_any(
+        target_error,
+        execution_group,
+        "periodic_owner_adaptation_target",
+        "periodic target local mesh",
+    )
+    ancestry_error = None
+    if adaptive_execution.part_transition is None:
+        if np.asarray(target_mesh_data["vertex_ids"]).size:
+            ancestry_error = "Periodic target vertices lack a committed exact transition."
+        source_coordinate_stencil = None
+        exact_vertex_coordinate_offsets = None
+    else:
+        try:
+            (
+                source_coordinate_stencil,
+                exact_vertex_coordinate_offsets,
+            ) = _compose_owner_local_periodic_coordinate_ancestry(
+                source_coordinate_stencil,
+                ()
+                if exact_vertex_coordinate_offsets is None
+                else exact_vertex_coordinate_offsets,
+                adaptive_execution.part_transition,
+            )
+            expected_coordinates = tuple(
+                tuple(point) for point in target_mesh_data["exact_vertex_coordinates"]
+            )
+            replayed_coordinates = (
+                ()
+                if source_coordinate_stencil is None
+                else _evaluate_owner_local_periodic_coordinate_ancestry(
+                    source_coordinate_stencil,
+                    exact_vertex_coordinate_offsets,
+                    coordinate_root_bank,
+                )
+            )
+            if replayed_coordinates != expected_coordinates:
+                raise ValueError(
+                    "Exact periodic midpoint ancestry differs from native target coordinates."
+                )
+            if source_coordinate_stencil is None:
+                exact_vertex_coordinate_offsets = None
+        except Exception as error:
+            ancestry_error = f"{type(error).__name__}: {error}"
+            source_coordinate_stencil = None
+            exact_vertex_coordinate_offsets = None
+    _owner_group_fail_if_any(
+        ancestry_error,
+        execution_group,
+        "periodic_owner_adaptation_ancestry",
+        "periodic exact midpoint ancestry",
+    )
+    target_mesh_data["source_coordinate_stencil"] = source_coordinate_stencil
+    target_mesh_data["exact_vertex_coordinate_offsets"] = exact_vertex_coordinate_offsets
+    mesh_authority = _owner_local_periodic_mesh_authority(
+        target_mesh_data,
+        source,
+        candidate,
+        source_entry,
+        source_content_id,
+        coordinate_contract_id,
+        specification_id,
+        route,
+        source_map_id,
+        source_context_id,
+        rank,
+        execution_group,
+        "periodic_owner_adaptation_target",
+    )
+    # Neighbor-halo closure rebinds the cumulative ancestry to the expanded
+    # resident vertex bank.
+    return (
+        target_mesh_data,
+        mesh_authority,
+        target_mesh_data["source_coordinate_stencil"],
+        target_mesh_data["exact_vertex_coordinate_offsets"],
+    )
+
+
 def _owner_local_periodic_assembly_from_state(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
@@ -9580,8 +9829,6 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                         "Owner-local periodic size controls must bind the complete "
                         "authored fundamental-domain scope."
                     )
-            if not controls:
-                local_error = "Owner-local periodic adaptation requires a whole-domain uniform size control."
             _owner_group_fail_if_any(
                 local_error,
                 execution_group,
@@ -9912,132 +10159,61 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                 local_periodic_candidate.candidate_id
             )
             candidate["periodic_shell_certificate"] = shell_certificate
-            from .._device_adaptation import _adapt_owner_local_periodic
+            # A base specification without size controls publishes the exact
+            # owner-local Delaunay candidate; size controls request adaptation.
+            if controls:
+                from .._device_adaptation import _adapt_owner_local_periodic
 
-            adaptive_execution = _adapt_owner_local_periodic(
-                local_periodic_candidate,
-                self.specification,
-                execution_group,
-                rank,
-                axis_name="periodic_owner_adaptation",
-                graph_partition_plan=graph_partition_plan,
-            )
-            local_error = adaptive_execution.refusal
-            if local_error is None and not adaptive_execution.size_evidence.compliant:
-                local_error = (
-                    "Periodic Delaunay target does not satisfy its exact size controls."
-                )
-            _owner_group_fail_if_any(
-                local_error,
-                execution_group,
-                "periodic_owner_adaptation_acceptance",
-                "periodic exact size compliance",
-            )
-            target_error = None
-            try:
-                target_mesh_data = _owner_local_periodic_adaptive_mesh_data(
-                    adaptive_execution,
-                    domain.cell,
+                adaptive_execution = _adapt_owner_local_periodic(
+                    local_periodic_candidate,
+                    self.specification,
+                    execution_group,
                     rank,
+                    axis_name="periodic_owner_adaptation",
+                    graph_partition_plan=graph_partition_plan,
                 )
-            except Exception as error:
-                target_error = f"{type(error).__name__}: {error}"
-                target_mesh_data = {}
-            _owner_group_fail_if_any(
-                target_error,
-                execution_group,
-                "periodic_owner_adaptation_target",
-                "periodic target local mesh",
-            )
-            ancestry_error = None
-            if adaptive_execution.part_transition is None:
-                if np.asarray(target_mesh_data["vertex_ids"]).size:
-                    ancestry_error = (
-                        "Periodic target vertices lack a committed exact transition."
-                    )
-                source_coordinate_stencil = None
-                exact_vertex_coordinate_offsets = None
-            else:
-                try:
-                    (
-                        source_coordinate_stencil,
-                        exact_vertex_coordinate_offsets,
-                    ) = _compose_owner_local_periodic_coordinate_ancestry(
-                        source_coordinate_stencil,
-                        ()
-                        if exact_vertex_coordinate_offsets is None
-                        else exact_vertex_coordinate_offsets,
-                        adaptive_execution.part_transition,
-                    )
-                    expected_coordinates = tuple(
-                        tuple(point)
-                        for point in target_mesh_data["exact_vertex_coordinates"]
-                    )
-                    replayed_coordinates = (
-                        ()
-                        if source_coordinate_stencil is None
-                        else _evaluate_owner_local_periodic_coordinate_ancestry(
-                            source_coordinate_stencil,
-                            exact_vertex_coordinate_offsets,
-                            coordinate_root_bank,
-                        )
-                    )
-                    if replayed_coordinates != expected_coordinates:
-                        raise ValueError(
-                            "Exact periodic midpoint ancestry differs from native target coordinates."
-                        )
-                    if source_coordinate_stencil is None:
-                        exact_vertex_coordinate_offsets = None
-                except Exception as error:
-                    ancestry_error = f"{type(error).__name__}: {error}"
-                    source_coordinate_stencil = None
-                    exact_vertex_coordinate_offsets = None
-            _owner_group_fail_if_any(
-                ancestry_error,
-                execution_group,
-                "periodic_owner_adaptation_ancestry",
-                "periodic exact midpoint ancestry",
-            )
-            target_mesh_data["source_coordinate_stencil"] = source_coordinate_stencil
-            target_mesh_data["exact_vertex_coordinate_offsets"] = (
-                exact_vertex_coordinate_offsets
-            )
-            mesh_data = target_mesh_data
-            mesh_authority = _owner_local_periodic_mesh_authority(
-                mesh_data,
-                self.source,
-                candidate,
-                source_entry,
-                source_content_id,
-                self.coordinate_contract.spatial_id,
-                self.specification.specification_id,
-                owner_local_route,
-                source_map_id,
-                source_context_id,
-                rank,
-                execution_group,
-                "periodic_owner_adaptation_target",
-            )
-            # Neighbor-halo closure rebinds the cumulative ancestry to the
-            # expanded resident vertex bank.
-            source_coordinate_stencil = mesh_data["source_coordinate_stencil"]
-            exact_vertex_coordinate_offsets = mesh_data["exact_vertex_coordinate_offsets"]
-            face_coverage_id = mesh_authority.face_coverage_id
-            owner_directory = mesh_authority.owner_directory
-            shell_certificate = dict(candidate["periodic_shell_certificate"])
-            shell_certificate["exact_fundamental_volume"] = (
-                mesh_authority.exact_volume.numerator,
-                mesh_authority.exact_volume.denominator,
-            )
-            shell_certificate["expected_fundamental_volume"] = (
-                mesh_authority.expected_volume.numerator,
-                mesh_authority.expected_volume.denominator,
-            )
-            shell_certificate["quotient_face_coverage_id"] = face_coverage_id
-            shell_certificate["size_evidence_id"] = (
-                adaptive_execution.size_evidence.evidence_id
-            )
-            candidate["periodic_shell_certificate"] = shell_certificate
+                (
+                    mesh_data,
+                    mesh_authority,
+                    source_coordinate_stencil,
+                    exact_vertex_coordinate_offsets,
+                ) = _owner_local_periodic_adaptive_target(
+                    adaptive_execution,
+                    source_coordinate_stencil,
+                    exact_vertex_coordinate_offsets,
+                    coordinate_root_bank,
+                    self.source,
+                    candidate,
+                    source_entry,
+                    source_content_id,
+                    self.coordinate_contract.spatial_id,
+                    self.specification.specification_id,
+                    owner_local_route,
+                    source_map_id,
+                    source_context_id,
+                    rank,
+                    execution_group,
+                    domain.cell,
+                )
+                final_source = mesh_data.get("expanded_source_authority", final_source)
+                source_authority_value = final_source
+                source_context_id = final_source.binding_id
+                face_coverage_id = mesh_authority.face_coverage_id
+                owner_directory = mesh_authority.owner_directory
+                shell_certificate = dict(candidate["periodic_shell_certificate"])
+                shell_certificate["exact_fundamental_volume"] = (
+                    mesh_authority.exact_volume.numerator,
+                    mesh_authority.exact_volume.denominator,
+                )
+                shell_certificate["expected_fundamental_volume"] = (
+                    mesh_authority.expected_volume.numerator,
+                    mesh_authority.expected_volume.denominator,
+                )
+                shell_certificate["quotient_face_coverage_id"] = face_coverage_id
+                shell_certificate["size_evidence_id"] = (
+                    adaptive_execution.size_evidence.evidence_id
+                )
+                candidate["periodic_shell_certificate"] = shell_certificate
         else:
             if graph_partition_plan is not None:
                 from .._distribution import OwnerLocalGraphMigrationEvidence
