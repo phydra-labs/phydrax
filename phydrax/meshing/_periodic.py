@@ -936,9 +936,7 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
                 ("simplex:", "triangle", "tetrahedron")
             )
             permutation = None
-            for order, orientation in _orientation_orders(
-                vertices.size, simplex=simplex
-            ):
+            for order, orientation in _orientation_orders(vertices.size, simplex=simplex):
                 # Same moving-vertex anchor convention as the quotient keys.
                 candidate, _ = _interleaved_key(
                     identifiers, exponents, fixed_entities, order, orders
@@ -1565,8 +1563,15 @@ def periodic_topology_after_edit(
     ``vertex_orbit_keys``/``vertex_windings`` plus ``source_entity_degree``.
     Each explicit key starts with a source quotient entity ID; remaining columns
     carry source-owned ancestry such as a boundary-layer level. Its winding must
-    occur on that source entity orbit. Coordinates only validate the resulting
-    identity through the canonical PeriodicMeshTopology constructor.
+    occur on that source entity orbit.
+
+    A producer that owns the orbit identity of every target vertex (for example
+    an orbit-locked local metric kernel whose generated vertices are exact deck
+    images of one root) passes keys and windings without ``source_entity_degree``.
+    Equal keys then form one vertex orbit and windings are the absolute deck
+    exponents of each member; located interpolation stencils are not orbit
+    evidence in this mode. Coordinates validate the resulting identity bit for
+    bit through the canonical PeriodicMeshTopology constructor in every mode.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError(
@@ -1634,30 +1639,33 @@ def periodic_topology_after_edit(
         tuple[int, ...] | tuple[tuple[int, tuple[int, ...], int, int], ...]
     ] = []
     anchors = np.empty((target_ids.size, orders.size), dtype=np.int64)
-    explicit = (
-        vertex_orbit_keys is not None
-        or vertex_windings is not None
-        or source_entity_degree is not None
-    )
+    explicit = vertex_orbit_keys is not None or vertex_windings is not None
+    if source_entity_degree is not None and not explicit:
+        raise ValueError(
+            "A source entity degree requires explicit periodic vertex orbit keys."
+        )
     if explicit:
         if (
             vertex_orbit_keys is None
             or vertex_windings is None
-            or source_entity_degree is None
-            or isinstance(source_entity_degree, bool)
-            or not isinstance(source_entity_degree, (int, np.integer))
-            or not 0 <= int(source_entity_degree) <= source.topological_dimension
+            or (
+                source_entity_degree is not None
+                and (
+                    isinstance(source_entity_degree, bool)
+                    or not isinstance(source_entity_degree, (int, np.integer))
+                    or not 0 <= int(source_entity_degree) <= source.topological_dimension
+                )
+            )
         ):
             raise ValueError(
-                "Explicit periodic vertex ancestry requires orbit keys, windings, and a source entity degree."
+                "Explicit periodic vertex ancestry requires orbit keys, windings, and an optional valid source entity degree."
             )
-        degree = int(source_entity_degree)
         keys = np.asarray(vertex_orbit_keys)
         windings = np.asarray(vertex_windings)
         if (
             keys.ndim != 2
             or keys.shape[0] != target_ids.size
-            or keys.shape[1] < 2
+            or keys.shape[1] < (2 if source_entity_degree is not None else 1)
             or keys.dtype.kind not in "iu"
             or windings.shape != (target_ids.size, orders.size)
             or windings.dtype.kind not in "iu"
@@ -1679,6 +1687,10 @@ def periodic_topology_after_edit(
             raise ValueError(
                 "Periodic vertex ancestry keys must be nonnegative source identities."
             )
+        signatures = [tuple(int(value) for value in row) for row in keys]
+        anchors[:] = windings
+    if explicit and source_entity_degree is not None:
+        degree = int(source_entity_degree)
         source_entity_ids = np.asarray(
             source_topology.quotient.entity_sets[degree].entity_ids, dtype=np.int64
         )
@@ -1720,9 +1732,7 @@ def periodic_topology_after_edit(
             raise ValueError(
                 "Target vertex winding is absent from its source entity orbit."
             )
-        signatures = [tuple(int(value) for value in row) for row in keys]
-        anchors[:] = windings
-    else:
+    elif not explicit:
         root_ids = source_ids[representatives]
         weights = np.asarray(stencil.weights, dtype=np.float64)
         retained_positions = np.minimum(

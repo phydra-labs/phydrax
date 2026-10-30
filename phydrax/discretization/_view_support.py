@@ -3065,6 +3065,7 @@ def _materialize_owner_local_periodic_target(
 ) -> _OwnerLocalPeriodicTargetMaterialization:
     from ..meshing._lineage import VertexInterpolationStencil
     from ._exact_power_geometry import ExactPowerCellGeometrySource
+    from ._periodic_cell import PeriodicCell
     from ._periodic_exact import identification_orders, reduce_periodic_exponents
 
     if not isinstance(view, OwnerLocalCellGeometry):

@@ -4085,6 +4085,7 @@ def _partition_owner_local_periodic_power_cells(
 ) -> DistributedGraphPartitionResult:
     import jax
 
+    from ..._execution_runtime import ExecutionGroup
     from ...graph._distributed_partition import (
         DistributedGraphPartitionResult,
         DistributedWeightedCSRGraph,
@@ -4918,8 +4919,10 @@ def _owner_local_periodic_delaunay_view_mesh_data(
     periodic_cell: PeriodicCell,
     /,
 ) -> dict[str, Any]:
+    from ...discretization._periodic_cell import PeriodicCell
     from ...discretization._view_support import (
         _materialize_owner_local_periodic_target,
+        OwnerLocalCellGeometry,
     )
     from .._periodic import PeriodicPointOrbits
 
@@ -4977,36 +4980,76 @@ def _owner_local_periodic_delaunay_view_mesh_data(
             np.asarray(view.cell_ids, dtype=np.int64), cell_ids
         )
     else:
-        accepted_cell_measure_match = (
-            tuple(view.adaptive_result.target_cell_measures) == exact_cell_measures
+        # The adaptive result binds this owner's target cells; the compact view
+        # adds read-only halo cells around them.
+        owned_rows = np.flatnonzero(np.asarray(view.owned, dtype=np.bool_))
+        measure_by_id = dict(
+            zip(
+                (int(value) for value in view.adaptive_result.target_cell_ids),
+                tuple(view.adaptive_result.target_cell_measures),
+                strict=True,
+            )
         )
-        accepted_cell_id_match = tuple(view.adaptive_result.target_cell_ids) == tuple(
-            cell_ids.tolist()
+        accepted_cell_id_match = len(measure_by_id) == owned_rows.size and set(
+            measure_by_id
+        ) == {int(cell_ids[row]) for row in owned_rows}
+        accepted_cell_measure_match = accepted_cell_id_match and all(
+            measure_by_id[int(cell_ids[row])] == exact_cell_measures[int(row)]
+            for row in owned_rows
         )
     if (
         len(exact_cell_measures) != cell_ids.size
         or not accepted_cell_id_match
         or not accepted_cell_measure_match
-        or materialized.exact_vertex_coordinates != expected_exact_vertices
-        or not np.array_equal(
+    ):
+        adaptive_ids = (
+            None
+            if view.adaptive_result is None
+            else np.asarray(view.adaptive_result.target_cell_ids, dtype=np.int64)
+        )
+        raise ValueError(
+            "Stored periodic target cells differ from their exact cell measures "
+            f"({len(exact_cell_measures)} measures for {cell_ids.size} cells; "
+            f"cell IDs match: {accepted_cell_id_match}; "
+            f"measures match: {accepted_cell_measure_match}; adaptive target "
+            f"cells: {None if adaptive_ids is None else adaptive_ids.tolist()}; "
+            f"view cells: {cell_ids.tolist()})."
+        )
+    if materialized.exact_vertex_coordinates != expected_exact_vertices or not (
+        np.array_equal(
             materialized.vertex_coordinates,
             np.asarray(view.vertex_coordinates),
         )
-        or (
-            materialized.source_coordinate_stencil is None
-            and view.source_coordinate_stencil is not None
-        )
-        or (
-            materialized.source_coordinate_stencil is not None
-            and (
-                view.source_coordinate_stencil is None
-                or materialized.source_coordinate_stencil.stencil_id
-                != view.source_coordinate_stencil.stencil_id
-            )
-        )
-        or materialized.exact_vertex_coordinate_offsets
-        != view.exact_vertex_coordinate_offsets
     ):
+        raise ValueError(
+            "Stored periodic target vertices differ from their exact coordinates."
+        )
+    view_stencil = view.source_coordinate_stencil
+    view_offsets = view.exact_vertex_coordinate_offsets
+    if vertex_ids.size == 0:
+        # A real empty owner has vacuous coordinate ancestry: it may store
+        # either no ancestry or an ancestry over zero target rows.
+        ancestry_matches = (
+            materialized.source_coordinate_stencil is None
+            and (
+                view_stencil is None
+                or np.asarray(view_stencil.target_global_ids).size == 0
+            )
+            and not materialized.exact_vertex_coordinate_offsets
+            and not view_offsets
+        )
+    else:
+        ancestry_matches = (
+            (materialized.source_coordinate_stencil is None) == (view_stencil is None)
+            and (
+                view_stencil is None
+                or materialized.source_coordinate_stencil is None
+                or materialized.source_coordinate_stencil.stencil_id
+                == view_stencil.stencil_id
+            )
+            and materialized.exact_vertex_coordinate_offsets == view_offsets
+        )
+    if not ancestry_matches:
         raise ValueError(
             "Stored periodic target differs from its exact coordinate ancestry."
         )
@@ -9917,6 +9960,10 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                     )
                 source_context_id = context.context_id
             mesh_data = _owner_local_periodic_power_mesh_data(power, rank)
+            # Power cells are the authored sites' Laguerre cells; they carry no
+            # Delaunay coordinate ancestry.
+            source_coordinate_stencil = None
+            exact_vertex_coordinate_offsets = None
         cell_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)
         cell_owner_ranks = np.asarray(mesh_data["cell_owner_ranks"], dtype=np.int32)
         if owner_local_route == "periodic_delaunay":
@@ -9963,27 +10010,30 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
             execution_group,
             "periodic_owner_acceptance",
         )
-        final_source = mesh_data.get("expanded_source_authority", final_source)
-        source_authority_value = final_source
-        source_context_id = final_source.binding_id
-        final_domain = final_source.domain
-        source_coordinate_stencil = mesh_data.get(
-            "source_coordinate_stencil", source_coordinate_stencil
-        )
-        exact_vertex_coordinate_offsets = mesh_data.get(
-            "exact_vertex_coordinate_offsets", exact_vertex_coordinate_offsets
-        )
-        point_ids = np.asarray(final_domain.point_ids, dtype=np.int64)
-        point_coordinates = np.asarray(final_domain.points, dtype=np.float64)
-        coordinate_root_bank = tuple(
-            (
-                int(point_ids[row]),
-                tuple(
-                    Fraction.from_float(float(value)) for value in point_coordinates[row]
-                ),
+        if owner_local_route == "periodic_delaunay":
+            # The Delaunay neighbor halo may have grown the resident source bank.
+            final_source = mesh_data.get("expanded_source_authority", final_source)
+            source_authority_value = final_source
+            source_context_id = final_source.binding_id
+            final_domain = final_source.domain
+            source_coordinate_stencil = mesh_data.get(
+                "source_coordinate_stencil", source_coordinate_stencil
             )
-            for row in np.argsort(point_ids, kind="stable")
-        )
+            exact_vertex_coordinate_offsets = mesh_data.get(
+                "exact_vertex_coordinate_offsets", exact_vertex_coordinate_offsets
+            )
+            point_ids = np.asarray(final_domain.point_ids, dtype=np.int64)
+            point_coordinates = np.asarray(final_domain.points, dtype=np.float64)
+            coordinate_root_bank = tuple(
+                (
+                    int(point_ids[row]),
+                    tuple(
+                        Fraction.from_float(float(value))
+                        for value in point_coordinates[row]
+                    ),
+                )
+                for row in np.argsort(point_ids, kind="stable")
+            )
         face_coverage_id = mesh_authority.face_coverage_id
         owner_directory = mesh_authority.owner_directory
         shell_certificate = dict(candidate["periodic_shell_certificate"])
