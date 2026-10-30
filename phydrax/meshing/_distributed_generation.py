@@ -14,8 +14,8 @@ semantic identities without gathering a global mesh.
 
 from __future__ import annotations
 
+import math
 import struct
-import sys
 from fractions import Fraction
 from itertools import combinations
 from typing import final, Literal
@@ -391,79 +391,81 @@ def prepare_distributed_surface_generation(
     )
 
 
+type _PoleSamples = dict[
+    tuple[int, int, int], tuple[native_surface_owner._PoleChartSample, ...]
+]
+
+
+def _local_patches(
+    prepared: PreparedDistributedSurfaceGeneration,
+    local_patch_rows: tuple[int, ...],
+    /,
+) -> tuple[tuple[int, ...], np.ndarray]:
+    surface = prepared.surface
+    patches = tuple(surface.selected_patches[row] for row in local_patch_rows)
+    sizes = np.asarray(
+        [float(surface.size_values[row]) for row in local_patch_rows],
+        dtype=np.float64,
+    )
+    return patches, sizes
+
+
 def _initial_curve_parameters(
     prepared: PreparedDistributedSurfaceGeneration,
     local_patch_rows: tuple[int, ...],
     /,
-) -> dict[int, set[Fraction]]:
+) -> tuple[dict[int, set[Fraction]], _PoleSamples]:
+    """Serial initial seam samples restricted to the curves this owner trims.
+
+    Curve chord sampling uses every selected incident patch size, so incident
+    owners derive identical initial samples; pole-ring samples of remote patches
+    arrive through the first steward reconciliation.
+    """
     surface = prepared.surface
-    local_patches = tuple(surface.selected_patches[row] for row in local_patch_rows)
-    local_curves = native_surface_owner._trim_curves(surface.domain, local_patches)
-    sample_count = surface.schedule.minimum_edge_samples
-    baseline = {Fraction(index, sample_count - 1) for index in range(sample_count)}
-    result: dict[int, set[Fraction]] = {}
-    for curve in local_curves:
-        parameters = set(baseline)
-        source_curve = surface.domain.curves[curve]
-        if source_curve.start == source_curve.end:
-            parameters.add(Fraction(1, 2))
-        result[curve] = parameters
-    return result
+    patches, sizes = _local_patches(prepared, local_patch_rows)
+    if not patches:
+        return {}, {}
+    local_curves = native_surface_owner._trim_curves(surface.domain, patches)
+    parameters = native_surface_owner._curve_parameters(
+        surface.domain,
+        local_curves,
+        surface.selected_patches,
+        surface.size_values,
+        surface.specification,
+        surface.schedule,
+    )
+    pole_samples = native_surface_owner._pole_sampling(
+        surface.domain,
+        patches,
+        sizes,
+        surface.specification,
+        surface.schedule,
+    )
+    native_surface_owner._integrate_pole_ring_parameters(
+        surface.domain, patches, pole_samples, parameters
+    )
+    return parameters, pole_samples
 
 
 def _generate_local_charts(
     prepared: PreparedDistributedSurfaceGeneration,
-    rank: int,
+    local_patch_rows: tuple[int, ...],
     parameters_by_curve: dict[int, set[Fraction]],
+    pole_samples: _PoleSamples,
     /,
-) -> tuple[
-    list[native_surface_owner._ChartMesh],
-    native_surface_owner._RefinedSurface | None,
-]:
+) -> list[native_surface_owner._ChartMesh]:
     surface = prepared.surface
-    local_rows = tuple(
-        row
-        for row, owner in enumerate(prepared.patch_owner_slots.tolist())
-        if owner == rank
-    )
-    if not local_rows:
-        return [], None
-    domain = surface.domain
-    patches = tuple(surface.selected_patches[row] for row in local_rows)
-    size_by_patch = {
-        patch: float(size)
-        for patch, size in zip(
-            surface.selected_patches,
-            surface.size_values.tolist(),
-            strict=True,
-        )
-    }
-    local_sizes = np.asarray(
-        [size_by_patch[patch] for patch in patches], dtype=np.float64
-    )
-    print(f"surface-local rank={rank} pole-start", file=sys.stderr, flush=True)
-    pole_samples = native_surface_owner._pole_sampling(
-        domain,
-        patches,
-        local_sizes,
-        surface.specification,
-        surface.schedule,
-    )
-    print(f"surface-local rank={rank} pole-complete", file=sys.stderr, flush=True)
-    native_surface_owner._integrate_pole_ring_parameters(
-        domain, patches, pole_samples, parameters_by_curve
-    )
+    patches, _ = _local_patches(prepared, local_patch_rows)
     quality_angle = surface.schedule.quality_angle_degrees
     if surface.specification.quality_target is not None:
         quality_angle = max(
             quality_angle,
-            float(np.rad2deg(surface.specification.quality_target.minimum_angle)),
+            math.degrees(surface.specification.quality_target.minimum_angle),
         )
     root_charts = native_surface_owner._surface_root_charts(surface.roots)
-    print(f"surface-local rank={rank} charts-start", file=sys.stderr, flush=True)
     charts = [
         native_surface_owner._make_chart_mesh(
-            domain,
+            surface.domain,
             patch,
             parameters_by_curve,
             pole_samples,
@@ -471,22 +473,12 @@ def _generate_local_charts(
         )
         for patch in patches
     ]
-    print(f"surface-local rank={rank} charts-complete", file=sys.stderr, flush=True)
     for chart in charts:
         native_surface_owner._split_chart_at_source_cells(
             chart,
             root_charts.get(chart.patch, ()),
         )
-    print(f"surface-local rank={rank} refine-start", file=sys.stderr, flush=True)
-    refined = native_surface_owner._refine_charts(
-        domain,
-        charts,
-        local_sizes,
-        surface.specification,
-        surface.schedule,
-    )
-    print(f"surface-local rank={rank} refine-complete", file=sys.stderr, flush=True)
-    return charts, refined
+    return charts
 
 
 type _CurveSampleRecord = tuple[int, Fraction, tuple[float, float, float]]
@@ -963,11 +955,19 @@ def execute_distributed_surface_initial(
     prepared: PreparedDistributedSurfaceGeneration,
     /,
 ) -> DistributedSurfaceConstruction:
-    """Generate owner-local patch charts and close every shared seam iteratively."""
+    """Generate owner-local patch charts and close every shared seam iteratively.
+
+    This is the serial chart fixed point executed per owner: every round first
+    unions the seam samples of all incident owners through the curve steward,
+    then regenerates the local charts from that common sample set. Physical
+    refinement never splits source-curve edges, so it runs once after the
+    seams are closed and reproduces the serial construction patch by patch.
+    """
     rank = _execution_rank(prepared.execution_group)
     domain = prepared.surface.domain
     local_patch_rows: tuple[int, ...] = ()
     local_parameters: dict[int, set[Fraction]] = {}
+    pole_samples: _PoleSamples = {}
     local_error: Exception | None = None
     try:
         domain.require_current(domain.source_id, domain.source_revision)
@@ -976,7 +976,9 @@ def execute_distributed_surface_initial(
             for row, owner in enumerate(prepared.patch_owner_slots.tolist())
             if owner == rank
         )
-        local_parameters = _initial_curve_parameters(prepared, local_patch_rows)
+        local_parameters, pole_samples = _initial_curve_parameters(
+            prepared, local_patch_rows
+        )
     except Exception as error:
         local_error = error
     _collective_error(
@@ -986,17 +988,42 @@ def execute_distributed_surface_initial(
         "distributed surface execution setup",
     )
     charts: list[native_surface_owner._ChartMesh] = []
-    refined: native_surface_owner._RefinedSurface | None = None
+    canonical_points: dict[int, dict[Fraction, tuple[float, float, float]]] = {}
 
     while True:
-        local_error: Exception | None = None
+        local_error = None
         try:
-            charts, refined = _generate_local_charts(
+            reconciled, canonical_points = _reconcile_curve_parameters(
                 prepared,
                 rank,
                 local_parameters,
             )
-            discovered = {curve: set() for curve in local_parameters}
+            if any(
+                not local_parameters[curve].issubset(reconciled[curve])
+                for curve in local_parameters
+            ):
+                raise ValueError("Shared-curve sample refinement must be monotone.")
+            local_parameters = reconciled
+        except Exception as error:
+            local_error = error
+        _collective_error(
+            local_error,
+            prepared.execution_group,
+            f"{prepared.axis_name}_seam_reconciliation_failure",
+            "shared-seam reconciliation",
+        )
+        local_error = None
+        discovered = local_parameters
+        try:
+            charts = _generate_local_charts(
+                prepared,
+                local_patch_rows,
+                local_parameters,
+                pole_samples,
+            )
+            discovered = {
+                curve: set(values) for curve, values in local_parameters.items()
+            }
             for chart in charts:
                 for (local_row, curve), parameter in chart.curve_parameters.items():
                     if local_row < 0 or curve not in discovered:
@@ -1004,63 +1031,21 @@ def execute_distributed_surface_initial(
                             "A local chart contains an unowned source-curve sample."
                         )
                     discovered[curve].add(parameter)
-            for curve, parameters in discovered.items():
+            for parameters in discovered.values():
                 if not {Fraction(0), Fraction(1)}.issubset(parameters):
                     raise ValueError(
                         "A local source-curve boundary lost an authored endpoint."
                     )
         except Exception as error:
             local_error = error
-            discovered = {
-                curve: set(values) for curve, values in local_parameters.items()
-            }
         _collective_error(
             local_error,
             prepared.execution_group,
             f"{prepared.axis_name}_chart_failure",
             "owner-local chart generation",
         )
-        next_parameters = local_parameters
-        canonical_points: dict[int, dict[Fraction, tuple[float, float, float]]] = {}
-        local_error = None
-        try:
-            next_parameters, canonical_points = _reconcile_curve_parameters(
-                prepared,
-                rank,
-                discovered,
-            )
-            _validate_refined_shared_coordinates(
-                prepared,
-                charts,
-                refined,
-                canonical_points,
-            )
-        except Exception as error:
-            local_error = error
-        _collective_error(
-            local_error,
-            prepared.execution_group,
-            f"{prepared.axis_name}_seam_validation_failure",
-            "shared-seam reconciliation",
-        )
-        local_error = None
-        try:
-            if any(
-                not local_parameters[curve].issubset(next_parameters[curve])
-                for curve in local_parameters
-            ):
-                raise ValueError("Shared-curve sample refinement must be monotone.")
-        except Exception as error:
-            local_error = error
-        _collective_error(
-            local_error,
-            prepared.execution_group,
-            f"{prepared.axis_name}_seam_monotonicity_failure",
-            "monotone shared-seam refinement",
-        )
         changed = any(
-            next_parameters[curve] != local_parameters[curve]
-            for curve in local_parameters
+            discovered[curve] != local_parameters[curve] for curve in local_parameters
         )
         changed_by_owner = np.asarray(
             _owner_group_allgather(
@@ -1070,22 +1055,49 @@ def execute_distributed_surface_initial(
             ),
             dtype=np.bool_,
         )
-        local_parameters = next_parameters
         if not np.any(changed_by_owner):
             break
+        local_parameters = discovered
+
+    refined: native_surface_owner._RefinedSurface | None = None
+    local_error = None
+    try:
+        if charts:
+            _, local_sizes = _local_patches(prepared, local_patch_rows)
+            refined = native_surface_owner._refine_charts(
+                domain,
+                charts,
+                local_sizes,
+                prepared.surface.specification,
+                prepared.surface.schedule,
+            )
+        _validate_refined_shared_coordinates(
+            prepared,
+            charts,
+            refined,
+            canonical_points,
+        )
+    except Exception as error:
+        local_error = error
+    _collective_error(
+        local_error,
+        prepared.execution_group,
+        f"{prepared.axis_name}_refinement_failure",
+        "owner-local physical refinement",
+    )
 
     construction: SurfaceConstruction | None = None
     vertex_ids: tuple[str, ...] = ()
     cell_ids: tuple[str, ...] = ()
     shared_curve_ids = np.empty((0,), dtype=np.int64)
-    local_error: Exception | None = None
+    local_error = None
     try:
         if refined is not None:
             quality = prepared.surface.specification.quality_target
             if (
                 quality is not None
                 and quality.hard
-                and refined.minimum_angle < float(np.rad2deg(quality.minimum_angle))
+                and refined.minimum_angle < math.degrees(quality.minimum_angle)
             ):
                 raise native_surface_owner._failure(
                     "owner-local physical surface triangles miss the hard minimum-angle target",

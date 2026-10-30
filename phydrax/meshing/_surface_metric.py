@@ -12,10 +12,12 @@ accepted UV edit with exact source-chart evaluations.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
+from itertools import combinations
 from typing import NamedTuple
 
 import jax
@@ -23,46 +25,50 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
 from .._fingerprint import canonical_fingerprint
+from .._geometry_predicates import PredicateMode
 from .._physical import SpatialCoordinateContract
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._coordinate_enclosure import add, axes, constant, scale
+from ..discretization._nested_reference_types import (
+    freeze_reference_chart_arguments,
+    ReferenceCellMapWitnesses,
+    validate_reference_cell_map_witnesses,
+)
 from ..discretization._periodic_cell import PeriodicCell
 from ..discretization._periodic_topology import PeriodicMeshTopology
+from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
 )
-from ..discretization._reference_cell import reference_cell_topology
-from ..discretization._coordinate_enclosure import add, axes, constant, scale
-from ..discretization._nested_reference_types import (
-    ReferenceCellMapWitnesses,
-    freeze_reference_chart_arguments,
-    validate_reference_cell_map_witnesses,
-)
+from ..geometry._meshing_domain import _PlacedSurfacePatch, MeshingDomain
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryQuery,
     SourceProjectionStatus,
 )
-from ..geometry._meshing_domain import MeshingDomain, _PlacedSurfacePatch
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.brep._patches import RevolutionSurface, SpherePatch
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ._association import GeometryAssociation
-from ._local_metric import LocalMetricEvidence, LocalMetricOutcome, execute_local_metric_adaptation
+from ._local_metric import (
+    execute_local_metric_adaptation,
+    LocalMetricEvidence,
+    LocalMetricOutcome,
+)
 from ._metric import _tensor_properties, interpolate_mesh_metric
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._topology_edit import (
-    CellTopologyEdit,
-    EntityRelations,
-    TopologyEditBlock,
     assemble_topology_edit,
+    CellTopologyEdit,
     entity_keys,
+    EntityRelations,
     key_rows,
+    TopologyEditBlock,
 )
-
-
 
 
 class SurfaceMetricStatus(StrEnum):
@@ -79,9 +85,8 @@ class _ImplicitParameterSurface:
 
     @property
     def periods(self) -> tuple[float | None, float | None]:
-        return (None, float(np.tau)) if self.profile.family == "sphere" else (
-            float(np.tau),
-            float(np.tau),
+        return (
+            (None, math.tau) if self.profile.family == "sphere" else (math.tau, math.tau)
         )
 
     def evaluate(self, parameters: Array, /) -> Array:
@@ -169,15 +174,21 @@ class _ImplicitMetricDomain:
 
     def entity_id(self, dimension: int, patch: int, /) -> str:
         if dimension != 2 or patch != 0:
-            raise ValueError("Implicit metric charts expose one two-dimensional source entity.")
+            raise ValueError(
+                "Implicit metric charts expose one two-dimensional source entity."
+            )
         return self.source_entity_id
 
     def evaluate(self, patches: ArrayLike, charts: ArrayLike, /) -> np.ndarray:
         rows = np.asarray(patches, dtype=np.int64).reshape((-1,))
         parameters = np.asarray(charts, dtype=np.float64).reshape((-1, 2))
         if rows.shape != (parameters.shape[0],) or np.any(rows != 0):
-            raise ValueError("Implicit metric point evaluation requires source chart zero.")
-        return np.asarray(self.surface.evaluate(jnp.asarray(parameters)), dtype=np.float64)
+            raise ValueError(
+                "Implicit metric point evaluation requires source chart zero."
+            )
+        return np.asarray(
+            self.surface.evaluate(jnp.asarray(parameters)), dtype=np.float64
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,7 +212,15 @@ class _ImplicitSurfaceChartBank:
     def root_parameter_chart(self, row: int, /) -> tuple[tuple[Fraction, ...], ...]:
         if not 0 <= row < self.source_witness_rows.size:
             raise IndexError("Implicit source chart row is out of range.")
-        return self.witness.source_parameter_chart(int(self.source_witness_rows[row]))
+        # Read the witness token field directly: binding a witness method builds an
+        # equinox bound-method module that flattens the whole witness per row.
+        tokens = self.witness.source_parameter_rational_tokens[
+            int(self.source_witness_rows[row])
+        ]
+        return tuple(
+            tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+            for point in tokens
+        )
 
     def require_current(self) -> None:
         self.witness.require_current(self.mesh, self.geometry, self.fidelity_source)
@@ -235,6 +254,7 @@ class SurfaceMetricSource(NamedTuple):
     cell_patches: np.ndarray
     cell_root_ids: np.ndarray
     cell_source_pieces: tuple[tuple[int, ...], ...]
+    cell_charts: tuple[_ExactTriangle, ...]
     pullback_metric: np.ndarray
     physical_metric: np.ndarray
     source_cell_classes: np.ndarray
@@ -283,7 +303,9 @@ class SurfaceMetricOutcome(NamedTuple):
 
 def _source_cells(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
-        raise ValueError("Surface metric adaptation requires a two-dimensional mesh in 3-space.")
+        raise ValueError(
+            "Surface metric adaptation requires a two-dimensional mesh in 3-space."
+        )
     if not mesh.blocks or any(block.cell_kind != "triangle" for block in mesh.blocks):
         raise ValueError("Surface metric adaptation requires triangular source cells.")
     cells = np.concatenate(
@@ -303,25 +325,48 @@ def _source_cells(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray, np.ndarray
     return cells, cell_ids, block_rows
 
 
-def _source_metric_rows(
-    mesh: CellMesh, values: ArrayLike, /
-) -> np.ndarray:
+def _source_metric_rows(mesh: CellMesh, values: ArrayLike, /) -> np.ndarray:
     metric = np.asarray(values, dtype=np.float64)
-    if metric.shape != (mesh.coordinates.shape[0], 3, 3) or not np.all(np.isfinite(metric)):
-        raise ValueError("Surface metric values must be finite (vertices, 3, 3) ambient tensors.")
+    if metric.shape != (mesh.coordinates.shape[0], 3, 3) or not np.all(
+        np.isfinite(metric)
+    ):
+        raise ValueError(
+            "Surface metric values must be finite (vertices, 3, 3) ambient tensors."
+        )
     properties = _tensor_properties(metric)
     if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
         raise ValueError("Surface metric tensors must be symmetric positive definite.")
     return metric
 
 
+def _exact_triangle(chart: tuple[tuple[Fraction, ...], ...], /) -> _ExactTriangle:
+    if len(chart) != 3 or any(len(point) != 2 for point in chart):
+        raise ValueError("Surface source charts must be exact two-dimensional triangles.")
+    first, second, third = chart
+    return ((first[0], first[1]), (second[0], second[1]), (third[0], third[1]))
+
+
+type _PointTokens = tuple[tuple[int, int], tuple[int, int]]
+
+
+def _point_tokens(point: _ExactPoint, /) -> _PointTokens:
+    return (
+        (point[0].numerator, point[0].denominator),
+        (point[1].numerator, point[1].denominator),
+    )
+
+
+def _triangle_tokens(
+    chart: _ExactTriangle, /
+) -> tuple[_PointTokens, _PointTokens, _PointTokens]:
+    return (_point_tokens(chart[0]), _point_tokens(chart[1]), _point_tokens(chart[2]))
 
 
 def _chart_area(chart: _ExactTriangle, /) -> Fraction:
     first, second, third = chart
-    return (second[0] - first[0]) * (third[1] - first[1]) - (
-        second[1] - first[1]
-    ) * (third[0] - first[0])
+    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+        third[0] - first[0]
+    )
 
 
 def _integer_class_rows(keys: tuple[tuple[object, ...], ...], /) -> np.ndarray:
@@ -356,14 +401,10 @@ def _periods(
             )
             differential = jax.jacfwd(surface.evaluate)
             jacobians = np.asarray(
-                jax.vmap(differential)(
-                    jnp.asarray(chart_parameters, dtype=jnp.float64)
-                ),
+                jax.vmap(differential)(jnp.asarray(chart_parameters, dtype=jnp.float64)),
                 dtype=np.float64,
             )
-            scales = np.maximum(
-                1.0, np.linalg.norm(jacobians, axis=(1, 2))
-            )
+            scales = np.maximum(1.0, np.linalg.norm(jacobians, axis=(1, 2)))
             if any(
                 np.any(
                     np.linalg.norm(jacobians[:, :, axis], axis=1)
@@ -435,9 +476,13 @@ def _periodic_rows(
         if len(compatible) < 2:
             continue
         representative = min(row for row, _ in compatible)
-        reference = next(winding for row, winding in compatible if row == representative)
-        for row, winding in compatible:
-            relative = tuple(value - base for value, base in zip(winding, reference, strict=True))
+        reference = next(
+            row_winding for row, row_winding in compatible if row == representative
+        )
+        for row, row_winding in compatible:
+            relative = tuple(
+                value - base for value, base in zip(row_winding, reference, strict=True)
+            )
             if row != representative or any(relative):
                 representatives[row] = representative
                 shifts[row] = np.asarray(relative, dtype=np.int64)
@@ -456,7 +501,9 @@ def _chart_differentials(
     /,
 ) -> np.ndarray:
     result = np.empty((len(charts), 2, 2), dtype=np.float64)
-    chart_values = np.asarray([[float(value) for value in point] for point in charts], dtype=np.float64)
+    chart_values = np.asarray(
+        [[float(value) for value in point] for point in charts], dtype=np.float64
+    )
     for patch in np.unique(patches).tolist():
         rows = np.flatnonzero(patches == patch)
         surface = domain.patches[int(patch)].surface
@@ -476,7 +523,10 @@ def _chart_differentials(
                 polar = chart_values[row, 1]
                 if abs(abs(polar) - np.pi / 2.0) <= 32.0 * np.finfo(np.float64).eps:
                     frame = np.stack(
-                        (np.asarray(base_surface.first_axis), np.asarray(base_surface.second_axis)),
+                        (
+                            np.asarray(base_surface.first_axis),
+                            np.asarray(base_surface.second_axis),
+                        ),
                         axis=1,
                     )
                     jacobian = chart_frame @ (
@@ -484,7 +534,10 @@ def _chart_differentials(
                     )
             elif isinstance(base_surface, RevolutionSurface):
                 scale = max(1.0, float(np.linalg.norm(jacobian)))
-                if np.linalg.norm(jacobian[:, 0]) <= 32.0 * np.finfo(np.float64).eps * scale:
+                if (
+                    np.linalg.norm(jacobian[:, 0])
+                    <= 32.0 * np.finfo(np.float64).eps * scale
+                ):
                     axis = np.asarray(base_surface.axis_direction, dtype=np.float64)
                     profile_tangent = np.asarray(
                         jax.jacfwd(base_surface.curve.evaluate)(
@@ -511,9 +564,7 @@ def _chart_differentials(
                     first_axis /= np.linalg.norm(first_axis)
                     second_axis = np.cross(axis, first_axis)
                     jacobian = chart_frame @ (
-                        2.0
-                        * radial_speed
-                        * np.stack((first_axis, second_axis), axis=1)
+                        2.0 * radial_speed * np.stack((first_axis, second_axis), axis=1)
                     )
             elif (
                 isinstance(surface, _ImplicitParameterSurface)
@@ -538,11 +589,15 @@ def _chart_differentials(
             candidate = result[int(row)]
             scale = max(1.0, float(np.linalg.norm(reference, ord=np.inf)))
             if np.linalg.norm(candidate - reference, ord=np.inf) > 2.0e-10 * scale:
-                raise ValueError("Pulled-back SPD metrics disagree across a periodic source orbit.")
+                raise ValueError(
+                    "Pulled-back SPD metrics disagree across a periodic source orbit."
+                )
             result[int(row)] = reference
     properties = _tensor_properties(result)
     if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
-        raise ValueError("Physical metric pullback must remain symmetric positive definite in every chart.")
+        raise ValueError(
+            "Physical metric pullback must remain symmetric positive definite in every chart."
+        )
     return result
 
 
@@ -568,29 +623,37 @@ def prepare_surface_metric_source(
     if not isinstance(mesh, CellMesh) or not isinstance(
         source_charts, (SurfaceSourceCharts, _ImplicitSurfaceChartBank)
     ):
-        raise TypeError("Surface metric preparation requires a CellMesh and source chart bank.")
+        raise TypeError(
+            "Surface metric preparation requires a CellMesh and source chart bank."
+        )
     source_charts.require_root(mesh, source_charts.geometry)
     domain = source_charts.domain
     domain.require_current(source_charts.source_id, source_charts.source_revision)
     physical_metric = _source_metric_rows(mesh, metric)
     source_cells, source_cell_ids, source_block_rows = _source_cells(mesh)
     chart_rows = {
-        int(identifier): row for row, identifier in enumerate(source_charts.cell_global_ids)
+        int(identifier): row
+        for row, identifier in enumerate(source_charts.cell_global_ids)
     }
     if set(chart_rows) != set(source_cell_ids.tolist()):
-        raise ValueError("Surface source charts must cover every current source cell exactly once.")
+        raise ValueError(
+            "Surface source charts must cover every current source cell exactly once."
+        )
     cell_source_rows = np.asarray(
         [chart_rows[int(identifier)] for identifier in source_cell_ids], dtype=np.int64
     )
-    cell_patches = np.asarray(source_charts.root_patches, dtype=np.int64)[cell_source_rows]
+    cell_patches = np.asarray(source_charts.root_patches, dtype=np.int64)[
+        cell_source_rows
+    ]
     cell_root_ids = np.asarray(source_charts.source_root_cell_ids, dtype=np.int64)[
         cell_source_rows
     ]
     cell_pieces = tuple(
         source_charts.source_piece_ids[int(row)] for row in cell_source_rows
     )
+    root_parameter_chart = source_charts.root_parameter_chart
     exact_charts = tuple(
-        source_charts.root_parameter_chart(int(row)) for row in cell_source_rows
+        _exact_triangle(root_parameter_chart(int(row))) for row in cell_source_rows
     )
     if domain.source_id != source_charts.source_id:
         raise ValueError("Source charts no longer bind their declared source domain.")
@@ -618,11 +681,16 @@ def prepare_surface_metric_source(
     )
     if supplied_cell_classes.shape != (source_cells.shape[0],):
         raise ValueError("cell_classes must align with source triangle rows.")
-    if supplied_edge_classes.shape != (edge_count,) or supplied_protected.shape != (edge_count,):
+    if supplied_edge_classes.shape != (edge_count,) or supplied_protected.shape != (
+        edge_count,
+    ):
         raise ValueError("Edge classes and protection must align with source edges.")
     if supplied_fixed.shape != (mesh.coordinates.shape[0],):
         raise ValueError("fixed_vertices must align with source vertices.")
-    if supplied_cell_classes.dtype.kind not in "iu" or supplied_edge_classes.dtype.kind not in "iu":
+    if (
+        supplied_cell_classes.dtype.kind not in "iu"
+        or supplied_edge_classes.dtype.kind not in "iu"
+    ):
         raise TypeError("Source metric classification arrays must be integer-valued.")
     if supplied_protected.dtype != np.bool_ or supplied_fixed.dtype != np.bool_:
         raise TypeError("Source metric protection arrays must be boolean.")
@@ -653,8 +721,12 @@ def prepare_surface_metric_source(
             corners.append(work_row)
         work_cells.append((corners[0], corners[1], corners[2]))
 
-    source_vertex_rows = np.asarray([record[0] for record in vertex_records], dtype=np.int64)
-    work_vertex_patches = np.asarray([record[1] for record in vertex_records], dtype=np.int64)
+    source_vertex_rows = np.asarray(
+        [record[0] for record in vertex_records], dtype=np.int64
+    )
+    work_vertex_patches = np.asarray(
+        [record[1] for record in vertex_records], dtype=np.int64
+    )
     work_vertex_charts = tuple(record[2] for record in vertex_records)
     representatives, shifts, orbit_codes = _periodic_rows(
         source_vertex_rows,
@@ -831,13 +903,12 @@ def prepare_surface_metric_source(
         if cells.size != 2:
             continue
         first, second = int(cells[0]), int(cells[1])
-        source_cell_interface = int(source_cell_ids[first]) != int(source_cell_ids[second])
-        root_interface = (
-            implicit_source
-            and (
-                cell_root_ids[first] != cell_root_ids[second]
-                or cell_pieces[first] != cell_pieces[second]
-            )
+        source_cell_interface = int(source_cell_ids[first]) != int(
+            source_cell_ids[second]
+        )
+        root_interface = implicit_source and (
+            cell_root_ids[first] != cell_root_ids[second]
+            or cell_pieces[first] != cell_pieces[second]
         )
         if (
             work_cell_classes[first] != work_cell_classes[second]
@@ -888,6 +959,7 @@ def prepare_surface_metric_source(
         cell_patches,
         cell_root_ids,
         cell_pieces,
+        exact_charts,
         pulled,
         physical_metric,
         work_cell_classes,
@@ -929,11 +1001,15 @@ def prepare_implicit_surface_metric_source(
         or not witness.implicit_cell_keys.size
         or not witness.implicit_root_edge_keys.size
     ):
-        raise ValueError("Implicit metric source requires exact cell and root-edge ancestry.")
+        raise ValueError(
+            "Implicit metric source requires exact cell and root-edge ancestry."
+        )
     _, source_cell_ids, _ = _source_cells(mesh)
     witness_rows_by_cell = {
         int(identifier): row
-        for row, identifier in enumerate(np.asarray(witness.cell_global_ids, dtype=np.int64).tolist())
+        for row, identifier in enumerate(
+            np.asarray(witness.cell_global_ids, dtype=np.int64).tolist()
+        )
     }
     if set(witness_rows_by_cell) != set(source_cell_ids.tolist()):
         raise ValueError("Implicit source chart witness must cover every source cell.")
@@ -942,13 +1018,20 @@ def prepare_implicit_surface_metric_source(
         dtype=np.int64,
     )
     implicit_cells = np.asarray(witness.implicit_cell_keys, dtype=np.int64)[witness_rows]
-    root_tokens = tuple(tuple(int(value) for value in row) for row in implicit_cells.tolist())
+    root_tokens = tuple(
+        tuple(int(value) for value in row) for row in implicit_cells.tolist()
+    )
     ordered_roots = sorted(set(root_tokens))
     root_codes = {key: row for row, key in enumerate(ordered_roots)}
     root_ids = np.asarray([root_codes[key] for key in root_tokens], dtype=np.int64)
     source_pieces = tuple((0, int(root_id)) for root_id in root_ids.tolist())
-    if len(set(witness.source_entity_ids)) != 1 or len(set(witness.occurrence_paths)) != 1:
-        raise ValueError("One analytic implicit surface metric route requires one source occurrence.")
+    if (
+        len(set(witness.source_entity_ids)) != 1
+        or len(set(witness.occurrence_paths)) != 1
+    ):
+        raise ValueError(
+            "One analytic implicit surface metric route requires one source occurrence."
+        )
     domain = _ImplicitMetricDomain(
         profile,
         witness.source_query_id,
@@ -975,7 +1058,9 @@ def prepare_implicit_surface_metric_source(
     )
     bank.require_root(mesh, geometry)
     entity_id = witness.source_entity_ids[0]
-    occurrences = tuple(witness.occurrence_paths[0] for _ in range(mesh.coordinates.shape[0]))
+    occurrences = tuple(
+        witness.occurrence_paths[0] for _ in range(mesh.coordinates.shape[0])
+    )
     projected = profile.project_boundary(
         np.asarray(mesh.coordinates, dtype=np.float64),
         entity_ids=tuple(entity_id for _ in range(mesh.coordinates.shape[0])),
@@ -987,7 +1072,9 @@ def prepare_implicit_surface_metric_source(
             (int(SourceProjectionStatus.UNIQUE), int(SourceProjectionStatus.SEAM)),
         )
     ):
-        raise ValueError("Implicit metric source vertices lack unique source-bound projections.")
+        raise ValueError(
+            "Implicit metric source vertices lack unique source-bound projections."
+        )
     return prepare_surface_metric_source(
         mesh,
         bank,
@@ -1016,42 +1103,210 @@ def _source_rows_for_cell(
     raise ValueError("A target metric cell lacks source-cell ancestry.")
 
 
-def _exact_target_chart(
-    outcome: LocalMetricOutcome,
+type _WorkStencil = tuple[tuple[int, Fraction], ...]
+
+
+def _work_stencils(
+    local_edit: CellTopologyEdit,
     source: SurfaceMetricSource,
     /,
-) -> tuple[tuple[_ExactPoint, ...], ...]:
-    edit = outcome.edit
-    exact_weights = edit.stencil_exact_weights
+) -> list[_WorkStencil]:
+    """Exact UV-carrier interpolation row of every local target vertex."""
+    exact_weights = local_edit.stencil_exact_weights
     if exact_weights is None:
-        raise ValueError("Local metric execution did not retain exact source stencils.")
-    sources = np.asarray(edit.stencil_sources, dtype=np.int64)
-    valid = np.asarray(edit.stencil_valid, dtype=np.bool_)
-    coordinates = np.asarray(edit.coordinates, dtype=np.float64)
-    if coordinates.shape != (sources.shape[0], 2):
-        raise ValueError("Local metric UV coordinates must align with exact source stencils.")
-    charts: list[_ExactPoint] = []
+        raise ValueError(
+            "Local metric execution omitted exact source interpolation weights."
+        )
+    sources = np.asarray(local_edit.stencil_sources, dtype=np.int64)
+    valid = np.asarray(local_edit.stencil_valid, dtype=np.bool_)
     work_vertex_rows = {
         int(identifier): row
         for row, identifier in enumerate(
             np.asarray(source.work_mesh.vertex_global_ids, dtype=np.int64).tolist()
         )
     }
+    stencils: list[_WorkStencil] = []
     for row in range(sources.shape[0]):
-        first = Fraction(0)
-        second = Fraction(0)
-        for source_row, coefficient, is_valid in zip(
+        combined: dict[int, Fraction] = defaultdict(Fraction)
+        for source_id, weight, is_valid in zip(
             sources[row], exact_weights[row], valid[row], strict=True
         ):
             if is_valid:
-                work_row = work_vertex_rows.get(int(source_row))
+                work_row = work_vertex_rows.get(int(source_id))
                 if work_row is None:
                     raise ValueError(
                         "A local metric stencil names an unknown source chart vertex."
                     )
-                point = source.work_vertex_charts[work_row]
-                first += coefficient * point[0]
-                second += coefficient * point[1]
+                combined[work_row] += weight
+        stencil = tuple(
+            (work_row, weight) for work_row, weight in sorted(combined.items()) if weight
+        )
+        if not stencil or sum((weight for _, weight in stencil), Fraction(0)) != 1:
+            raise ValueError(
+                "A source-chart target stencil must preserve constants exactly."
+            )
+        stencils.append(stencil)
+    return stencils
+
+
+def _edge_counts(cells: np.ndarray, /) -> dict[tuple[int, int], int]:
+    counts: dict[tuple[int, int], int] = defaultdict(int)
+    for first, second, third in cells.tolist():
+        for left, right in ((first, second), (second, third), (third, first)):
+            counts[(min(left, right), max(left, right))] += 1
+    return counts
+
+
+def _parent_face_stencils(
+    source: SurfaceMetricSource,
+    stencils: list[_WorkStencil],
+    target_cells: np.ndarray,
+    cell_parents: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[list[_WorkStencil], np.ndarray]:
+    """Restrict target stencils to the exact source face their vertex lies on.
+
+    Local metric execution moves binary64 shadows of the exact UV chart, so a
+    split point of a source interface or chart-boundary edge can round off that
+    edge. Its exact point must lie in the closure of every incident target
+    cell's parent source cell, and on a source boundary edge when it bounds the
+    target carrier. The stencil is restricted to that face and renormalized; the
+    dropped mass is the shadow's rounding residue, which the caller bounds by
+    binary64 shadow resolution.
+    """
+    work_cells = np.concatenate(
+        tuple(
+            np.asarray(block.vertices, dtype=np.int64)
+            for block in source.work_mesh.blocks
+        ),
+        axis=0,
+    )
+    work_boundary = {
+        edge for edge, count in _edge_counts(work_cells).items() if count == 1
+    }
+    target_boundary_vertices = {
+        vertex
+        for edge, count in _edge_counts(target_cells).items()
+        if count == 1
+        for vertex in edge
+    }
+    parents_by_vertex: dict[int, set[int]] = defaultdict(set)
+    for cell, parents in zip(target_cells.tolist(), cell_parents, strict=True):
+        for vertex in cell:
+            parents_by_vertex[int(vertex)].update(parents)
+    restricted = list(stencils)
+    snapped = np.zeros((len(stencils),), dtype=np.bool_)
+    for vertex, parents in sorted(parents_by_vertex.items()):
+        stencil = stencils[vertex]
+        support = {work_row for work_row, _ in stencil}
+        common = set.intersection(
+            *(set(work_cells[parent].tolist()) for parent in sorted(parents))
+        )
+        boundary = vertex in target_boundary_vertices
+        if support <= common and (
+            len(support) == 1
+            or not boundary
+            or (len(support) == 2 and tuple(sorted(support)) in work_boundary)
+        ):
+            continue
+        faces = (
+            [
+                frozenset(edge)
+                for edge in combinations(sorted(common), 2)
+                if edge in work_boundary
+            ]
+            if boundary
+            else [frozenset(common)]
+        )
+        masses = [
+            sum((weight for work_row, weight in stencil if work_row in face), Fraction(0))
+            for face in faces
+        ]
+        if not faces or max(masses) <= 0:
+            raise ValueError(
+                "A surface metric target vertex has no exact source face shared by its parent cells."
+            )
+        face_row = max(range(len(faces)), key=lambda row: masses[row])
+        face, retained = faces[face_row], masses[face_row]
+        restricted[vertex] = tuple(
+            (work_row, weight / retained)
+            for work_row, weight in stencil
+            if work_row in face and weight
+        )
+        snapped[vertex] = True
+    return restricted, snapped
+
+
+def _physical_stencil(
+    source: SurfaceMetricSource, stencil: _WorkStencil, /
+) -> tuple[tuple[int, Fraction], ...]:
+    combined: dict[int, Fraction] = defaultdict(Fraction)
+    for work_row, weight in stencil:
+        combined[int(source.work_to_source_rows[work_row])] += weight
+    result = tuple(
+        (source_row, weight) for source_row, weight in sorted(combined.items()) if weight
+    )
+    if not result or sum((weight for _, weight in result), Fraction(0)) != 1:
+        raise ValueError("A source-chart target stencil must preserve constants exactly.")
+    return result
+
+
+def _synchronized_copy_stencils(
+    source: SurfaceMetricSource,
+    stencils: list[_WorkStencil],
+    group_rows: list[tuple[int, ...]],
+    /,
+) -> list[_WorkStencil]:
+    """Express every periodic copy with its representative's exact weights.
+
+    Copies are images of one quotient point; their binary64 shadows round
+    independently, so the representative's exact row is transported onto each
+    copy's own chart corners with the same physical source rows.
+    """
+    result = list(stencils)
+    for copies in group_rows:
+        reference = _physical_stencil(source, stencils[copies[0]])
+        for copy in copies[1:]:
+            if _physical_stencil(source, stencils[copy]) == reference:
+                continue
+            rows_by_source: dict[int, int] = {}
+            for work_row, _ in stencils[copy]:
+                rows_by_source.setdefault(
+                    int(source.work_to_source_rows[work_row]), work_row
+                )
+            if any(source_row not in rows_by_source for source_row, _ in reference):
+                raise ValueError(
+                    "Synchronized source-chart copies have different physical interpolation ancestry."
+                )
+            result[copy] = tuple(
+                sorted(
+                    (rows_by_source[source_row], weight)
+                    for source_row, weight in reference
+                )
+            )
+    return result
+
+
+def _exact_target_chart(
+    local_edit: CellTopologyEdit,
+    source: SurfaceMetricSource,
+    stencils: list[_WorkStencil],
+    snapped: np.ndarray,
+    /,
+) -> tuple[_ExactPoint, ...]:
+    coordinates = np.asarray(local_edit.coordinates, dtype=np.float64)
+    if coordinates.shape != (len(stencils), 2):
+        raise ValueError(
+            "Local metric UV coordinates must align with exact source stencils."
+        )
+    charts: list[_ExactPoint] = []
+    for row, stencil in enumerate(stencils):
+        first = Fraction(0)
+        second = Fraction(0)
+        for work_row, coefficient in stencil:
+            point = source.work_vertex_charts[work_row]
+            first += coefficient * point[0]
+            second += coefficient * point[1]
         exact_point = (first, second)
         exact_shadow = np.asarray(tuple(float(value) for value in exact_point))
         coordinate_scale = max(1.0, float(np.linalg.norm(coordinates[row], ord=np.inf)))
@@ -1060,6 +1315,10 @@ def _exact_target_chart(
             <= 4.0 * np.finfo(np.float64).eps * coordinate_scale
         ):
             charts.append(exact_point)
+        elif snapped[row]:
+            raise ValueError(
+                "A surface metric target vertex leaves its exact source face beyond binary64 shadow resolution."
+            )
         else:
             charts.append(
                 (
@@ -1068,32 +1327,6 @@ def _exact_target_chart(
                 )
             )
     return tuple(charts)
-
-
-def _target_source_vertex_stencil(
-    local_edit: CellTopologyEdit,
-    source: SurfaceMetricSource,
-    work_vertex_rows: dict[int, int],
-    row: int,
-    /,
-) -> tuple[tuple[int, Fraction], ...]:
-    exact_weights = local_edit.stencil_exact_weights
-    if exact_weights is None:
-        raise ValueError("Local metric execution omitted exact source interpolation weights.")
-    sources = np.asarray(local_edit.stencil_sources, dtype=np.int64)[row]
-    weights = exact_weights[row]
-    valid = np.asarray(local_edit.stencil_valid, dtype=np.bool_)[row]
-    combined: dict[int, Fraction] = defaultdict(Fraction)
-    for source_id, weight, is_valid in zip(sources, weights, valid, strict=True):
-        if is_valid:
-            work_row = work_vertex_rows.get(int(source_id))
-            if work_row is None:
-                raise ValueError("A local metric stencil names an unknown source chart vertex.")
-            combined[int(source.work_to_source_rows[work_row])] += weight
-    result = tuple((source_row, weight) for source_row, weight in sorted(combined.items()) if weight)
-    if not result or sum((weight for _, weight in result), Fraction(0)) != 1:
-        raise ValueError("A source-chart target stencil must preserve constants exactly.")
-    return result
 
 
 def _relation_rows(
@@ -1119,7 +1352,9 @@ def _relation_rows(
     ordered = sorted(rows.items())
     if not ordered:
         empty = np.empty((0, width), dtype=np.int64)
-        return EntityRelations(dimension, empty, empty.copy(), np.empty((0,), dtype=np.int8))
+        return EntityRelations(
+            dimension, empty, empty.copy(), np.empty((0,), dtype=np.int8)
+        )
     return EntityRelations(
         dimension,
         np.asarray([key[0] for key, _ in ordered], dtype=np.int64),
@@ -1140,7 +1375,9 @@ def _implicit_target_witness(
 ) -> tuple[SourceBoundaryChartWitness, np.ndarray, np.ndarray]:
     source_charts = prepared.source_charts
     if not isinstance(source_charts, _ImplicitSurfaceChartBank):
-        raise TypeError("Implicit target witnesses require an implicit source chart bank.")
+        raise TypeError(
+            "Implicit target witnesses require an implicit source chart bank."
+        )
     source_witness = source_charts.witness
     source_rows: list[int] = []
     cell_keys: list[np.ndarray] = []
@@ -1158,9 +1395,9 @@ def _implicit_target_witness(
         source_key_rows = np.asarray(source_witness.implicit_cell_keys, dtype=np.int64)[
             witness_rows
         ]
-        source_edge_rows = np.asarray(source_witness.implicit_root_edge_keys, dtype=np.int64)[
-            witness_rows
-        ]
+        source_edge_rows = np.asarray(
+            source_witness.implicit_root_edge_keys, dtype=np.int64
+        )[witness_rows]
         if any(
             not np.array_equal(source_key_rows[0], source_key_rows[row])
             or not np.array_equal(source_edge_rows[0], source_edge_rows[row])
@@ -1188,7 +1425,6 @@ def _implicit_target_witness(
         ],
         dtype=np.float64,
     )
-    source_rows_array = np.asarray(source_rows, dtype=np.int64)
     witness = SourceBoundaryChartWitness(
         mesh_id=target_mesh.mesh_id,
         geometry_id=cell_geometry_id(target_geometry),
@@ -1202,9 +1438,7 @@ def _implicit_target_witness(
         entity_global_ids=target_cell_ids,
         local_entity_indices=np.full(target_cell_ids.shape, -1, dtype=np.int32),
         target_reference_vertices=target_rows,
-        target_reference_rational_tokens=tuple(
-            reference_tokens for _ in target_cell_ids
-        ),
+        target_reference_rational_tokens=tuple(reference_tokens for _ in target_cell_ids),
         source_chart_ids=tuple(
             source_witness.source_chart_ids[int(row)] for row in source_rows
         ),
@@ -1252,12 +1486,8 @@ def _chart_barycentric_weights(
     delta = (point[0] - first[0], point[1] - first[1])
     first_edge = (second[0] - first[0], second[1] - first[1])
     second_edge = (third[0] - first[0], third[1] - first[1])
-    first_weight = (
-        delta[0] * second_edge[1] - delta[1] * second_edge[0]
-    ) / determinant
-    second_weight = (
-        first_edge[0] * delta[1] - first_edge[1] * delta[0]
-    ) / determinant
+    first_weight = (delta[0] * second_edge[1] - delta[1] * second_edge[0]) / determinant
+    second_weight = (first_edge[0] * delta[1] - first_edge[1] * delta[0]) / determinant
     return 1 - first_weight - second_weight, first_weight, second_weight
 
 
@@ -1275,9 +1505,6 @@ def _reference_maps_from_charts(
             for block in prepared.source_mesh.blocks
         )
     )
-    source_rows_by_id = {
-        int(identifier): row for row, identifier in enumerate(source_ids.tolist())
-    }
     reference_topology = reference_cell_topology("triangle")
     reference_points = tuple(
         tuple(Fraction(float(value)) for value in point)
@@ -1291,37 +1518,32 @@ def _reference_maps_from_charts(
     for target_id in target_ids.tolist():
         target_chart = chart_by_cell_id[int(target_id)][3]
         parent_rows = chart_by_cell_id[int(target_id)][4]
-        selected: tuple[int, tuple[tuple[Fraction, Fraction], ...]] | None = None
+        selected: tuple[int, _ExactTriangle] | None = None
         for source_row in parent_rows:
-            chart_row = int(prepared.cell_source_rows[int(source_row)])
-            source_chart_raw = prepared.source_charts.root_parameter_chart(chart_row)
-            source_chart: _ExactTriangle = (
-                source_chart_raw[0],
-                source_chart_raw[1],
-                source_chart_raw[2],
-            )
+            source_chart = prepared.cell_charts[int(source_row)]
             barycentric = tuple(
-                _chart_barycentric_weights(point, source_chart)
-                for point in target_chart
+                _chart_barycentric_weights(point, source_chart) for point in target_chart
             )
-            if any(
-                any(weight < 0 for weight in weights)
-                for weights in barycentric
-            ):
+            if any(any(weight < 0 for weight in weights) for weights in barycentric):
                 continue
             source_reference = tuple(
-                tuple(
+                (
                     sum(
                         (
-                            barycentric[corner][source_corner]
-                            * reference_points[source_corner][axis]
+                            weights[source_corner] * reference_points[source_corner][0]
                             for source_corner in range(3)
                         ),
                         Fraction(0),
-                    )
-                    for axis in range(2)
+                    ),
+                    sum(
+                        (
+                            weights[source_corner] * reference_points[source_corner][1]
+                            for source_corner in range(3)
+                        ),
+                        Fraction(0),
+                    ),
                 )
-                for corner in range(3)
+                for weights in barycentric
             )
             selected = (
                 int(source_ids[int(source_row)]),
@@ -1373,35 +1595,57 @@ def _reference_maps_from_charts(
     return (maps,)
 
 
-def _source_chart_point(
+def _source_chart_points(
     domain: MeshingDomain | _ImplicitMetricDomain,
-    patch: int,
-    parameters: _ExactPoint,
+    patches: np.ndarray,
+    parameters: tuple[_ExactPoint, ...],
     /,
 ) -> np.ndarray:
-    charts = np.asarray(
-        [[float(parameters[0]), float(parameters[1])]], dtype=np.float64
+    """Evaluate every exact target chart point in one source batch."""
+    # Patch evaluators are rank-strict per chart row; the bound evaluator is
+    # hoisted because binding a Module method flattens the whole domain.
+    evaluate = domain.evaluate
+    points = np.asarray(
+        [
+            np.asarray(
+                evaluate(
+                    np.asarray((int(patch),), dtype=np.int64),
+                    np.asarray([[float(point[0]), float(point[1])]], dtype=np.float64),
+                ),
+                dtype=np.float64,
+            )[0]
+            for patch, point in zip(
+                np.asarray(patches, dtype=np.int64).tolist(), parameters, strict=True
+            )
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 3))
+    if not isinstance(domain, _ImplicitMetricDomain):
+        return points
+    count = points.shape[0]
+    projection = domain.profile.project_boundary(
+        points,
+        entity_ids=(domain.source_entity_id,) * count,
+        occurrence_paths=(domain.occurrence_path,) * count,
     )
-    point = domain.evaluate(np.asarray((patch,), dtype=np.int64), charts)[0]
-    if isinstance(domain, _ImplicitMetricDomain):
-        projection = domain.profile.project_boundary(
-            point[None, :],
-            entity_ids=(domain.source_entity_id,),
-            occurrence_paths=(domain.occurrence_path,),
+    status = np.asarray(projection.status, dtype=np.int32)
+    if status.shape != (count,) or not np.all(
+        np.isin(
+            status,
+            (int(SourceProjectionStatus.UNIQUE), int(SourceProjectionStatus.SEAM)),
         )
-        status = np.asarray(projection.status, dtype=np.int32)
-        if status.shape != (1,) or int(status[0]) not in (
-            int(SourceProjectionStatus.UNIQUE),
-            int(SourceProjectionStatus.SEAM),
-        ):
-            raise ValueError("Implicit metric target point lacks a resolved source projection.")
-        projected = np.asarray(projection.points, dtype=np.float64)
-        residual = float(np.linalg.norm(projected[0] - point, ord=np.inf))
-        scale = max(1.0, float(np.linalg.norm(projected[0], ord=np.inf)))
-        if residual > 64.0 * np.finfo(np.float64).eps * scale:
-            raise ValueError("Implicit chart evaluation disagrees with its certified projection.")
-        return projected[0]
-    return point
+    ):
+        raise ValueError(
+            "Implicit metric target point lacks a resolved source projection."
+        )
+    projected = np.asarray(projection.points, dtype=np.float64)
+    residual = np.max(np.abs(projected - points), axis=1, initial=0.0)
+    scale = np.maximum(1.0, np.max(np.abs(projected), axis=1, initial=0.0))
+    if np.any(residual > 64.0 * np.finfo(np.float64).eps * scale):
+        raise ValueError(
+            "Implicit chart evaluation disagrees with its certified projection."
+        )
+    return projected
 
 
 def _physical_edit(
@@ -1410,27 +1654,31 @@ def _physical_edit(
     /,
 ) -> tuple[CellTopologyEdit, np.ndarray, SurfaceMetricGeometryWitness]:
     local_edit = local_outcome.edit
+    local_blocks = tuple(
+        block for block in local_edit.blocks if isinstance(block, TopologyEditBlock)
+    )
+    if len(local_blocks) != len(local_edit.blocks):
+        raise ValueError(
+            "Surface metric UV edits must retain fixed-family triangle blocks."
+        )
     staged = stage_periodic_topology_edit(prepared.work_mesh, local_edit)
     work_target = staged
     if work_target is None:
         work_target = CellMesh(
             local_edit.coordinates,
             tuple(
-                CellBlock(block.name, block.cell_kind, block.cells, global_ids=block.cell_ids)
-                for block in local_edit.blocks
+                CellBlock(
+                    block.name, block.cell_kind, block.cells, global_ids=block.cell_ids
+                )
+                for block in local_blocks
             ),
             vertex_global_ids=local_edit.vertex_global_ids,
         )
     target_ids = np.asarray(work_target.vertex_global_ids, dtype=np.int64)
-    if not np.array_equal(target_ids, np.asarray(local_edit.vertex_global_ids, dtype=np.int64)):
+    if not np.array_equal(
+        target_ids, np.asarray(local_edit.vertex_global_ids, dtype=np.int64)
+    ):
         raise ValueError("Periodic chart staging changed canonical UV vertex identities.")
-    target_uv = _exact_target_chart(local_outcome, prepared)
-    work_vertex_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(
-            np.asarray(prepared.work_mesh.vertex_global_ids, dtype=np.int64).tolist()
-        )
-    }
     _, source_cell_ids, source_block_rows = _source_cells(prepared.source_mesh)
     source_rows_by_cell = {
         int(identifier): row for row, identifier in enumerate(source_cell_ids.tolist())
@@ -1453,57 +1701,17 @@ def _physical_edit(
     }
     source_orientation_by_cell: dict[int, int] = {}
     for row, identifier in enumerate(source_cell_ids.tolist()):
-        chart_row = int(prepared.cell_source_rows[row])
-        chart = prepared.source_charts.root_parameter_chart(chart_row)
+        chart = prepared.cell_charts[row]
         source_orientation_by_cell[int(identifier)] = 1 if _chart_area(chart) > 0 else -1
 
     cell_relation = local_edit.relations[2]
     local_cells = np.concatenate(
-        tuple(np.asarray(block.cells, dtype=np.int64) for block in local_edit.blocks), axis=0
+        tuple(np.asarray(block.cells, dtype=np.int64) for block in local_blocks),
+        axis=0,
     )
     local_cell_ids = np.concatenate(
-        tuple(np.asarray(block.cell_ids, dtype=np.int64) for block in local_edit.blocks)
+        tuple(np.asarray(block.cell_ids, dtype=np.int64) for block in local_blocks)
     )
-    cell_meta: dict[
-        int, tuple[int, int, tuple[int, ...], str, int, _ExactTriangle, tuple[int, ...]]
-    ] = {}
-    for cell, target_id_raw in zip(local_cells, local_cell_ids, strict=True):
-        target_id = int(target_id_raw)
-        parents = _source_rows_for_cell(cell_relation, target_id, source_rows_by_cell)
-        parent_ids = tuple(int(source_cell_ids[row]) for row in parents)
-        patches = {source_patch_by_cell[value] for value in parent_ids}
-        roots = {source_root_by_cell[value] for value in parent_ids}
-        pieces = {source_piece_by_cell[value] for value in parent_ids}
-        blocks = {source_block_by_cell[value] for value in parent_ids}
-        orientations = {source_orientation_by_cell[value] for value in parent_ids}
-        if any(len(values) != 1 for values in (patches, roots, pieces, blocks, orientations)):
-            raise ValueError("A surface metric operation crossed source chart ancestry.")
-        patch, root, piece, block_name, orientation = (
-            next(iter(patches)),
-            next(iter(roots)),
-            next(iter(pieces)),
-            next(iter(blocks)),
-            next(iter(orientations)),
-        )
-        chart_points = tuple(target_uv[int(vertex)] for vertex in cell)
-        if len(chart_points) != 3:
-            raise ValueError("Surface metric target cells must remain triangles.")
-        chart: _ExactTriangle = (chart_points[0], chart_points[1], chart_points[2])
-        area = _chart_area(chart)
-        if area == 0 or (1 if area > 0 else -1) != 1:
-            raise ValueError("A UV operation produced a nonpositive chart triangle.")
-        if orientation < 0:
-            chart = (chart[0], chart[2], chart[1])
-        cell_meta[target_id] = (
-            patch,
-            root,
-            piece,
-            block_name,
-            orientation,
-            chart,
-            parents,
-        )
-
     orbit_codes = np.arange(target_ids.size, dtype=np.int64)
     if work_target.periodic_topology is not None:
         orbit_codes = np.asarray(
@@ -1541,6 +1749,61 @@ def _physical_edit(
         for row in rows:
             target_physical_id_by_work_row[row] = physical_id
         group_rows.append(tuple(rows))
+    cell_parents = tuple(
+        _source_rows_for_cell(cell_relation, int(target_id), source_rows_by_cell)
+        for target_id in local_cell_ids.tolist()
+    )
+    work_stencils, snapped = _parent_face_stencils(
+        prepared,
+        _work_stencils(local_edit, prepared),
+        local_cells,
+        cell_parents,
+    )
+    if work_target.periodic_topology is not None:
+        work_stencils = _synchronized_copy_stencils(prepared, work_stencils, group_rows)
+    target_uv = _exact_target_chart(local_edit, prepared, work_stencils, snapped)
+    cell_meta: dict[
+        int, tuple[int, int, tuple[int, ...], str, int, _ExactTriangle, tuple[int, ...]]
+    ] = {}
+    for cell, target_id_raw, parents in zip(
+        local_cells.tolist(), local_cell_ids.tolist(), cell_parents, strict=True
+    ):
+        target_id = int(target_id_raw)
+        parent_ids = tuple(int(source_cell_ids[row]) for row in parents)
+        patches = {source_patch_by_cell[value] for value in parent_ids}
+        roots = {source_root_by_cell[value] for value in parent_ids}
+        pieces = {source_piece_by_cell[value] for value in parent_ids}
+        blocks = {source_block_by_cell[value] for value in parent_ids}
+        orientations = {source_orientation_by_cell[value] for value in parent_ids}
+        if any(
+            len(values) != 1 for values in (patches, roots, pieces, blocks, orientations)
+        ):
+            raise ValueError("A surface metric operation crossed source chart ancestry.")
+        patch, root, piece, block_name, orientation = (
+            next(iter(patches)),
+            next(iter(roots)),
+            next(iter(pieces)),
+            next(iter(blocks)),
+            next(iter(orientations)),
+        )
+        chart_points = tuple(target_uv[int(vertex)] for vertex in cell)
+        if len(chart_points) != 3:
+            raise ValueError("Surface metric target cells must remain triangles.")
+        chart: _ExactTriangle = (chart_points[0], chart_points[1], chart_points[2])
+        area = _chart_area(chart)
+        if area == 0 or (1 if area > 0 else -1) != 1:
+            raise ValueError("A UV operation produced a nonpositive chart triangle.")
+        if orientation < 0:
+            chart = (chart[0], chart[2], chart[1])
+        cell_meta[target_id] = (
+            patch,
+            root,
+            piece,
+            block_name,
+            orientation,
+            chart,
+            parents,
+        )
 
     physical_ids = np.asarray(
         sorted(set(target_physical_id_by_work_row.tolist())), dtype=np.int64
@@ -1556,35 +1819,30 @@ def _physical_edit(
         dtype=np.int64,
     )
     vertex_patches = np.full((target_ids.size,), -1, dtype=np.int64)
-    for cell, target_id_raw in zip(local_cells, local_cell_ids, strict=True):
+    for cell, target_id_raw in zip(
+        local_cells.tolist(), local_cell_ids.tolist(), strict=True
+    ):
         patch = cell_meta[int(target_id_raw)][0]
-        for vertex in cell.tolist():
+        for vertex in cell:
             previous = int(vertex_patches[vertex])
             if previous >= 0 and previous != patch:
-                raise ValueError("One UV carrier vertex is shared by different source patches.")
+                raise ValueError(
+                    "One UV carrier vertex is shared by different source patches."
+                )
             vertex_patches[vertex] = patch
+    if np.any(vertex_patches < 0):
+        raise ValueError("A target source-chart vertex has no source patch occurrence.")
+    work_points = _source_chart_points(prepared.domain, vertex_patches, target_uv)
     physical_coordinates = np.empty((physical_ids.size, 3), dtype=np.float64)
-    target_metric = np.empty((physical_ids.size, 3, 3), dtype=np.float64)
     physical_stencils: list[tuple[tuple[int, Fraction], ...]] = []
     maximum_residual = 0.0
     for physical_row, copies in enumerate(group_rows):
         representative = copies[0]
-        patch = int(vertex_patches[representative])
-        if patch < 0:
-            raise ValueError("A target source-chart vertex has no source patch occurrence.")
-        point = _source_chart_point(
-            prepared.domain, patch, target_uv[representative]
-        )
+        point = work_points[representative]
         physical_coordinates[physical_row] = point
-        stencil = _target_source_vertex_stencil(
-            local_edit, prepared, work_vertex_rows, representative
-        )
+        stencil = _physical_stencil(prepared, work_stencils[representative])
         for copy_row in copies[1:]:
-            copy_patch = int(vertex_patches[copy_row])
-            copy_point = _source_chart_point(
-                prepared.domain, copy_patch, target_uv[copy_row]
-            )
-            residual = float(np.linalg.norm(point - copy_point, ord=np.inf))
+            residual = float(np.linalg.norm(point - work_points[copy_row], ord=np.inf))
             maximum_residual = max(maximum_residual, residual)
             scale = max(1.0, float(np.linalg.norm(point, ord=np.inf)))
             if residual > 2.0e-10 * scale:
@@ -1593,24 +1851,25 @@ def _physical_edit(
                 )
             if (
                 work_target.periodic_topology is not None
-                and _target_source_vertex_stencil(
-                    local_edit, prepared, work_vertex_rows, copy_row
-                )
-                != stencil
+                and _physical_stencil(prepared, work_stencils[copy_row]) != stencil
             ):
                 raise ValueError(
                     "Synchronized source-chart copies have different physical interpolation ancestry."
                 )
         physical_stencils.append(stencil)
-        source_rows = np.asarray([source_row for source_row, _ in stencil], dtype=np.int64)
-        weights = np.asarray([float(weight) for _, weight in stencil], dtype=np.float64)
-        target_metric[physical_row] = np.asarray(
-            interpolate_mesh_metric(
-                prepared.physical_metric[source_rows][None, :, :],
-                weights[None, :],
-            )[0],
-            dtype=np.float64,
-        )
+    metric_width = max(len(row) for row in physical_stencils)
+    metric_rows = np.empty((len(physical_stencils), metric_width), dtype=np.int64)
+    metric_weights = np.zeros((len(physical_stencils), metric_width), dtype=np.float64)
+    for row, stencil in enumerate(physical_stencils):
+        # Padding repeats the first sample with zero log-Euclidean weight.
+        metric_rows[row] = stencil[0][0]
+        for column, (source_row, weight) in enumerate(stencil):
+            metric_rows[row, column] = source_row
+            metric_weights[row, column] = float(weight)
+    target_metric = np.asarray(
+        interpolate_mesh_metric(prepared.physical_metric[metric_rows], metric_weights),
+        dtype=np.float64,
+    )
 
     vertex_order = np.argsort(physical_ids, kind="stable")
     physical_ids = physical_ids[vertex_order]
@@ -1678,9 +1937,9 @@ def _physical_edit(
     local_vertex_relations = local_edit.relations[0]
     vertex_relation_rows: list[tuple[int, int, int]] = []
     for source_key, target_key, kind in zip(
-        np.asarray(local_vertex_relations.source_keys, dtype=np.int64),
-        np.asarray(local_vertex_relations.target_keys, dtype=np.int64),
-        np.asarray(local_vertex_relations.kinds, dtype=np.int32),
+        np.asarray(local_vertex_relations.source_keys, dtype=np.int64).tolist(),
+        np.asarray(local_vertex_relations.target_keys, dtype=np.int64).tolist(),
+        np.asarray(local_vertex_relations.kinds, dtype=np.int32).tolist(),
         strict=True,
     ):
         source_id = source_work_to_physical_id.get(int(source_key[0]))
@@ -1695,8 +1954,12 @@ def _physical_edit(
             )
     vertex_relations = _relation_rows(
         0,
-        np.asarray([[row[0]] for row in vertex_relation_rows], dtype=np.int64).reshape((-1, 1)),
-        np.asarray([[row[1]] for row in vertex_relation_rows], dtype=np.int64).reshape((-1, 1)),
+        np.asarray([[row[0]] for row in vertex_relation_rows], dtype=np.int64).reshape(
+            (-1, 1)
+        ),
+        np.asarray([[row[1]] for row in vertex_relation_rows], dtype=np.int64).reshape(
+            (-1, 1)
+        ),
         np.asarray([row[2] for row in vertex_relation_rows], dtype=np.int32),
         1,
     )
@@ -1705,13 +1968,17 @@ def _physical_edit(
     edge_target_rows: list[tuple[int, int]] = []
     edge_kind_rows: list[int] = []
     for source_key, target_key, kind in zip(
-        np.asarray(local_edit.relations[1].source_keys, dtype=np.int64),
-        np.asarray(local_edit.relations[1].target_keys, dtype=np.int64),
-        np.asarray(local_edit.relations[1].kinds, dtype=np.int32),
+        np.asarray(local_edit.relations[1].source_keys, dtype=np.int64).tolist(),
+        np.asarray(local_edit.relations[1].target_keys, dtype=np.int64).tolist(),
+        np.asarray(local_edit.relations[1].kinds, dtype=np.int32).tolist(),
         strict=True,
     ):
         source_key_mapped = tuple(
-            sorted(source_work_to_physical_id[int(value)] for value in source_key if value >= 0)
+            sorted(
+                source_work_to_physical_id[int(value)]
+                for value in source_key
+                if value >= 0
+            )
         )
         target_key_mapped = tuple(
             sorted(
@@ -1758,7 +2025,9 @@ def _physical_edit(
     )
     target_geometry = CellGeometrySpec.affine(target_mesh)
     target_cell_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks
+        )
     )
     reference_maps = _reference_maps_from_charts(
         prepared, target_cell_ids, chart_by_cell_id
@@ -1784,6 +2053,15 @@ def _physical_edit(
             chart_by_cell_id,
         )
     else:
+        entity_id = prepared.domain.entity_id
+        surface_occurrences = prepared.domain.source_occurrences[2]
+        patch_entity_ids = {
+            int(patch): entity_id(2, int(patch)) for patch in np.unique(patches).tolist()
+        }
+        patch_occurrences = {
+            int(patch): surface_occurrences[int(patch)]
+            for patch in np.unique(patches).tolist()
+        }
         witness = SurfaceChartWitness(
             geometry_id=cell_geometry_id(target_geometry),
             topology_id=target_mesh.topology_id,
@@ -1800,12 +2078,10 @@ def _physical_edit(
             source_root_cell_ids=roots,
             source_piece_ids=pieces,
             geometry_entity_ids=tuple(
-                prepared.domain.entity_id(2, int(patch))
-                for patch in patches.tolist()
+                patch_entity_ids[int(patch)] for patch in patches.tolist()
             ),
             occurrence_paths=tuple(
-                prepared.domain.source_occurrences[2][int(patch)]
-                for patch in patches.tolist()
+                patch_occurrences[int(patch)] for patch in patches.tolist()
             ),
             root_mesh_cell_bindings=tuple(
                 SurfaceRootMeshCellBinding(
@@ -1815,13 +2091,7 @@ def _physical_edit(
                 )
                 for identifier in target_cell_ids.tolist()
             ),
-            chart_rational_tokens=tuple(
-                tuple(
-                    tuple((value.numerator, value.denominator) for value in point)
-                    for point in chart
-                )
-                for chart in charts
-            ),
+            chart_rational_tokens=tuple(_triangle_tokens(chart) for chart in charts),
         )
     periodic_topology_id = None
     periodic_vertex_orbits = 0
@@ -1855,7 +2125,7 @@ def execute_surface_metric_adaptation(
     source: SurfaceMetricSource,
     /,
     *,
-    predicate_mode: object,
+    predicate_mode: PredicateMode,
     topology_operations: bool,
     relocation: bool,
 ) -> SurfaceMetricOutcome:
@@ -1932,24 +2202,39 @@ def target_surface_source(
         or geometry.domain_id != source_charts.domain_id
         or geometry.source_chart_id != source_charts.source_chart_id
     ):
-        raise ValueError("Surface metric chart transition changed its fixed source identity.")
+        raise ValueError(
+            "Surface metric chart transition changed its fixed source identity."
+        )
     witness = geometry.target_chart_witness
     if not isinstance(witness, SurfaceChartWitness):
-        raise TypeError("Implicit source charts require their source-bound witness route.")
+        raise TypeError(
+            "Implicit source charts require their source-bound witness route."
+        )
     if (
         witness.topology_id != target_mesh.topology_id
         or witness.geometry_id != cell_geometry_id(target_geometry)
     ):
-        raise ValueError("Surface metric target chart witness is stale for its geometry endpoint.")
+        raise ValueError(
+            "Surface metric target chart witness is stale for its geometry endpoint."
+        )
     target_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks
+        )
     )
     witness_ids = np.asarray(witness.cell_global_ids, dtype=np.int64)
-    witness_rows = {int(identifier): row for row, identifier in enumerate(witness_ids.tolist())}
-    if target_ids.size != witness_ids.size or set(target_ids.tolist()) != set(witness_rows):
+    witness_rows = {
+        int(identifier): row for row, identifier in enumerate(witness_ids.tolist())
+    }
+    if target_ids.size != witness_ids.size or set(target_ids.tolist()) != set(
+        witness_rows
+    ):
         raise ValueError("Surface metric chart witness does not cover every target cell.")
-    rows = np.asarray([witness_rows[int(identifier)] for identifier in target_ids], dtype=np.int64)
-    exact_charts = tuple(witness.exact_chart(int(row)) for row in rows.tolist())
+    rows = np.asarray(
+        [witness_rows[int(identifier)] for identifier in target_ids], dtype=np.int64
+    )
+    exact_chart = witness.exact_chart
+    exact_charts = tuple(exact_chart(int(row)) for row in rows.tolist())
     return SurfaceSourceCharts(
         source_charts.domain,
         target_mesh,
@@ -1959,8 +2244,12 @@ def target_surface_source(
         np.asarray(witness.patches, dtype=np.int64)[rows],
         tuple(associations),
         source_charts.boundary_source,
-        source_root_cell_ids=np.asarray(witness.source_root_cell_ids, dtype=np.int64)[rows],
-        source_piece_ids=tuple(witness.source_piece_ids[int(row)] for row in rows.tolist()),
+        source_root_cell_ids=np.asarray(witness.source_root_cell_ids, dtype=np.int64)[
+            rows
+        ],
+        source_piece_ids=tuple(
+            witness.source_piece_ids[int(row)] for row in rows.tolist()
+        ),
         root_parameter_exact=exact_charts,
     )
 

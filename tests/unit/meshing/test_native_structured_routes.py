@@ -97,7 +97,9 @@ def _rectangle(
         name,
         (
             _curve(((x0, y0), (x0, y1)), source_id=f"{name}:left", intervals=y_intervals),
-            _curve(((x1, y0), (x1, y1)), source_id=f"{name}:right", intervals=y_intervals),
+            _curve(
+                ((x1, y0), (x1, y1)), source_id=f"{name}:right", intervals=y_intervals
+            ),
             _curve(bottom_points, source_id=f"{name}:bottom", intervals=x_intervals),
             _curve(((x0, y1), (x1, y1)), source_id=f"{name}:top", intervals=x_intervals),
         ),
@@ -145,7 +147,9 @@ def test_logical_cell_bank_uses_c_order_quad_and_hex_reference_vertices() -> Non
 
 
 @pytest.mark.parametrize("shape", ((), (2,), (2, 2, 2, 2), (0, 2), (2, 1)))
-def test_logical_cell_bank_rejects_invalid_logical_dimensions(shape: tuple[int, ...]) -> None:
+def test_logical_cell_bank_rejects_invalid_logical_dimensions(
+    shape: tuple[int, ...],
+) -> None:
     with pytest.raises(ValueError, match="logical_shape"):
         logical_cell_bank(shape)
 
@@ -178,9 +182,7 @@ def test_curved_transfinite_boundary_is_realized_in_the_high_order_map() -> None
     bottom = block.boundaries[2]
     assert isinstance(bottom, TransfiniteCurveControl)
     expected = np.asarray(
-        bottom.curve.evaluate(
-            jnp.asarray(np.linspace(0.0, 1.0, 5), dtype=jnp.float64)
-        )
+        bottom.curve.evaluate(jnp.asarray(np.linspace(0.0, 1.0, 5), dtype=jnp.float64))
     )
     np.testing.assert_allclose(grid[:, 0], expected, rtol=0.0, atol=2e-15)
 
@@ -232,7 +234,11 @@ def test_triangle_and_quad_sweeps_preserve_family_and_source_cell_ids() -> None:
     control = SweepControl(SweepMapKind.EXTRUSION, schedule, "z-axis")
     quad = phx.discretization.CellMesh(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
-        (phx.discretization.CellBlock("quad", "quadrilateral", ((0, 1, 2, 3),), global_ids=(91,)),),
+        (
+            phx.discretization.CellBlock(
+                "quad", "quadrilateral", ((0, 1, 2, 3),), global_ids=(91,)
+            ),
+        ),
     )
     triangle = phx.discretization.CellMesh.from_triangles(
         ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), ((0, 1, 2),), cell_global_ids=(37,)
@@ -252,7 +258,9 @@ def test_triangle_and_quad_sweeps_preserve_family_and_source_cell_ids() -> None:
         triangle_map.source_reference_vertices[:, 3:],
     )
     np.testing.assert_allclose(swept_quad.stations, (0.0, 0.25, 1.0))
-    np.testing.assert_allclose(swept_quad.measured_layer_thicknesses, ((0.25,) * 4, (0.75,) * 4))
+    np.testing.assert_allclose(
+        swept_quad.measured_layer_thicknesses, ((0.25,) * 4, (0.75,) * 4)
+    )
 
 
 def test_closed_revolution_has_an_explicit_periodic_seam_map() -> None:
@@ -319,10 +327,16 @@ def test_wrong_interface_permutation_and_nonconforming_counts_are_rejected() -> 
 
 def test_three_dimensional_face_permutation_and_flip_are_applied_explicitly() -> None:
     left = generate_structured_block(
-        _box("left3d", (0.0, 0.0, 0.0), ((0.5, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+        _box(
+            "left3d", (0.0, 0.0, 0.0), ((0.5, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        )
     )
     right = generate_structured_block(
-        _box("right3d", (0.5, 0.0, 1.0), ((0.5, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)))
+        _box(
+            "right3d",
+            (0.5, 0.0, 1.0),
+            ((0.5, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+        )
     )
     interface = BlockInterfaceControl("left3d", 1, "right3d", 0, (1, 0), (False, True))
     glued = glue_structured_blocks((left, right), (interface,))
@@ -330,7 +344,9 @@ def test_three_dimensional_face_permutation_and_flip_are_applied_explicitly() ->
     assert glued.maximum_gluing_residual == 0.0
 
 
-def test_sweep_connectivity_carries_high_order_geometry_rows_and_refuses_wraparound() -> None:
+def test_sweep_connectivity_carries_high_order_geometry_rows_and_refuses_wraparound() -> (
+    None
+):
     profile_geometry_rows = np.asarray(((0, 1, 2, 3, 4, 5),), dtype=np.int32)
     swept = column_connectivity(profile_geometry_rows, 2, 6, False)
     np.testing.assert_array_equal(swept[0], (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
@@ -356,9 +372,7 @@ def test_closed_frame_sweep_retains_the_declared_periodic_seam() -> None:
         ((0.0, 1.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         dtype=np.float64,
     )
-    frames = np.stack(
-        (identity, quarter_turn, half_turn, three_quarter_turn, identity)
-    )
+    frames = np.stack((identity, quarter_turn, half_turn, three_quarter_turn, identity))
     control = SweepControl(
         SweepMapKind.FRAMES,
         LayerSchedule((0.25, 0.25, 0.25, 0.25)),
@@ -471,11 +485,13 @@ class _SweepPwlDomainOwner:
         )
         self.scope_entity_ids_by_mesh_row = entity_rows
         self._scope_entity_set_ids = tuple(
-            f"{domain.domain_id}:pwl:{dimension}"
-            for dimension in range(len(entity_rows))
+            f"{domain.domain_id}:pwl:{dimension}" for dimension in range(len(entity_rows))
         )
         self._entity_keys = (
-            tuple((f"{domain.domain_id}:vertex:{row}", ()) for row in range(entity_rows[0].size)),
+            tuple(
+                (f"{domain.domain_id}:vertex:{row}", ())
+                for row in range(entity_rows[0].size)
+            ),
             tuple(
                 (
                     f"{domain.domain_id}:edge:{int(edge[0])}:{int(edge[1])}",
@@ -483,7 +499,10 @@ class _SweepPwlDomainOwner:
                 )
                 for edge in self.edges
             ),
-            tuple((f"{domain.domain_id}:facet:{row}", ()) for row in range(entity_rows[2].size)),
+            tuple(
+                (f"{domain.domain_id}:facet:{row}", ())
+                for row in range(entity_rows[2].size)
+            ),
             tuple(
                 (name, path)
                 for name, path in zip(
@@ -494,11 +513,10 @@ class _SweepPwlDomainOwner:
         self._domain_id = domain.domain_id
 
     def require_current(self, /) -> None:
-        if (
-            self.domain.domain_id != self._domain_id
-            or (self.domain.source_id, self.domain.source_revision)
-            != (self.source_id, self.source_revision)
-        ):
+        if self.domain.domain_id != self._domain_id or (
+            self.domain.source_id,
+            self.domain.source_revision,
+        ) != (self.source_id, self.source_revision):
             raise ValueError("The sweep PWL source domain changed after preparation.")
 
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
@@ -598,7 +616,6 @@ def test_native_structured_provider_returns_canonical_construction_data() -> Non
     )
 
 
-
 def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> None:
     source_id = "sweep-prism"
     vertices = np.asarray(
@@ -650,9 +667,7 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
         control,
         source_id,
         domain.source_revision,
-        fidelity_source=PiecewiseLinearBoundarySource(
-            _SweepPwlDomainOwner(domain), 2
-        ),
+        fidelity_source=PiecewiseLinearBoundarySource(_SweepPwlDomainOwner(domain), 2),
         maximum_deviation=0.0,
         domain=domain,
         domain_vertex_map=np.asarray(
@@ -694,11 +709,15 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
             coordinate_contract=SpatialCoordinateContract.si(),
         )
 
-    result = NativeMeshingProvider(NativeMeshingOptions("sweep")).plan(
-        source,
-        specification,
-        coordinate_contract=SpatialCoordinateContract.si(),
-    ).execute()
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("sweep"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     assert result.mesh.blocks[0].cell_kind == "prism"
     assert result.certification is not None and result.certification.passed
@@ -724,27 +743,19 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
             dtype=np.float64,
         ),
     )
-    attributes = {
-        attribute.name: attribute for attribute in result.attributes
-    }
+    attributes = {attribute.name: attribute for attribute in result.attributes}
     np.testing.assert_array_equal(
-        attributes[
-            f"{result.mesh.blocks[0].name}:source-profile-cell-id"
-        ].values,
+        attributes[f"{result.mesh.blocks[0].name}:source-profile-cell-id"].values,
         (37,),
     )
     assert {zone.name for zone in result.zones} == {"solid"}
 
-    finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        result.mesh
-    ).prepare()
+    finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(result.mesh).prepare()
     cell_volumes = np.asarray(finite_volume.cell_volumes, dtype=np.float64)
     np.testing.assert_allclose(cell_volumes, (0.5,), rtol=0.0, atol=1.0e-12)
     source_field = {37: 2.0}
     parent_ids = np.asarray(
-        attributes[
-            f"{result.mesh.blocks[0].name}:source-profile-cell-id"
-        ].values,
+        attributes[f"{result.mesh.blocks[0].name}:source-profile-cell-id"].values,
         dtype=np.int64,
     )
     transported_field = np.asarray(
@@ -756,6 +767,92 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
         1.0,
         rtol=0.0,
         atol=1.0e-12,
+    )
+
+
+def test_native_graded_whole_slab_sweep_keeps_the_physical_layer_schedule() -> None:
+    # Native counterpart of the CAD whole-solid layer sweep: the full slab is the
+    # layer domain, with no core fill and an exact first-cell height.
+    source_id = "graded-slab"
+    thicknesses = (0.08, 0.10, 0.12)
+    stations = np.concatenate(((0.0,), np.cumsum(thicknesses)))
+    triangle = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    # The PWL boundary carries every station so each wall facet is one swept face.
+    vertices = np.asarray(
+        [(x, y, z) for z in stations for x, y in triangle], dtype=np.float64
+    )
+    top = 3 * (len(thicknesses))
+    facet_rows = [(0, 2, 1), (top, top + 1, top + 2)]
+    for layer in range(len(thicknesses)):
+        base = 3 * layer
+        for first, second in ((0, 1), (1, 2), (2, 0)):
+            facet_rows.append((base + first, base + second, base + second + 3))
+            facet_rows.append((base + first, base + second + 3, base + first + 3))
+    facets = np.asarray(facet_rows, dtype=np.int64)
+    domain = PiecewiseLinearDomain(
+        vertices,
+        facets,
+        np.tile(np.asarray(((0, -1),), dtype=np.int64), (facets.shape[0], 1)),
+        ("slab",),
+        source_id=source_id,
+    )
+    profile = phx.discretization.CellMesh.from_triangles(
+        vertices[:3],
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+        cell_global_ids=(5,),
+    )
+    source = NativeSweepSource(
+        profile,
+        SweepControl(
+            SweepMapKind.EXTRUSION,
+            LayerSchedule(thicknesses),
+            "graded-slab-extrusion",
+        ),
+        source_id,
+        domain.source_revision,
+        fidelity_source=PiecewiseLinearBoundarySource(_SweepPwlDomainOwner(domain), 2),
+        maximum_deviation=0.0,
+        domain=domain,
+        domain_vertex_map=np.asarray(
+            [
+                (profile_row, station)
+                for station in range(stations.size)
+                for profile_row in range(3)
+            ],
+            dtype=np.int64,
+        ),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("prism",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.SWEEP,
+        size_controls=(),
+    )
+
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("sweep"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+
+    assert {block.cell_kind for block in result.mesh.blocks} == {"prism"}
+    assert sum(block.cell_count for block in result.mesh.blocks) == len(thicknesses)
+    assert result.certification is not None and result.certification.passed
+    assert result.audit.passed and result.compliance.passed
+    stations = np.unique(np.asarray(result.mesh.coordinates, dtype=np.float64)[:, 2])
+    np.testing.assert_allclose(
+        stations, np.concatenate(((0.0,), np.cumsum(thicknesses))), rtol=0.0, atol=1e-15
+    )
+    assert stations[1] - stations[0] == pytest.approx(thicknesses[0], rel=0.0, abs=1e-15)
+    finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(result.mesh).prepare()
+    cell_volumes = np.sort(np.asarray(finite_volume.cell_volumes, dtype=np.float64))
+    # Independent oracle: each layer is a right prism over the unit right triangle.
+    np.testing.assert_allclose(
+        cell_volumes, np.sort(0.5 * np.asarray(thicknesses)), rtol=0.0, atol=1e-14
     )
 
 

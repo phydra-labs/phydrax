@@ -4488,10 +4488,12 @@ class PlanePatch(AbstractSurfacePatch):
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.origin.dtype)
+        # Equal-rank operands: batched charts must not rely on rank promotion.
+        shape = (1,) * (parameters_.ndim - 1) + (self.origin.shape[-1],)
         return (
-            self.origin
-            + parameters_[..., :1] * self.first_axis
-            + parameters_[..., 1:2] * self.second_axis
+            self.origin.reshape(shape)
+            + parameters_[..., :1] * self.first_axis.reshape(shape)
+            + parameters_[..., 1:2] * self.second_axis.reshape(shape)
         )
 
     def derivative_bounds(
