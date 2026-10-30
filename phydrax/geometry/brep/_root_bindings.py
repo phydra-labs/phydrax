@@ -201,6 +201,7 @@ def _exact_cylinder_patch_box(
         upper_values.append(fraction_up(enclosure[1]))
     return np.asarray((lower_values, upper_values), dtype=np.float64)
 
+
 def _exact_torus_patch_box(
     patch: object, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
@@ -268,8 +269,6 @@ def _exact_torus_patch_box(
     return np.asarray((lower_values, upper_values), dtype=np.float64)
 
 
-
-
 def _exact_bspline_surface_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
@@ -315,9 +314,7 @@ def _exact_bspline_surface_box(
                 "A rational B-spline surface span has no positive denominator."
             )
         if len(enclosure.value_bounds) != 3:
-            raise ValueError(
-                "A B-spline surface source box must have three coordinates."
-            )
+            raise ValueError("A B-spline surface source box must have three coordinates.")
         for axis, bounds in enumerate(enclosure.value_bounds):
             component_bounds[axis].append(bounds)
     if any(not bounds for bounds in component_bounds):
@@ -333,6 +330,7 @@ def _exact_bspline_surface_box(
         for component in component_bounds
     )
     return np.asarray((lower_values, upper_values), dtype=np.float64)
+
 
 def _patch_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
@@ -377,6 +375,7 @@ def _patch_box(
         np.asarray(upper, dtype=np.float64)[None],
     )
     return np.stack((lo[0], hi[0]))
+
 
 def _curve_box(curve: AbstractCurve, lower: float, upper: float, /) -> np.ndarray:
     if isinstance(curve, (IntersectionPCurve, CurveTrimSegment)):
@@ -494,19 +493,14 @@ def _root_support_parameter_box(
     patch: AbstractSurfacePatch, root: TrimIntersectionRoot, /
 ) -> np.ndarray:
     witness = root.endpoint_witness
-    if (
-        witness is not None
-        and _same_parameter_source(patch, witness.source_region.patch)
-    ):
+    if witness is not None and _same_parameter_source(patch, witness.source_region.patch):
         return np.asarray(witness.uv_enclosure, dtype=np.float64)
     lower, upper = np.asarray(root.parameter_lower), np.asarray(root.parameter_upper)
     curve_box = _curve_box(root.first, float(lower[0]), float(upper[0]))
     try:
         return np.asarray(patch.validate_parameter_box(curve_box), dtype=np.float64)
     except ValueError:
-        boundary_box = _exact_source_domain_boundary_root_box(
-            patch, root, curve_box
-        )
+        boundary_box = _exact_source_domain_boundary_root_box(patch, root, curve_box)
         if boundary_box is not None:
             return boundary_box
         if (
@@ -531,7 +525,6 @@ def _root_support_parameter_box(
                 upper = min(upper, domain[1][axis])
             expanded[:, axis] = (lower, upper)
         return np.asarray(patch.validate_parameter_box(expanded), dtype=np.float64)
-
 
 
 class BRepRootSupport(StrictModule):
@@ -598,9 +591,7 @@ class BRepCurveSurfaceLift(StrictModule):
                 "BRepCurveSurfaceLift requires a finite increasing source interval."
             )
         region_box = np.asarray(source_region.parameter_box, dtype=np.float64)
-        if not exact_source_lift(
-            curve, pcurve, source_region, float(first), float(last)
-        ):
+        if not exact_source_lift(curve, pcurve, source_region, float(first), float(last)):
             raise ValueError(
                 "BRepCurveSurfaceLift requires a proved source correspondence."
             )
@@ -619,19 +610,15 @@ class BRepCurveSurfaceLift(StrictModule):
             "surface": _source_payload(self.surface),
             "pcurve": _source_payload(self.pcurve),
             "parameter_box": tuple(
-                tuple(float(value).hex() for value in row)
-                for row in self.parameter_box
+                tuple(float(value).hex() for value in row) for row in self.parameter_box
             ),
             "range": (float(self.first).hex(), float(self.last).hex()),
         }
 
 
-
 type _LiftChartScalar = ExactScalar | PeriodOffset
 type _LiftChartPoint = tuple[_LiftChartScalar, _LiftChartScalar]
-type _ExactLineChart = tuple[
-    _LiftChartPoint, tuple[ExactScalar, ExactScalar]
-]
+type _ExactLineChart = tuple[_LiftChartPoint, tuple[ExactScalar, ExactScalar]]
 
 
 def _exact_line_chart(
@@ -736,7 +723,6 @@ def _chart_cross(
     return None if left is None or right is None else _chart_subtract(left, right)
 
 
-
 def _exact_line_chart_image(
     line: _ExactLineChart, parameter: _LiftChartScalar, /
 ) -> _LiftChartPoint | None:
@@ -765,15 +751,10 @@ def _exact_trim_root_chart_point(
     first_origin, first_direction = first
     second_origin, second_direction = second
     determinant = _chart_cross(first_direction, second_direction)
-    if (
-        determinant is None
-        or isinstance(determinant, PeriodOffset)
-        or determinant == 0
-    ):
+    if determinant is None or isinstance(determinant, PeriodOffset) or determinant == 0:
         return None
     delta = tuple(
-        _chart_subtract(second_origin[axis], first_origin[axis])
-        for axis in range(2)
+        _chart_subtract(second_origin[axis], first_origin[axis]) for axis in range(2)
     )
     if delta[0] is None or delta[1] is None:
         return None
@@ -805,7 +786,9 @@ def _exact_trim_root_chart_point(
         return None
     first_point = _exact_line_chart_image(first, first_parameter)
     second_point = _exact_line_chart_image(second, second_parameter)
-    return first_point if first_point is not None and first_point == second_point else None
+    return (
+        first_point if first_point is not None and first_point == second_point else None
+    )
 
 
 def _line_parameter_for_chart_point(
@@ -952,9 +935,8 @@ def _isolated_axis_line_lift_endpoint(
 def _support_lift_parameter(
     support: BRepRootSupport, lift: BRepCurveSurfaceLift, /
 ) -> _LiftChartScalar | None:
-    if (
-        not isinstance(support.root, TrimIntersectionRoot)
-        or not _same_parameter_source(support.patch, lift.surface)
+    if not isinstance(support.root, TrimIntersectionRoot) or not _same_parameter_source(
+        support.patch, lift.surface
     ):
         return None
     witness = support.root.endpoint_witness
@@ -1014,9 +996,7 @@ def _support_roots_share_lifted_endpoint(
     lifts: tuple[BRepCurveSurfaceLift, ...],
     /,
 ) -> bool:
-    for first_lift, second_lift in _shared_support_lift_pairs(
-        first, second, lifts
-    ):
+    for first_lift, second_lift in _shared_support_lift_pairs(first, second, lifts):
         first_parameter = _support_lift_parameter(first, first_lift)
         second_parameter = _support_lift_parameter(second, second_lift)
         if (
@@ -1569,9 +1549,7 @@ def _curve_surface_root_shares_trim_support(
         if source_trim.reversed:
             source_scale = -source_scale
             source_offset = source_trim.last
-        edge_endpoint = affine_root_endpoint(
-            source_endpoint, source_scale, source_offset
-        )
+        edge_endpoint = affine_root_endpoint(source_endpoint, source_scale, source_offset)
         edge_lower, edge_upper = edge_endpoint.parameter_enclosure()
         if edge_lower < lift.first or edge_upper > lift.last:
             continue
@@ -1579,9 +1557,7 @@ def _curve_surface_root_shares_trim_support(
             root, "second" if source_operand == 0 else "first"
         )
         branch_lower, branch_upper = branch_endpoint.parameter_enclosure()
-        if not (
-            0.0 <= branch_lower <= branch_upper <= branch.num_charts
-        ):
+        if not (0.0 <= branch_lower <= branch_upper <= branch.num_charts):
             continue
         try:
             coupled = branch.parameter_enclosures(branch_lower, branch_upper)
@@ -1616,8 +1592,10 @@ def _curve_surface_root_shares_trim_support(
             np.asarray(spatial.parameter_upper, dtype=np.float64),
             np.asarray((edge_upper, *chart_upper), dtype=np.float64),
         )
-        margin = 64.0 * np.finfo(np.float64).eps * (
-            1.0 + np.maximum(np.abs(lower), np.abs(upper))
+        margin = (
+            64.0
+            * np.finfo(np.float64).eps
+            * (1.0 + np.maximum(np.abs(lower), np.abs(upper)))
         )
         lower, upper = (
             np.nextafter(lower - margin, -np.inf),
@@ -1692,10 +1670,12 @@ class BRepVertexRoot(StrictModule):
                     raise ValueError(
                         "BRepRootSupport aliases need an exact shared-lift endpoint proof."
                     )
-            elif isinstance(primary, BRepConicVertex) and _has_conic_support_lift(
-                primary, alias, source_edge_lifts
-            ) and not _conic_support_shares_lifted_endpoint(
-                primary, alias, source_edge_lifts
+            elif (
+                isinstance(primary, BRepConicVertex)
+                and _has_conic_support_lift(primary, alias, source_edge_lifts)
+                and not _conic_support_shares_lifted_endpoint(
+                    primary, alias, source_edge_lifts
+                )
             ):
                 raise ValueError(
                     "A conic vertex support alias needs an exact shared-lift endpoint proof."
@@ -1795,15 +1775,17 @@ class BRepVertexRoot(StrictModule):
             and endpoint.source_surface is not None
         ):
             joint = self.joint_root
-            if joint is None and isinstance(
-                self.primary, TripleSurfaceIntersectionRoot
-            ):
+            if joint is None and isinstance(self.primary, TripleSurfaceIntersectionRoot):
                 joint = self.primary
-            if joint is not None and any(
-                _same_parameter_source(region.patch, endpoint.source_surface.patch)
-                for region in (joint.first, joint.second, joint.third)
-            ) and joint.certifies_root(
-                endpoint.root, source_edge_lifts=self.source_edge_lifts
+            if (
+                joint is not None
+                and any(
+                    _same_parameter_source(region.patch, endpoint.source_surface.patch)
+                    for region in (joint.first, joint.second, joint.third)
+                )
+                and joint.certifies_root(
+                    endpoint.root, source_edge_lifts=self.source_edge_lifts
+                )
             ):
                 return True
         endpoint_root = getattr(endpoint, "root", None)
@@ -1889,12 +1871,24 @@ class BRepVertexRoot(StrictModule):
         while isinstance(curve, CurveTrimSegment):
             curve = curve.curve
         if isinstance(endpoint, BranchRootEndpoint):
-            side = endpoint.source_side
-            if side not in ("first", "second"):
+            source_side = endpoint.source_side
+            if source_side not in ("first", "second"):
                 return None
-            region = endpoint.curve.first if side == "first" else endpoint.curve.second
-            if not _same_parameter_source(region.patch, patch):
+            # Bind the branch side carried by this patch. The endpoint root may
+            # be isolated on the opposite face's edge; its source image still
+            # encloses that root in this face's own parameters. A patch carrying
+            # neither or both branch sides cannot select a chart.
+            sides = tuple(
+                candidate
+                for candidate, region in (
+                    ("first", endpoint.curve.first),
+                    ("second", endpoint.curve.second),
+                )
+                if _same_parameter_source(region.patch, patch)
+            )
+            if len(sides) != 1:
                 return None
+            side = sides[0]
             if isinstance(curve, IntersectionPCurve):
                 if (
                     curve.curve.branch_id != endpoint.curve.branch_id
@@ -1902,8 +1896,10 @@ class BRepVertexRoot(StrictModule):
                     or curve.reversed
                 ):
                     return None
-            elif endpoint.source_pcurve is None or not _same_parameter_source(
-                endpoint.source_pcurve, curve
+            elif (
+                side != source_side
+                or endpoint.source_pcurve is None
+                or not _same_parameter_source(endpoint.source_pcurve, curve)
             ):
                 return None
             try:
@@ -2186,11 +2182,7 @@ def _exact_conic_uv_endpoint(
             return None
         return ("plane", uv[0], uv[1])
 
-    if (
-        not isinstance(patch, CylinderPatch)
-        or symbols[0] != "two_pi"
-        or shifts[1] != 0
-    ):
+    if not isinstance(patch, CylinderPatch) or symbols[0] != "two_pi" or shifts[1] != 0:
         return None
     if isinstance(source, PlaneCylinderSectionPCurve):
         chart = _exact_plane_cylinder_section_endpoint_chart(

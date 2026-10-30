@@ -57,16 +57,28 @@ from ._sewing import BRepSewingPolicy, sew_brep, shells
 from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
 
-_BooleanRootEndpoint: TypeAlias = TrimRootEndpoint | BranchRootEndpoint | NativePeriodEndpoint | ConicParameterEndpoint
+_BooleanRootEndpoint: TypeAlias = (
+    TrimRootEndpoint | BranchRootEndpoint | NativePeriodEndpoint | ConicParameterEndpoint
+)
+
 
 def _require_boolean_root_endpoint(endpoint: object, /) -> _BooleanRootEndpoint:
     if isinstance(
         endpoint,
-        (TrimRootEndpoint, BranchRootEndpoint, NativePeriodEndpoint, ConicParameterEndpoint),
+        (
+            TrimRootEndpoint,
+            BranchRootEndpoint,
+            NativePeriodEndpoint,
+            ConicParameterEndpoint,
+        ),
     ):
         return endpoint
     raise TypeError("Boolean endpoint bindings require an exact native root endpoint.")
-def root_parameter_in_source(carrier: AbstractCurve, endpoint: object, /) -> tuple[Fraction, Fraction]:
+
+
+def root_parameter_in_source(
+    carrier: AbstractCurve, endpoint: object, /
+) -> tuple[Fraction, Fraction]:
     endpoint = _require_boolean_root_endpoint(endpoint)
     if isinstance(endpoint, TrimRootEndpoint):
         scale = Fraction(endpoint.affine_parameter_scale)
@@ -112,15 +124,14 @@ def conic_rootline_endpoint_parameter(
     ):
         return None
     try:
-        parameter = (
-            Fraction.from_float(endpoint.affine_parameter_scale)
-            * witness.parameter_exact
-            + Fraction.from_float(endpoint.affine_parameter_offset)
+        parameter = Fraction.from_float(
+            endpoint.affine_parameter_scale
+        ) * witness.parameter_exact + Fraction.from_float(
+            endpoint.affine_parameter_offset
         )
         for scale, offset in endpoint.affine_transforms:
-            parameter = (
-                Fraction.from_float(scale) * parameter
-                + Fraction.from_float(offset)
+            parameter = Fraction.from_float(scale) * parameter + Fraction.from_float(
+                offset
             )
     except (OverflowError, ValueError):
         return None
@@ -129,15 +140,21 @@ def conic_rootline_endpoint_parameter(
 
 def root_endpoint_id(endpoint: object, /) -> str:
     """Canonical identity for an exact endpoint binding, including its source chart."""
-    return canonical_fingerprint(endpoint_root_payload(_require_boolean_root_endpoint(endpoint)))
+    return canonical_fingerprint(
+        endpoint_root_payload(_require_boolean_root_endpoint(endpoint))
+    )
 
 
 def same_root_endpoint(first: object, second: object, /) -> bool:
     """Compare canonical exact root bindings, including their source charts."""
-    return endpoint_root_payload(_require_boolean_root_endpoint(first)) == endpoint_root_payload(_require_boolean_root_endpoint(second))
+    return endpoint_root_payload(
+        _require_boolean_root_endpoint(first)
+    ) == endpoint_root_payload(_require_boolean_root_endpoint(second))
 
 
-def affine_root_endpoint(endpoint: object, scale: float, offset: float, /) -> TrimRootEndpoint | BranchRootEndpoint:
+def affine_root_endpoint(
+    endpoint: object, scale: float, offset: float, /
+) -> TrimRootEndpoint | BranchRootEndpoint:
     """Retain a root's exact source identity under an affine scalar transport."""
     endpoint = _require_boolean_root_endpoint(endpoint)
     if isinstance(endpoint, TrimRootEndpoint):
@@ -146,7 +163,10 @@ def affine_root_endpoint(endpoint: object, scale: float, offset: float, /) -> Tr
             endpoint.operand,
             affine_parameter_offset=endpoint.affine_parameter_offset,
             affine_parameter_scale=endpoint.affine_parameter_scale,
-            affine_transforms=(*endpoint.affine_transforms, (float(scale), float(offset))),
+            affine_transforms=(
+                *endpoint.affine_transforms,
+                (float(scale), float(offset)),
+            ),
             source_pcurve=endpoint.source_pcurve,
             source_surface=endpoint.source_surface,
         )
@@ -160,11 +180,12 @@ def affine_root_endpoint(endpoint: object, scale: float, offset: float, /) -> Tr
             source_first=endpoint.source_first,
             source_last=endpoint.source_last,
             periodic_shifts=endpoint.periodic_shifts,
-            affine_transforms=(*endpoint.affine_transforms, (float(scale), float(offset))),
+            affine_transforms=(
+                *endpoint.affine_transforms,
+                (float(scale), float(offset)),
+            ),
         )
     raise TypeError("Affine root transport requires a trim or branch endpoint binding.")
-
-
 
 
 def _rational_numeric_shadow(values: object, /) -> np.ndarray | None:
@@ -190,11 +211,15 @@ def _affine_execution_matrix_is_nonsingular(value: object, /) -> bool:
         Fraction.from_float(float(matrix[1, 1])),
     )
     return a * d - b * c != 0
+
+
 class AffinePCurve(AbstractCurve):
     """Exact rational chart transport of an unchanged source p-curve."""
 
     curve: AbstractCurve
-    matrix: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] = eqx.field(static=True)
+    matrix: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] = eqx.field(
+        static=True
+    )
     offset: tuple[Fraction, Fraction] = eqx.field(static=True)
     matrix_value: Array
     offset_value: Array
@@ -207,21 +232,27 @@ class AffinePCurve(AbstractCurve):
     ) -> None:
         matrix_host = np.asarray(matrix, dtype=object)
         offset_host = np.asarray(offset, dtype=object)
-        if curve.ambient_dimension != 2 or matrix_host.shape != (2, 2) or offset_host.shape != (2,):
-            raise ValueError("AffinePCurve requires a planar source, 2x2 matrix, and 2-vector.")
+        if (
+            curve.ambient_dimension != 2
+            or matrix_host.shape != (2, 2)
+            or offset_host.shape != (2,)
+        ):
+            raise ValueError(
+                "AffinePCurve requires a planar source, 2x2 matrix, and 2-vector."
+            )
 
         def rational(value: object) -> Fraction:
             if isinstance(value, Fraction):
                 return value
-            if isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)):
+            if isinstance(value, (int, np.integer)) and not isinstance(
+                value, (bool, np.bool_)
+            ):
                 return Fraction(int(value))
             if isinstance(value, (float, np.floating)) and np.isfinite(value):
                 return Fraction(float(value))
             raise ValueError("AffinePCurve coefficients must be finite rational values.")
 
-        exact_matrix: tuple[
-            tuple[Fraction, Fraction], tuple[Fraction, Fraction]
-        ] = (
+        exact_matrix: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] = (
             (
                 rational(matrix_host[0, 0]),
                 rational(matrix_host[0, 1]),
@@ -235,8 +266,13 @@ class AffinePCurve(AbstractCurve):
             rational(offset_host[0]),
             rational(offset_host[1]),
         )
-        if exact_matrix[0][0] * exact_matrix[1][1] == exact_matrix[0][1] * exact_matrix[1][0]:
-            raise ValueError("AffinePCurve matrix must be nonsingular over rational coefficients.")
+        if (
+            exact_matrix[0][0] * exact_matrix[1][1]
+            == exact_matrix[0][1] * exact_matrix[1][0]
+        ):
+            raise ValueError(
+                "AffinePCurve matrix must be nonsingular over rational coefficients."
+            )
         matrix_value = _rational_numeric_shadow(exact_matrix)
         offset_value = _rational_numeric_shadow(exact_offset)
         if matrix_value is None or offset_value is None:
@@ -262,7 +298,9 @@ class AffinePCurve(AbstractCurve):
 
     @property
     def parameter_interval(self) -> tuple[float, float]:
-        return (-np.inf, np.inf) if self.parameter_domain is None else self.parameter_domain
+        return (
+            (-np.inf, np.inf) if self.parameter_domain is None else self.parameter_domain
+        )
 
     @property
     def period(self) -> float | None:
@@ -275,7 +313,10 @@ class AffinePCurve(AbstractCurve):
         return self.curve.is_c1_on(first, last)
 
     def evaluate(self, parameters: Array, /) -> Array:
-        return jnp.asarray(self.curve.evaluate(parameters)) @ self.matrix_value.T + self.offset_value
+        return (
+            jnp.asarray(self.curve.evaluate(parameters)) @ self.matrix_value.T
+            + self.offset_value
+        )
 
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         source = _curve_box(self.curve, first, last)
@@ -299,8 +340,7 @@ class AffinePCurve(AbstractCurve):
             "kind": "boolean-affine-pcurve",
             "curve": carrier_payload(self.curve),
             "matrix": tuple(
-                tuple(coefficient_payload(value) for value in row)
-                for row in self.matrix
+                tuple(coefficient_payload(value) for value in row) for row in self.matrix
             ),
             "offset": tuple(coefficient_payload(value) for value in self.offset),
         }
@@ -314,13 +354,29 @@ class PeriodicPCurve(AbstractCurve):
     period_shifts: tuple[int, int] = eqx.field(static=True)
     offset_value: Array
 
-    def __init__(self, source_curve: AbstractCurve, patch: AbstractSurfacePatch, period_shifts: tuple[int, int] = (0, 0)) -> None:
+    def __init__(
+        self,
+        source_curve: AbstractCurve,
+        patch: AbstractSurfacePatch,
+        period_shifts: tuple[int, int] = (0, 0),
+    ) -> None:
         shifts = period_shifts
-        if source_curve.ambient_dimension != 2 or len(shifts) != 2 or any(type(value) is not int for value in shifts):
-            raise ValueError("PeriodicPCurve requires a planar source and two integer shifts.")
+        if (
+            source_curve.ambient_dimension != 2
+            or len(shifts) != 2
+            or any(type(value) is not int for value in shifts)
+        ):
+            raise ValueError(
+                "PeriodicPCurve requires a planar source and two integer shifts."
+            )
         symbols = patch.native_period_symbols()
-        if any(shift and symbol != "two_pi" for shift, symbol in zip(shifts, symbols, strict=True)):
-            raise ValueError("PeriodicPCurve shifts require declared mathematical two-pi periods.")
+        if any(
+            shift and symbol != "two_pi"
+            for shift, symbol in zip(shifts, symbols, strict=True)
+        ):
+            raise ValueError(
+                "PeriodicPCurve shifts require declared mathematical two-pi periods."
+            )
         self.source_curve, self.patch = source_curve, patch
         self.period_shifts = shifts
         try:
@@ -347,7 +403,9 @@ class PeriodicPCurve(AbstractCurve):
 
     @property
     def parameter_interval(self) -> tuple[float, float]:
-        return (-np.inf, np.inf) if self.parameter_domain is None else self.parameter_domain
+        return (
+            (-np.inf, np.inf) if self.parameter_domain is None else self.parameter_domain
+        )
 
     @property
     def period(self) -> float | None:
@@ -362,17 +420,30 @@ class PeriodicPCurve(AbstractCurve):
     def evaluate(self, parameters: Array, /) -> Array:
         return jnp.asarray(self.source_curve.evaluate(parameters)) + self.offset_value
 
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # A constant integer-period translation leaves every parameter derivative unchanged.
+        return self.source_curve.derivative_bounds(first, last, order=order)
+
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         source = _curve_box(self.source_curve, first, last)
         lower, upper = source[0].copy(), source[1].copy()
         for axis, shift in enumerate(self.period_shifts):
             if shift:
                 period = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
-                lower[axis], upper[axis] = interval_add((lower[axis], upper[axis]), period)
+                lower[axis], upper[axis] = interval_add(
+                    (lower[axis], upper[axis]), period
+                )
         return np.stack((lower, upper))
 
     def identity_payload(self) -> dict[str, object]:
-        return {"kind": "boolean-periodic-pcurve", "source": carrier_payload(self.source_curve), "patch": carrier_payload(self.patch), "shifts": self.period_shifts}
+        return {
+            "kind": "boolean-periodic-pcurve",
+            "source": carrier_payload(self.source_curve),
+            "patch": carrier_payload(self.patch),
+            "shifts": self.period_shifts,
+        }
 
 
 def _curve_box(curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
@@ -387,9 +458,15 @@ def _same_pcurve_parameter(first: AbstractCurve, second: AbstractCurve, /) -> bo
             first.curve.branch_id == second.curve.branch_id
             and first.side == second.side
             and first.reversed == second.reversed
-            and (not first.reversed or Fraction(first.first) + Fraction(first.last) == Fraction(second.first) + Fraction(second.last))
+            and (
+                not first.reversed
+                or Fraction(first.first) + Fraction(first.last)
+                == Fraction(second.first) + Fraction(second.last)
+            )
         )
-    return canonical_fingerprint(carrier_payload(first)) == canonical_fingerprint(carrier_payload(second))
+    return canonical_fingerprint(carrier_payload(first)) == canonical_fingerprint(
+        carrier_payload(second)
+    )
 
 
 def _pcurve_affine_source(
@@ -407,9 +484,17 @@ def _pcurve_affine_source(
     zero: tuple[ChartScalar, ChartScalar] = (Fraction(0), Fraction(0))
     if isinstance(curve, PeriodicPCurve):
         source, matrix, offset = _pcurve_affine_source(curve.source_curve)
-        return source, matrix, (
-            chart_add(offset[0], PeriodOffset(Fraction(0), Fraction(curve.period_shifts[0]))),
-            chart_add(offset[1], PeriodOffset(Fraction(0), Fraction(curve.period_shifts[1]))),
+        return (
+            source,
+            matrix,
+            (
+                chart_add(
+                    offset[0], PeriodOffset(Fraction(0), Fraction(curve.period_shifts[0]))
+                ),
+                chart_add(
+                    offset[1], PeriodOffset(Fraction(0), Fraction(curve.period_shifts[1]))
+                ),
+            ),
         )
     if isinstance(curve, AffinePCurve):
         source, inner, inner_offset = _pcurve_affine_source(curve.curve)
@@ -447,14 +532,16 @@ def pcurve_affine_correspondence(
     first: AbstractCurve,
     second: AbstractCurve,
     /,
-) -> tuple[
-    tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
-    tuple[ChartScalar, ChartScalar],
-] | None:
+) -> (
+    tuple[
+        tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+        tuple[ChartScalar, ChartScalar],
+    ]
+    | None
+):
     """Return exact chart map only when both p-curves share one source parameter atom."""
-    if (
-        not _pcurve_execution_shadows_match(first)
-        or not _pcurve_execution_shadows_match(second)
+    if not _pcurve_execution_shadows_match(first) or not _pcurve_execution_shadows_match(
+        second
     ):
         return None
     source_a, matrix_a, offset_a = _pcurve_affine_source(first)
@@ -540,7 +627,9 @@ def pcurve_periodic_source(
         return None
     shifts = [0, 0]
     while isinstance(curve, PeriodicPCurve):
-        if canonical_fingerprint(carrier_payload(curve.patch)) != canonical_fingerprint(carrier_payload(patch)):
+        if canonical_fingerprint(carrier_payload(curve.patch)) != canonical_fingerprint(
+            carrier_payload(patch)
+        ):
             return None
         shifts = [a + b for a, b in zip(shifts, curve.period_shifts, strict=True)]
         curve = curve.source_curve
@@ -552,12 +641,22 @@ def pcurve_periodic_source(
         if any(inner):
             return None
         return source, (0, 0)
-    if any(shift and symbol != "two_pi" for shift, symbol in zip(shifts, patch.native_period_symbols(), strict=True)):
+    if any(
+        shift and symbol != "two_pi"
+        for shift, symbol in zip(shifts, patch.native_period_symbols(), strict=True)
+    ):
         return None
     return curve, (shifts[0], shifts[1])
 
 
-def pcurve_surface_period_shifts(first: AbstractCurve, second: AbstractCurve, expected_matrix: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], expected_offset: tuple[Fraction, Fraction], patch: AbstractSurfacePatch, /) -> tuple[int, int] | None:
+def pcurve_surface_period_shifts(
+    first: AbstractCurve,
+    second: AbstractCurve,
+    expected_matrix: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    expected_offset: tuple[Fraction, Fraction],
+    patch: AbstractSurfacePatch,
+    /,
+) -> tuple[int, int] | None:
     if (
         not _pcurve_execution_shadows_match(first)
         or pcurve_periodic_source(second, patch) is None
@@ -567,7 +666,9 @@ def pcurve_surface_period_shifts(first: AbstractCurve, second: AbstractCurve, ex
     if correspondence is None or correspondence[0] != expected_matrix:
         return None
     shifts = []
-    for actual, expected, symbol in zip(correspondence[1], expected_offset, patch.native_period_symbols(), strict=True):
+    for actual, expected, symbol in zip(
+        correspondence[1], expected_offset, patch.native_period_symbols(), strict=True
+    ):
         delta = chart_add(actual, -expected)
         if isinstance(delta, PeriodOffset):
             if delta.rational or delta.turns.denominator != 1 or symbol != "two_pi":
@@ -580,11 +681,12 @@ def pcurve_surface_period_shifts(first: AbstractCurve, second: AbstractCurve, ex
     return shifts[0], shifts[1]
 
 
-
-
 def trim_source_join(first: AbstractCurve, second: AbstractCurve, /) -> bool:
     """Join exact source endpoints only when curve atoms and endpoint roots agree."""
-    def oriented_end(curve: AbstractCurve, start: bool) -> tuple[AbstractCurve, _BooleanRootEndpoint | None, Fraction] | None:
+
+    def oriented_end(
+        curve: AbstractCurve, start: bool
+    ) -> tuple[AbstractCurve, _BooleanRootEndpoint | None, Fraction] | None:
         if isinstance(curve, AffinePCurve):
             nested = oriented_end(curve.curve, start)
             return None if nested is None else (curve, nested[1], nested[2])
@@ -596,9 +698,17 @@ def trim_source_join(first: AbstractCurve, second: AbstractCurve, /) -> bool:
         lower_root, upper_root = curve.first_root, curve.last_root
         start_root = upper_root if curve.reversed else lower_root
         end_root = lower_root if curve.reversed else upper_root
-        parameter = (curve.last if curve.reversed else curve.first) if start else (curve.first if curve.reversed else curve.last)
+        parameter = (
+            (curve.last if curve.reversed else curve.first)
+            if start
+            else (curve.first if curve.reversed else curve.last)
+        )
         root = start_root if start else end_root
-        return curve.curve, None if root is None else _require_boolean_root_endpoint(root), Fraction(parameter)
+        return (
+            curve.curve,
+            None if root is None else _require_boolean_root_endpoint(root),
+            Fraction(parameter),
+        )
 
     left, right = oriented_end(first, False), oriented_end(second, True)
     if left is None or right is None:
@@ -609,10 +719,13 @@ def trim_source_join(first: AbstractCurve, second: AbstractCurve, /) -> bool:
     left_root, right_root = left[1], right[1]
     if left_root is None or right_root is None:
         return left_root is right_root and left[2] == right[2]
-    if isinstance(left_root, NativePeriodEndpoint) and isinstance(right_root, NativePeriodEndpoint):
+    if isinstance(left_root, NativePeriodEndpoint) and isinstance(
+        right_root, NativePeriodEndpoint
+    ):
         return left_root.exact_parameter == right_root.exact_parameter
-    return same_root_endpoint(left_root, right_root) and root_parameter_in_source(left[0], left_root) == root_parameter_in_source(right[0], right_root)
-
+    return same_root_endpoint(left_root, right_root) and root_parameter_in_source(
+        left[0], left_root
+    ) == root_parameter_in_source(right[0], right_root)
 
 
 BRepBooleanOperation: TypeAlias = Literal["union", "intersection", "difference"]
@@ -977,6 +1090,7 @@ def boolean_face_chart_box(
         if box[0, axis] <= lower and upper <= box[1, axis]:
             box[0, axis], box[1, axis] = lower, upper
     return box
+
 
 class _Rectangle(StrictModule):
     model: int = eqx.field(static=True)
@@ -1534,15 +1648,16 @@ class BooleanSourceLineage:
         except KeyError as error:
             raise BRepBooleanFailure(
                 "BRepBoolean.lineage.source_entity must bind to an exact operand occurrence",
-                (source_entity_id(
-                    entity.source_id,
-                    entity.source_revision,
-                    entity.kind,
-                    entity.index,
-                    occurrence_path=entity.occurrence_path,
-                ),),
+                (
+                    source_entity_id(
+                        entity.source_id,
+                        entity.source_revision,
+                        entity.kind,
+                        entity.index,
+                        occurrence_path=entity.occurrence_path,
+                    ),
+                ),
             ) from error
-
 
 
 def entity_occurrence_index(
@@ -1581,6 +1696,7 @@ def entity_occurrence_index(
         key: tuple(sorted(values, key=lambda item: item[0].occurrence_path))
         for key, values in grouped.items()
     }
+
 
 def source_assembly_occurrence_id(
     lineage: BooleanSourceLineage,
@@ -1622,7 +1738,6 @@ def target_assembly_occurrence_id(
             (local_id,),
         )
     return matches[0]
-
 
 
 def _boolean_operand_occurrence_id(
@@ -1700,9 +1815,7 @@ def source_lineage(
                     "BRepBoolean.lineage.source_entity must exist in its canonical source revision",
                     (entity_key,),
                 )
-            entity_occurrences[(operand, entity)] = occurrence_ids[
-                local.occurrence_id
-            ]
+            entity_occurrences[(operand, entity)] = occurrence_ids[local.occurrence_id]
     return BooleanSourceLineage(
         CADRevision(
             certificate,
