@@ -8,10 +8,7 @@ import pytest
 
 from phydrax._meshcore import (
     MeshcoreStatus,
-    PlcEntityKind,
-    PlcFailureReason,
     PlcRecovery3D,
-    PlcSourceFailure,
     prepare_plc_source,
 )
 from phydrax._physical import SpatialCoordinateContract
@@ -471,11 +468,13 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
         protected_features=(requested_feature,),
         region_seeds=base_specification.region_seeds,
     )
-    with pytest.raises(PlcSourceFailure) as failure:
-        _construct(source, feature_specification)
-    assert failure.value.status is MeshcoreStatus.CONSTRAINT_INTERSECTION
-    assert failure.value.reason is PlcFailureReason.FIXED_SEGMENT
-    assert failure.value.first_kind is PlcEntityKind.EDGE
+    # A requested diagonal is an edge of the authored face triangulation, so
+    # even a fixed boundary recovers it without boundary Steiner points.
+    requested = _construct(source, feature_specification)
+    requested_id = complex_.plc_edge_ids[requested_diagonal_row]
+    assert set(requested.segment_source_ids) == boundary_ids | {requested_id}
+    assert set(requested.face_source_ids) == set(complex_.facet_ids)
+    assert np.all(np.asarray(requested.boundary_faces) < complex_.vertices.shape[0])
 
 
 def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
