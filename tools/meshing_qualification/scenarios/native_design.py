@@ -64,7 +64,6 @@ class _FittedSizeModel(phx.AbstractArrayModel):
         return jnp.dot(jnp.asarray(features), self.weights) + self.bias
 
 
-
 class _PhysicalOracleRecord(TypedDict):
     represented_fe_qoi: float
     represented_exact_field_qoi: float
@@ -91,6 +90,7 @@ class _PhysicalSolveRecord(TypedDict):
     independent_exact_solution: str
     physical_oracle: _PhysicalOracleRecord
     residual_tolerance: float
+
 
 def _sphere_source(
     lattice_factor: int,
@@ -328,9 +328,9 @@ def _vertex_dof_rows(
 ) -> np.ndarray:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     dof_points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
-    row_by_point = {tuple(point.tolist()): row for row, point in enumerate(dof_points)}
+    row_by_point = {tuple(point): row for row, point in enumerate(dof_points.tolist())}
     return np.asarray(
-        [row_by_point[tuple(point.tolist())] for point in points], dtype=np.int64
+        [row_by_point[tuple(point)] for point in points.tolist()], dtype=np.int64
     )
 
 
@@ -592,7 +592,7 @@ def _derivative_oracle(radius: float, /) -> dict[str, object]:
     }
 
 
-def _recordable_solve(value: dict[str, object], /) -> dict[str, object]:
+def _recordable_solve(value: _PhysicalSolveRecord, /) -> dict[str, object]:
     return {
         key: item
         for key, item in value.items()
@@ -784,7 +784,9 @@ def _profile_case(
             )
             learned = proposer.propose(source, feature_record, scope=scope)
             if not isinstance(learned, MeshMarkingProposal):
-                raise TypeError("The learned sphere proposer did not produce a marking proposal.")
+                raise TypeError(
+                    "The learned sphere proposer did not produce a marking proposal."
+                )
             learned_fit_error = float(
                 np.max(
                     np.abs(np.asarray(learned.values) - analytic_scores),
@@ -949,7 +951,9 @@ def native_design_loop() -> dict[str, object]:
     for profile in profiles:
         profile_contracts = profile.get("missing_profile_contracts")
         if not isinstance(profile_contracts, list):
-            raise TypeError("Design profile omitted its explicit missing-contract record.")
+            raise TypeError(
+                "Design profile omitted its explicit missing-contract record."
+            )
         for contract in profile_contracts:
             if not isinstance(contract, str):
                 raise TypeError("Design missing-contract entries must be strings.")

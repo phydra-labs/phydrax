@@ -28,7 +28,14 @@ from ..discretization._exact_algebraic_geometry import (
     rational_coefficient,
 )
 from ..discretization._periodic_cell import PeriodicCell
+from ..discretization._periodic_exact import (
+    exact_periodic_element,
+    identification_orders,
+    PeriodicIsometryGroup,
+    reduce_periodic_exponents,
+)
 from ..discretization._periodic_topology import PeriodicMeshTopology
+from ..discretization._topology import CellComplexTopology
 from ._embedding_cells import EmbeddingCell
 from ._embedding_state import (
     MeshCertificateFinding,
@@ -38,8 +45,11 @@ from ._exact_polyhedral_geometry import (
     _sign,
     contact_is_declared,
     determinant3,
+    Point,
+    Point2,
     Point3,
     tetrahedron_contact_points,
+    triangle_contact_points2,
 )
 from ._periodic_image_frame import prepare_periodic_image_frame
 from ._planar_chain_embedding import triangulate_planar_polygon
@@ -81,16 +91,56 @@ def _contact_disposition(check: str, /) -> str:
     return "unresolved"
 
 
+def _boundary_cycles_oriented(
+    quotient: CellComplexTopology,
+    edge_boundary: NDArray[np.bool_],
+    edge_orientations: NDArray[np.float64],
+    /,
+) -> Literal["with_boundary"] | None:
+    """Require a 2D quotient boundary to be a disjoint union of oriented cycles."""
+    vertex_count = quotient.entity_sets[0].count
+    vertex_boundary = np.asarray(
+        quotient.entity_sets[0].subset("boundary").mask, dtype=np.bool_
+    )
+    incidence = quotient.incidences[0]
+    relation = incidence.relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    vertex_indices = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+    edge_indices = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+    signs = np.asarray(incidence.signs, dtype=np.float64)[valid]
+    on_boundary = edge_boundary[edge_indices]
+    boundary_counts = np.bincount(vertex_indices[on_boundary], minlength=vertex_count)
+    if vertex_boundary.shape != (vertex_count,) or not np.array_equal(
+        vertex_boundary, boundary_counts > 0
+    ):
+        return None
+    for edge in np.flatnonzero(edge_boundary):
+        endpoints = vertex_indices[on_boundary & (edge_indices == edge)]
+        if endpoints.size != 2 or endpoints[0] == endpoints[1]:
+            return None
+    for vertex in np.flatnonzero(vertex_boundary):
+        selected = on_boundary & (vertex_indices == vertex)
+        coefficients = signs[selected] * edge_orientations[edge_indices[selected]]
+        if (
+            coefficients.size != 2
+            or float(np.sum(coefficients)) != 0.0
+            or np.any(np.abs(coefficients) != 1.0)
+        ):
+            return None
+    return "with_boundary"
+
+
 def _quotient_faces_pair_oriented(
     topology: PeriodicMeshTopology, /
 ) -> Literal["closed", "with_boundary"] | None:
-    """Classify closed and manifold-boundary oriented 3D periodic quotients."""
+    """Classify closed and manifold-boundary oriented 2D/3D periodic quotients."""
     quotient = topology.quotient
-    if topology.topological_dimension != 3 or len(quotient.entity_sets) < 4:
+    dimension = topology.topological_dimension
+    if dimension not in (2, 3) or len(quotient.entity_sets) < dimension + 1:
         return None
-    face_count = quotient.entity_sets[2].count
+    face_count = quotient.entity_sets[dimension - 1].count
     face_boundary = np.asarray(
-        quotient.entity_sets[2].subset("boundary").mask, dtype=np.bool_
+        quotient.entity_sets[dimension - 1].subset("boundary").mask, dtype=np.bool_
     )
     incidence = quotient.incidences[-1]
     relation = incidence.relation
@@ -100,9 +150,11 @@ def _quotient_faces_pair_oriented(
     quotient_offsets = np.asarray(topology.quotient_offsets, dtype=np.int64)
     lifted_offsets = np.asarray(topology.lifted_offsets, dtype=np.int64)
     representatives = np.asarray(topology.representatives, dtype=np.int64)
-    cell_representatives = representatives[quotient_offsets[3] : quotient_offsets[4]]
+    cell_representatives = representatives[
+        quotient_offsets[dimension] : quotient_offsets[dimension + 1]
+    ]
     orientations = np.asarray(topology.orbit_orientations, dtype=np.int8)
-    cell_orientations = orientations[lifted_offsets[3] + cell_representatives]
+    cell_orientations = orientations[lifted_offsets[dimension] + cell_representatives]
     # Quotient cells use canonical vertex order, not necessarily positive
     # physical orientation. Form the boundary of the physical cell chain.
     face_signs = (
@@ -127,6 +179,8 @@ def _quotient_faces_pair_oriented(
             return None
     if not np.any(face_boundary):
         return "closed"
+    if dimension == 2:
+        return _boundary_cycles_oriented(quotient, face_boundary, face_orientations)
 
     edge_count = quotient.entity_sets[1].count
     edge_boundary = np.asarray(
@@ -250,64 +304,71 @@ def _point3(point: tuple[ExactScalar, ...], /) -> Point3:
     return point[0], point[1], point[2]
 
 
-def _translated_points(
-    points: tuple[Point3, ...], translation: Point3, /
-) -> tuple[Point3, ...]:
-    return tuple(
-        (
-            point[0] + translation[0],
-            point[1] + translation[1],
-            point[2] + translation[2],
+def _point(point: tuple[ExactScalar, ...], dimension: int, /) -> Point:
+    if len(point) != dimension:
+        raise ValueError(
+            "Periodic affine contact source points must match the mesh dimension."
         )
-        for point in points
+    if dimension == 2:
+        return point[0], point[1]
+    return _point3(point)
+
+
+def _point2(point: Point, /) -> Point2:
+    if len(point) != 2:
+        raise ValueError("Planar periodic contact requires two-dimensional points.")
+    return point[0], point[1]
+
+
+def _simplex_contact_points(
+    first: tuple[Point, ...], second: tuple[Point, ...], /
+) -> tuple[Point, ...]:
+    if len(first) == 4 and len(second) == 4:
+        return tetrahedron_contact_points(
+            tuple(_point3(point) for point in first),
+            tuple(_point3(point) for point in second),
+        )
+    if len(first) == 3 and len(second) == 3:
+        left = tuple(_point2(point) for point in first)
+        right = tuple(_point2(point) for point in second)
+        return triangle_contact_points2(
+            (left[0], left[1], left[2]), (right[0], right[1], right[2])
+        )
+    raise ValueError("Periodic contact pieces must be matching affine simplices.")
+
+
+def _image_winding(
+    winding: tuple[int, ...],
+    exponent: tuple[int, ...],
+    orders: tuple[int, ...],
+    fixed: tuple[bool, ...],
+    /,
+) -> tuple[int, ...]:
+    """Compose an action with a lifted winding modulo the vertex stabilizer."""
+    return tuple(
+        0 if stationary else (value + step) % order if order > 0 else value + step
+        for value, step, order, stationary in zip(
+            winding, exponent, orders, fixed, strict=True
+        )
     )
 
 
-def _tetrahedron_bounds(
-    points: tuple[Point3, Point3, Point3, Point3], /
+def _simplex_bounds(
+    points: tuple[Point, ...], /
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    axes = range(len(points[0]))
     return (
         np.asarray(
             [
                 coefficient_endpoint(min(point[axis] for point in points), upper=False)
-                for axis in range(3)
+                for axis in axes
             ],
             dtype=np.float64,
         ),
         np.asarray(
             [
                 coefficient_endpoint(max(point[axis] for point in points), upper=True)
-                for axis in range(3)
-            ],
-            dtype=np.float64,
-        ),
-    )
-
-
-def _translated_bounds(
-    lower: NDArray[np.float64],
-    upper: NDArray[np.float64],
-    translation: Point3,
-    /,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    return (
-        np.asarray(
-            [
-                coefficient_endpoint(
-                    Fraction.from_float(float(lower[axis])) + translation[axis],
-                    upper=False,
-                )
-                for axis in range(3)
-            ],
-            dtype=np.float64,
-        ),
-        np.asarray(
-            [
-                coefficient_endpoint(
-                    Fraction.from_float(float(upper[axis])) + translation[axis],
-                    upper=True,
-                )
-                for axis in range(3)
+                for axis in axes
             ],
             dtype=np.float64,
         ),
@@ -350,7 +411,7 @@ def _lifted_cell_center_keys(
         or identifiers.shape != (lifted_end - lifted_begin,)
         or quotient_ids.shape != (quotient_end - quotient_begin,)
         or orbits.shape != identifiers.shape
-        or windings.shape != (identifiers.size, 3)
+        or windings.shape != (identifiers.size, topology.cell.rank)
         or np.any((orbits < 0) | (orbits >= quotient_ids.size))
     ):
         raise ValueError("Periodic lifted-cell identity tables are malformed.")
@@ -859,28 +920,36 @@ def certify_periodic_affine_embedding(
     Exact image frames enumerate every lattice action whose source-vertex
     projections can meet. Each action is traversed through two BVHs; no
     cell-pair/image product is materialized. The route supports affine
-    tetrahedra and convex vertex-defined polyhedra on closed quotients or
-    oriented manifold subdomains with rank-three translational lattices.
+    triangles in 2D and affine tetrahedra or convex vertex-defined polyhedra in
+    3D, on closed quotients or oriented manifold subdomains. The identification
+    may be a translational lattice of any rank up to the ambient dimension or a
+    commuting proper isometry group (finite rotations and screws). Nonperiodic
+    directions have no images; they are bounded by the quotient's physical
+    boundary.
     """
     unresolved = (
         "periodic_quotient_unresolved",
         (),
-        "Periodic quotient is outside the exact translation simplex/convex-polyhedron route.",
+        "Periodic quotient is outside the exact affine periodic simplex/convex-polyhedron route.",
     )
     period = topology.cell
+    dimension = mesh.topological_dimension
+    simplex_kinds = (
+        ("tetrahedron", "simplex:3") if dimension == 3 else ("triangle", "simplex:2")
+    )
     if (
-        not isinstance(period, PeriodicCell)
-        or mesh.topological_dimension != 3
-        or mesh.ambient_dimension != 3
+        not isinstance(period, (PeriodicCell, PeriodicIsometryGroup))
+        or dimension not in (2, 3)
+        or mesh.ambient_dimension != dimension
+        or period.ambient_dimension != dimension
         or len(cells) == 0
         or any(
             not (
-                (cell.kind in ("tetrahedron", "simplex:3") and cell.affine)
-                or (cell.kind == "polyhedron" and cell.dimension == 3)
+                (cell.kind in simplex_kinds and cell.affine)
+                or (dimension == 3 and cell.kind == "polyhedron" and cell.dimension == 3)
             )
             for cell in cells
         )
-        or len(period.periodic_axes) != 3
     ):
         return PeriodicContactResult("unresolved", (unresolved,))
     boundary_kind = _quotient_faces_pair_oriented(topology)
@@ -892,18 +961,17 @@ def certify_periodic_affine_embedding(
         )
         return PeriodicContactResult("unresolved", (finding,))
 
-    vectors_raw = np.asarray(period.vectors, dtype=np.float64)
-    vectors = tuple(tuple(Fraction(float(value)) for value in row) for row in vectors_raw)
+    orders = tuple(int(order) for order in identification_orders(period))
 
     try:
         representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
         shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
         fixed = np.asarray(topology.vertex_fixed_generators, dtype=np.bool_)
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-        source_by_index: dict[int, Point3] = {}
+        source_by_index: dict[int, Point] = {}
         for cell in cells:
             for index, point in zip(cell.vertex_indices, cell.corner_images, strict=True):
-                exact_point = _point3(point)
+                exact_point = _point(point, dimension)
                 prior = source_by_index.get(index)
                 if prior is not None and prior != exact_point:
                     finding = (
@@ -915,13 +983,6 @@ def certify_periodic_affine_embedding(
                 source_by_index[index] = exact_point
         for index, point in source_by_index.items():
             representative = int(representatives[index])
-            if np.any(fixed[index]):
-                finding = (
-                    "periodic_fixed_vertex_unresolved",
-                    (int(vertex_ids[index]),),
-                    "Translation quotient unexpectedly contains a fixed generator orbit.",
-                )
-                return PeriodicContactResult("unresolved", (finding,), boundary_kind)
             representative_point = source_by_index.get(representative)
             if representative_point is None:
                 finding = (
@@ -930,16 +991,16 @@ def certify_periodic_affine_embedding(
                     "Exact source map does not cover the declared periodic representative.",
                 )
                 return PeriodicContactResult("unresolved", (finding,), boundary_kind)
+            matrix = exact_periodic_element(period, shifts[index])
             expected = tuple(
-                representative_point[axis]
-                + sum(
+                sum(
                     (
-                        int(shifts[index, generator]) * vectors[generator][axis]
-                        for generator in range(len(vectors))
+                        matrix[axis][column] * representative_point[column]
+                        for column in range(dimension)
                     ),
-                    Fraction(0),
+                    matrix[axis][dimension],
                 )
-                for axis in range(3)
+                for axis in range(dimension)
             )
             if point != expected:
                 finding = (
@@ -948,27 +1009,46 @@ def certify_periodic_affine_embedding(
                     "Exact source corner does not match its declared orbit winding.",
                 )
                 return PeriodicContactResult("violated", (finding,), boundary_kind)
-    except (IndexError, KeyError, ValueError) as error:
+    except (ArithmeticError, IndexError, KeyError, TypeError, ValueError) as error:
         finding = ("periodic_source_identity_unresolved", (), str(error))
         return PeriodicContactResult("unresolved", (finding,), boundary_kind)
 
     mesh_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    # Windings modulo each vertex stabilizer: a generator fixing an orbit does
+    # not distinguish its images, matching the quotient topology convention.
+    key_shifts = reduce_periodic_exponents(shifts, orders)
+    key_shifts[fixed] = 0
+    fixed_by_root = {
+        int(mesh_vertex_ids[int(representatives[index])]): tuple(
+            bool(value) for value in fixed[index]
+        )
+        for index in range(len(mesh_vertex_ids))
+    }
     lifted_keys = tuple(
-        _lifted_vertex_keys(cell, mesh_vertex_ids, representatives, shifts)
+        _lifted_vertex_keys(cell, mesh_vertex_ids, representatives, key_shifts)
         for cell in cells
     )
-    try:
-        cell_tetrahedra = _periodic_cell_tetrahedra(mesh, cells, topology, lifted_keys)
-    except (ValueError, ArithmeticError, IndexError) as error:
-        polyhedron_ids = tuple(
-            cell.global_id for cell in cells if cell.kind == "polyhedron"
+    cell_pieces: tuple[
+        tuple[tuple[tuple[Point, ...], tuple[PeriodicVertexKey, ...]], ...], ...
+    ]
+    if dimension == 3:
+        try:
+            cell_pieces = _periodic_cell_tetrahedra(mesh, cells, topology, lifted_keys)
+        except (ValueError, ArithmeticError, IndexError) as error:
+            polyhedron_ids = tuple(
+                cell.global_id for cell in cells if cell.kind == "polyhedron"
+            )
+            finding = (
+                "periodic_polyhedron_decomposition_unresolved",
+                polyhedron_ids,
+                str(error),
+            )
+            return PeriodicContactResult("unresolved", (finding,), boundary_kind)
+    else:
+        cell_pieces = tuple(
+            ((tuple(_point(value, 2) for value in cell.corner_images), keys),)
+            for cell, keys in zip(cells, lifted_keys, strict=True)
         )
-        finding = (
-            "periodic_polyhedron_decomposition_unresolved",
-            polyhedron_ids,
-            str(error),
-        )
-        return PeriodicContactResult("unresolved", (finding,), boundary_kind)
 
     colliding_cells = tuple(
         cell.global_id
@@ -987,20 +1067,13 @@ def certify_periodic_affine_embedding(
         return PeriodicContactResult("violated", findings, boundary_kind)
 
     piece_parent_rows: list[int] = []
-    piece_points: list[tuple[Point3, Point3, Point3, Point3]] = []
-    piece_keys: list[
-        tuple[
-            PeriodicVertexKey,
-            PeriodicVertexKey,
-            PeriodicVertexKey,
-            PeriodicVertexKey,
-        ]
-    ] = []
+    piece_points: list[tuple[Point, ...]] = []
+    piece_keys: list[tuple[PeriodicVertexKey, ...]] = []
     piece_lowers: list[NDArray[np.float64]] = []
     piece_uppers: list[NDArray[np.float64]] = []
-    for cell_row, tetrahedra in enumerate(cell_tetrahedra):
-        for points, keys in tetrahedra:
-            lower, upper = _tetrahedron_bounds(points)
+    for cell_row, pieces in enumerate(cell_pieces):
+        for points, keys in pieces:
+            lower, upper = _simplex_bounds(points)
             piece_parent_rows.append(cell_row)
             piece_points.append(points)
             piece_keys.append(keys)
@@ -1010,59 +1083,71 @@ def certify_periodic_affine_embedding(
         finding = (
             "periodic_tetrahedralization_unresolved",
             (),
-            "Periodic volume cells produced no exact contact tetrahedra.",
+            "Periodic volume cells produced no exact contact simplices.",
         )
         return PeriodicContactResult("unresolved", (finding,), boundary_kind)
     parent_rows = np.asarray(piece_parent_rows, dtype=np.int64)
-    frame_source_points = tuple(
-        point for tetrahedron in piece_points for point in tetrahedron
-    )
+    frame_source_points = tuple(point for simplex in piece_points for point in simplex)
     frame_coordinates = np.asarray(
         tuple(tuple(float(value) for value in point) for point in frame_source_points),
         dtype=np.float64,
+    )
+    base_lower = np.asarray(np.stack(piece_lowers), dtype=np.float64)
+    base_upper = np.asarray(np.stack(piece_uppers), dtype=np.float64)
+    support_boxes = (
+        ((np.min(base_lower, axis=0), np.max(base_upper, axis=0)),)
+        if isinstance(period, PeriodicIsometryGroup)
+        and any(order == 0 for order in period.orders)
+        else None
     )
     try:
         image_frame = prepare_periodic_image_frame(
             frame_coordinates,
             np.arange(len(frame_source_points), dtype=np.int64),
-            np.zeros((len(frame_source_points), 3), dtype=np.int64),
+            np.zeros((len(frame_source_points), period.rank), dtype=np.int64),
             period,
+            source_support_boxes=support_boxes,
             exact_coordinates=frame_source_points,
         )
     except (ArithmeticError, OverflowError, TypeError, ValueError) as error:
         finding = ("periodic_image_frame_unresolved", (), str(error))
         return PeriodicContactResult("unresolved", (finding,), boundary_kind)
-    base_lower = np.asarray(np.stack(piece_lowers), dtype=np.float64)
-    base_upper = np.asarray(np.stack(piece_uppers), dtype=np.float64)
     base_tree = prepare_bvh(base_lower, base_upper)
-    zero_point = _point3(tuple(image_frame.points[0]))
+    piece_offsets = np.cumsum(
+        np.asarray((0, *(len(points) for points in piece_points)), dtype=np.int64)
+    )
+    no_fixed = (False,) * period.rank
     findings: list[tuple[str, tuple[int, ...], str]] = []
 
     for image in image_frame.images():
-        if not isinstance(image, tuple):
-            raise TypeError(
-                "Periodic translation image frames must enumerate exponent tuples."
-            )
-        exponent = tuple(int(value) for value in image)
-        zero_shift = not any(exponent)
-        if not zero_shift:
-            first_nonzero = next(value for value in exponent if value)
-            if first_nonzero < 0:
+        if isinstance(image, tuple):
+            exponent = tuple(int(value) for value in image)
+            # Lattice images come in inverse pairs; one of each pair suffices.
+            if any(exponent) and next(value for value in exponent if value) < 0:
                 continue
-        image_points = image_frame.image_points(image)
-        image_anchor = _point3(tuple(image_points[0]))
-        translation_point: Point3 = (
-            image_anchor[0] - zero_point[0],
-            image_anchor[1] - zero_point[1],
-            image_anchor[2] - zero_point[2],
-        )
+        else:
+            action_bank = image_frame.image_exponents
+            if action_bank is None:
+                raise TypeError(
+                    "Periodic isometry image frames must retain action exponents."
+                )
+            exponent = tuple(int(value) for value in action_bank[int(image)])
+        zero_shift = not any(exponent)
         if zero_shift:
+            image_pieces = tuple(piece_points)
             shifted_tree = base_tree
         else:
-            bounds = tuple(
-                _translated_bounds(lower, upper, translation_point)
-                for lower, upper in zip(piece_lowers, piece_uppers, strict=True)
+            image_bank = image_frame.image_points(image)
+            image_pieces = tuple(
+                tuple(
+                    _point(tuple(image_bank[row]), dimension)
+                    for row in range(
+                        int(piece_offsets[piece]), int(piece_offsets[piece + 1])
+                    )
+                )
+                for piece in range(len(piece_points))
             )
+            bounds = tuple(_simplex_bounds(points) for points in image_pieces)
             shifted_lower = np.stack(tuple(value[0] for value in bounds))
             shifted_upper = np.stack(tuple(value[1] for value in bounds))
             shifted_tree = prepare_bvh(shifted_lower, shifted_upper)
@@ -1085,14 +1170,15 @@ def certify_periodic_affine_embedding(
                 if zero_shift:
                     second_points, second_ids = second_base_points, second_base_ids
                 else:
-                    second_points = _translated_points(
-                        second_base_points, translation_point
-                    )
+                    second_points = image_pieces[second_piece]
                     second_ids = tuple(
                         (
                             identifier,
-                            tuple(
-                                winding[axis] + int(exponent[axis]) for axis in range(3)
+                            _image_winding(
+                                winding,
+                                exponent,
+                                orders,
+                                fixed_by_root.get(identifier, no_fixed),
                             ),
                         )
                         for identifier, winding in second_base_ids
@@ -1114,7 +1200,7 @@ def certify_periodic_affine_embedding(
                     )
                     continue
                 try:
-                    contacts = tetrahedron_contact_points(first_points, second_points)
+                    contacts = _simplex_contact_points(first_points, second_points)
                 except (ValueError, ZeroDivisionError) as error:
                     findings.append(
                         (
@@ -1132,7 +1218,7 @@ def certify_periodic_affine_embedding(
                         (
                             "periodic_cell_contact",
                             (first_cell.global_id, second_cell.global_id),
-                            "A translated cell intersection extends beyond its declared quotient stratum.",
+                            "A cell intersects a periodic image beyond its declared quotient stratum.",
                         )
                     )
     dispositions = tuple(_contact_disposition(check) for check, _, _ in findings)

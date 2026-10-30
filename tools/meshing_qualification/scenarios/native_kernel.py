@@ -1,66 +1,18 @@
 from __future__ import annotations
 
-
-import argparse
-
-
-import importlib.metadata
-
-
-import json
-
-
 import os
-
-
-import platform
-
-
-import shutil
-
-
 import sys
-
-
 from collections.abc import Callable
-
-
-from pathlib import Path
-
-
-from tempfile import TemporaryDirectory
-
-
 from time import perf_counter
-
-
 from typing import Any
 
-
 import jax
-
-
 import jax.numpy as jnp
-
-
 import numpy as np
 
-
 import phydrax as phx
-
-
 from phydrax._fingerprint import canonical_fingerprint
-
-
-from phydrax._meshcore import meshcore_available, meshcore_identity
-
-
-from phydrax.geometry.brep import BRepTessellationPolicy
-from phydrax.interchange import (
-    CadImportPolicy,
-    persist_occt_shape,
-    read_brep_text,
-)
+from phydrax._meshcore import meshcore_available
 
 
 def _contract() -> phx.SpatialCoordinateContract:
@@ -999,7 +951,6 @@ def qualify_triangulation() -> dict[str, object]:
         "diagrams": diagrams,
         "redundant_power_generator": redundant,
     }
-
 
 
 from .._runtime import runtime_identity as _runtime_identity

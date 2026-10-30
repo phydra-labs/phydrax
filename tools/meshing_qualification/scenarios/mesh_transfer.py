@@ -1,66 +1,17 @@
 from __future__ import annotations
 
-
-import argparse
-
-
-import importlib.metadata
-
-
-import json
-
-
 import os
-
-
-import platform
-
-
-import shutil
-
-
 import sys
-
-
 from collections.abc import Callable
-
-
-from pathlib import Path
-
-
-from tempfile import TemporaryDirectory
-
-
 from time import perf_counter
-
-
 from typing import Any
 
-
 import jax
-
-
 import jax.numpy as jnp
-
-
 import numpy as np
 
-
 import phydrax as phx
-
-
-from phydrax._fingerprint import canonical_fingerprint
-
-
-from phydrax._meshcore import meshcore_available, meshcore_identity
-
-
-from phydrax.geometry.brep import BRepTessellationPolicy
-from phydrax.interchange import (
-    CadImportPolicy,
-    persist_occt_shape,
-    read_brep_text,
-)
+from phydrax._meshcore import meshcore_available
 
 
 def _contract() -> phx.SpatialCoordinateContract:
@@ -118,11 +69,18 @@ _MESHCORE_DETAIL = "Set PHYDRAX_MESHCORE_LIBRARY or install phydrax[meshcore]."
 
 _HEXAHEDRON_CORNERS = np.asarray(
     (
-        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
-        (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 1, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        (1, 0, 1),
+        (1, 1, 1),
+        (0, 1, 1),
     ),
     dtype=np.int32,
 )
+
 
 def _unit_lattice_cells(
     cells_per_axis: int, dimension: int, /
@@ -1155,33 +1113,52 @@ def qualify_bisection() -> dict[str, object]:
     }
 
 
-
 from .._runtime import runtime_identity as _runtime_identity
 
 
 def _planar_triangles(cells_per_axis: int, /) -> np.ndarray:
-    index = np.arange((cells_per_axis + 1) ** 2, dtype=np.int32).reshape((cells_per_axis + 1, cells_per_axis + 1))
-    lower, right, upper, left = (index[:-1, :-1].reshape(-1), index[1:, :-1].reshape(-1), index[1:, 1:].reshape(-1), index[:-1, 1:].reshape(-1))
-    return np.concatenate((np.stack((lower, right, upper), axis=1), np.stack((lower, upper, left), axis=1)))
+    index = np.arange((cells_per_axis + 1) ** 2, dtype=np.int32).reshape(
+        (cells_per_axis + 1, cells_per_axis + 1)
+    )
+    lower, right, upper, left = (
+        index[:-1, :-1].reshape(-1),
+        index[1:, :-1].reshape(-1),
+        index[1:, 1:].reshape(-1),
+        index[:-1, 1:].reshape(-1),
+    )
+    return np.concatenate(
+        (np.stack((lower, right, upper), axis=1), np.stack((lower, upper, left), axis=1))
+    )
 
-def _jittered_unit_square_triangles(cells_per_axis: int, seed: int, /) -> phx.discretization.CellMesh:
+
+def _jittered_unit_square_triangles(
+    cells_per_axis: int, seed: int, /
+) -> phx.discretization.CellMesh:
     axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
     jitter = np.random.default_rng(seed).uniform(-0.2, 0.2, points.shape)
     points[interior] += jitter[interior] / cells_per_axis
-    return phx.discretization.CellMesh.from_triangles(points, _planar_triangles(cells_per_axis))
+    return phx.discretization.CellMesh.from_triangles(
+        points, _planar_triangles(cells_per_axis)
+    )
+
 
 def _remap_field(points: np.ndarray, /) -> np.ndarray:
     x, y = points[..., 0], points[..., 1]
     return np.sin(2.0 * np.pi * x) * np.cos(np.pi * y) + x * x
 
+
 def _kuhn_tetrahedra(cells_per_axis: int, /) -> tuple[np.ndarray, np.ndarray]:
     from itertools import permutations
 
     axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape((-1, 3))
-    vertex_rows = np.arange((cells_per_axis + 1) ** 3, dtype=np.int64).reshape((cells_per_axis + 1,) * 3)
+    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
+        (-1, 3)
+    )
+    vertex_rows = np.arange((cells_per_axis + 1) ** 3, dtype=np.int64).reshape(
+        (cells_per_axis + 1,) * 3
+    )
     tetrahedra = []
     for cube in np.ndindex((cells_per_axis,) * 3):
         for order in permutations(range(3)):
@@ -1191,7 +1168,9 @@ def _kuhn_tetrahedra(cells_per_axis: int, /) -> tuple[np.ndarray, np.ndarray]:
                 point = point.copy()
                 point[coordinate_axis] += 1
                 path.append(point)
-            tetrahedron = np.asarray([vertex_rows[tuple(row)] for row in path], dtype=np.int32)
+            tetrahedron = np.asarray(
+                [vertex_rows[tuple(row)] for row in path], dtype=np.int32
+            )
             if np.linalg.det(points[tetrahedron[1:]] - points[tetrahedron[0]]) < 0.0:
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)

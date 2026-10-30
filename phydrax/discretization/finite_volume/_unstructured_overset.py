@@ -180,12 +180,15 @@ def _prepare_overset_routes(
             ) from error
     else:
         receptors = receptors_raw.astype(np.int32)
+    # An owner-local shard whose owned receptors have no fringe routes carries an
+    # empty route set; a serial plan without routes has no overset coupling.
+    owner_local_shard = receptor.owner_local_view is not None
     if (
         receptors.ndim != 1
         or np.any(receptors < 0)
         or np.any(receptors >= receptor.cell_count)
         or np.unique(receptors).size != receptors.size
-        or receptors.size == 0
+        or (receptors.size == 0 and not owner_local_shard)
     ):
         raise ValueError("receptor_cells must contain unique valid cell indices.")
 
@@ -209,7 +212,7 @@ def _prepare_overset_routes(
         raise ValueError("Overset CSR routes are inconsistent.")
     if np.any(~np.isfinite(measures)) or np.any(measures <= 0.0):
         raise ValueError("Overset overlap measures must be positive and finite.")
-    if donors_raw.size == 0:
+    if donors_raw.size == 0 and not owner_local_shard:
         raise ValueError("Overset routes cannot be empty.")
 
     donor_positions = {

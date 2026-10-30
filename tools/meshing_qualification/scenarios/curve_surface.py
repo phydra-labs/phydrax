@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
-from phydrax.geometry.simplicial import SegmentMesh
+from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._constructors import brep_sphere
-from phydrax.meshing._contracts import CellFamilyPolicy, CellMeshingTarget, CurveMeshingSpec, SurfaceMeshingSpec
+from phydrax.geometry.simplicial import SegmentMesh
+from phydrax.meshing._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
+    CurveMeshingSpec,
+    SurfaceMeshingSpec,
+)
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 from phydrax.meshing.providers._native_sources import NativeCurveSource
-from phydrax._physical import SpatialCoordinateContract
 
 from .._runtime import accepted_result_record, require_meshcore, runtime_identity
 
@@ -42,7 +47,9 @@ def native_curve() -> dict[str, object]:
     edge_lengths = np.linalg.norm(points[cells[:, 1]] - points[cells[:, 0]], axis=1)
     length = float(np.sum(edge_lengths))
     if not np.isclose(length, 1.0, rtol=0.0, atol=1.0e-12):
-        raise RuntimeError(f"Native curve length {length} differs from the exact unit segment.")
+        raise RuntimeError(
+            f"Native curve length {length} differs from the exact unit segment."
+        )
     if np.any(np.abs(points[:, 1]) > 1.0e-12):
         raise RuntimeError("Native curve departed from its exact source line.")
     if not result.associations:
@@ -84,14 +91,20 @@ def native_surface() -> dict[str, object]:
     source = result.surface_source
     certification = result.certification
     if source is None or certification is None or certification.fidelity is None:
-        raise RuntimeError("Native BRep surface result omitted its source-chart fidelity proof.")
+        raise RuntimeError(
+            "Native BRep surface result omitted its source-chart fidelity proof."
+        )
     witness = certification.inputs.fidelity_witness
     if witness is None or witness.witness_id != source.chart_witness.witness_id:
-        raise RuntimeError("Surface fidelity certification is not bound to retained chart ancestry.")
+        raise RuntimeError(
+            "Surface fidelity certification is not bound to retained chart ancestry."
+        )
     points = np.asarray(result.mesh.coordinates, dtype=np.float64)
     radial_error = float(np.max(np.abs(np.linalg.norm(points, axis=1) - 1.0)))
     if radial_error > deviation_tolerance:
-        raise RuntimeError("Native BRep sphere vertices exceed the exact radial deviation request.")
+        raise RuntimeError(
+            "Native BRep sphere vertices exceed the exact radial deviation request."
+        )
     approximate_area = float(np.sum(np.asarray(result.quality.evaluation.measures)))
     if not np.isfinite(approximate_area) or approximate_area <= 0.0:
         raise RuntimeError("Native sphere surface has invalid measured area.")

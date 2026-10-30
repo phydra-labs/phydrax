@@ -71,7 +71,9 @@ _TOLERANCES = {
 def _periodic_point_orbits(source: NativePeriodicSource, /) -> PeriodicPointOrbits:
     domain = source.domain
     if not isinstance(domain, PeriodicPointOrbits):
-        raise TypeError("This polyhedral periodic workflow requires authored point-orbit input.")
+        raise TypeError(
+            "This polyhedral periodic workflow requires authored point-orbit input."
+        )
     return domain
 
 
@@ -1365,12 +1367,27 @@ def native_polyhedral() -> dict[str, object]:
                 lambda: _run_native_source(target_source, target_spec, target_options),
             )
             base_ids = (
-                set(map(int, np.asarray(_periodic_point_orbits(base_source).point_ids, dtype=np.int64)))
+                set(
+                    map(
+                        int,
+                        np.asarray(
+                            _periodic_point_orbits(base_source).point_ids, dtype=np.int64
+                        ),
+                    )
+                )
                 if isinstance(base_source, NativePeriodicSource)
                 else set(base_source.site_ids)
             )
             target_ids = (
-                set(map(int, np.asarray(_periodic_point_orbits(target_source).point_ids, dtype=np.int64)))
+                set(
+                    map(
+                        int,
+                        np.asarray(
+                            _periodic_point_orbits(target_source).point_ids,
+                            dtype=np.int64,
+                        ),
+                    )
+                )
                 if isinstance(target_source, NativePeriodicSource)
                 else set(target_source.site_ids)
             )
@@ -1418,7 +1435,9 @@ def native_polyhedral() -> dict[str, object]:
                 else (
                     int(target_source.sites.shape[0])
                     if isinstance(target_source, NativePolyhedralSource)
-                    else int(np.asarray(_periodic_point_orbits(target_source).point_ids).size)
+                    else int(
+                        np.asarray(_periodic_point_orbits(target_source).point_ids).size
+                    )
                 )
             ),
             "mandatory_family": "polyhedron",

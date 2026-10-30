@@ -431,6 +431,7 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
             layer_controls=(control,),
         )
 
+
 def test_meshing_failure_evidence_reaches_trace_diagnostic() -> None:
     evidence = phx.meshing.MeshingFailureEvidence(
         requested_quantities={"minimum_quality": 0.8, "maximum_skew": 0.2},

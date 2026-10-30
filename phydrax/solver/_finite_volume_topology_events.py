@@ -7,7 +7,16 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, replace
 from enum import IntEnum
-from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Literal,
+    Mapping,
+    Sequence,
+    TYPE_CHECKING,
+    TypeAlias,
+    TypeVar,
+)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,17 +29,30 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TopologyEpoch
 from ..meshing import CellMeshTransition
-from ..typing import checked
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
     from ..discretization.finite_volume._automatic_remap import (
         PreparedUnstructuredConservativeRemap,
     )
+    from ..discretization.finite_volume._material_chain_action import (
+        MaterialChainConservativeRemap,
+    )
     from ..geometry._supermesh import CommonRefinementPolicy
 
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)
+
+FiniteVolumeContentTransferSemantics: TypeAlias = Literal[
+    "eulerian_physical_overlap", "material_following_content"
+]
+"""Declared physical meaning of conservative FV content across a remesh.
+
+``eulerian_physical_overlap`` content stays in space and is transferred by the
+exact source/target physical overlap. ``material_following_content`` follows the
+material and is transferred by the transition's accepted volume material chain.
+"""
 
 
 class TopologyEventKind(IntEnum):
@@ -1705,9 +1727,7 @@ def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
         )
         if any(value is None for value in aggregate_values):
             return False
-        scalars = tuple(
-            np.asarray(value, dtype=np.float64) for value in aggregate_values
-        )
+        scalars = tuple(np.asarray(value, dtype=np.float64) for value in aggregate_values)
         if any(value.shape != () or not np.isfinite(value) for value in scalars):
             return False
         (
@@ -1815,7 +1835,6 @@ def _conservation_passed(
     return bool(np.all(np.isfinite(value)) and np.all(np.abs(value) <= tolerance))
 
 
-
 def _required_artifact_success(value: Any, name: str, /) -> bool:
     if isinstance(value, TopologyEventStatus):
         return value is TopologyEventStatus.SUCCESS
@@ -1832,8 +1851,6 @@ def _failure_reason(value: Any, default: TopologyEventStatus, /) -> TopologyEven
     if isinstance(value, TopologyEventStatus) and _is_failed_status(value):
         return value
     return default
-
-
 
 
 def _active_content_valid(content: Any, expected_mask: Any = _MISSING, /) -> bool:
@@ -1895,7 +1912,13 @@ def _call_transfer(callback: Callable[..., Any], source: Any, remap: Any, /) -> 
 
 @dataclass(frozen=True, slots=True)
 class FiniteVolumeRemeshArtifact:
-    """Typed remesh candidate consumed without dynamic field inspection."""
+    """Typed remesh candidate consumed without dynamic field inspection.
+
+    ``content_semantics`` selects the transfer route the transaction prepares
+    when no explicit ``remap`` is supplied: the exact physical overlap for
+    Eulerian content, or the transition's accepted volume material chain for
+    material-following content.
+    """
 
     transition: CellMeshTransition
     candidate_epoch: TopologyEpoch
@@ -1907,6 +1930,7 @@ class FiniteVolumeRemeshArtifact:
     result_id: str
     payload_ids: tuple[str | None, ...] = ()
     target_geometry: Any = None
+    content_semantics: FiniteVolumeContentTransferSemantics = "eulerian_physical_overlap"
 
     def __post_init__(self) -> None:
         if not isinstance(self.transition, CellMeshTransition):
@@ -1921,6 +1945,19 @@ class FiniteVolumeRemeshArtifact:
             raise TypeError("status must be TopologyEventStatus.")
         if not str(self.result_id):
             raise ValueError("Finite-volume remesh result_id must be non-empty.")
+        semantics = parse(
+            self.content_semantics,
+            FiniteVolumeContentTransferSemantics,
+            "content_semantics",
+        )
+        if (
+            semantics == "material_following_content"
+            and self.transition.volume_material_chain is None
+        ):
+            raise ValueError(
+                "Material-following FV content requires a transition that carries "
+                "its accepted volume material chain."
+            )
 
 
 @dataclass(frozen=True)
@@ -1973,7 +2010,10 @@ class _OwnerLocalRepartitionTransfer:
             _required_identifier(value, name)
         if (
             not isinstance(self.cell_transfer_ids, tuple)
-            or any(not isinstance(value, str) or not value for value in self.cell_transfer_ids)
+            or any(
+                not isinstance(value, str) or not value
+                for value in self.cell_transfer_ids
+            )
             or len(set(self.cell_transfer_ids)) != len(self.cell_transfer_ids)
             or not isinstance(self.bank_route_evidence, tuple)
             or any(
@@ -2187,6 +2227,66 @@ def _resolve_topology_event_candidate(
     return prepared, explicit
 
 
+def _prepare_material_chain_remap(
+    self: FiniteVolumeTopologyEventTransaction,
+    source_content: Any,
+    artifact: FiniteVolumeRemeshArtifact,
+    /,
+) -> (
+    tuple[MaterialChainConservativeRemap, FiniteVolumeTopologyArtifactEvidence]
+    | FiniteVolumeTopologyEventTransactionResult
+):
+    """Bind the artifact's accepted material chain to the FV endpoint geometry."""
+    from ..discretization.finite_volume._material_chain_action import (
+        prepare_material_chain_conservative_remap,
+    )
+    from ..discretization.finite_volume._material_schedule import _mesh_cell_ids
+
+    chain = artifact.transition.volume_material_chain
+    if chain is None or self.source_geometry is None or self.target_geometry is None:
+        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+    source_ids = np.asarray(self.source_geometry.cell_global_ids, dtype=np.int64)
+    target_ids = np.asarray(self.target_geometry.cell_global_ids, dtype=np.int64)
+    if set(source_ids.tolist()) != set(
+        _mesh_cell_ids(chain.maps[0].source_mesh).tolist()
+    ) or set(target_ids.tolist()) != set(
+        _mesh_cell_ids(chain.maps[-1].target_mesh).tolist()
+    ):
+        return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+    remap = prepare_material_chain_conservative_remap(
+        chain,
+        source_ids,
+        target_ids,
+        self.source_geometry.cell_volumes,
+        self.target_geometry.cell_volumes,
+    )
+    if not bool(np.asarray(remap.coverage_passed)):
+        return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
+    source_average = _host_field(source_content, "cell_average")
+    if callable(source_average):
+        source_average = source_average()
+    conservation_defect = (
+        jnp.zeros(())
+        if source_average is _MISSING
+        else remap.conservation_defect(source_average, remap.apply(source_average))
+    )
+    evidence = FiniteVolumeTopologyArtifactEvidence(
+        passed=jnp.asarray(True),
+        status=jnp.asarray(int(TopologyEventStatus.SUCCESS), dtype=jnp.int32),
+        coverage_error=remap.coverage_error,
+        conservation_defect=conservation_defect,
+        evidence_id=canonical_fingerprint(
+            {
+                "kind": "finite-volume-material-chain-remesh-evidence",
+                "remap": remap.plan_id,
+                "transition": artifact.transition.transition_id,
+                "candidate_epoch": artifact.candidate_epoch.epoch_id,
+            }
+        ),
+    )
+    return remap, evidence
+
+
 def _prepare_automatic_remap(
     self: FiniteVolumeTopologyEventTransaction,
     source_content: Any,
@@ -2262,10 +2362,7 @@ def _candidate_admission_failure(
             or candidate.evidence is not migration
         ):
             return TopologyEventStatus.FAILED_MISSING_ARTIFACT
-        if (
-            not migration.result.feasible
-            or migration.result.migration_count <= 0
-        ):
+        if not migration.result.feasible or migration.result.migration_count <= 0:
             return TopologyEventStatus.FAILED_RESOURCE_LIMIT
         target = candidate.candidate_epoch
         if (
@@ -2333,6 +2430,23 @@ def _prepare_topology_event_artifacts(
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
     automatic_remap = None
     if (
+        not self.ownership_migration
+        and candidate.remap is None
+        and isinstance(prepared, FiniteVolumeRemeshArtifact)
+        and prepared.content_semantics == "material_following_content"
+    ):
+        material_outcome = _prepare_material_chain_remap(self, source_content, prepared)
+        if isinstance(material_outcome, FiniteVolumeTopologyEventTransactionResult):
+            return material_outcome
+        material_remap, material_evidence = material_outcome
+        candidate = replace(
+            candidate,
+            remap=material_remap,
+            metrics=material_evidence,
+            evidence=material_evidence,
+            status=TopologyEventStatus.SUCCESS,
+        )
+    elif (
         not self.ownership_migration
         and candidate.remap is None
         and self.source_geometry is not None
@@ -2587,9 +2701,7 @@ class FiniteVolumeTopologyEventTransaction:
             from ..meshing._distribution import OwnerLocalGraphMigrationEvidence
 
             if (
-                not isinstance(
-                    prepared_event.remap, OwnerLocalGraphMigrationEvidence
-                )
+                not isinstance(prepared_event.remap, OwnerLocalGraphMigrationEvidence)
                 or candidate_content.migration_evidence_id
                 != prepared_event.remap.evidence_id
             ):

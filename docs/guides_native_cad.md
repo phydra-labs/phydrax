@@ -212,8 +212,13 @@ placement representation.
 `brep_normal_ranges(model, direction, draft_angle=..., angular_tolerance=...)`
 returns one face-scoped angle enclosure in radians. It uses continuous surface
 derivative or analytic normal enclosures over the source trims, refining cells
-that can affect an angle extremum or requested threshold. A singular or
-unresolved cell remains explicit; it is never replaced by a point sample.
+that can affect an angle extremum or requested threshold. Revolved line and
+circle profiles lying in a plane through their axis use the meridian normal,
+which stays regular where a profile meets the axis (disc caps, cone apices,
+sphere poles). Cells whose normal is undefined, such as a profile crossing the
+axis, are subdivided to 1/256 of the face parameter range and then reported in
+`unresolved_cells` with spatial boxes in `singular_points`; they contribute the
+full `[0, pi]` range and are never replaced by a point sample.
 
 `CadExportPolicy(intersection_approximation=CadCurveFitPolicy(...))` requests a
 fitted B-spline edge and its two source p-curves for an otherwise unrepresented
