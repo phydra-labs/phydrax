@@ -13,6 +13,7 @@ from itertools import combinations
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
@@ -31,6 +32,7 @@ from ..discretization._coordinate_enclosure import (
     ExpressionInput,
     RationalPolynomial,
 )
+from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
 from ..discretization._nested_reference_types import validate_reference_cell_map_witnesses
 from ..discretization._reference_cell import reference_cell_topology
 from ..linalg._exact import determinant_exact
@@ -366,6 +368,279 @@ def _root_boundary_proof(
     return overlaps, len(target_facets), tuple(findings)
 
 
+def _affine_image(
+    offset: tuple[ExactScalar, ...],
+    matrix: tuple[tuple[ExactScalar, ...], ...],
+    point: tuple[Fraction, ...],
+    /,
+) -> tuple[ExactScalar, ...]:
+    return tuple(
+        offset[row]
+        + sum(
+            (matrix[row][column] * point[column] for column in range(len(point))),
+            Fraction(0),
+        )
+        for row in range(len(offset))
+    )
+
+
+def _certify_polyhedral_child_charts(
+    domain: MappedReferenceDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source_map: MappedPowerCellGeometrySource,
+    cell_regions: np.ndarray,
+    root_overlaps: tuple[FacetOverlap, ...],
+    root_target_facet_count: int,
+    findings: list[MeshCertificateFinding],
+    /,
+) -> MappedChartProof:
+    """Restrict each carrier root chart to the power pieces of one polyhedron.
+
+    Every restricted piece lies in one carrier tetrahedron whose four corners
+    have exact root-reference images, so piece coordinates are affine in the
+    carrier tetrahedron. A polyhedron whose pieces all restrict one root chart
+    has that affine chart; its physical vertices must be the affine root-map
+    images of the chart vertices, which makes the published polyhedron the
+    exact root image of a reference polyhedron. Containment and exact measure
+    completeness are proved here. All children of one root share one affine
+    chart, so their pairwise interior disjointness is the chart preimage of the
+    certified global embedding that coverage requires before it uses charts.
+    """
+    connectivity = mesh.connectivity
+    reference = source_map.reference_source
+    if (
+        not isinstance(connectivity, PolyhedralConnectivity)
+        or source_map.domain_id != domain.domain_id
+        or geometry.source_mesh_id != mesh.mesh_id
+        or geometry.source_map_id != source_map.source_map_id
+        or any(block.cell_kind != "polyhedron" for block in mesh.blocks)
+    ):
+        findings.append(
+            _finding(
+                "mapped_chart_source_identity",
+                "violated",
+                "mesh",
+                detail="Polyhedral chart ancestry names a different mesh, map, or root domain.",
+            )
+        )
+        return MappedChartProof(
+            (), (), root_overlaps, tuple(findings), root_target_facet_count
+        )
+    root_maps = cell_coordinate_expressions(domain.reference_mesh, domain.source_geometry)
+    root_kinds = tuple(
+        block.cell_kind
+        for block in domain.reference_mesh.blocks
+        for _ in range(block.cell_count)
+    )
+    root_rows = {
+        int(identifier): row for row, identifier in enumerate(domain.root_cell_ids)
+    }
+    physical_vertices = geometry.source_coordinates()
+    cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+    vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int64)
+    vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int64)
+    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    face_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
+    piece_groups = source_map.cell_piece_tetrahedra()
+    if (
+        len(reference.source_coordinates()) != len(physical_vertices)
+        or cell_regions.shape != (cell_ids.size,)
+        or len(piece_groups) != cell_ids.size
+    ):
+        findings.append(
+            _finding(
+                "mapped_chart_parent_assignment",
+                "unresolved",
+                "mesh",
+                detail="Reference vertices, physical vertices, and restricted pieces do not align with the target cells.",
+            )
+        )
+        return MappedChartProof(
+            (), (), root_overlaps, tuple(findings), root_target_facet_count
+        )
+
+    parent_ids: list[int] = []
+    chart_ids: list[str] = []
+    measures_by_root: dict[int, Fraction] = {}
+    for cell_row, target_cell_id in enumerate(cell_ids.tolist()):
+        cell_vertices = vertex_values[
+            vertex_offsets[cell_row] : vertex_offsets[cell_row + 1]
+        ]
+        try:
+            parent_id, chart_points = source_map.restricted_root_chart(
+                piece_groups[cell_row], cell_vertices
+            )
+        except ValueError as error:
+            findings.append(
+                _finding(
+                    "mapped_chart_parent_assignment",
+                    "unresolved",
+                    "cell",
+                    (target_cell_id,),
+                    detail=f"The restricted carrier root chart is unavailable: {error}",
+                )
+            )
+            continue
+        root_row = root_rows.get(parent_id)
+        if root_row is None:
+            findings.append(
+                _finding(
+                    "mapped_chart_parent_missing",
+                    "violated",
+                    "source_cell",
+                    (parent_id,),
+                    detail="A child chart names a root cell absent from the mapped source mesh.",
+                )
+            )
+            continue
+        root_kind = _standard_kind(root_kinds[root_row], 3)
+        root_map = root_maps[root_row]
+        root_affine = (
+            None if root_map is None or root_kind is None else affine_map(root_map, 3)
+        )
+        if root_kind is None or root_affine is None:
+            findings.append(
+                _finding(
+                    "mapped_chart_kind_unsupported",
+                    "unresolved",
+                    "source_cell",
+                    (parent_id,),
+                    detail="Planar polyhedral children require an affine map on a supported root cell.",
+                )
+            )
+            continue
+        if int(domain.cell_regions[root_row]) != int(cell_regions[cell_row]):
+            findings.append(
+                _finding(
+                    "mapped_chart_region_assignment",
+                    "violated",
+                    "cell",
+                    (target_cell_id, parent_id),
+                    detail="Dense target cell region differs from its mapped root cell region.",
+                )
+            )
+        vertex_charts = dict(zip(cell_vertices.tolist(), chart_points, strict=True))
+        if not all(
+            _inside_reference_cell(point, root_kind) for point in vertex_charts.values()
+        ):
+            findings.append(
+                _finding(
+                    "mapped_chart_containment",
+                    "violated",
+                    "cell",
+                    (target_cell_id, parent_id),
+                    detail="A polyhedral chart vertex lies outside its convex root reference cell.",
+                )
+            )
+        offset, matrix = root_affine
+        if any(
+            _affine_image(offset, matrix, point) != tuple(physical_vertices[vertex])
+            for vertex, point in vertex_charts.items()
+        ):
+            findings.append(
+                _finding(
+                    "mapped_chart_physical_map_mismatch",
+                    "violated",
+                    "cell",
+                    (target_cell_id, parent_id),
+                    detail="A physical polyhedral vertex is not the exact root-map image of its chart vertex.",
+                )
+            )
+        measure = Fraction(0)
+        start, stop = (
+            int(cell_face_offsets[cell_row]),
+            int(cell_face_offsets[cell_row + 1]),
+        )
+        for slot in range(start, stop):
+            face = int(cell_faces[slot])
+            loop = tuple(
+                vertex_charts[int(vertex)]
+                for vertex in face_values[face_offsets[face] : face_offsets[face + 1]]
+            )
+            anchor = loop[0]
+            oriented = Fraction(0)
+            for index in range(1, len(loop) - 1):
+                first, second = loop[index], loop[index + 1]
+                oriented += (
+                    anchor[0] * (first[1] * second[2] - first[2] * second[1])
+                    - anchor[1] * (first[0] * second[2] - first[2] * second[0])
+                    + anchor[2] * (first[0] * second[1] - first[1] * second[0])
+                ) / 6
+            measure += int(face_signs[slot]) * oriented
+        if measure <= 0:
+            findings.append(
+                _finding(
+                    "mapped_chart_orientation",
+                    "violated",
+                    "cell",
+                    (target_cell_id,),
+                    detail="A polyhedral chart has nonpositive exact root-reference measure.",
+                )
+            )
+            continue
+        measures_by_root[parent_id] = (
+            measures_by_root.get(parent_id, Fraction(0)) + measure
+        )
+        parent_ids.append(parent_id)
+        chart_ids.append(
+            canonical_fingerprint(
+                {
+                    "parent": parent_id,
+                    "target": target_cell_id,
+                    "kind": "polyhedron",
+                    "vertices": tuple(
+                        (vertex, tuple(str(value) for value in point))
+                        for vertex, point in sorted(vertex_charts.items())
+                    ),
+                }
+            )
+        )
+    for parent_id, root_row in root_rows.items():
+        achieved = measures_by_root.get(parent_id)
+        if achieved is None:
+            findings.append(
+                _finding(
+                    "mapped_chart_root_uncovered",
+                    "violated",
+                    "source_cell",
+                    (parent_id,),
+                    detail="No target child chart covers this mapped source root cell.",
+                )
+            )
+            continue
+        root_kind = _standard_kind(root_kinds[root_row], 3)
+        if root_kind is not None and achieved != reference_cell_measure(root_kind):
+            findings.append(
+                _finding(
+                    "mapped_chart_completeness",
+                    "violated",
+                    "source_cell",
+                    (parent_id,),
+                    detail="Contained polyhedral child chart measures do not fill the exact root reference cell.",
+                )
+            )
+    if len(parent_ids) != cell_ids.size:
+        findings.append(
+            _finding(
+                "mapped_chart_boundary_unresolved",
+                "unresolved",
+                "mesh",
+                detail="The complete root-to-target chart partition is unavailable for every target cell.",
+            )
+        )
+    return MappedChartProof(
+        tuple(parent_ids),
+        tuple(chart_ids),
+        root_overlaps,
+        tuple(findings),
+        root_target_facet_count,
+    )
+
+
 def certify_child_chart_partition(
     domain: MappedReferenceDomain,
     mesh: CellMesh,
@@ -378,6 +653,17 @@ def certify_child_chart_partition(
     findings: list[MeshCertificateFinding] = []
     root_overlaps, root_target_facet_count, root_findings = _root_boundary_proof(domain)
     findings.extend(root_findings)
+    if isinstance(geometry.source_map, MappedPowerCellGeometrySource):
+        return _certify_polyhedral_child_charts(
+            domain,
+            mesh,
+            geometry,
+            geometry.source_map,
+            np.asarray(cell_regions, dtype=np.int64),
+            root_overlaps,
+            root_target_facet_count,
+            findings,
+        )
     identity = (
         mesh.mesh_id == domain.reference_mesh.mesh_id
         and geometry.geometry_layout_id == domain.source_geometry.geometry_layout_id
