@@ -1,70 +1,32 @@
 from __future__ import annotations
 
-
 import argparse
-
-
-import importlib.metadata
-
-
-import json
-
-
 import os
-
-
-import platform
-
-
 import shutil
-
-
 import sys
-
-
 from collections.abc import Callable
-
-
 from pathlib import Path
-
-
 from tempfile import TemporaryDirectory
-
-
 from time import perf_counter
-
-
 from typing import Any
 
-
 import jax
-
-
 import jax.numpy as jnp
-
-
 import numpy as np
 
-
 import phydrax as phx
-
-
-from phydrax._fingerprint import canonical_fingerprint
-
-
-from phydrax._meshcore import meshcore_available, meshcore_identity
-
-
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry.brep import BRepTessellationPolicy
 from phydrax.interchange import (
     CadImportPolicy,
     persist_occt_shape,
     read_brep_text,
 )
+
+
 _CAD_CURVING_ASSOCIATION_POLICY = phx.meshing.AssociationPropagationPolicy(
     classification_tolerance=1.0e-8
 )
-
 
 
 def _contract() -> phx.SpatialCoordinateContract:
@@ -295,7 +257,9 @@ def qualify_gmsh() -> dict[str, object]:
             partition.model.source_revision != source_revision
             or partition.model.geometry.geometry_id != geometry_id
         ):
-            raise RuntimeError("Native Gmsh qualification changed its immutable CAD source.")
+            raise RuntimeError(
+                "Native Gmsh qualification changed its immutable CAD source."
+            )
 
     return {
         "provider": result.provider.name,
@@ -1879,15 +1843,22 @@ def qualify_cad_curving() -> dict[str, object]:
     }
 
 
-
-
 from importlib.util import find_spec
 
 from .._runtime import runtime_identity as _runtime_identity
 
 
 def _configured_worker(name: str, explicit: str | None, default: str, /) -> str | None:
-    configured = explicit or phx.config.snapshot().workers.get(name) or os.environ.get({"mmg": "PHYDRAX_MMG_WORKER", "vorocrust": "PHYDRAX_VOROCRUST_WORKER"}.get(name, "")) or default
+    configured = (
+        explicit
+        or phx.config.snapshot().workers.get(name)
+        or os.environ.get(
+            {"mmg": "PHYDRAX_MMG_WORKER", "vorocrust": "PHYDRAX_VOROCRUST_WORKER"}.get(
+                name, ""
+            )
+        )
+        or default
+    )
     return shutil.which(configured) if configured else None
 
 
@@ -1918,14 +1889,35 @@ def run_optional(name: str, args: argparse.Namespace, /) -> dict[str, object]:
         missing = _missing(package_dependencies[name])
         if missing is not None:
             return missing
-    if name == "mmg" and _configured_worker("mmg", args.worker, "phydrax-mmg-worker") is None:
-        return {"status": "missing-dependency", "dependency": "phydrax-mmg-worker", "detail": "Build the MMG worker and set PHYDRAX_MMG_WORKER or put phydrax-mmg-worker on PATH.", "runtime": _runtime_identity()}
+    if (
+        name == "mmg"
+        and _configured_worker("mmg", args.worker, "phydrax-mmg-worker") is None
+    ):
+        return {
+            "status": "missing-dependency",
+            "dependency": "phydrax-mmg-worker",
+            "detail": "Build the MMG worker and set PHYDRAX_MMG_WORKER or put phydrax-mmg-worker on PATH.",
+            "runtime": _runtime_identity(),
+        }
     if name == "vorocrust":
         worker = _configured_worker("vorocrust", args.worker, "phydrax-vorocrust-worker")
         executable = shutil.which(args.executable)
         if worker is None or executable is None:
-            missing_names = tuple(key for key, value in (("phydrax-vorocrust-worker", worker), (args.executable, executable)) if value is None)
-            return {"status": "missing-dependency", "dependency": ", ".join(missing_names), "detail": "Build the VoroCrust worker and install its upstream vc_mesh executable; configure PHYDRAX_VOROCRUST_WORKER when needed.", "runtime": _runtime_identity()}
+            missing_names = tuple(
+                key
+                for key, value in (
+                    ("phydrax-vorocrust-worker", worker),
+                    (args.executable, executable),
+                )
+                if value is None
+            )
+            return {
+                "status": "missing-dependency",
+                "dependency": ", ".join(missing_names),
+                "detail": "Build the VoroCrust worker and install its upstream vc_mesh executable; configure PHYDRAX_VOROCRUST_WORKER when needed.",
+                "runtime": _runtime_identity(),
+            }
+
     def run_planar_bands() -> dict[str, object]:
         from .native_layers import qualify_planar_bands
 

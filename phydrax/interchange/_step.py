@@ -26,7 +26,6 @@ declared product/usage relationships. Product and usage names remain
 provenance labels only; display strings and placements never define identity.
 """
 
-
 from __future__ import annotations
 
 import hashlib
@@ -103,8 +102,8 @@ from ._cad import (
     unrepresentable_cad_tolerance_loss,
 )
 from ._cad_carriers import RigidPlacement, surface_tag
-from ._cad_placement_evidence import certify_placed_model, source_placement_evidence
 from ._cad_io import CadResource, decode_cad_bytes, read_cad_file
+from ._cad_placement_evidence import certify_placed_model, source_placement_evidence
 from ._report import (
     AdapterFormatProfile,
     AdapterLoss,
@@ -322,12 +321,6 @@ _ASSEMBLY_ENTITIES = frozenset(
 
 
 # --------------------------------------------------------------------- lexing
-
-
-
-
-
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -1222,8 +1215,7 @@ class _Decoder:
                     else:
                         origin, x, y = self._frame2(record.params[1])
                     radii = [
-                        self._float(item, instance) * factor
-                        for item in record.params[2:]
+                        self._float(item, instance) * factor for item in record.params[2:]
                     ]
                     if record.name == "CIRCLE" and len(radii) == 1:
                         return CircleCurve(origin, x, y, radii[0])
@@ -1280,10 +1272,9 @@ class _Decoder:
                                 ref_direction,
                             ) = self._params(instance, 5)
                             direction = self._direction(ref_direction, 3)
-                        if (
-                            not isinstance(self_intersect, _Enum)
-                            or self_intersect.value not in ("T", "F", "U")
-                        ):
+                        if not isinstance(
+                            self_intersect, _Enum
+                        ) or self_intersect.value not in ("T", "F", "U"):
                             raise self._refuse(
                                 "malformed",
                                 instance,
@@ -1366,7 +1357,6 @@ class _Decoder:
             while entered:
                 self._leave()
                 entered -= 1
-
 
     def _trim_parameter(
         self,
@@ -1558,9 +1548,7 @@ class _Decoder:
                         break
                     record = self._simple(instance)
                     if record.name == "OFFSET_SURFACE":
-                        _, basis, distance, self_intersect = self._params(
-                            instance, 4
-                        )
+                        _, basis, distance, self_intersect = self._params(instance, 4)
                         if not isinstance(
                             self_intersect, _Enum
                         ) or self_intersect.value not in ("T", "F", "U"):
@@ -1598,7 +1586,6 @@ class _Decoder:
             while entered:
                 self._leave()
                 entered -= 1
-
 
     # ------------------------------------------------------------ topology
 
@@ -1908,9 +1895,7 @@ class _Decoder:
                 f"STEP.face.surface must be an instance reference; got {surface_!r}"
             )
         face_tag = (
-            face_name
-            if isinstance(face_name, str) and face_name
-            else surface_tag(patch)
+            face_name if isinstance(face_name, str) and face_name else surface_tag(patch)
         )
         same_sense = self._bool(same_sense_, instance)
         same_sense = self._repair_face_sense(patch, sign, same_sense, instance)
@@ -2409,8 +2394,7 @@ def _closure(start: list[int], links: dict[int, list[int]], /) -> list[int]:
 
 def _assembly_affine(placement: RigidPlacement, /) -> BRepAffinePlacement:
     rows = tuple(
-        tuple(Fraction(float(value)) for value in row)
-        for row in placement.matrix()
+        tuple(Fraction(float(value)) for value in row) for row in placement.matrix()
     ) + ((Fraction(0), Fraction(0), Fraction(0), Fraction(1)),)
     return BRepAffinePlacement(rows)
 
@@ -2427,9 +2411,6 @@ def _product_representations(
     )
 
 
-
-
-
 def _product_usage_placement(
     decoder: _Decoder,
     assembly: _Assembly,
@@ -2439,13 +2420,9 @@ def _product_usage_placement(
 ) -> RigidPlacement:
     label = decoder.instances[usage].label
     if usage not in assembly.placements:
-        raise refuse(
-            "unsupported-entity", label, "Assembly usage has no placement."
-        )
+        raise refuse("unsupported-entity", label, "Assembly usage has no placement.")
     first, second, operator = assembly.placements[usage]
-    child, parent = (
-        (first, second) if first in child_representations else (second, first)
-    )
+    child, parent = (first, second) if first in child_representations else (second, first)
     if child not in child_representations:
         raise refuse(
             "inconsistent-geometry",
@@ -2483,8 +2460,12 @@ def _step_assembly_graph(
     products = set(assembly.product_reps) | set(assembly.children)
     products.update(child for usages in assembly.children.values() for _, child in usages)
     related = {child for usages in assembly.children.values() for _, child in usages}
-    product_source_order = tuple(product for product in decoder.instances if product in products)
-    product_roots = tuple(product for product in product_source_order if product not in related)
+    product_source_order = tuple(
+        product for product in decoder.instances if product in products
+    )
+    product_roots = tuple(
+        product for product in product_source_order if product not in related
+    )
     product_order: list[int] = []
     seen_products: set[int] = set()
     pending_products = list(reversed(product_roots))
@@ -2527,8 +2508,7 @@ def _step_assembly_graph(
         for identifier in representation_order
     }
     product_definition_ids = {
-        product: f"step-product-definition-#{product}"
-        for product in product_order
+        product: f"step-product-definition-#{product}" for product in product_order
     }
     definitions: list[BRepAssemblyDefinition] = []
     provenance: list[tuple[str, str]] = []
@@ -2546,9 +2526,7 @@ def _step_assembly_graph(
         for item_position, (item, mapped, placement) in enumerate(
             decoder.mapped_items.get(representation, ())
         ):
-            use_id = (
-                f"step-representation-use-#{representation}-mapped-{item_position}-#{item}"
-            )
+            use_id = f"step-representation-use-#{representation}-mapped-{item_position}-#{item}"
             uses.append(
                 BRepAssemblyUse(
                     use_id,
@@ -2561,7 +2539,10 @@ def _step_assembly_graph(
         definition_id = representation_ids[representation]
         definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
         provenance.append(
-            (f"assembly-definition:{definition_id}", decoder.instances[representation].label)
+            (
+                f"assembly-definition:{definition_id}",
+                decoder.instances[representation].label,
+            )
         )
     for product in product_order:
         uses: list[BRepAssemblyUse] = []
@@ -2598,9 +2579,7 @@ def _step_assembly_graph(
                     placement_evidence=source_placement_evidence(placement),
                 )
             )
-            provenance.append(
-                (f"assembly-use:{use_id}", decoder.instances[usage].label)
-            )
+            provenance.append((f"assembly-use:{use_id}", decoder.instances[usage].label))
         definition_id = product_definition_ids[product]
         definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
         provenance.append(
@@ -2614,9 +2593,7 @@ def _step_assembly_graph(
                 use_id, identity, definition_id=product_definition_ids[product]
             )
         )
-        provenance.append(
-            (f"assembly-use:{use_id}", decoder.instances[product].label)
-        )
+        provenance.append((f"assembly-use:{use_id}", decoder.instances[product].label))
     represented = {
         representation
         for product in product_order
@@ -2686,9 +2663,7 @@ def _decode(
         },
     )
     representations = [
-        instance
-        for instance in instances.values()
-        if instance.names & _REPRESENTATIONS
+        instance for instance in instances.values() if instance.names & _REPRESENTATIONS
     ]
     factors = [
         decoder._context_units(decoder._items_context(instance.id)).scale
@@ -2749,9 +2724,7 @@ def _decode(
             source_digest=digest,
             import_policy_id=policy.policy_id,
             tessellation=(
-                None
-                if policy.maximum_placement_deviation > 0.0
-                else policy.tessellation
+                None if policy.maximum_placement_deviation > 0.0 else policy.tessellation
             ),
         )
         model, repairs, decoder.orientation_assumptions = audit_shells(
@@ -3076,6 +3049,8 @@ def _import_report(
         + decoder.orientation_assumptions,
         losses=losses,
     )
+
+
 @checked
 def decode_step_resource(
     resource: CadResource,
@@ -3419,9 +3394,7 @@ class _Writer:
                 basis = self.curve(curve.base, label)
                 distance = -float(curve.distance_exact)
                 if curve.direction is None:
-                    return self.add(
-                        f"OFFSET_CURVE_2D('',#{basis},{_real(distance)},.U.)"
-                    )
+                    return self.add(f"OFFSET_CURVE_2D('',#{basis},{_real(distance)},.U.)")
                 direction = self.direction(np.asarray(curve.direction))
                 return self.add(
                     f"OFFSET_CURVE_3D('',#{basis},{_real(distance)},.U.,#{direction})"
@@ -3921,9 +3894,7 @@ class _Writer:
         definition_context: int,
         /,
     ) -> tuple[int, int]:
-        product = self.add(
-            f"PRODUCT('',{_string(name)},'',(#{product_context}))"
-        )
+        product = self.add(f"PRODUCT('',{_string(name)},'',(#{product_context}))")
         formation = self.add(f"PRODUCT_DEFINITION_FORMATION('','',#{product})")
         definition = self.add(
             f"PRODUCT_DEFINITION('design','',#{formation},#{definition_context})"
@@ -4047,7 +4018,9 @@ class _Writer:
             product_context,
             definition_context,
         )
-        self.assembly_provenance.append(("assembly-container:root", f"#{root_definition}"))
+        self.assembly_provenance.append(
+            ("assembly-container:root", f"#{root_definition}")
+        )
         root_node = (
             root_definition,
             root_shape,
@@ -4060,8 +4033,7 @@ class _Writer:
         def placement_frame(placement: BRepAffinePlacement, label: str, /) -> int:
             matrix = placement.matrix
             rotation = tuple(
-                tuple(matrix[row][column] for column in range(3))
-                for row in range(3)
+                tuple(matrix[row][column] for column in range(3)) for row in range(3)
             )
             for first in range(3):
                 for second in range(3):
@@ -4081,11 +4053,7 @@ class _Writer:
             a, b, c = rotation[0]
             d, e, f = rotation[1]
             g, h, i = rotation[2]
-            determinant = (
-                a * (e * i - f * h)
-                - b * (d * i - f * g)
-                + c * (d * h - e * g)
-            )
+            determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
             if determinant != 1:
                 raise refuse(
                     "inexact-export",
@@ -4131,9 +4099,7 @@ class _Writer:
                 "NEXT_ASSEMBLY_USAGE_OCCURRENCE('','','',"
                 f"#{parent_definition},#{child_definition},$)"
             )
-            self.assembly_provenance.append(
-                (f"assembly-use:{use.use_id}", f"#{usage}")
-            )
+            self.assembly_provenance.append((f"assembly-use:{use.use_id}", f"#{usage}"))
             usage_shape = self.add(f"PRODUCT_DEFINITION_SHAPE('','',#{usage})")
             transform = self.add(
                 f"ITEM_DEFINED_TRANSFORMATION('','',#{source_axis},#{target_axis})"
@@ -4175,9 +4141,7 @@ class _Writer:
         root_representation = self.add(
             f"SHAPE_REPRESENTATION('',{_refs(root_node[3])},#{context})"
         )
-        self.add(
-            f"SHAPE_DEFINITION_REPRESENTATION(#{root_shape},#{root_representation})"
-        )
+        self.add(f"SHAPE_DEFINITION_REPRESENTATION(#{root_shape},#{root_representation})")
         representations["root"] = root_representation
         for child_representation, transform, shape, parent in pending:
             if isinstance(child_representation, str):
@@ -4222,9 +4186,7 @@ def write_step(
     geometry, _, approximation_losses = prepare_cad_export_geometry(
         model, model.geometry, policy_, format_name="step"
     )
-    surface_carriers, surface_losses = prepare_cad_export_surfaces(
-        model.patches, "STEP"
-    )
+    surface_carriers, surface_losses = prepare_cad_export_surfaces(model.patches, "STEP")
     uncertainty = _certified_cad_export_tolerances(
         model, _cad_export_gap_surfaces(surface_carriers)
     ).uncertainty
@@ -4276,9 +4238,7 @@ def write_step(
             *approximation_losses,
             *writer.assembly_losses,
             *writer.surface_losses,
-            *cad_export_assembly_identifier_losses(
-                geometry.assembly_graph, "STEP"
-            ),
+            *cad_export_assembly_identifier_losses(geometry.assembly_graph, "STEP"),
         ),
     )
     return CadExportResult(

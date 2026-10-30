@@ -1,10 +1,13 @@
-from fractions import Fraction
 import math
+from fractions import Fraction
 from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry.brep._boolean import boolean_brep
+from phydrax.geometry.brep._constructors import brep_cylinder
 from phydrax.geometry.brep._curve_approximation_bounds import (
     certify_coupled_approximation,
     propose_intersection_approximation,
@@ -18,11 +21,6 @@ from phydrax.geometry.brep._intersection import (
     intersect_surface_regions,
 )
 from phydrax.geometry.brep._intersection_curve import SurfaceRegion
-from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry.brep._boolean import boolean_brep
-from phydrax.geometry.brep._constructors import brep_cylinder
-from phydrax.interchange._cad import CadCurveFitPolicy, CadExportPolicy
-from phydrax.interchange._step import write_step
 from phydrax.geometry.brep._patches import (
     CircleCurve,
     ConicParameterRoot,
@@ -30,6 +28,8 @@ from phydrax.geometry.brep._patches import (
     LineCurve,
     PlanePatch,
 )
+from phydrax.interchange._cad import CadCurveFitPolicy, CadExportPolicy
+from phydrax.interchange._step import write_step
 
 
 def test_coupled_curve_bounds_cover_dense_independent_samples_and_exact_roots() -> None:
@@ -121,14 +121,20 @@ def test_coupled_curve_bounds_cover_dense_independent_samples_and_exact_roots() 
         float(np.max(np.min(pairwise, axis=0))),
     )
     first_exact_uv = np.asarray(source.p_curve("first").evaluate(jnp.asarray(parameters)))
-    second_exact_uv = np.asarray(source.p_curve("second").evaluate(jnp.asarray(parameters)))
+    second_exact_uv = np.asarray(
+        source.p_curve("second").evaluate(jnp.asarray(parameters))
+    )
     first_fit_uv = np.asarray(fitted[1].evaluate(jnp.asarray(parameters)))
     second_fit_uv = np.asarray(fitted[2].evaluate(jnp.asarray(parameters)))
     first_lift_error = np.max(
-        np.linalg.norm(plane_patch.evaluate(jnp.asarray(first_fit_uv)) - fitted_values, axis=1)
+        np.linalg.norm(
+            plane_patch.evaluate(jnp.asarray(first_fit_uv)) - fitted_values, axis=1
+        )
     )
     second_lift_error = np.max(
-        np.linalg.norm(cylinder_patch.evaluate(jnp.asarray(second_fit_uv)) - fitted_values, axis=1)
+        np.linalg.norm(
+            cylinder_patch.evaluate(jnp.asarray(second_fit_uv)) - fitted_values, axis=1
+        )
     )
     parameter_error = max(
         np.max(np.linalg.norm(first_exact_uv - first_fit_uv, axis=1)),
@@ -179,7 +185,8 @@ def test_step_export_uses_certified_intersection_approximation(
     assert destination.is_file()
     assert exported.report.valid
     assert any(
-        loss.path.startswith("edge:") and loss.path.endswith(".intersection-curve")
+        loss.path.startswith("edge:")
+        and loss.path.endswith(".intersection-curve")
         and loss.changes_interpretation
         for loss in exported.report.losses
     )

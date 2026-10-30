@@ -603,9 +603,25 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
                 source_ids, source_owners, source_owned, strict=True
             )
         )
+        # Adapted vertices are their own quotient keys; their exact source-site
+        # roots are the active rows of the cumulative coordinate ancestry.
+        vertex_keys = np.asarray(receptor_view.vertex_source_ids, dtype=np.int64)
+        stencil = receptor_view.source_coordinate_stencil
+        roots = (
+            vertex_keys
+            if stencil is None
+            else np.asarray(stencil.source_global_ids, dtype=np.int64)[
+                np.asarray(stencil.valid, dtype=np.bool_)
+            ]
+        )
         source_halo_valid = source_halo_valid and bool(
-            np.all(np.isin(np.asarray(receptor_view.cell_key_source_ids), source_ids))
-            and np.all(np.isin(np.asarray(receptor_view.vertex_source_ids), source_ids))
+            np.all(np.isin(roots, source_ids))
+            and np.all(
+                np.isin(
+                    np.asarray(receptor_view.cell_key_source_ids, dtype=np.int64),
+                    np.union1d(vertex_keys, source_ids),
+                )
+            )
         )
         remote_source_count = np.count_nonzero(source_owners != partition)
     source_halo_evidence = np.asarray(

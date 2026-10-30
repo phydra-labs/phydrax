@@ -40,6 +40,7 @@ from ..discretization._periodic_exact import (
 from ..discretization._periodic_topology import (
     _canonical_unordered_form,
     _entity_vertex_rows,
+    _interleaved_key,
     _orientation_orders,
     PeriodicMeshTopology,
 )
@@ -935,18 +936,15 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
                 ("simplex:", "triangle", "tetrahedron")
             )
             permutation = None
-            for order, orientation in _orientation_orders(vertices.size, simplex=simplex):
-                permutation_rows = np.asarray(order, dtype=np.int64)
-                ranked_ids = identifiers[permutation_rows]
-                ranked_shifts = exponents[permutation_rows].copy()
-                ranked_fixed = fixed_entities[permutation_rows]
-                ranked_shifts[ranked_fixed] = 0
-                anchor = ranked_shifts[0]
-                relative = reduce_periodic_exponents(ranked_shifts - anchor, orders)
-                candidate = np.concatenate(
-                    (ranked_ids[:, None], relative), axis=1
-                ).reshape(-1)
-                if np.array_equal(candidate, expected):
+            for order, orientation in _orientation_orders(
+                vertices.size, simplex=simplex
+            ):
+                # Same moving-vertex anchor convention as the quotient keys.
+                candidate, _ = _interleaved_key(
+                    identifiers, exponents, fixed_entities, order, orders
+                )
+                if np.array_equal(np.asarray(candidate, dtype=np.int64), expected):
+                    permutation_rows = np.asarray(order, dtype=np.int64)
                     if int(orientation) != int(stored_signs[row]):
                         raise ValueError(
                             "Periodic corner permutation has an inconsistent orientation."

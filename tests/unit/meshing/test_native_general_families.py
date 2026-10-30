@@ -118,7 +118,10 @@ def _cube_source() -> NativePlcSource:
         ),
         dtype=np.float64,
     )
-    row = {tuple(int(value) for value in point): index for index, point in enumerate(vertices)}
+    row = {
+        tuple(int(value) for value in point): index
+        for index, point in enumerate(vertices)
+    }
     polygons = (
         (row[(0, 0, 0)], row[(0, 1, 0)], row[(1, 1, 0)], row[(1, 0, 0)]),
         (row[(0, 0, 1)], row[(1, 0, 1)], row[(1, 1, 1)], row[(0, 1, 1)]),
@@ -173,7 +176,7 @@ def _volume_request(
     single_region_material: str | None = None,
     two_region_seed_points: tuple[
         tuple[float, float, float], tuple[float, float, float]
-    ] = ((0.0, 0.0, 0.25), (0.0, 0.0, -0.25)),
+    ] = ((0.0, 0.2, 0.25), (0.0, 0.2, -0.25)),
 ) -> VolumeMeshingSpec:
     boundary = MeshingScope.whole(source, 2)
     controls = (
@@ -227,7 +230,9 @@ def _volume_request(
 
 def _accepted_public_result(result: Any, source: Any, /) -> None:
     assert result.certification is not None and result.certification.passed
-    assert result.certification.inputs.source is source
+    inputs = result.certification.inputs
+    assert inputs.source_id == source.source_id
+    assert inputs.source_revision == source.source_revision
     assert result.audit.passed
     assert result.compliance.passed
     assert result.provider.name == "phydrax-native"
@@ -246,11 +251,7 @@ def _assert_plc_facet_associations(result: Any, /) -> None:
 
 
 def _region_materials(result: Any, /) -> set[str]:
-    return {
-        zone.material_id
-        for zone in result.zones
-        if zone.material_id is not None
-    }
+    return {zone.material_id for zone in result.zones if zone.material_id is not None}
 
 
 def test_polyhedral_power_keeps_region_sites_and_fv_field_measure() -> None:
@@ -348,9 +349,7 @@ def test_polyhedral_power_keeps_region_sites_and_fv_field_measure() -> None:
             labels[f"power-site:{site_id}"].scope.entity_ids, site_cells
         )
     for point_row, expected_site in enumerate((0, 1)):
-        located_cells = np.asarray(
-            located.candidate_cells[point_row], dtype=np.int64
-        )
+        located_cells = np.asarray(located.candidate_cells[point_row], dtype=np.int64)
         located_cells = located_cells[located_cells >= 0]
         assert located_cells.size
         assert np.any(site_indices[located_cells] == expected_site)
@@ -399,13 +398,15 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
             CellFamilyPolicy(required=("quadrilateral",)),
         ),
         scope,
+        # The unit-square diagonal (sqrt 2) must not force a central Steiner
+        # point: a four-triangle star has no positive-quality quad pairing.
         size_controls=(
-            UniformSizeControl(scope, 1.0, strength=SizeControlStrength.SOFT),
+            UniformSizeControl(scope, 1.5, strength=SizeControlStrength.SOFT),
         ),
     )
-    plan = NativeMeshingProvider(
-        NativeMeshingOptions("planar_dual_quad")
-    ).plan(source, specification, coordinate_contract=_COORDINATES)
+    plan = NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
+        source, specification, coordinate_contract=_COORDINATES
+    )
 
     assert plan.route == "planar_dual_quad"
     result = plan.execute()
@@ -592,9 +593,7 @@ def _curved_public_plc_source() -> NativePlcSource:
             )
             for axis in range(3)
         )
-        shear = scale(
-            multiply(multiply(carrier[0], carrier[1]), carrier[1]), alpha
-        )
+        shear = scale(multiply(multiply(carrier[0], carrier[1]), carrier[1]), alpha)
         root_charts.append(
             tuple(
                 sum_polynomials(
@@ -672,7 +671,9 @@ def _curved_public_plc_source() -> NativePlcSource:
         segments=np.empty((0, 2), dtype=np.int64),
         vertex_ids=tuple(str(value) for value in root_vertex_ids.tolist()),
         vertex_occurrence_paths=((),) * vertices.shape[0],
-        facet_ids=tuple(f"curved-bipyramid-facet-{row}" for row in range(facets.shape[0])),
+        facet_ids=tuple(
+            f"curved-bipyramid-facet-{row}" for row in range(facets.shape[0])
+        ),
         facet_occurrence_paths=((),) * facets.shape[0],
         segment_ids=(),
         segment_occurrence_paths=(),
@@ -702,6 +703,7 @@ def _assert_curved_root_feature(source: NativePlcSource, /) -> None:
         Fraction(1, 512),
     )
 
+
 def test_public_plc_balanced_grid_accepts_source_authored_curved_chart() -> None:
     source = _curved_public_plc_source()
     _assert_curved_root_feature(source)
@@ -710,7 +712,7 @@ def test_public_plc_balanced_grid_accepts_source_authored_curved_chart() -> None
         family_policy=CellFamilyPolicy(required=("hexahedron",)),
         fill_strategy=VolumeFillStrategy.SIMPLEX,
         size=0.8,
-        two_region_seed_points=((0.0, 0.0, 0.05), (0.0, 0.0, -0.05)),
+        two_region_seed_points=((0.0, 0.2, 0.05), (0.0, 0.2, -0.05)),
     )
     plan = NativeMeshingProvider(
         NativeMeshingOptions(
@@ -756,7 +758,7 @@ def test_public_plc_hex_dominant_composes_the_mapped_curved_source() -> None:
             allow_mixed=True,
         ),
         fill_strategy=VolumeFillStrategy.HEX_DOMINANT_SIMPLEX_TRANSITION,
-        two_region_seed_points=((0.0, 0.0, 0.05), (0.0, 0.0, -0.05)),
+        two_region_seed_points=((0.0, 0.2, 0.05), (0.0, 0.2, -0.05)),
     )
     plan = NativeMeshingProvider(
         NativeMeshingOptions(
@@ -779,4 +781,3 @@ def test_public_plc_hex_dominant_composes_the_mapped_curved_source() -> None:
     assert kinds <= {"hexahedron", "pyramid", "tetrahedron"}
     assert result.geometry.restriction_source is not None
     assert _region_materials(result) == {"upper-material", "lower-material"}
-

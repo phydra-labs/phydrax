@@ -15,8 +15,8 @@ from ..geometry.brep._assembly import (
     BRepAssemblyGraph,
     BRepPlacementEvidence,
 )
-from ..geometry.brep._exact import square_root_interval
 from ..geometry.brep._constructors import BRepTessellationPolicy
+from ..geometry.brep._exact import square_root_interval
 from ..geometry.brep._model import BRepGeometry, BRepModel, BRepTessellation
 from ..geometry.brep._tessellation import tessellate_brep_model
 from ._cad import CadImportPolicy, refuse
@@ -60,7 +60,9 @@ def _solid_extent(model: BRepModel, solid: int, /) -> float:
             )
         squared = sum(
             (
-                max(abs(Fraction(float(box[0, axis]))), abs(Fraction(float(box[1, axis]))))
+                max(
+                    abs(Fraction(float(box[0, axis]))), abs(Fraction(float(box[1, axis])))
+                )
                 ** 2
                 for axis in range(3)
             ),

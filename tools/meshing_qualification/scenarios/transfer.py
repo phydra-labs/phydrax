@@ -5,10 +5,10 @@ import numpy as np
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.meshing._adaptation import (
+    execute_mesh_adaptation,
     MarkedMeshAdaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
-    execute_mesh_adaptation,
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._canonical import certify_cell_mesh
@@ -35,10 +35,18 @@ def _p1_integral(mesh: CellMesh, values: np.ndarray, /) -> float:
 
 def native_transfer() -> dict[str, object]:
     meshcore = require_meshcore()
-    coordinates = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64)
+    coordinates = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64
+    )
     mesh = CellMesh(
         coordinates,
-        (CellBlock("unit-square", "triangle", np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)),),
+        (
+            CellBlock(
+                "unit-square",
+                "triangle",
+                np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32),
+            ),
+        ),
         numeric_version="native-transfer-source",
     )
     source = certify_cell_mesh(mesh, SpatialCoordinateContract.si())
@@ -52,7 +60,9 @@ def native_transfer() -> dict[str, object]:
     target = adaptation.target
     transition = adaptation.transition
     if transition is None:
-        raise RuntimeError("Native bisection did not retain its accepted mesh transition.")
+        raise RuntimeError(
+            "Native bisection did not retain its accepted mesh transition."
+        )
     stencil = transition.vertex_stencil
     if stencil is None:
         raise RuntimeError("Native bisection did not retain its vertex transfer stencil.")
@@ -72,8 +82,27 @@ def native_transfer() -> dict[str, object]:
         raise RuntimeError(
             f"Native P1 transfer failed linear/conservative oracle: {reproduction_error=}, {integral_error=}."
         )
-    if not target.audit.passed or target.certification is None or not target.certification.passed:
-        raise RuntimeError("Native transfer target lost its accepted mesh/certification.")
+    # The bare source mesh carries no acceptance inputs, so neither result has a
+    # certification report; require the audit plus an independent orientation
+    # and area-partition oracle on every target triangle.
+    target_points = np.asarray(target.mesh.coordinates, dtype=np.float64)
+    target_cells = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in target.mesh.blocks]
+    )
+    corners = target_points[target_cells]
+    signed_areas = 0.5 * (
+        (corners[:, 1, 0] - corners[:, 0, 0]) * (corners[:, 2, 1] - corners[:, 0, 1])
+        - (corners[:, 1, 1] - corners[:, 0, 1]) * (corners[:, 2, 0] - corners[:, 0, 0])
+    )
+    if (
+        not target.audit.passed
+        or np.any(signed_areas <= 0.0)
+        or abs(float(np.sum(signed_areas)) - 1.0) > 1.0e-12
+        or target_cells.shape[0] <= 2
+    ):
+        raise RuntimeError(
+            "Native transfer target failed its audit or independent validity/area oracle."
+        )
     return {
         "status": "passed",
         "route": MeshAdaptationRoute.NATIVE_BISECTION.value,

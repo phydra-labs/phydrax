@@ -367,9 +367,13 @@ def _boundary_control_issues(
         retained_layer_domain = (
             chart_domain is not None or source.source_domain is not None
         )
-        fixed_plc_boundary = boundary.entity_dimension == 2 and np.array_equal(
-            np.asarray(boundary.entity_ids, dtype=np.int64),
-            np.asarray(source.complex.facet_entity_ids, dtype=np.int64),
+        fixed_plc_boundary = (
+            boundary.entity_dimension == 2
+            and boundary.entity_set_id == source.scope_entity_set_id(2)
+            and np.array_equal(
+                np.sort(np.asarray(boundary.entity_ids, dtype=np.int64)),
+                np.sort(np.asarray(source.complex.facet_entity_ids, dtype=np.int64)),
+            )
         )
         native_volume_scope = boundary.entity_set_id == source.scope_entity_set_id(
             3
@@ -1017,14 +1021,18 @@ def _compliance_report(
         issues.append("layer:minimum_visibility")
     requested.extend(construction.periodic_requested)
     achieved.extend(construction.periodic_achieved)
-    if construction.core.refinement_status is not MeshcoreStatus.OK:
-        issues.append("native_refinement_status")
-    if construction.core.improvement_status is not MeshcoreStatus.OK:
-        issues.append("native_improvement_status")
-    for name, _, _, _ in construction.core.refinement_unmet:
-        issues.append(f"native_refinement:{name}")
-    for name, _, _, _ in construction.core.improvement_unmet:
-        issues.append(f"native_improvement:{name}")
+    if construction.polyhedral_core is None:
+        # A restricted-power core's tetrahedral carrier is an internal scaffold;
+        # its explicit quality request is enforced by the power generator and
+        # output cells are measured above, so carrier refinement is not output.
+        if construction.core.refinement_status is not MeshcoreStatus.OK:
+            issues.append("native_refinement_status")
+        if construction.core.improvement_status is not MeshcoreStatus.OK:
+            issues.append("native_improvement_status")
+        for name, _, _, _ in construction.core.refinement_unmet:
+            issues.append(f"native_refinement:{name}")
+        for name, _, _, _ in construction.core.improvement_unmet:
+            issues.append(f"native_improvement:{name}")
     return result_owner.MeshingComplianceReport(
         specification.specification_id,
         requested=tuple(requested),

@@ -6,14 +6,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 
 import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
 from ..._validation import positive_finite_float
 from ._intersection_curve import IntersectionCurve
 from ._patches import AbstractSurfacePatch, BSplineCurve
@@ -42,15 +41,27 @@ class CoupledApproximationEvidence:
             self.second_correspondence_bound,
         )
         if any(not math.isfinite(value) or value < 0.0 for value in values):
-            raise ValueError("Coupled approximation bounds must be finite and nonnegative.")
-        if isinstance(self.cells, bool) or not isinstance(self.cells, int) or self.cells < 1:
+            raise ValueError(
+                "Coupled approximation bounds must be finite and nonnegative."
+            )
+        if (
+            isinstance(self.cells, bool)
+            or not isinstance(self.cells, int)
+            or self.cells < 1
+        ):
             raise ValueError("Coupled approximation cells must be a positive integer.")
         rows = np.asarray(self.interval_evidence, dtype=np.float64)
         if rows.ndim != 2 or rows.shape[1] != 6 or not np.all(np.isfinite(rows)):
-            raise ValueError("Coupled approximation interval evidence must have finite six-column rows.")
+            raise ValueError(
+                "Coupled approximation interval evidence must have finite six-column rows."
+            )
         roots = tuple(float(value) for value in self.endpoint_root_bounds)
-        if len(roots) != 2 or any(not math.isfinite(value) or value < 0.0 for value in roots):
-            raise ValueError("Coupled approximation root bounds must be two finite nonnegative values.")
+        if len(roots) != 2 or any(
+            not math.isfinite(value) or value < 0.0 for value in roots
+        ):
+            raise ValueError(
+                "Coupled approximation root bounds must be two finite nonnegative values."
+            )
         immutable = np.frombuffer(rows.tobytes(), dtype=np.float64).reshape(rows.shape)
         object.__setattr__(self, "interval_evidence", immutable)
         object.__setattr__(self, "endpoint_root_bounds", roots)
@@ -90,7 +101,9 @@ def _identity(curves: tuple[BSplineCurve, BSplineCurve, BSplineCurve], /) -> str
 
 def _piecewise_cubic(samples: np.ndarray, /) -> BSplineCurve:
     if samples.ndim != 3 or samples.shape[0] < 1 or samples.shape[1] < 4:
-        raise ValueError("Intersection fitting samples must have shape (charts, samples>=4, dimension).")
+        raise ValueError(
+            "Intersection fitting samples must have shape (charts, samples>=4, dimension)."
+        )
     chart_count, sample_count, dimension = samples.shape
     parameter = np.linspace(0.0, 1.0, sample_count, dtype=np.float64)
     first_basis = 3.0 * parameter * (1.0 - parameter) ** 2
@@ -100,9 +113,7 @@ def _piecewise_cubic(samples: np.ndarray, /) -> BSplineCurve:
     for chart in range(chart_count):
         values = samples[chart]
         start, end = values[0], values[-1]
-        fixed = (
-            (1.0 - parameter) ** 3
-        )[:, None] * start + parameter[:, None] ** 3 * end
+        fixed = ((1.0 - parameter) ** 3)[:, None] * start + parameter[:, None] ** 3 * end
         interior = np.linalg.lstsq(design, values[1:-1] - fixed[1:-1], rcond=None)[0]
         segment = np.stack((start, interior[0], interior[1], end))
         controls.extend(segment if chart == 0 else segment[1:])
@@ -144,7 +155,9 @@ def propose_intersection_approximation(
     if endpoint_points is not None:
         endpoints = np.asarray(endpoint_points, dtype=np.float64)
         if endpoints.shape != (2, 3) or not np.all(np.isfinite(endpoints)):
-            raise ValueError("Intersection fit endpoints must be finite (2, 3) coordinates.")
+            raise ValueError(
+                "Intersection fit endpoints must be finite (2, 3) coordinates."
+            )
         if source.closed and not np.array_equal(endpoints[0], endpoints[1]):
             raise ValueError("A closed intersection fit must retain one shared endpoint.")
         spatial[0, 0] = endpoints[0]
@@ -172,14 +185,66 @@ def _box_difference_upper(first: np.ndarray, second: np.ndarray, /) -> float:
     return float(np.nextafter(np.sqrt(squared), np.inf))
 
 
-def _parameter_boxes(source: IntersectionCurve, first: float, last: float, /) -> np.ndarray:
+def _parameter_enclosures(
+    source: IntersectionCurve, first: float, last: float, /
+) -> np.ndarray:
     boxes = np.asarray(source.parameter_enclosures(first, last), dtype=np.float64)
     if boxes.ndim != 3 or boxes.shape[1:] != (2, 4):
-        raise ValueError("The source intersection branch returned malformed parameter enclosures.")
+        raise ValueError(
+            "The source intersection branch returned malformed parameter enclosures."
+        )
+    return boxes
+
+
+def _parameter_hull(boxes: np.ndarray, /) -> np.ndarray:
     return np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
 
 
-def _positive_parameter_box(box: np.ndarray, patch: AbstractSurfacePatch, /) -> np.ndarray:
+def source_point_box(
+    source: IntersectionCurve, first: float, last: float, /
+) -> np.ndarray:
+    """Enclose source branch points over ``[first, last]`` on both carriers.
+
+    Each certified parameter enclosure is lifted through both source surfaces;
+    the true point lies in both lifts, so their intersection is a sound and
+    subrange-convergent enclosure.
+    """
+    if first == last and first == round(first):
+        # Branch nodes carry their own certified root boxes.
+        return np.asarray(source.bounding_box(first, last), dtype=np.float64)
+    return _lifted_point_box(source, _parameter_enclosures(source, first, last))
+
+
+def _lifted_point_box(source: IntersectionCurve, boxes: np.ndarray, /) -> np.ndarray:
+    lower = np.full((3,), np.inf, dtype=np.float64)
+    upper = np.full((3,), -np.inf, dtype=np.float64)
+    for box in boxes:
+        first_lift = np.asarray(
+            source.first.patch.bounding_box(
+                _positive_parameter_box(box[:, :2], source.first.patch)
+            ),
+            dtype=np.float64,
+        )
+        second_lift = np.asarray(
+            source.second.patch.bounding_box(
+                _positive_parameter_box(box[:, 2:], source.second.patch)
+            ),
+            dtype=np.float64,
+        )
+        box_lower = np.maximum(first_lift[0], second_lift[0])
+        box_upper = np.minimum(first_lift[1], second_lift[1])
+        if np.any(box_lower > box_upper):
+            raise ValueError(
+                "The source intersection branch lifts to disjoint surface enclosures."
+            )
+        lower = np.minimum(lower, box_lower)
+        upper = np.maximum(upper, box_upper)
+    return np.stack((lower, upper))
+
+
+def _positive_parameter_box(
+    box: np.ndarray, patch: AbstractSurfacePatch, /
+) -> np.ndarray:
     result = np.asarray(box, dtype=np.float64).copy()
     domain = patch.parameter_domain
     for axis in range(2):
@@ -192,7 +257,9 @@ def _positive_parameter_box(box: np.ndarray, patch: AbstractSurfacePatch, /) -> 
             lower = max(lower, domain[0][axis])
             upper = min(upper, domain[1][axis])
         if not lower < upper:
-            raise ValueError("A fitted p-curve lift has no positive-width surface enclosure.")
+            raise ValueError(
+                "A fitted p-curve lift has no positive-width surface enclosure."
+            )
         result[:, axis] = (lower, upper)
     return result
 
@@ -206,10 +273,11 @@ def _cell_bounds(
     last: float,
     /,
 ) -> tuple[float, float, float, float]:
-    source_box = np.asarray(source.bounding_box(first, last), dtype=np.float64)
+    enclosures = _parameter_enclosures(source, first, last)
+    source_box = _lifted_point_box(source, enclosures)
     curve_box = curve.bounding_box(first, last)
     distance = _box_difference_upper(source_box, curve_box)
-    parameters = _parameter_boxes(source, first, last)
+    parameters = _parameter_hull(enclosures)
     first_fit_box = first_pcurve.bounding_box(first, last)
     second_fit_box = second_pcurve.bounding_box(first, last)
     first_parameter_bound = _box_difference_upper(parameters[:, :2], first_fit_box)
@@ -231,7 +299,7 @@ def _cell_bounds(
 def _endpoint_root_bound(
     source: IntersectionCurve, curve: BSplineCurve, parameter: float, /
 ) -> float:
-    source_box = source.bounding_box(parameter, parameter)
+    source_box = source_point_box(source, parameter, parameter)
     fit_box = curve.bounding_box(parameter, parameter)
     return _box_difference_upper(source_box, fit_box)
 
@@ -248,16 +316,25 @@ def certify_coupled_approximation(
 ) -> CoupledApproximationEvidence:
     """Certify 3D, UV, and both surface-lift errors over every closed parameter cell."""
     if not source.fully_certified:
-        raise ValueError("Approximation certification requires a fully certified source branch.")
+        raise ValueError(
+            "Approximation certification requires a fully certified source branch."
+        )
     fits = (curve, first_pcurve, second_pcurve)
     domain = (0.0, float(source.num_charts))
     if any(fit.parameter_domain != domain for fit in fits):
-        raise ValueError("Fitted intersection curves must retain the source parameter domain.")
+        raise ValueError(
+            "Fitted intersection curves must retain the source parameter domain."
+        )
     if tuple(fit.ambient_dimension for fit in fits) != (3, 2, 2):
-        raise ValueError("Fitted intersection curves must have ambient dimensions (3, 2, 2).")
+        raise ValueError(
+            "Fitted intersection curves must have ambient dimensions (3, 2, 2)."
+        )
     distance_limit = positive_finite_float(distance_tolerance, "distance_tolerance")
     parameter_limit = positive_finite_float(parameter_tolerance, "parameter_tolerance")
-    pending = [(float(chart), float(chart + 1), 0) for chart in reversed(range(source.num_charts))]
+    pending = [
+        (float(chart), float(chart + 1), 0)
+        for chart in reversed(range(source.num_charts))
+    ]
     records: list[tuple[float, ...]] = []
     while pending:
         first, last, depth = pending.pop()

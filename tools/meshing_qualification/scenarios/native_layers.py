@@ -1,64 +1,16 @@
 from __future__ import annotations
 
-
-import argparse
-
-
-import importlib.metadata
-
-
-import json
-
-
 import os
-
-
-import platform
-
-
-import shutil
-
-
 import sys
-
-
 from collections.abc import Callable
-
-
-
-
-
-
 from time import perf_counter
-
-
 from typing import Any
 
-
 import jax
-
-
-import jax.numpy as jnp
-
-
 import numpy as np
 
-
 import phydrax as phx
-
-
-from phydrax._fingerprint import canonical_fingerprint
-
-
-from phydrax._meshcore import meshcore_available, meshcore_identity
-
-
-from phydrax.geometry.brep import BRepTessellationPolicy
-from phydrax.interchange import (
-    CadImportPolicy,
-    persist_occt_shape,
-    read_brep_text,
-)
+from phydrax._meshcore import meshcore_available
 
 
 def _contract() -> phx.SpatialCoordinateContract:
@@ -176,8 +128,7 @@ def qualify_planar_bands() -> dict[str, object]:
             band_patch.adjacent_region_ids,
         )
         for band_patch in source.partition.patches
-        if len(set(band_patch.adjacent_region_ids))
-        == len(band_patch.adjacent_region_ids)
+        if len(set(band_patch.adjacent_region_ids)) == len(band_patch.adjacent_region_ids)
     )
     specification = phx.meshing.SurfaceMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -529,7 +480,6 @@ def qualify_boundary_layer() -> dict[str, object]:
             "retained_boundary_layer_bytes": _layer_retained_bytes(layers),
         },
     }
-
 
 
 from .._runtime import runtime_identity as _runtime_identity
