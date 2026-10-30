@@ -1040,16 +1040,12 @@ def _face_piece_proof(
             )
             for component in gradient_p
         )
-        base_box = tuple(
-            (float(p_low[axis]), float(p_high[axis])) for axis in range(3)
-        )
+        base_box = tuple((float(p_low[axis]), float(p_high[axis])) for axis in range(3))
         minus_box = tuple(
-            _interval_subtract(base_box[axis], normal_shifts[axis])
-            for axis in range(3)
+            _interval_subtract(base_box[axis], normal_shifts[axis]) for axis in range(3)
         )
         plus_box = tuple(
-            _interval_add(base_box[axis], normal_shifts[axis])
-            for axis in range(3)
+            _interval_add(base_box[axis], normal_shifts[axis]) for axis in range(3)
         )
         minus_lower = np.asarray(
             [component[0] for component in minus_box], dtype=np.float64
@@ -1338,6 +1334,17 @@ def _root_edge_triangle(values: np.ndarray, /) -> RootEdgeTriangle:
     )
 
 
+def _token_chart(
+    tokens: tuple[tuple[tuple[int, int], ...], ...], /
+) -> tuple[tuple[Fraction, ...], ...]:
+    # Per-row witness reads use token fields: binding a witness method builds an
+    # equinox bound-method module that flattens the whole witness on every row.
+    return tuple(
+        tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+        for point in tokens
+    )
+
+
 def _reference_triangle(points: tuple[tuple[Fraction, ...], ...], /) -> ReferenceTriangle:
     if (
         len(points) != 3
@@ -1443,7 +1450,9 @@ def _build_face(
     cell_expressions = _target_cell_coordinate_expressions(
         mesh, geometry, block_index, cell_row
     )
-    reference_corners = _reference_triangle(witness.target_reference_chart(row))
+    reference_corners = _reference_triangle(
+        _token_chart(witness.target_reference_rational_tokens[row])
+    )
     target_expressions = _triangle_coordinate_expressions(
         cell_expressions, reference_corners
     )
@@ -1490,7 +1499,9 @@ def _build_face(
         projected_axes = (1, 0, 2)
     else:
         projected_axes = (2, 0, 1)
-    source_parameters = _source_parameter_triangle(witness.source_parameter_chart(row))
+    source_parameters = _source_parameter_triangle(
+        _token_chart(witness.source_parameter_rational_tokens[row])
+    )
     source_area = _fraction_barycentric_area(source_parameters)
     if source_area == 0:
         raise ValueError("Implicit source chart parameters are degenerate.")
@@ -2239,7 +2250,9 @@ def certify_adaptive_implicit_charts(
         cell_expressions = _target_cell_coordinate_expressions(
             mesh, geometry, block_index, cell_row
         )
-        reference_corners = _reference_triangle(witness.target_reference_chart(row))
+        reference_corners = _reference_triangle(
+            _token_chart(witness.target_reference_rational_tokens[row])
+        )
         mapped = _triangle_coordinate_expressions(cell_expressions, reference_corners)
         target_maps.append(mapped)
         target_map_boxes.append(_box_from_polynomials(mapped, _STANDARD_TRIANGLE))
