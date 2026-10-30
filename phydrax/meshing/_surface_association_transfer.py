@@ -17,7 +17,6 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh
-from ..discretization._cell_mesh import SimplicialConnectivity
 from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
@@ -70,13 +69,22 @@ def _class_code(
 
 
 def _simplex_edges(mesh: CellMesh, /) -> np.ndarray:
-    connectivity = mesh.connectivity
-    if (
-        not isinstance(connectivity, SimplicialConnectivity)
-        or connectivity.dimension != 2
-    ):
+    """Edge vertex rows aligned with the mesh's canonical edge entity set."""
+    from ._topology_edit import entity_keys
+
+    if any(block.cell_kind != "triangle" for block in mesh.blocks):
         raise ValueError("Surface association transfer requires triangular incidence.")
-    return np.asarray(connectivity.entities[1], dtype=np.int64)
+    keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
+    vertex_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    return np.asarray(
+        [[vertex_rows[int(value)] for value in key] for key in keys.tolist()],
+        dtype=np.int64,
+    ).reshape((-1, 2))
 
 
 def _target_edge_parameter(
