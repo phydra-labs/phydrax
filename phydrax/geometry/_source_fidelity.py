@@ -3446,7 +3446,11 @@ def _surface_target_chart_rows(
         raise ValueError(
             "Standard volume-boundary charts retain three-dimensional parent-reference corners."
         )
-    if any(block.cell_kind == "polyhedron" for block in mesh.blocks):
+    if any(
+        cells[cell_id][2].cell_kind == "polyhedron"
+        for cell_id in cell_ids
+        if cell_id in cells
+    ):
         raise ValueError(
             "A polyhedral volume chart witness requires explicit target face triangle ancestry."
         )

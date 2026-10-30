@@ -16,14 +16,20 @@ from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing.providers import NativeMeshingProvider
 
-from .._runtime import accepted_result_record, require_meshcore, runtime_identity
+from .._runtime import (
+    accepted_result_record,
+    require_meshcore,
+    runtime_identity,
+    single_cell_kind,
+)
 
 
 def _mapped_volume(
     mesh: phx.discretization.CellMesh, geometry: phx.discretization.CellGeometrySpec, /
 ) -> float:
     field = phx.discretization.FiniteElementFieldSpec(
-        "x", phx.discretization.lagrange_element("tetrahedron", 1)
+        "x",
+        phx.discretization.lagrange_element(single_cell_kind(mesh, "tetrahedron"), 1),
     )
     discretization = phx.discretization.FiniteElementPlan(
         mesh, field, coordinate_spec=geometry
@@ -34,7 +40,10 @@ def _mapped_volume(
 
 def _solve_linear_field(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
     field = phx.discretization.FiniteElementFieldSpec(
-        "u", phx.discretization.lagrange_element("tetrahedron", 1)
+        "u",
+        phx.discretization.lagrange_element(
+            single_cell_kind(result.mesh, "tetrahedron"), 1
+        ),
     )
     space = phx.discretization.FiniteElementPlan(
         result.mesh, field, coordinate_spec=result.geometry
@@ -173,7 +182,9 @@ def native_high_order_curving() -> dict[str, object]:
     for element in adapted.geometry.elements:
         degree = getattr(element, "degree", None)
         if not isinstance(degree, (int, np.integer)):
-            raise RuntimeError("Native bisection omitted degree-bearing geometry elements.")
+            raise RuntimeError(
+                "Native bisection omitted degree-bearing geometry elements."
+            )
         degree_values.append(int(degree))
     degrees = tuple(degree_values)
     if not degrees or max(degrees) < 2:

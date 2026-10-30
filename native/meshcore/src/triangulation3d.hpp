@@ -19,6 +19,74 @@
 
 namespace phx::mc {
 
+// Outcome of the shared checked cone insertion. Every refusal leaves the
+// complex unchanged except kInternal; callers choose their fallback
+// (refinement reports an unmet cell, Delaunay/PLC construction rebuilds).
+enum class ConeInsertion : std::uint8_t {
+  kApplied,
+  kInvertedCell,   // a finite cone cell is not exactly positively oriented
+  kRemovesVertex,  // a cavity vertex is absent from the cavity boundary
+  kSlotLimit,      // the slot bank cannot hold the cone
+  kInternal,       // the star link failed after the topology write
+};
+
+// The one incremental insertion commit used by Delaunay/PLC construction and
+// tetrahedral refinement: cone `cavity` (cells to remove, with `boundary` its
+// outward facets) to `center` after `positive` accepts each finite cone cell.
+// `positive` is the caller's exact orientation model (symbolically perturbed
+// for a Delaunay construction whose conflicts are perturbed, plain exact for a
+// mesh). A positive cone whose boundary is the cavity boundary tiles the
+// cavity, so `center` lies in its interior and every boundary facet is matched
+// once. Unless `allow_removed_vertices` (regular triangulations may bury a
+// point), every cavity vertex must remain on the cavity boundary.
+template <class Positive>
+ConeInsertion insert_checked_cone(TetrahedralComplex& complex, CavityEdit& edit,
+                                  const Positive& positive, int32_t center,
+                                  std::span<const int32_t> cavity,
+                                  std::span<const BoundaryFacet> boundary,
+                                  bool allow_removed_vertices) {
+  for (const BoundaryFacet& face : boundary) {
+    Tetrahedron cone = complex.tets[static_cast<std::size_t>(face.tet)];
+    cone.v[face.slot] = center;
+    if (is_ghost(cone)) continue;
+    if (!positive(cone.v)) return ConeInsertion::kInvertedCell;
+  }
+  if (!allow_removed_vertices) {
+    std::vector<int32_t> kept;
+    kept.reserve(3 * boundary.size());
+    for (const BoundaryFacet& face : boundary) {
+      const Tetrahedron& cell = complex.tets[static_cast<std::size_t>(face.tet)];
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot != face.slot) kept.push_back(cell.v[slot]);
+      }
+    }
+    std::sort(kept.begin(), kept.end());
+    for (int32_t t : cavity) {
+      for (int32_t vertex : complex.tets[static_cast<std::size_t>(t)].v) {
+        if (vertex >= 0 && !std::binary_search(kept.begin(), kept.end(), vertex)) {
+          return ConeInsertion::kRemovesVertex;
+        }
+      }
+    }
+  }
+  EditStatus status = edit.stage_cone(center, cavity, boundary);
+  if (status == EditStatus::kOk) status = edit.commit();
+  switch (status) {
+    case EditStatus::kOk: return ConeInsertion::kApplied;
+    case EditStatus::kSlotLimit:
+      edit.rollback();
+      return ConeInsertion::kSlotLimit;
+    case EditStatus::kNotLive:
+    case EditStatus::kDuplicate:
+    case EditStatus::kNonManifold:
+    case EditStatus::kBoundaryMismatch:
+    case EditStatus::kInverted:
+    case EditStatus::kConstraintViolation:
+    case EditStatus::kInternal: return ConeInsertion::kInternal;
+  }
+  return ConeInsertion::kInternal;
+}
+
 class Triangulation3D {
  public:
   Triangulation3D(const double* points, const double* weights, int64_t vertex_count)
@@ -192,16 +260,30 @@ class Triangulation3D {
     if (status != PHX_MC_OK) return status;
     status = removed_vertices();
     if (status != PHX_MC_OK) return status;
-    EditStatus edit = EditStatus::kOk;
     if (constrained_facets_ == 0) {
-      edit = edit_.stage_cone(p, cavity_, boundary_);
+      // An inverted cone means the cavity was not star-shaped from p (the
+      // complex is no longer Delaunay); UNRESOLVED tells the caller to rebuild.
+      const ConeInsertion inserted = insert_checked_cone(
+          complex_, edit_,
+          [this](const int32_t* v) {
+            return orient3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), v[0], v[1],
+                                v[2], v[3]) > 0;
+          },
+          p, cavity_, boundary_, !removed_.empty());
+      switch (inserted) {
+        case ConeInsertion::kApplied: break;
+        case ConeInsertion::kInvertedCell:
+        case ConeInsertion::kRemovesVertex: return PHX_MC_UNRESOLVED;
+        case ConeInsertion::kSlotLimit: return PHX_MC_INDEX_RANGE_ERROR;
+        case ConeInsertion::kInternal: return PHX_MC_INTERNAL_ERROR;
+      }
     } else {
-      edit = stage_constrained(p);
-    }
-    if (edit == EditStatus::kOk) edit = edit_.commit();
-    if (edit != EditStatus::kOk) {
-      edit_.rollback();
-      return refuse(edit);
+      EditStatus edit = stage_constrained(p);
+      if (edit == EditStatus::kOk) edit = edit_.commit();
+      if (edit != EditStatus::kOk) {
+        edit_.rollback();
+        return refuse(edit);
+      }
     }
     for (int32_t vertex : removed_) alive[static_cast<std::size_t>(vertex)] = 0;
     largest_cavity_ = std::max(largest_cavity_, cavity_.size());

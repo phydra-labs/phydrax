@@ -581,6 +581,14 @@ def _polyhedral_core_source_associations(
             [identifier_maps[dimension][int(value)] for value in target_ids],
             dtype=np.int64,
         )
+        # Power-core records carry stratum identity by role and key; keep their
+        # absent dimension/index banks absent instead of asserting -1 strata.
+        stored_dimensions = np.asarray(record.source_dimensions, dtype=np.int64)
+        stratum_bank = bool(np.any(stored_dimensions >= 0))
+        record_dimensions = stored_dimensions if stratum_bank else None
+        record_indices = (
+            np.asarray(record.source_indices, dtype=np.int64) if stratum_bank else None
+        )
         rebound.append(
             association_owner.GeometryAssociation(
                 record.association_kind,
@@ -593,8 +601,8 @@ def _polyhedral_core_source_associations(
                 resolved=np.asarray(record.resolved, dtype=np.bool_),
                 ambiguous=np.asarray(record.ambiguous, dtype=np.bool_),
                 exact=record.exact,
-                source_dimensions=np.asarray(record.source_dimensions, dtype=np.int64),
-                source_indices=np.asarray(record.source_indices, dtype=np.int64),
+                source_dimensions=record_dimensions,
+                source_indices=record_indices,
                 source_roles=role_values,
                 source_occurrence_paths=tuple(source_paths),
                 source_region_sides=tuple(region_sides),

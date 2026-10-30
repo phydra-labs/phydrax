@@ -629,8 +629,14 @@ def _validate_refined_shared_coordinates(
                 continue
             canonical = points.get(parameter)
             if canonical is None:
-                raise ValueError(
-                    "A shared chart sample has no stewarded canonical coordinate."
+                # Serial refinement splits a trim edge jointly in every incident
+                # chart; an owner-local split of a shared seam has no incident
+                # owner agreement, so it is refused rather than published.
+                domain = prepared.surface.domain
+                raise native_surface_owner._failure(
+                    "owner-local physical refinement split a shared source curve; the shared seam schedule does not meet the request",
+                    category=native_surface_owner.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    entity_ids=(int(domain.scope_entity_ids(1)[curve]),),
                 )
             physical_row = local_rows[local_row]
             physical = (

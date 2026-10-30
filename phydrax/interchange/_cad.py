@@ -162,6 +162,7 @@ class CadCurveFitPolicy:
                 }
             ),
         )
+
     @property
     def resolved_parameter_tolerance(self) -> float:
         return (
@@ -236,9 +237,7 @@ class CadImportPolicy:
                     "kind": "cad-import-policy",
                     "spatial_id": self.coordinate_contract.spatial_id,
                     "tessellation": (
-                        None
-                        if self.tessellation is None
-                        else self.tessellation.policy_id
+                        None if self.tessellation is None else self.tessellation.policy_id
                     ),
                     "pcurve_fit": None
                     if self.pcurve_fit is None
@@ -280,8 +279,6 @@ class CadExportPolicy:
                 }
             ),
         )
-
-
 
 
 @checked
@@ -367,6 +364,7 @@ def refuse(
     """Build the typed refusal for one external entity (raised by the caller)."""
     return CadInterchangeError(CadRefusal(reason, entity, tuple(chain), message))
 
+
 def _rational_affine_pcurve(
     curve: AbstractCurve,
     matrix: Sequence[Sequence[ExactScalar]],
@@ -379,9 +377,7 @@ def _rational_affine_pcurve(
             tuple(rational_coefficient(value, role=label) for value in row)
             for row in matrix
         )
-        exact_offset = tuple(
-            rational_coefficient(value, role=label) for value in offset
-        )
+        exact_offset = tuple(rational_coefficient(value, role=label) for value in offset)
     except ValueError as error:
         raise refuse(
             "unsupported-entity",
@@ -393,6 +389,8 @@ def _rational_affine_pcurve(
         np.asarray(exact_matrix, dtype=object),
         np.asarray(exact_offset, dtype=object),
     )
+
+
 @dataclass(frozen=True, slots=True)
 class CadCoverage:
     """Admitted entity counts and exact or source-supplied p-curve coverage."""
@@ -828,7 +826,9 @@ class CadImportResult:
                 character not in "0123456789abcdef" for character in self.source_digest
             )
         ):
-            raise ValueError("CadImportResult.source_digest must be a lowercase SHA-256 digest.")
+            raise ValueError(
+                "CadImportResult.source_digest must be a lowercase SHA-256 digest."
+            )
         if not isinstance(self.report, AdapterReport) or not self.report.valid:
             raise ValueError(
                 f"CadImportResult.report must be a valid AdapterReport; got type={type(self.report).__name__}, valid={self.report.valid if isinstance(self.report, AdapterReport) else 'not-AdapterReport'}"
@@ -960,8 +960,6 @@ class CadExportResult:
             )
 
 
-
-
 @checked
 def build_cad_export_report(
     model: BRepModel,
@@ -1005,6 +1003,7 @@ def build_cad_export_report(
         ),
     )
 
+
 class CadExportTolerances(StrictModule):
     """Certified physical-length bounds rounded upward for 17-digit output."""
 
@@ -1032,9 +1031,6 @@ def _written_upper_bound(value: float) -> float:
             )
         value = float(np.nextafter(value, np.inf))
     return value
-
-
-
 
 
 @checked
@@ -1087,10 +1083,6 @@ def certified_cad_export_tolerances(
     Missing or unbounded entity evidence refuses export.
     """
     return _certified_cad_export_tolerances(model, model.patches)
-
-
-
-
 
 
 # --------------------------------------------------------------------- units
@@ -1273,9 +1265,7 @@ def explicit_carrier(curve: AbstractCurve, /) -> AbstractCurve:
         case ExactLineCurve() as line:
             direction_exact = tuple(
                 last - first
-                for first, last in zip(
-                    line.first_exact, line.last_exact, strict=True
-                )
+                for first, last in zip(line.first_exact, line.last_exact, strict=True)
             )
             try:
                 return LineCurve(
@@ -1316,8 +1306,7 @@ def explicit_carrier(curve: AbstractCurve, /) -> AbstractCurve:
             origin = np.asarray(cylinder.origin)
             if curve.fixed_axis == 0:
                 radial = (
-                    np.cos(curve.fixed_value) * first
-                    + np.sin(curve.fixed_value) * second
+                    np.cos(curve.fixed_value) * first + np.sin(curve.fixed_value) * second
                 )
                 return LineCurve(origin + float(cylinder.radius) * radial, axis)
             return CircleCurve(
@@ -1383,9 +1372,7 @@ def curve_parameter(curve: AbstractCurve, point: np.ndarray, /) -> tuple[float, 
                     jax.jacfwd(curve.evaluate)(jnp.asarray(0.0, dtype=jnp.float64)),
                     dtype=np.float64,
                 )
-                parameter = float(
-                    (target - origin) @ direction / (direction @ direction)
-                )
+                parameter = float((target - origin) @ direction / (direction @ direction))
                 if isinstance(base, ExactLineCurve):
                     parameter = min(max(parameter, 0.0), 1.0)
             else:
@@ -1415,16 +1402,13 @@ def curve_parameter(curve: AbstractCurve, point: np.ndarray, /) -> tuple[float, 
             )
     distance = float(
         np.linalg.norm(
-            np.asarray(curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)))
-            - target
+            np.asarray(curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64))) - target
         )
     )
     return parameter, distance
 
 
-def _sampled_curve_parameter(
-    curve: AbstractCurve, target: np.ndarray, /
-) -> float:
+def _sampled_curve_parameter(curve: AbstractCurve, target: np.ndarray, /) -> float:
     domain = curve.parameter_domain
     if domain is None:
         period = curve.period
@@ -1441,15 +1425,12 @@ def _sampled_curve_parameter(
     while isinstance(base, OffsetCurve):
         base = base.base
     sample_count = (
-        8 * base.control_points.shape[0] + 1
-        if isinstance(base, BSplineCurve)
-        else 65
+        8 * base.control_points.shape[0] + 1 if isinstance(base, BSplineCurve) else 65
     )
     samples = np.linspace(domain[0], domain[1], sample_count)
     values = np.asarray(curve.evaluate(jnp.asarray(samples)), dtype=np.float64)
-    if (
-        values.shape != (sample_count, curve.ambient_dimension)
-        or not np.all(np.isfinite(values))
+    if values.shape != (sample_count, curve.ambient_dimension) or not np.all(
+        np.isfinite(values)
     ):
         raise ValueError(
             f"{type(curve).__name__}.evaluate must return finite source points during inversion."
@@ -1467,9 +1448,9 @@ def _sampled_curve_parameter(
 
     prepared = prepare_interval_function(value_jets, 1, batch_capacity=1)
     while True:
-        jets = prepared.evaluate_host_points(
-            np.asarray([[parameter]], dtype=np.float64)
-        )[0]
+        jets = prepared.evaluate_host_points(np.asarray([[parameter]], dtype=np.float64))[
+            0
+        ]
         value, first_, second_ = jets[:, 0], jets[:, 1], jets[:, 2]
         residual = value - target
         distance = float(np.linalg.norm(residual))
@@ -1520,11 +1501,11 @@ def edge_range(
                     f"edge_range.start must lie on the periodic carrier within tolerance={tolerance}; got parameter={first!r}, deviation={gap!r}"
                 )
             try:
-                last = float(
-                    Fraction.from_float(first) + Fraction.from_float(period)
-                )
+                last = float(Fraction.from_float(first) + Fraction.from_float(period))
             except OverflowError as error:
-                raise ValueError("edge_range.periodic range exceeds finite parameters.") from error
+                raise ValueError(
+                    "edge_range.periodic range exceeds finite parameters."
+                ) from error
             if not isfinite(last) or not last > first:
                 raise ValueError("edge_range.periodic range is not representable.")
             return first, last
@@ -1567,7 +1548,9 @@ def edge_range(
         try:
             last = float(Fraction.from_float(first) + width)
         except OverflowError as error:
-            raise ValueError("edge_range.periodic range exceeds finite parameters.") from error
+            raise ValueError(
+                "edge_range.periodic range exceeds finite parameters."
+            ) from error
         if (
             not isfinite(last)
             or not last > first
@@ -1588,9 +1571,6 @@ def edge_range(
 
 def _angle(value: np.ndarray, /) -> np.ndarray:
     return np.arctan2(value[..., 1], value[..., 0])
-
-
-
 
 
 @checked
@@ -1645,22 +1625,7 @@ def _sweep_domain(
             return None
 
 
-
-
-
 # ------------------------------------------------------------ p-curve recovery
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _fit_basis(knots: np.ndarray, count: int, parameters: np.ndarray, /) -> np.ndarray:
@@ -1684,10 +1649,6 @@ def _segment_knots(breakpoints: np.ndarray, spans: int, /) -> np.ndarray:
     return np.concatenate(knots)
 
 
-
-
-
-
 @checked
 def recover_pcurve(
     patch: AbstractSurfacePatch,
@@ -1706,6 +1667,7 @@ def recover_pcurve(
     raise ValueError(
         f"No exact p-curve source map exists for surface={type(patch).__name__}, curve={type(curve).__name__}."
     )
+
 
 def _validate_curve_parameter_range(
     curve: AbstractCurve,
@@ -1797,9 +1759,9 @@ class CadStage:
         int,
         tuple[AbstractSurfacePatch | None, Literal[0, 1] | None, Fraction],
     ] = field(default_factory=dict)
-    split_endpoint_phases: dict[
-        int, tuple[Fraction | None, Fraction | None]
-    ] = field(default_factory=dict)
+    split_endpoint_phases: dict[int, tuple[Fraction | None, Fraction | None]] = field(
+        default_factory=dict
+    )
     split_period_surfaces: dict[int, AbstractSurfacePatch] = field(default_factory=dict)
 
     @property
@@ -1920,9 +1882,7 @@ class CadStage:
     # -------------------------------------------------------- natural bounds
 
     @staticmethod
-    def _sphere_chart_radius(
-        patch: AbstractSurfacePatch, /
-    ) -> Fraction | None:
+    def _sphere_chart_radius(patch: AbstractSurfacePatch, /) -> Fraction | None:
         source = patch
         offsets: list[OffsetSurface] = []
         while isinstance(source, (OffsetSurface, PlacedSurface)):
@@ -2199,9 +2159,7 @@ class CadStage:
 
     def _ends(self, coedge: StagedCoedge, pcurve: AbstractCurve, /) -> np.ndarray:
         first, last = self.edge_ranges[coedge.edge]
-        ends = np.asarray(
-            pcurve.evaluate(jnp.asarray((first, last), dtype=jnp.float64))
-        )
+        ends = np.asarray(pcurve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)))
         return ends if coedge.sense > 0 else ends[::-1]
 
     def _resolve_loop(
@@ -2367,9 +2325,9 @@ class CadStage:
                     float(source.semi_angle)
                 )
             case TorusPatch():
-                radius = float(source.major_radius) + float(
-                    source.minor_radius
-                ) * np.cos(v)
+                radius = float(source.major_radius) + float(source.minor_radius) * np.cos(
+                    v
+                )
             case RevolutionSurface():
                 point = np.asarray(
                     source.curve.evaluate(jnp.asarray(v, dtype=jnp.float64))
@@ -2399,9 +2357,7 @@ class CadStage:
         affine = _affine_curve_coefficients(explicit_carrier(pcurve), _ZERO_UV)
         if affine is None:
             return None
-        offset, direction = (
-            np.asarray(values, dtype=np.float64) for values in affine
-        )
+        offset, direction = (np.asarray(values, dtype=np.float64) for values in affine)
         expected = np.zeros(2, dtype=np.float64)
         expected[axis] = 1.0
         if offset[axis] != 0.0 or not np.array_equal(direction, expected):
@@ -2461,9 +2417,7 @@ class CadStage:
         head_evidence = self._exact_coedge_endpoint(
             head_source, face.patch, moving, False
         )
-        tail_evidence = self._exact_coedge_endpoint(
-            tail_source, face.patch, moving, True
-        )
+        tail_evidence = self._exact_coedge_endpoint(tail_source, face.patch, moving, True)
         if head_evidence is None or tail_evidence is None:
             raise refuse(
                 "unsupported-entity",
@@ -2621,11 +2575,7 @@ class CadStage:
         for loop in loops:
             for coedge, pcurve in loop:
                 first, last = self.edge_ranges[coedge.edge]
-                boxes.append(
-                    np.asarray(
-                        pcurve.bounding_box(first, last)
-                    )
-                )
+                boxes.append(np.asarray(pcurve.bounding_box(first, last)))
         stacked = np.stack(boxes)
         box = np.stack((np.min(stacked[:, 0], axis=0), np.max(stacked[:, 1], axis=0)))
         natural = natural_box(patch)
@@ -2653,9 +2603,7 @@ class CadStage:
                         return Fraction(quarter if quarter < 3 else -1, 4), sense
         return None
 
-    def _ring_pcurve(
-        self, face: StagedFace, coedge: StagedCoedge, /
-    ) -> AbstractCurve:
+    def _ring_pcurve(self, face: StagedFace, coedge: StagedCoedge, /) -> AbstractCurve:
         curve = self.curves[self.edge_curves[coedge.edge]]
         pcurve = self._coedge_pcurve(face, coedge)
         frame = self._ring_frame_phase(face.patch, curve)
@@ -2747,12 +2695,11 @@ class CadStage:
             original_phase = None
             for quarter, axis in enumerate(axes):
                 direction = tuple(Fraction(float(value)) for value in axis)
-                if (
-                    sum(a * b for a, b in zip(radial_exact, direction, strict=True)) > 0
-                    and all(
-                        radial_exact[i] * direction[j] == radial_exact[j] * direction[i]
-                        for i, j in ((0, 1), (0, 2), (1, 2))
-                    )
+                if sum(
+                    a * b for a, b in zip(radial_exact, direction, strict=True)
+                ) > 0 and all(
+                    radial_exact[i] * direction[j] == radial_exact[j] * direction[i]
+                    for i, j in ((0, 1), (0, 2), (1, 2))
                 ):
                     original_phase = Fraction(quarter, 4)
                     phases.add(original_phase)
@@ -3161,10 +3108,18 @@ class CadStage:
             carrier = pcurves[uses[0]] if index < 0 else self.curves[index]
             edge_roots[edge] = (
                 NativePeriodEndpoint(
-                    carrier, patch, axis, rational=rational, turns=0,
+                    carrier,
+                    patch,
+                    axis,
+                    rational=rational,
+                    turns=0,
                 ),
                 NativePeriodEndpoint(
-                    carrier, patch, axis, rational=rational, turns=1,
+                    carrier,
+                    patch,
+                    axis,
+                    rational=rational,
+                    turns=1,
                 ),
             )
             for coedge in uses:
@@ -3204,7 +3159,10 @@ class CadStage:
                     None
                     if phase is None
                     else NativePeriodEndpoint(
-                        pcurves[coedge], patch, 0, turns=phase,
+                        pcurves[coedge],
+                        patch,
+                        0,
+                        turns=phase,
                     )
                     for phase in phases
                 ]
@@ -3589,7 +3547,6 @@ class CadStage:
         )
 
 
-
 def cad_import_synthesis_losses(stage: CadStage, /) -> tuple[AdapterLoss, ...]:
     """Report natural face boundaries reconstructed from source surface domains."""
     if not stage.natural_boundaries:
@@ -3603,6 +3560,7 @@ def cad_import_synthesis_losses(stage: CadStage, /) -> tuple[AdapterLoss, ...]:
             changes_interpretation=False,
         ),
     )
+
 
 # ------------------------------------------------------ trim validation
 
@@ -3640,9 +3598,7 @@ def _validate_export_coedge_trim(
             chain,
         )
     source = geometry.pcurves[coedge]
-    if isinstance(carrier, IntersectionPCurve) or isinstance(
-        source, IntersectionPCurve
-    ):
+    if isinstance(carrier, IntersectionPCurve) or isinstance(source, IntersectionPCurve):
         same_carrier = (
             isinstance(carrier, IntersectionPCurve)
             and isinstance(source, IntersectionPCurve)
@@ -3651,9 +3607,9 @@ def _validate_export_coedge_trim(
             == (source.side, source.first, source.last, source.reversed)
         )
     else:
-        same_carrier = canonical_fingerprint(carrier_payload(carrier)) == canonical_fingerprint(
-            carrier_payload(source)
-        )
+        same_carrier = canonical_fingerprint(
+            carrier_payload(carrier)
+        ) == canonical_fingerprint(carrier_payload(source))
     if (
         trim.first != ranges[edge, 0]
         or trim.last != ranges[edge, 1]
@@ -3687,7 +3643,9 @@ def validate_export_trims(
             "geometry",
             f"BRepModel.trim_domains must align with BRepGeometry.face_loops; got domains={len(domains)}, faces={len(geometry.face_loops)}",
         )
-    for face, (domain, loops) in enumerate(zip(domains, geometry.face_loops, strict=True)):
+    for face, (domain, loops) in enumerate(
+        zip(domains, geometry.face_loops, strict=True)
+    ):
         if domain is None:
             raise refuse(
                 "inexact-export",
@@ -3758,9 +3716,7 @@ def validate_export_trims(
             endpoints = []
             for coedge in coedges:
                 edge = geometry.coedge_edges[coedge]
-                parameter = ranges[
-                    edge, 0 if geometry.coedge_senses[coedge] > 0 else 1
-                ]
+                parameter = ranges[edge, 0 if geometry.coedge_senses[coedge] > 0 else 1]
                 point = np.asarray(
                     geometry.pcurves[coedge].evaluate(
                         jnp.asarray(parameter, dtype=jnp.float64)
@@ -3768,14 +3724,12 @@ def validate_export_trims(
                     dtype=np.float64,
                 )
                 endpoints.append(
-                    (point - bounds[face, 0])
-                    / (bounds[face, 1] - bounds[face, 0])
+                    (point - bounds[face, 0]) / (bounds[face, 1] - bounds[face, 0])
                 )
             polygon = np.asarray(endpoints)
             vertices_ = np.asarray(vertices, dtype=np.float64)
             if polygon.shape == vertices_.shape and any(
-                np.max(np.abs(np.roll(polygon, offset, axis=0) - vertices_))
-                <= 1.0e-12
+                np.max(np.abs(np.roll(polygon, offset, axis=0) - vertices_)) <= 1.0e-12
                 for offset in range(len(endpoints))
             ):
                 continue
@@ -3785,6 +3739,7 @@ def validate_export_trims(
                 f"TrimDomain polygon must match the oriented line coedge closure; got loop={loop_index}",
                 chain,
             )
+
 
 def _copy_geometry_with_approximation(
     geometry: BRepGeometry,
@@ -3823,8 +3778,6 @@ def _copy_geometry_with_approximation(
     )
 
 
-
-
 def _fit_intersection_edges(
     model: BRepModel,
     geometry: BRepGeometry,
@@ -3852,9 +3805,11 @@ def _fit_intersection_edges(
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     vertices = geometry.edge_vertices
     for edge, curve_index in enumerate(geometry.edge_curves):
-        if curve_index < 0 or not isinstance(geometry.curves[curve_index], IntersectionCurve):
+        if curve_index < 0:
             continue
         source = geometry.curves[curve_index]
+        if not isinstance(source, IntersectionCurve):
+            continue
         if not source.fully_certified:
             raise refuse(
                 "inexact-export",
@@ -3867,8 +3822,12 @@ def _fit_intersection_edges(
             fitted = propose_intersection_approximation(
                 source,
                 endpoint_points=(
-                    np.asarray(geometry.vertex_points[vertices[edge][0]], dtype=np.float64),
-                    np.asarray(geometry.vertex_points[vertices[edge][1]], dtype=np.float64),
+                    np.asarray(
+                        geometry.vertex_points[vertices[edge][0]], dtype=np.float64
+                    ),
+                    np.asarray(
+                        geometry.vertex_points[vertices[edge][1]], dtype=np.float64
+                    ),
                 ),
             )
             try:
@@ -3878,10 +3837,11 @@ def _fit_intersection_edges(
                     distance_tolerance=policy.tolerance,
                     parameter_tolerance=policy.resolved_parameter_tolerance,
                 )
-                topology = certify_branch_approximation_topology(
-                    source, *fitted, bounds
-                )
-            except (ApproximationCertificationError, BranchTopologyCertificationError) as error:
+                topology = certify_branch_approximation_topology(source, *fitted, bounds)
+            except (
+                ApproximationCertificationError,
+                BranchTopologyCertificationError,
+            ) as error:
                 raise refuse(
                     "inexact-export",
                     f"intersection-curve {source.branch_id}",
@@ -3897,9 +3857,7 @@ def _fit_intersection_edges(
                 distance_tolerance=policy.tolerance,
                 parameter_tolerance=policy.resolved_parameter_tolerance,
             )
-            topology = certify_branch_approximation_topology(
-                source, *fitted, bounds
-            )
+            topology = certify_branch_approximation_topology(source, *fitted, bounds)
         edge_coedges = tuple(
             coedge
             for loops in geometry.face_loops
@@ -3949,7 +3907,9 @@ def _fit_intersection_edges(
                 for loop in geometry.face_loops[face]:
                     for trim_coedge in loop:
                         trim_edge = geometry.coedge_edges[trim_coedge]
-                        if trim_edge == edge or set(vertices[edge]) & set(vertices[trim_edge]):
+                        if trim_edge == edge or set(vertices[edge]) & set(
+                            vertices[trim_edge]
+                        ):
                             continue
                         trim = geometry.pcurves[trim_coedge]
                         trim_first, trim_last = ranges[trim_edge]
@@ -3972,7 +3932,7 @@ def _fit_intersection_edges(
             AdapterLoss(
                 f"edge:{edge}.intersection-curve",
                 "export",
-                "approximated",
+                "transformed",
                 f"{format_name} substituted a fitted rational B-spline after continuous coupled error "
                 f"and branch topology certification (distance={bounds.distance_bound:.17g}, "
                 f"parameter={bounds.parameter_bound:.17g}, topology={topology.evidence_id}).",
@@ -4022,6 +3982,8 @@ def prepare_cad_export_geometry(
         model, geometry, policy.intersection_approximation, format_name
     )
     return prepared, model.trim_domains, losses
+
+
 def _tspline_surface_carrier(
     patch: AbstractSurfacePatch, label: str, format_name: str, /
 ) -> tuple[AbstractSurfacePatch | None, AdapterLoss | None]:
@@ -4031,7 +3993,9 @@ def _tspline_surface_carrier(
         base, loss = _tspline_surface_carrier(patch.base, label, format_name)
         if base is None:
             return None, None
-        return OffsetSurface(base, patch.distance_exact, frame_sign=patch.frame_sign), loss
+        return OffsetSurface(
+            base, patch.distance_exact, frame_sign=patch.frame_sign
+        ), loss
     if not isinstance(patch, TSplineSurfacePatch):
         return None, None
     patch.validate_exact_transfer_chain()
@@ -4126,13 +4090,12 @@ def prepare_cad_export_surfaces(
     carriers: list[AbstractSurfacePatch] = []
     losses: list[AdapterLoss] = []
     for face, patch in enumerate(patches):
-        carrier, loss = _tspline_surface_carrier(
-            patch, f"face:{face}", format_name
-        )
+        carrier, loss = _tspline_surface_carrier(patch, f"face:{face}", format_name)
         carriers.append(patch if carrier is None else carrier)
         if loss is not None:
             losses.append(loss)
     return tuple(carriers), tuple(losses)
+
 
 def _exact_affine_plane_surface(
     patch: AbstractSurfacePatch, /
@@ -4193,16 +4156,13 @@ def _exact_affine_plane_surface(
         return None
     corner = points[0][0]
     first_axis = tuple(
-        (points[-1][0][axis] - corner[axis]) / (u1 - u0)
-        for axis in range(3)
+        (points[-1][0][axis] - corner[axis]) / (u1 - u0) for axis in range(3)
     )
     second_axis = tuple(
-        (points[0][-1][axis] - corner[axis]) / (v1 - v0)
-        for axis in range(3)
+        (points[0][-1][axis] - corner[axis]) / (v1 - v0) for axis in range(3)
     )
     origin = tuple(
-        corner[axis] - u0 * first_axis[axis] - v0 * second_axis[axis]
-        for axis in range(3)
+        corner[axis] - u0 * first_axis[axis] - v0 * second_axis[axis] for axis in range(3)
     )
     if any(
         points[u][v][axis]
@@ -4233,7 +4193,9 @@ def _cad_export_gap_surfaces(
 ) -> tuple[AbstractSurfacePatch, ...]:
     """Use only exact affine-plane equivalents to certify exported surface gaps."""
     return tuple(
-        exact_plane if (exact_plane := _exact_affine_plane_surface(patch)) is not None else patch
+        exact_plane
+        if (exact_plane := _exact_affine_plane_surface(patch)) is not None
+        else patch
         for patch in patches
     )
 
@@ -4287,8 +4249,6 @@ def cad_export_assembly_identifier_losses(
             changes_interpretation=True,
         ),
     )
-
-
 
 
 __all__ = [

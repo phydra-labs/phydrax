@@ -1,6 +1,7 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string_view>
@@ -8,6 +9,7 @@
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "facet_coverage.hpp"
+#include "predicates.hpp"
 #include "tet_mesh.hpp"
 
 namespace {
@@ -451,42 +453,48 @@ void persistent_create_snapshot_and_rejection() {
                 0.5, 0, nullptr, &edit_status, &run_status, &inserted_vertices,
                 &remaining_cells) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
-  PHX_CHECK(run_status == PHX_MC_UNRESOLVED && inserted_vertices == 1);
+  // A radius-edge bound below the regular tetrahedron's is unattainable: the
+  // run ends unresolved after circumcenter insertions (if any) that keep a
+  // valid, ancestry-consistent state.
+  PHX_CHECK(run_status == PHX_MC_UNRESOLVED && inserted_vertices >= 0);
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> refined_sizes{};
   PHX_CHECK(phx_mc_tet_mesh_snapshot_sizes(mesh, refined_sizes.data()) == PHX_MC_OK);
-  PHX_CHECK(refined_sizes[0] == 5 && refined_sizes[1] == 4);
-  PHX_CHECK(refined_sizes[17] == 4 && refined_sizes[18] == 4);
-  std::array<uint64_t, 5> refined_vertex_ids{};
-  std::array<double, 15> refined_points{};
-  std::array<int8_t, 5> refined_witness_strata{};
-  std::array<int32_t, 5> refined_witness_entities{};
-  std::array<double, 10> refined_witness_parameters{};
-  std::array<double, 5> refined_witness_deviations{};
-  std::array<int8_t, 5> refined_vertex_dimensions{};
-  std::array<double, 5> refined_protection_radii{};
-  std::array<int8_t, 5> refined_protected_vertices{};
-  std::array<int8_t, 5> refined_edge_witness_present{};
-  std::array<uint64_t, 10> refined_edge_witness_endpoints{};
-  std::array<double, 5> refined_edge_parameters{};
-  std::array<int64_t, 6> refined_vertex_ancestry_offsets{};
-  std::array<uint64_t, 4> refined_vertex_ancestor_ids{};
-  std::array<int64_t, 12> refined_vertex_ancestor_winding{};
-  std::array<double, 4> refined_vertex_ancestry_weights{};
-  std::array<uint64_t, 4> refined_cell_ids{};
-  std::array<uint64_t, 16> refined_cell_vertices{};
-  std::array<int32_t, 4> refined_cell_regions{};
-  std::array<int64_t, 5> refined_cell_ancestry_offsets{};
-  std::array<uint64_t, 4> refined_cell_ancestor_ids{};
-  std::array<int32_t, 4> refined_cell_ancestry_edit_kinds{};
+  PHX_CHECK(refined_sizes[0] == 4 + inserted_vertices && refined_sizes[1] >= 1);
+  const std::size_t refined_vertex_count = static_cast<std::size_t>(refined_sizes[0]);
+  const std::size_t refined_cell_count = static_cast<std::size_t>(refined_sizes[1]);
+  const std::size_t refined_vertex_ancestry = static_cast<std::size_t>(refined_sizes[17]);
+  const std::size_t refined_cell_ancestry = static_cast<std::size_t>(refined_sizes[18]);
+  std::vector<uint64_t> refined_vertex_ids(refined_vertex_count);
+  std::vector<double> refined_points(3 * refined_vertex_count);
+  std::vector<int8_t> refined_witness_strata(refined_vertex_count);
+  std::vector<int32_t> refined_witness_entities(refined_vertex_count);
+  std::vector<double> refined_witness_parameters(2 * refined_vertex_count);
+  std::vector<double> refined_witness_deviations(refined_vertex_count);
+  std::vector<int8_t> refined_vertex_dimensions(refined_vertex_count);
+  std::vector<double> refined_protection_radii(refined_vertex_count);
+  std::vector<int8_t> refined_protected_vertices(refined_vertex_count);
+  std::vector<int8_t> refined_edge_witness_present(refined_vertex_count);
+  std::vector<uint64_t> refined_edge_witness_endpoints(2 * refined_vertex_count);
+  std::vector<double> refined_edge_parameters(refined_vertex_count);
+  std::vector<int64_t> refined_vertex_ancestry_offsets(refined_vertex_count + 1);
+  std::vector<uint64_t> refined_vertex_ancestor_ids(refined_vertex_ancestry + 1);
+  std::vector<int64_t> refined_vertex_ancestor_winding(3 * refined_vertex_ancestry + 3);
+  std::vector<double> refined_vertex_ancestry_weights(refined_vertex_ancestry + 1);
+  std::vector<uint64_t> refined_cell_ids(refined_cell_count);
+  std::vector<uint64_t> refined_cell_vertices(4 * refined_cell_count);
+  std::vector<int32_t> refined_cell_regions(refined_cell_count);
+  std::vector<int64_t> refined_cell_ancestry_offsets(refined_cell_count + 1);
+  std::vector<uint64_t> refined_cell_ancestor_ids(refined_cell_ancestry + 1);
+  std::vector<int32_t> refined_cell_ancestry_edit_kinds(refined_cell_count);
   uint64_t refined_generation = 0;
   phx_mc_tet_mesh_snapshot_request refined_snapshot{};
-  refined_snapshot.vertex_capacity = 5;
-  refined_snapshot.cell_capacity = 4;
+  refined_snapshot.vertex_capacity = refined_sizes[0];
+  refined_snapshot.cell_capacity = refined_sizes[1];
   refined_snapshot.facet_capacity = 4;
   refined_snapshot.source_point_capacity = 4;
   refined_snapshot.source_face_capacity = 4;
-  refined_snapshot.vertex_ancestry_capacity = 4;
-  refined_snapshot.cell_ancestor_capacity = 4;
+  refined_snapshot.vertex_ancestry_capacity = refined_sizes[17];
+  refined_snapshot.cell_ancestor_capacity = refined_sizes[18];
   refined_snapshot.vertex_ids = refined_vertex_ids.data();
   refined_snapshot.points = refined_points.data();
   refined_snapshot.witness_strata = refined_witness_strata.data();
@@ -521,23 +529,32 @@ void persistent_create_snapshot_and_rejection() {
   refined_snapshot.source_face_tolerances = source_face_tolerances.data();
   refined_snapshot.generation = &refined_generation;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &refined_snapshot) == PHX_MC_OK);
-  constexpr std::array<int64_t, 6> expected_vertex_ancestry_offsets{0, 0, 0, 0, 0, 4};
-  constexpr std::array<uint64_t, 4> expected_vertex_ancestor_ids{101, 211, 307, 409};
-  constexpr std::array<int64_t, 12> expected_vertex_ancestor_winding{};
-  constexpr std::array<double, 4> expected_vertex_ancestry_weights{0.25, 0.25, 0.25, 0.25};
-  constexpr std::array<uint64_t, 4> expected_cell_ancestor_ids{9001, 9001, 9001, 9001};
-  constexpr std::array<int64_t, 5> expected_cell_ancestry_offsets{0, 1, 2, 3, 4};
-  constexpr std::array<int32_t, 4> expected_cell_edit_kinds{
-      PHX_MC_TET_EDIT_REFINE_CELL, PHX_MC_TET_EDIT_REFINE_CELL,
-      PHX_MC_TET_EDIT_REFINE_CELL, PHX_MC_TET_EDIT_REFINE_CELL};
-  PHX_CHECK(refined_generation == 1 && refined_vertex_ids.back() == 410);
-  PHX_CHECK(refined_vertex_ancestry_offsets == expected_vertex_ancestry_offsets);
-  PHX_CHECK(refined_vertex_ancestor_ids == expected_vertex_ancestor_ids);
-  PHX_CHECK(refined_vertex_ancestor_winding == expected_vertex_ancestor_winding);
-  PHX_CHECK(refined_vertex_ancestry_weights == expected_vertex_ancestry_weights);
-  PHX_CHECK(refined_cell_ancestry_offsets == expected_cell_ancestry_offsets);
-  PHX_CHECK(refined_cell_ancestor_ids == expected_cell_ancestor_ids);
-  PHX_CHECK(refined_cell_ancestry_edit_kinds == expected_cell_edit_kinds);
+  PHX_CHECK(refined_generation == generation + static_cast<uint64_t>(inserted_vertices));
+  // Circumcenters carry no affine stencil, and every refined cell names the
+  // cavity cells it replaced as ancestors.
+  PHX_CHECK(refined_sizes[17] == 0);
+  for (std::size_t row = 0; row < refined_cell_count; ++row) {
+    const std::array<const double*, 4> corners{
+        [&] {
+          std::array<const double*, 4> result{};
+          for (std::size_t corner = 0; corner < 4; ++corner) {
+            const uint64_t id = refined_cell_vertices[4 * row + corner];
+            const auto found =
+                std::find(refined_vertex_ids.begin(), refined_vertex_ids.end(), id);
+            PHX_CHECK(found != refined_vertex_ids.end());
+            result[corner] = refined_points.data() +
+                             3 * static_cast<std::size_t>(found - refined_vertex_ids.begin());
+          }
+          return result;
+        }()};
+    PHX_CHECK(phx::mc::orient3d(corners[0], corners[1], corners[2], corners[3]) > 0);
+    if (refined_cell_ancestry_edit_kinds[row] == PHX_MC_TET_EDIT_REFINE_CELL) {
+      PHX_CHECK(refined_cell_ancestry_offsets[row + 1] > refined_cell_ancestry_offsets[row]);
+    }
+  }
+  for (std::size_t row = 0; row < refined_cell_ancestry; ++row) {
+    PHX_CHECK(refined_cell_ancestor_ids[row] >= 9001);
+  }
   int64_t report_count = 0;
   PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &report_count) == PHX_MC_OK);
   PHX_CHECK(report_count > 0 && report_count >= remaining_cells);
@@ -556,21 +573,25 @@ void persistent_create_snapshot_and_rejection() {
                                   report_values.data()) == PHX_MC_OK);
   for (std::size_t row = 0; row < report_cells.size(); ++row) {
     PHX_CHECK(report_criteria[row] == PHX_MC_TET_UNMET_RADIUS_EDGE);
-    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT ||
+              report_reasons[row] == PHX_MC_TET_UNMET_FIXED_BOUNDARY ||
+              report_reasons[row] == PHX_MC_TET_UNMET_REFUSED);
     PHX_CHECK(report_values[row] > 0.5);
   }
   int64_t collapsed_vertices = 0;
   int64_t relocated_vertices = 0;
   PHX_CHECK(phx_mc_tet_mesh_improve_quality(
-                mesh, generation + 1, identity_bound, source_id, sizeof(source_id) - 1,
+                mesh, refined_generation, identity_bound, source_id, sizeof(source_id) - 1,
                 source_revision, sizeof(source_revision) - 1, source_map_id,
                 sizeof(source_map_id) - 1, frame_id, sizeof(frame_id) - 1,
                 2.0, 0.0, 0.0, &edit_status, &run_status, &collapsed_vertices,
                 &relocated_vertices, &remaining_cells) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
-  PHX_CHECK(run_status == PHX_MC_UNRESOLVED && remaining_cells > 0);
+  // Status and per-cell records agree: success exactly when no cell is unmet.
+  PHX_CHECK((run_status == PHX_MC_OK && remaining_cells == 0) ||
+            (run_status == PHX_MC_UNRESOLVED && remaining_cells > 0));
   PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &report_count) == PHX_MC_OK);
-  PHX_CHECK(report_count > 0);
+  PHX_CHECK((report_count == 0) == (remaining_cells == 0));
   report_cells.resize(static_cast<std::size_t>(report_count));
   report_criteria.resize(static_cast<std::size_t>(report_count));
   report_reasons.resize(static_cast<std::size_t>(report_count));

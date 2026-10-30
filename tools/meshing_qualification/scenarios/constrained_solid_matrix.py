@@ -14,8 +14,10 @@ from phydrax.discretization import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     lagrange_element,
+    reference_cell_topology,
     TetrahedralConnectivity,
 )
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.meshing._association import GeometryAssociationKind, GeometrySourceEntityRole
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -509,7 +511,9 @@ def _request(
     )
     patch_controls: list[PatchControl] = []
     interface_facets: list[int] = []
-    facet_regions = np.asarray(source_input.facet_regions, dtype=np.int64).reshape((-1, 2))
+    facet_regions = np.asarray(source_input.facet_regions, dtype=np.int64).reshape(
+        (-1, 2)
+    )
     for facet in range(facet_regions.shape[0]):
         positive = int(facet_regions[facet, 0])
         negative = int(facet_regions[facet, 1])
@@ -720,7 +724,10 @@ def _independent_region_oracle(
     /,
 ) -> dict[str, object]:
     mesh = result.mesh
-    if any(block.cell_kind != "tetrahedron" for block in mesh.blocks):
+    if any(
+        reference_cell_topology(block.cell_kind).family != "tetrahedron"
+        for block in mesh.blocks
+    ):
         raise TypeError(
             f"{profile.profile_id} published non-tetrahedral blocks: "
             f"{sorted({block.cell_kind for block in mesh.blocks})}."
@@ -745,7 +752,9 @@ def _independent_region_oracle(
         raise RuntimeError("Native certification omitted per-cell source region labels.")
     native_coverage = certification.coverage
     if native_coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification is absent or did not pass.")
+        raise RuntimeError(
+            "Native domain-coverage certification is absent or did not pass."
+        )
     certified_regions = np.asarray(native_coverage.cell_regions, dtype=np.int64)
     if certified_regions.shape != independent_regions.shape:
         raise RuntimeError(
@@ -835,6 +844,39 @@ def _point_in_source_polygon(
     return inside
 
 
+def _tetrahedral_face_tables(
+    mesh: phx.discretization.CellMesh, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Face-vertex rows, cell-to-face rows, and boundary-face mask in entity-set order."""
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, TetrahedralConnectivity):
+        faces, cell_faces, boundary = (
+            connectivity.faces,
+            connectivity.cell_faces,
+            connectivity.boundary_faces,
+        )
+    elif isinstance(connectivity, SimplicialConnectivity) and connectivity.dimension == 3:
+        faces, cell_faces, boundary = (
+            connectivity.entities[2],
+            connectivity.cell_entities[2],
+            connectivity.boundary_masks[2],
+        )
+    else:
+        raise TypeError(
+            "Native constrained-solid boundary coverage requires tetrahedral connectivity."
+        )
+    face_vertices = np.asarray(faces, dtype=np.int64)
+    if face_vertices.shape != (np.asarray(mesh.entity_set(2).entity_ids).size, 3):
+        raise RuntimeError(
+            "Tetrahedral face table does not align with the face entity set."
+        )
+    return (
+        face_vertices,
+        np.asarray(cell_faces, dtype=np.int64),
+        np.asarray(boundary, dtype=np.bool_),
+    )
+
+
 def _boundary_facet_oracle(
     source: NativePlcSource,
     source_input: _SolidInput,
@@ -842,11 +884,6 @@ def _boundary_facet_oracle(
     /,
 ) -> dict[str, object]:
     mesh = result.mesh
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError(
-            "Native constrained-solid boundary coverage requires tetrahedral connectivity."
-        )
     face_set = mesh.entity_set(2)
     face_associations = tuple(
         association
@@ -884,7 +921,7 @@ def _boundary_facet_oracle(
             np.asarray(face_set.entity_ids, dtype=np.int64).tolist()
         )
     }
-    face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
+    face_vertices, cell_face_rows, boundary_face_mask = _tetrahedral_face_tables(mesh)
     point_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     certification = result.certification
     if certification is None or certification.coverage is None:
@@ -893,9 +930,11 @@ def _boundary_facet_oracle(
         )
     coverage = certification.coverage
     if coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification did not pass facet coverage.")
+        raise RuntimeError(
+            "Native domain-coverage certification did not pass facet coverage."
+        )
     cell_regions = np.asarray(coverage.cell_regions, dtype=np.int64)
-    cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int64).reshape((-1, 4))
+    cell_faces = cell_face_rows.reshape((-1, 4))
     adjacent_regions: list[set[int]] = [set() for _ in range(face_vertices.shape[0])]
     for cell_row in range(cell_faces.shape[0]):
         for local_face in range(cell_faces.shape[1]):
@@ -904,8 +943,7 @@ def _boundary_facet_oracle(
     expected_rows = {
         row
         for row, regions in enumerate(adjacent_regions)
-        if bool(np.asarray(connectivity.boundary_faces, dtype=np.bool_)[row])
-        or len(regions) > 1
+        if bool(boundary_face_mask[row]) or len(regions) > 1
     }
     expected_ids = {
         int(np.asarray(face_set.entity_ids, dtype=np.int64)[row]) for row in expected_rows
@@ -994,9 +1032,7 @@ def _boundary_facet_oracle(
         )
     fixed_boundary = None
     if source_input.boundary == "fixed":
-        fixed_rows = np.flatnonzero(
-            np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-        )
+        fixed_rows = np.flatnonzero(boundary_face_mask)
         published_triangles = {
             tuple(
                 sorted(
@@ -1067,7 +1103,9 @@ def _material_control_oracle(
         )
     coverage = certification.coverage
     if coverage.status != "certified":
-        raise RuntimeError("Native domain-coverage certification did not pass material checks.")
+        raise RuntimeError(
+            "Native domain-coverage certification did not pass material checks."
+        )
     cell_regions = np.asarray(coverage.cell_regions, dtype=np.int64)
     cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
     if cell_ids.shape != cell_regions.shape:
@@ -1175,7 +1213,10 @@ def _material_control_oracle(
 
 def _solve_fe(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
     mesh = result.mesh
-    field = FiniteElementFieldSpec("u", lagrange_element("tetrahedron", 1))
+    kinds = {block.cell_kind for block in mesh.blocks}
+    if len(kinds) != 1:
+        raise RuntimeError(f"Native constrained solid mixed tetrahedral kinds {kinds}.")
+    field = FiniteElementFieldSpec("u", lagrange_element(kinds.pop(), 1))
     space = FiniteElementPlan(mesh, field, coordinate_spec=result.geometry).prepare()
     constraint = phx.discretization.dirichlet_constraint(space, "u")
     form = phx.equations.FiniteElementForm(
