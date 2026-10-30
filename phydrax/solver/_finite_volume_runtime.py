@@ -199,15 +199,21 @@ def _prepare_owner_local_fv_stage_state_provider(
         for row, identifier in enumerate(local_ids)
         if local_owned[row]
     }
+    # The view's face-neighbor CSR is keyed by its sorted owned cells; ghost
+    # rows are resident carriers without their own neighbor rows.
+    graph_ids = np.asarray(owner_local_view.owned_cell_ids, dtype=np.int64)
     offsets = np.asarray(owner_local_view.cell_neighbor_offsets, dtype=np.int64)
     neighbor_ids = np.asarray(owner_local_view.cell_neighbor_ids, dtype=np.int64)
     if (
-        offsets.shape != (local_ids.size + 1,)
+        offsets.shape != (graph_ids.size + 1,)
         or offsets[0] != 0
         or offsets[-1] != neighbor_ids.size
         or np.any(np.diff(offsets) < 0)
+        or set(int(value) for value in graph_ids)
+        != set(int(value) for value in local_ids[local_owned])
     ):
         raise ValueError("Owner-local FV reconstruction-neighbor routes are malformed.")
+    graph_row_by_id = {int(identifier): row for row, identifier in enumerate(graph_ids)}
     if (
         isinstance(required_stencil_depth, bool)
         or not isinstance(required_stencil_depth, (int, np.integer))
@@ -220,7 +226,12 @@ def _prepare_owner_local_fv_stage_state_provider(
     for _ in range(int(required_stencil_depth)):
         next_frontier: set[int] = set()
         for identifier in frontier:
-            row = view_row_by_id[identifier]
+            row = graph_row_by_id.get(identifier)
+            if row is None:
+                raise ValueError(
+                    "Owner-local FV view lacks neighbor rows for a ghost cell inside "
+                    "the reconstruction-stencil depth."
+                )
             neighbors = neighbor_ids[offsets[row] : offsets[row + 1]]
             missing = [int(value) for value in neighbors if int(value) not in resident]
             if missing:
