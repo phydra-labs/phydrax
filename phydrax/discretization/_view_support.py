@@ -2604,6 +2604,195 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
 
 
 @final
+class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
+    """Several current owner-local part views compiled as one disjoint local layout.
+
+    Parts are kept in canonical name order; each part's rows occupy one static,
+    contiguous block of the composite cell axis (``cell_offsets``). Cell and
+    vertex identities must be disjoint across parts, so every composite row keeps
+    an explicit, part-unique stable ID. The face-neighbor CSR is the per-part
+    owned-cell CSR concatenated in part order; parts never share faces.
+    """
+
+    parts: tuple[OwnerLocalCellGeometry, ...]
+    part_names: tuple[str, ...] = eqx.field(static=True)
+    cell_offsets: tuple[int, ...] = eqx.field(static=True)
+    owner_rank: int = eqx.field(static=True)
+    topological_dimension: int = eqx.field(static=True)
+    local_view_id: str = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+    part_id: str = eqx.field(static=True)
+    source_topology_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    geometry_layout_id: str = eqx.field(static=True)
+    cell_ids: Array
+    owned: Array
+    cell_owner_ranks: Array
+    vertex_ids: Array
+    owned_cell_ids: Array
+    cell_neighbor_offsets: Array
+    cell_neighbor_ids: Array
+    cell_neighbor_owner_ranks: Array
+
+    def __init__(self, parts: tuple[OwnerLocalCellGeometry, ...], /) -> None:
+        if (
+            not isinstance(parts, tuple)
+            or len(parts) < 2
+            or any(not isinstance(part, OwnerLocalCellGeometry) for part in parts)
+        ):
+            raise TypeError(
+                "A composite owner-local layout requires at least two part views."
+            )
+        ordered = tuple(sorted(parts, key=lambda part: part.part_name))
+        names = tuple(part.part_name for part in ordered)
+        if len(set(names)) != len(names):
+            raise ValueError("Composite owner-local parts must have unique names.")
+        if (
+            len({part.owner_rank for part in ordered}) != 1
+            or len({part.topological_dimension for part in ordered}) != 1
+            or any(part.serial_source_view for part in ordered)
+        ):
+            raise ValueError(
+                "Composite owner-local parts must share one owner rank and dimension."
+            )
+        cell_banks = [np.asarray(part.cell_ids, dtype=np.int64) for part in ordered]
+        vertex_banks = [np.asarray(part.vertex_ids, dtype=np.int64) for part in ordered]
+        cell_ids = np.concatenate(cell_banks)
+        vertex_ids = np.concatenate(vertex_banks)
+        if (
+            np.unique(cell_ids).size != cell_ids.size
+            or np.unique(vertex_ids).size != vertex_ids.size
+        ):
+            raise ValueError(
+                "Composite owner-local parts must have disjoint cell and vertex IDs."
+            )
+        offsets = [0]
+        for bank in cell_banks:
+            offsets.append(offsets[-1] + bank.size)
+        neighbor_offsets = [np.zeros((1,), dtype=np.int64)]
+        neighbor_base = 0
+        for part in ordered:
+            part_offsets = np.asarray(part.cell_neighbor_offsets, dtype=np.int64)
+            neighbor_offsets.append(part_offsets[1:] + neighbor_base)
+            neighbor_base += int(part_offsets[-1])
+        self.parts = ordered
+        self.part_names = names
+        self.cell_offsets = tuple(offsets)
+        self.owner_rank = ordered[0].owner_rank
+        self.topological_dimension = ordered[0].topological_dimension
+        self.cell_ids = jnp.asarray(cell_ids)
+        self.owned = jnp.asarray(
+            np.concatenate([np.asarray(part.owned, dtype=np.bool_) for part in ordered])
+        )
+        self.cell_owner_ranks = jnp.asarray(
+            np.concatenate(
+                [np.asarray(part.cell_owner_ranks, dtype=np.int32) for part in ordered]
+            )
+        )
+        self.vertex_ids = jnp.asarray(vertex_ids)
+        self.owned_cell_ids = jnp.asarray(
+            np.concatenate(
+                [np.asarray(part.owned_cell_ids, dtype=np.int64) for part in ordered]
+            )
+        )
+        self.cell_neighbor_offsets = jnp.asarray(np.concatenate(neighbor_offsets))
+        self.cell_neighbor_ids = jnp.asarray(
+            np.concatenate(
+                [np.asarray(part.cell_neighbor_ids, dtype=np.int64) for part in ordered]
+            )
+        )
+        self.cell_neighbor_owner_ranks = jnp.asarray(
+            np.concatenate(
+                [
+                    np.asarray(part.cell_neighbor_owner_ranks, dtype=np.int32)
+                    for part in ordered
+                ]
+            )
+        )
+
+        def joined(field: str, values: tuple[str, ...], /) -> str:
+            return canonical_fingerprint(
+                {
+                    "kind": f"owner-local-composite-{field}",
+                    "parts": tuple(zip(names, values, strict=True)),
+                }
+            )
+
+        self.local_view_id = joined(
+            "local-view", tuple(part.local_view_id for part in ordered)
+        )
+        self.distribution_id = joined(
+            "distribution", tuple(part.distribution_id for part in ordered)
+        )
+        self.part_id = joined("part", tuple(part.part_id for part in ordered))
+        self.source_topology_id = joined(
+            "source-topology", tuple(part.source_topology_id for part in ordered)
+        )
+        self.source_geometry_id = joined(
+            "source-geometry", tuple(part.source_geometry_id for part in ordered)
+        )
+        self.geometry_layout_id = joined(
+            "geometry-layout", tuple(part.geometry_layout_id for part in ordered)
+        )
+
+    def part(self, name: str, /) -> OwnerLocalCellGeometry:
+        if name not in self.part_names:
+            raise KeyError(f"Composite owner-local layout has no part {name!r}.")
+        return self.parts[self.part_names.index(name)]
+
+    def require_owner_directory_current(
+        self,
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        axis_name: str = "owner_local_cell_geometry_directory",
+    ) -> None:
+        """Check every part's scientific owner directory collectively."""
+        for name, part in zip(self.part_names, self.parts, strict=True):
+            part.require_owner_directory_current(
+                execution_group, axis_name=f"{axis_name}_{name}"
+            )
+
+    def union_local_mesh(self) -> CellMesh | None:
+        """Disjoint union of the parts' local carrier meshes in part order."""
+        meshes = [part.reconstruct_local_geometry()[0] for part in self.parts]
+        present = [
+            (name, mesh)
+            for name, mesh in zip(self.part_names, meshes, strict=True)
+            if mesh is not None
+        ]
+        if not present:
+            return None
+        coordinates: list[np.ndarray] = []
+        vertex_ids: list[np.ndarray] = []
+        blocks: list[CellBlock] = []
+        base = 0
+        for name, mesh in present:
+            coordinates.append(np.asarray(mesh.coordinates, dtype=np.float64))
+            vertex_ids.append(np.asarray(mesh.vertex_global_ids, dtype=np.int64))
+            for block in mesh.blocks:
+                if not isinstance(block, CellBlock):
+                    raise TypeError(
+                        "Composite owner-local meshes require homogeneous cell blocks."
+                    )
+                blocks.append(
+                    CellBlock(
+                        f"{name}/{block.name}",
+                        block.cell_kind,
+                        np.asarray(block.vertices, dtype=np.int64) + base,
+                        vertex_valid=block.vertex_valid,
+                        global_ids=block.global_ids,
+                    )
+                )
+            base += coordinates[-1].shape[0]
+        return CellMesh(
+            np.concatenate(coordinates, axis=0),
+            tuple(blocks),
+            vertex_global_ids=np.concatenate(vertex_ids),
+        )
+
+
+@final
 class OwnerLocalFieldSupport(StrictModule, NonTrainableState):
     """Exact field-query support bound to one owner-local source view."""
 
@@ -4119,6 +4308,7 @@ __all__ = [
     "MappedFieldSupport",
     "OwnerLocalCellBlock",
     "OwnerLocalCellGeometry",
+    "OwnerLocalCompositeCellGeometry",
     "MappedMeshSupportQueryResult",
     "cell_location_status",
     "mapped_mesh_support_query",
