@@ -82,12 +82,27 @@ def native_transfer() -> dict[str, object]:
         raise RuntimeError(
             f"Native P1 transfer failed linear/conservative oracle: {reproduction_error=}, {integral_error=}."
         )
+    # The bare source mesh carries no acceptance inputs, so neither result has a
+    # certification report; require the audit plus an independent orientation
+    # and area-partition oracle on every target triangle.
+    target_points = np.asarray(target.mesh.coordinates, dtype=np.float64)
+    target_cells = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in target.mesh.blocks]
+    )
+    corners = target_points[target_cells]
+    signed_areas = 0.5 * (
+        (corners[:, 1, 0] - corners[:, 0, 0]) * (corners[:, 2, 1] - corners[:, 0, 1])
+        - (corners[:, 1, 1] - corners[:, 0, 1]) * (corners[:, 2, 0] - corners[:, 0, 0])
+    )
     if (
         not target.audit.passed
-        or target.certification is None
-        or not target.certification.passed
+        or np.any(signed_areas <= 0.0)
+        or abs(float(np.sum(signed_areas)) - 1.0) > 1.0e-12
+        or target_cells.shape[0] <= 2
     ):
-        raise RuntimeError("Native transfer target lost its accepted mesh/certification.")
+        raise RuntimeError(
+            "Native transfer target failed its audit or independent validity/area oracle."
+        )
     return {
         "status": "passed",
         "route": MeshAdaptationRoute.NATIVE_BISECTION.value,
