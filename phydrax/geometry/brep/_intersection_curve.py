@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import functools
 import math
-from dataclasses import dataclass
+import weakref
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import partial
 from typing import Any, Callable, cast, Literal, TypeAlias, TypeGuard
@@ -367,12 +369,69 @@ class _OrthogonalCylinderFamily:
         return patch
 
 
+type _FamilyRecord = (
+    _OrthogonalCylinderFamily
+    | _DisjointOrthogonalCylinderFamily
+    | _SingularOrthogonalCylinderFamily
+    | None
+)
+
+# Immutable source regions keyed by object identity. A stored family holds its
+# derived proxy regions in place of the keyed regions, so no record keeps its
+# own key alive; each entry is dropped when either keyed region is collected.
+_FAMILY_RECORDS: dict[tuple[int, int], _FamilyRecord] = {}
+
+
 def orthogonal_cylinder_family(
     source_a: SurfaceRegion,
     source_b: SurfaceRegion,
     /,
 ) -> _OrthogonalCylinderFamily | None:
-    """Certify regular unequal branches; classify equal-radius singularity or separation."""
+    """Certify regular unequal branches; classify equal-radius singularity or separation.
+
+    The exact derivation is pure in the two immutable source regions, so it is
+    prepared once per region pair and reused by every branch query.
+    """
+    key = id(source_a), id(source_b)
+    record = _FAMILY_RECORDS.get(key)
+    if key not in _FAMILY_RECORDS:
+        try:
+            family = _derive_orthogonal_cylinder_family(source_a, source_b)
+        except (
+            _DisjointOrthogonalCylinderFamily,
+            _SingularOrthogonalCylinderFamily,
+        ) as error:
+            # A fresh refusal carries no traceback frames that reference the keys.
+            record = type(error)(*error.args)
+        else:
+            record = (
+                None
+                if family is None
+                else replace(family, source_regions=family.proxy_regions)
+            )
+        if _region_is_concrete(source_a) and _region_is_concrete(source_b):
+            _FAMILY_RECORDS[key] = record
+            weakref.finalize(source_a, _FAMILY_RECORDS.pop, key, None)
+            weakref.finalize(source_b, _FAMILY_RECORDS.pop, key, None)
+    if record is None:
+        return None
+    if isinstance(record, _DisjointOrthogonalCylinderFamily):
+        raise _DisjointOrthogonalCylinderFamily(*record.args)
+    if isinstance(record, _SingularOrthogonalCylinderFamily):
+        raise _SingularOrthogonalCylinderFamily(*record.args)
+    return replace(record, source_regions=(source_a, source_b))
+
+
+def _region_is_concrete(region: SurfaceRegion, /) -> bool:
+    return not any(isinstance(leaf, Tracer) for leaf in jax.tree_util.tree_leaves(region))
+
+
+def _derive_orthogonal_cylinder_family(
+    source_a: SurfaceRegion,
+    source_b: SurfaceRegion,
+    /,
+) -> _OrthogonalCylinderFamily | None:
+    """Derive regular unequal branches; classify equal-radius singularity or separation."""
     from .._rational import rational_cross, rational_dot
     from ._intersection import _revolution_cylinder_view
     from ._patches import CylinderPatch, ExactLineCurve, LineCurve, RevolutionSurface
@@ -595,6 +654,20 @@ def orthogonal_cylinder_family(
     )
 
 
+@functools.cache
+def interval_context(decimal_digits: int, /) -> Any:
+    """Return one shared outward mpmath interval context at a fixed precision.
+
+    Context construction wraps every special function and dominates small exact
+    enclosures; a context is never mutated after this fixed-precision setup.
+    """
+    from mpmath.ctx_iv import MPIntervalContext
+
+    context = MPIntervalContext()
+    context.dps = decimal_digits
+    return context
+
+
 def orthogonal_cylinder_graph_bounds(
     family: _OrthogonalCylinderFamily,
     theta_lower: float,
@@ -604,7 +677,6 @@ def orthogonal_cylinder_graph_bounds(
     /,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Outward-enclose the closed-form source p-curve over a source-angle interval."""
-    from mpmath.ctx_iv import MPIntervalContext
 
     if (
         branch_sign not in (-1, 1)
@@ -640,8 +712,7 @@ def orthogonal_cylinder_graph_bounds(
             Fraction(0),
         ),
     )
-    context = MPIntervalContext()
-    context.dps = 80
+    context = interval_context(80)
 
     def scalar(value: Fraction) -> Any:
         return context.mpf(value.numerator) / context.mpf(value.denominator)
@@ -739,8 +810,6 @@ def orthogonal_cylinder_graph_derivative_bounds(
     /,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Outward-enclose source p-curve derivatives with respect to small angle."""
-    from mpmath.ctx_iv import MPIntervalContext
-
     if (
         branch_sign not in (-1, 1)
         or not math.isfinite(theta_lower)
@@ -748,8 +817,7 @@ def orthogonal_cylinder_graph_derivative_bounds(
         or theta_lower > theta_upper
     ):
         return None
-    context = MPIntervalContext()
-    context.dps = 80
+    context = interval_context(80)
 
     def scalar(value: Fraction) -> Any:
         return context.mpf(value.numerator) / context.mpf(value.denominator)
@@ -2502,6 +2570,67 @@ class IntersectionCurve(AbstractCurve):
             bounds = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(int(shift))))
             lower[axis], upper[axis] = float(bounds[0]), float(bounds[1])
         return lower, upper
+
+    def closure_period_shifts(self) -> np.ndarray:
+        """Return the integer source deck from the start node to the closing node.
+
+        A closed branch's first and last nodes enclose the same coupled root,
+        possibly on different native-period sheets. Each periodic axis must
+        admit exactly one integer turn under which the two enclosures meet;
+        any other configuration is not a closed source branch.
+        """
+        shifts = np.zeros((4,), dtype=np.int64)
+        if not self.closed:
+            return shifts
+        last = self.num_charts
+        start_lower = np.asarray(self.node_lower[0], dtype=np.float64)
+        start_upper = np.asarray(self.node_upper[0], dtype=np.float64)
+        end_lower = np.asarray(self.node_lower[last], dtype=np.float64)
+        end_upper = np.asarray(self.node_upper[last], dtype=np.float64)
+        periods = (*self.first.patch.periods, *self.second.patch.periods)
+        symbols = (
+            *self.first.patch.native_period_symbols(),
+            *self.second.patch.native_period_symbols(),
+        )
+        for axis in range(4):
+            if (
+                start_lower[axis] <= end_upper[axis]
+                and end_lower[axis] <= start_upper[axis]
+            ):
+                continue
+            if periods[axis] is None or symbols[axis] != "two_pi":
+                raise ValueError(
+                    "A closed IntersectionCurve must close on a declared native period."
+                )
+            estimate = round(
+                (
+                    0.5 * (end_lower[axis] + end_upper[axis])
+                    - 0.5 * (start_lower[axis] + start_upper[axis])
+                )
+                / math.tau
+            )
+            turns = []
+            for turn in range(estimate - 1, estimate + 2):
+                lower, upper = self.shift_parameter_bounds(
+                    np.asarray(
+                        [turn if index == axis else 0 for index in range(4)],
+                        dtype=np.int64,
+                    )
+                )
+                shifted_lower = math.nextafter(
+                    float(start_lower[axis] + lower[axis]), -math.inf
+                )
+                shifted_upper = math.nextafter(
+                    float(start_upper[axis] + upper[axis]), math.inf
+                )
+                if shifted_lower <= end_upper[axis] and end_lower[axis] <= shifted_upper:
+                    turns.append(turn)
+            if len(turns) != 1:
+                raise ValueError(
+                    "A closed IntersectionCurve must close under one native period turn."
+                )
+            shifts[axis] = turns[0]
+        return shifts
 
     def parameter_enclosures(self, first: float, last: float, /) -> np.ndarray:
         """Enclose all four source-chart parameters over a certified branch interval."""
