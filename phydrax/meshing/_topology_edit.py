@@ -274,46 +274,50 @@ def _pad_key_table(keys: np.ndarray, width: int) -> np.ndarray:
 
 
 def _cell_facets(mesh: CellMesh) -> tuple[tuple[np.ndarray, ...], ...]:
-    """Ordered facets of all target cells in concatenated block order."""
-    topology = mesh.topological_dimension
-    facets: list[tuple[np.ndarray, ...]] = []
-    if isinstance(mesh.connectivity, PolyhedralConnectivity):
-        connectivity = mesh.connectivity
-        cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
-        cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
-        signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
-        face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-        face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
-        for cell in range(connectivity.cell_count):
-            loops = []
-            for position in range(cell_offsets[cell], cell_offsets[cell + 1]):
-                face = int(cell_faces[position])
-                loop = face_values[face_offsets[face] : face_offsets[face + 1]]
-                loops.append(loop if signs[position] > 0 else loop[::-1])
-            facets.append(tuple(np.asarray(loop, dtype=np.int64) for loop in loops))
-        return tuple(facets)
-    from ..discretization._reference_cell import reference_cell_topology
+    """Ordered facets of all target cells in concatenated block order.
 
+    Fixed-family cells use their local reference facets; only polyhedral cells
+    use their packed outward face loops, matching ``SharedFaceWitnesses``.
+    """
+    topology = mesh.topological_dimension
+    connectivity = mesh.connectivity
+    facets: list[tuple[np.ndarray, ...]] = []
+    row = 0
     for block in mesh.blocks:
         cells = np.asarray(block.vertices, dtype=np.int64)
-        if block.cell_kind == "polygon":
+        if isinstance(block, PolyhedralBlock):
+            if not isinstance(connectivity, PolyhedralConnectivity):
+                raise ValueError("Polyhedral cells require packed face connectivity.")
+            cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+            cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+            signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
+            face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+            face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+            for cell in range(row, row + block.cell_count):
+                loops = []
+                for position in range(cell_offsets[cell], cell_offsets[cell + 1]):
+                    face = int(cell_faces[position])
+                    loop = face_values[face_offsets[face] : face_offsets[face + 1]]
+                    loops.append(loop if signs[position] > 0 else loop[::-1])
+                facets.append(tuple(np.asarray(loop, dtype=np.int64) for loop in loops))
+        elif block.cell_kind == "polygon":
             facets.extend(
                 tuple(
-                    np.asarray((row[index], row[(index + 1) % row.size]), dtype=np.int64)
-                    for index in range(row.size)
+                    np.asarray(
+                        (loop[index], loop[(index + 1) % loop.size]), dtype=np.int64
+                    )
+                    for index in range(loop.size)
                 )
-                for row in cells
+                for loop in cells
             )
-            continue
-        reference = reference_cell_topology(block.cell_kind)
-        local = reference.entities[topology - 1]
-        facets.extend(
-            tuple(cells[cell, np.asarray(face, dtype=np.int64)] for face in local)
-            for cell in range(cells.shape[0])
-        )
-    return tuple(
-        tuple(np.asarray(face, dtype=np.int64) for face in cell) for cell in facets
-    )
+        else:
+            local = reference_cell_topology(block.cell_kind).entities[topology - 1]
+            facets.extend(
+                tuple(cells[cell, np.asarray(face, dtype=np.int64)] for face in local)
+                for cell in range(cells.shape[0])
+            )
+        row += block.cell_count
+    return tuple(facets)
 
 
 def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -> None:
