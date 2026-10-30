@@ -67,25 +67,18 @@ def _entity_vertex_rows(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]
             for values in connectivity.entities
         )
     vertices = tuple(
-        np.asarray((index,), dtype=np.int64)
-        for index in range(mesh.coordinates.shape[0])
+        np.asarray((index,), dtype=np.int64) for index in range(mesh.coordinates.shape[0])
     )
     if isinstance(connectivity, IntervalConnectivity):
         cells = tuple(
-            np.asarray(row, dtype=np.int64)
-            for row in connectivity.cell_vertices
+            np.asarray(row, dtype=np.int64) for row in connectivity.cell_vertices
         )
         return vertices, cells
     if isinstance(connectivity, PolygonalConnectivity):
-        edges = tuple(
-            np.asarray(row, dtype=np.int64) for row in connectivity.edges
-        )
+        edges = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
         values = np.asarray(connectivity.cell_vertices, dtype=np.int64)
         valid = np.asarray(connectivity.cell_vertex_valid, dtype=np.bool_)
-        cells = tuple(
-            values[row, :][valid[row, :]]
-            for row in range(values.shape[0])
-        )
+        cells = tuple(values[row, :][valid[row, :]] for row in range(values.shape[0]))
         return vertices, edges, cells
     if isinstance(connectivity, TetrahedralConnectivity):
         edges = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
@@ -106,9 +99,7 @@ def _entity_vertex_rows(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]
         )
         return vertices, edges, faces, cells
     if isinstance(connectivity, PolyhedralConnectivity):
-        edge_rows = tuple(
-            np.asarray(row, dtype=np.int64) for row in connectivity.edges
-        )
+        edge_rows = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
         face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
         faces = tuple(
@@ -132,7 +123,9 @@ def _orientation_orders(
 ) -> tuple[tuple[tuple[int, ...], int], ...]:
     if arity == 1:
         return (((0,), 1),)
-    if simplex:
+    # An edge is a 1-simplex: its 2-cycle rotation is its reversal, so cyclic
+    # loop orientation would wrongly give the reversed edge a positive sign.
+    if simplex or arity == 2:
         records = []
         for order in permutations(range(arity)):
             inversions = sum(
@@ -164,8 +157,16 @@ def _interleaved_key(
     ranked_exp = exponents[np.asarray(order, dtype=np.int64)].copy()
     ranked_fixed = fixed[np.asarray(order, dtype=np.int64)]
     ranked_exp[ranked_fixed] = 0
-    anchor = ranked_exp[0].copy()
+    # A deck shift moves only vertices outside the generator's fixed set, so
+    # the anchor must be a moving vertex and fixed windings stay zero.
+    movable = np.flatnonzero(~np.any(ranked_fixed, axis=1))
+    anchor = (
+        ranked_exp[movable[0]].copy()
+        if movable.size
+        else np.zeros((ranked_exp.shape[1],), dtype=ranked_exp.dtype)
+    )
     relative = reduce_periodic_exponents(ranked_exp - anchor, orders)
+    relative[ranked_fixed] = 0
     key = tuple(
         int(value)
         for value in np.concatenate((ranked_ids[:, None], relative), axis=1).reshape(-1)
@@ -222,12 +223,13 @@ def _group_keys(keys: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray
     return ordered[start_rows], inverse, order[start_rows]
 
 
-
 def _group_ragged_keys(
     keys: tuple[tuple[int, ...], ...], /
 ) -> tuple[tuple[tuple[int, ...], ...], np.ndarray, np.ndarray]:
     if not keys:
-        raise ValueError("Periodic quotient requires non-empty entity rows at every degree.")
+        raise ValueError(
+            "Periodic quotient requires non-empty entity rows at every degree."
+        )
     order = sorted(range(len(keys)), key=keys.__getitem__)
     unique: list[tuple[int, ...]] = []
     first: list[int] = []
@@ -249,12 +251,16 @@ def _canonical_unordered_form(
     /,
 ) -> tuple[tuple[int, ...], np.ndarray, np.ndarray]:
     """Canonicalize an unordered cell vertex set under one common deck shift."""
+    ranked_fixed = np.asarray(fixed, dtype=np.bool_)
     ranked_exponents = np.asarray(exponents, dtype=np.int64).copy()
-    ranked_exponents[np.asarray(fixed, dtype=np.bool_)] = 0
+    ranked_exponents[ranked_fixed] = 0
+    movable_rows = np.flatnonzero(~np.any(ranked_fixed, axis=1))
+    anchor_rows = movable_rows if movable_rows.size else np.arange(identifiers.size)
     candidates = []
-    for anchor_row in range(identifiers.size):
+    for anchor_row in anchor_rows.tolist():
         anchor = ranked_exponents[anchor_row].copy()
         relative = reduce_periodic_exponents(ranked_exponents - anchor, orders)
+        relative[ranked_fixed] = 0
         entries = tuple(
             sorted(
                 (
@@ -270,16 +276,13 @@ def _canonical_unordered_form(
             for identifier, winding, _ in entries
             for value in (identifier, *winding)
         )
-        permutation = np.asarray(
-            [row for _, _, row in entries], dtype=np.int32
-        )
+        permutation = np.asarray([row for _, _, row in entries], dtype=np.int32)
         candidates.append(
             (key, tuple(int(value) for value in anchor), anchor, permutation)
         )
-    key, _, anchor, permutation = min(
-        candidates, key=lambda value: (value[0], value[1])
-    )
+    key, _, anchor, permutation = min(candidates, key=lambda value: (value[0], value[1]))
     return key, anchor, permutation
+
 
 def _supplied_ids(
     mapping: Mapping[int, ArrayLike] | None,
@@ -471,12 +474,8 @@ def _validate_vertex_orbits(
             raise TypeError(
                 "Exact periodic power coordinate witnesses require PeriodicCell."
             )
-        exact_coordinate_source.require_periodic_lift(
-            points, cell, reps, exponents
-        )
+        exact_coordinate_source.require_periodic_lift(points, cell, reps, exponents)
     return reps.astype(np.int32), exponents.astype(np.int32)
-
-
 
 
 def validate_periodic_vertex_orbits(
@@ -615,8 +614,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                     )
                 if (
                     exact_coordinate_source is not None
-                    and source_map.source_map_id
-                    != exact_coordinate_source.source_map_id
+                    and source_map.source_map_id != exact_coordinate_source.source_map_id
                 ):
                     raise ValueError(
                         "Periodic geometry and exact coordinate witnesses disagree."
@@ -674,7 +672,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         top_cell_ids = np.asarray(
             lifted.topology.entity_sets[dimension].entity_ids, dtype=np.int64
         )
-        top_cell_kinds = tuple(cell_kind_by_id[int(identifier)] for identifier in top_cell_ids)
+        top_cell_kinds = tuple(
+            cell_kind_by_id[int(identifier)] for identifier in top_cell_ids
+        )
         for degree, rows in enumerate(row_groups):
             if not rows or any(len(row) == 0 for row in rows):
                 raise ValueError("Periodic quotient cannot contain empty entities.")
@@ -709,9 +709,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 ordered_rows = [row for row in group_rows if row not in unordered_set]
                 if not ordered_rows:
                     continue
-                vertices = np.asarray(
-                    [rows[row] for row in ordered_rows], dtype=np.int64
-                )
+                vertices = np.asarray([rows[row] for row in ordered_rows], dtype=np.int64)
                 ids = root_ids[vertices]
                 exponents = shifts[vertices]
                 fixed = fixed_vertices[vertices]
@@ -733,7 +731,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                     signs[row] = group_signs[local_row]
                     anchors[row] = group_anchors[local_row]
             if any(key is None for key in row_keys):
-                raise ValueError("Periodic quotient failed to canonicalize an entity row.")
+                raise ValueError(
+                    "Periodic quotient failed to canonicalize an entity row."
+                )
             canonical_keys = tuple(key for key in row_keys if key is not None)
             if len({len(key) for key in canonical_keys}) == 1:
                 key_table = np.asarray(canonical_keys, dtype=np.int64)
@@ -850,9 +850,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             None
             if exact_coordinate_source is None
             else canonical_fingerprint(
-                array_tree_fingerprint(
-                    np.asarray(lifted.coordinates, dtype=np.float64)
-                )
+                array_tree_fingerprint(np.asarray(lifted.coordinates, dtype=np.float64))
             )
         )
         self.vertex_fixed_generators = jnp.asarray(fixed_vertices, dtype=jnp.bool_)
@@ -1026,7 +1024,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 "Stored periodic topology identity does not authenticate its structural tables."
             )
 
-
     @classmethod
     @checked
     def from_stored_fields(
@@ -1052,7 +1049,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             len(stored.quotient.entity_sets) != dimension + 1
             or len(stored.allocator_next_ids) != dimension + 1
         ):
-            raise ValueError("Stored periodic topology has malformed quotient dimensions.")
+            raise ValueError(
+                "Stored periodic topology has malformed quotient dimensions."
+            )
         exact_coordinate_source = None
         if stored.coordinate_source_map_id is not None:
             if (
@@ -1063,10 +1062,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                     "Periodic power topology restore requires its current exact source map."
                 )
             exact_coordinate_source = actual_geometry.source_map
-            if (
-                exact_coordinate_source.source_map_id
-                != stored.coordinate_source_map_id
-            ):
+            if exact_coordinate_source.source_map_id != stored.coordinate_source_map_id:
                 raise ValueError(
                     "Periodic power topology restore has another exact coordinate source."
                 )
@@ -1112,8 +1108,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         )
         if (
             renewed.periodic_topology_id != stored.periodic_topology_id
-            or renewed.coordinate_source_map_id
-            != stored.coordinate_source_map_id
+            or renewed.coordinate_source_map_id != stored.coordinate_source_map_id
             or renewed.coordinate_shadow_fingerprint
             != stored.coordinate_shadow_fingerprint
             or renewed.lifted_topology_id != stored.lifted_topology_id
@@ -1140,6 +1135,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 "Reconstructed periodic quotient differs from its stored current source."
             )
         return renewed
+
     def require_lifted(
         self,
         topology: CellComplexTopology,
