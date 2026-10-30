@@ -42,9 +42,7 @@ def _source_identity(model: BRepModel) -> tuple[str, str]:
 
 
 def _branch_side(curve: AbstractCurve) -> IntersectionSide | None:
-    if not isinstance(curve, CurveTrimSegment):
-        return None
-    source = curve.curve
+    source = curve.curve if isinstance(curve, CurveTrimSegment) else curve
     if not isinstance(source, IntersectionPCurve):
         return None
     return source.side
@@ -292,6 +290,49 @@ def test_nonrational_quadric_boolean_publishes_complete_branches_and_pcurves(
 
     _assert_exhaustive_oriented_lineage(result)
     assert (_source_identity(first), _source_identity(second)) == original
+
+
+def test_closed_branch_endpoints_isolated_on_opposite_seam_bind_one_chart_point() -> None:
+    first = brep_cylinder(
+        1.0, 4.0, base_center=(0.0, 0.0, -2.0), coordinate_contract=_COORDINATES
+    )
+    second = brep_cylinder(
+        0.8,
+        4.0,
+        base_center=(-2.0, 0.0, 0.0),
+        axis=(1.0, 0.0, 0.0),
+        coordinate_contract=_COORDINATES,
+    )
+    model = boolean_brep(first, second, "intersection").model
+    geometry = model.geometry
+    assert geometry is not None
+    closed_faces = tuple(
+        (face, loops[0][0])
+        for face, loops in enumerate(geometry.face_loops)
+        if len(loops) == 1 and len(loops[0]) == 1
+    )
+    # The larger cylinder keeps two disks, each bounded by one closed branch
+    # whose roots were isolated on the smaller cylinder's seam generator.
+    assert len(closed_faces) == 2
+    for face, coedge in closed_faces:
+        start_vertex, end_vertex = geometry.edge_vertices[geometry.coedge_edges[coedge]]
+        assert start_vertex == end_vertex
+        root = geometry.vertex_roots[start_vertex]
+        assert root is not None
+        start, end = geometry.coedge_endpoint_roots[coedge]
+        pcurve = geometry.pcurves[coedge]
+        assert root.same_uv_endpoint(model.patches[face], pcurve, end, pcurve, start)
+        other_faces = tuple(
+            index
+            for index, patch in enumerate(model.patches)
+            if patch is not model.patches[face] and index != face
+        )
+        assert other_faces
+        # The branch p-curve of this face does not bind on a patch carrying the
+        # other branch side.
+        assert not root.same_uv_endpoint(
+            model.patches[other_faces[-1]], pcurve, end, pcurve, start
+        )
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

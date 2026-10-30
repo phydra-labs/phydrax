@@ -80,10 +80,10 @@ type HalfedgeKey = tuple[str, str, str, int]
 def _halfedge_key(piece: Piece) -> HalfedgeKey:
     return piece.arc.token, piece.first.node, piece.last.node, piece.sense
 
+
 def _curve_parameter_interval(curve: AbstractCurve, /) -> tuple[float, float]:
     domain = curve.parameter_domain
     return (-np.inf, np.inf) if domain is None else domain
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +145,6 @@ class FaceArrangementCells:
     parent_tokens: Mapping[str, str] = field(default_factory=dict)
 
 
-
-
 def _root_ids(cuts: Mapping[str, tuple[Cut, ...]]) -> tuple[str, ...]:
     roots: set[str] = set()
     for values in cuts.values():
@@ -192,8 +190,7 @@ def _outward_tangent(
             f"face_cells.root_interval must intersect its trim carrier range; got root={(cut.lower, cut.upper)}, trim={(lower, upper)}",
             (piece.arc.token,),
         )
-    lo, hi = piece.arc.trim.derivative_bounds(
-        first, last)
+    lo, hi = piece.arc.trim.derivative_bounds(first, last)
     if not np.all(np.isfinite((lo, hi))):
         raise BRepBooleanFailure(
             f"face_cells.tangent_bounds must be finite; got {(lo, hi)!r}",
@@ -212,10 +209,7 @@ def _cyclic_order(
     within a halfplane then requires a strictly positive/negative determinant.
     Opposite rays reside in opposite halfplanes and need no false transversality.
     """
-    tangents = tuple(
-        _outward_tangent(piece)
-        for piece in pieces
-    )
+    tangents = tuple(_outward_tangent(piece) for piece in pieces)
     centers = np.asarray([0.5 * (lo + hi) for lo, hi in tangents])
     angles = np.arctan2(centers[:, 1], centers[:, 0]) % np.pi
     candidates = sorted(set(float(angle) for angle in angles))
@@ -273,15 +267,46 @@ class _NodeAliasPair(StrictModule):
     second: str
 
 
+def _same_opposite_root_image(
+    endpoint: BranchRootEndpoint,
+    previous_endpoint: BranchRootEndpoint,
+    columns: slice,
+) -> bool:
+    """Prove one UV sheet for a single root isolated on the opposite face's edge.
+
+    The chart image on this face is the root's own isolation box in this
+    face's parameters, transported by the endpoint gauge. One root id and an
+    identical transported box therefore name one chart representative.
+    """
+    side = "first" if columns.start == 0 else "second"
+    if (
+        endpoint.root.root_id != previous_endpoint.root.root_id
+        or endpoint.source_side in (None, side)
+        or previous_endpoint.source_side in (None, side)
+    ):
+        return False
+    try:
+        image = endpoint.source_image()[:, columns]
+        previous_image = previous_endpoint.source_image()[:, columns]
+    except (TypeError, ValueError, NotImplementedError):
+        return False
+    return bool(np.array_equal(image, previous_image))
+
+
 def _same_sheet_alias(
     arc: Arc,
     cut: Cut,
     endpoint: BranchRootEndpoint,
     previous_source: tuple[Arc, Cut],
     patch: AbstractSurfacePatch,
+    columns: slice,
 ) -> _NodeAliasPair:
     previous_arc, previous_cut = previous_source
     previous_endpoint = previous_cut.endpoint
+    if isinstance(previous_endpoint, BranchRootEndpoint) and _same_opposite_root_image(
+        endpoint, previous_endpoint, columns
+    ):
+        return _NodeAliasPair(first=cut.node, second=previous_cut.node)
     if (
         cut.vertex_root is None
         or not isinstance(previous_endpoint, BranchRootEndpoint)
@@ -323,7 +348,9 @@ def _alias_fixed_trim_node(
         return
     index = int(parameter)
     direction = 1 if cut.parameter == _curve_parameter_interval(arc.trim)[0] else 0
-    shifts = tuple(int(value) for value in branch.node_period_shifts[index, direction, columns])
+    shifts = tuple(
+        int(value) for value in branch.node_period_shifts[index, direction, columns]
+    )
     node = resolve_node(cut.node, aliases)
     key = branch.branch_id, root.point_id, tuple(shifts)
     previous = points.get(key)
@@ -391,14 +418,13 @@ def _fixed_point_nodes(
                         endpoint,
                         previous_source,
                         region.patch,
+                        columns,
                     )
                     merge_node_aliases(aliases, pair.first, pair.second)
                 continue
             if not isinstance(root, IntersectionCurvePointRoot):
                 continue
-            _alias_fixed_trim_node(
-                arc, cut, root, branch, columns, points, aliases
-            )
+            _alias_fixed_trim_node(arc, cut, root, branch, columns, points, aliases)
     return {node: resolve_node(node, aliases) for node in aliases}
 
 
@@ -425,10 +451,7 @@ def _bind_face_graph(
     bound_workset = replace(
         workset, cuts={key: tuple(values) for key, values in cuts_by_arc.items()}
     )
-    aliases = dict(
-        _fixed_point_nodes(
-            owner, bound_workset)
-    )
+    aliases = dict(_fixed_point_nodes(owner, bound_workset))
     root_nodes: dict[str, list[tuple[Arc, Cut]]] = {}
     patch = state.models[owner[0]].patches[owner[1]]
     for arc in workset.arcs:
@@ -502,8 +525,7 @@ def _full_pieces(
     workset: FaceCellWorkset,
 ) -> tuple[Piece, ...]:
     pieces = []
-    bound = _bind_face_graph(
-        state, owner, workset)
+    bound = _bind_face_graph(state, owner, workset)
     local, aliases = bound.arrangement, bound.aliases
     for arc in workset.arcs:
         cuts = ordered_cuts(local, arc)
@@ -620,9 +642,13 @@ def _area_sign(loop: tuple[CurveTrimSegment, ...]) -> int:
         (curve, 0.0, 1.0) for curve in loop
     ]
     if not cells:
-        raise BRepBooleanFailure("face_cells.area_arcs must contain a directed curve; got no arcs")
+        raise BRepBooleanFailure(
+            "face_cells.area_arcs must contain a directed curve; got no arcs"
+        )
 
-    def enclose(pending: list[tuple[AbstractCurve, float, float]]) -> list[tuple[float, float]]:
+    def enclose(
+        pending: list[tuple[AbstractCurve, float, float]],
+    ) -> list[tuple[float, float]]:
         return [
             bound
             for start in range(0, len(pending), 64)
@@ -639,7 +665,9 @@ def _area_sign(loop: tuple[CurveTrimSegment, ...]) -> int:
         if float(upper) < 0.0:
             return -1
         widths = [b - a for a, b in bounds]
-        unbounded = {index for index, width in enumerate(widths) if not np.isfinite(width)}
+        unbounded = {
+            index for index, width in enumerate(widths) if not np.isfinite(width)
+        }
         if unbounded:
             selected = unbounded
         else:
@@ -659,11 +687,19 @@ def _area_sign(loop: tuple[CurveTrimSegment, ...]) -> int:
                 continue
             middle = first + 0.5 * (last - first)
             if not first < middle < last:
-                raise BRepBooleanFailure("face_cells.area_interval remains unresolved at parameter representability")
+                raise BRepBooleanFailure(
+                    "face_cells.area_interval remains unresolved at parameter representability"
+                )
             following.extend(((curve, first, middle), (curve, middle, last)))
             retained.extend((None, None))
         refined = iter(
-            enclose([cell for cell, bound in zip(following, retained, strict=True) if bound is None])
+            enclose(
+                [
+                    cell
+                    for cell, bound in zip(following, retained, strict=True)
+                    if bound is None
+                ]
+            )
         )
         cells = following
         bounds = [next(refined) if bound is None else bound for bound in retained]
@@ -689,7 +725,9 @@ def _loop_signs(
 
 def _reference_box(loop: tuple[CurveTrimSegment, ...]) -> np.ndarray:
     if not loop:
-        raise BRepBooleanFailure("face_cells.reference_loop must contain a source trim segment")
+        raise BRepBooleanFailure(
+            "face_cells.reference_loop must contain a source trim segment"
+        )
     return source_pcurve_image(loop[0], 0.5, 0.5)
 
 
@@ -751,7 +789,9 @@ def _seed_box(
 ) -> np.ndarray:
     boxes = [source_pcurve_image(curve, 0.0, 1.0) for curve in outer]
     if not boxes:
-        raise BRepBooleanFailure("face_cells.seed_loop must contain a source trim segment")
+        raise BRepBooleanFailure(
+            "face_cells.seed_loop must contain a source trim segment"
+        )
     bounds = np.stack(
         (
             np.min(np.stack([box[0] for box in boxes]), axis=0),
@@ -803,10 +843,8 @@ def _publish_face_cells(
     for outer, children in holes.items():
         owned = (outer, *children)
         domain = TrimDomain.from_curve_loops(tuple(exact[index] for index in owned))
-        seed = _seed_box(
-            domain, exact[outer])
-        status = _box_status(
-            state.domains[owner], seed)
+        seed = _seed_box(domain, exact[outer])
+        status = _box_status(state.domains[owner], seed)
         if status == 0:
             raise BRepBooleanFailure(
                 f"face_cells.source_trim_membership must resolve the open-cell seed; got owner={owner}, unresolved classification"
@@ -923,17 +961,13 @@ def _arc_scalar_map(arc: Arc) -> tuple[ChartScalar, ChartScalar] | None:
             case NativePeriodEndpoint():
                 endpoints.append(root.exact_parameter)
             case ConicParameterEndpoint():
-                if (
-                    root.parameter_exact is None
-                    or carrier_payload(root.carrier)
-                    != carrier_payload(arc.trim.curve)
-                ):
+                if root.parameter_exact is None or carrier_payload(
+                    root.carrier
+                ) != carrier_payload(arc.trim.curve):
                     return None
                 endpoints.append(root.parameter_exact)
             case TrimRootEndpoint() as endpoint:
-                parameter = conic_rootline_endpoint_parameter(
-                    arc.trim.curve, endpoint
-                )
+                parameter = conic_rootline_endpoint_parameter(arc.trim.curve, endpoint)
                 if parameter is None:
                     return None
                 endpoints.append(parameter)
@@ -956,9 +990,7 @@ def _fixed_chart_cut(arc: Arc, cut: Cut) -> bool:
     elif isinstance(cut.endpoint, TrimRootEndpoint) and isinstance(
         arc.trim, CurveTrimSegment
     ):
-        exact_parameter = conic_rootline_endpoint_parameter(
-            arc.trim.curve, cut.endpoint
-        )
+        exact_parameter = conic_rootline_endpoint_parameter(arc.trim.curve, cut.endpoint)
         if exact_parameter is None:
             return False
     else:
@@ -1088,9 +1120,9 @@ def scalar_phase(first: Arc, second: Arc) -> tuple[Fraction, Fraction] | None:
                     ):
                         return None
                 case ConicParameterEndpoint():
-                    if not isinstance(b_root, ConicParameterEndpoint) or not same_root_endpoint(
-                        a_root, b_root
-                    ):
+                    if not isinstance(
+                        b_root, ConicParameterEndpoint
+                    ) or not same_root_endpoint(a_root, b_root):
                         return None
                 case TrimRootEndpoint() | BranchRootEndpoint() | NativePeriodEndpoint():
                     if b_root is None:
@@ -1175,8 +1207,7 @@ def _prepare_overlay_graph(
     unique_arcs: dict[str, Arc] = {}
     sources: dict[str, CoincidentFaceArc] = {}
     for overlay in overlays:
-        for arc in _overlay_arcs(
-            state, owner, overlay):
+        for arc in _overlay_arcs(state, owner, overlay):
             unique_arcs.setdefault(arc.token, arc)
         for loops in (overlay.first_loops, overlay.second_loops):
             for loop in loops:
@@ -1361,7 +1392,10 @@ def _record_overlay_events(
                 merge_node_aliases(aliases, old_node, root_node)
             endpoint = TrimRootEndpoint(root, "first" if operand == 0 else "second")
             patch = state.models[owner[0]].patches[owner[1]]
-            xyz = np.asarray(patch.evaluate(jnp.asarray(event.point, dtype=jnp.float64)), dtype=np.float64)
+            xyz = np.asarray(
+                patch.evaluate(jnp.asarray(event.point, dtype=jnp.float64)),
+                dtype=np.float64,
+            )
             if local_node != node:
                 values = cuts[arc.token]
                 index = 0 if local_node == arc.first_node else 1
@@ -1380,7 +1414,8 @@ def prepare_face_cell_workset(
     /,
     *,
     overlays: tuple[CoincidentFaceOverlay, ...] = (),
-    intersection: Callable[[AbstractCurve, AbstractCurve], CurveIntersectionResult] | None = None,
+    intersection: Callable[[AbstractCurve, AbstractCurve], CurveIntersectionResult]
+    | None = None,
 ) -> FaceCellWorkset:
     """Prepare a complete graph from common-chart counterparts and branches."""
     if not overlays:
@@ -1485,6 +1520,7 @@ def prepare_face_cell_workset(
         },
     )
 
+
 def _exact_line_crossing(
     first: Arc, second: Arc
 ) -> tuple[Fraction, Fraction] | Literal[False] | None:
@@ -1587,7 +1623,12 @@ def _add_exact_line_crossing(
         return False
     if known is None:
         node = f"line-crossing:{owner}:{first.token}:{crossing[0]}:{second.token}:{crossing[1]}"
-        xyz = np.asarray(state.models[owner[0]].patches[owner[1]].evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64)
+        xyz = np.asarray(
+            state.models[owner[0]]
+            .patches[owner[1]]
+            .evaluate(jnp.asarray(uv, dtype=jnp.float64)),
+            dtype=np.float64,
+        )
         template = Cut(0.0, 0.0, 0.0, node, node, None, None, xyz)
     else:
         template = replace(known, endpoint=None)
@@ -1719,9 +1760,7 @@ def _transport_phase_cut(
                         (cut.node,),
                     )
             else:
-                exact_parameter = (
-                    raw_scale * endpoint.parameter_exact + raw_offset
-                )
+                exact_parameter = raw_scale * endpoint.parameter_exact + raw_offset
                 source_lower = Fraction.from_float(float(target.trim.first))
                 source_upper = Fraction.from_float(float(target.trim.last))
                 if not source_lower <= exact_parameter <= source_upper:

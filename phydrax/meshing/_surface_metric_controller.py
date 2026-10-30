@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import final
 
-import numpy as np
 from jax.typing import ArrayLike
 
 from .._geometry_predicates import PredicateMode
@@ -21,11 +20,11 @@ from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ._result import CellMeshingResult
 from ._surface_metric import (
-    SurfaceMetricOutcome,
-    SurfaceMetricSource,
     execute_surface_metric_adaptation,
     prepare_implicit_surface_metric_source,
     prepare_surface_metric_source,
+    SurfaceMetricOutcome,
+    SurfaceMetricSource,
 )
 
 
@@ -70,7 +69,9 @@ class SurfaceMetricController:
         charts = self.source.surface_source
         if isinstance(charts, SurfaceSourceCharts):
             if self.implicit_profile is not None:
-                raise ValueError("BRep source charts cannot be paired with an implicit profile.")
+                raise ValueError(
+                    "BRep source charts cannot be paired with an implicit profile."
+                )
             charts.require_root(self.source.mesh, self.source.geometry)
             self.prepared = prepare_surface_metric_source(
                 self.source.mesh,
@@ -133,15 +134,17 @@ class SurfaceMetricController:
             raise ValueError("The fixed surface metric source changed after preparation.")
         if isinstance(charts, SurfaceSourceCharts):
             if charts.source_chart_id != self._source_chart_id:
-                raise ValueError("The fixed surface metric source charts changed after preparation.")
+                raise ValueError(
+                    "The fixed surface metric source charts changed after preparation."
+                )
             charts.require_root(self.source.mesh, self.source.geometry)
         else:
             certification = self.source.certification
             profile = self.implicit_profile
-            if certification is None or not isinstance(
-                profile, AnalyticImplicitProfile
-            ):
-                raise ValueError("Implicit source certification was removed after preparation.")
+            if certification is None or not isinstance(profile, AnalyticImplicitProfile):
+                raise ValueError(
+                    "Implicit source certification was removed after preparation."
+                )
             witness = certification.inputs.fidelity_witness
             fidelity_source = certification.inputs.source
             if (
@@ -149,8 +152,12 @@ class SurfaceMetricController:
                 or witness.witness_id != self._implicit_witness_id
                 or not isinstance(fidelity_source, SourceBoundaryQuery)
             ):
-                raise ValueError("The fixed implicit metric source charts changed after preparation.")
-            witness.require_current(self.source.mesh, self.source.geometry, fidelity_source)
+                raise ValueError(
+                    "The fixed implicit metric source charts changed after preparation."
+                )
+            witness.require_current(
+                self.source.mesh, self.source.geometry, fidelity_source
+            )
         result = execute_surface_metric_adaptation(
             self.prepared,
             predicate_mode=self.predicate_mode,
@@ -158,7 +165,9 @@ class SurfaceMetricController:
             relocation=self.relocation,
         )
         if self.prepared.periodic_rank and result.geometry.periodic_topology_id is None:
-            raise RuntimeError("Periodic UV adaptation lost its synchronized target orbit.")
+            raise RuntimeError(
+                "Periodic UV adaptation lost its synchronized target orbit."
+            )
         self._staged = result
         return result
 

@@ -47,6 +47,7 @@ from ._intersection_curve import (
     IntersectionEndpointKind,
     IntersectionPCurve,
     IntersectionSide,
+    interval_context,
     orthogonal_cylinder_family,
     SurfacePairSystem,
     SurfaceRegion,
@@ -2574,9 +2575,31 @@ class BranchRootEndpoint(StrictModule):
             )
         return lower, upper
 
+    def _source_pcurve_carrier(self) -> tuple[AbstractCurve | None, np.ndarray]:
+        """Split an integer native-period gauge off the source-edge p-curve.
+
+        The root box is enclosed on the ungauged carrier, where an iso-parameter
+        coordinate stays exact; the turns join the endpoint's sheet gauge.
+        """
+        from ._boolean_core import PeriodicPCurve
+
+        turns = np.zeros((4,), dtype=np.int64)
+        pcurve = self.source_pcurve
+        if self.source_side is None:
+            return pcurve, turns
+        offset = 0 if self.source_side == "first" else 2
+        while isinstance(pcurve, PeriodicPCurve):
+            turns[offset : offset + 2] += np.asarray(pcurve.period_shifts, dtype=np.int64)
+            pcurve = pcurve.source_curve
+        return pcurve, turns
+
     def source_gauges(self) -> np.ndarray:
         """Return only explicit integer shifts on natively periodic chart axes."""
         shifts = np.asarray(self.periodic_shifts, dtype=np.int64)
+        if isinstance(self.root, CurveSurfaceIntersectionRoot) and not isinstance(
+            self.root.curve, IntersectionCurve
+        ):
+            shifts = shifts + self._source_pcurve_carrier()[1]
         symbols = (
             *self.curve.first.patch.native_period_symbols(),
             *self.curve.second.patch.native_period_symbols(),
@@ -2685,8 +2708,13 @@ class BranchRootEndpoint(StrictModule):
                     raise ValueError(
                         "A source-edge branch endpoint must bind the opposite branch face."
                     )
+                carrier, _ = self._source_pcurve_carrier()
+                if carrier is None:
+                    raise ValueError(
+                        "A source-edge branch endpoint requires its exact coedge p-curve lift."
+                    )
                 source_box = _curve_parameter_box(
-                    self.source_pcurve, float(lower[0]), float(upper[0])
+                    carrier, float(lower[0]), float(upper[0])
                 )
                 if source_box is None:
                     raise ValueError(
@@ -2737,21 +2765,76 @@ class BranchRootEndpoint(StrictModule):
                 self.curve.node_period_shifts[node, shift_axis], dtype=np.int64
             )
             difference = self.source_gauges() - node_shifts
+            frame = node
+            if self.curve.closed and node == self.curve.num_charts:
+                # The closing node is the start root seen through the closure
+                # deck; compare in the start frame, whose fixed value is exact.
+                closure = self.curve.closure_period_shifts()
+                if np.any(closure):
+                    difference = difference - closure
+                    frame = 0
             transported = image
             if np.any(difference):
                 lower, upper = self.curve.shift_parameter_bounds(difference)
                 from .._interval_enclosure import interval_add
 
                 transported = np.stack(interval_add((image[0], image[1]), (lower, upper)))
-            fixed_axis = int(self.curve.node_axes[node])
-            fixed_value = float(self.curve.node_values[node])
+            fixed_axis = int(self.curve.node_axes[frame])
+            fixed_value = float(self.curve.node_values[frame])
             if (
-                transported[0, fixed_axis] == fixed_value == transported[1, fixed_axis]
-                and np.all(transported[0] >= np.asarray(self.curve.node_lower[node]))
-                and np.all(transported[1] <= np.asarray(self.curve.node_upper[node]))
+                transported[0, fixed_axis] != fixed_value
+                or transported[1, fixed_axis] != fixed_value
+            ):
+                continue
+            node_lower = np.asarray(self.curve.node_lower[frame], dtype=np.float64)
+            node_upper = np.asarray(self.curve.node_upper[frame], dtype=np.float64)
+            if np.all(transported[0] >= node_lower) and np.all(
+                transported[1] <= node_upper
             ):
                 return True
+            if self._isolation_contains_node(transported, node_lower, node_upper):
+                return True
         return False
+
+    def _isolation_contains_node(
+        self, image: np.ndarray, node_lower: np.ndarray, node_upper: np.ndarray, /
+    ) -> bool:
+        """Identify a node lying strictly inside a source-line root isolation box.
+
+        For a source edge with an affine p-curve, the strict image interior is
+        covered by the edge itself. A node there lies on the edge and on the
+        opposite surface within the Krawczyk box, so it is that unique root.
+        """
+        from ._boolean_core import PeriodicPCurve
+        from ._patches import LineCurve
+
+        if (
+            not isinstance(self.root, CurveSurfaceIntersectionRoot)
+            or isinstance(self.root.curve, IntersectionCurve)
+            or self.source_side is None
+        ):
+            return False
+        pcurve = self.source_pcurve
+        while isinstance(pcurve, PeriodicPCurve):
+            pcurve = pcurve.source_curve
+        if not isinstance(pcurve, LineCurve):
+            return False
+        source_axes = (0, 1) if self.source_side == "first" else (2, 3)
+        # Only an iso-parameter line fills the interior of its own image box.
+        if all(image[0, axis] < image[1, axis] for axis in source_axes):
+            return False
+        for axis in range(4):
+            degenerate = image[0, axis] == image[1, axis]
+            if degenerate and axis in source_axes:
+                # A constant affine coordinate is exact along the whole edge.
+                if not node_lower[axis] <= image[0, axis] <= node_upper[axis]:
+                    return False
+                continue
+            if not (
+                image[0, axis] < node_lower[axis] and node_upper[axis] < image[1, axis]
+            ):
+                return False
+        return True
 
 
 class NativePeriodEndpoint(StrictModule):
@@ -3638,8 +3721,6 @@ def _line_cylinder_region_intersections(
     /,
 ) -> CurveIntersectionResult | None:
     """Isolate a line/revolution-cylinder pair from its exact quadratic."""
-    from mpmath.ctx_iv import MPIntervalContext
-
     from .._rational import fraction_down, fraction_up
     from ._patches import CylinderPatch, ExactLineCurve, LineCurve, RevolutionSurface
 
@@ -3749,8 +3830,7 @@ def _line_cylinder_region_intersections(
     source_upper = Fraction.from_float(float(source.last))
     profile_lower = Fraction.from_float(float(surface.parameter_box[0, 1]))
     profile_upper = Fraction.from_float(float(surface.parameter_box[1, 1]))
-    context = MPIntervalContext()
-    context.dps = 100
+    context = interval_context(100)
 
     def scalar(value: Fraction) -> Any:
         return context.mpf(value.numerator) / context.mpf(value.denominator)
@@ -6906,12 +6986,12 @@ def _orthogonal_cylinder_family_intersection(
     large_angle_axis = 2 * family.large_index
     theta_axis = 2 * family.small_index
     source_patches = regions[0].patch, regions[1].patch
-    curves = []
-    for branch_sign in (-1, 1):
-        seed = orthogonal_cylinder_graph_point(family, theta_lower, branch_sign, 0.0)
-        if seed is None:
-            return _unresolved_surface(regions[0], regions[1], "continuation")
-        reference = float(seed[large_angle_axis])
+    large_box = np.asarray(regions[family.large_index].parameter_box, dtype=np.float64)
+    large_lower, large_upper = float(large_box[0, 0]), float(large_box[1, 0])
+
+    def branch_charts(
+        branch_sign: int, reference: float, /
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
         charts = []
         for first, last in zip(
             ordered_breakpoints[:-1], ordered_breakpoints[1:], strict=True
@@ -6922,7 +7002,7 @@ def _orthogonal_cylinder_family_intersection(
                 family, first, last, branch_sign, reference
             )
             if start is None or end is None or bounds is None:
-                return _unresolved_surface(regions[0], regions[1], "continuation")
+                return None
             lower = np.minimum(bounds[0], np.minimum(start, end))
             upper = np.maximum(bounds[1], np.maximum(start, end))
             lower, upper = (
@@ -6930,8 +7010,35 @@ def _orthogonal_cylinder_family_intersection(
                 np.nextafter(upper, np.inf),
             )
             if np.any(lower >= upper):
-                return _unresolved_surface(regions[0], regions[1], "continuation")
+                return None
             charts.append((start, end, lower, upper))
+        return charts
+
+    curves = []
+    for branch_sign in (-1, 1):
+        seed = orthogonal_cylinder_graph_point(family, theta_lower, branch_sign, 0.0)
+        if seed is None:
+            return _unresolved_surface(regions[0], regions[1], "continuation")
+        reference = float(seed[large_angle_axis])
+        charts = branch_charts(branch_sign, reference)
+        if charts is None:
+            return _unresolved_surface(regions[0], regions[1], "continuation")
+        # Select the native-turn gauge that places every chart node of the
+        # branch in the authored large-source chart. The gauge is a choice of
+        # representative only; certification still comes from the chart boxes.
+        node_angles = [float(item[0][large_angle_axis]) for item in charts] + [
+            float(item[1][large_angle_axis]) for item in charts
+        ]
+        turns = math.ceil((large_lower - min(node_angles)) / math.tau)
+        if (
+            turns
+            and large_upper - large_lower >= math.tau
+            and max(node_angles) + turns * math.tau <= large_upper
+        ):
+            reference += turns * math.tau
+            charts = branch_charts(branch_sign, reference)
+            if charts is None:
+                return _unresolved_surface(regions[0], regions[1], "continuation")
 
         node_values = np.asarray(ordered_breakpoints, dtype=np.float64)
         node_lower = []

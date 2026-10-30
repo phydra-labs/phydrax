@@ -1,7 +1,8 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Source-preserving interior collapse/relocation improvement with unmet-quality reporting.
+// Source-preserving interior reconnection, collapse, and relocation improvement
+// with unmet-quality reporting.
 #pragma once
 
 #include <array>
@@ -11,11 +12,11 @@
 
 namespace phx::mc {
 
-// Radius-edge and dihedral targets contribute equally to a normalized
-// satisfaction sum; the weaker component breaks ties. This deterministic score
-// guides local search, but final per-criterion checks—not the score—set status.
-// Determinant validity and source constraints remain hard gates. Each accepted
-// edit is one generation-checked source-preserving batch.
+// Each cell scores the worse of its dihedral and radius-edge target fractions.
+// Every edit is accepted only if its affected cells' worst-first sorted scores
+// strictly improve, with determinant validity and source constraints as hard
+// gates; that one order makes the run terminate. Final per-criterion checks,
+// not the score, set status, and unmet cells are reported individually.
 struct TetQualityRequest {
   double radius_edge_bound;
   double minimum_dihedral_degrees;

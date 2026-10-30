@@ -8,17 +8,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from fractions import Fraction
-from typing import NamedTuple, final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
 from .._fingerprint import canonical_fingerprint
-from .._meshcore import MixedElementKind, mixed_template, mixed_template_counts
+from .._meshcore import mixed_template, mixed_template_counts, MixedElementKind
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import (
@@ -35,6 +34,7 @@ from ..discretization._coordinate_enclosure import (
     compose_expression,
     constant,
     CoordinateSourceBank,
+    ExactScalar,
     Expression,
     expression_equal,
     scale,
@@ -52,14 +52,14 @@ from ..discretization._reference_cell import (
 from ..linalg._exact import solve_exact
 from ._lineage import EntityLineageKind
 from ._topology_edit import (
+    assemble_topology_edit,
     CellTopologyEdit,
+    entity_keys,
     EntityRelations,
+    key_rows,
     PrescribedEntityIds,
     SharedFaceWitnesses,
     TopologyEditBlock,
-    assemble_topology_edit,
-    entity_keys,
-    key_rows,
 )
 
 
@@ -80,6 +80,7 @@ class MixedSibling(NamedTuple):
     column_id: int | None
     interval_index: int | None
 
+
 class MixedCoarseningMap(NamedTuple):
     """Exact child-reference corners in one restored mixed parent reference cell."""
 
@@ -88,6 +89,7 @@ class MixedCoarseningMap(NamedTuple):
     parent_cell_kind: str
     child_cell_ids: NDArray[np.int64]
     child_reference_vertices: tuple[tuple[tuple[Fraction, ...], ...], ...]
+
 
 type _MixedReferenceAffineMap = tuple[
     tuple[tuple[Fraction, ...], ...],
@@ -137,7 +139,6 @@ class MixedActiveCell(NamedTuple):
 class MixedLayerColumns(StrictModule, NonTrainableState):
     """Explicit layer-cell ancestry and the permitted axial schedule changes."""
 
-    __strict_contract__ = True
     cell_ids: Array
     column_ids: Array
     interval_indices: Array
@@ -181,7 +182,9 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
             or np.any(intervals < 0)
             or np.unique(cells).size != cells.size
         ):
-            raise ValueError("Layer columns need aligned unique cells and nonnegative ancestry.")
+            raise ValueError(
+                "Layer columns need aligned unique cells and nonnegative ancestry."
+            )
         flags = (hard_first_thickness, axial_refinement, allow_schedule_change)
         if any(not isinstance(value, (bool, np.bool_)) for value in flags):
             raise TypeError("Layer-column permissions must be bool values.")
@@ -211,11 +214,12 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
 class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
     """Stable cell/vertex allocation and exact sibling ancestry for coarsening."""
 
-    __strict_contract__ = True
     siblings: tuple[MixedSibling, ...] = eqx.field(static=True)
     active_cells: tuple[MixedActiveCell, ...] = eqx.field(static=True)
     vertex_points: tuple[tuple[int, _PointKey], ...] = eqx.field(static=True)
-    retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = eqx.field(static=True)
+    retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = eqx.field(
+        static=True
+    )
     layer_policy: tuple[bool, bool, bool] | None = eqx.field(static=True)
     next_cell_id: int = eqx.field(static=True)
     next_vertex_id: int = eqx.field(static=True)
@@ -238,7 +242,8 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
         ordered_retired = tuple(sorted(retired_entities))
         if (
             len({value.cell_id for value in ordered_cells}) != len(ordered_cells)
-            or len({value.parent_id for value in ordered_siblings}) != len(ordered_siblings)
+            or len({value.parent_id for value in ordered_siblings})
+            != len(ordered_siblings)
             or len({value[0] for value in ordered_points}) != len(ordered_points)
             or len({(value[0], value[1]) for value in ordered_retired})
             != len(ordered_retired)
@@ -253,19 +258,37 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
         high_cell = max(
             high_cell,
             max((value.parent_id for value in ordered_siblings), default=-1),
-            max((child for value in ordered_siblings for child in value.child_ids), default=-1),
+            max(
+                (child for value in ordered_siblings for child in value.child_ids),
+                default=-1,
+            ),
         )
         high_vertex = max(
-            max((vertex for value in ordered_cells for vertex in value.vertices), default=-1),
-            max((vertex for value in ordered_siblings for vertex in value.parent_vertices), default=-1),
+            max(
+                (vertex for value in ordered_cells for vertex in value.vertices),
+                default=-1,
+            ),
+            max(
+                (
+                    vertex
+                    for value in ordered_siblings
+                    for vertex in value.parent_vertices
+                ),
+                default=-1,
+            ),
             max((value[0] for value in ordered_points), default=-1),
         )
         if next_cell_id <= high_cell or next_vertex_id <= high_vertex:
-            raise ValueError("Mixed-adaptation hierarchy allocators must exceed issued IDs.")
+            raise ValueError(
+                "Mixed-adaptation hierarchy allocators must exceed issued IDs."
+            )
         if layer_policy is not None and (
-            len(layer_policy) != 3 or any(type(value) is not bool for value in layer_policy)
+            len(layer_policy) != 3
+            or any(type(value) is not bool for value in layer_policy)
         ):
-            raise ValueError("Mixed-adaptation layer policy must contain three bool values.")
+            raise ValueError(
+                "Mixed-adaptation layer policy must contain three bool values."
+            )
         self.siblings = ordered_siblings
         self.active_cells = ordered_cells
         self.vertex_points = ordered_points
@@ -436,7 +459,10 @@ def _sibling_payload(
             value.parent_vertices,
             value.child_ids,
             tuple(
-                tuple(tuple(_fraction_payload(coordinate) for coordinate in point) for point in child)
+                tuple(
+                    tuple(_fraction_payload(coordinate) for coordinate in point)
+                    for point in child
+                )
                 for child in value.child_reference_vertices
             ),
             value.cell_class,
@@ -447,7 +473,9 @@ def _sibling_payload(
     )
 
 
-def _point_key(kind: str, vertices: NDArray[np.int64], point: NDArray[np.float64], /) -> _PointKey:
+def _point_key(
+    kind: str, vertices: NDArray[np.int64], point: NDArray[np.float64], /
+) -> _PointKey:
     coordinates = tuple(Fraction(float(value)) for value in point)
     x, y = coordinates[:2]
     if kind == "tetrahedron":
@@ -495,6 +523,7 @@ def _point_key(kind: str, vertices: NDArray[np.int64], point: NDArray[np.float64
         )
     )
 
+
 def _template_facts(cell: _Cell, template: _Template, /) -> _TemplateFacts:
     topology = reference_cell_topology(cell.kind)
     child_points = tuple(
@@ -518,11 +547,12 @@ def _template_facts(cell: _Cell, template: _Template, /) -> _TemplateFacts:
         for edge in topology.entities[1]
     }
     split_edges = frozenset(
-        tuple(sorted((int(point[0][0]), int(point[1][0]))))
+        (min(first, second), max(first, second))
         for points in child_points
         for point in points
         if len(point) == 2
-        and tuple(sorted((int(point[0][0]), int(point[1][0])))) in local_edges
+        for first, second in ((int(point[0][0]), int(point[1][0])),)
+        if (min(first, second), max(first, second)) in local_edges
     )
     return _TemplateFacts(
         child_points,
@@ -579,6 +609,7 @@ def _source_cells(
     /,
 ) -> list[_Cell]:
     result: list[_Cell] = []
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     row = 0
     for block in mesh.blocks:
         if not isinstance(block, CellBlock) or block.cell_kind not in (
@@ -590,16 +621,17 @@ def _source_cells(
             raise ValueError(
                 "Mixed adaptation requires fixed tetrahedron, prism, pyramid, and hexahedron blocks."
             )
-        vertices = np.asarray(block.vertices, dtype=np.int64)
+        vertices = vertex_ids[np.asarray(block.vertices, dtype=np.int64)]
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
-        for cell_id, cell_vertices in zip(identifiers, vertices, strict=True):
-            layer = layer_by_id.get(int(cell_id))
+        for local_row in range(identifiers.size):
+            cell_id = int(identifiers[local_row])
+            layer = layer_by_id.get(cell_id)
             result.append(
                 _Cell(
-                    int(cell_id),
+                    cell_id,
                     block.name,
                     block.cell_kind,
-                    cell_vertices.copy(),
+                    vertices[local_row, :].copy(),
                     int(classes[row]),
                     None if layer is None else layer[0],
                     None if layer is None else layer[1],
@@ -616,19 +648,28 @@ def _source_cells(
 def _mesh_facet_owners(
     cells: list[_Cell], /
 ) -> dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]]:
-    owners: dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]] = defaultdict(list)
+    owners: dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]] = defaultdict(
+        list
+    )
     for row, cell in enumerate(cells):
         facets = reference_cell_topology(cell.kind).entities[2]
         for facet, local in enumerate(facets):
             loop = tuple(int(cell.vertices[index]) for index in local)
             owners[tuple(sorted(loop))].append((row, facet, loop))
     if any(len(values) > 2 for values in owners.values()):
-        raise MixedTemplateClosureError("Mixed adaptation requires manifold shared faces.")
+        raise MixedTemplateClosureError(
+            "Mixed adaptation requires manifold shared faces."
+        )
     return owners
 
 
 def _face_signature(
-    cell: _Cell, template: _Template, facet: int, cache: dict[tuple[int, int], _TemplateFacts], index: int, /
+    cell: _Cell,
+    template: _Template,
+    facet: int,
+    cache: dict[tuple[int, int], _TemplateFacts],
+    index: int,
+    /,
 ) -> _FaceSignature:
     key = (index, template.index)
     facts = cache.get(key)
@@ -691,9 +732,15 @@ def _close_templates(
         unresolved = [index for index, values in enumerate(choices) if len(values) > 1]
         if not unresolved:
             return [values[0] for values in choices], steps
+        # Marked cells (identity excluded) are decided first in their preferred
+        # template order; closure cells then follow their constrained faces.
         selected = min(
             unresolved,
-            key=lambda index: (len(choices[index]), cells[index].identifier),
+            key=lambda index: (
+                any(value.index == 0 for value in domains[index]),
+                len(choices[index]),
+                cells[index].identifier,
+            ),
         )
         for candidate in reversed(choices[selected]):
             branch = [values.copy() for values in choices]
@@ -704,7 +751,9 @@ def _close_templates(
     )
 
 
-def _mapping_points(hierarchy: MixedAdaptationHierarchy | None, mesh: CellMesh, /) -> dict[int, _PointKey]:
+def _mapping_points(
+    hierarchy: MixedAdaptationHierarchy | None, mesh: CellMesh, /
+) -> dict[int, _PointKey]:
     if hierarchy is None:
         return {
             int(identifier): ((int(identifier), Fraction(1)),)
@@ -714,7 +763,9 @@ def _mapping_points(hierarchy: MixedAdaptationHierarchy | None, mesh: CellMesh, 
     current = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     missing = [int(value) for value in current if int(value) not in points]
     if missing:
-        raise ValueError("Mixed hierarchy does not retain ancestry for every source vertex.")
+        raise ValueError(
+            "Mixed hierarchy does not retain ancestry for every source vertex."
+        )
     return points
 
 
@@ -723,7 +774,9 @@ def _root_key(point: _PointKey, root_points: dict[int, _PointKey], /) -> _PointK
     for identifier, coefficient in point:
         for root, weight in root_points[identifier]:
             accumulated[root] += coefficient * weight
-    return tuple(sorted((identifier, value) for identifier, value in accumulated.items() if value))
+    return tuple(
+        sorted((identifier, value) for identifier, value in accumulated.items() if value)
+    )
 
 
 def _coarsening_candidates(
@@ -768,7 +821,9 @@ def _coarsening_candidates(
     changed = True
     while changed:
         changed = False
-        removed_children = {child for record in accepted.values() for child in record.child_ids}
+        removed_children = {
+            child for record in accepted.values() for child in record.child_ids
+        }
         faces = _mesh_facet_owners(cells)
         reject_parents: set[int] = set()
         for record in accepted.values():
@@ -808,7 +863,9 @@ def _coarsening_candidates(
                 record = accepted.pop(parent)
                 rejected.update(set(record.child_ids) & marks)
             changed = True
-    accepted_children = {child for record in accepted.values() for child in record.child_ids}
+    accepted_children = {
+        child for record in accepted.values() for child in record.child_ids
+    }
     rejected.update(marks - accepted_children)
     return list(accepted.values()), rejected, accepted_children
 
@@ -864,8 +921,12 @@ def _entity_relations(
             continue
         source_keys = entity_keys(source, degree)
         target_keys = entity_keys(probe, degree)
-        source_vertices = [tuple(int(value) for value in row if value >= 0) for row in source_keys]
-        target_vertices = [tuple(int(value) for value in row if value >= 0) for row in target_keys]
+        source_vertices = [
+            tuple(int(value) for value in row if value >= 0) for row in source_keys
+        ]
+        target_vertices = [
+            tuple(int(value) for value in row if value >= 0) for row in target_keys
+        ]
         source_root_supports = [
             frozenset(root for vertex in row for root, _ in root_points[vertex])
             for row in source_vertices
@@ -900,7 +961,11 @@ def _entity_relations(
                     and tuple(target_key) != source_vertices[row]
                 ):
                     refined.append(
-                        (source_keys[row], target_key, int(EntityLineageKind.REFINED_FROM))
+                        (
+                            source_keys[row],
+                            target_key,
+                            int(EntityLineageKind.REFINED_FROM),
+                        )
                     )
             coarsen_rows = sorted(
                 {
@@ -933,8 +998,12 @@ def _entity_relations(
     return tuple(relations)
 
 
-def _shared_faces(blocks: tuple[TopologyEditBlock, ...], vertex_ids: NDArray[np.int64], /) -> SharedFaceWitnesses:
-    owners: dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]] = defaultdict(list)
+def _shared_faces(
+    blocks: tuple[TopologyEditBlock, ...], vertex_ids: NDArray[np.int64], /
+) -> SharedFaceWitnesses:
+    owners: dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]] = defaultdict(
+        list
+    )
     for block in blocks:
         topology = reference_cell_topology(block.cell_kind)
         for identifier, row in zip(block.cell_ids, block.cells, strict=True):
@@ -1002,9 +1071,12 @@ def _validate_hierarchy(
         for cell in cells
     )
     if active != hierarchy.active_cells:
-        raise ValueError("Mixed-adaptation hierarchy is not bound to this exact active mesh.")
+        raise ValueError(
+            "Mixed-adaptation hierarchy is not bound to this exact active mesh."
+        )
     if not set(vertex_points).issuperset(
-        int(value) for value in np.asarray([vertex for cell in cells for vertex in cell.vertices])
+        int(value)
+        for value in np.asarray([vertex for cell in cells for vertex in cell.vertices])
     ):
         raise ValueError("Mixed-adaptation hierarchy lacks source-vertex ancestry.")
 
@@ -1037,7 +1109,10 @@ def _template_domain(
         facts = _template_facts(cell, template)
         if any(tuple(sorted(edge)) in protected_edges for edge in facts.split_edges):
             continue
-        if any(facts.facets[facet] != identity_facts.facets[facet] for facet in protected_facets):
+        if any(
+            facts.facets[facet] != identity_facts.facets[facet]
+            for facet in protected_facets
+        ):
             continue
         accepted.append(template)
     return accepted
@@ -1051,10 +1126,18 @@ def _target_edit(
     prescribed: tuple[PrescribedEntityIds, ...],
     /,
 ) -> CellTopologyEdit:
-    vertex_ids = np.asarray(sorted({value for cell in target_cells for value in cell.vertices}), dtype=np.int64)
+    vertex_ids = np.asarray(
+        sorted({value for cell in target_cells for value in cell.vertices}),
+        dtype=np.int64,
+    )
     vertex_rows = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
-    coordinates = np.asarray([coordinates_by_id[int(identifier)] for identifier in vertex_ids], dtype=np.float64)
-    width = max((len(target_stencils[int(identifier)]) for identifier in vertex_ids), default=1)
+    coordinates = np.asarray(
+        [coordinates_by_id[int(identifier)] for identifier in vertex_ids],
+        dtype=np.float64,
+    )
+    width = max(
+        (len(target_stencils[int(identifier)]) for identifier in vertex_ids), default=1
+    )
     sources = np.full((vertex_ids.size, width), -1, dtype=np.int64)
     weights = np.zeros((vertex_ids.size, width), dtype=np.float64)
     valid = np.zeros((vertex_ids.size, width), dtype=np.bool_)
@@ -1071,7 +1154,9 @@ def _target_edit(
     families = tuple((block.name, block.cell_kind) for block in mesh.blocks)
     blocks: list[TopologyEditBlock] = []
     for name, kind in families:
-        selected = [cell for cell in target_cells if cell.name == name and cell.kind == kind]
+        selected = [
+            cell for cell in target_cells if cell.name == name and cell.kind == kind
+        ]
         if selected:
             selected.sort(key=lambda value: value.identifier)
             blocks.append(
@@ -1080,7 +1165,10 @@ def _target_edit(
                     kind,
                     kind,
                     np.asarray(
-                        [[vertex_rows[value] for value in cell.vertices] for cell in selected],
+                        [
+                            [vertex_rows[value] for value in cell.vertices]
+                            for cell in selected
+                        ],
                         dtype=np.int32,
                     ),
                     np.asarray([cell.identifier for cell in selected], dtype=np.int64),
@@ -1136,8 +1224,14 @@ def _retired_entity_records(
             for key, identifier, row in zip(source_keys, ids, rows, strict=True)
             if row < 0
         )
-    unique = {(degree, key): identifier for degree, key, identifier in retained if (degree, key) not in restored}
-    return tuple(sorted((degree, key, identifier) for (degree, key), identifier in unique.items()))
+    unique = {
+        (degree, key): identifier
+        for degree, key, identifier in retained
+        if (degree, key) not in restored
+    }
+    return tuple(
+        sorted((degree, key, identifier) for (degree, key), identifier in unique.items())
+    )
 
 
 def _prescribed_entities(
@@ -1178,7 +1272,9 @@ def _cell_transfer(
         (
             (source_id, target.identifier, weight)
             for target in targets
-            for source_id, weight in zip(target.source_ids, target.content_weights, strict=True)
+            for source_id, weight in zip(
+                target.source_ids, target.content_weights, strict=True
+            )
         ),
         key=lambda value: (value[1], value[0]),
     )
@@ -1186,7 +1282,9 @@ def _cell_transfer(
     row_targets = np.asarray([value[1] for value in rows], dtype=np.int64)
     exact = tuple(value[2] for value in rows)
     weights = np.asarray([float(value) for value in exact], dtype=np.float64)
-    target_ids = np.asarray(sorted({target.identifier for target in targets}), dtype=np.int64)
+    target_ids = np.asarray(
+        sorted({target.identifier for target in targets}), dtype=np.int64
+    )
     source_sorted = np.sort(source_ids)
     transfer_id = canonical_fingerprint(
         {
@@ -1209,7 +1307,6 @@ def _cell_transfer(
     )
 
 
-
 def _mixed_reference_maps(
     targets: list[_TargetCell],
     coarsened_parent_ids: set[int],
@@ -1219,7 +1316,9 @@ def _mixed_reference_maps(
     for target in targets:
         if target.identifier not in coarsened_parent_ids:
             if len(target.source_ids) != 1:
-                raise ValueError("Direct mixed reference maps require one source-cell parent.")
+                raise ValueError(
+                    "Direct mixed reference maps require one source-cell parent."
+                )
             grouped[target.kind].append(target)
     witnesses = []
     for kind, values in sorted(grouped.items()):
@@ -1245,18 +1344,15 @@ def _mixed_reference_maps(
     return tuple(witnesses)
 
 
-def _reference_map_arguments(
+def _reference_map_sources(
     witnesses: tuple[ReferenceCellMapWitnesses, ...], /
-) -> dict[int, tuple[int, tuple[Expression, ...]]]:
-    result: dict[int, tuple[int, tuple[Expression, ...]]] = {}
+) -> dict[int, int]:
+    result: dict[int, int] = {}
     for witness in witnesses:
         for mapping in nested_cell_reference_maps(witness):
             if mapping.arguments is None:
                 raise ValueError("Mixed reference-map corners lack an exact chart.")
-            result[mapping.target_cell_id] = (
-                mapping.source_cell_id,
-                mapping.arguments,
-            )
+            result[mapping.target_cell_id] = mapping.source_cell_id
     return result
 
 
@@ -1279,14 +1375,20 @@ def _exact_child_to_parent_affine_map(
     if len(child_parent_vertices) != len(local) or any(
         len(point) != dimension for point in child_parent_vertices
     ):
-        raise ValueError("Mixed sibling reference corners do not match their cell family.")
+        raise ValueError(
+            "Mixed sibling reference corners do not match their cell family."
+        )
     local_matrix = tuple(
-        tuple(local[basis[column]][row] - local[0][row] for column in range(dimension))
+        tuple(
+            local[basis[column + 1]][row] - local[basis[0]][row]
+            for column in range(dimension)
+        )
         for row in range(dimension)
     )
     parent_matrix = tuple(
         tuple(
-            child_parent_vertices[basis[column]][row] - child_parent_vertices[0][row]
+            child_parent_vertices[basis[column + 1]][row]
+            - child_parent_vertices[basis[0]][row]
             for column in range(dimension)
         )
         for row in range(dimension)
@@ -1333,10 +1435,10 @@ def _mixed_coarsening_reference_transforms(
     seen_children: set[int] = set()
     for record in maps:
         child_ids = np.asarray(record.child_cell_ids, dtype=np.int64)
-        if child_ids.ndim != 1 or child_ids.size != len(
-            record.child_reference_vertices
-        ):
-            raise ValueError("Mixed coarsening reference rows do not align with child IDs.")
+        if child_ids.ndim != 1 or child_ids.size != len(record.child_reference_vertices):
+            raise ValueError(
+                "Mixed coarsening reference rows do not align with child IDs."
+            )
         for child_id_raw, exact_vertices in zip(
             child_ids, record.child_reference_vertices, strict=True
         ):
@@ -1344,12 +1446,32 @@ def _mixed_coarsening_reference_transforms(
             if child_id in seen_children:
                 raise ValueError("Mixed coarsening maps repeat a source child cell.")
             seen_children.add(child_id)
-            result[(record.parent_cell_id, child_id)] = (
-                _exact_child_to_parent_affine_map(
-                    record.parent_cell_kind, exact_vertices
-                )
+            result[(record.parent_cell_id, child_id)] = _exact_child_to_parent_affine_map(
+                record.parent_cell_kind, exact_vertices
             )
     return result
+
+
+def _affine_chart(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    offset: tuple[Fraction, ...],
+    /,
+) -> tuple[Expression, ...]:
+    dimension = len(offset)
+    variables = axes(dimension)
+    return tuple(
+        sum_polynomials(
+            (
+                constant(offset[row], dimension),
+                *(
+                    scale(variables[column], matrix[row][column])
+                    for column in range(dimension)
+                ),
+            ),
+            dimension,
+        )
+        for row in range(dimension)
+    )
 
 
 def _parent_to_child_chart(
@@ -1362,26 +1484,16 @@ def _parent_to_child_chart(
         tuple(Fraction(int(row == column)) for column in range(dimension))
         for row in range(dimension)
     )
-    inverse = solve_exact(matrix, identity)
-    variables = axes(dimension)
-    return tuple(
-        sum_polynomials(
-            (
-                constant(
-                    -sum(
-                        (inverse[row][column] * offset[column] for column in range(dimension)),
-                        Fraction(0),
-                    ),
-                    dimension,
-                ),
-                *(
-                    scale(variables[column], inverse[row][column])
-                    for column in range(dimension)
-                ),
-            ),
-            dimension,
-        )
-        for row in range(dimension)
+    inverse = tuple(tuple(row) for row in solve_exact(matrix, identity))
+    return _affine_chart(
+        inverse,
+        tuple(
+            -sum(
+                (inverse[row][column] * offset[column] for column in range(dimension)),
+                Fraction(0),
+            )
+            for row in range(dimension)
+        ),
     )
 
 
@@ -1401,7 +1513,7 @@ def _mixed_target_geometry(
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
     }
     target_by_id = {target.identifier: target for target in targets}
-    direct_maps = _reference_map_arguments(reference_maps)
+    direct_sources = _reference_map_sources(reference_maps)
     coarsened = {value.parent_cell_id: value for value in coarsening_maps}
 
     def source_chart(
@@ -1417,7 +1529,11 @@ def _mixed_target_geometry(
         chain = coordinate_reference_chain(element)
         chart = restriction_chart_arguments(element, cell_row=row)
         if chart is None:
-            chart = axes(reference_cell_topology(source_mesh.blocks[block_index].cell_kind).dimension)
+            chart = axes(
+                reference_cell_topology(
+                    source_mesh.blocks[block_index].cell_kind
+                ).dimension
+            )
         return (
             chain[0],
             tuple(chart),
@@ -1436,59 +1552,80 @@ def _mixed_target_geometry(
             target = target_by_id[int(target_id)]
             coarsening = coarsened.get(int(target_id))
             if coarsening is None:
-                direct = direct_maps.get(int(target_id))
-                if direct is None:
-                    raise ValueError("Mixed target geometry lacks exact source-cell ancestry.")
-                source_id, target_chart = direct
+                source_id = direct_sources.get(int(target_id), -1)
+                if source_id < 0 or source_id != target.source_ids[0]:
+                    raise ValueError(
+                        "Mixed target geometry lacks exact source-cell ancestry."
+                    )
+                # Family-preserving templates are affine sub-cells; the exact affine
+                # chart avoids the removable rational form of collapsed families.
+                target_chart = _affine_chart(
+                    *_exact_child_to_parent_affine_map(
+                        target.kind, target.reference_vertices
+                    )
+                )
                 root, source_chart_arguments, route = source_chart(source_id)
                 chart = tuple(
                     compose_expression(value, target_chart)
                     for value in source_chart_arguments
                 )
             else:
-                root = None
-                route = None
-                chart = None
+                candidates: list[
+                    tuple[
+                        int,
+                        ScalarCoordinateElement,
+                        tuple[Expression, ...],
+                        NDArray[np.int32],
+                    ]
+                ] = []
                 for child_id, child_vertices in zip(
-                    np.asarray(coarsening.child_cell_ids, dtype=np.int64),
+                    np.asarray(coarsening.child_cell_ids, dtype=np.int64).tolist(),
                     coarsening.child_reference_vertices,
                     strict=True,
                 ):
-                    child_root, child_chart, child_route = source_chart(int(child_id))
+                    child_root, child_chart, child_route = source_chart(child_id)
                     child_matrix, child_offset = _exact_child_to_parent_affine_map(
                         coarsening.parent_cell_kind, child_vertices
                     )
                     parent_to_child = _parent_to_child_chart(child_matrix, child_offset)
-                    candidate_chart = tuple(
-                        compose_expression(value, parent_to_child)
-                        for value in child_chart
+                    candidates.append(
+                        (
+                            child_id,
+                            child_root,
+                            tuple(
+                                compose_expression(value, parent_to_child)
+                                for value in child_chart
+                            ),
+                            child_route,
+                        )
                     )
-                    if root is None:
-                        root = child_root
-                        route = child_route
-                        chart = candidate_chart
-                        source_id = int(child_id)
-                    elif (
-                        root.element_id != child_root.element_id
-                        or not np.array_equal(route, child_route)
-                        or any(
-                            not expression_equal(first, second)
-                            for first, second in zip(chart, candidate_chart, strict=True)
-                        )
-                    ):
-                        raise ValueError(
-                            "Mixed sibling source maps do not reconstruct one exact parent map."
-                        )
-                if root is None or route is None or chart is None:
+                if not candidates:
                     raise ValueError("A mixed coarsening map has no source children.")
+                source_id, root, chart, route = candidates[0]
+                if any(
+                    other_root.element_id != root.element_id
+                    or not np.array_equal(other_route, route)
+                    or any(
+                        not expression_equal(first, second)
+                        for first, second in zip(chart, other_chart, strict=True)
+                    )
+                    for _, other_root, other_chart, other_route in candidates[1:]
+                ):
+                    raise ValueError(
+                        "Mixed sibling source maps do not reconstruct one exact parent map."
+                    )
             if route.shape != (root.local_dof_count,):
-                raise ValueError("Mixed source geometry roots do not match their DOF routes.")
+                raise ValueError(
+                    "Mixed source geometry roots do not match their DOF routes."
+                )
             roots.append(root)
             source_ids.append(source_id)
             chart_rows.append(chart)
             route_rows.append(route)
         if not roots or any(value.element_id != roots[0].element_id for value in roots):
-            raise ValueError("A mixed target block cannot combine unrelated geometry roots.")
+            raise ValueError(
+                "A mixed target block cannot combine unrelated geometry roots."
+            )
         elements[block.name] = PerCellRestrictedCellGeometryElement(
             roots[0],
             block.cell_kind,
@@ -1503,24 +1640,24 @@ def _mixed_target_geometry(
 def _exact_target_vertex_coordinates(
     geometry: CellGeometrySpec,
     mesh: CellMesh,
-    targets: list[_TargetCell],
     edit_vertex_ids: NDArray[np.int64],
     /,
 ) -> NDArray[np.float64]:
-    target_by_id = {target.identifier: target for target in targets}
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    exact_coordinates: dict[int, tuple[object, ...]] = {}
+    exact_coordinates: dict[int, tuple[ExactScalar, ...]] = {}
     for block in mesh.blocks:
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
-        references = tuple(
-            (target_by_id[int(identifier)].reference_vertices,)
-            for identifier in identifiers
+        corners = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in reference_cell_topology(block.cell_kind).vertices
         )
-        evaluated = geometry.evaluate_exact(mesh, identifiers, references)
+        evaluated = geometry.evaluate_exact(
+            mesh, identifiers, tuple(corners for _ in identifiers)
+        )
         cells = np.asarray(block.vertices, dtype=np.int64)
-        for row, (cell, points) in enumerate(zip(cells, evaluated, strict=True)):
+        for cell, points in zip(cells, evaluated, strict=True):
             local_ids = vertex_ids[cell]
-            for vertex_id, point in zip(local_ids, points[0], strict=True):
+            for vertex_id, point in zip(local_ids, points, strict=True):
                 key = int(vertex_id)
                 previous = exact_coordinates.get(key)
                 value = tuple(point)
@@ -1539,7 +1676,7 @@ def _exact_target_vertex_coordinates(
         dtype=np.float64,
     )
 
-@final
+
 def adapt_mixed_mesh(
     mesh: CellMesh,
     /,
@@ -1566,7 +1703,9 @@ def adapt_mixed_mesh(
     if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:
         raise ValueError("Mixed volume adaptation requires a 3D mesh in 3D coordinates.")
     if mesh.periodic_topology is not None:
-        raise ValueError("Mixed-family edits require an explicit periodic-orbit closure route.")
+        raise ValueError(
+            "Mixed-family edits require an explicit periodic-orbit closure route."
+        )
     if hierarchy is not None and not isinstance(hierarchy, MixedAdaptationHierarchy):
         raise TypeError("hierarchy must be MixedAdaptationHierarchy or None.")
     if layer_columns is not None and not isinstance(layer_columns, MixedLayerColumns):
@@ -1581,8 +1720,14 @@ def adapt_mixed_mesh(
         if cell_classes is None
         else np.asarray(cell_classes)
     )
-    if classes.ndim != 1 or classes.shape != (block_count,) or classes.dtype.kind not in "iu":
-        raise TypeError("cell_classes must be an integer vector aligned with source block order.")
+    if (
+        classes.ndim != 1
+        or classes.shape != (block_count,)
+        or classes.dtype.kind not in "iu"
+    ):
+        raise TypeError(
+            "cell_classes must be an integer vector aligned with source block order."
+        )
     classes = classes.astype(np.int64, copy=False)
     if np.any(classes < 0):
         raise ValueError("cell_classes must be nonnegative.")
@@ -1600,7 +1745,9 @@ def adapt_mixed_mesh(
         }
     )
     if hierarchy is not None and cell_classes is None:
-        class_by_id = {value.cell_id: value.cell_class for value in hierarchy.active_cells}
+        class_by_id = {
+            value.cell_id: value.cell_class for value in hierarchy.active_cells
+        }
         row = 0
         for block in mesh.blocks:
             for identifier in np.asarray(block.global_ids, dtype=np.int64):
@@ -1629,17 +1776,23 @@ def adapt_mixed_mesh(
                 if value.column_id is not None
             }
             if old_layers != layer_values:
-                raise ValueError("Layer-column ancestry differs from the bound hierarchy.")
+                raise ValueError(
+                    "Layer-column ancestry differs from the bound hierarchy."
+                )
             if hierarchy.layer_policy != (
                 layer_columns.hard_first_thickness,
                 layer_columns.axial_refinement,
                 layer_columns.allow_schedule_change,
             ):
-                raise ValueError("Layer-column permissions differ from the bound hierarchy.")
+                raise ValueError(
+                    "Layer-column permissions differ from the bound hierarchy."
+                )
     refine = set(_integer_vector(refine_cell_ids, "refine_cell_ids").tolist())
     coarsen_marks = set(_integer_vector(coarsen_cell_ids, "coarsen_cell_ids").tolist())
     if refine & coarsen_marks:
-        raise ValueError("A mixed cell cannot be marked for both refinement and coarsening.")
+        raise ValueError(
+            "A mixed cell cannot be marked for both refinement and coarsening."
+        )
     if not refine.issubset(active_ids) or not coarsen_marks.issubset(active_ids):
         raise ValueError("Mixed adaptation marks must name current source cell IDs.")
     protected_vertices = _protected_id_set(protected_vertex_ids, "protected_vertex_ids")
@@ -1687,9 +1840,13 @@ def adapt_mixed_mesh(
         coarsen_sources[record.parent_id] = record.child_ids
     working.sort(key=lambda value: value.identifier)
     if len(working) == 0:
-        raise MixedTemplateClosureError("Mixed adaptation cannot remove every source cell.")
+        raise MixedTemplateClosureError(
+            "Mixed adaptation cannot remove every source cell."
+        )
     if any(not set(cell.vertices.tolist()).issubset(coordinate_rows) for cell in working):
-        raise ValueError("Restored mixed parent corners are absent from source coordinates.")
+        raise ValueError(
+            "Restored mixed parent corners are absent from source coordinates."
+        )
 
     owners = _mesh_facet_owners(working)
     interfaces = [
@@ -1781,12 +1938,14 @@ def adapt_mixed_mesh(
         facts = _template_facts(cell, template)
         child_ids: list[int] = []
         reference_rows: list[tuple[tuple[Fraction, ...], ...]] = []
-        split_axial = cell.kind in ("prism", "hexahedron") and any(
-            np.ptp(child[:, 2]) < 1.0 for child in template.children
+        children = tuple(
+            template.children[child_row, :, :]
+            for child_row in range(template.children.shape[0])
         )
-        for child_index, (child, point_keys) in enumerate(
-            zip(template.children, facts.points, strict=True)
-        ):
+        split_axial = cell.kind in ("prism", "hexahedron") and any(
+            np.ptp(child[:, 2]) < 1.0 for child in children
+        )
+        for child, point_keys in zip(children, facts.points, strict=True):
             target_vertices: list[int] = []
             for key in point_keys:
                 if len(key) == 1 and key[0][1] == 1:
@@ -1810,8 +1969,7 @@ def adapt_mixed_mesh(
             next_cell_id += 1
             child_ids.append(identifier)
             reference = tuple(
-                tuple(Fraction(float(value)) for value in point)
-                for point in child
+                tuple(Fraction(float(value)) for value in point) for point in child
             )
             reference_rows.append(reference)
             interval = cell.interval_index
@@ -1851,8 +2009,13 @@ def adapt_mixed_mesh(
         if identifier not in target_stencils:
             target_stencils[identifier] = ((identifier, Fraction(1)),)
     # Keep only active output vertices; fresh IDs remain above the hierarchy high-water mark.
-    target_stencils = {identifier: target_stencils[identifier] for identifier in target_used}
-    target_coordinates = {identifier: coordinate_rows[identifier] for identifier in target_used}
+    target_stencils = {
+        identifier: target_stencils[identifier] for identifier in target_used
+    }
+    target_coordinates = {
+        identifier: coordinate_rows[identifier] for identifier in target_used
+    }
+    prescribed = _prescribed_entities(mesh, hierarchy)
     provisional = _target_edit(
         mesh,
         output,
@@ -1944,8 +2107,18 @@ def adapt_mixed_mesh(
         )
         if retained_map is not None:
             target_geometry = CellGeometrySpec(
-                dict(zip(target_geometry.block_names, target_geometry.elements, strict=True)),
-                dict(zip(target_geometry.block_names, target_geometry.geometry_dofs, strict=True)),
+                dict(
+                    zip(
+                        target_geometry.block_names, target_geometry.elements, strict=True
+                    )
+                ),
+                dict(
+                    zip(
+                        target_geometry.block_names,
+                        target_geometry.geometry_dofs,
+                        strict=True,
+                    )
+                ),
                 target_geometry.coordinates,
                 source_map=retained_map,
                 source_mesh=target_mesh,
@@ -1953,7 +2126,6 @@ def adapt_mixed_mesh(
         exact_coordinates = _exact_target_vertex_coordinates(
             target_geometry,
             target_mesh,
-            output,
             np.asarray(edit.vertex_global_ids, dtype=np.int64),
         )
         edit = edit._replace(coordinates=exact_coordinates)
@@ -1962,8 +2134,18 @@ def adapt_mixed_mesh(
         )
         if retained_map is not None:
             target_geometry = CellGeometrySpec(
-                dict(zip(target_geometry.block_names, target_geometry.elements, strict=True)),
-                dict(zip(target_geometry.block_names, target_geometry.geometry_dofs, strict=True)),
+                dict(
+                    zip(
+                        target_geometry.block_names, target_geometry.elements, strict=True
+                    )
+                ),
+                dict(
+                    zip(
+                        target_geometry.block_names,
+                        target_geometry.geometry_dofs,
+                        strict=True,
+                    )
+                ),
                 target_geometry.coordinates,
                 source_map=retained_map,
                 source_mesh=target_mesh,
@@ -2016,7 +2198,11 @@ def adapt_mixed_mesh(
     coarsened_ids = np.asarray(sorted(removed), dtype=np.int64)
     rejected_ids = np.asarray(sorted(rejected), dtype=np.int64)
     changed_ids = np.asarray(sorted(schedule_changed), dtype=np.int64)
-    work = sum(template.children.size for template in chosen) + len(interfaces) + closure_steps
+    work = (
+        sum(template.children.size for template in chosen)
+        + len(interfaces)
+        + closure_steps
+    )
     evidence_id = canonical_fingerprint(
         {
             "kind": "mixed-adaptation-evidence",
@@ -2045,7 +2231,6 @@ def adapt_mixed_mesh(
         evidence_id,
     )
 
-
     return MixedAdaptationOutcome(
         edit,
         successor,
@@ -2055,6 +2240,8 @@ def adapt_mixed_mesh(
         reference_maps,
         target_geometry,
     )
+
+
 __all__ = [
     "MixedAdaptationEvidence",
     "MixedAdaptationHierarchy",

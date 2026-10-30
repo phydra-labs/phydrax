@@ -24,7 +24,6 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from fractions import Fraction
 from itertools import combinations
-from typing import Protocol
 
 import equinox as eqx
 import jax
@@ -65,14 +64,14 @@ from ._boolean_core import (
     side_payload,
     trim_source_join,
 )
-from ._projection import NativeBRepProjection
-from ._projection_contracts import BRepEntityDimension, BRepProjectionStatus
+from ._carrier_pieces import child_coefficient_enclosures, SurfacePiece
 from ._intersection import SurfaceIntersectionResult
 from ._intersection_curve import CurveTrimSegment
-from ._carrier_pieces import SurfacePiece, child_coefficient_enclosures
 from ._interval_source import evaluate_interval
 from ._model import BRepEntityId, BRepModel
 from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._projection import NativeBRepProjection
+from ._projection_contracts import BRepEntityDimension, BRepProjectionStatus
 
 
 type FacePair = tuple[FaceOwner, FaceOwner]
@@ -121,6 +120,7 @@ def _entity_occurrences(model: BRepModel, kind: str, /) -> tuple[BRepEntityId, .
             }
         )
     )
+
 
 @dataclass(frozen=True, slots=True)
 class MaterialEnclosureEvidence:
@@ -1381,9 +1381,29 @@ def _pair_overlap(
     source_labels = {label.classification_key: label for label in classification.labels}
     witnesses = []
     for key in sorted(set(source_keys) | set(target_keys)):
+        # Cell labels name the model-level solid; a source occurrence of that
+        # solid shares its material label.
         individual = next(
-            item for item in source_labels[key].solids if item.solid == source
+            (
+                item
+                for item in source_labels[key].solids
+                if item.solid == source
+                or (
+                    item.solid.model_index == source.model_index
+                    and item.solid.entity.occurrence_path == ()
+                    and replace(
+                        item.solid.entity, occurrence_path=source.entity.occurrence_path
+                    )
+                    == source.entity
+                )
+            ),
+            None,
         )
+        if individual is None:
+            raise BRepBooleanFailure(
+                "BRepBoolean.material.label must classify every source solid occurrence",
+                (key, str(source.entity)),
+            )
         target_label = target_labels[key][target.index]
         if _joint_inside(individual, target_label):
             witnesses.append(key)
@@ -1655,11 +1675,7 @@ def prove_material_overlaps(
         )
     entity_pairs = tuple(
         sorted(
-            (
-                (item.source, item.target)
-                for item in overlaps
-                if item.overlaps
-            ),
+            ((item.source, item.target) for item in overlaps if item.overlaps),
             key=lambda pair: (
                 pair[0].model_index,
                 pair[0].entity,
@@ -1668,9 +1684,7 @@ def prove_material_overlaps(
         )
     )
     mapped_sources = {source for source, _ in entity_pairs}
-    deleted_sources = tuple(
-        source for source in sources if source not in mapped_sources
-    )
+    deleted_sources = tuple(source for source in sources if source not in mapped_sources)
     certificate = canonical_fingerprint(
         {
             "kind": "native-exhaustive-solid-material-ancestry",
@@ -1678,8 +1692,7 @@ def prove_material_overlaps(
             "target": target_completion,
             "overlaps": tuple(item.certificate_id for item in overlaps),
             "pairs": tuple(
-                (asdict(source), asdict(target))
-                for source, target in entity_pairs
+                (asdict(source), asdict(target)) for source, target in entity_pairs
             ),
             "deleted_sources": tuple(asdict(source) for source in deleted_sources),
         }

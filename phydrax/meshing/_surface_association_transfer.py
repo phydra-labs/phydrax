@@ -10,14 +10,14 @@ from fractions import Fraction
 from typing import final
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellMesh
-from ..discretization._cell_mesh import SimplicialConnectivity
-from ..geometry._meshing_domain import MeshingDomain
+from ..discretization import CellBlock, CellMesh
+from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
 from ._association import (
@@ -69,13 +69,22 @@ def _class_code(
 
 
 def _simplex_edges(mesh: CellMesh, /) -> np.ndarray:
-    connectivity = mesh.connectivity
-    if (
-        not isinstance(connectivity, SimplicialConnectivity)
-        or connectivity.dimension != 2
-    ):
+    """Edge vertex rows aligned with the mesh's canonical edge entity set."""
+    from ._topology_edit import entity_keys
+
+    if any(block.cell_kind != "triangle" for block in mesh.blocks):
         raise ValueError("Surface association transfer requires triangular incidence.")
-    return np.asarray(connectivity.entities[1], dtype=np.int64)
+    keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
+    vertex_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    return np.asarray(
+        [[vertex_rows[int(value)] for value in key] for key in keys.tolist()],
+        dtype=np.int64,
+    ).reshape((-1, 2))
 
 
 def _target_edge_parameter(
@@ -119,6 +128,96 @@ def _target_edge_parameter(
             "A trim-edge split parameter must lie strictly inside its source interval."
         )
     return parameter
+
+
+def _trim_child_parameter(
+    edge_table: GeometryAssociation,
+    table_row: int,
+    vertex_id: int,
+    source_mesh: CellMesh,
+    source_edge_row: int,
+    stencil: VertexInterpolationStencil,
+    /,
+) -> Fraction:
+    """Exact source-curve parameter of a vertex created on one trim edge."""
+    interval = edge_table.source_parameter_intervals[table_row]
+    if interval is None:
+        raise ValueError(
+            "Trimmed curve-edge association requires exact source parameter intervals."
+        )
+    sign = int(np.asarray(edge_table.orientations, dtype=np.int8)[table_row])
+    if sign not in (-1, 1):
+        raise ValueError("Trimmed curve-edge parents must retain source orientation.")
+    endpoints = _simplex_edges(source_mesh)[source_edge_row]
+    source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    fraction = _target_edge_parameter(
+        vertex_id,
+        (int(source_vertex_ids[endpoints[0]]), int(source_vertex_ids[endpoints[1]])),
+        stencil,
+    )
+    if sign < 0:
+        fraction = 1 - fraction
+    return interval[0] + fraction * (interval[1] - interval[0])
+
+
+def _trim_curve_point(
+    domain: MeshingDomain, curve: int, parameter: Fraction, /
+) -> np.ndarray:
+    from .providers._native_surface import _source_curve_point
+
+    return np.asarray(_source_curve_point(domain, curve, parameter), dtype=np.float64)
+
+
+def _use_chart(use: PatchCurveUse, parameter: float, /) -> np.ndarray:
+    native = use.first + parameter * (use.last - use.first)
+    return np.asarray(
+        use.pcurve.evaluate(jnp.asarray(native, dtype=jnp.float64)), dtype=np.float64
+    ).reshape((2,))
+
+
+def _source_vertex_chart(
+    domain: MeshingDomain,
+    patch: int,
+    dimension: int,
+    index: int,
+    parameters: np.ndarray,
+    /,
+) -> np.ndarray:
+    """One chart point of a source vertex on ``patch``, or NaN when not unique.
+
+    Patch vertices keep their UV; curve and corner vertices are mapped through
+    the patch's trim p-curves at their canonical curve parameter or endpoint.
+    """
+    missing = np.full((2,), np.nan, dtype=np.float64)
+    if dimension == 2:
+        return np.asarray(parameters, dtype=np.float64).reshape((2,))
+    uses = tuple(
+        use
+        for loop in domain.patches[patch].loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+    )
+    if dimension == 1:
+        candidates = [
+            _use_chart(use, float(parameters[0])) for use in uses if use.curve == index
+        ]
+    elif dimension == 0:
+        candidates = [
+            _use_chart(use, endpoint)
+            for use in uses
+            for endpoint, corner in (
+                (0.0, domain.curves[use.curve].start),
+                (1.0, domain.curves[use.curve].end),
+            )
+            if corner == index
+        ]
+    else:
+        return missing
+    if not candidates or any(
+        not np.array_equal(candidates[0], candidate) for candidate in candidates[1:]
+    ):
+        return missing
+    return candidates[0]
 
 
 @final
@@ -591,6 +690,31 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             parent_ids[target_row] = int(
                 source_mesh.entity_set(source_dimension).entity_ids[source_entity_row]
             )
+            if selected_table is edge_table and edge_table is not None:
+                # A bisected trim-edge child lies on the chord of its source
+                # edge, not on the patch: the trim curve continues past the
+                # chart boundary, so a closest-point query on the patch lands
+                # outside the trim. Its stratum is the source curve at the exact
+                # split parameter of the parent edge's source interval.
+                curve_parameter = _trim_child_parameter(
+                    edge_table,
+                    selected_table_row,
+                    identifier,
+                    source_mesh,
+                    source_entity_row,
+                    stencil,
+                )
+                curve_point = _trim_curve_point(
+                    self.domain, int(vertex_indices[target_row]), curve_parameter
+                )
+                parameters[target_row] = (float(curve_parameter), np.nan)
+                residuals[target_row] = float(
+                    np.linalg.norm(
+                        np.asarray(target_mesh.coordinates, dtype=np.float64)[target_row]
+                        - curve_point
+                    )
+                )
+                continue
             patch = self._patch_index(
                 int(vertex_dimensions[target_row]),
                 int(vertex_indices[target_row]),
@@ -613,10 +737,32 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Surface vertex stencil references unknown source vertices."
                 )
-            uv = np.asarray(old.parameters, dtype=np.float64)[
-                old.target_rows(stencil_sources[stencil_valid])
-            ]
-            seed = np.sum(uv * stencil_weights[stencil_valid, None], axis=0)
+            source_parent_rows = old.target_rows(stencil_sources[stencil_valid])
+            uv = np.stack(
+                [
+                    _source_vertex_chart(
+                        self.domain,
+                        patch,
+                        int(np.asarray(old.source_dimensions)[int(parent_row)]),
+                        int(np.asarray(old.source_indices)[int(parent_row)]),
+                        np.asarray(old.parameters, dtype=np.float64)[int(parent_row)],
+                    )
+                    for parent_row in np.asarray(source_parent_rows).tolist()
+                ]
+            )
+            # The seed is the stencil mean of the parents' charts on this patch;
+            # parents without one patch chart point are omitted, and the
+            # projection itself is verified below.
+            weights = stencil_weights[stencil_valid]
+            finite = np.all(np.isfinite(uv), axis=1)
+            if not np.any(finite) or np.sum(weights[finite]) <= 0.0:
+                raise AssociationPropagationError(
+                    "Trimmed surface vertex has no patch-chart stencil sample to seed its projection.",
+                    np.asarray((identifier,), dtype=np.int64),
+                )
+            seed = np.sum(uv[finite] * weights[finite, None], axis=0) / np.sum(
+                weights[finite]
+            )
             projected_rows.append(target_row)
             projected_patches.append(patch)
             projected_seeds.append((float(seed[0]), float(seed[1])))
@@ -686,15 +832,20 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             )
         source_rows = rows.association_rows
         target_ids = rows.target_ids
-        connectivity = target.connectivity
-        if (
-            not isinstance(connectivity, SimplicialConnectivity)
-            or connectivity.dimension != 2
-        ):
-            raise ValueError(
-                "Trimmed surface target must retain triangular connectivity."
-            )
-        cells = np.asarray(connectivity.entities[2], dtype=np.int64)
+        cell_vertices: dict[int, list[int]] = {}
+        for block in target.blocks:
+            if not isinstance(block, CellBlock) or block.cell_kind != "triangle":
+                raise ValueError("Trimmed surface target must retain triangle blocks.")
+            for identifier, vertices in zip(
+                np.asarray(block.global_ids, dtype=np.int64).tolist(),
+                np.asarray(block.vertices, dtype=np.int64).tolist(),
+                strict=True,
+            ):
+                cell_vertices[int(identifier)] = vertices
+        cells = np.asarray(
+            [cell_vertices[int(identifier)] for identifier in target_ids.tolist()],
+            dtype=np.int64,
+        )
         centroid = np.mean(
             np.asarray(target.coordinates, dtype=np.float64)[cells], axis=1
         )
