@@ -630,8 +630,8 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 receptor_fringe,
             ) = _overset_masks(
                 overset,
-                np.asarray(overset.donor_covered_measures).size,
                 int(discretization.cell_count),
+                np.asarray(overset.donor_covered_measures).size,
             )
             del donor_active, donor_hole, donor_fringe, receptor_fringe
             if overset.donor_topology_id == discretization.topology_id:

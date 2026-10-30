@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
 from math import prod
 from numbers import Integral
@@ -109,10 +109,8 @@ _OwnerLocalPeriodicFaceRows: TypeAlias = tuple[_OwnerLocalPeriodicFaceRow, ...]
 
 class _PeriodicGraphVertexCoordinateAncestryPayload(TypedDict):
     source_entity_set_id: str
-    target_entity_set_id: str
     preserves_constants: bool
     source_ids: list[int]
-    source_valid: list[bool]
     weight_bits: list[int]
     exact_weights: list[list[int]]
     exact_offsets: list[list[int]]
@@ -2737,10 +2735,8 @@ def _migrate_owner_local_periodic_delaunay_data(
                     ancestry = json_object(raw_ancestry)
                     if set(ancestry) != {
                         "source_entity_set_id",
-                        "target_entity_set_id",
                         "preserves_constants",
                         "source_ids",
-                        "source_valid",
                         "weight_bits",
                         "exact_weights",
                         "exact_offsets",
@@ -2749,22 +2745,16 @@ def _migrate_owner_local_periodic_delaunay_data(
                             "Periodic graph coordinate ancestry fields are malformed."
                         )
                     source_entity_set_id = ancestry["source_entity_set_id"]
-                    target_entity_set_id = ancestry["target_entity_set_id"]
                     preserves_constants = ancestry["preserves_constants"]
                     source_ids = json_integers(ancestry["source_ids"])
-                    source_valid_raw = json_list(ancestry["source_valid"])
                     if (
                         not isinstance(source_entity_set_id, str)
                         or not source_entity_set_id
-                        or not isinstance(target_entity_set_id, str)
-                        or not target_entity_set_id
                         or type(preserves_constants) is not bool
-                        or any(type(value) is not bool for value in source_valid_raw)
                     ):
                         raise ValueError(
                             "Periodic graph coordinate ancestry identity is invalid."
                         )
-                    source_valid = [bool(value) for value in source_valid_raw]
                     weight_bits = json_uint64s(ancestry["weight_bits"])
                     exact_weight_rows = json_list(ancestry["exact_weights"])
                     exact_weights: list[list[int]] = []
@@ -2782,7 +2772,13 @@ def _migrate_owner_local_periodic_delaunay_data(
                         )
                     if (
                         len(source_ids) == 0
-                        or len(source_valid) != len(source_ids)
+                        or any(value < 0 for value in source_ids)
+                        or any(
+                            second <= first
+                            for first, second in zip(
+                                source_ids, source_ids[1:], strict=False
+                            )
+                        )
                         or len(weight_bits) != len(source_ids)
                         or len(exact_weights) != len(source_ids)
                         or len(exact_offsets) != dimension
@@ -2792,10 +2788,8 @@ def _migrate_owner_local_periodic_delaunay_data(
                         )
                     coordinate_ancestry = {
                         "source_entity_set_id": source_entity_set_id,
-                        "target_entity_set_id": target_entity_set_id,
                         "preserves_constants": preserves_constants,
                         "source_ids": source_ids,
-                        "source_valid": source_valid,
                         "weight_bits": weight_bits,
                         "exact_weights": exact_weights,
                         "exact_offsets": exact_offsets,
@@ -3061,32 +3055,11 @@ def _migrate_owner_local_periodic_delaunay_data(
                 ) = None
                 if source_stencil is not None:
                     stencil_row = stencil_row_by_vertex_id[vertex_id]
-                    exact_weights = source_stencil.exact_weights[stencil_row]
-                    if any(not isinstance(value, Fraction) for value in exact_weights):
-                        raise TypeError(
-                            "Periodic graph ancestry requires exact rational weights."
-                        )
-                    offset_row = exact_stencil_offsets[stencil_row]
-                    coordinate_ancestry = {
-                        "source_entity_set_id": source_stencil.source_entity_set_id,
-                        "target_entity_set_id": source_stencil.target_entity_set_id,
-                        "preserves_constants": source_stencil.preserves_constants,
-                        "source_ids": [
-                            int(value)
-                            for value in stencil_source_ids[stencil_row].tolist()
-                        ],
-                        "source_valid": [
-                            bool(value) for value in stencil_valid[stencil_row].tolist()
-                        ],
-                        "weight_bits": [
-                            int(value)
-                            for value in stencil_weights[stencil_row]
-                            .view(np.uint64)
-                            .tolist()
-                        ],
-                        "exact_weights": [pair(value) for value in exact_weights],
-                        "exact_offsets": [pair(value) for value in offset_row],
-                    }
+                    coordinate_ancestry = _periodic_vertex_ancestry_payload(
+                        source_stencil,
+                        stencil_row,
+                        exact_stencil_offsets[stencil_row],
+                    )
                 vertex_payloads.append(
                     {
                         "vertex_id": vertex_id,
@@ -3161,15 +3134,7 @@ def _migrate_owner_local_periodic_delaunay_data(
                 source_ids = {vertex["source_id"]}
                 ancestry = vertex["coordinate_ancestry"]
                 if ancestry is not None:
-                    source_ids.update(
-                        identifier
-                        for identifier, valid in zip(
-                            ancestry["source_ids"],
-                            ancestry["source_valid"],
-                            strict=True,
-                        )
-                        if valid
-                    )
+                    source_ids.update(ancestry["source_ids"])
                 for source_id in source_ids:
                     if source_id not in source_point_payloads_by_id:
                         raise ValueError(
@@ -3315,15 +3280,7 @@ def _migrate_owner_local_periodic_delaunay_data(
                 source_ids = {vertex["source_id"]}
                 ancestry = vertex["coordinate_ancestry"]
                 if ancestry is not None:
-                    source_ids.update(
-                        identifier
-                        for identifier, valid in zip(
-                            ancestry["source_ids"],
-                            ancestry["source_valid"],
-                            strict=True,
-                        )
-                        if valid
-                    )
+                    source_ids.update(ancestry["source_ids"])
                 if not source_ids.issubset(source_point_records):
                     raise ValueError(
                         "Graph migration omitted an exact coordinate ancestry root."
@@ -3416,102 +3373,14 @@ def _migrate_owner_local_periodic_delaunay_data(
             )
             for identifier in target_vertex_ids.tolist()
         )
-        target_coordinate_stencil: VertexInterpolationStencil | None = None
-        target_exact_coordinate_offsets: tuple[tuple[Fraction, ...], ...] | None = None
-        if target_vertex_ids.size:
-            ancestry_rows = [
-                vertex_records[int(identifier)]["coordinate_ancestry"]
-                for identifier in target_vertex_ids.tolist()
-            ]
-            if any(row is None for row in ancestry_rows):
+        target_ancestry_rows: list[_PeriodicGraphVertexCoordinateAncestryPayload] = []
+        for identifier in target_vertex_ids.tolist():
+            ancestry_row = vertex_records[int(identifier)]["coordinate_ancestry"]
+            if ancestry_row is None:
                 raise ValueError(
                     "Migrated periodic vertices lost exact source interpolation ancestry."
                 )
-            first_ancestry = ancestry_rows[0]
-            if first_ancestry is None:
-                raise ValueError("Periodic coordinate ancestry is incomplete.")
-            ancestry_metadata = (
-                first_ancestry["source_entity_set_id"],
-                first_ancestry["target_entity_set_id"],
-                first_ancestry["preserves_constants"],
-            )
-            if any(
-                row is None
-                or (
-                    row["source_entity_set_id"],
-                    row["target_entity_set_id"],
-                    row["preserves_constants"],
-                )
-                != ancestry_metadata
-                for row in ancestry_rows
-            ):
-                raise ValueError(
-                    "Migrated periodic vertices disagree on interpolation identity."
-                )
-            stencil_width = len(first_ancestry["source_ids"])
-            if stencil_width == 0 or any(
-                row is None or len(row["source_ids"]) != stencil_width
-                for row in ancestry_rows
-            ):
-                raise ValueError(
-                    "Migrated periodic vertex ancestry has inconsistent row width."
-                )
-            target_source_rows = np.asarray(
-                [row["source_ids"] for row in ancestry_rows if row is not None],
-                dtype=np.int64,
-            ).reshape((-1, stencil_width))
-            target_valid_rows = np.asarray(
-                [row["source_valid"] for row in ancestry_rows if row is not None],
-                dtype=np.bool_,
-            ).reshape((-1, stencil_width))
-            target_weight_bits = np.asarray(
-                [row["weight_bits"] for row in ancestry_rows if row is not None],
-                dtype=np.uint64,
-            ).reshape((-1, stencil_width))
-            target_exact_weights = tuple(
-                tuple(exact_pair(value) for value in row["exact_weights"])
-                for row in ancestry_rows
-                if row is not None
-            )
-            target_exact_coordinate_offsets = tuple(
-                tuple(exact_pair(value) for value in row["exact_offsets"])
-                for row in ancestry_rows
-                if row is not None
-            )
-            if any(
-                len(offset) != dimension for offset in target_exact_coordinate_offsets
-            ):
-                raise ValueError(
-                    "Migrated periodic coordinate offsets have the wrong dimension."
-                )
-            target_coordinate_stencil = VertexInterpolationStencil(
-                ancestry_metadata[0],
-                ancestry_metadata[1],
-                target_vertex_ids,
-                target_source_rows,
-                target_weight_bits.view(np.float64),
-                target_valid_rows,
-                preserves_constants=ancestry_metadata[2],
-                exact_weights=target_exact_weights,
-            )
-            target_root_coordinates = tuple(
-                (
-                    int(point_ids[row]),
-                    tuple(Fraction.from_float(float(value)) for value in points[row]),
-                )
-                for row in np.argsort(point_ids, kind="stable")
-            )
-            if (
-                _evaluate_owner_local_periodic_coordinate_ancestry(
-                    target_coordinate_stencil,
-                    target_exact_coordinate_offsets,
-                    target_root_coordinates,
-                )
-                != exact_vertex_coordinates
-            ):
-                raise ValueError(
-                    "Migrated exact periodic coordinate ancestry does not reproduce target vertices."
-                )
+            target_ancestry_rows.append(ancestry_row)
         vertex_coordinate_bits = np.asarray(
             [
                 vertex_records[int(identifier)]["coordinate_bits"]
@@ -3719,6 +3588,35 @@ def _migrate_owner_local_periodic_delaunay_data(
                 local_entity_ids[degree] = np.zeros((0,), dtype=np.int64)
                 entity_vertex_offsets[degree] = np.zeros((1,), dtype=np.int64)
                 entity_vertex_values[degree] = np.zeros((0,), dtype=np.int32)
+        target_coordinate_stencil: VertexInterpolationStencil | None = None
+        target_exact_coordinate_offsets: tuple[tuple[Fraction, ...], ...] | None = None
+        if local_mesh is not None:
+            target_coordinate_stencil, target_exact_coordinate_offsets = (
+                _periodic_ancestry_stencil(
+                    target_ancestry_rows,
+                    target_vertex_ids,
+                    local_mesh.entity_set(0).entity_set_id,
+                    dimension,
+                )
+            )
+            target_root_coordinates = tuple(
+                (
+                    int(point_ids[row]),
+                    tuple(Fraction.from_float(float(value)) for value in points[row]),
+                )
+                for row in np.argsort(point_ids, kind="stable")
+            )
+            if (
+                _evaluate_owner_local_periodic_coordinate_ancestry(
+                    target_coordinate_stencil,
+                    target_exact_coordinate_offsets,
+                    target_root_coordinates,
+                )
+                != exact_vertex_coordinates
+            ):
+                raise ValueError(
+                    "Migrated exact periodic coordinate ancestry does not reproduce target vertices."
+                )
         new_mesh_data = dict(mesh_data)
         new_mesh_data.update(
             {
@@ -4893,6 +4791,122 @@ def _evaluate_owner_local_periodic_coordinate_ancestry(
     return tuple(coordinates)
 
 
+def _periodic_vertex_ancestry_payload(
+    stencil: VertexInterpolationStencil,
+    row: int,
+    exact_offsets: tuple[Fraction, ...],
+    /,
+) -> _PeriodicGraphVertexCoordinateAncestryPayload:
+    """Encode one vertex's active exact source row, independent of its sender.
+
+    A stencil's target entity set and padded row width belong to the resident
+    mesh of one rank, so every rank sharing a vertex must publish only the
+    vertex's canonical active row (sorted by source ID) and exact offset.
+    """
+    source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)[row]
+    valid = np.asarray(stencil.valid, dtype=np.bool_)[row]
+    weight_bits = np.asarray(stencil.weights, dtype=np.float64)[row].view(np.uint64)
+    exact_weights = stencil.exact_weights[row]
+    if any(not isinstance(value, Fraction) for value in exact_weights) or any(
+        not isinstance(value, Fraction) for value in exact_offsets
+    ):
+        raise TypeError("Periodic vertex ancestry requires exact rational rows.")
+    active = sorted(
+        (
+            (int(identifier), int(bits), exact)
+            for identifier, bits, exact, is_valid in zip(
+                source_ids, weight_bits, exact_weights, valid, strict=True
+            )
+            if is_valid
+        ),
+        key=lambda entry: entry[0],
+    )
+    return {
+        "source_entity_set_id": stencil.source_entity_set_id,
+        "preserves_constants": stencil.preserves_constants,
+        "source_ids": [identifier for identifier, _, _ in active],
+        "weight_bits": [bits for _, bits, _ in active],
+        "exact_weights": [
+            [int(exact.numerator), int(exact.denominator)] for _, _, exact in active
+        ],
+        "exact_offsets": [
+            [int(value.numerator), int(value.denominator)] for value in exact_offsets
+        ],
+    }
+
+
+def _periodic_ancestry_stencil(
+    rows: Sequence[_PeriodicGraphVertexCoordinateAncestryPayload],
+    target_vertex_ids: np.ndarray,
+    target_entity_set_id: str,
+    dimension: int,
+    /,
+) -> tuple[VertexInterpolationStencil, tuple[tuple[Fraction, ...], ...]]:
+    """Bind canonical vertex ancestry rows to the receiving rank's resident mesh."""
+    from .._lineage import VertexInterpolationStencil
+
+    def exact_value(raw: object, /) -> Fraction:
+        if (
+            not isinstance(raw, list)
+            or len(raw) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in raw)
+            or raw[1] <= 0
+        ):
+            raise ValueError("Periodic exact ancestry scalar is malformed.")
+        return Fraction(raw[0], raw[1])
+
+    if not rows or len(rows) != target_vertex_ids.size:
+        raise ValueError("Periodic ancestry rows do not cover the resident vertices.")
+    metadata = (rows[0]["source_entity_set_id"], rows[0]["preserves_constants"])
+    if any(
+        (row["source_entity_set_id"], row["preserves_constants"]) != metadata
+        for row in rows
+    ):
+        raise ValueError("Periodic vertex ancestry rows disagree on source identity.")
+    width = max(len(row["source_ids"]) for row in rows)
+    if width == 0:
+        raise ValueError("Periodic vertex ancestry has no active source rows.")
+    source_ids = np.full((len(rows), width), -1, dtype=np.int64)
+    weight_bits = np.zeros((len(rows), width), dtype=np.uint64)
+    valid = np.zeros((len(rows), width), dtype=np.bool_)
+    exact_weights: list[tuple[Fraction, ...]] = []
+    exact_offsets: list[tuple[Fraction, ...]] = []
+    for index, row in enumerate(rows):
+        count = len(row["source_ids"])
+        if (
+            count == 0
+            or len(row["weight_bits"]) != count
+            or len(row["exact_weights"]) != count
+            or len(row["exact_offsets"]) != dimension
+            or any(
+                second <= first
+                for first, second in zip(
+                    row["source_ids"], row["source_ids"][1:], strict=False
+                )
+            )
+        ):
+            raise ValueError("Periodic vertex ancestry row is not canonical.")
+        source_ids[index, :count] = row["source_ids"]
+        weight_bits[index, :count] = row["weight_bits"]
+        valid[index, :count] = True
+        exact_weights.append(
+            tuple(exact_value(value) for value in row["exact_weights"])
+            + (Fraction(0),) * (width - count)
+        )
+        exact_offsets.append(tuple(exact_value(value) for value in row["exact_offsets"]))
+    stencil = VertexInterpolationStencil(
+        metadata[0],
+        target_entity_set_id,
+        target_vertex_ids,
+        source_ids,
+        weight_bits.view(np.float64),
+        valid,
+        preserves_constants=metadata[1],
+        exact_weights=tuple(exact_weights),
+    )
+    return stencil, tuple(exact_offsets)
+
+
 def _owner_local_periodic_delaunay_view_mesh_data(
     view: OwnerLocalCellGeometry,
     source_authority: NativePeriodicSource,
@@ -5153,7 +5167,6 @@ def _owner_local_periodic_delaunay_neighbor_halo(
     from ...discretization._cell_mesh import CellBlock, CellMesh
     from ...discretization._periodic_topology import _entity_vertex_rows
     from ...discretization.fem._reference import lagrange_element
-    from ...meshing._lineage import VertexInterpolationStencil
     from .._distribution import _owner_exchange_message_banks, _owner_group_fail_if_any
     from .._periodic import PeriodicPointOrbits
 
@@ -5320,36 +5333,9 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                         "Periodic neighbor exact interpolation offsets are missing."
                     )
                 stencil_row = stencil_row_by_id[vertex_id]
-                exact_weights = source_stencil.exact_weights[stencil_row]
-                ancestry = {
-                    "source_entity_set_id": source_stencil.source_entity_set_id,
-                    "target_entity_set_id": source_stencil.target_entity_set_id,
-                    "preserves_constants": source_stencil.preserves_constants,
-                    "source_ids": [
-                        int(value)
-                        for value in np.asarray(source_stencil.source_global_ids)[
-                            stencil_row
-                        ].tolist()
-                    ],
-                    "source_valid": [
-                        bool(value)
-                        for value in np.asarray(source_stencil.valid)[
-                            stencil_row
-                        ].tolist()
-                    ],
-                    "weight_bits": [
-                        int(value)
-                        for value in np.asarray(source_stencil.weights, dtype=np.float64)[
-                            stencil_row
-                        ]
-                        .view(np.uint64)
-                        .tolist()
-                    ],
-                    "exact_weights": [exact_pair(value) for value in exact_weights],
-                    "exact_offsets": [
-                        exact_pair(value) for value in exact_offsets[stencil_row]
-                    ],
-                }
+                ancestry = _periodic_vertex_ancestry_payload(
+                    source_stencil, stencil_row, exact_offsets[stencil_row]
+                )
             vertex_payloads.append(
                 {
                     "vertex_id": vertex_id,
@@ -5547,8 +5533,14 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                 vertex_id = int(vertex["vertex_id"])
                 previous = vertex_records.get(vertex_id)
                 if previous is not None and previous != vertex:
+                    differing = sorted(
+                        name
+                        for name, value in vertex.items()
+                        if dict(previous.items()).get(name) != value
+                    )
                     raise ValueError(
-                        "Periodic neighbor cells disagree on shared vertex geometry."
+                        "Periodic neighbor cells disagree on shared vertex geometry "
+                        f"(vertex {vertex_id}, fields {differing})."
                     )
                 vertex_records[vertex_id] = vertex
 
@@ -5653,8 +5645,7 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                 len(cell["key_source_ids"]) != arity
                 or len(cell["key_relative_windings"]) != arity
                 or len(cell["cell_winding"]) != dimension
-                or len(cell["support_lower_bits"])
-                != len(cell["support_upper_bits"])
+                or len(cell["support_lower_bits"]) != len(cell["support_upper_bits"])
                 or len(cell["support_lower_bits"]) not in (0, dimension)
             ):
                 raise ValueError("Periodic neighbor cell has malformed exact keys.")
@@ -5691,20 +5682,28 @@ def _owner_local_periodic_delaunay_neighbor_halo(
         if support_widths != support_upper_widths or len(support_widths) > 1:
             raise ValueError("Periodic neighbor support-bound rows are inconsistent.")
         if support_widths == {dimension}:
-            support_lower_ = np.asarray(
-                [
-                    cell_records[int(identifier)]["support_lower_bits"]
-                    for identifier in cell_order.tolist()
-                ],
-                dtype=np.uint64,
-            ).reshape((-1, dimension)).view(np.float64)
-            support_upper_ = np.asarray(
-                [
-                    cell_records[int(identifier)]["support_upper_bits"]
-                    for identifier in cell_order.tolist()
-                ],
-                dtype=np.uint64,
-            ).reshape((-1, dimension)).view(np.float64)
+            support_lower_ = (
+                np.asarray(
+                    [
+                        cell_records[int(identifier)]["support_lower_bits"]
+                        for identifier in cell_order.tolist()
+                    ],
+                    dtype=np.uint64,
+                )
+                .reshape((-1, dimension))
+                .view(np.float64)
+            )
+            support_upper_ = (
+                np.asarray(
+                    [
+                        cell_records[int(identifier)]["support_upper_bits"]
+                        for identifier in cell_order.tolist()
+                    ],
+                    dtype=np.uint64,
+                )
+                .reshape((-1, dimension))
+                .view(np.float64)
+            )
             if (
                 np.any(~np.isfinite(support_lower_))
                 or np.any(~np.isfinite(support_upper_))
@@ -5716,14 +5715,10 @@ def _owner_local_periodic_delaunay_neighbor_halo(
             support_upper_ = None
         elif not support_widths and not cell_order.size:
             support_lower_ = (
-                None
-                if support_lower is None
-                else support_lower.view(np.float64)
+                None if support_lower is None else support_lower.view(np.float64)
             )
             support_upper_ = (
-                None
-                if support_upper is None
-                else support_upper.view(np.float64)
+                None if support_upper is None else support_upper.view(np.float64)
             )
         else:
             raise ValueError("Periodic neighbor support-bound rows are inconsistent.")
@@ -5748,72 +5743,15 @@ def _owner_local_periodic_delaunay_neighbor_halo(
             ],
             dtype=np.int64,
         ).reshape((-1, dimension))
-        ancestry_rows = [
-            vertex_records[int(identifier)]["coordinate_ancestry"]
-            for identifier in vertex_order.tolist()
-        ]
+        ancestry_rows: list[_PeriodicGraphVertexCoordinateAncestryPayload] = []
+        for identifier in vertex_order.tolist():
+            ancestry_row = vertex_records[int(identifier)]["coordinate_ancestry"]
+            if ancestry_row is not None:
+                ancestry_rows.append(ancestry_row)
+        if ancestry_rows and len(ancestry_rows) != vertex_order.size:
+            raise ValueError("Periodic neighbor vertices have incomplete ancestry.")
         source_stencil_: VertexInterpolationStencil | None = None
         exact_offsets_: tuple[tuple[Fraction, ...], ...] | None = None
-        if any(row is not None for row in ancestry_rows):
-            if any(row is None for row in ancestry_rows):
-                raise ValueError("Periodic neighbor vertices have incomplete ancestry.")
-            first = ancestry_rows[0]
-            if first is None:
-                raise ValueError("Periodic neighbor ancestry has no first row.")
-            metadata = (
-                first["source_entity_set_id"],
-                first["target_entity_set_id"],
-                first["preserves_constants"],
-            )
-            width = len(first["source_ids"])
-            if width == 0 or any(
-                row is None
-                or (
-                    row["source_entity_set_id"],
-                    row["target_entity_set_id"],
-                    row["preserves_constants"],
-                )
-                != metadata
-                or len(row["source_ids"]) != width
-                for row in ancestry_rows
-            ):
-                raise ValueError("Periodic neighbor ancestry rows disagree.")
-            source_global_ids_ = np.asarray(
-                [row["source_ids"] for row in ancestry_rows if row is not None],
-                dtype=np.int64,
-            ).reshape((-1, width))
-            valid_ = np.asarray(
-                [row["source_valid"] for row in ancestry_rows if row is not None],
-                dtype=np.bool_,
-            ).reshape((-1, width))
-            weight_bits_ = np.asarray(
-                [row["weight_bits"] for row in ancestry_rows if row is not None],
-                dtype=np.uint64,
-            ).reshape((-1, width))
-            exact_weights_ = tuple(
-                tuple(exact_fraction(value) for value in row["exact_weights"])
-                for row in ancestry_rows
-                if row is not None
-            )
-            exact_offsets_ = tuple(
-                tuple(exact_fraction(value) for value in row["exact_offsets"])
-                for row in ancestry_rows
-                if row is not None
-            )
-            if any(len(row) != dimension for row in exact_offsets_):
-                raise ValueError(
-                    "Periodic neighbor ancestry offsets have wrong dimension."
-                )
-            source_stencil_ = VertexInterpolationStencil(
-                metadata[0],
-                metadata[1],
-                vertex_order,
-                source_global_ids_,
-                weight_bits_.view(np.float64),
-                valid_,
-                preserves_constants=metadata[2],
-                exact_weights=exact_weights_,
-            )
         cell_kind = str(mesh_data["cell_kind"])
         element = lagrange_element(cell_kind, 1)
         cell_rows_ = np.arange(cell_order.size, dtype=np.int64)
@@ -5833,6 +5771,13 @@ def _owner_local_periodic_delaunay_neighbor_halo(
                 (block,),
                 vertex_global_ids=vertex_order,
             )
+            if ancestry_rows:
+                source_stencil_, exact_offsets_ = _periodic_ancestry_stencil(
+                    ancestry_rows,
+                    vertex_order,
+                    local_mesh.entity_set(0).entity_set_id,
+                    dimension,
+                )
             entity_vertices = _entity_vertex_rows(local_mesh)
             for degree, rows_at_degree in enumerate(entity_vertices):
                 identifiers = np.asarray(
@@ -10073,6 +10018,10 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                 execution_group,
                 "periodic_owner_adaptation_target",
             )
+            # Neighbor-halo closure rebinds the cumulative ancestry to the
+            # expanded resident vertex bank.
+            source_coordinate_stencil = mesh_data["source_coordinate_stencil"]
+            exact_vertex_coordinate_offsets = mesh_data["exact_vertex_coordinate_offsets"]
             face_coverage_id = mesh_authority.face_coverage_id
             owner_directory = mesh_authority.owner_directory
             shell_certificate = dict(candidate["periodic_shell_certificate"])

@@ -1559,15 +1559,19 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             int(value) for value in cell_ids
         ) != set(int(value) for value in local_cell_ids):
             raise ValueError("Owner-local FV cells differ from the accepted source view.")
+        # The view's face-neighbor CSR is keyed by its sorted owned cells.
+        graph_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
         offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
         neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
         if (
-            offsets.shape != (local_cell_ids.size + 1,)
+            offsets.shape != (graph_ids.size + 1,)
             or offsets[-1] != neighbor_ids.size
+            or set(int(value) for value in graph_ids)
+            != set(int(value) for value in local_cell_ids[local_owned])
         ):
             raise ValueError("Owner-local FV neighbor metadata is malformed.")
         available_cells = set(int(value) for value in local_cell_ids)
-        for row in np.flatnonzero(local_owned):
+        for row in range(graph_ids.size):
             required = neighbor_ids[offsets[row] : offsets[row + 1]]
             if any(int(identifier) not in available_cells for identifier in required):
                 raise ValueError(
@@ -1768,10 +1772,28 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 "view": view.local_view_id,
             }
         )
-        return eqx.tree_at(
-            lambda prepared: (prepared.owner_local_view, prepared.plan_id),
-            plan,
-            (view, owner_plan_id),
+        return cls(
+            None,
+            _prepared=_PreparedUnstructuredFiniteVolumeData(
+                mesh=plan.mesh,
+                vertices=plan.vertices,
+                triangles=plan.triangles,
+                quadrilaterals=plan.quadrilaterals,
+                tetrahedra=plan.tetrahedra,
+                vertex_global_ids=plan.vertex_global_ids,
+                cell_global_ids=plan.cell_global_ids,
+                cell_dimension=plan.cell_dimension,
+                patch_names=plan.patch_names,
+                patch_faces=plan.patch_faces,
+                field_name=plan.field_name,
+                component_names=plan.component_names,
+                topology_id=plan.topology_id,
+                geometry_id=plan.geometry_id,
+                key=plan.key,
+                capabilities=plan.capabilities,
+                plan_id=owner_plan_id,
+                owner_local_view=view,
+            ),
         )
 
     def prepare(self, /, *, numeric_version: str = "0") -> Any:

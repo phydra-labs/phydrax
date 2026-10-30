@@ -28,6 +28,7 @@ from ..discretization._mapped_locator import (
     PreparedMappedCellLocator,
     PreparedOwnerLocalMappedCellMap,
 )
+from ..discretization._periodic_cell import PeriodicCell
 from ..discretization._polyhedral_locator import PreparedPolyhedralCellLocator
 from ..discretization._view_support import OwnerLocalCellGeometry
 from ..discretization.fem._point_interpolation import (
@@ -277,6 +278,77 @@ def _owner_local_halo_exchange(
     return np.asarray(jax.device_get(exchanged.addressable_shards[0].data))[0]
 
 
+def _periodic_donor_image_frame(
+    view: OwnerLocalCellGeometry,
+    block: Any,
+    search_mask: np.ndarray,
+    /,
+) -> tuple[PeriodicCell, np.ndarray, np.ndarray, float] | None:
+    """Fractional reach of this rank's searchable donor cells on a periodic source.
+
+    Periodic owner-local donors cover the quotient once, each in its own lifted
+    image, so a receptor point must be located over every lattice image that can
+    reach those lifted cells. Returns the source cell, the fractional lower/upper
+    bounds of the searchable donor vertices and their largest cell diameter.
+    """
+    from ._periodic import PeriodicPointOrbits
+    from .providers._native_periodic import NativePeriodicSource
+
+    source = view.source_value
+    if (
+        view.periodic_lift_matrix is None
+        or not isinstance(source, NativePeriodicSource)
+        or not isinstance(source.domain, PeriodicPointOrbits)
+        or not np.any(search_mask)
+    ):
+        return None
+    cell = source.domain.cell
+    if cell.cell_id != view.periodic_lift_id:
+        raise ValueError("Periodic donor view does not bind its source lattice.")
+    coordinates = np.asarray(view.vertex_coordinates, dtype=np.float64)
+    rows = np.asarray(block.vertices, dtype=np.int64)[search_mask]
+    valid = np.asarray(block.vertex_valid, dtype=np.bool_)[search_mask]
+    cell_points = coordinates[rows]
+    shifts = block.cell_vertex_shifts
+    if not view.coordinates_are_lifted and shifts is not None:
+        cell_points = cell_points + np.asarray(shifts, dtype=np.float64)[
+            search_mask
+        ] @ np.asarray(cell.vectors, dtype=np.float64)
+    fractional = np.asarray(cell.fractional(cell_points[valid]), dtype=np.float64)
+    diameter = 0.0
+    for points, mask in zip(cell_points, valid, strict=True):
+        selected = points[mask]
+        diameter = max(
+            diameter,
+            float(
+                np.max(
+                    np.linalg.norm(selected[:, None, :] - selected[None, :, :], axis=-1)
+                )
+            ),
+        )
+    return cell, fractional.min(axis=0), fractional.max(axis=0), diameter
+
+
+def _periodic_donor_images(
+    frame: tuple[PeriodicCell, np.ndarray, np.ndarray, float] | None,
+    point: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Every lattice image of ``point`` that can lie in the framed donor cells."""
+    if frame is None:
+        return point
+    cell, lower, upper, diameter = frame
+    query = np.asarray(cell.fractional(point), dtype=np.float64)[0]
+    excursion = tuple(
+        float(value) for value in np.maximum(np.abs(query - lower), np.abs(upper - query))
+    )
+    stencil = cell.image_stencil(diameter, fractional_excursion=excursion)
+    translations = np.asarray(stencil.shifts, dtype=np.float64) @ np.asarray(
+        cell.vectors, dtype=np.float64
+    )
+    return point + translations
+
+
 def _local_donor_candidates(
     connectivity: OversetConnectivity,
     geometries: Mapping[str, OwnerLocalCellGeometry],
@@ -307,7 +379,17 @@ def _local_donor_candidates(
     owner_by_id: dict[str, dict[int, int]] = {}
     locators_by_part: dict[
         str,
-        tuple[tuple[Any, np.ndarray, np.ndarray, np.ndarray, str], ...],
+        tuple[
+            tuple[
+                Any,
+                np.ndarray,
+                np.ndarray,
+                np.ndarray,
+                str,
+                tuple[PeriodicCell, np.ndarray, np.ndarray, float] | None,
+            ],
+            ...,
+        ],
     ] = {}
     for name, view in geometries.items():
         spec = spec_by_name.get(name)
@@ -398,7 +480,16 @@ def _local_donor_candidates(
                 ],
                 dtype=np.bool_,
             )
-            locators.append((locator, search_mask, active, supported, block.name))
+            locators.append(
+                (
+                    locator,
+                    search_mask,
+                    active,
+                    supported,
+                    block.name,
+                    _periodic_donor_image_frame(view, block, search_mask),
+                )
+            )
         locators_by_part[name] = tuple(locators)
     best: dict[int, tuple[Any, ...]] = {}
     candidate_parts: dict[int, set[str]] = {}
@@ -420,8 +511,10 @@ def _local_donor_candidates(
                 active,
                 supported,
                 block_name,
+                image_frame,
             ) in locators_by_part[donor_name]:
-                location = locator.locate(donor_point, cell_mask=search_mask)
+                images = _periodic_donor_images(image_frame, donor_point)
+                location = locator.locate(images, cell_mask=search_mask)
                 complete = np.asarray(location.candidates_complete, dtype=np.bool_)
                 status = np.asarray(location.status, dtype=np.int32)
                 if not np.all(complete) or not np.all(
@@ -441,19 +534,17 @@ def _local_donor_candidates(
                 residuals = np.asarray(location.geometry_residual, dtype=np.float64)
                 if (
                     candidates.ndim != 2
-                    or candidates.shape[0] != 1
+                    or candidates.shape[0] != images.shape[0]
                     or references.ndim != 3
                     or references.shape[:2] != candidates.shape
-                    or residuals.shape != (1,)
+                    or residuals.shape != (images.shape[0],)
                 ):
                     raise ValueError(
                         "Owner-local candidate rows do not match receptor points."
                     )
                 global_ids = np.asarray(locator.cell_map.cell_global_ids, dtype=np.int64)
-                for slot, local_cell in enumerate(candidates[0]):
-                    if local_cell < 0:
-                        continue
-                    local_cell_ = int(local_cell)
+                for image, slot in zip(*np.nonzero(candidates >= 0), strict=True):
+                    local_cell_ = int(candidates[image, slot])
                     cell_id = int(global_ids[local_cell_])
                     if not active[local_cell_]:
                         blocked.add(query_index)
@@ -483,8 +574,10 @@ def _local_donor_candidates(
                             cell_id,
                             block_name,
                             local_cell_,
-                            references[0, slot],
-                            float(residuals[0]),
+                            references[image, slot],
+                            float(residuals[image]),
+                            # The donor-frame lattice image the cell was found in.
+                            images[image],
                         )
     return best, candidate_parts, blocked
 
@@ -873,13 +966,13 @@ def _owner_local_donor_results(
         )
         raise ValueError("Owner-local receptor query failed collectively: " + detail)
     points = _owner_local_halo_exchange(plan, local_points, devices, axis_name)
+    # Candidate tokens only create the owner-to-candidate halo routes; each
+    # candidate reads the query point from the query entity row itself, which is
+    # owned on the query owner and a received halo copy everywhere else.
     points_by_query = {
-        query_index: points[
-            local_slots[query_count + query_index * len(group_ranks) + partition_index]
-        ]
+        query_index: points[local_slots[query_index]]
         for query_index in range(query_count)
-        if partition_index in candidate_owners[query_index]
-        and query_count + query_index * len(group_ranks) + partition_index in local_slots
+        if partition_index in candidate_owners[query_index] and query_index in local_slots
     }
     point_error = (
         None
@@ -1145,8 +1238,7 @@ def _validate_local_donor_search(
     )
     points_by_query: dict[int, np.ndarray] = {}
     for query_index in local_query_indices:
-        token = query_count + query_index * len(group_ranks) + partition_index
-        row = local_slots.get(token)
+        row = local_slots.get(query_index)
         if row is not None:
             points_by_query[query_index] = points[row]
     point_error = (
@@ -1377,7 +1469,7 @@ def _owner_local_field_exchange_state(
     axis_name: str,
 ) -> tuple[Any, ...]:
     from ._overset import (
-        _to_source,
+        _to_target,
         OversetConnectivityError,
         OversetDonorPacket,
     )
@@ -1839,10 +1931,12 @@ def _owner_local_field_exchange_state(
                     "Selected donor cell is absent or duplicated in its field locator."
                 )
             cell_row = int(cell_rows[0])
-            target_point = np.asarray(points_by_query[query_index], dtype=np.float64)
             target_spec = spec_by_name[receptor_name]
             donor_spec = spec_by_name[donor_name]
-            donor_point = _to_source(target_point[None, :], target_spec, donor_spec)
+            # Evaluate at the exact lattice image in which the donor was located;
+            # its receptor-frame site is the same periodic point's matching image.
+            donor_point = np.asarray(candidate[7], dtype=np.float64)[None, :]
+            target_point = _to_target(donor_point, donor_spec, target_spec)[0]
             packet = OversetDonorPacket(
                 resolved.assembly.declared_part(donor_name),
                 resolved.assembly.declared_part(receptor_name),
