@@ -795,6 +795,16 @@ each overlapping image, and the nonperiodic directions are closed by the
 quotient's oriented physical boundary. A mesh that wraps the quotient twice
 overlaps its own image and is refused as violated.
 
+Quotient cells may be convex vertex-defined polyhedra, as produced by the
+restricted-power polyhedral fill, and a single cell may span a whole period or
+touch a fixed rotation axis. The quotient is then a cell complex rather than a
+simplicial one: an edge may be a loop whose two ends lie in one vertex orbit,
+and a face may traverse an edge twice (the folded cap at a rotation axis). The
+boundary check therefore reads each boundary face's corners from its lifted
+representative and requires every boundary vertex to join all of its
+boundary edge ends (an edge plus its start or finish) into one cycle. Pinched
+quotients, such as two columns touching along one edge, are left unresolved.
+
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
 admits exact screw generators whose finite linear-order power is a nonzero

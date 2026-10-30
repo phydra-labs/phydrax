@@ -425,3 +425,71 @@ def test_rotational_pie_wedge_with_fixed_axis_certifies() -> None:
     assert validity.all_certified
     assert certificate.status == "certified", certificate.findings
     assert "periodic_subdomain_boundary" in certificate.evaluated_checks
+
+
+def _has_loop_edge(mesh: CellMesh, /) -> bool:
+    topology = mesh.periodic_topology
+    assert topology is not None
+    incidence = topology.quotient.incidences[0]
+    valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
+    vertices = np.asarray(incidence.relation.source_indices, dtype=np.int64)[valid]
+    edges = np.asarray(incidence.relation.target_indices, dtype=np.int64)[valid]
+    return any(np.unique(vertices[edges == edge]).size == 1 for edge in np.unique(edges))
+
+
+def test_single_layer_z_periodic_material_l_certifies_loop_edge_quotient() -> None:
+    # One cell layer spans the whole z period, so every vertical edge is a
+    # quotient loop and every vertical boundary face repeats a vertex orbit.
+    foot = tuple((i, 0, 0) for i in range(2))
+    leg = ((0, 1, 0),)
+    coordinates, blocks = _cube_grid((("material-foot", foot), ("material-leg", leg)))
+    mesh = _periodic_quotient(coordinates, blocks, (2,), 1, 1)
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert _has_loop_edge(mesh)
+    assert validity.all_certified
+    assert certificate.status == "certified", certificate.findings
+    assert {
+        "periodic_exact_cell_contacts",
+        "periodic_subdomain_boundary",
+    } <= set(certificate.evaluated_checks)
+
+
+def test_single_column_x_periodic_strip_certifies_boundary_loops() -> None:
+    # Each boundary component of the annulus is one loop edge at one vertex.
+    coordinates = [(i, j) for i in range(2) for j in range(2)]
+    index = {point: row for row, point in enumerate(coordinates)}
+    triangles = [
+        (index[(0, 0)], index[(1, 0)], index[(1, 1)]),
+        (index[(0, 0)], index[(1, 1)], index[(0, 1)]),
+    ]
+    mesh = _periodic_quotient(
+        coordinates, (("strip", "triangle", triangles),), (0,), 1, 1
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert _has_loop_edge(mesh)
+    assert validity.all_certified
+    assert certificate.status == "certified", certificate.findings
+    assert "periodic_subdomain_boundary" in certificate.evaluated_checks
+
+
+def test_edge_pinched_single_layer_quotient_is_unresolved() -> None:
+    # Two columns meet only along one vertical loop edge: its boundary vertex
+    # link is two cycles, so the quotient boundary is not a manifold.
+    coordinates, blocks = _cube_grid((("pinched", ((0, 0, 0), (1, 1, 0))),))
+    mesh = _periodic_quotient(coordinates, blocks, (2,), 1, 1)
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status != "certified"
+    assert any(
+        finding.check == "periodic_quotient_incidence_unresolved"
+        for finding in certificate.findings
+    )

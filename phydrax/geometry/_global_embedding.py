@@ -3751,7 +3751,7 @@ def _periodic_facet_trace_certificate_id(
     from ..discretization._periodic_topology import _entity_vertex_rows
     from ._periodic_embedding import _quotient_faces_pair_oriented
 
-    boundary_kind = _quotient_faces_pair_oriented(topology)
+    boundary_kind = _quotient_faces_pair_oriented(mesh, topology)
     if boundary_kind is None:
         return None
     orders = identification_orders(topology.cell)
