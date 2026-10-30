@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import phydrax as phx
 import numpy as np
 
+import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._constructors import brep_box
 from phydrax.geometry.implicit import AnalyticImplicitProfile
@@ -48,7 +48,9 @@ def native_brep_workflow() -> dict[str, object]:
             f"Native profile-extrusion volume {measured_volume} differs from exact volume {exact_volume}."
         )
     if not result.region_boundary_evidence:
-        raise RuntimeError("Native BRep volume result omitted source-region boundary evidence.")
+        raise RuntimeError(
+            "Native BRep volume result omitted source-region boundary evidence."
+        )
     return {
         "status": "passed",
         "workflow": "native planar profile -> extrusion B-Rep -> tetrahedral volume mesh",
@@ -85,9 +87,7 @@ def native_volume() -> dict[str, object]:
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(
-            UniformSizeControl(
-                boundary, 0.35, strength=SizeControlStrength.SOFT
-            ),
+            UniformSizeControl(boundary, 0.35, strength=SizeControlStrength.SOFT),
         ),
         maximum_deviation=maximum_deviation,
     )

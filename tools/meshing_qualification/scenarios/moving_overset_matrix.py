@@ -14,8 +14,8 @@ from phydrax.discretization import (
     FiniteElementDiscretization,
     FiniteElementFieldSpec,
     FiniteElementPlan,
-    PreparedFieldReconstruction,
     lagrange_element,
+    PreparedFieldReconstruction,
 )
 from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization.fem import prepare_finite_element_field_reconstruction
@@ -26,7 +26,6 @@ from phydrax.lifecycle import (
     CompositionTransport,
 )
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
-from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -34,6 +33,7 @@ from phydrax.meshing._contracts import (
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import (
     SizeCompliancePolicy,
@@ -850,7 +850,9 @@ def _motion_advance(
         or advance.source_result_id != source.result_id
         or target.mesh.topology_id != source.mesh.topology_id
     ):
-        raise RuntimeError(f"Source-bound mesh motion changed identity for {part.name!r}.")
+        raise RuntimeError(
+            f"Source-bound mesh motion changed identity for {part.name!r}."
+        )
     return advance
 
 

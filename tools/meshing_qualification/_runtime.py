@@ -7,8 +7,8 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-import phydrax as phx
 
+import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._meshcore import meshcore_available, meshcore_identity
 
