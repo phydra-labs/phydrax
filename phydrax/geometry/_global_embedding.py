@@ -235,6 +235,138 @@ def _point_in_declared_stratum(
     )
 
 
+def _shared_face_union(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    common: frozenset[int],
+    /,
+) -> tuple[tuple[int, ...], ...] | None:
+    """Return the faces of ``first`` that are also faces of ``second`` inside ``common``.
+
+    The shared stratum must be exactly their vertex union; otherwise ``None``.
+    """
+    if first.kind != "polyhedron" or second.kind != "polyhedron":
+        return None
+    second_faces = {
+        frozenset(second.vertex_ids[index] for index in face)
+        for face in second.facet_routes
+    }
+    faces = tuple(
+        loop
+        for loop in (
+            tuple(first.vertex_ids[index] for index in face)
+            for face in first.facet_routes
+        )
+        if frozenset(loop) <= common and frozenset(loop) in second_faces
+    )
+    if not faces or frozenset(chain.from_iterable(faces)) != common:
+        return None
+    return faces
+
+
+def _convex_planar_face_union(
+    faces: tuple[tuple[int, ...], ...],
+    point_by_id: dict[int, tuple[ExactScalar, ...]],
+    /,
+) -> bool | None:
+    """Decide whether coplanar oriented faces tile one convex polygon exactly.
+
+    The union boundary is the set of directed face edges without a reversed
+    partner; it must close into one loop that never turns against the common
+    face normal. ``None`` means the exact decision was not available.
+    """
+    points: dict[int, tuple[Fraction, Fraction, Fraction]] = {}
+    for identifier in chain.from_iterable(faces):
+        point = point_by_id[identifier]
+        if len(point) != 3:
+            return None
+        x, y, z = point
+        if (
+            not isinstance(x, Fraction)
+            or not isinstance(y, Fraction)
+            or not isinstance(z, Fraction)
+        ):
+            return None
+        points[identifier] = (x, y, z)
+
+    def cross(
+        left: tuple[Fraction, Fraction, Fraction],
+        right: tuple[Fraction, Fraction, Fraction],
+        /,
+    ) -> tuple[Fraction, Fraction, Fraction]:
+        return (
+            left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0],
+        )
+
+    def difference(
+        left: tuple[Fraction, Fraction, Fraction],
+        right: tuple[Fraction, Fraction, Fraction],
+        /,
+    ) -> tuple[Fraction, Fraction, Fraction]:
+        return left[0] - right[0], left[1] - right[1], left[2] - right[2]
+
+    def dot(
+        left: tuple[Fraction, Fraction, Fraction],
+        right: tuple[Fraction, Fraction, Fraction],
+        /,
+    ) -> Fraction:
+        return left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+
+    def area_vector(face: tuple[int, ...], /) -> tuple[Fraction, Fraction, Fraction]:
+        total = (Fraction(0), Fraction(0), Fraction(0))
+        for start, stop in zip(face, (*face[1:], face[0]), strict=True):
+            term = cross(points[start], points[stop])
+            total = (total[0] + term[0], total[1] + term[1], total[2] + term[2])
+        return total
+
+    # Face loops carry their own storage order; orient every face with the
+    # first face's normal before reading the union boundary.
+    reference_normal = area_vector(faces[0])
+    if reference_normal == (0, 0, 0):
+        return False
+    oriented: list[tuple[int, ...]] = []
+    for face in faces:
+        face_normal = area_vector(face)
+        alignment = dot(face_normal, reference_normal)
+        if alignment == 0:
+            return False
+        oriented.append(face if alignment > 0 else face[::-1])
+    normal = reference_normal
+    directed: set[tuple[int, int]] = set()
+    for face in oriented:
+        for start, stop in zip(face, (*face[1:], face[0]), strict=True):
+            if (start, stop) in directed:
+                return False
+            directed.add((start, stop))
+    origin = next(iter(points.values()))
+    if any(dot(difference(point, origin), normal) != 0 for point in points.values()):
+        return False
+    boundary = {
+        start: stop for start, stop in directed if (stop, start) not in directed
+    }
+    if len(boundary) < 3 or len(set(boundary.values())) != len(boundary):
+        return False
+    start = min(boundary)
+    loop = [start]
+    while (successor := boundary[loop[-1]]) != start:
+        if successor in loop or successor not in boundary:
+            return False
+        loop.append(successor)
+    if len(loop) != len(boundary):
+        return False
+    for index, vertex in enumerate(loop):
+        previous = points[loop[index - 1]]
+        following = points[loop[(index + 1) % len(loop)]]
+        turn = cross(
+            difference(points[vertex], previous), difference(following, points[vertex])
+        )
+        if dot(turn, normal) < 0:
+            return False
+    return True
+
+
 def _contact_is_declared(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -249,11 +381,20 @@ def _contact_is_declared(
     if not shared:
         return False
     common = frozenset(shared)
-    if common not in _local_strata(first) or common not in _local_strata(second):
-        return False
     point_by_id = dict(zip(first_ids, first.corner_images, strict=True))
     if any(identifier not in point_by_id for identifier in shared):
         return False
+    if common not in _local_strata(first) or common not in _local_strata(second):
+        # Restricted-power polyhedra may share one convex interface split into
+        # several coplanar faces; it is declared only as their exact union.
+        faces = _shared_face_union(first, second, common)
+        if faces is None:
+            return False
+        convex = _convex_planar_face_union(faces, point_by_id)
+        if convex is not True:
+            # Convex hull membership would overstate a nonconvex or nonplanar
+            # union, so the contact stays undecided rather than accepted.
+            return None
     try:
         return all(
             _point_in_declared_stratum(point, shared, point_by_id) for point in points

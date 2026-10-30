@@ -462,6 +462,13 @@ standard/polyhedral `CellMesh`; each cap facet must have one layer and one core
 incident cell. Missing authored core sites refuse rather than synthesizing a
 power source. This route currently refuses mapped or high-order polyhedral cores
 that cannot retain their exact geometry through the mixed assembly.
+Restricted-power generation joins every site's carrier pieces across
+unconstrained carrier faces and splits a site into per-tetrahedron pieces only
+when an authored segment or protected vertex lies off every facet polygon.
+Periodic PLC power quotients require the transformed source facets to have the
+exact transformed output face subdivision, not only matching vertices. Two
+polyhedra whose common interface is several coplanar faces declare contact only
+on their exact convex face union.
 `CAD_EXTRUSION` also admits a whole-solid sweep: if the authored slabs consume
 the controlled solid, the partition has no core solid, and the swept cap is a
 one-sided exterior patch. Source-solid volume must equal the sum of its slab

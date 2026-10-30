@@ -432,6 +432,8 @@ def _edge_association(
     face_edge_values = np.asarray(connectivity.face_edge_values, dtype=np.int64)
     face_regions: list[set[int]] = [set() for _ in range(connectivity.edge_count)]
     cell_regions = np.asarray(construction.cell_regions, dtype=np.int64)
+    face_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
+    edge_facets: list[set[int]] = [set() for _ in range(connectivity.edge_count)]
     for face, (start, stop) in enumerate(
         zip(face_edge_offsets[:-1], face_edge_offsets[1:], strict=True)
     ):
@@ -442,6 +444,8 @@ def _edge_association(
         adjacent = {int(cell_regions[cell]) for cell in owners if cell >= 0}
         for edge in face_edge_values[start:stop]:
             face_regions[int(edge)].update(adjacent)
+            if face_facets[face] >= 0:
+                edge_facets[int(edge)].add(int(face_facets[face]))
 
     complex_ = source.complex
     facet_keys = tuple(
@@ -547,6 +551,13 @@ def _edge_association(
                     common_facets = vertex_facet_keys.get(
                         first_key, set()
                     ) & vertex_facet_keys.get(second_key, set())
+                    # A carrier diagonal inside one facet touches only that
+                    # facet's recovered faces, which disambiguates corners
+                    # shared by several facets.
+                    if len(common_facets) > 1 and edge_facets[edge]:
+                        common_facets &= {
+                            facet_keys[row] for row in edge_facets[edge]
+                        }
                     if len(common_facets) == 1:
                         facet_key = next(iter(common_facets))
                         role, identifier, occurrence_path = (
@@ -596,6 +607,16 @@ def _edge_association(
                         second_id,
                         second_path,
                     )
+            if not identifier and len(edge_facets[edge]) == 1:
+                # Every recovered face around this edge lies on one PLC facet,
+                # so the edge is in that facet (a cross-facet edge would also
+                # bound another facet's faces or be an authored PLC edge).
+                facet_key = facet_keys[next(iter(edge_facets[edge]))]
+                role, identifier, occurrence_path = (
+                    GeometrySourceEntityRole.FACET,
+                    facet_key[0],
+                    facet_key[1],
+                )
             if not identifier:
                 adjacent_regions = face_regions[edge]
                 if len(adjacent_regions) == 1:
