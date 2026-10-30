@@ -97,6 +97,7 @@ bool tetrahedron_shape_impl(const double* const points[4],
     }
   }
   if (!(shortest_squared > 0.0) || !std::isfinite(shortest_squared)) return false;
+  std::copy_n(center, 3, shape.circumcenter.begin());
   shape.circumradius = std::sqrt(radius_squared);
   shape.shortest_edge = std::sqrt(shortest_squared);
   shape.radius_edge_ratio = shape.circumradius / shape.shortest_edge;

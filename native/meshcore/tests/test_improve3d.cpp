@@ -707,14 +707,45 @@ void relocation_clears_stale_carrier_ancestry() {
       {}, nullptr);
   PHX_CHECK(build_status == PHX_MC_OK);
   if (build_status != PHX_MC_OK) return;
-  std::int64_t inserted = 0;
-  std::int64_t unmet = 0;
-  const std::int32_t refine_status = refine_mesh(mesh, 0.1, {}, inserted, unmet);
-  PHX_CHECK(refine_status == PHX_MC_OK || refine_status == PHX_MC_UNRESOLVED);
-  PHX_CHECK(inserted == 1);
-  if ((refine_status != PHX_MC_OK && refine_status != PHX_MC_UNRESOLVED) || inserted != 1) {
-    return;
+  // An explicit stellar edit seeds an interior vertex with an exact
+  // barycentric stencil (refinement inserts circumcenters without one).
+  TetMeshSnapshot initial;
+  PHX_CHECK(mesh.snapshot(initial) == TetEditStatus::kApplied);
+  if (initial.cells.size() != 1) return;
+  const TetSnapshotCell& parent = initial.cells.front();
+  std::uint64_t next_vertex_id = 0;
+  for (const TetSnapshotVertex& vertex : initial.vertices) {
+    next_vertex_id = std::max(next_vertex_id, vertex.id + 1);
   }
+  TetEdit stellar;
+  stellar.kind = TetEditKind::kRefineCell;
+  stellar.removed_cell_ids.push_back(parent.id);
+  TetEditVertex centroid;
+  centroid.id = next_vertex_id;
+  centroid.carrier = {0.25, 0.25, 0.25};
+  for (std::uint64_t vertex : parent.vertices) {
+    centroid.ancestry.push_back({vertex, {}, 0.25});
+  }
+  stellar.changed_vertices.push_back(centroid);
+  const std::int32_t parent_slot = mesh.cell_slot(parent.id);
+  for (int face = 0; face < 4; ++face) {
+    std::int32_t oriented[3];
+    oriented_facet(mesh.tet(parent_slot).v, face, oriented);
+    TetEditCell child;
+    child.id = parent.id + 1 + static_cast<std::uint64_t>(face);
+    child.vertices = {mesh.vertex_id(oriented[0]), mesh.vertex_id(oriented[1]),
+                      mesh.vertex_id(oriented[2]), centroid.id};
+    child.facet_sources[3] = mesh.complex().constraint(parent_slot, face);
+    child.region = parent.region;
+    child.ancestor_cell_ids.push_back(parent.id);
+    stellar.replacement_cells.push_back(child);
+  }
+  TetEditBatch batch{mesh.generation(), mesh.source_revision(), mesh.frame_id(),
+                     mesh.identity_bound(), {std::move(stellar)}, mesh.source_id(),
+                     mesh.source_map_id(), mesh.periodic_identity()};
+  std::vector<TetEditResult> results;
+  PHX_CHECK(mesh.apply_edit_batch(batch, results) == TetEditStatus::kApplied);
+  if (results.size() != 1 || results.front().status != TetEditStatus::kApplied) return;
   TetMeshSnapshot before;
   PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
   const auto steiner = std::find_if(before.vertices.begin(), before.vertices.end(),
