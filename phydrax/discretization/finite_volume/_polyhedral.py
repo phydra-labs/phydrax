@@ -91,20 +91,27 @@ def prepare_polyhedral_finite_volume_geometry(
         if np.max(np.abs(distance)) > planarity * scale:
             raise ValueError("Polyhedral face fails its planarity certificate.")
         triangle_areas, triangle_centers = [], []
+        # Conforming faces may carry collinear vertices on their edges; the
+        # zero-area fan triangles they produce carry no measure and are skipped.
+        degenerate_area = planarity * scale * scale
         for local in range(1, polygon.shape[0] - 1):
             triangle = polygon[[0, local, local + 1]]
             vector = 0.5 * np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
             weight = float(np.dot(vector, unit))
-            if not np.isfinite(weight) or weight <= 0:
+            if not np.isfinite(weight) or weight < -degenerate_area:
                 raise ValueError(
                     "Polyhedral face loop is not consistently oriented/convex."
                 )
+            if weight <= degenerate_area:
+                continue
             center = np.mean(triangle, axis=0)
             triangle_areas.append(weight)
             triangle_centers.append(center)
             face_q_points[face, local - 1] = center
             face_q_weights[face, local - 1] = weight
             face_q_valid[face, local - 1] = True
+        if not triangle_areas:
+            raise ValueError("Polyhedral faces require positive finite measure.")
         face_centers[face] = np.average(
             np.asarray(triangle_centers), axis=0, weights=np.asarray(triangle_areas)
         )
@@ -138,6 +145,8 @@ def prepare_polyhedral_finite_volume_geometry(
             polygon = points[face_vertices[face, face_valid[face]]]
             closure_vector += float(sign) * area_vectors[face]
             for local in range(1, polygon.shape[0] - 1):
+                if not face_q_valid[face, local - 1]:
+                    continue
                 triangle = polygon[[0, local, local + 1]]
                 volume = (
                     float(sign)

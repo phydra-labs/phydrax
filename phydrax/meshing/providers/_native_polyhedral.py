@@ -555,9 +555,7 @@ def _edge_association(
                     # facet's recovered faces, which disambiguates corners
                     # shared by several facets.
                     if len(common_facets) > 1 and edge_facets[edge]:
-                        common_facets &= {
-                            facet_keys[row] for row in edge_facets[edge]
-                        }
+                        common_facets &= {facet_keys[row] for row in edge_facets[edge]}
                     if len(common_facets) == 1:
                         facet_key = next(iter(common_facets))
                         role, identifier, occurrence_path = (
@@ -1133,33 +1131,38 @@ def _polyhedral_organization(
         labels.append(
             MeshLabel("internal_curve", _mesh_scope(mesh, 1, edge_ids[curve_rows]))
         )
-    site_weights = construction.site_weights[construction.cell_sites]
-    site_parent_rows = construction.site_parents[construction.cell_sites]
+    # Meshing scopes store sorted entity IDs; attribute values follow that order.
+    sorted_rows = np.argsort(cell_ids, kind="stable")
+    all_cells_scope = _mesh_scope(mesh, 3, cell_ids)
     attributes = [
         MeshAttribute(
-            "power_site_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.cell_sites,
-        ),
-        MeshAttribute(
-            "power_component_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.component_ids,
-        ),
-        MeshAttribute(
-            "power_site_parent_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_parent_rows,
-        ),
-        MeshAttribute(
-            "power_site_weight",
-            MeshAttributeRole.USER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_weights,
-        ),
+            name,
+            role,
+            all_cells_scope,
+            np.asarray(values)[sorted_rows],
+        )
+        for name, role, values in (
+            (
+                "power_site_index",
+                MeshAttributeRole.MARKER,
+                construction.cell_sites,
+            ),
+            (
+                "power_component_index",
+                MeshAttributeRole.MARKER,
+                construction.component_ids,
+            ),
+            (
+                "power_site_parent_index",
+                MeshAttributeRole.MARKER,
+                construction.site_parents[construction.cell_sites],
+            ),
+            (
+                "power_site_weight",
+                MeshAttributeRole.USER,
+                construction.site_weights[construction.cell_sites],
+            ),
+        )
     ]
     for site, site_id in enumerate(construction.site_ids):
         cells = np.flatnonzero(construction.cell_sites == site)

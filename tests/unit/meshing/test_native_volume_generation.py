@@ -375,10 +375,9 @@ def test_plc_ids_and_occurrences_are_authored_and_not_coordinate_derived() -> No
     assert len(set(repeated_face_ids)) == 2
 
 
-
 def test_shared_polygon_loop_seam_is_a_stable_plc_edge() -> None:
     points = np.asarray(
-        ((0., 0., 0.), (1., 0., 0.), (1., 1., 0.), (0., 1., 0.)),
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)),
         dtype=np.float64,
     )
     loops = (
@@ -406,20 +405,19 @@ def test_shared_polygon_loop_seam_is_a_stable_plc_edge() -> None:
     complex_ = make_complex(loops)
     reordered = make_complex(tuple(reversed(loops)))
     rows = {
-        tuple(sorted(edge)): row
-        for row, edge in enumerate(complex_.plc_edge_vertices)
+        tuple(sorted(edge)): row for row, edge in enumerate(complex_.plc_edge_vertices)
     }
     assert set(rows) == {(0, 1), (1, 2), (2, 3), (0, 3), (0, 2)}
     seam = rows[(0, 2)]
     assert complex_.plc_edge_facets[seam] == (0,)
     reordered_rows = {
-        tuple(sorted(edge)): row
-        for row, edge in enumerate(reordered.plc_edge_vertices)
+        tuple(sorted(edge)): row for row, edge in enumerate(reordered.plc_edge_vertices)
     }
     assert complex_.plc_edge_ids[seam] == reordered.plc_edge_ids[reordered_rows[(0, 2)]]
-    assert complex_.plc_edge_entity_ids[seam] == reordered.plc_edge_entity_ids[
-        reordered_rows[(0, 2)]
-    ]
+    assert (
+        complex_.plc_edge_entity_ids[seam]
+        == reordered.plc_edge_entity_ids[reordered_rows[(0, 2)]]
+    )
 
 
 def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> None:
@@ -433,9 +431,7 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
     construction = _construct(source, _request(source, region_seeds=(seed,)))
     complex_ = source.complex
     boundary_rows = {
-        row
-        for row, facets in enumerate(complex_.plc_edge_facets)
-        if len(facets) == 2
+        row for row, facets in enumerate(complex_.plc_edge_facets) if len(facets) == 2
     }
     diagonal_rows = set(range(len(complex_.plc_edge_ids))) - boundary_rows
     assert len(boundary_rows) == 12
@@ -512,16 +508,14 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
     raw_edge_rows = [
         row
         for row, edge in enumerate(raw_edges.tolist())
-        if tuple(sorted(int(value) for value in edge))
-        == tuple(sorted(canonical_edge))
+        if tuple(sorted(int(value) for value in edge)) == tuple(sorted(canonical_edge))
     ]
     assert len(raw_edge_rows) == 1
     raw_edge_row = raw_edge_rows[0]
     raw_edge = tuple(int(value) for value in raw_edges[raw_edge_row])
-    segment_point = (
-        0.75 * np.asarray(complex_.vertices[raw_edge[0]], dtype=np.float64)
-        + 0.25 * np.asarray(complex_.vertices[raw_edge[1]], dtype=np.float64)
-    )
+    segment_point = 0.75 * np.asarray(
+        complex_.vertices[raw_edge[0]], dtype=np.float64
+    ) + 0.25 * np.asarray(complex_.vertices[raw_edge[1]], dtype=np.float64)
     source_triangle = np.asarray(prepared.input_triangles[0], dtype=np.int64)
     face_point = (
         np.asarray(complex_.vertices[source_triangle[0]], dtype=np.float64)
@@ -551,9 +545,7 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
         prepared.plc_edges,
         prepared.input_triangles,
         prepared.input_polygons,
-        np.concatenate(
-            (prepared.source_strata, np.asarray((1, 2), dtype=np.int8))
-        ),
+        np.concatenate((prepared.source_strata, np.asarray((1, 2), dtype=np.int8))),
         np.concatenate(
             (
                 prepared.source_entities,
@@ -566,9 +558,7 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
                 np.asarray(((0.25, 0.0), (0.2, 0.3)), dtype=np.float64),
             )
         ),
-        np.concatenate(
-            (prepared.source_deviations, np.zeros((2,), dtype=np.float64))
-        ),
+        np.concatenate((prepared.source_deviations, np.zeros((2,), dtype=np.float64))),
     )
     canonical_edges = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
     vertex_identity_rows = tuple(
@@ -614,9 +604,7 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
         complex_.plc_edge_occurrence_paths[int(row)] for row in expected_rows
     )
 
-    expected_segment_parameter = (
-        0.25 if raw_edge == canonical_edge else 0.75
-    )
+    expected_segment_parameter = 0.25 if raw_edge == canonical_edge else 0.75
     assert int(tables.source.witness_entities[-2]) == 0
     assert tables.source.witness_parameters[-2, 0] == pytest.approx(
         expected_segment_parameter
@@ -627,10 +615,7 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
         np.asarray((0.2, 0.3), dtype=np.float64),
     )
     assert tables.segment_entity_ids[0] == complex_.plc_edge_ids[0]
-    assert (
-        tables.segment_occurrence_paths[0]
-        == complex_.plc_edge_occurrence_paths[0]
-    )
+    assert tables.segment_occurrence_paths[0] == complex_.plc_edge_occurrence_paths[0]
 
 
 def test_native_plc_fill_recovers_material_interface_and_fixed_boundary() -> None:
@@ -639,7 +624,10 @@ def test_native_plc_fill_recovers_material_interface_and_fixed_boundary() -> Non
     assert construction.boundary_policy == "fixed"
     assert isinstance(construction.domain, PiecewiseLinearDomain)
     assert construction.region_ids == ("upper", "lower")
-    assert construction.domain.region_occurrence_paths == source.complex.region_occurrence_paths
+    assert (
+        construction.domain.region_occurrence_paths
+        == source.complex.region_occurrence_paths
+    )
     assert set(np.asarray(construction.cell_regions, dtype=np.int64).tolist()) == {0, 1}
     assert construction.input_vertices.shape == (construction.mesh.coordinates.shape[0],)
     boundary_vertex_rows = np.unique(construction.boundary_faces)
@@ -661,9 +649,10 @@ def test_native_plc_fill_recovers_material_interface_and_fixed_boundary() -> Non
         np.isin(construction.face_source_facets, interface_facets)
     )
     assert interface_rows.size == 1
-    assert construction.face_source_ids[int(interface_rows[0])] == source.complex.facet_ids[
-        int(interface_facets[0])
-    ]
+    assert (
+        construction.face_source_ids[int(interface_rows[0])]
+        == source.complex.facet_ids[int(interface_facets[0])]
+    )
 
     result = _prepare(source, _request(source))
 
@@ -703,21 +692,19 @@ def test_native_plc_fill_recovers_material_interface_and_fixed_boundary() -> Non
         association
         for association in result.organization.associations
         if association.association_kind is GeometryAssociationKind.PIECEWISE_LINEAR
-        and association.target_entity_set_id
-        == result.mesh.entity_set(2).entity_set_id
+        and association.target_entity_set_id == result.mesh.entity_set(2).entity_set_id
         and any(
-            role is GeometrySourceEntityRole.FACET
-            for role in association.source_roles
+            role is GeometrySourceEntityRole.FACET for role in association.source_roles
         )
     )
     assert any(
-        positive is not None
-        and negative is not None
-        and positive != negative
+        positive is not None and negative is not None and positive != negative
         for positive, negative in face_association.source_region_sides
     )
     assert result.certification.cell_regions is not None
-    assert set(np.asarray(result.certification.cell_regions, dtype=np.int64).tolist()) == {
+    assert set(
+        np.asarray(result.certification.cell_regions, dtype=np.int64).tolist()
+    ) == {
         0,
         1,
     }
@@ -782,16 +769,22 @@ def test_native_plc_boundary_evidence_separates_repeated_region_occurrences() ->
     }
     assert set(evidence_by_path) == {("assembly-a",), ("assembly-b",)}
     assert all(
-        evidence.source_region_id == "shared-region"
-        and evidence.control_id is None
+        evidence.source_region_id == "shared-region" and evidence.control_id is None
         for evidence in evidence_by_path.values()
     )
-    assert len(
-        {evidence.source_scope.scope_id for evidence in evidence_by_path.values()}
-    ) == 2
-    assert len(
-        {int(evidence.source_scope.entity_ids[0]) for evidence in evidence_by_path.values()}
-    ) == 2
+    assert (
+        len({evidence.source_scope.scope_id for evidence in evidence_by_path.values()})
+        == 2
+    )
+    assert (
+        len(
+            {
+                int(evidence.source_scope.entity_ids[0])
+                for evidence in evidence_by_path.values()
+            }
+        )
+        == 2
+    )
     zone_names = tuple(zone.name for zone in organization.zones)
     assert len(set(zone_names)) == 2
     assert all(name.startswith("shared-region@") for name in zone_names)
@@ -827,8 +820,13 @@ def test_native_plc_boundary_evidence_separates_repeated_region_occurrences() ->
         ("assembly-a",),
         ("assembly-b",),
     )
-    assert dict(evidence_by_path[("assembly-a",)].patch_sides)[interface_patch.patch_id] == 1
-    assert dict(evidence_by_path[("assembly-b",)].patch_sides)[interface_patch.patch_id] == -1
+    assert (
+        dict(evidence_by_path[("assembly-a",)].patch_sides)[interface_patch.patch_id] == 1
+    )
+    assert (
+        dict(evidence_by_path[("assembly-b",)].patch_sides)[interface_patch.patch_id]
+        == -1
+    )
 
 
 def test_conforming_plc_fill_retains_source_ancestry_and_region_coverage() -> None:
@@ -864,12 +862,121 @@ def test_mapped_carrier_classification_uses_plc_incidence_and_witnesses() -> Non
         2,
         3,
     ]
-    assert ancestry.source_entity_ids[0] == construction.vertex_source_ids[
-        original_vertex_row
-    ]
+    assert (
+        ancestry.source_entity_ids[0]
+        == construction.vertex_source_ids[original_vertex_row]
+    )
     assert ancestry.source_entity_ids[1] == construction.face_source_ids[0]
     region = int(construction.cell_regions[0])
     assert ancestry.source_entity_ids[2] == construction.region_ids[region]
-    assert ancestry.source_occurrence_paths[2] == construction.region_occurrence_paths[
-        region
+    assert (
+        ancestry.source_occurrence_paths[2]
+        == construction.region_occurrence_paths[region]
+    )
+
+
+def _stacked_box_source() -> NativePlcSource:
+    points = np.asarray(
+        [
+            (x, y, z)
+            for z in (0.0, 0.5, 1.0)
+            for x, y in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+        ],
+        dtype=np.float64,
+    )
+
+    def sides(base: int, /) -> tuple[tuple[int, int, int], ...]:
+        rows: list[tuple[int, int, int]] = []
+        for first, second in ((0, 1), (1, 2), (2, 3), (3, 0)):
+            a, b = base + first, base + second
+            rows.extend(((a, b, b + 4), (a, b + 4, a + 4)))
+        return tuple(rows)
+
+    triangles = np.asarray(
+        (
+            (0, 2, 1),
+            (0, 3, 2),
+            (8, 9, 10),
+            (8, 10, 11),
+            (4, 5, 6),
+            (4, 6, 7),
+            *sides(0),
+            *sides(4),
+        ),
+        dtype=np.int64,
+    )
+    # Facets: bottom, top, the two-triangle material interface, then the four
+    # side squares of the lower and of the upper box.
+    facets = np.asarray(
+        (0, 0, 1, 1, 2, 2, *np.repeat(np.arange(3, 11), 2).tolist()),
+        dtype=np.int64,
+    )
+    facet_regions = np.asarray(
+        ((-1, 1), (-1, 0), (0, 1), *((-1, 1),) * 4, *((-1, 0),) * 4),
+        dtype=np.int64,
+    )
+    complex_ = PiecewiseLinearComplex(
+        points,
+        triangles,
+        facets,
+        facet_regions,
+        ("upper", "lower"),
+        segments=np.empty((0, 2), dtype=np.int64),
+        vertex_ids=tuple(f"stack-vertex-{row}" for row in range(points.shape[0])),
+        vertex_occurrence_paths=((),) * points.shape[0],
+        facet_ids=tuple(f"stack-facet-{row}" for row in range(11)),
+        facet_occurrence_paths=((),) * 11,
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((), ()),
+        boundary="fixed",
+    )
+    return NativePlcSource(complex_, "stacked-boxes", "revision-1")
+
+
+def test_mapped_carrier_classification_assigns_interface_diagonals_to_their_facet() -> (
+    None
+):
+    from phydrax.meshing._plc_mapped_support import classify_plc_carriers
+
+    source = _stacked_box_source()
+    construction = _construct(
+        source,
+        _request(
+            source,
+            region_seeds=(
+                RegionSeed(
+                    np.asarray((0.5, 0.5, 0.75), dtype=np.float64),
+                    "upper",
+                    "upper-material",
+                    RegionRole.SOLID,
+                ),
+                RegionSeed(
+                    np.asarray((0.5, 0.5, 0.25), dtype=np.float64),
+                    "lower",
+                    "lower-material",
+                    RegionRole.SOLID,
+                ),
+            ),
+        ),
+    )
+    interface_rows = np.flatnonzero(
+        np.asarray(construction.face_source_facets, dtype=np.int64) == 2
+    )
+    interface_faces = np.asarray(construction.boundary_faces, dtype=np.int64)[
+        interface_rows
     ]
+    assert interface_faces.shape == (2, 3)
+    diagonal = sorted(set(interface_faces[0].tolist()) & set(interface_faces[1].tolist()))
+    assert len(diagonal) == 2
+    native_vertex_ids = np.asarray(construction.mesh.vertex_global_ids, dtype=np.int64)
+    carriers = np.full((1, 4), -1, dtype=np.int64)
+    carriers[0, :2] = native_vertex_ids[np.asarray(diagonal, dtype=np.int64)]
+
+    ancestry = classify_plc_carriers(construction, carriers)
+
+    assert ancestry.dimensions.tolist() == [2]
+    assert ancestry.source_entity_ids == (
+        construction.face_source_ids[int(interface_rows[0])],
+    )
+    assert ancestry.source_entity_ids[0] == source.complex.facet_ids[2]
