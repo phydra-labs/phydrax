@@ -464,15 +464,20 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
   return {validity, quality_score};
 }
 
+// Measures an exactly positive cell. A positive cell whose circumsphere is not
+// representable in floating point (the circumcenter solve meets a zero pivot,
+// as for a rounded cocircular sliver) has a radius-edge ratio above every
+// representable bound, so it is measured as +inf (score 0) rather than refused;
+// the exact orientation keeps its validity beyond doubt.
 bool measure_cell(const std::array<const double*, 4>& points, CellMeasure& result) {
   if (orient3d(points[0], points[1], points[2], points[3]) <= 0) return false;
   geometry::TetrahedronShape shape;
-  if (!geometry::tetrahedron_shape(points.data(), shape)) return false;
+  result.radius_edge_ratio = geometry::tetrahedron_shape(points.data(), shape)
+                                 ? shape.radius_edge_ratio
+                                 : std::numeric_limits<double>::infinity();
   result.minimum_angle = geometry::minimum_dihedral_degrees(points.data());
-  result.radius_edge_ratio = shape.radius_edge_ratio;
   result.relative_determinant = geometry::relative_determinant(points.data());
   return std::isfinite(result.minimum_angle) &&
-         std::isfinite(result.radius_edge_ratio) &&
          std::isfinite(result.relative_determinant);
 }
 bool measure_relocated_cell(
@@ -481,14 +486,13 @@ bool measure_relocated_cell(
   if (orient3d(points[0], points[1], points[2], points[3]) <= 0) return false;
   if (!geometry::relocation_radius_edge_ratio(
           points.data(), metric_cache, result.radius_edge_ratio)) {
-    return false;
+    result.radius_edge_ratio = std::numeric_limits<double>::infinity();
   }
   result.minimum_angle =
       geometry::relocation_minimum_dihedral_degrees(points.data(), metric_cache);
   result.relative_determinant =
       geometry::relocation_relative_determinant(points.data(), metric_cache);
   return std::isfinite(result.minimum_angle) &&
-         std::isfinite(result.radius_edge_ratio) &&
          std::isfinite(result.relative_determinant);
 }
 
@@ -2023,11 +2027,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
     }
     bool cell_unmet = false;
     geometry::TetrahedronShape shape;
-    if (!geometry::tetrahedron_shape(points.data(), shape) ||
-        !std::isfinite(shape.radius_edge_ratio)) {
-      records.push_back({cell.id, PHX_MC_TET_UNMET_CONSTRUCTION,
+    if (!geometry::tetrahedron_shape(points.data(), shape)) {
+      // Exactly positive (checked above) with a circumsphere that floating
+      // point cannot represent: the ratio exceeds every representable bound.
+      records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
                          PHX_MC_TET_UNMET_NONREPRESENTABLE,
-                         shape.radius_edge_ratio});
+                         std::numeric_limits<double>::infinity()});
       cell_unmet = true;
     } else if (shape.radius_edge_ratio > request.radius_edge_bound) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,

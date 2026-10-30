@@ -842,6 +842,59 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
   }
 }
 
+// A rounded cocircular torus-grid sliver: exactly positive, but the floating
+// circumcenter solve meets a zero pivot. Improvement measures it with an
+// unbounded radius-edge ratio instead of refusing its input.
+void unrepresentable_positive_sliver_is_measured_not_refused() {
+  const std::array<double, 12> points{
+      -0x1.c70b87954e637p-3, -0x1.c5ed025972287p-1, -0x1.32dd9dbad3c19p-2,
+      -0x1.d04e9d763be24p-3, -0x1.cf2a434460531p-1, -0x1.31619e74336d0p-2,
+      -0x1.aaaea448179fdp-3, -0x1.c7a4ec59e9057p-1, -0x1.32dd9dbad3c19p-2,
+      -0x1.b35df02262e1bp-3, -0x1.d0eb21831421bp-1, -0x1.31619e74336d0p-2};
+  const double* corners[4]{points.data(), points.data() + 3, points.data() + 6,
+                           points.data() + 9};
+  PHX_CHECK(orient3d(corners[0], corners[1], corners[2], corners[3]) > 0);
+  geometry::TetrahedronShape shape;
+  PHX_CHECK(!geometry::tetrahedron_shape(corners, shape));
+  constexpr std::array<std::int32_t, 4> tetrahedron{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 1> regions{0};
+  constexpr std::array<std::int32_t, 4> face_sources{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 0> no_indices{};
+  std::array<std::int32_t, 12> faces{};
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    std::int32_t face[3];
+    oriented_facet(tetrahedron.data(), opposite, face);
+    std::copy_n(face, 3, faces.begin() + 3 * opposite);
+  }
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  PHX_CHECK(mesh.build(points, tetrahedron, regions, faces, face_sources, {}, no_indices,
+                       no_indices, {}, nullptr) == PHX_MC_OK);
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  if (before.cells.size() != 1) return;
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(
+      mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  const std::uint64_t sliver = before.cells.front().id;
+  const bool survives = std::any_of(after.cells.begin(), after.cells.end(),
+                                    [&](const TetSnapshotCell& cell) { return cell.id == sliver; });
+  PHX_CHECK(survives == std::any_of(
+                            mesh.unmet_records().begin(), mesh.unmet_records().end(),
+                            [&](const TetUnmetRecord& record) {
+                              return record.cell_id == sliver &&
+                                     record.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE &&
+                                     record.reason == PHX_MC_TET_UNMET_NONREPRESENTABLE &&
+                                     std::isinf(record.value);
+                            }));
+  PHX_CHECK(same_source_banks(before, after));
+}
+
 
 void fixed_mapped_cube_slivers_are_improved_transactionally() {
   constexpr std::array<double, 24> points{
@@ -1731,6 +1784,7 @@ int main() {
   convex_bipyramid_reports_unresolved_radius_edge();
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
+  unrepresentable_positive_sliver_is_measured_not_refused();
   fixed_mapped_cube_slivers_are_improved_transactionally();
   dihedral_extremum_matches_pairwise_reference();
   relocation_metric_cache_is_bitwise_exact();
