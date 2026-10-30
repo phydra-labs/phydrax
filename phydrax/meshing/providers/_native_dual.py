@@ -4157,6 +4157,11 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
                 scoped_fidelity.append(
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
+        # The grid geometry is the exact per-cell restriction of the root source
+        # map, so its source deviation is zero. Without a requested bound the
+        # certificate proves that exact claim instead of an invented allowance.
+        requested = self.specification.maximum_deviation
+        fidelity_tolerance = 0.0 if requested is None else requested
         certification = NativeCertificationRequest(
             MeshCertificationSchedule("volume_plc"),
             self.source.source_id,
@@ -4164,7 +4169,7 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
             domain=self.source.domain,
             cell_regions=np.asarray(mapped.cell_regions, dtype=np.int64),
             fidelity_source=fidelity_source,
-            fidelity_tolerance=self.specification.maximum_deviation,
+            fidelity_tolerance=fidelity_tolerance,
             fidelity_witness=fidelity_witness,
             protected_features=self.specification.protected_features,
             scoped_fidelity=tuple(scoped_fidelity),

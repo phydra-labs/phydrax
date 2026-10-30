@@ -651,6 +651,9 @@ source-bound obstruction; it does not fall back to one global frame or to
 tetrahedral dualization. `mapped_balanced_grid_hex` and `mapped_frame_grid_hex`
 are separate again: they subdivide an already mapped hexahedral root mesh and
 retain its exact root-face transitions.
+Their target geometry is the exact per-cell restriction of the root map, so a
+request without `maximum_deviation` is certified at zero source deviation; an
+explicit bound is honored as requested.
 
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
