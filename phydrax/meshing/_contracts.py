@@ -886,6 +886,74 @@ class SurfaceRemeshingSpec(StrictModule, NonTrainableState):
         )
 
 
+def _require_source_layer_scopes(
+    control: BoundaryLayerControl, boundary_scope: MeshingScope, /
+) -> None:
+    """Bind one layer control to the volume request's source in source terms.
+
+    A face ``boundary_scope`` (the source boundary) must contain the wall and cap
+    faces, and the volume scope names solids of the same source binding. A solid
+    ``boundary_scope`` must contain the volume scope.
+    """
+    binding = (
+        boundary_scope.source_id,
+        boundary_scope.source_revision,
+        boundary_scope.entity_kind,
+    )
+    volume = control.volume_scope
+    scopes = tuple(
+        scope
+        for scope in (control.wall_scope, control.cap_scope, volume)
+        if scope is not None
+    )
+    if any(
+        (scope.source_id, scope.source_revision, scope.entity_kind) != binding
+        for scope in scopes
+    ):
+        raise ValueError(
+            "Boundary-layer scopes must bind the volume request's source in "
+            "source-geometry terms."
+        )
+    if volume is None or volume.entity_dimension != 3:
+        raise ValueError(
+            "Boundary-layer controls of a volume request need a solid scope."
+        )
+    match boundary_scope.entity_dimension:
+        case 2:
+            faces = tuple(
+                scope
+                for scope in (control.wall_scope, control.cap_scope)
+                if scope is not None
+            )
+            if any(
+                scope.entity_dimension != 2
+                or scope.entity_set_id != boundary_scope.entity_set_id
+                or np.setdiff1d(
+                    np.asarray(scope.entity_ids), np.asarray(boundary_scope.entity_ids)
+                ).size
+                for scope in faces
+            ):
+                raise ValueError(
+                    "Boundary-layer wall and cap faces must be contained in the "
+                    "source boundary scope."
+                )
+        case 3:
+            if (
+                volume.entity_set_id != boundary_scope.entity_set_id
+                or np.setdiff1d(
+                    np.asarray(volume.entity_ids), np.asarray(boundary_scope.entity_ids)
+                ).size
+            ):
+                raise ValueError(
+                    "Boundary-layer volume scopes must be contained in the top-level "
+                    "volume scope."
+                )
+        case _:
+            raise ValueError(
+                "Boundary-layer controls require a face or solid boundary scope."
+            )
+
+
 class VolumeMeshingSpec(StrictModule, NonTrainableState):
     target: CellMeshingTarget
     boundary_scope: MeshingScope
@@ -961,36 +1029,17 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             raise TypeError(
                 "layer_controls must contain only BoundaryLayerControl values."
             )
-        if any(
-            control.volume_scope is None
-            or control.volume_scope.entity_set_id != boundary_scope.entity_set_id
-            or np.setdiff1d(
-                np.asarray(control.volume_scope.entity_ids),
-                np.asarray(boundary_scope.entity_ids),
-            ).size
-            for control in layer_controls_
-        ):
-            raise ValueError(
-                "Boundary-layer volume scopes must be contained in the top-level volume scope."
-            )
-        layer_scopes = tuple(
-            scope
-            for control in layer_controls_
-            for scope in (control.wall_scope, control.cap_scope, control.volume_scope)
-            if scope is not None
-        )
+        for control in layer_controls_:
+            _require_source_layer_scopes(control, boundary_scope)
         binding = (
             boundary_scope.source_id,
             boundary_scope.source_revision,
             boundary_scope.entity_kind,
         )
-        additional_scopes = (
-            *(seed.scope for seed in hole_seeds_),
-            *layer_scopes,
-        )
         if any(
-            (scope.source_id, scope.source_revision, scope.entity_kind) != binding
-            for scope in additional_scopes
+            (seed.scope.source_id, seed.scope.source_revision, seed.scope.entity_kind)
+            != binding
+            for seed in hole_seeds_
         ):
             raise ValueError("Volume meshing controls must share one source binding.")
         deviation = _source_deviation(maximum_deviation)
