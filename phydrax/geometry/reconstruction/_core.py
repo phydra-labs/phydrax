@@ -592,14 +592,8 @@ def _scope_entity_ids_by_mesh_row(
         for values in rows:
             values.setflags(write=False)
         return rows
-    counts = (
-        len(domain.source_indices[0]),
-        len(domain.source_indices[1]),
-        len(domain.source_indices[2]),
-        len(domain.region_source_indices),
-    )
     row_banks: list[np.ndarray] = []
-    for dimension, count in enumerate(counts):
+    for dimension in range(4):
         id_by_key = {
             key: int(identifier)
             for identifier, key in zip(
@@ -609,7 +603,7 @@ def _scope_entity_ids_by_mesh_row(
             )
         }
         row_ids = np.asarray(
-            [id_by_key[(domain.entity_id(dimension, row), ())] for row in range(count)],
+            [id_by_key[(key, ())] for key in domain.stratum_entity_ids(dimension)],
             dtype=np.int64,
         )
         row_ids.setflags(write=False)

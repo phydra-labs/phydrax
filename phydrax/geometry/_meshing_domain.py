@@ -1796,6 +1796,21 @@ class MeshingDomain(StrictModule, NonTrainableState):
             occurrence_path=source_paths[index],
         )
 
+    def stratum_entity_ids(self, dimension: int, /) -> tuple[str, ...]:
+        """Return every canonical source key of one stratum in slot order.
+
+        Loops over many slots should call this once: each method call on the
+        domain rebuilds a bound-method pytree over the whole domain.
+        """
+        kind, source_indices, source_paths = self._source_entity_table(dimension)
+        source_id, source_revision = self.source_id, self.source_revision
+        return tuple(
+            canonical_source_entity_id(
+                source_id, source_revision, kind, index, occurrence_path=path
+            )
+            for index, path in zip(source_indices, source_paths, strict=True)
+        )
+
     def resolve_entity_id(
         self,
         dimension: int,
@@ -1845,10 +1860,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             indices_.dtype, np.integer
         ):
             raise TypeError("entity_ids inputs must be integer arrays.")
-        return tuple(
-            self.entity_id(int(dimension), int(index))
-            for dimension, index in zip(dimensions_, indices_, strict=True)
-        )
+        keys: dict[int, tuple[str, ...]] = {}
+        result = []
+        for dimension, index in zip(dimensions_.tolist(), indices_.tolist(), strict=True):
+            stratum = keys.get(dimension)
+            if stratum is None:
+                stratum = keys[dimension] = self.stratum_entity_ids(dimension)
+            if index < 0 or index >= len(stratum):
+                raise ValueError(
+                    "MeshingDomain entity index is outside its source stratum."
+                )
+            result.append(stratum[index])
+        return tuple(result)
 
     def entity_set_id(self, dimension: int, /) -> str:
         kind, source_indices, source_paths = self._source_entity_table(dimension)
@@ -1880,21 +1903,22 @@ class MeshingDomain(StrictModule, NonTrainableState):
         key_banks: list[tuple[tuple[str, tuple[str, ...]], ...]] = []
         set_ids: list[str] = []
         maximum = (1 << 63) - 1
+        source_id, source_revision = self.source_id, self.source_revision
         for dimension in range(4):
             _, source_ids, occurrence_paths = self._source_entity_table(dimension)
+            entity_keys = self.stratum_entity_ids(dimension)
             records = []
-            for slot, (source_id, path) in enumerate(
-                zip(source_ids, occurrence_paths, strict=True)
+            for source_index, path, entity_key in zip(
+                source_ids, occurrence_paths, entity_keys, strict=True
             ):
-                entity_key = self.entity_id(dimension, slot)
                 numeric_id = int(
                     canonical_fingerprint(
                         {
                             "kind": "meshing-domain-scope-entity",
-                            "source_id": self.source_id,
-                            "source_revision": self.source_revision,
+                            "source_id": source_id,
+                            "source_revision": source_revision,
                             "dimension": dimension,
-                            "source_index": source_id,
+                            "source_index": source_index,
                             "source_entity_id": entity_key,
                             "occurrence_path": path,
                         }
@@ -2075,9 +2099,10 @@ class MeshingDomain(StrictModule, NonTrainableState):
             1, source_key[0], occurrence_path=source_key[1]
         )
         result = []
+        patch_keys = self.stratum_entity_ids(2)
         for patch_row, patch in enumerate(self.patches):
             patch_key = (
-                self.entity_id(2, patch_row),
+                patch_keys[patch_row],
                 self.source_occurrences[2][patch_row],
             )
             for loop_row, loop in enumerate(patch.loops):
@@ -2176,6 +2201,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         expected_point_bounds: dict[
             tuple[str, tuple[str, ...]], tuple[np.ndarray, np.ndarray]
         ] = {}
+        corner_keys = self.stratum_entity_ids(0)
         for query_row, chart_id in enumerate(query.chart_ids):
             _, _, (first, last), patch_row, _, _, use = expected[chart_id]
             curve = query.curves[query_row]
@@ -2190,7 +2216,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             # Coedge sense reverses loop traversal, not the chart's parameter order.
             corners = (source_curve.start, source_curve.end)
             expected_endpoint_keys = tuple(
-                (self.entity_id(0, corner), self.source_occurrences[0][corner])
+                (corner_keys[corner], self.source_occurrences[0][corner])
                 for corner in corners
             )
             if query.endpoint_source_keys[query_row] != expected_endpoint_keys:
