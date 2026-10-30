@@ -13,6 +13,7 @@
 #include <limits>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <new>
 #include <set>
@@ -2035,9 +2036,6 @@ class PlcRecoveryBuilder {
   // split_parameter. S is a dyadic rational point; its carrier is the
   // correctly rounded S, and every predicate on the new vertex evaluates S.
   int32_t split_source_edge(std::size_t edge, std::size_t interval, bool& restart) {
-    if (input_.policy == BoundaryPolicy::kFixed) {
-      return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, edge);
-    }
     const PlcEdgePoint first = edge_chains_[edge][interval];
     const PlcEdgePoint second = edge_chains_[edge][interval + 1];
     const double parameter = split_parameter(edge, first, second);
@@ -2165,16 +2163,6 @@ class PlcRecoveryBuilder {
         const int32_t edge_status = has_edge(first, second, edge_present);
         if (edge_status != PHX_MC_OK) return edge_status;
         if (edge_present) continue;
-        if (input_.policy == BoundaryPolicy::kFixed) {
-          const int32_t fixed_status = recover_fixed_source_edge(edge, first, second);
-          if (fixed_status != PHX_MC_OK) return fixed_status;
-          if (cavity_steiner_restart_required_) {
-            cavity_steiner_restart_required_ = false;
-            restart = true;
-            return PHX_MC_OK;
-          }
-          continue;
-        }
         bool recovered = false;
         const int32_t local_status = try_planar_source_edge(edge, first, second, recovered);
         if (local_status != PHX_MC_OK) return local_status;
@@ -2991,9 +2979,7 @@ class PlcRecoveryBuilder {
       const PlcSourceRefusal saved_refusal = candidate_.source_refusal;
       const std::size_t old_point_count = candidate_.points.size();
       bool restart = false;
-      const int32_t status = split_source_face(
-          key, current->second, restart, parameters, spacing, carrier,
-          deviation);
+      const int32_t status = split_source_face(key, current->second, restart);
       if (status == PHX_MC_OK && restart) {
         if (progress_enabled_) {
           ++progress_face_steiner_insertions_;
@@ -6680,164 +6666,114 @@ class PlcRecoveryBuilder {
     return false;
   }
 
-  bool exact_source_face_point(int32_t source_triangle, double* point,
-                               double* parameters) const {
-    const int32_t* face = candidate_.input_triangles.data() + 3 * source_triangle;
-    const double* a = candidate_.points.data() + 3 * static_cast<std::size_t>(face[0]);
-    const double* b = candidate_.points.data() + 3 * static_cast<std::size_t>(face[1]);
-    const double* c = candidate_.points.data() + 3 * static_cast<std::size_t>(face[2]);
-    const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-    const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const double* triangle[3] = {a, b, c};
-    for (int resolution = 2; resolution <= 52; ++resolution) {
-      const double scale = std::exp2(resolution);
-      const double parameter = std::round(scale / 3.0) / scale;
-      for (int axis = 0; axis < 3; ++axis) {
-        point[axis] = a[axis] + parameter * ab[axis] + parameter * ac[axis];
-      }
-      int side = 0;
-      if (geometry::point_in_domain(point) &&
-          locate_on_triangle(point, triangle, side) == kFeatureInterior) {
-        parameters[0] = parameter;
-        parameters[1] = parameter;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  int32_t split_source_face(
-      const Triple& key, const PlcSourceFace& source, bool& restart,
-      const double* steiner_parameters = nullptr,
-      double minimum_spacing = 0.0,
-      const double* steiner_carrier = nullptr,
-      double steiner_deviation = 0.0) {
+  // Splits the missing subface `source`, a child of source triangle
+  // T = ABC, at the exactly witnessed point S = A + l1 (B - A) + l2 (C - A).
+  // (l1, l2) are the barycentric coordinates of the child's centroid,
+  // rounded to dyadic rationals of increasing precision until S lies
+  // exactly in the child's open interior; S keeps its exact position in the
+  // exact vertex bank (its carrier is the rounding of S), so S is exactly
+  // coplanar with every subface of T and later recovery and suppression
+  // decide on S itself. The child becomes the fan from S over its boundary,
+  // which includes the split points on its edges.
+  int32_t split_source_face(const Triple& key, const PlcSourceFace& source, bool& restart) {
+    restart = false;
+    const auto refuse = [&]() {
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
+    };
+    const int32_t source_count = static_cast<int32_t>(candidate_.points.size() / 3);
     std::vector<int32_t> boundary;
     for (int side = 0; side < 3; ++side) {
       const int32_t first = source.oriented[static_cast<std::size_t>(side)];
       const int32_t second = source.oriented[static_cast<std::size_t>((side + 1) % 3)];
       boundary.push_back(first);
-      int axis = 0;
-      for (int k = 1; k < 3; ++k) {
-        if (std::fabs(point(second)[k] - point(first)[k]) >
-            std::fabs(point(second)[axis] - point(first)[axis])) axis = k;
-      }
-      const double a = point(first)[axis];
-      const double b = point(second)[axis];
       std::vector<int32_t> interior;
-      for (int32_t vertex = 0; vertex < static_cast<int32_t>(candidate_.points.size() / 3); ++vertex) {
+      for (int32_t vertex = 0; vertex < source_count; ++vertex) {
         if (vertex == first || vertex == second) continue;
-        const double coordinate = point(vertex)[axis];
-        if (!(std::min(a, b) < coordinate && coordinate < std::max(a, b)) ||
-            !geometry::collinear(point(first), point(second), point(vertex), 1)) continue;
+        if (!collinear(ref(first), ref(second), ref(vertex)) ||
+            !between_on_line(ref(first), ref(second), ref(vertex))) {
+          continue;
+        }
         interior.push_back(vertex);
       }
+      // Order along the edge by the exact projection onto it.
       std::sort(interior.begin(), interior.end(), [&](int32_t x, int32_t y) {
-        return a < b ? point(x)[axis] < point(y)[axis] : point(x)[axis] > point(y)[axis];
+        Expansion along;
+        for (int axis = 0; axis < 3; ++axis) {
+          along = along + (coordinate(ref(y), axis) - coordinate(ref(x), axis)) *
+                              (coordinate(ref(second), axis) - coordinate(ref(first), axis));
+        }
+        return along.sign() > 0;
       });
       boundary.insert(boundary.end(), interior.begin(), interior.end());
     }
-    if (boundary.size() < 3) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
-    }
     const int32_t* original = candidate_.input_triangles.data() + 3 * source.source_triangle;
-    const double* source_corners[3] = {
+    const double* corners[3] = {
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[0]),
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[1]),
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[2])};
-    double constructed[3];
-    double parameters[2] = {0.0, 0.0};
-    const bool is_source_triangle =
-        sorted_triple(source.oriented.data()) == sorted_triple(original);
-    bool constructed_ok = false;
-    if (steiner_parameters != nullptr) {
-      parameters[0] = steiner_parameters[0];
-      parameters[1] = steiner_parameters[1];
-      constructed_ok =
-          source_parameters_valid(SourceStratum::kFacet, parameters);
-    } else {
-      constructed_ok = is_source_triangle
-          ? exact_source_face_point(source.source_triangle, constructed,
-                                    parameters)
-          : exact_triangle_point(point(source.oriented[0]),
-                                 point(source.oriented[1]),
-                                 point(source.oriented[2]), constructed);
-      if (!is_source_triangle && constructed_ok) {
-        source_locator(source_corners, SourceStratum::kFacet, constructed,
-                       parameters, false);
-      }
+    // Barycentric coordinates of the child's carrier centroid in T, by the
+    // normal equations of the affine map (only a target for the search).
+    double centroid[3] = {0.0, 0.0, 0.0};
+    for (int32_t vertex : source.oriented) {
+      for (int axis = 0; axis < 3; ++axis) centroid[axis] += point(vertex)[axis] / 3.0;
     }
-    if (!constructed_ok) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
-    if (!source_parameters_valid(SourceStratum::kFacet, parameters)) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
+    double u[3], v[3], w[3];
+    geometry::difference(corners[1], corners[0], u);
+    geometry::difference(corners[2], corners[0], v);
+    geometry::difference(centroid, corners[0], w);
+    const double uu = geometry::dot(u, u), uv = geometry::dot(u, v), vv = geometry::dot(v, v);
+    const double wu = geometry::dot(w, u), wv = geometry::dot(w, v);
+    const double determinant = uu * vv - uv * uv;
+    if (!(determinant > 0.0)) return refuse();
+    const double target[2] = {(wu * vv - wv * uv) / determinant, (wv * uu - wu * uv) / determinant};
+    const ExactPointRef child[3] = {ref(source.oriented[0]), ref(source.oriented[1]),
+                                    ref(source.oriented[2])};
+    double parameters[2];
+    Expansion position[3];
     double carrier[3];
-    double deviation = 0.0;
-    if (steiner_carrier != nullptr) {
-      std::copy_n(steiner_carrier, 3, carrier);
-      deviation = steiner_deviation;
-    } else if (!source_carrier(source_corners, SourceStratum::kFacet,
-                               parameters, carrier, deviation)) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
-    const double bound = source_facet_tolerance(source.facet);
-    if (deviation > bound) {
-      candidate_.source_refusal = {deviation, bound};
-      return fail(PHX_MC_UNRESOLVED, kPlcSourceDeviation, kPlcFacet, source.facet);
-    }
-    const double* const child_triangle[3] = {
-        point(source.oriented[0]), point(source.oriented[1]), point(source.oriented[2])};
-    int center_side = 0;
-    if (locate_on_triangle(carrier, child_triangle, center_side) != kFeatureInterior) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
-    }
-    const Expansion minimum_spacing_squared =
-        Expansion::product(minimum_spacing, minimum_spacing);
-    for (std::size_t vertex = 0;
-         vertex < candidate_.points.size() / 3; ++vertex) {
-      const double* existing =
-          candidate_.points.data() + 3 * vertex;
-      if (geometry::same_point(carrier, existing)) {
-        return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                    source.facet);
+    bool found = false;
+    for (int bits = 4; bits <= 52 && !found; ++bits) {
+      const double scale = std::exp2(bits);
+      parameters[0] = std::round(target[0] * scale) / scale;
+      parameters[1] = std::round(target[1] * scale) / scale;
+      if (!source_parameters_valid(SourceStratum::kFacet, parameters) ||
+          !source_point(corners, SourceStratum::kFacet, parameters, position)) {
+        continue;
       }
-      if (minimum_spacing > 0.0) {
-        const Expansion dx = Expansion::difference(carrier[0], existing[0]);
-        const Expansion dy = Expansion::difference(carrier[1], existing[1]);
-        const Expansion dz = Expansion::difference(carrier[2], existing[2]);
-        const Expansion distance_squared = dx * dx + dy * dy + dz * dz;
-        if ((distance_squared - minimum_spacing_squared).sign() < 0) {
-          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                      source.facet);
-        }
-      }
+      for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(position[axis]);
+      if (!geometry::point_in_domain(carrier)) continue;
+      int side = 0;
+      found = locate_on_triangle(ExactPointRef{carrier, position}, child, side) ==
+              kFeatureInterior;
     }
-    if (candidate_.points.size() / 3 >= static_cast<std::size_t>(kMaxMeshPoints - corner_count_)) {
+    if (!found) return refuse();
+    const double deviation = outward_distance(carrier, position);
+    // Distinct exact points with equal carriers would be indistinguishable.
+    const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
+    for (int32_t vertex = 0; vertex < source_count; ++vertex) {
+      if (!geometry::same_point(carrier, point(vertex))) continue;
+      if (same_point(split, ref(vertex))) {
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcFacet, source.facet,
+                    kPlcPoint, vertex);
+      }
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet, kPlcPoint,
+                  vertex);
+    }
+    if (source_count >= kMaxMeshPoints - corner_count_) {
       return fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
     }
-    const int32_t center = static_cast<int32_t>(candidate_.points.size() / 3);
-    const PlcSourceFace parent = source;
+    const int32_t center = source_count;
     std::map<Triple, PlcSourceFace> staged_source_faces;
     for (std::size_t side = 0; side < boundary.size(); ++side) {
-      const Triple child{boundary[side], boundary[(side + 1) % boundary.size()], center};
-      const Triple child_key = sorted_triple(child.data());
+      const Triple child_face{boundary[side], boundary[(side + 1) % boundary.size()], center};
+      const Triple child_key = sorted_triple(child_face.data());
       if (source_faces_.contains(child_key) ||
           !staged_source_faces
-               .emplace(child_key,
-                        PlcSourceFace{child, parent.facet, parent.source_triangle})
+               .emplace(child_key, PlcSourceFace{child_face, source.facet, source.source_triangle})
                .second) {
-        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
-                    kPlcFacet, parent.facet);
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcFacet, source.facet);
       }
     }
-    candidate_.points.reserve(candidate_.points.size() + 3);
-    candidate_.witnesses.reserve(candidate_.witnesses.size() + 1);
-    candidate_.vertex_dimension.reserve(candidate_.vertex_dimension.size() + 1);
     candidate_.points.insert(candidate_.points.end(), carrier, carrier + 3);
     PlcRecoveryWitness witness{};
     witness.stratum = SourceStratum::kFacet;
@@ -6847,28 +6783,29 @@ class PlcRecoveryBuilder {
     witness.deviation = deviation;
     candidate_.witnesses.push_back(witness);
     candidate_.vertex_dimension.push_back(2);
+    if (deviation != 0.0) exact_points_.assign(center, position);
     source_faces_.erase(key);
     source_faces_.merge(staged_source_faces);
+    const int32_t insertion_status = insert_source_vertex_incrementally(center);
+    if (insertion_status != PHX_MC_OK) return insertion_status;
     restart = true;
     return PHX_MC_OK;
   }
 
+  // Recovers every subface: present ones are marked; a missing one is
+  // recovered by in-plane flips when its facet plane is covered, else split
+  // at an exactly witnessed interior point (split_source_face) and the scan
+  // restarts. FIXED boundaries take the same path; their split points are
+  // removed again by suppression.
   int32_t recover_source_faces(bool& restart) {
     restart = false;
     std::map<Triple, std::vector<PlcFaceUse>> faces;
     TetrahedralComplex& complex = triangulation_->complex();
-    bool attempted_fixed_face = false;
-    Triple previous_fixed_face{};
-    const auto mark_source_faces = [&](bool skip_missing) -> int32_t {
+    const auto mark_source_faces = [&]() -> int32_t {
       for (const auto& [key, source] : source_faces_) {
         const auto found = faces.find(key);
         if (found == faces.end() || found->second.size() != 2) {
-          if (skip_missing) continue;
-          return fail(input_.policy == BoundaryPolicy::kFixed ? PHX_MC_CONSTRAINT_INTERSECTION
-                                                              : PHX_MC_UNRESOLVED,
-                      input_.policy == BoundaryPolicy::kFixed ? kPlcFixedFacet
-                                                              : kPlcNonrepresentable,
-                      kPlcFacet, source.facet);
+          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
         }
         const PlcFaceUse* finite[2] = {nullptr, nullptr};
         int finite_count = 0;
@@ -6884,16 +6821,10 @@ class PlcRecoveryBuilder {
           const bool second_positive =
               FacetKey::of(finite[1]->oriented.data()) == FacetKey::of(source.oriented.data());
           if (first_positive == second_positive) {
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable,
-                        kPlcFacet, source.facet);
+            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
           }
         } else if (finite_count != 1 || corner_count_ != 0) {
-          if (skip_missing) continue;
-          return fail(input_.policy == BoundaryPolicy::kFixed ? PHX_MC_CONSTRAINT_INTERSECTION
-                                                              : PHX_MC_UNRESOLVED,
-                      input_.policy == BoundaryPolicy::kFixed ? kPlcFixedFacet
-                                                              : kPlcNonrepresentable,
-                      kPlcFacet, source.facet);
+          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
         }
         complex.set_facet_constraint(finite[0]->tet, finite[0]->slot, source.facet);
       }
@@ -6913,25 +6844,11 @@ class PlcRecoveryBuilder {
       }
       const int32_t planar_status = recover_planar_polygons(faces);
       if (planar_status != PHX_MC_OK) return planar_status;
-
-      if (input_.policy == BoundaryPolicy::kFixed) {
-        const int32_t label_status = mark_source_faces(true);
-        if (label_status != PHX_MC_OK) return label_status;
-      }
       bool source_face_recovered = false;
       for (const auto& [key, source] : source_faces_) {
         const auto found = faces.find(key);
         if (found != faces.end() && found->second.size() == 2) continue;
-        if (input_.policy == BoundaryPolicy::kFixed) {
-          if (attempted_fixed_face && key == previous_fixed_face) {
-            return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedFacet,
-                        kPlcFacet, source.facet);
-          }
-          attempted_fixed_face = true;
-          previous_fixed_face = key;
-        }
         const PlcFailure prior_failure = failure_;
-        const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
         bool planar_recovered = false;
         const Triple planar_key = key;
         const PlcSourceFace planar_source = source;
@@ -6948,56 +6865,26 @@ class PlcRecoveryBuilder {
           }
           failure_ = prior_failure;
         }
-        // Recover the exact current chain patch before conforming facet subdivision.
-        const int32_t status = recover_current_source_face(source);
-        if (cavity_steiner_restart_required_) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          cavity_steiner_restart_required_ = false;
-          restart = true;
-          return PHX_MC_OK;
-        }
-        if (status == PHX_MC_OK) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          source_face_recovered = true;
-          break;
-        }
-        if (input_.policy != BoundaryPolicy::kFixed &&
-            (status == PHX_MC_CONSTRAINT_INTERSECTION ||
-             status == PHX_MC_UNRESOLVED)) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          return split_source_face(key, source, restart);
-        }
-        return status;
+        return split_source_face(planar_key, planar_source, restart);
       }
       if (source_face_recovered) continue;
-      return mark_source_faces(false);
+      return mark_source_faces();
     }
   }
 
-  // Steiner suppression (cf. Si, TetGen boundary recovery with -Y): every
-  // split point whose exact position is not a binary64 point is moved off
-  // the boundary once all facets are recovered, so published boundary
-  // carriers stay exactly on the source. Around such a point s on interval
-  // pq of a source segment, the recovered subfaces through s form half-fans,
-  // one per incident facet side; each is a planar polygon with pq on its
-  // boundary, retriangulated without s by exact ear clipping, so pq becomes
-  // one recovered interval. The constraint half-fans cut the star of s into
-  // wedges. A finite wedge is star-shaped from s strictly with respect to its
-  // link faces, and lies on fixed sides of the two facet planes bounding it;
-  // points y = s + l d with d the sum of the inward unit normals stay on both
-  // sides (d . n_i = 1 + n_i . n_j > 0 unless the facets are coplanar and
-  // opposed) and keep every link cone positive for small l, so the cones
-  // from y over the link faces and the new fan triangles tile the wedge. y
-  // is a binary64 point accepted only after every cone, including those on
-  // incident constraint faces, is exactly positive. Exterior hull wedges
-  // receive ghost cells over the new fan triangles instead. Each suppression
-  // removes one vertex and adds one interior point per wedge, so the pass is
-  // finite. A wedge without two distinct bounding facets (a free or dangling
-  // segment), a fan that cannot be retriangulated, or a wedge without an
-  // exactly visible binary64 point is a typed STEINER_SUPPRESSION refusal.
+  // Steiner suppression (cf. Si, TetGen boundary recovery with -Y): once
+  // all facets are recovered, every boundary split point is removed again
+  // when the policy is FIXED, and otherwise every split point whose exact
+  // position is not a binary64 point, so published boundary vertices lie
+  // exactly on their sources. The recovered subfaces through such a point s
+  // are retriangulated without s within their own planar polygons (as the
+  // fans from a neighbour t when s contracts onto t, else by exact ear
+  // clipping), so the two chain intervals at a segment point merge into one,
+  // and every wedge of the star of s is refilled by remove_witnessed_vertex.
+  // Each suppression removes one boundary vertex and adds at most one volume
+  // point per wedge, so the pass is finite. A point whose fans or wedges
+  // admit none of the exactly verified replacements is a typed
+  // STEINER_SUPPRESSION refusal naming its source segment or facet.
   struct SuppressionFan {
     int32_t facet = -1;
     int32_t source_triangle = -1;
@@ -7011,7 +6898,9 @@ class PlcRecoveryBuilder {
     const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
     suppressed_.assign(static_cast<std::size_t>(count), 0);
     for (int32_t vertex = source_point_count_; vertex < count; ++vertex) {
-      if (exact_points_.position(vertex) == nullptr) continue;
+      if (input_.policy != BoundaryPolicy::kFixed && exact_points_.position(vertex) == nullptr) {
+        continue;
+      }
       const int32_t status = suppress_vertex(vertex);
       if (status != PHX_MC_OK) return status;
     }
@@ -7051,9 +6940,11 @@ class PlcRecoveryBuilder {
         (void)unused;
         if (!targets.contains(vertex)) starts.push_back(vertex);
       }
-      // A full disk of one facet around s (a segment inside a facet) is cut
-      // into its two half-fans at p and q.
-      if (starts.empty()) starts = {p, q};
+      // A full disk of one facet around s is cut into its two half-fans at
+      // the chain neighbours p and q of a segment point; around a facet
+      // point (p < 0) it is one closed loop.
+      const bool disk = starts.empty();
+      if (disk) starts = p >= 0 ? std::vector<int32_t>{p, q} : std::vector<int32_t>{rotated[0][1]};
       std::vector<char> used(rotated.size(), 0);
       for (int32_t start : starts) {
         SuppressionFan fan;
@@ -7071,12 +6962,17 @@ class PlcRecoveryBuilder {
           fan.planar = fan.planar && use.planar;
           fan.old_faces.push_back(face);
           loop.push_back(face[2]);
-          if (loop.back() == p || loop.back() == q) break;
+          if (p >= 0 && (loop.back() == p || loop.back() == q)) break;
         }
         const int32_t end = loop.back();
-        if (fan.old_faces.empty() || !((start == p && end == q) || (start == q && end == p))) {
+        if (p < 0) {
+          if (!disk || end != start) return false;
+          loop.pop_back();
+        } else if (fan.old_faces.empty() ||
+                   !((start == p && end == q) || (start == q && end == p))) {
           return false;
         }
+        if (fan.old_faces.empty()) return false;
         fan.reference = fan.old_faces.front();
         const int axis = exact_projection_axis(fan.reference[0], fan.reference[1],
                                                fan.reference[2]);
@@ -7088,40 +6984,341 @@ class PlcRecoveryBuilder {
       }
       if (std::find(used.begin(), used.end(), 0) != used.end()) return false;
     }
-    return fans.size() >= 2;
+    return p < 0 ? fans.size() == 1 : !fans.empty();
   }
 
-  int32_t suppress_vertex(int32_t s) {
-    const std::size_t edge = static_cast<std::size_t>(
-        candidate_.witnesses[static_cast<std::size_t>(s)].entity);
-    const auto refuse = [&]() {
-      return fail(PHX_MC_UNRESOLVED, kPlcSteinerSuppression, kPlcEdge,
-                  static_cast<int64_t>(edge), kPlcPoint, s);
-    };
-    auto& chain = edge_chains_[edge];
-    std::size_t position = 1;
-    while (position + 1 < chain.size() && chain[position].vertex != s) ++position;
-    if (position + 1 >= chain.size()) {
-      return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+  // Makes the star of s star-shaped from t where 2-3 flips allow: a cell
+  // (s, a, b, c) whose link face abc does not strictly face t, with abc
+  // unconstrained and a finite neighbour (a, b, c, d), is replaced by the
+  // three cells around the new edge sd when all three are exactly positive
+  // (sd crosses the open triangle abc). Each flip replaces one link face of
+  // s by three faces through d and keeps a valid complex; the pass is bounded
+  // by four times the number of cells around s at entry.
+  int32_t flip_star_toward(int32_t s, int32_t t) {
+    TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<int32_t> cells;
+    int32_t status = vertex_cells(s, cells);
+    if (status != PHX_MC_OK) return status;
+    std::size_t budget = 4 * cells.size();
+    while (budget-- > 0) {
+      bool flipped = false;
+      for (int32_t cell : cells) {
+        const Tetrahedron tet = complex.tets[static_cast<std::size_t>(cell)];
+        if (is_ghost(tet) || vertex_slot(tet, t) >= 0) continue;
+        const int own = vertex_slot(tet, s);
+        std::array<int32_t, 4> collapsed{tet.v[0], tet.v[1], tet.v[2], tet.v[3]};
+        collapsed[static_cast<std::size_t>(own)] = t;
+        if (orient(collapsed[0], collapsed[1], collapsed[2], collapsed[3]) > 0) continue;
+        if (complex.constraint(cell, own) != kNoConstraint) continue;
+        const int32_t other = tet.n[own];
+        if (!complex.live(other)) continue;
+        const Tetrahedron neighbor = complex.tets[static_cast<std::size_t>(other)];
+        if (is_ghost(neighbor)) continue;
+        const int back = neighbor_slot(neighbor, cell);
+        if (back < 0) continue;
+        const int32_t d = neighbor.v[back];
+        // Three cells: `tet` with one link vertex replaced by d each; the
+        // face opposite d is tet's, the face opposite s the neighbour's.
+        std::array<SuppressionCell, 3> created{};
+        int count = 0;
+        bool valid = true;
+        for (int slot = 0; slot < 4 && valid; ++slot) {
+          if (slot == own) continue;
+          SuppressionCell next{{tet.v[0], tet.v[1], tet.v[2], tet.v[3]},
+                               {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+          next.v[static_cast<std::size_t>(slot)] = d;
+          valid = orient(next.v[0], next.v[1], next.v[2], next.v[3]) > 0;
+          next.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
+          next.constraints[static_cast<std::size_t>(own)] =
+              complex.constraint(other, vertex_slot(neighbor, tet.v[slot]));
+          created[static_cast<std::size_t>(count++)] = next;
+        }
+        if (!valid) continue;
+        CavityEdit edit(complex);
+        edit.begin();
+        if (edit.remove(cell) != EditStatus::kOk || edit.remove(other) != EditStatus::kOk) continue;
+        for (const SuppressionCell& next : created) {
+          edit.add(next.v.data(), next.constraints.data(), kNoRegion);
+        }
+        EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
+          return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
+        });
+        if (edit_status == EditStatus::kOk) edit_status = edit.commit();
+        if (edit_status != EditStatus::kOk) {
+          edit.rollback();
+          if (edit_status == EditStatus::kSlotLimit) {
+            return fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+          }
+          continue;
+        }
+        local_edits_ = true;
+        star_marks_.resize(complex.tets.size(), 0U);
+        for (int32_t id : edit.created()) {
+          for (int32_t vertex : complex.tets[static_cast<std::size_t>(id)].v) {
+            vertex_tet_[static_cast<std::size_t>(vertex)] = id;
+          }
+        }
+        if (!triangulation_->set_hint(edit.created().front())) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+        }
+        flipped = true;
+        break;
+      }
+      if (!flipped) return PHX_MC_OK;
+      status = vertex_cells(s, cells);
+      if (status != PHX_MC_OK) return status;
     }
-    const int32_t p = chain[position - 1].vertex;
-    const int32_t q = chain[position + 1].vertex;
-    std::vector<SuppressionFan> fans;
-    if (!suppression_fans(s, p, q, fans)) return refuse();
-    std::map<Triple, std::size_t> fan_of_face;
-    for (std::size_t fan = 0; fan < fans.size(); ++fan) {
-      for (const Triple& face : fans[fan].old_faces) {
-        fan_of_face.emplace(sorted_triple(face.data()), fan);
+    return PHX_MC_OK;
+  }
+
+  // A cell of a suppression proposal and the source facet marks of its faces.
+  struct SuppressionCell {
+    std::array<int32_t, 4> v;
+    std::array<int32_t, 4> constraints;
+  };
+
+  // Steiner-free fill of a closed cavity by exact gift wrapping. Each
+  // boundary cell carries `placeholder` in one slot: the face opposite it
+  // is a boundary face and a cavity vertex x lies on its inner side exactly
+  // when the cell with x substituted is positive. Sides of faces are keyed
+  // by the face oriented as its cell on that side sees it, so a face may
+  // bound the cavity from both sides (a slit along an open sheet). An open
+  // side is closed by a cavity vertex on its inner side; each other face of
+  // the new cell either closes an open side, or opens the far side of a new
+  // face, and may neither repeat a closed side nor lie outside a boundary
+  // face. The side with the fewest admissible apices is closed first,
+  // apices in increasing order of the number of rivals inside their
+  // circumsphere (the Delaunay choice first) after the `preferred` apex,
+  // with bounded backtracking. A finished fill is a set of positive cells
+  // with every face paired and the cavity boundary as boundary, hence the
+  // 3-chain of the cavity: the cells tile it.
+  bool wrap_cavity(const std::vector<SuppressionCell>& boundary, int32_t placeholder,
+                   int32_t preferred, const std::vector<int32_t>& interior,
+                   std::vector<SuppressionCell>& filled) const {
+    struct Open {
+      std::array<int32_t, 4> cell;
+      int slot;
+      int32_t constraint;
+    };
+    const auto side_of = [](const std::array<int32_t, 4>& cell, int slot) {
+      int32_t face[3];
+      oriented_facet(cell.data(), slot, face);
+      return FacetKey::of(face);
+    };
+    const auto with = [](std::array<int32_t, 4> cell, int slot, int32_t vertex) {
+      cell[static_cast<std::size_t>(slot)] = vertex;
+      return cell;
+    };
+    const auto positive = [&](const std::array<int32_t, 4>& v) {
+      return orient(v[0], v[1], v[2], v[3]) > 0;
+    };
+    std::map<FacetKey, Open> front;
+    std::set<FacetKey> outside;
+    std::set<int32_t> vertices;
+    for (const SuppressionCell& cell : boundary) {
+      const auto found = std::find(cell.v.begin(), cell.v.end(), placeholder);
+      if (found == cell.v.end()) return false;
+      const int slot = static_cast<int>(found - cell.v.begin());
+      const FacetKey side = side_of(cell.v, slot);
+      if (!front.emplace(side, Open{cell.v, slot, cell.constraints[static_cast<std::size_t>(slot)]})
+               .second) {
+        return false;
+      }
+      outside.insert(side.reversed());
+      for (int k = 0; k < 4; ++k) {
+        if (k != slot) vertices.insert(cell.v[static_cast<std::size_t>(k)]);
       }
     }
+    // Interior candidates: volume points that may become apices.
+    vertices.insert(interior.begin(), interior.end());
+    std::set<FacetKey> closed;
+    filled.clear();
+    std::size_t budget = 4096;
+    std::function<bool()> search = [&]() -> bool {
+      if (front.empty()) return true;
+      if (budget == 0) return false;
+      --budget;
+      FacetKey key{};
+      std::vector<int32_t> candidates;
+      bool chosen = false;
+      for (const auto& [side, open] : front) {
+        std::vector<int32_t> admissible;
+        for (int32_t vertex : vertices) {
+          if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
+          if (positive(with(open.cell, open.slot, vertex))) admissible.push_back(vertex);
+        }
+        if (admissible.empty()) return false;
+        if (!chosen || admissible.size() < candidates.size()) {
+          key = side;
+          candidates = std::move(admissible);
+          chosen = true;
+        }
+      }
+      const Open open = front.at(key);
+      std::vector<std::pair<int, int32_t>> order;
+      for (int32_t vertex : candidates) {
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        int inside = 0;
+        for (int32_t rival : candidates) {
+          if (rival == vertex) continue;
+          inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                                 tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+        }
+        // The preferred apex (the contraction target) goes first.
+        order.push_back({vertex == preferred ? -1 : inside, vertex});
+      }
+      std::sort(order.begin(), order.end());
+      for (const auto& [unused, vertex] : order) {
+        (void)unused;
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        SuppressionCell cell{tet, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+        cell.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
+        std::vector<FacetKey> matched;
+        std::vector<FacetKey> sealed;
+        std::vector<std::pair<FacetKey, Open>> opened;
+        bool valid = true;
+        for (int slot = 0; slot < 4 && valid; ++slot) {
+          if (slot == open.slot) continue;
+          const FacetKey side = side_of(tet, slot);
+          const auto other = front.find(side);
+          if (other != front.end()) {
+            matched.push_back(side);
+            cell.constraints[static_cast<std::size_t>(slot)] = other->second.constraint;
+            continue;
+          }
+          if (closed.contains(side) || outside.contains(side)) {
+            valid = false;
+            break;
+          }
+          sealed.push_back(side);
+          const FacetKey far = side.reversed();
+          if (closed.contains(far) || front.contains(far)) continue;
+          // The cell across this face lies on its other side.
+          std::array<int32_t, 4> flipped = with(tet, slot, placeholder);
+          std::swap(flipped[static_cast<std::size_t>((slot + 1) % 4)],
+                    flipped[static_cast<std::size_t>((slot + 2) % 4)]);
+          opened.push_back({far, Open{flipped, slot, kNoConstraint}});
+        }
+        if (!valid) continue;
+        front.erase(key);
+        closed.insert(key);
+        std::vector<Open> saved;
+        for (const FacetKey& side : matched) {
+          saved.push_back(front.at(side));
+          front.erase(side);
+          closed.insert(side);
+        }
+        for (const FacetKey& side : sealed) closed.insert(side);
+        for (const auto& [side, entry] : opened) front.emplace(side, entry);
+        filled.push_back(cell);
+        if (search()) return true;
+        filled.pop_back();
+        for (const auto& [side, entry] : opened) {
+          (void)entry;
+          front.erase(side);
+        }
+        for (const FacetKey& side : sealed) closed.erase(side);
+        for (std::size_t row = 0; row < matched.size(); ++row) {
+          closed.erase(matched[row]);
+          front.emplace(matched[row], saved[row]);
+        }
+        closed.erase(key);
+        front.emplace(key, open);
+        if (budget == 0) return false;
+      }
+      return false;
+    };
+    return search();
+  }
 
-    // Wedges: cells around s joined across faces through s that are not
-    // recovered subfaces; each wedge records the side of every bounding fan
-    // (+1/-1 relative to the fan's reference orientation, 0 for the hull).
+  // A cell equal to `cell` except that the face opposite `slot` is `face`,
+  // seen from the cell with the same orientation as `cell` sees its own face
+  // there when `same` holds, reversed otherwise.
+  static std::array<int32_t, 4> transplant(const int32_t* cell, int slot, const Triple& face,
+                                           bool same) {
+    const Triple wanted = same ? face : Triple{face[0], face[2], face[1]};
+    std::array<int32_t, 4> result{cell[0], cell[1], cell[2], cell[3]};
+    int others[3];
+    int count = 0;
+    for (int k = 0; k < 4; ++k) {
+      if (k != slot) others[count++] = k;
+    }
+    for (int k = 0; k < 3; ++k) {
+      result[static_cast<std::size_t>(others[k])] = wanted[static_cast<std::size_t>(k)];
+    }
+    Triple seen{};
+    oriented_facet(result.data(), slot, seen.data());
+    if (!(FacetKey::of(seen.data()) == FacetKey::of(wanted.data()))) {
+      std::swap(result[static_cast<std::size_t>(others[0])],
+                result[static_cast<std::size_t>(others[1])]);
+    }
+    return result;
+  }
+
+  // Removes the witnessed vertex s from the complex. With t >= 0 every
+  // recovered subface (s, a, b) becomes (t, a, b) (an edge contraction;
+  // subfaces through t vanish), otherwise each half-fan through s is ear
+  // clipped without s (suppression_fans with chain neighbours p, q, or the
+  // full disk of a facet point when p < 0). The star of s splits into wedges
+  // (cells joined across faces through s that are not subfaces). A wedge is
+  // replaced by its contraction onto t when every finite cell stays
+  // positive; a hull wedge of ghost cells over subfaces by ghost cells over
+  // the new subfaces; any other finite wedge by a Steiner-free gift-wrapped
+  // fill of its cavity (link faces and new subfaces), else by the cones from
+  // one binary64 point y = s + l d (d the sum of the inner unit normals of
+  // its subface planes, l halving) over that cavity boundary. Every finite
+  // proposed cell is exactly positive on exact positions and the cavity edit
+  // checks that the proposal's boundary is the link of s with its marks, so
+  // the proposal tiles the star. Otherwise nothing changes.
+  int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, bool& removed) {
+    removed = false;
     TetrahedralComplex& complex = triangulation_->complex();
+    if (t >= 0) {
+      const int32_t flip_status = flip_star_toward(s, t);
+      if (flip_status != PHX_MC_OK) return flip_status;
+    }
     std::vector<int32_t> cells;
     const int32_t cells_status = vertex_cells(s, cells);
     if (cells_status != PHX_MC_OK) return cells_status;
+    struct NewFace {
+      Triple oriented;
+      int32_t facet;
+      int32_t source_triangle;
+      bool planar;
+    };
+    struct OldFace {
+      Triple oriented;
+      std::size_t group;
+    };
+    std::map<Triple, OldFace> old_faces;
+    std::vector<std::vector<NewFace>> groups;
+    if (t >= 0) {
+      for (const auto* faces : {&source_faces_, &planar_source_faces_}) {
+        const bool planar = faces == &planar_source_faces_;
+        for (const auto& [key, face] : *faces) {
+          if (std::find(key.begin(), key.end(), s) == key.end()) continue;
+          old_faces.emplace(key, OldFace{face.oriented, groups.size()});
+          groups.emplace_back();
+          if (std::find(key.begin(), key.end(), t) != key.end()) continue;
+          Triple mapped = face.oriented;
+          std::replace(mapped.begin(), mapped.end(), s, t);
+          groups.back().push_back({mapped, face.facet, face.source_triangle, planar});
+        }
+      }
+    } else {
+      std::vector<SuppressionFan> fans;
+      if (!suppression_fans(s, p, q, fans)) return PHX_MC_OK;
+      for (const SuppressionFan& fan : fans) {
+        for (const Triple& face : fan.old_faces) {
+          old_faces.emplace(sorted_triple(face.data()), OldFace{face, groups.size()});
+        }
+        groups.emplace_back();
+        for (const Triple& face : fan.new_faces) {
+          groups.back().push_back({face, fan.facet, fan.source_triangle, fan.planar});
+        }
+      }
+    }
+
     std::unordered_map<int32_t, std::size_t> row_of;
     for (std::size_t row = 0; row < cells.size(); ++row) row_of.emplace(cells[row], row);
     std::vector<std::size_t> parent(cells.size());
@@ -7132,8 +7329,8 @@ class PlcRecoveryBuilder {
     };
     struct Contact {
       std::size_t row;
-      std::size_t fan;
-      int side;
+      int slot;
+      const OldFace* face;
     };
     std::vector<Contact> contacts;
     for (std::size_t row = 0; row < cells.size(); ++row) {
@@ -7143,156 +7340,240 @@ class PlcRecoveryBuilder {
         if (slot == own) continue;
         Triple face{};
         oriented_facet(tet.v, slot, face.data());
-        const auto fan = fan_of_face.find(sorted_triple(face.data()));
-        if (fan == fan_of_face.end()) {
-          const auto neighbor = row_of.find(tet.n[slot]);
-          if (neighbor == row_of.end()) {
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
-          }
-          parent[root(row)] = root(neighbor->second);
+        const auto old = old_faces.find(sorted_triple(face.data()));
+        if (old != old_faces.end()) {
+          contacts.push_back({row, slot, &old->second});
           continue;
         }
-        const int32_t apex = tet.v[slot];
-        const Triple& reference = fans[fan->second].reference;
-        const int side = apex == kGhostVertex
-            ? 0 : orient(reference[0], reference[1], reference[2], apex);
-        contacts.push_back({row, fan->second, side});
+        const auto neighbor = row_of.find(tet.n[slot]);
+        if (neighbor == row_of.end()) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+        }
+        parent[root(row)] = root(neighbor->second);
       }
     }
-    struct Wedge {
-      std::vector<std::size_t> rows;
-      std::map<std::size_t, int> sides;
-      bool ghost = false;
-      bool finite = false;
-      int32_t center = -1;
-    };
-    std::map<std::size_t, Wedge> wedges;
-    for (std::size_t row = 0; row < cells.size(); ++row) {
-      Wedge& wedge = wedges[root(row)];
-      wedge.rows.push_back(row);
-      const bool ghost = is_ghost(complex.tets[static_cast<std::size_t>(cells[row])]);
-      wedge.ghost = wedge.ghost || ghost;
-      wedge.finite = wedge.finite || !ghost;
-    }
-    std::vector<int> fan_sides(fans.size(), 0);
-    for (const Contact& contact : contacts) {
-      Wedge& wedge = wedges[root(contact.row)];
-      const auto [entry, inserted] = wedge.sides.emplace(contact.fan, contact.side);
-      if (!inserted && entry->second != contact.side) return refuse();
-    }
-    for (const auto& [unused, wedge] : wedges) {
-      (void)unused;
-      if ((wedge.ghost && wedge.finite) || wedge.sides.size() < 2) return refuse();
-      for (const auto& [fan, side] : wedge.sides) {
-        if (side == 0 && !wedge.ghost) return refuse();
-        ++fan_sides[fan];
-      }
-    }
-    for (int sides : fan_sides) {
-      if (sides != 2) return refuse();
-    }
+    std::map<std::size_t, std::vector<std::size_t>> wedges;
+    for (std::size_t row = 0; row < cells.size(); ++row) wedges[root(row)].push_back(row);
 
-    // One exactly visible binary64 point per finite wedge.
+    using Proposal = SuppressionCell;
+    constexpr int32_t kPlaceholder = std::numeric_limits<int32_t>::min() / 2;
+    const auto positive = [&](const std::array<int32_t, 4>& v, const ExactPointRef* center) {
+      if (std::find(v.begin(), v.end(), kGhostVertex) != v.end()) return true;
+      ExactPointRef corners[4];
+      for (int slot = 0; slot < 4; ++slot) {
+        corners[slot] = v[static_cast<std::size_t>(slot)] == kPlaceholder
+            ? *center : ref(v[static_cast<std::size_t>(slot)]);
+      }
+      return orient3d(corners[0], corners[1], corners[2], corners[3]) > 0;
+    };
+    // Cells over the new subfaces of the groups met by a wedge, once per
+    // group, oriented like the wedge cell that meets the group.
+    const auto subface_cells = [&](const std::vector<std::size_t>& rows) {
+      std::vector<Proposal> result;
+      std::set<std::pair<std::size_t, bool>> emitted;
+      for (const Contact& contact : contacts) {
+        if (root(contact.row) != root(rows.front())) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+        Triple seen{};
+        oriented_facet(tet.v, contact.slot, seen.data());
+        const bool same = FacetKey::of(seen.data()) == FacetKey::of(contact.face->oriented.data());
+        // A wedge meets a group from both sides along an open sheet.
+        if (!emitted.insert({contact.face->group, same}).second) continue;
+        for (const NewFace& face : groups[contact.face->group]) {
+          Proposal cell{transplant(tet.v, contact.slot, face.oriented, same),
+                        {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+          if (tet.v[contact.slot] != kGhostVertex) cell.v[static_cast<std::size_t>(contact.slot)] = kPlaceholder;
+          cell.constraints[static_cast<std::size_t>(contact.slot)] = face.facet;
+          result.push_back(cell);
+        }
+      }
+      return result;
+    };
+    std::vector<Proposal> proposals;
     std::vector<std::array<double, 3>> centers;
-    for (auto& [unused, wedge] : wedges) {
+    std::vector<int32_t> added;
+    // Volume points appended for a replacement that is not committed die.
+    const auto abandon = [&]() {
+      for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
+      return PHX_MC_OK;
+    };
+    for (const auto& [unused, rows] : wedges) {
       (void)unused;
-      if (wedge.ghost) continue;
+      bool ghost = false;
+      std::vector<std::size_t> blocked;
+      for (std::size_t row : rows) {
+        ghost = ghost || is_ghost(complex.tets[static_cast<std::size_t>(cells[row])]);
+        if (t < 0) blocked.push_back(row);
+      }
+      if (t >= 0) {
+        std::vector<Proposal> collapse;
+        bool star_shaped = true;
+        for (std::size_t row : rows) {
+          const int32_t cell = cells[row];
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+          if (vertex_slot(tet, t) >= 0) continue;
+          Proposal proposal{};
+          for (int slot = 0; slot < 4; ++slot) {
+            proposal.v[static_cast<std::size_t>(slot)] = tet.v[slot] == s ? t : tet.v[slot];
+            proposal.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
+          }
+          if (!positive(proposal.v, nullptr)) {
+            star_shaped = false;
+            blocked.push_back(row);
+          }
+          collapse.push_back(proposal);
+        }
+        if (star_shaped) {
+          proposals.insert(proposals.end(), collapse.begin(), collapse.end());
+          continue;
+        }
+      }
+      if (ghost) {
+        // A hull wedge: ghost cells, each over one subface through s.
+        std::size_t covered = 0;
+        for (const Contact& contact : contacts) {
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+          if (root(contact.row) == root(rows.front()) && tet.v[contact.slot] == kGhostVertex) {
+            ++covered;
+          }
+        }
+        if (covered != rows.size()) return abandon();
+        const std::vector<Proposal> hull = subface_cells(rows);
+        proposals.insert(proposals.end(), hull.begin(), hull.end());
+        continue;
+      }
+      // The cavity boundary: link faces (s replaced by the placeholder) and
+      // the new subfaces.
+      std::vector<Proposal> cavity = subface_cells(rows);
+      std::vector<std::array<double, 3>> normals;
+      double reach = std::numeric_limits<double>::infinity();
+      for (std::size_t row : rows) {
+        const int32_t cell = cells[row];
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        const int own = vertex_slot(tet, s);
+        Proposal link{{tet.v[0], tet.v[1], tet.v[2], tet.v[3]},
+                      {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+        link.v[static_cast<std::size_t>(own)] = kPlaceholder;
+        link.constraints[static_cast<std::size_t>(own)] = complex.constraint(cell, own);
+        cavity.push_back(link);
+        for (int32_t vertex : tet.v) {
+          if (vertex != s) {
+            reach = std::min(reach, std::sqrt(geometry::squared_distance(point(s), point(vertex))));
+          }
+        }
+      }
+      for (const Contact& contact : contacts) {
+        if (root(contact.row) != root(rows.front())) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+        Triple face{};
+        oriented_facet(tet.v, contact.slot, face.data());
+        double u[3], w[3], normal[3], offset[3];
+        geometry::difference(point(face[1]), point(face[0]), u);
+        geometry::difference(point(face[2]), point(face[0]), w);
+        geometry::cross(u, w, normal);
+        geometry::difference(point(tet.v[contact.slot]), point(s), offset);
+        const double length = std::sqrt(geometry::dot(normal, normal));
+        if (!(length > 0.0)) continue;
+        const double sign = geometry::dot(normal, offset) < 0.0 ? -1.0 : 1.0;
+        const std::array<double, 3> unit{sign * normal[0] / length, sign * normal[1] / length,
+                                         sign * normal[2] / length};
+        if (std::none_of(normals.begin(), normals.end(), [&](const auto& known) {
+              return known[0] * unit[0] + known[1] * unit[1] + known[2] * unit[2] > 1.0 - 0x1p-30;
+            })) {
+          normals.push_back(unit);
+        }
+      }
+      std::vector<Proposal> wrapped;
+      if (wrap_cavity(cavity, kPlaceholder, t, {}, wrapped)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        continue;
+      }
+      // Steiner-assisted fill: interior points of the cells that block the
+      // contraction (every cell without a target) join the apex candidates.
+      std::vector<int32_t> extra;
+      for (std::size_t row : blocked) {
+        if (root(row) != root(rows.front()) || extra.size() == 8) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
+        double centroid[3] = {0.0, 0.0, 0.0};
+        for (int32_t vertex : tet.v) {
+          for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * point(vertex)[axis];
+        }
+        if (!geometry::point_in_domain(centroid)) continue;
+        int32_t vertex = -1;
+        const int32_t status = add_volume_point(centroid, vertex);
+        if (status != PHX_MC_OK) return status;
+        added.push_back(vertex);
+        extra.push_back(vertex);
+      }
+      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, t, extra, wrapped)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        continue;
+      }
+      double direction[3] = {0.0, 0.0, 0.0};
+      for (const auto& unit : normals) {
+        for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
+      }
+      const double norm = std::sqrt(geometry::dot(direction, direction));
+      if (normals.empty() || !(norm > 0.0) || !std::isfinite(reach) || !(reach > 0.0)) {
+        return abandon();
+      }
+      bool found = false;
       double location[3];
-      if (!suppression_center(s, cells, wedge.rows, fans, wedge.sides, location)) {
-        return refuse();
+      for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
+        for (int axis = 0; axis < 3; ++axis) {
+          location[axis] = point(s)[axis] + step * direction[axis] / norm;
+        }
+        if (!geometry::point_in_domain(location)) continue;
+        const ExactPointRef center{location, nullptr};
+        found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
+          return positive(cone.v, &center);
+        });
+      }
+      if (!found) return abandon();
+      // Placeholder ids of later centers stay distinct until appended.
+      for (Proposal& cone : cavity) {
+        std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
+                     kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
       }
       centers.push_back({location[0], location[1], location[2]});
+      proposals.insert(proposals.end(), cavity.begin(), cavity.end());
     }
 
-    // Fan subfaces become interior to the replacement; release their marks.
+    for (std::size_t row = 0; row < centers.size(); ++row) {
+      int32_t vertex = -1;
+      const int32_t status = add_volume_point(centers[row].data(), vertex);
+      if (status != PHX_MC_OK) return status;
+      added.push_back(vertex);
+      for (Proposal& proposal : proposals) {
+        std::replace(proposal.v.begin(), proposal.v.end(),
+                     kPlaceholder + 1 + static_cast<int32_t>(row), vertex);
+      }
+    }
+    // Subfaces through s are interior to the removed star; their marks move
+    // to the proposal, which carries them on the new subfaces.
     std::vector<std::array<int32_t, 3>> released;
     for (int32_t cell : cells) {
       const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
       for (int slot = 0; slot < 4; ++slot) {
         if (tet.v[slot] == s) continue;
-        Triple face{};
-        oriented_facet(tet.v, slot, face.data());
-        if (!fan_of_face.contains(sorted_triple(face.data()))) continue;
         const int32_t constraint = complex.constraint(cell, slot);
         if (constraint == kNoConstraint) continue;
         released.push_back({cell, slot, constraint});
         complex.set_facet_constraint(cell, slot, kNoConstraint);
       }
     }
-    const auto restore = [&]() {
-      for (const auto& [cell, slot, constraint] : released) {
-        complex.set_facet_constraint(cell, slot, constraint);
-      }
-    };
-    std::size_t center_row = 0;
-    for (auto& [unused, wedge] : wedges) {
-      (void)unused;
-      if (wedge.ghost) continue;
-      const int32_t status = add_volume_point(centers[center_row++].data(), wedge.center);
-      if (status != PHX_MC_OK) {
-        restore();
-        return status;
-      }
-    }
-
     CavityEdit edit(complex);
     edit.begin();
     for (int32_t cell : cells) {
       if (edit.remove(cell) != EditStatus::kOk) {
-        restore();
+        for (const auto& [mark_cell, slot, constraint] : released) {
+          complex.set_facet_constraint(mark_cell, slot, constraint);
+        }
         return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
       }
     }
-    // Finite cone cell over a fan triangle on side `side` of the reference.
-    const auto fan_cone = [](const Triple& face, int side, int32_t center) {
-      return side > 0 ? std::array<int32_t, 4>{face[0], face[1], face[2], center}
-                      : std::array<int32_t, 4>{face[0], face[2], face[1], center};
-    };
-    for (const auto& [unused, wedge] : wedges) {
-      (void)unused;
-      if (wedge.ghost) continue;
-      for (std::size_t row : wedge.rows) {
-        const int32_t cell = cells[row];
-        Tetrahedron tet = complex.tets[static_cast<std::size_t>(cell)];
-        const int own = vertex_slot(tet, s);
-        int32_t constraints[4] = {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint};
-        constraints[own] = complex.constraint(cell, own);
-        tet.v[own] = wedge.center;
-        edit.add(tet.v, constraints, kNoRegion);
-      }
-      for (const auto& [fan, side] : wedge.sides) {
-        const int32_t constraints[4] = {kNoConstraint, kNoConstraint, kNoConstraint,
-                                        fans[fan].facet};
-        for (const Triple& face : fans[fan].new_faces) {
-          edit.add(fan_cone(face, side, wedge.center).data(), constraints, kNoRegion);
-        }
-      }
-    }
-    // Hull wedges: ghost cells over the new fan triangles, facing the cone
-    // cell of the finite wedge on the other side.
-    for (const auto& [unused, wedge] : wedges) {
-      (void)unused;
-      if (!wedge.ghost) continue;
-      for (const auto& [fan, ghost_side] : wedge.sides) {
-        (void)ghost_side;
-        int finite_side = 0;
-        for (const auto& [other_unused, other] : wedges) {
-          (void)other_unused;
-          const auto found = other.sides.find(fan);
-          if (!other.ghost && found != other.sides.end()) finite_side = found->second;
-        }
-        if (finite_side == 0) {
-          restore();
-          return refuse();
-        }
-        const int32_t constraints[4] = {kNoConstraint, kNoConstraint, kNoConstraint,
-                                        fans[fan].facet};
-        for (const Triple& face : fans[fan].new_faces) {
-          const std::array<int32_t, 4> cone = fan_cone(face, finite_side, 0);
-          const int32_t ghost[4] = {cone[0], cone[2], cone[1], kGhostVertex};
-          edit.add(ghost, constraints, kNoRegion);
-        }
-      }
+    for (const Proposal& proposal : proposals) {
+      edit.add(proposal.v.data(), proposal.constraints.data(), kNoRegion);
     }
     EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
       return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
@@ -7300,10 +7581,13 @@ class PlcRecoveryBuilder {
     if (edit_status == EditStatus::kOk) edit_status = edit.commit();
     if (edit_status != EditStatus::kOk) {
       edit.rollback();
-      restore();
+      for (const auto& [mark_cell, slot, constraint] : released) {
+        complex.set_facet_constraint(mark_cell, slot, constraint);
+      }
+      for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
       return edit_status == EditStatus::kSlotLimit
           ? fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, s)
-          : refuse();
+          : PHX_MC_OK;
     }
     local_edits_ = true;
     star_marks_.resize(complex.tets.size(), 0U);
@@ -7317,81 +7601,92 @@ class PlcRecoveryBuilder {
     if (hint < 0 || !triangulation_->set_hint(hint)) {
       return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
     }
-    for (const SuppressionFan& fan : fans) {
-      for (const Triple& face : fan.old_faces) {
-        const Triple key = sorted_triple(face.data());
-        source_faces_.erase(key);
-        planar_source_faces_.erase(key);
-      }
-      auto& faces = fan.planar ? planar_source_faces_ : source_faces_;
-      for (const Triple& face : fan.new_faces) {
-        faces.emplace(sorted_triple(face.data()),
-                      PlcSourceFace{face, fan.facet, fan.source_triangle});
+    for (const auto& [key, unused] : old_faces) {
+      (void)unused;
+      source_faces_.erase(key);
+      planar_source_faces_.erase(key);
+    }
+    for (const std::vector<NewFace>& group : groups) {
+      for (const NewFace& face : group) {
+        auto& faces = face.planar ? planar_source_faces_ : source_faces_;
+        faces.emplace(sorted_triple(face.oriented.data()),
+                      PlcSourceFace{face.oriented, face.facet, face.source_triangle});
       }
     }
-    chain.erase(chain.begin() + static_cast<std::ptrdiff_t>(position));
     alive_[static_cast<std::size_t>(s)] = 0;
     vertex_tet_[static_cast<std::size_t>(s)] = -1;
     suppressed_[static_cast<std::size_t>(s)] = 1;
+    for (int32_t vertex : added) {
+      const bool used = std::any_of(proposals.begin(), proposals.end(), [&](const Proposal& cell) {
+        return std::find(cell.v.begin(), cell.v.end(), vertex) != cell.v.end();
+      });
+      if (!used) alive_[static_cast<std::size_t>(vertex)] = 0;
+    }
+    removed = true;
     return PHX_MC_OK;
   }
 
-  // A binary64 point y = s + l d of a finite wedge from which every cone over
-  // its link faces and its new fan triangles is exactly positive; l halves
-  // from a quarter of the shortest link distance.
-  bool suppression_center(int32_t s, const std::vector<int32_t>& cells,
-                          const std::vector<std::size_t>& rows,
-                          const std::vector<SuppressionFan>& fans,
-                          const std::map<std::size_t, int>& sides, double* location) const {
-    const TetrahedralComplex& complex = triangulation_->complex();
-    const double* origin = point(s);
-    double direction[3] = {0.0, 0.0, 0.0};
-    for (const auto& [fan, side] : sides) {
-      const Triple& face = fans[fan].reference;
-      double u[3], v[3], normal[3];
-      geometry::difference(point(face[1]), point(face[0]), u);
-      geometry::difference(point(face[2]), point(face[0]), v);
-      geometry::cross(u, v, normal);
-      const double length = std::sqrt(geometry::dot(normal, normal));
-      if (!(length > 0.0)) return false;
-      for (int axis = 0; axis < 3; ++axis) direction[axis] += side * normal[axis] / length;
-    }
-    const double norm = std::sqrt(geometry::dot(direction, direction));
-    if (!(norm > 0.0)) return false;
-    double reach = std::numeric_limits<double>::infinity();
-    for (std::size_t row : rows) {
-      for (int32_t vertex : complex.tets[static_cast<std::size_t>(cells[row])].v) {
-        if (vertex == s || vertex == kGhostVertex) continue;
-        reach = std::min(reach, std::sqrt(geometry::squared_distance(origin, point(vertex))));
+  // Suppresses one witnessed vertex: contraction onto a chain neighbour (a
+  // segment point) or a disk neighbour (a facet point), else the ear-clipped
+  // half-fans. A point that cannot be removed is a STEINER_SUPPRESSION
+  // refusal naming its source segment or facet; under FIXED it is the
+  // FIXED_SEGMENT / FIXED_FACET refusal of that entity (its boundary could
+  // not be recovered unmodified).
+  int32_t suppress_vertex(int32_t s) {
+    const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
+    const bool segment = witness.stratum == SourceStratum::kSegment;
+    const auto refuse = [&]() {
+      const bool fixed = input_.policy == BoundaryPolicy::kFixed;
+      const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
+      if (segment) {
+        return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
+                    static_cast<int64_t>(witness.entity), kPlcPoint, s);
       }
-    }
-    if (!std::isfinite(reach) || !(reach > 0.0)) return false;
-    for (double step = 0.25 * reach; step > 0x1p-40 * reach; step *= 0.5) {
-      for (int axis = 0; axis < 3; ++axis) {
-        location[axis] = origin[axis] + step * direction[axis] / norm;
+      const int32_t facet = input_.polygon_facets[
+          candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]];
+      return fail(status, fixed ? kPlcFixedFacet : kPlcSteinerSuppression, kPlcFacet, facet,
+                  kPlcPoint, s);
+    };
+    int32_t p = -1;
+    int32_t q = -1;
+    std::vector<int32_t> targets;
+    std::size_t position = 0;
+    if (segment) {
+      auto& chain = edge_chains_[static_cast<std::size_t>(witness.entity)];
+      position = 1;
+      while (position + 1 < chain.size() && chain[position].vertex != s) ++position;
+      if (position + 1 >= chain.size()) {
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
       }
-      if (!geometry::point_in_domain(location)) continue;
-      const ExactPointRef center{location, nullptr};
-      bool visible = true;
-      for (std::size_t row = 0; row < rows.size() && visible; ++row) {
-        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[rows[row]])];
-        ExactPointRef corners[4];
-        for (int slot = 0; slot < 4; ++slot) {
-          corners[slot] = tet.v[slot] == s ? center : ref(tet.v[slot]);
-        }
-        visible = orient3d(corners[0], corners[1], corners[2], corners[3]) > 0;
-      }
-      for (auto entry = sides.begin(); entry != sides.end() && visible; ++entry) {
-        for (const Triple& face : fans[entry->first].new_faces) {
-          if (orient3d(ref(face[0]), ref(face[1]), ref(face[2]), center) != entry->second) {
-            visible = false;
-            break;
+      p = chain[position - 1].vertex;
+      q = chain[position + 1].vertex;
+      targets = {p, q};
+    } else {
+      std::set<int32_t> ring;
+      for (const auto* faces : {&source_faces_, &planar_source_faces_}) {
+        for (const auto& [key, unused] : *faces) {
+          (void)unused;
+          if (std::find(key.begin(), key.end(), s) == key.end()) continue;
+          for (int32_t vertex : key) {
+            if (vertex != s) ring.insert(vertex);
           }
         }
       }
-      if (visible) return true;
+      targets.assign(ring.begin(), ring.end());
     }
-    return false;
+    targets.push_back(-1);
+    for (int32_t target : targets) {
+      bool removed = false;
+      const int32_t status = remove_witnessed_vertex(s, target, p, q, removed);
+      if (status != PHX_MC_OK) return status;
+      if (!removed) continue;
+      if (segment) {
+        auto& chain = edge_chains_[static_cast<std::size_t>(witness.entity)];
+        chain.erase(chain.begin() + static_cast<std::ptrdiff_t>(position));
+      }
+      return PHX_MC_OK;
+    }
+    return refuse();
   }
 
   int32_t seed_tet(const double* seed, int64_t row) {
