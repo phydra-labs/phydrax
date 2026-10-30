@@ -3517,8 +3517,6 @@ class MappedFieldSupport(StrictModule, NonTrainableState):
     has the same physical source identity and revision as the mapped domain.
     """
 
-    __strict_contract__ = True
-
     mesh: CellMesh
     geometry: CellGeometrySpec
     domain: MappedReferenceDomain
