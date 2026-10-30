@@ -40,13 +40,19 @@ def layer_control_issues(
             or control.region_name not in source_region_entity_ids
             or not np.array_equal(
                 np.asarray(control.scope.entity_ids),
-                np.asarray([source_region_entity_ids[control.region_name]], dtype=np.int64),
+                np.asarray(
+                    [source_region_entity_ids[control.region_name]], dtype=np.int64
+                ),
             )
         ):
-            issues.append("region controls bound to their authoritative layer/core region")
+            issues.append(
+                "region controls bound to their authoritative layer/core region"
+            )
             continue
         if not control.meshing_enabled:
-            issues.append("disabled regions represented as void, not occupied layer/core cells")
+            issues.append(
+                "disabled regions represented as void, not occupied layer/core cells"
+            )
         previous = controls.get(control.region_name)
         if previous is not None and (previous.material_id, previous.role) != (
             control.material_id,
@@ -86,9 +92,7 @@ def layer_control_issues(
 
 
 @checked
-def core_facet_scope_ids(
-    source: sources_owner.NativeLayerCoreSource, /
-) -> np.ndarray:
+def core_facet_scope_ids(source: sources_owner.NativeLayerCoreSource, /) -> np.ndarray:
     """Map stable PLC facet source IDs to exact original source-scope IDs."""
     if source.source_boundary_scope is None:
         return np.asarray(source.complex.facet_entity_ids, dtype=np.int64)
@@ -103,25 +107,31 @@ def core_facet_scope_ids(
         len(identities) != source.complex.facet_count
         or len(paths) != source.complex.facet_count
     ):
-        raise ValueError("PLC facet source identity and occurrence banks must cover every facet.")
+        raise ValueError(
+            "PLC facet source identity and occurrence banks must cover every facet."
+        )
     scope_ids = np.asarray(domain.scope_entity_ids(2), dtype=np.int64)
     result = np.full((len(identities),), -1, dtype=np.int64)
     for facet, (identity, path) in enumerate(zip(identities, paths, strict=True)):
         if identity is None:
             if path is not None:
-                raise ValueError("An unbound PLC facet cannot declare a source occurrence.")
+                raise ValueError(
+                    "An unbound PLC facet cannot declare a source occurrence."
+                )
             continue
         if path is None:
             raise ValueError("A bound PLC facet must retain its source occurrence path.")
-        slot = domain.resolve_entity_id(
-            2, identity, occurrence_path=path
-        )
+        slot = domain.resolve_entity_id(2, identity, occurrence_path=path)
         if slot < 0 or slot >= scope_ids.size:
-            raise ValueError("A PLC facet resolved outside the retained source-domain inventory.")
+            raise ValueError(
+                "A PLC facet resolved outside the retained source-domain inventory."
+            )
         result[facet] = scope_ids[slot]
     allowed = np.asarray(source.source_boundary_scope.entity_ids, dtype=np.int64)
     if np.setdiff1d(result[result >= 0], allowed).size:
-        raise ValueError("PLC facet source identities escaped the retained boundary scope.")
+        raise ValueError(
+            "PLC facet source identities escaped the retained boundary scope."
+        )
     return result
 
 
@@ -136,7 +146,9 @@ def _wall_face_sources(source: sources_owner.NativeLayerCoreSource, /) -> dict[i
         np.asarray(layer.source_wall.entity_set(2).entity_ids, dtype=np.int64).tolist()
     )
     if source.source_boundary_scope is None:
-        allowed = set(np.asarray(source.complex.facet_entity_ids, dtype=np.int64).tolist())
+        allowed = set(
+            np.asarray(source.complex.facet_entity_ids, dtype=np.int64).tolist()
+        )
     else:
         allowed = set(
             np.asarray(source.source_boundary_scope.entity_ids, dtype=np.int64).tolist()
@@ -147,7 +159,9 @@ def _wall_face_sources(source: sources_owner.NativeLayerCoreSource, /) -> dict[i
             continue
         identifier = int(raw_identifier)
         if identifier not in wall_face_ids:
-            raise ValueError("A front-row face is absent from the exact source wall mesh.")
+            raise ValueError(
+                "A front-row face is absent from the exact source wall mesh."
+            )
         if identifier not in allowed:
             if source.source_boundary_scope is None:
                 continue
@@ -359,7 +373,9 @@ def layer_source_face_ancestry(
     ).sources.items():
         previous = authored.get(key)
         if previous is not None and previous != owner:
-            raise ValueError("One lateral physical face cannot claim conflicting source strata.")
+            raise ValueError(
+                "One lateral physical face cannot claim conflicting source strata."
+            )
         authored[key] = owner
     return authored
 
@@ -447,8 +463,6 @@ def compose_layer_controls(
                 )
             )
     return zones, tuple(patches)
-
-
 
 
 __all__ = [

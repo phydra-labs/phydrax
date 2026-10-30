@@ -17,25 +17,22 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._validation import positive_finite_float
 from ...discretization._exact_algebraic_geometry import (
-    ExactScalar,
     coefficient_interval,
+    ExactScalar,
 )
 from ...linalg._exact import (
     ExactLinearFactorization,
     factor_exact,
 )
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from .._rational import fraction_endpoint
-from ..._validation import positive_finite_float
 from ...typing import checked
-from .._source_boundary_records import SourceBoundaryDistance
 from .._planar_embedding import PlanarEmbedding
+from .._rational import fraction_endpoint
+from .._source_boundary_records import SourceBoundaryDistance
 from ._model import BRepModel
 from ._patches import (
-    AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     BSplineSurfacePatch,
@@ -50,16 +47,16 @@ from ._patches import (
     SpherePatch,
     TorusPatch,
 )
-from ._tspline import TSplineSurfacePatch
 from ._projection_contracts import (
     AbstractBRepProjection,
+    brep_entity_id,
     BRepEntityDimension,
     BRepProjectionPolicy,
     BRepProjectionResult,
     BRepProjectionStatus,
-    brep_entity_id,
     closure_codes,
 )
+from ._tspline import TSplineSurfacePatch
 
 
 _UNIQUE = int(BRepProjectionStatus.UNIQUE)
@@ -133,7 +130,6 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
 
 
 def _unresolved(dimension: int, index: int, path: tuple[str, ...] = ()) -> _Hit:
-    ambient = 3
     return _Hit(
         dimension,
         index,
@@ -252,7 +248,10 @@ def _trim_classification(model: BRepModel, face: int, uv: np.ndarray, /) -> int 
         for coedge in loop:
             edge = geometry.coedge_edges[coedge]
             curve = geometry.pcurves[coedge]
-            if not isinstance(curve, (LineCurve, ExactLineCurve)) or curve.ambient_dimension != 2:
+            if (
+                not isinstance(curve, (LineCurve, ExactLineCurve))
+                or curve.ambient_dimension != 2
+            ):
                 return None
             first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
             start = np.asarray(curve.evaluate(jnp.asarray(first)), dtype=np.float64)
@@ -330,7 +329,10 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     for coedge in loops[0]:
         edge = geometry.coedge_edges[coedge]
         curve = geometry.pcurves[coedge]
-        if not isinstance(curve, (LineCurve, ExactLineCurve)) or curve.ambient_dimension != 2:
+        if (
+            not isinstance(curve, (LineCurve, ExactLineCurve))
+            or curve.ambient_dimension != 2
+        ):
             return False
         first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
         start = np.asarray(curve.evaluate(jnp.asarray(first)), dtype=np.float64)
@@ -559,6 +561,53 @@ def _line_curve_hit(
     )
 
 
+def _natural_rectangle_trim(model: BRepModel, face: int, /) -> bool:
+    """Prove that a face's single authored loop traces its parameter rectangle.
+
+    Every coedge must be an exact axis-aligned chart line (possibly on a
+    native period sheet) along one rectangle side, joined corner to corner.
+    """
+    from ._boolean_core import PeriodicPCurve
+
+    geometry = model.geometry
+    if geometry is None or len(geometry.face_loops[face]) != 1:
+        return False
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    corners = {(float(bounds[i, 0]), float(bounds[j, 1])) for i in (0, 1) for j in (0, 1)}
+    loop = geometry.face_loops[face][0]
+    path: list[tuple[float, float]] = []
+    for coedge in loop:
+        pcurve = geometry.pcurves[coedge]
+        while isinstance(pcurve, PeriodicPCurve):
+            pcurve = pcurve.source_curve
+        if not isinstance(pcurve, (LineCurve, ExactLineCurve)):
+            return False
+        edge = geometry.coedge_edges[coedge]
+        first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+        ends = np.asarray(
+            geometry.pcurves[coedge].evaluate(jnp.asarray((first, last))),
+            dtype=np.float64,
+        )
+        if geometry.coedge_senses[coedge] < 0:
+            ends = ends[::-1]
+        start, end = (
+            (float(ends[0, 0]), float(ends[0, 1])),
+            (
+                float(ends[1, 0]),
+                float(ends[1, 1]),
+            ),
+        )
+        if start not in corners or end not in corners or start == end:
+            return False
+        if start[0] != end[0] and start[1] != end[1]:
+            return False
+        if path and path[-1] != start:
+            return False
+        path.append(start)
+        path.append(end)
+    return len(loop) == 4 and path[0] == path[-1] and set(path) == corners
+
+
 def _plane_boundary_hit(
     model: BRepModel,
     face: int,
@@ -650,7 +699,9 @@ def _tspline_affine_plane(
         return None
     patch.validate_exact_transfer_chain()
     common_weight: Fraction | None = None
-    affine: tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]] | None = None
+    affine: (
+        tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]] | None
+    ) = None
     for extraction in patch.realization.extractions:
         bounds = extraction.parameter_bounds
         u0, u1, v0, v1 = bounds
@@ -660,7 +711,11 @@ def _tspline_affine_plane(
             extraction.piece_id, patch.exact_target_homogeneous
         )
         weights = tuple(row[3] for row in coefficients)
-        if not weights or weights[0] <= 0 or any(value != weights[0] for value in weights):
+        if (
+            not weights
+            or weights[0] <= 0
+            or any(value != weights[0] for value in weights)
+        ):
             return None
         if common_weight is None:
             common_weight = weights[0]
@@ -671,12 +726,10 @@ def _tspline_affine_plane(
         )
         origin_control = controls[0]
         u_axis = tuple(
-            (controls[12][axis] - origin_control[axis]) / (u1 - u0)
-            for axis in range(3)
+            (controls[12][axis] - origin_control[axis]) / (u1 - u0) for axis in range(3)
         )
         v_axis = tuple(
-            (controls[3][axis] - origin_control[axis]) / (v1 - v0)
-            for axis in range(3)
+            (controls[3][axis] - origin_control[axis]) / (v1 - v0) for axis in range(3)
         )
         origin = tuple(
             origin_control[axis] - u_axis[axis] * u0 - v_axis[axis] * v0
@@ -691,8 +744,7 @@ def _tspline_affine_plane(
             u = u0 + Fraction(index // 4, 3) * (u1 - u0)
             v = v0 + Fraction(index % 4, 3) * (v1 - v0)
             expected = tuple(
-                origin[axis] + u_axis[axis] * u + v_axis[axis] * v
-                for axis in range(3)
+                origin[axis] + u_axis[axis] * u + v_axis[axis] * v for axis in range(3)
             )
             if control != expected:
                 return None
@@ -736,8 +788,7 @@ def _prepare_affine_projection_frame(
                 )
             )
         second = tuple(
-            Fraction.from_float(float(value))
-            for value in np.asarray(patch.direction)
+            Fraction.from_float(float(value)) for value in np.asarray(patch.direction)
         )
     else:
         return None
@@ -746,6 +797,7 @@ def _prepare_affine_projection_frame(
         left: tuple[ExactScalar, ...], right: tuple[ExactScalar, ...], /
     ) -> ExactScalar:
         return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
     gram = (
         (dot(first, first), dot(first, second)),
         (dot(first, second), dot(second, second)),
@@ -753,9 +805,7 @@ def _prepare_affine_projection_frame(
     try:
         factorization = factor_exact(gram)
     except ValueError:
-        return _AffineProjectionFrame(
-            origin, first, second, Fraction(0), None
-        )
+        return _AffineProjectionFrame(origin, first, second, Fraction(0), None)
     determinant = factorization.determinant
     if determinant <= 0:
         return _AffineProjectionFrame(origin, first, second, determinant, None)
@@ -879,7 +929,11 @@ def _tspline_graph_stationary_hit(
             extraction.piece_id, patch.exact_target_homogeneous
         )
         weights = tuple(row[3] for row in homogeneous)
-        if not weights or weights[0] <= 0 or any(value != weights[0] for value in weights):
+        if (
+            not weights
+            or weights[0] <= 0
+            or any(value != weights[0] for value in weights)
+        ):
             return None
         if common_weight is None:
             common_weight = weights[0]
@@ -906,7 +960,11 @@ def _tspline_graph_stationary_hit(
         uu = tuple(
             abs(
                 Fraction(6)
-                * (heights[(i + 2) * 4 + j] - 2 * heights[(i + 1) * 4 + j] + heights[i * 4 + j])
+                * (
+                    heights[(i + 2) * 4 + j]
+                    - 2 * heights[(i + 1) * 4 + j]
+                    + heights[i * 4 + j]
+                )
                 / (du * du)
             )
             for i in range(2)
@@ -915,7 +973,11 @@ def _tspline_graph_stationary_hit(
         vv = tuple(
             abs(
                 Fraction(6)
-                * (heights[i * 4 + j + 2] - 2 * heights[i * 4 + j + 1] + heights[i * 4 + j])
+                * (
+                    heights[i * 4 + j + 2]
+                    - 2 * heights[i * 4 + j + 1]
+                    + heights[i * 4 + j]
+                )
                 / (dv * dv)
             )
             for i in range(4)
@@ -942,10 +1004,7 @@ def _tspline_graph_stationary_hit(
         return _unresolved(2, face, path)
     parameter_u = Fraction.from_float(float(point[0]))
     parameter_v = Fraction.from_float(float(point[1]))
-    if not (
-        domain[0] < parameter_u < domain[1]
-        and domain[2] < parameter_v < domain[3]
-    ):
+    if not (domain[0] < parameter_u < domain[1] and domain[2] < parameter_v < domain[3]):
         return _unresolved(2, face, path)
     selected = next(
         (
@@ -1009,9 +1068,7 @@ def _tspline_graph_stationary_hit(
         abs(query_height - lower_height), abs(query_height - upper_height)
     )
     hessian_norm_squared = (
-        maximum_uu * maximum_uu
-        + maximum_vv * maximum_vv
-        + 2 * maximum_uv * maximum_uv
+        maximum_uu * maximum_uu + maximum_vv * maximum_vv + 2 * maximum_uv * maximum_uv
     )
     if vertical_extent * vertical_extent * hessian_norm_squared >= 1:
         return None
@@ -1025,9 +1082,7 @@ def _tspline_graph_stationary_hit(
         (float(parameter_u), float(parameter_v), float(height)), dtype=np.float64
     )
     normal = np.asarray((0.0, 0.0, orientation), dtype=np.float64)
-    tangents = np.asarray(
-        ((1.0, 0.0, 0.0), (0.0, orientation, 0.0)), dtype=np.float64
-    )
+    tangents = np.asarray(((1.0, 0.0, 0.0), (0.0, orientation, 0.0)), dtype=np.float64)
     return _Hit(2, face, candidate, chart, lower, upper, _UNIQUE, normal, tangents, path)
 
 
@@ -1048,6 +1103,9 @@ def _project_face(
     uv: np.ndarray | None = None
     nonisolated = False
     affine_spline = False
+    # Revolution of an axial-plane line: the candidate is the closest point of
+    # the whole authored parameter rectangle, including its profile endpoints.
+    revolution_line = False
     affine_distance_squared: ExactScalar | None = None
     if isinstance(patch, PlanePatch) or (
         isinstance(patch, TSplineSurfacePatch) and affine_frame is not None
@@ -1065,9 +1123,9 @@ def _project_face(
         if not np.all(np.isfinite(uv)) or not np.all(np.isfinite(candidate)):
             return _unresolved(2, face, path)
         affine_spline = isinstance(patch, TSplineSurfacePatch)
-    elif (graph_hit := _tspline_graph_stationary_hit(
-        model, face, point, path, orientation
-    )) is not None:
+    elif (
+        graph_hit := _tspline_graph_stationary_hit(model, face, point, path, orientation)
+    ) is not None:
         return graph_hit
     elif isinstance(patch, (BSplineSurfacePatch, TSplineSurfacePatch)):
         from ._spline_projection import project_spline_face
@@ -1142,10 +1200,13 @@ def _project_face(
                     projected.root_id,
                 )
             uv[axis] = representative
-            seam_tolerance = 128.0 * np.finfo(np.float64).eps * max(
-                1.0, abs(float(uv[axis]))
+            seam_tolerance = (
+                128.0 * np.finfo(np.float64).eps * max(1.0, abs(float(uv[axis])))
             )
-            if status == _UNIQUE and abs(float(uv[axis]) - parameter_bounds[0, axis]) <= seam_tolerance:
+            if (
+                status == _UNIQUE
+                and abs(float(uv[axis]) - parameter_bounds[0, axis]) <= seam_tolerance
+            ):
                 status = _SEAM
         if embedding is not None:
             candidate = embedding.to_planar(candidate)
@@ -1431,7 +1492,9 @@ def _project_face(
             exact_line_origin = patch.curve.origin_exact
         else:
             line_origin = np.asarray(patch.curve.first, dtype=np.float64)
-            line_direction = np.asarray(patch.curve.last - patch.curve.first, dtype=np.float64)
+            line_direction = np.asarray(
+                patch.curve.last - patch.curve.first, dtype=np.float64
+            )
             exact_line_origin = patch.curve.first_exact
             exact_direction = tuple(
                 last - first
@@ -1445,7 +1508,9 @@ def _project_face(
             first - second
             for first, second in zip(exact_line_origin, exact_axis_origin, strict=True)
         )
-        dot_exact = lambda a, b: sum((x * y for x, y in zip(a, b, strict=True)), Fraction(0))
+        dot_exact = lambda a, b: sum(
+            (x * y for x, y in zip(a, b, strict=True)), Fraction(0)
+        )
         if dot_exact(exact_axis, exact_axis) != 1:
             return _unresolved(2, face, path)
         axial_start = float((line_origin - axis_origin) @ axis)
@@ -1499,21 +1564,27 @@ def _project_face(
             return _unresolved(2, face, path)
         phase = np.asarray((rho_point - rho_first, axial_point - z_first))
         fraction = float(np.clip((phase @ delta) / squared, 0.0, 1.0))
-        profile_parameter = first_parameter + fraction * (last_parameter - first_parameter)
+        profile_parameter = first_parameter + fraction * (
+            last_parameter - first_parameter
+        )
         if rho_point == 0.0:
             bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             angle = float(bounds[0, 0])
         else:
-            angle = float(np.arctan2(radial_point @ second_axis, radial_point @ radial_axis))
+            angle = float(
+                np.arctan2(radial_point @ second_axis, radial_point @ radial_axis)
+            )
         uv = np.asarray((angle, profile_parameter), dtype=np.float64)
         candidate = np.asarray(
             patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
         )
         candidate_relative = candidate - axis_origin
         candidate_height = float(candidate_relative @ axis)
-        nonisolated = rho_point == 0.0 and float(
-            np.linalg.norm(candidate_relative - candidate_height * axis)
-        ) > 0.0
+        nonisolated = (
+            rho_point == 0.0
+            and float(np.linalg.norm(candidate_relative - candidate_height * axis)) > 0.0
+        )
+        revolution_line = True
     else:
         return _unresolved(2, face, path)
     if uv is None or candidate is None:
@@ -1529,13 +1600,22 @@ def _project_face(
                 return _unresolved(2, face, path)
             uv[axis] = representative
     outside_bounds = np.any(uv < bounds[0]) or np.any(uv > bounds[1])
-    trim = 0 if outside_bounds else _trim_classification(model, face, uv)
+    if revolution_line and not outside_bounds and _natural_rectangle_trim(model, face):
+        # The closed face is its full rectangle; the rectangle-closest point is
+        # the face-closest point even where it lies on a seam or rim edge.
+        trim = 1
+    else:
+        trim = 0 if outside_bounds else _trim_classification(model, face, uv)
     if trim is None:
         return _unresolved(2, face, path)
     if trim == 0:
-        if isinstance(patch, PlanePatch) or affine_spline or (
-            isinstance(patch, ExtrusionSurface)
-            and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+        if (
+            isinstance(patch, PlanePatch)
+            or affine_spline
+            or (
+                isinstance(patch, ExtrusionSurface)
+                and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+            )
         ):
             boundary_hit = _plane_boundary_hit(
                 model,
@@ -1614,21 +1694,25 @@ def _closed_revolution_cylinder(
 ):
     from .._rational import rational_vector
 
-    geometry = model.geometry
     faces = model.topology.solid_faces[solid]
     if len(faces) != 3:
         return None
 
-    def dot(first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /) -> ExactScalar:
+    def dot(
+        first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+    ) -> ExactScalar:
         return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
-    side: tuple[
-        tuple[ExactScalar, ExactScalar, ExactScalar],
-        tuple[ExactScalar, ExactScalar, ExactScalar],
-        ExactScalar,
-        ExactScalar,
-        ExactScalar,
-    ] | None = None
+    side: (
+        tuple[
+            tuple[ExactScalar, ExactScalar, ExactScalar],
+            tuple[ExactScalar, ExactScalar, ExactScalar],
+            ExactScalar,
+            ExactScalar,
+            ExactScalar,
+        ]
+        | None
+    ) = None
     cap_rows: list[tuple[ExactScalar, ExactScalar]] = []
     for face in faces:
         patch = model.patches[face]
@@ -1642,7 +1726,9 @@ def _closed_revolution_cylinder(
         period = patch.periods[0]
         if period is None or not np.isfinite(period) or period <= 0.0:
             return None
-        if Fraction.from_float(float(bounds[1, 0])) - Fraction.from_float(float(bounds[0, 0])) != Fraction.from_float(float(period)):
+        if Fraction.from_float(float(bounds[1, 0])) - Fraction.from_float(
+            float(bounds[0, 0])
+        ) != Fraction.from_float(float(period)):
             return None
         axis_values = rational_vector(np.asarray(patch.axis_direction))
         origin_values = rational_vector(np.asarray(patch.axis_origin))
@@ -1663,10 +1749,7 @@ def _closed_revolution_cylinder(
                     patch.curve.first_exact, patch.curve.last_exact, strict=True
                 )
             )
-        first, last = (
-            Fraction.from_float(float(value))
-            for value in bounds[:, 1]
-        )
+        first, last = (Fraction.from_float(float(value)) for value in bounds[:, 1])
 
         def point(parameter: Fraction, /) -> tuple[ExactScalar, ...]:
             return tuple(
@@ -1682,17 +1765,27 @@ def _closed_revolution_cylinder(
         ) -> tuple[ExactScalar, ...]:
             return tuple(relative[index] - height * axis[index] for index in range(3))
 
-        relative_first = tuple(value - base for value, base in zip(point(first), origin, strict=True))
-        relative_last = tuple(value - base for value, base in zip(point(last), origin, strict=True))
+        relative_first = tuple(
+            value - base for value, base in zip(point(first), origin, strict=True)
+        )
+        relative_last = tuple(
+            value - base for value, base in zip(point(last), origin, strict=True)
+        )
         z_first, z_last = axial(relative_first), axial(relative_last)
         r_first, r_last = radial(relative_first, z_first), radial(relative_last, z_last)
         radius_first, radius_last = dot(r_first, r_first), dot(r_last, r_last)
         direction_height = dot(line_direction, axis)
         radial_direction = tuple(
-            line_direction[index] - direction_height * axis[index]
-            for index in range(3)
+            line_direction[index] - direction_height * axis[index] for index in range(3)
         )
-        start_radial = radial(tuple(value - base for value, base in zip(line_origin, origin, strict=True)), axial(tuple(value - base for value, base in zip(line_origin, origin, strict=True))))
+        start_radial = radial(
+            tuple(value - base for value, base in zip(line_origin, origin, strict=True)),
+            axial(
+                tuple(
+                    value - base for value, base in zip(line_origin, origin, strict=True)
+                )
+            ),
+        )
         cross = (
             start_radial[1] * radial_direction[2] - start_radial[2] * radial_direction[1],
             start_radial[2] * radial_direction[0] - start_radial[0] * radial_direction[2],
@@ -1709,7 +1802,13 @@ def _closed_revolution_cylinder(
         ):
             if side is not None:
                 return None
-            side = (origin, axis, radius_first, min(z_first, z_last), max(z_first, z_last))
+            side = (
+                origin,
+                axis,
+                radius_first,
+                min(z_first, z_last),
+                max(z_first, z_last),
+            )
         elif z_first == z_last and (
             (radius_first == 0 and radius_last > 0)
             or (radius_last == 0 and radius_first > 0)
@@ -1941,7 +2040,9 @@ class NativeBRepProjection(AbstractBRepProjection):
         if occurrence_path == ():
             if definition_only:
                 return (_Occurrence((), -1, _IDENTITY_ROTATION, _ZERO_TRANSLATION),)
-            raise ValueError("An empty occurrence path cannot select an instantiated solid entity.")
+            raise ValueError(
+                "An empty occurrence path cannot select an instantiated solid entity."
+            )
         available = tuple(
             value
             for value in self.occurrences
@@ -1957,6 +2058,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         if definition_only:
             return (_Occurrence((), -1, _IDENTITY_ROTATION, _ZERO_TRANSLATION),)
         return ()
+
     def occurrence_paths_for_entities(
         self,
         dimensions: ArrayLike,
@@ -1986,7 +2088,6 @@ class NativeBRepProjection(AbstractBRepProjection):
             )
             for dimension, index in zip(dims, rows, strict=True)
         )
-
 
     def entity_codes(self, dimensions: ArrayLike, indices: ArrayLike, /) -> np.ndarray:
         """Encode aligned definition-entity rows in the canonical topology bank."""
@@ -2111,7 +2212,6 @@ class NativeBRepProjection(AbstractBRepProjection):
         total = sum(self.entity_counts)
         encoded = containers * total + children
         return np.isin(encoded, np.asarray(self.closure_codes, dtype=np.int64))
-
 
     def _face_orientation(self, face: int, solid: int, /) -> float:
         orientation = float(self.model.orientation[face])
@@ -2374,7 +2474,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                 not isinstance(value, str) or not value or value.strip() != value
                 for value in entity_ids
             ):
-                raise TypeError("entity_ids must be a tuple of canonical source entity IDs.")
+                raise TypeError(
+                    "entity_ids must be a tuple of canonical source entity IDs."
+                )
             if len(set(entity_ids)) != len(entity_ids):
                 raise ValueError("entity_ids must not repeat a source entity.")
             by_id = {value.entity_id: value for value in self.boundary_entities}
@@ -2391,11 +2493,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                 for path in occurrence_paths
             )
         ):
-            raise ValueError("occurrence_paths must contain one exact path tuple per query.")
+            raise ValueError(
+                "occurrence_paths must contain one exact path tuple per query."
+            )
         known_paths = {value.path for value in self.occurrences}
         if occurrence_paths is not None and any(
-            path not in known_paths and path != ()
-            for path in occurrence_paths
+            path not in known_paths and path != () for path in occurrence_paths
         ):
             raise ValueError("occurrence_paths must select an occurrence of this source.")
         world = self._world(queries)
@@ -2407,7 +2510,9 @@ class NativeBRepProjection(AbstractBRepProjection):
             )
             if not eligible:
                 if path is not None and candidates:
-                    raise ValueError("occurrence_path does not own the selected source entities.")
+                    raise ValueError(
+                        "occurrence_path does not own the selected source entities."
+                    )
                 hits.append(_failed(self.ambient_dimension))
                 continue
             projected: list[_Hit] = []
@@ -2444,9 +2549,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                 )
             ]
             status = (
-                _AMBIGUOUS
-                if overlaps and best.status != _NON_ISOLATED
-                else best.status
+                _AMBIGUOUS if overlaps and best.status != _NON_ISOLATED else best.status
             )
             hits.append(
                 _Hit(
@@ -2464,9 +2567,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             )
         return self._result(queries, hits)
 
-    def boundary_distance(
-        self, points: np.ndarray, /
-    ) -> SourceBoundaryDistance:
+    def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
         """Return certified physical distance bounds to this source boundary."""
         result = self.project_boundary(points)
         return SourceBoundaryDistance(
@@ -2568,7 +2669,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                 "Occurrence-restricted classification requires groups, allowed groups, dimensions, indices, and paths."
             )
         group_values: np.ndarray | None = None
-        allowed_values: dict[int, tuple[tuple[int, int, tuple[str, ...]], ...]] | None = None
+        allowed_values: dict[int, tuple[tuple[int, int, tuple[str, ...]], ...]] | None = (
+            None
+        )
         if restricted:
             assert groups is not None
             assert allowed_groups is not None
@@ -2581,9 +2684,16 @@ class NativeBRepProjection(AbstractBRepProjection):
             raw_indices = np.asarray(allowed_indices)
             if any(
                 not np.issubdtype(values.dtype, np.integer)
-                for values in (raw_groups, raw_allowed_groups, raw_dimensions, raw_indices)
+                for values in (
+                    raw_groups,
+                    raw_allowed_groups,
+                    raw_dimensions,
+                    raw_indices,
+                )
             ):
-                raise TypeError("Occurrence-restricted classification IDs must be integer arrays.")
+                raise TypeError(
+                    "Occurrence-restricted classification IDs must be integer arrays."
+                )
             if (
                 raw_groups.shape != (queries.shape[0],)
                 or raw_allowed_groups.ndim != 1
@@ -2591,24 +2701,30 @@ class NativeBRepProjection(AbstractBRepProjection):
                 or raw_indices.shape != raw_allowed_groups.shape
                 or len(allowed_occurrence_paths) != raw_allowed_groups.size
             ):
-                raise ValueError("Occurrence-restricted classification filters must be row-aligned.")
+                raise ValueError(
+                    "Occurrence-restricted classification filters must be row-aligned."
+                )
             if not isinstance(allowed_occurrence_paths, tuple) or any(
                 not isinstance(path, tuple)
                 or any(not isinstance(part, str) or not part for part in path)
                 for path in allowed_occurrence_paths
             ):
-                raise TypeError("allowed_occurrence_paths must contain exact occurrence-path tuples.")
-            if np.any((raw_dimensions < 0) | (raw_dimensions > 2)) or np.any(raw_indices < 0):
-                raise ValueError("Allowed entity dimensions and indices must select B-Rep entities.")
+                raise TypeError(
+                    "allowed_occurrence_paths must contain exact occurrence-path tuples."
+                )
+            if np.any((raw_dimensions < 0) | (raw_dimensions > 2)) or np.any(
+                raw_indices < 0
+            ):
+                raise ValueError(
+                    "Allowed entity dimensions and indices must select B-Rep entities."
+                )
             if any(
                 int(index) >= self.entity_counts[int(dimension)]
                 for dimension, index in zip(raw_dimensions, raw_indices, strict=True)
             ):
                 raise ValueError("Allowed entity index lies outside its B-Rep dimension.")
             group_values = raw_groups.astype(np.int64, copy=False)
-            allowed_lists: dict[
-                int, list[tuple[int, int, tuple[str, ...]]]
-            ] = {}
+            allowed_lists: dict[int, list[tuple[int, int, tuple[str, ...]]]] = {}
             for group, dimension, index, path in zip(
                 raw_allowed_groups,
                 raw_dimensions,
@@ -2659,12 +2775,16 @@ class NativeBRepProjection(AbstractBRepProjection):
             elif hit.status == _NON_ISOLATED:
                 if hit.upper <= radius:
                     candidates.append(hit)
-            elif hit.status in (
-                _UNIQUE,
-                _SEAM,
-                _AMBIGUOUS,
-                int(BRepProjectionStatus.SINGULAR),
-            ) and hit.upper <= radius:
+            elif (
+                hit.status
+                in (
+                    _UNIQUE,
+                    _SEAM,
+                    _AMBIGUOUS,
+                    int(BRepProjectionStatus.SINGULAR),
+                )
+                and hit.upper <= radius
+            ):
                 candidates.append(hit)
 
         for row, query in enumerate(world):
@@ -2717,14 +2837,18 @@ class NativeBRepProjection(AbstractBRepProjection):
                 query[2] - origin[2],
             )
             height = sum(
-                (value * direction for value, direction in zip(relative, axis, strict=True)),
+                (
+                    value * direction
+                    for value, direction in zip(relative, axis, strict=True)
+                ),
                 Fraction(0),
             )
-            radial_squared = sum((value * value for value in relative), Fraction(0)) - height * height
+            radial_squared = (
+                sum((value * value for value in relative), Fraction(0)) - height * height
+            )
             if radial_squared == radius_squared or height in (lower, upper):
                 return None
             return radial_squared < radius_squared and lower < height < upper
-        geometry = self.model.geometry
         direction = np.asarray((1.0, sqrt(2.0), sqrt(3.0)), dtype=np.float64)
         direction /= np.linalg.norm(direction)
         from .._rational import rational_cross, rational_vector

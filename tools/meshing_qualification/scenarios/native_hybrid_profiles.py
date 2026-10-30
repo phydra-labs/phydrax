@@ -1516,7 +1516,9 @@ def _run_exact_sweep(name: str, /) -> dict[str, object]:
     if periodic:
         source_topology = wall.periodic_topology
         if source_topology is None:
-            raise ValueError("The authored exact-sweep source lost its periodic topology.")
+            raise ValueError(
+                "The authored exact-sweep source lost its periodic topology."
+            )
         periodic_source_id = source_topology.periodic_topology_id
     schedule = phx.meshing.LayerSchedule.geometric(2, 0.01, growth_rate=1.0)
     stations = np.concatenate(

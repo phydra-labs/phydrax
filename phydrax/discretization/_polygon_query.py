@@ -96,9 +96,9 @@ def _orientation(
     third: tuple[Fraction, Fraction],
     /,
 ) -> Fraction:
-    return (second[0] - first[0]) * (third[1] - first[1]) - (
-        second[1] - first[1]
-    ) * (third[0] - first[0])
+    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+        third[0] - first[0]
+    )
 
 
 def _point_on_segment(
@@ -125,24 +125,18 @@ def _segments_intersect(
     first_right = _orientation(first_start, first_stop, second_stop)
     second_left = _orientation(second_start, second_stop, first_start)
     second_right = _orientation(second_start, second_stop, first_stop)
-    if (
-        (first_left < 0 < first_right or first_right < 0 < first_left)
-        and (second_left < 0 < second_right or second_right < 0 < second_left)
+    if (first_left < 0 < first_right or first_right < 0 < first_left) and (
+        second_left < 0 < second_right or second_right < 0 < second_left
     ):
         return True
     return (
         (first_left == 0 and _point_on_segment(second_start, first_start, first_stop))
+        or (first_right == 0 and _point_on_segment(second_stop, first_start, first_stop))
         or (
-            first_right == 0
-            and _point_on_segment(second_stop, first_start, first_stop)
+            second_left == 0 and _point_on_segment(first_start, second_start, second_stop)
         )
         or (
-            second_left == 0
-            and _point_on_segment(first_start, second_start, second_stop)
-        )
-        or (
-            second_right == 0
-            and _point_on_segment(first_stop, second_start, second_stop)
+            second_right == 0 and _point_on_segment(first_stop, second_start, second_stop)
         )
     )
 
@@ -232,6 +226,7 @@ class PolygonMeshLocation(StrictModule):
     status: Array
     conditioning: Array
 
+
 @final
 class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
     """Bounded point location in arbitrary simple polygon cells.
@@ -285,9 +280,7 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         triangle_vertices = np.zeros(
             (cells.shape[0], maximum_triangles, 3), dtype=np.int32
         )
-        triangle_active = np.zeros(
-            (cells.shape[0], maximum_triangles), dtype=np.bool_
-        )
+        triangle_active = np.zeros((cells.shape[0], maximum_triangles), dtype=np.bool_)
         for cell in range(cells.shape[0]):
             if not valid[cell]:
                 continue
@@ -365,9 +358,7 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         self, point: Array, cells: Array, valid: Array, /
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         relative = point[None, None, :] - self.triangle_origin[cells]
-        reference = ein.contract(
-            "ktrd,kd->ktr", self.triangle_inverse[cells], relative
-        )
+        reference = ein.contract("ktrd,ktd->ktr", self.triangle_inverse[cells], relative)
         barycentric = jnp.concatenate(
             (1.0 - jnp.sum(reference, axis=-1, keepdims=True), reference), axis=-1
         )
@@ -542,6 +533,7 @@ def triangle_barycentric_gradients(triangle_inverse: Array, /) -> Array:
     reference = jnp.asarray(_REFERENCE_GRADIENT, dtype=triangle_inverse.dtype)
     return ein.contract("ar,nrd->nad", reference, triangle_inverse)
 
+
 class _PolygonRoute(StrictModule):
     dofs: Array
     weights: Array
@@ -627,8 +619,8 @@ class PolygonFieldReconstructionKernel(
         mask = None if side is None else side.cell_mask
         location = self.locator.locate(points, cell_mask=mask)
         average = side is not None and side.side == "average"
-        cells, triangles, barycentric, triangle_vertices, share = (
-            _selected_candidates(location, average)
+        cells, triangles, barycentric, triangle_vertices, share = _selected_candidates(
+            location, average
         )
         slots = cells.shape[1]
         flat_cells = jnp.maximum(cells, 0).reshape((-1,))
@@ -755,9 +747,7 @@ def _selected_candidates(
     return (
         jnp.take_along_axis(location.candidate_cells, first, axis=1),
         jnp.take_along_axis(location.candidate_triangles, first, axis=1),
-        jnp.take_along_axis(
-            location.candidate_barycentric, first[:, :, None], axis=1
-        ),
+        jnp.take_along_axis(location.candidate_barycentric, first[:, :, None], axis=1),
         jnp.take_along_axis(
             location.candidate_triangle_vertices, first[:, :, None], axis=1
         ),

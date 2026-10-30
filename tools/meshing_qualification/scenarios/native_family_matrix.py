@@ -39,12 +39,12 @@ from phydrax.geometry._meshing_domain import (
     PatchCurveUse,
 )
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
-from phydrax.geometry.brep import CircleCurve, LineCurve, PlanePatch
-from phydrax.geometry.simplicial import PlanarMeshRegion
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryDistance,
     SourceBoundarySamples,
 )
+from phydrax.geometry.brep import CircleCurve, LineCurve, PlanePatch
+from phydrax.geometry.simplicial import PlanarMeshRegion
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -235,7 +235,9 @@ class _SquareBoundaryQuery:
     def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
         coordinates = np.asarray(points, dtype=np.float64)
         if coordinates.ndim != 2 or coordinates.shape[1] != 2:
-            raise ValueError("Square boundary queries require an (N, 2) coordinate array.")
+            raise ValueError(
+                "Square boundary queries require an (N, 2) coordinate array."
+            )
         boundaries = (
             np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
             np.asarray(((1.0, 0.0), (1.0, 1.0)), dtype=np.float64),
@@ -284,6 +286,7 @@ class _SquareBoundaryQuery:
             "certified",
             complete=True,
         )
+
 
 def _pwl_owner(domain: PiecewiseLinearDomain) -> Any:
     class Owner:
@@ -1335,7 +1338,9 @@ def _frame_sweep_source(resolution: int) -> _FamilyInput:
             "translations": translations,
         }
     )
-    reference_points_array = np.asarray(reference_points, dtype=np.float64).reshape((-1, 3))
+    reference_points_array = np.asarray(reference_points, dtype=np.float64).reshape(
+        (-1, 3)
+    )
     reference_vertex_row: dict[tuple[float, float, float], int] = {}
     for row in range(reference_points_array.shape[0]):
         key = (
@@ -1344,7 +1349,9 @@ def _frame_sweep_source(resolution: int) -> _FamilyInput:
             float(reference_points_array[row, 2]),
         )
         reference_vertex_row[key] = row
-    reference_domain_vertices = np.asarray(cube_vertices, dtype=np.float64).reshape((-1, 3))
+    reference_domain_vertices = np.asarray(cube_vertices, dtype=np.float64).reshape(
+        (-1, 3)
+    )
     reference_domain_root_ids = np.empty(
         (reference_domain_vertices.shape[0],), dtype=np.int64
     )
@@ -1367,17 +1374,13 @@ def _frame_sweep_source(resolution: int) -> _FamilyInput:
         reference_domain_vertex_root_ids=reference_domain_root_ids,
     )
     reference_polygons: tuple[tuple[int, int, int], ...] = tuple(
-        triangle
-        for a, b, c, d in faces
-        for triangle in ((a, b, c), (a, c, d))
+        triangle for a, b, c, d in faces for triangle in ((a, b, c), (a, c, d))
     )
     reference_complex = _plc(
         cube_vertices,
         reference_polygons,
         np.arange(len(reference_polygons), dtype=np.int64),
-        np.tile(
-            np.asarray((-1, 0), dtype=np.int64), (len(reference_polygons), 1)
-        ),
+        np.tile(np.asarray((-1, 0), dtype=np.int64), (len(reference_polygons), 1)),
         ("solid",),
         vertex_prefix=source_id,
         facet_ids=tuple(

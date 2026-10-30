@@ -13,6 +13,7 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from phydrax.meshing._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -25,6 +26,7 @@ from phydrax.meshing._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._controls import PeriodicConstraint
 from phydrax.meshing._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -39,13 +41,12 @@ from phydrax.meshing._organization import (
     MeshZoneRole,
 )
 from phydrax.meshing._plc_mapped_support import classify_plc_carriers
-from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from phydrax.meshing._polyhedral_generation import (
+    effective_polyhedral_schedule,
     generate_polyhedral_volume,
     NativePolyhedralSchedule,
     PolyhedralConstruction,
 )
-from phydrax.meshing._controls import PeriodicConstraint
 from phydrax.meshing._result import MeshingComplianceReport
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
@@ -175,7 +176,6 @@ def _rebind_periodic_constraints(
 def polyhedral_support_issues(
     source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
-    options: NativeMeshingOptions,
     /,
 ) -> tuple[str, ...]:
     """Admit only an explicitly authored PLC and implemented power semantics."""
@@ -184,8 +184,6 @@ def polyhedral_support_issues(
         issues.append(
             "a NativePolyhedralSource with authored power sites and stable site IDs"
         )
-    if options.route != "plc_restricted_power":
-        issues.append("the plc_restricted_power route")
     target = specification.target
     if (
         target.topological_dimension != 3
@@ -222,19 +220,29 @@ def polyhedral_support_issues(
         else:
             if (
                 source.complex.geometry is None
-                or cell_geometry_id(source.complex.geometry) != domain.reference_geometry_id
+                or cell_geometry_id(source.complex.geometry)
+                != domain.reference_geometry_id
             ):
-                issues.append("the exact PLC coordinate map bound to its mapped root geometry")
+                issues.append(
+                    "the exact PLC coordinate map bound to its mapped root geometry"
+                )
             query = (
                 source.boundary_query()
                 if isinstance(source, NativePlcSource)
                 else source.fidelity_source
             )
-            if not isinstance(query, MappedReferenceBoundarySource) or (
-                (query.source_id, query.source_revision)
+            authority = (
+                query.authority
+                if isinstance(query, MappedReferenceBoundarySource)
+                else None
+            )
+            if (
+                not isinstance(query, MappedReferenceBoundarySource)
+                or not isinstance(authority, NativePlcSource)
+                or (query.source_id, query.source_revision)
                 != (source.source_id, source.source_revision)
-                or query.authority.domain.domain_id != domain.domain_id
-                or query.authority.complex.complex_id != source.complex.complex_id
+                or authority.domain.domain_id != domain.domain_id
+                or authority.complex.complex_id != source.complex.complex_id
             ):
                 issues.append("an independent mapped PLC root-chart boundary witness")
         requested_tolerance = specification.maximum_deviation
@@ -277,42 +285,6 @@ def polyhedral_support_issues(
         )
     issues.extend(_periodic_control_issues(source, specification))
     return tuple(issues)
-
-
-def _effective_schedule(
-    specification: VolumeMeshingSpec,
-    supplied: NativePolyhedralSchedule,
-    /,
-) -> NativePolyhedralSchedule:
-    hard_bounds = []
-    policy = specification.size_compliance
-    for control in specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            continue
-        if control.strength is not SizeControlStrength.HARD:
-            continue
-        tolerance = policy.absolute_tolerance + policy.relative_tolerance * abs(
-            control.target_size
-        )
-        bound = (
-            control.maximum_size
-            if control.maximum_size is not None
-            else control.target_size + tolerance
-        )
-        hard_bounds.append(bound)
-    diameter = supplied.maximum_cell_diameter
-    if hard_bounds:
-        physical_bound = min(hard_bounds)
-        diameter = physical_bound if diameter is None else min(diameter, physical_bound)
-    return NativePolyhedralSchedule(
-        maximum_cell_diameter=diameter,
-        target_site_volumes=supplied.target_site_volumes,
-        relative_volume_tolerance=supplied.relative_volume_tolerance,
-        feature_tolerance=supplied.feature_tolerance,
-        protected_site_ids=supplied.protected_site_ids,
-        require_every_site=supplied.require_every_site,
-        lloyd_steps=supplied.lloyd_steps,
-    )
 
 
 def _mesh_scope(
@@ -816,7 +788,7 @@ def _require_protected_feature_witnesses(
         residuals = np.asarray(association.residuals, dtype=np.float64)
         failed = matched & (residuals > feature.maximum_deviation)
         if np.any(failed):
-            target_ids = np.asarray(association.target_entity_ids, dtype=np.int64)
+            target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
                 f"Protected feature {feature.feature_id!r} exceeds its source deviation.",
@@ -824,6 +796,8 @@ def _require_protected_feature_witnesses(
                 stage="geometry_association",
                 entity_ids=tuple(int(value) for value in target_ids[failed]),
             )
+
+
 def _size_scope_edges(
     construction: PolyhedralConstruction,
     control: UniformSizeControl,
@@ -1314,7 +1288,9 @@ def prepare_native_polyhedral(
     coordinate_contract: SpatialCoordinateContract,
     /,
 ) -> _PreparedNativePolyhedral:
-    issues = polyhedral_support_issues(source, specification, options)
+    issues = polyhedral_support_issues(source, specification)
+    if options.route != "plc_restricted_power":
+        issues = (*issues, "the plc_restricted_power route")
     if issues:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -1324,7 +1300,7 @@ def prepare_native_polyhedral(
         )
     if options.polyhedral_schedule is None:
         raise RuntimeError("The polyhedral route must own its numerical schedule.")
-    schedule = _effective_schedule(specification, options.polyhedral_schedule)
+    schedule = effective_polyhedral_schedule(specification, options.polyhedral_schedule)
     return _PreparedNativePolyhedral(
         source, specification, options, coordinate_contract, schedule
     )

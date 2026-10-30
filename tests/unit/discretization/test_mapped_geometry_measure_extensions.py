@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fractions import Fraction
 import math
+from fractions import Fraction
 
 import numpy as np
 
@@ -56,12 +56,48 @@ def test_rational_embedded_curve_measure_matches_independent_gauss_rule() -> Non
     )
 
 
+def test_embedded_surface_measure_matches_independent_tensor_gauss_rule() -> None:
+    source = lagrange_element("quadrilateral", 1)
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64)
+    # The bilinear chart (u, v, u v) is exact in the Q1 coordinate space.
+    coordinates = np.column_stack((nodes[:, 0], nodes[:, 1], nodes[:, 0] * nodes[:, 1]))
+    mesh = CellMesh(
+        coordinates,
+        (
+            CellBlock(
+                "surface",
+                "quadrilateral",
+                np.arange(nodes.shape[0], dtype=np.int32)[None, :],
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {"surface": source},
+        {"surface": np.arange(nodes.shape[0], dtype=np.int64)[None, :]},
+        coordinates,
+    )
+
+    measures = certified_cell_measures(mesh, geometry, absolute_tolerance=1e-12)
+
+    gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss(64)
+    unit = 0.5 * (gauss_nodes + 1.0)
+    weights = 0.5 * gauss_weights
+    u, v = np.meshgrid(unit, unit, indexing="ij")
+    independent = float(
+        np.sum(np.outer(weights, weights) * np.sqrt(1.0 + np.square(u) + np.square(v)))
+    )
+    assert measures.values.shape == (1,)
+    assert np.isfinite(measures.absolute_errors[0]) and measures.absolute_errors[0] > 0.0
+    assert abs(float(measures.values[0]) - independent) <= (
+        float(measures.absolute_errors[0]) + 2e-14
+    )
+    assert float(measures.absolute_errors[0]) <= 1e-12
+
+
 def test_rational_pyramid_volume_matches_independent_gauss_rule() -> None:
     source = lagrange_element("hexahedron", 1)
-    unit: dict[tuple[int, int, int], Fraction] = {
-        (0, 0, 0): Fraction(1)
-    }
-    denominator = {
+    unit: dict[tuple[int, ...], Fraction] = {(0, 0, 0): Fraction(1)}
+    denominator: dict[tuple[int, ...], Fraction] = {
         (0, 0, 0): Fraction(1),
         (1, 0, 0): Fraction(1),
     }
@@ -76,9 +112,7 @@ def test_rational_pyramid_volume_matches_independent_gauss_rule() -> None:
     )
     y = RationalPolynomial({(0, 1, 0): Fraction(1)}, unit)
     z = RationalPolynomial({(0, 0, 1): Fraction(1)}, unit)
-    element = RationalComposedCellGeometryElement(
-        source, "pyramid", (x, y, z)
-    )
+    element = RationalComposedCellGeometryElement(source, "pyramid", (x, y, z))
     pyramid_vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -115,17 +149,19 @@ def test_rational_pyramid_volume_matches_independent_gauss_rule() -> None:
         reference_nodes, reference_nodes, reference_nodes, indexing="ij"
     )
     x_reference = (1.0 - w) * u + 0.5 * w
-    determinant = 1.0 + 0.1 * (1.0 - w) * (
-        1.0 - 2.0 * x_reference - x_reference**2
-    ) / (1.0 + x_reference) ** 2
+    determinant = (
+        1.0
+        + 0.1
+        * (1.0 - w)
+        * (1.0 - 2.0 * x_reference - x_reference**2)
+        / (1.0 + x_reference) ** 2
+    )
     tensor_weights = (
         reference_weights[:, None, None]
         * reference_weights[None, :, None]
         * reference_weights[None, None, :]
     )
-    independent = float(
-        np.sum(tensor_weights * (1.0 - w) ** 2 * determinant)
-    )
+    independent = float(np.sum(tensor_weights * (1.0 - w) ** 2 * determinant))
     discrepancy = abs(float(measures.values[0]) - independent)
     assert measures.values.shape == (1,)
     assert np.isfinite(measures.values[0]) and measures.values[0] > 0.0

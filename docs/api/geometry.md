@@ -640,8 +640,10 @@ and its explicit inside, boundary, or unresolved outcomes.
 `brep_normal_ranges(model, direction, draft_angle=..., angular_tolerance=...)`
 returns a whole-trim angle enclosure in radians and an explicit face status.
 Analytic and interval derivative enclosures are subdivided until the requested
-angular enclosure is resolved or parameter resolution prevents refinement;
-singular and unresolved cells remain visible in the result.
+angular enclosure is resolved or parameter resolution prevents refinement.
+Meridian line/circle revolution faces use a normal that stays regular on the
+axis; cells with an undefined normal stop at 1/256 of the face parameter range
+and are returned as `unresolved_cells` with spatial `singular_points` boxes.
 
 Rational spline evaluation uses the shared span-local B-spline kernel. Each
 curve query gathers `degree + 1` controls; each surface query gathers only the

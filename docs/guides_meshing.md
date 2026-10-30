@@ -778,6 +778,16 @@ refinement transition, then certifies parent-volume partitions and boundary
 subdivision; the certificate, including its premise, round-trips through the
 model archive. Mapped restriction separately proves an exact common subcomplex.
 
+Affine periodic quotients may be partially periodic or rotational: a
+translational lattice of any rank up to the ambient dimension (for example, a
+z-periodic channel in 3D or an x-periodic strip in 2D) or a commuting proper
+`PeriodicIsometryGroup`, such as a quarter-turn wedge, including vertices on a
+fixed rotation axis. The exact image frame enumerates group actions only along
+periodic directions, every lifted triangle or tetrahedron is checked against
+each overlapping image, and the nonperiodic directions are closed by the
+quotient's oriented physical boundary. A mesh that wraps the quotient twice
+overlaps its own image and is refused as violated.
+
 Reusable periodic image frames retain lifted-source roots, shifts, and group
 actions for translational lattices and isometry groups. `PeriodicIsometryGroup`
 admits exact screw generators whose finite linear-order power is a nonzero
@@ -916,8 +926,12 @@ bound to the source vertices). Routes:
 three-space using the retained source-chart UV coordinates. It pulls the full
 ambient SPD tensor back as `J.T @ M @ J`; anisotropy is never reduced to a scalar
 size. The route reuses the native local split, collapse, flip, and relocation
-operations, evaluating proposal vertices on the fixed source chart. Periodic UV
-seams use an exact quotient so every lifted edit is staged as one orbit.
+operations, evaluating proposal vertices on the fixed source chart. Regular
+periodic UV seams use an exact quotient so every lifted edit is staged as one
+orbit; a singular periodic direction, such as the polar axis of a sphere chart,
+is instead a fixed chart cut whose seam edges are protected. Every target vertex
+keeps an exact chart point on the source face shared by its parent cells, so a
+split of a source-cell interface stays on that exact edge.
 
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
@@ -2083,9 +2097,14 @@ before collective acceptance. Planar tile and seam identities are determined by
 the source, request, and tile schedule; graph partitioning assigns the tiles to
 the current `ExecutionGroup`. Each owner triangulates only its tiles and
 exchanges seam coordinates until the shared seam sets stop changing. Surface
-patches are assigned through the native graph partitioner, and incident owners
-reconcile their shared source-curve samples before their local chart meshes are
-committed. These exchanges carry seam data and ownership metadata, not a global
+patches are assigned through the native graph partitioner. Each round, incident
+owners first union their shared source-curve samples through the curve steward
+and then regenerate their local charts from that common set, which is the serial
+chart fixed point; physical refinement runs once after the seams close, so the
+owner-local charts equal the serial charts patch by patch. A refinement that
+would split a shared source curve is refused with `UNSUPPORTED_COMBINATION`
+rather than published without incident-owner agreement. These exchanges carry
+seam data and ownership metadata, not a global
 mesh or candidate table. Source and request identities must agree on every
 group member.
 

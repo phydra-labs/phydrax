@@ -1090,11 +1090,41 @@ class PlcRecoveryBuilder {
   }
 
   int32_t output_vertex(int32_t vertex) const {
-    return vertex < static_cast<int32_t>(candidate_.points.size() / 3) ? vertex : -1;
+    const int32_t points = static_cast<int32_t>(candidate_.points.size() / 3);
+    if (vertex < points) return vertex;
+    const int32_t volume = vertex - points - corner_count_;
+    if (volume < 0 || static_cast<std::size_t>(volume) >= volume_output_.size()) return -1;
+    return volume_output_[static_cast<std::size_t>(volume)];
   }
 
+  // Appends one recovery Steiner point after the scaffold corners. Volume
+  // points are rebuilt from scratch with the triangulation, so they never
+  // enter source protection or split spacing.
+  int32_t add_volume_point(const double* coordinates, int32_t& vertex) {
+    const std::size_t count = work_points_.size() / 3;
+    if (count >= static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_INDEX_RANGE_ERROR;
+    if (!triangulation_->insert_point_slot(count, count)) return PHX_MC_INTERNAL_ERROR;
+    work_points_.insert(work_points_.end(), coordinates, coordinates + 3);
+    alive_.push_back(1);
+    vertex_tet_.push_back(-1);
+    triangulation_->rebind(work_points_.data(), static_cast<int64_t>(count + 1));
+    ++volume_count_;
+    vertex = static_cast<int32_t>(count);
+    return PHX_MC_OK;
+  }
+
+  // The domain needs no corner scaffold when every triangle bounding the
+  // void supports the whole source point set: the closed exterior boundary
+  // is then the convex hull, whose faces are present in every triangulation
+  // of the source points. Interfaces between two regions may be nonconvex.
   bool convex_boundary() const {
+    bool exterior = false;
     for (std::size_t triangle = 0; triangle < candidate_.input_triangles.size() / 3; ++triangle) {
+      const int32_t facet = input_.polygon_facets[candidate_.input_polygons[triangle]];
+      if (input_.facet_regions[2 * facet] >= 0 && input_.facet_regions[2 * facet + 1] >= 0) {
+        continue;
+      }
+      exterior = true;
       const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
       bool positive = false;
       bool negative = false;
@@ -1105,7 +1135,7 @@ class PlcRecoveryBuilder {
         if (positive && negative) return false;
       }
     }
-    return true;
+    return exterior;
   }
 
   // A polygon's triangulation diagonal is not a PLC constraint when the
@@ -1587,6 +1617,8 @@ class PlcRecoveryBuilder {
     triangulation_.reset();
     work_points_ = candidate_.points;
     work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+    volume_count_ = 0;
+    local_edits_ = false;
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
     triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
     alive_.assign(static_cast<std::size_t>(count), 1);
@@ -1618,6 +1650,9 @@ class PlcRecoveryBuilder {
         static_cast<std::size_t>(vertex) + 1 != candidate_.points.size() / 3) {
       return PHX_MC_INTERNAL_ERROR;
     }
+    // Bowyer-Watson insertion is star-shaped only in a Delaunay complex;
+    // after a local recovery edit the next restart rebuilds instead.
+    if (local_edits_) return PHX_MC_OK;
     if (triangulation_->constrained_facets() != 0) {
       if (progress_enabled_) {
         std::fprintf(
@@ -1630,19 +1665,22 @@ class PlcRecoveryBuilder {
     }
     const std::size_t old_source_points = static_cast<std::size_t>(vertex);
     const std::size_t old_work_points = work_points_.size() / 3;
-    if (old_work_points != old_source_points + static_cast<std::size_t>(corner_count_) ||
+    const std::size_t prefix = old_source_points + static_cast<std::size_t>(corner_count_);
+    if (old_work_points != prefix + volume_count_ ||
         alive_.size() != old_work_points || vertex_tet_.size() != old_work_points) {
       return PHX_MC_INTERNAL_ERROR;
     }
-    const std::size_t new_work_points = candidate_.points.size() / 3 +
-                                        static_cast<std::size_t>(corner_count_);
-    if (new_work_points != old_work_points + 1) return PHX_MC_INTERNAL_ERROR;
+    const std::size_t new_work_points = old_work_points + 1;
     std::vector<double> next_work_points;
-    next_work_points.reserve(candidate_.points.size() + corner_points_.size());
+    next_work_points.reserve(3 * new_work_points);
     next_work_points.insert(next_work_points.end(), candidate_.points.begin(),
                             candidate_.points.end());
     next_work_points.insert(next_work_points.end(), corner_points_.begin(),
                             corner_points_.end());
+    next_work_points.insert(
+        next_work_points.end(),
+        work_points_.begin() + static_cast<std::ptrdiff_t>(3 * prefix),
+        work_points_.end());
     if (next_work_points.size() != 3 * new_work_points) {
       return PHX_MC_INTERNAL_ERROR;
     }
@@ -2177,7 +2215,8 @@ class PlcRecoveryBuilder {
         }
         EdgeCavityScratch scratch;
         std::vector<int32_t> cavity;
-        const int32_t start = vertex_tet_[static_cast<std::size_t>(first)];
+        const int32_t start = finite_vertex_cell(first);
+        if (start < 0) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
         if (progress_enabled_) {
           std::fprintf(stderr,
                        "PLC_PROGRESS phase=segment_search_begin row=%zu interval=%zu "
@@ -2221,6 +2260,14 @@ class PlcRecoveryBuilder {
             const PlcSourceRefusal recovery_refusal = candidate_.source_refusal;
             failure_ = prior_failure;
             candidate_.source_refusal = prior_source_refusal;
+            bool planar_recovered = false;
+            const int32_t planar_status =
+                try_planar_source_edge(edge, first, second, planar_recovered);
+            if (planar_status != PHX_MC_OK) {
+              protected_segments_.pop_back();
+              return planar_status;
+            }
+            if (planar_recovered) continue;
             bool incident_facet_recovered = false;
             const int32_t facet_status = recover_incident_authored_triangle_facets(
                 edge, first, second, incident_facet_recovered);
@@ -2341,6 +2388,14 @@ class PlcRecoveryBuilder {
           std::fprintf(stderr,
                        "PLC_TRACE vertex_closure_fallback row=%zu split_status=%d\n",
                        edge, split_status);
+        }
+        bool planar_recovered = false;
+        const int32_t planar_status =
+            try_planar_source_edge(edge, first, second, planar_recovered);
+        if (planar_status != PHX_MC_OK) return planar_status;
+        if (planar_recovered) {
+          protected_segments_.push_back({first, second});
+          continue;
         }
         protected_segments_.push_back({first, second});
         bool incident_facet_recovered = false;
@@ -3572,6 +3627,7 @@ class PlcRecoveryBuilder {
                       point(vertices[3])) > 0;
     });
     if (edit_status == EditStatus::kOk) edit_status = edit.commit();
+    local_edits_ = local_edits_ || edit_status == EditStatus::kOk;
     if (edit_status != EditStatus::kOk) {
       edit.rollback();
       if (edit_status == EditStatus::kSlotLimit) {
@@ -3600,6 +3656,905 @@ class PlcRecoveryBuilder {
         !triangulation_->set_hint(edit.created().front())) {
       return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
     }
+    return PHX_MC_OK;
+  }
+
+  // Planar recovery of a source edge ab lying on the plane H of an incident
+  // authored triangle. It applies when the mesh triangles in H already cover
+  // ab, so ab is a missing edge of that planar triangulation. Every step
+  // flips one in-plane edge crossing ab whose quadrilateral is strictly convex
+  // and whose new diagonal does not cross ab; such an edge exists while ab is
+  // missing (Hanke, Ottmann, and Schuierer, J.UCS 2(8), 1996). The crossing
+  // count therefore decreases by exactly one per flip, so recovery ends after
+  // the initial crossing count of flips. Each flip replaces the edge star on
+  // both sides of H by a cone from an off-plane link vertex (the ghost vertex
+  // on the hull side); no vertex is created and no other edge is removed.
+  struct PlanarFrame {
+    std::array<int32_t, 3> plane{};
+    int axis = -1;
+  };
+  struct PlanarCrossing {
+    int32_t left;
+    int32_t right;
+    int32_t before;
+    int32_t after;
+  };
+  enum class PlanarWalk { kCovered, kUncovered, kVertexOnEdge };
+
+  int planar_side(const PlanarFrame& frame, int32_t vertex) const {
+    return orient3d(point(frame.plane[0]), point(frame.plane[1]),
+                    point(frame.plane[2]), point(vertex));
+  }
+
+  int planar_orient(const PlanarFrame& frame, int32_t a, int32_t b, int32_t c) const {
+    const int x = (frame.axis + 1) % 3;
+    const int y = (frame.axis + 2) % 3;
+    const double pa[2] = {point(a)[x], point(a)[y]};
+    const double pb[2] = {point(b)[x], point(b)[y]};
+    const double pc[2] = {point(c)[x], point(c)[y]};
+    return orient2d(pa, pb, pc);
+  }
+
+  bool in_plane(const PlanarFrame& frame, int32_t vertex) const {
+    return vertex >= 0 && !artificial_corner_vertex(vertex) &&
+           planar_side(frame, vertex) == 0;
+  }
+
+  // A live finite cell incident to `vertex`, refreshing the cached hint.
+  int32_t finite_vertex_cell(int32_t vertex) {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    const int32_t cached = vertex_tet_[static_cast<std::size_t>(vertex)];
+    if (complex.live(cached) && !is_ghost(complex.tets[static_cast<std::size_t>(cached)]) &&
+        vertex_slot(complex.tets[static_cast<std::size_t>(cached)], vertex) >= 0) {
+      return cached;
+    }
+    std::vector<int32_t> cells;
+    if (vertex_cells(vertex, cells) != PHX_MC_OK) return -1;
+    for (int32_t cell : cells) {
+      if (is_ghost(complex.tets[static_cast<std::size_t>(cell)])) continue;
+      vertex_tet_[static_cast<std::size_t>(vertex)] = cell;
+      return cell;
+    }
+    return -1;
+  }
+
+  int32_t vertex_cells(int32_t vertex, std::vector<int32_t>& cells) {
+    cells.clear();
+    const TetrahedralComplex& complex = triangulation_->complex();
+    int32_t start = vertex_tet_[static_cast<std::size_t>(vertex)];
+    if (start < 0 || !complex.live(start) ||
+        vertex_slot(complex.tets[static_cast<std::size_t>(start)], vertex) < 0) {
+      start = triangulation_->locate(point(vertex));
+      if (start < 0 || !complex.live(start) ||
+          vertex_slot(complex.tets[static_cast<std::size_t>(start)], vertex) < 0) {
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
+      }
+      vertex_tet_[static_cast<std::size_t>(vertex)] = start;
+    }
+    if (star_marks_.size() != complex.tets.size()) {
+      star_marks_.resize(complex.tets.size(), 0U);
+    }
+    if (++star_stamp_ == 0) {
+      std::fill(star_marks_.begin(), star_marks_.end(), 0U);
+      star_stamp_ = 1;
+    }
+    cells.push_back(start);
+    star_marks_[static_cast<std::size_t>(start)] = star_stamp_;
+    for (std::size_t at = 0; at < cells.size(); ++at) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[at])];
+      const int own = vertex_slot(tet, vertex);
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot == own) continue;
+        const int32_t next = tet.n[slot];
+        if (!complex.live(next)) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
+        }
+        if (star_marks_[static_cast<std::size_t>(next)] == star_stamp_) continue;
+        star_marks_[static_cast<std::size_t>(next)] = star_stamp_;
+        cells.push_back(next);
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  int32_t edge_cells(int32_t first, int32_t second, std::vector<int32_t>& cells) {
+    std::vector<int32_t> around;
+    const int32_t status = vertex_cells(first, around);
+    if (status != PHX_MC_OK) return status;
+    cells.clear();
+    for (int32_t cell : around) {
+      if (vertex_slot(triangulation_->complex().tets[static_cast<std::size_t>(cell)],
+                      second) >= 0) {
+        cells.push_back(cell);
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  // Third vertices of the mesh triangles in H that contain edge (first, second).
+  int32_t planar_apices(const PlanarFrame& frame, int32_t first, int32_t second,
+                        std::vector<int32_t>& apices) {
+    std::vector<int32_t> cells;
+    const int32_t status = edge_cells(first, second, cells);
+    if (status != PHX_MC_OK) return status;
+    apices.clear();
+    for (int32_t cell : cells) {
+      for (int32_t vertex : triangulation_->complex().tets[static_cast<std::size_t>(cell)].v) {
+        if (vertex == first || vertex == second || !in_plane(frame, vertex)) continue;
+        if (std::find(apices.begin(), apices.end(), vertex) == apices.end()) {
+          apices.push_back(vertex);
+        }
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  bool within_segment_box(int32_t a, int32_t b, int32_t vertex) const {
+    for (int axis = 0; axis < 3; ++axis) {
+      const double low = std::min(point(a)[axis], point(b)[axis]);
+      const double high = std::max(point(a)[axis], point(b)[axis]);
+      if (point(vertex)[axis] < low || point(vertex)[axis] > high) return false;
+    }
+    return true;
+  }
+
+  // Walks the in-plane triangles from a to b and records each crossed edge
+  // with the triangle apices before and after it.
+  int32_t planar_crossings(const PlanarFrame& frame, int32_t a, int32_t b,
+                           std::vector<PlanarCrossing>& crossings, PlanarWalk& walk,
+                           int32_t& blocking_vertex) {
+    crossings.clear();
+    walk = PlanarWalk::kUncovered;
+    blocking_vertex = -1;
+    bool present = false;
+    int32_t status = has_edge(a, b, present);
+    if (status != PHX_MC_OK) return status;
+    if (present) {
+      walk = PlanarWalk::kCovered;
+      return PHX_MC_OK;
+    }
+    std::vector<int32_t> cells;
+    status = vertex_cells(a, cells);
+    if (status != PHX_MC_OK) return status;
+    int32_t left = -1;
+    int32_t right = -1;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    for (int32_t cell : cells) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      for (int i = 0; i < 4 && left < 0; ++i) {
+        for (int j = i + 1; j < 4 && left < 0; ++j) {
+          const int32_t u = tet.v[i];
+          const int32_t v = tet.v[j];
+          if (u == a || v == a || !in_plane(frame, u) || !in_plane(frame, v)) continue;
+          for (int32_t candidate : {u, v}) {
+            if (planar_orient(frame, a, b, candidate) == 0 &&
+                within_segment_box(a, b, candidate)) {
+              walk = PlanarWalk::kVertexOnEdge;
+              blocking_vertex = candidate;
+              return PHX_MC_OK;
+            }
+          }
+          const int turn = planar_orient(frame, a, u, v);
+          if (turn == 0 || planar_orient(frame, a, u, b) != turn ||
+              planar_orient(frame, a, b, v) != turn) {
+            continue;
+          }
+          left = planar_orient(frame, a, b, u) > 0 ? u : v;
+          right = left == u ? v : u;
+        }
+      }
+      if (left >= 0) break;
+    }
+    if (left < 0) return PHX_MC_OK;
+    int32_t before = a;
+    std::vector<int32_t> apices;
+    for (;;) {
+      status = planar_apices(frame, left, right, apices);
+      if (status != PHX_MC_OK) return status;
+      if (apices.size() != 2 || (apices[0] != before && apices[1] != before)) {
+        crossings.clear();
+        return PHX_MC_OK;
+      }
+      const int32_t after = apices[0] == before ? apices[1] : apices[0];
+      crossings.push_back({left, right, before, after});
+      if (after == b) break;
+      const int side = planar_orient(frame, a, b, after);
+      if (side == 0) {
+        crossings.clear();
+        walk = PlanarWalk::kVertexOnEdge;
+        blocking_vertex = after;
+        return PHX_MC_OK;
+      }
+      if (side > 0) {
+        before = left;
+        left = after;
+      } else {
+        before = right;
+        right = after;
+      }
+    }
+    walk = PlanarWalk::kCovered;
+    return PHX_MC_OK;
+  }
+
+  // Ghost fan of a hull flip: the two hull faces through (left, right) become
+  // (head, after, before) and (after, tail, before) in the same cyclic order.
+  bool planar_ghost_fan(const std::vector<int32_t>& fan, const PlanarCrossing& crossing,
+                        std::vector<std::array<int32_t, 4>>& tets) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    for (int32_t cell : fan) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      const int ghost = vertex_slot(tet, kGhostVertex);
+      if (ghost < 0 || vertex_slot(tet, crossing.before) < 0) continue;
+      Triple face{};
+      oriented_facet(tet.v, ghost, face.data());
+      int start = 0;
+      while (start < 3 && face[static_cast<std::size_t>(start)] != crossing.left) ++start;
+      if (start == 3) return false;
+      const bool forward =
+          face[static_cast<std::size_t>((start + 1) % 3)] == crossing.right;
+      const int32_t head = forward ? crossing.left : crossing.right;
+      const int32_t tail = forward ? crossing.right : crossing.left;
+      tets = {{head, crossing.after, crossing.before, kGhostVertex},
+              {crossing.after, tail, crossing.before, kGhostVertex}};
+      return true;
+    }
+    return false;
+  }
+
+  static double tetrahedron_shape(const double* a, const double* b, const double* c,
+                                  const double* d) {
+    const double* corners[4] = {a, b, c, d};
+    double squared = 0.0;
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        for (int axis = 0; axis < 3; ++axis) {
+          const double delta = corners[i][axis] - corners[j][axis];
+          squared += delta * delta;
+        }
+      }
+    }
+    double u[3], v[3], w[3], normal[3];
+    geometry::difference(b, a, u);
+    geometry::difference(c, a, v);
+    geometry::difference(d, a, w);
+    geometry::cross(u, v, normal);
+    const double volume = std::fabs(normal[0] * w[0] + normal[1] * w[1] + normal[2] * w[2]);
+    return volume / (squared * std::sqrt(squared));
+  }
+
+  // Link edges of the cells around edge (p, q).
+  bool link_edges(const std::vector<int32_t>& cells, int32_t p, int32_t q,
+                  std::vector<std::array<int32_t, 2>>& links) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    links.clear();
+    for (int32_t cell : cells) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      std::array<int32_t, 2> link{};
+      int count = 0;
+      for (int32_t vertex : tet.v) {
+        if (vertex != p && vertex != q) link[static_cast<std::size_t>(count++)] = vertex;
+      }
+      if (count != 2) return false;
+      links.push_back(link);
+    }
+    return true;
+  }
+
+  // Walks unused link edges from `from` to `to`.
+  static bool link_chain(const std::vector<std::array<int32_t, 2>>& links,
+                         std::vector<char>& used, int32_t from, int32_t to,
+                         std::vector<int32_t>& chain) {
+    chain.assign(1, from);
+    while (chain.size() == 1 || chain.back() != to) {
+      bool extended = false;
+      for (std::size_t row = 0; row < links.size() && !extended; ++row) {
+        if (used[row] != 0) continue;
+        for (int end = 0; end < 2; ++end) {
+          if (links[row][static_cast<std::size_t>(end)] != chain.back()) continue;
+          used[row] = 1;
+          chain.push_back(links[row][static_cast<std::size_t>(1 - end)]);
+          extended = true;
+          break;
+        }
+      }
+      if (!extended) return false;
+    }
+    return true;
+  }
+
+  // Edge removal over one link chain c0, ..., cn closed by the new edge
+  // (c0, cn): every triangle t of a chain triangulation contributes the cells
+  // (p, t) and (q, t). The cubic dynamic program over chain triangulations
+  // maximizes the worst normalized cell volume; only exactly positive cells
+  // are admitted. A cone from one link vertex is one of the enumerated
+  // triangulations.
+  bool triangulate_link_chain(int32_t p, int32_t q, const std::vector<int32_t>& chain,
+                              std::vector<std::array<int32_t, 4>>& tets) const {
+    const std::size_t n = chain.size();
+    if (n < 3) return false;
+    constexpr double kInvalid = -1.0;
+    const double kEmpty = std::numeric_limits<double>::infinity();
+    for (int sign : {1, -1}) {
+      std::vector<double> score(n * n, kInvalid);
+      std::vector<std::size_t> split(n * n, 0);
+      for (std::size_t i = 0; i + 1 < n; ++i) score[i * n + i + 1] = kEmpty;
+      for (std::size_t length = 2; length < n; ++length) {
+        for (std::size_t i = 0; i + length < n; ++i) {
+          const std::size_t j = i + length;
+          for (std::size_t m = i + 1; m < j; ++m) {
+            const double inner = std::min(score[i * n + m], score[m * n + j]);
+            if (!(inner > score[i * n + j])) continue;
+            const double* ci = point(chain[i]);
+            const double* cm = point(chain[m]);
+            const double* cj = point(chain[j]);
+            if (orient3d(point(p), ci, cm, cj) != sign ||
+                orient3d(point(q), ci, cm, cj) != -sign) {
+              continue;
+            }
+            const double shape = std::min(tetrahedron_shape(point(p), ci, cm, cj),
+                                          tetrahedron_shape(point(q), ci, cm, cj));
+            const double value = std::min(inner, shape);
+            if (value > score[i * n + j]) {
+              score[i * n + j] = value;
+              split[i * n + j] = m;
+            }
+          }
+        }
+      }
+      if (!(score[n - 1] > kInvalid)) continue;
+      std::vector<std::pair<std::size_t, std::size_t>> pending{{0, n - 1}};
+      while (!pending.empty()) {
+        const auto [i, j] = pending.back();
+        pending.pop_back();
+        if (j == i + 1) continue;
+        const std::size_t m = split[i * n + j];
+        const int32_t ci = chain[i];
+        const int32_t cm = chain[m];
+        const int32_t cj = chain[j];
+        tets.push_back(sign > 0 ? std::array<int32_t, 4>{p, ci, cm, cj}
+                                : std::array<int32_t, 4>{p, ci, cj, cm});
+        tets.push_back(sign > 0 ? std::array<int32_t, 4>{q, ci, cj, cm}
+                                : std::array<int32_t, 4>{q, ci, cm, cj});
+        pending.push_back({i, m});
+        pending.push_back({m, j});
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // Finite fan of an in-plane flip: its link chain runs from before to after.
+  bool planar_fan_removal(const std::vector<int32_t>& fan, const PlanarCrossing& crossing,
+                          std::vector<std::array<int32_t, 4>>& tets) const {
+    std::vector<std::array<int32_t, 2>> links;
+    if (!link_edges(fan, crossing.left, crossing.right, links)) return false;
+    std::vector<char> used(links.size(), 0);
+    std::vector<int32_t> chain;
+    if (!link_chain(links, used, crossing.before, crossing.after, chain) ||
+        chain.size() != links.size() + 1) {
+      return false;
+    }
+    tets.clear();
+    return triangulate_link_chain(crossing.left, crossing.right, chain, tets);
+  }
+
+  // A volume Steiner point must not touch an authored facet or segment, so
+  // later source recovery never meets it.
+  bool clear_of_sources(const double* candidate) const {
+    const auto inside_box = [&](std::initializer_list<const double*> corners) {
+      for (int axis = 0; axis < 3; ++axis) {
+        double low = std::numeric_limits<double>::infinity();
+        double high = -low;
+        for (const double* corner : corners) {
+          low = std::min(low, corner[axis]);
+          high = std::max(high, corner[axis]);
+        }
+        if (candidate[axis] < low || candidate[axis] > high) return false;
+      }
+      return true;
+    };
+    for (std::size_t row = 0; row < candidate_.input_triangles.size() / 3; ++row) {
+      const int32_t* face = candidate_.input_triangles.data() + 3 * row;
+      const double* corners[3] = {point(face[0]), point(face[1]), point(face[2])};
+      int side = 0;
+      if (inside_box({corners[0], corners[1], corners[2]}) &&
+          locate_on_triangle(candidate, corners, side) != kFeatureNone) {
+        return false;
+      }
+    }
+    for (int64_t row = 0; row < input_.segment_count; ++row) {
+      const double* first = point(input_.segments[2 * row]);
+      const double* second = point(input_.segments[2 * row + 1]);
+      if (inside_box({first, second}) && geometry::collinear(first, second, candidate, 1)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Finite fan without a Steiner-free removal. The fan is star-shaped from
+  // the open flipped edge: every face opposite left or right is strictly
+  // visible from its interior points, and both flipped in-plane faces lie in
+  // H. Points c + t (g - c), with c the edge midpoint and g the mean off-plane
+  // link vertex, therefore see every face for all small t > 0. The halving
+  // ends at the first exactly visible point clear of every source entity, or
+  // refuses once binary64 can no longer separate the candidate from c.
+  bool planar_fan_steiner(const std::vector<int32_t>& fan, const PlanarCrossing& crossing,
+                          std::vector<Triple>& faces, double* location) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    faces.clear();
+    double centroid[3] = {0.0, 0.0, 0.0};
+    std::vector<int32_t> links;
+    bool oriented = false;
+    for (int32_t cell : fan) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t vertex = tet.v[slot];
+        Triple face{};
+        oriented_facet(tet.v, slot, face.data());
+        if (vertex == crossing.left || vertex == crossing.right) {
+          faces.push_back(face);
+          continue;
+        }
+        if (vertex == crossing.before || vertex == crossing.after) continue;
+        if (std::find(links.begin(), links.end(), vertex) == links.end()) {
+          links.push_back(vertex);
+        }
+        if (oriented || vertex_slot(tet, crossing.before) < 0) continue;
+        int start = 0;
+        while (start < 3 && face[static_cast<std::size_t>(start)] != crossing.left) ++start;
+        if (start == 3) return false;
+        const bool forward =
+            face[static_cast<std::size_t>((start + 1) % 3)] == crossing.right;
+        const int32_t head = forward ? crossing.left : crossing.right;
+        const int32_t tail = forward ? crossing.right : crossing.left;
+        faces.push_back({head, crossing.after, crossing.before});
+        faces.push_back({crossing.after, tail, crossing.before});
+        oriented = true;
+      }
+    }
+    if (!oriented || links.empty()) return false;
+    for (int32_t vertex : links) {
+      for (int axis = 0; axis < 3; ++axis) {
+        centroid[axis] += point(vertex)[axis] / static_cast<double>(links.size());
+      }
+    }
+    double midpoint[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      midpoint[axis] = 0.5 * (point(crossing.left)[axis] + point(crossing.right)[axis]);
+    }
+    double previous[3] = {centroid[0], centroid[1], centroid[2]};
+    for (double fraction = 0.5;; fraction *= 0.5) {
+      double candidate[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        candidate[axis] = midpoint[axis] + fraction * (centroid[axis] - midpoint[axis]);
+      }
+      if (geometry::same_point(candidate, previous) ||
+          geometry::same_point(candidate, midpoint)) {
+        return false;
+      }
+      std::copy_n(candidate, 3, previous);
+      const bool visible = std::all_of(faces.begin(), faces.end(), [&](const Triple& face) {
+        return orient3d(point(face[0]), point(face[1]), point(face[2]), candidate) > 0;
+      });
+      if (visible && clear_of_sources(candidate)) {
+        std::copy_n(candidate, 3, location);
+        return true;
+      }
+    }
+  }
+
+  int32_t flip_planar_edge(const PlanarFrame& frame, const PlanarCrossing& crossing,
+                           bool& applied) {
+    applied = false;
+    std::vector<int32_t> cells;
+    const int32_t status = edge_cells(crossing.left, crossing.right, cells);
+    if (status != PHX_MC_OK) return status;
+    TetrahedralComplex& complex = triangulation_->complex();
+    // Positive, negative, and ghost fans around the flipped edge.
+    std::vector<int32_t> fans[3];
+    for (int32_t cell : cells) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      int side = 0;
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t vertex = tet.v[slot];
+        if (vertex == crossing.left || vertex == crossing.right) continue;
+        // Faces through the flipped edge are interior to its star.
+        if (complex.constraint(cell, slot) != kNoConstraint) return PHX_MC_OK;
+        if (vertex == kGhostVertex) continue;
+        const int vertex_side = planar_side(frame, vertex);
+        if (vertex_side == 0) continue;
+        if (side != 0 && side != vertex_side) return PHX_MC_OK;
+        side = vertex_side;
+      }
+      if (is_ghost(tet)) {
+        if (side != 0) return PHX_MC_OK;
+        fans[2].push_back(cell);
+      } else if (side == 0) {
+        return PHX_MC_OK;
+      } else {
+        fans[side > 0 ? 0 : 1].push_back(cell);
+      }
+    }
+    std::vector<std::array<int32_t, 4>> cones[3];
+    std::vector<Triple> steiner_faces[3];
+    double steiner_points[3][3] = {};
+    bool steiner[3] = {false, false, false};
+    int nonempty = 0;
+    for (int fan = 0; fan < 3; ++fan) {
+      if (fans[fan].empty()) continue;
+      ++nonempty;
+      bool realized = fan == 2 ? planar_ghost_fan(fans[fan], crossing, cones[fan])
+                               : planar_fan_removal(fans[fan], crossing, cones[fan]);
+      if (!realized && fan != 2) {
+        realized = planar_fan_steiner(fans[fan], crossing, steiner_faces[fan],
+                                      steiner_points[fan]);
+        steiner[fan] = realized;
+      }
+      if (!realized) return PHX_MC_OK;
+    }
+    if (nonempty != 2) return PHX_MC_OK;
+    for (int fan = 0; fan < 2; ++fan) {
+      if (!steiner[fan]) continue;
+      int32_t center = -1;
+      const int32_t point_status = add_volume_point(steiner_points[fan], center);
+      if (point_status != PHX_MC_OK) return point_status;
+      for (const Triple& face : steiner_faces[fan]) {
+        cones[fan].push_back({face[0], face[1], face[2], center});
+      }
+    }
+    std::vector<std::array<int32_t, 4>> replacement;
+    for (const auto& cone : cones) replacement.insert(replacement.end(), cone.begin(), cone.end());
+    return replace_cells(cells, replacement, applied);
+  }
+
+  // Validated replacement of `cells` by `tets`; an inconsistent proposal is
+  // rolled back and reported as not applied.
+  int32_t replace_cells(const std::vector<int32_t>& cells,
+                        const std::vector<std::array<int32_t, 4>>& tets, bool& applied) {
+    applied = false;
+    TetrahedralComplex& complex = triangulation_->complex();
+    CavityEdit edit(complex);
+    edit.begin();
+    for (int32_t cell : cells) {
+      if (edit.remove(cell) != EditStatus::kOk) {
+        edit.rollback();
+        return PHX_MC_INTERNAL_ERROR;
+      }
+    }
+    for (const auto& tet : tets) edit.add(tet.data(), nullptr, kNoRegion);
+    EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
+      return orient3d(point(vertices[0]), point(vertices[1]), point(vertices[2]),
+                      point(vertices[3])) > 0;
+    });
+    if (edit_status != EditStatus::kOk) {
+      edit.rollback();
+      return edit_status == EditStatus::kSlotLimit ? PHX_MC_INDEX_RANGE_ERROR : PHX_MC_OK;
+    }
+    edit_status = edit.commit();
+    local_edits_ = local_edits_ || edit_status == EditStatus::kOk;
+    if (edit_status != EditStatus::kOk) {
+      return edit_status == EditStatus::kSlotLimit ? PHX_MC_INDEX_RANGE_ERROR
+                                                   : PHX_MC_INTERNAL_ERROR;
+    }
+    star_marks_.resize(complex.tets.size(), 0U);
+    int32_t hint = -1;
+    for (int32_t id : edit.created()) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(id)];
+      if (is_ghost(tet)) continue;
+      if (hint < 0) hint = id;
+      for (int32_t vertex : tet.v) vertex_tet_[static_cast<std::size_t>(vertex)] = id;
+    }
+    if (hint < 0 || !triangulation_->set_hint(hint)) return PHX_MC_INTERNAL_ERROR;
+    applied = true;
+    return PHX_MC_OK;
+  }
+
+  // Removes edge (u, v) so that the missing edge (a, b) appears. Both lie on
+  // the closed link ring of (u, v), which they split into two chains; each is
+  // triangulated by edge removal and the new chain triangulations share the
+  // fins (u, a, b) and (v, b, a). This is the 3-2 flip for a ring of three.
+  int32_t remove_edge_toward(int32_t u, int32_t v, int32_t a, int32_t b, bool& applied) {
+    applied = false;
+    std::vector<int32_t> cells;
+    const int32_t status = edge_cells(u, v, cells);
+    if (status != PHX_MC_OK) return status;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    for (int32_t cell : cells) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      if (is_ghost(tet)) return PHX_MC_OK;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (tet.v[slot] != u && tet.v[slot] != v &&
+            complex.constraint(cell, slot) != kNoConstraint) {
+          return PHX_MC_OK;
+        }
+      }
+    }
+    std::vector<std::array<int32_t, 2>> links;
+    if (!link_edges(cells, u, v, links)) return PHX_MC_OK;
+    std::vector<char> used(links.size(), 0);
+    std::vector<int32_t> first_chain;
+    std::vector<int32_t> second_chain;
+    if (!link_chain(links, used, a, b, first_chain) ||
+        !link_chain(links, used, b, a, second_chain) ||
+        first_chain.size() + second_chain.size() != links.size() + 2) {
+      return PHX_MC_OK;
+    }
+    std::vector<std::array<int32_t, 4>> tets;
+    if (!triangulate_link_chain(u, v, first_chain, tets) ||
+        !triangulate_link_chain(u, v, second_chain, tets)) {
+      return PHX_MC_OK;
+    }
+    return replace_cells(cells, tets, applied);
+  }
+
+  // Steiner-free recovery of a missing edge ab whose crossing cells all
+  // share one edge (u, v) with a and b on its link: a single edge removal
+  // creates ab. Two crossing cells sharing a face with apices a and b are
+  // the 2-3 flip instance (ab crosses that face, so the flip is convex).
+  int32_t recover_edge_by_removal(std::size_t edge, int32_t a, int32_t b,
+                                  const std::vector<int32_t>& crossing, bool& recovered) {
+    recovered = false;
+    if (crossing.empty()) return PHX_MC_OK;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    if (crossing.size() == 2) {
+      const Tetrahedron& first = complex.tets[static_cast<std::size_t>(crossing[0])];
+      const Tetrahedron& second = complex.tets[static_cast<std::size_t>(crossing[1])];
+      const int first_apex =
+          vertex_slot(first, a) >= 0 ? vertex_slot(first, a) : vertex_slot(first, b);
+      const int32_t other = first_apex >= 0 && first.v[first_apex] == a ? b : a;
+      const int second_apex = vertex_slot(second, other);
+      if (first_apex >= 0 && second_apex >= 0 && first.n[first_apex] == crossing[1] &&
+          !is_ghost(first) && !is_ghost(second) &&
+          complex.constraint(crossing[0], first_apex) == kNoConstraint) {
+        Triple face{};
+        oriented_facet(first.v, first_apex, face.data());
+        std::vector<std::array<int32_t, 4>> tets;
+        for (int side = 0; side < 3; ++side) {
+          tets.push_back({face[static_cast<std::size_t>(side)],
+                          face[static_cast<std::size_t>((side + 1) % 3)],
+                          first.v[first_apex], other});
+          if (orient3d(point(tets.back()[0]), point(tets.back()[1]), point(tets.back()[2]),
+                       point(tets.back()[3])) < 0) {
+            std::swap(tets.back()[0], tets.back()[1]);
+          }
+        }
+        const int32_t status = replace_cells(crossing, tets, recovered);
+        if (status != PHX_MC_OK || recovered) return status;
+      }
+    }
+    std::vector<std::array<int32_t, 2>> shared;
+    const Tetrahedron& seed = complex.tets[static_cast<std::size_t>(crossing.front())];
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        const int32_t u = seed.v[i];
+        const int32_t v = seed.v[j];
+        if (u < 0 || v < 0 || u == a || u == b || v == a || v == b) continue;
+        const bool common = std::all_of(crossing.begin(), crossing.end(), [&](int32_t cell) {
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+          return vertex_slot(tet, u) >= 0 && vertex_slot(tet, v) >= 0;
+        });
+        if (common) shared.push_back({u, v});
+      }
+    }
+    for (const auto& [u, v] : shared) {
+      const int32_t status = remove_edge_toward(u, v, a, b, recovered);
+      if (status != PHX_MC_OK) {
+        return fail(status, kPlcNonrepresentable, kPlcEdge, static_cast<int64_t>(edge));
+      }
+      if (recovered) break;
+    }
+    if (!recovered) return PHX_MC_OK;
+    bool present = false;
+    const int32_t status = has_edge(a, b, present);
+    if (status != PHX_MC_OK) return status;
+    if (!present) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge,
+                              static_cast<int64_t>(edge));
+    return PHX_MC_OK;
+  }
+
+  int32_t try_edge_removal(std::size_t edge, int32_t a, int32_t b, bool& recovered) {
+    recovered = false;
+    const int32_t start = finite_vertex_cell(a);
+    if (start < 0) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, a);
+    EdgeCavityScratch scratch;
+    std::vector<int32_t> crossing;
+    const int32_t status = collect_edge_cavity(
+        triangulation_->complex(), work_points_.data(), a, b, start, scratch, crossing);
+    if (status != PHX_MC_OK) return PHX_MC_OK;
+    std::sort(crossing.begin(), crossing.end());
+    crossing.erase(std::unique(crossing.begin(), crossing.end()), crossing.end());
+    return recover_edge_by_removal(edge, a, b, crossing, recovered);
+  }
+
+  // Flip recovery of an unsplittable source edge: planar flips on a covered
+  // incident facet plane, else one edge removal (or 2-3 flip) around ab. An
+  // unrealizable flip leaves a valid mesh, so later recovery stages may
+  // continue from it; every other failure is returned unchanged.
+  int32_t try_planar_source_edge(std::size_t edge, int32_t a, int32_t b,
+                                 bool& recovered) {
+    const PlcFailure prior = failure_;
+    int32_t status = recover_planar_source_edge(edge, a, b, recovered);
+    if (status == PHX_MC_CONSTRAINT_INTERSECTION && failure_.reason == kPlcFixedSegment) {
+      failure_ = prior;
+      status = PHX_MC_OK;
+    }
+    if (status != PHX_MC_OK || recovered) return status;
+    return try_edge_removal(edge, a, b, recovered);
+  }
+
+  // Exact Lawson test for crossing edge (left, right) with apices before and
+  // after under the lexicographic lifting h(v) = (cross(b - a, v - a)^2,
+  // |2 v - a - b|^2) of the projected plane: true when the lifted after
+  // vertex lies strictly below the lifted plane of (left, right, before).
+  bool lifted_nonconvex(const PlanarFrame& frame, int32_t a, int32_t b,
+                        const PlanarCrossing& crossing) const {
+    const int x = (frame.axis + 1) % 3;
+    const int y = (frame.axis + 2) % 3;
+    const double* pa = point(a);
+    const double* pb = point(b);
+    const Expansion ex = Expansion::difference(pb[x], pa[x]);
+    const Expansion ey = Expansion::difference(pb[y], pa[y]);
+    const auto primary = [&](int32_t vertex) {
+      const double* p = point(vertex);
+      const Expansion cross = ex * Expansion::difference(p[y], pa[y]) -
+                              ey * Expansion::difference(p[x], pa[x]);
+      return cross * cross;
+    };
+    const auto secondary = [&](int32_t vertex) {
+      const double* p = point(vertex);
+      const Expansion dx = Expansion(2.0 * p[x]) - Expansion::sum(pa[x], pb[x]);
+      const Expansion dy = Expansion(2.0 * p[y]) - Expansion::sum(pa[y], pb[y]);
+      return dx * dx + dy * dy;
+    };
+    const int32_t rows[3] = {crossing.left, crossing.right, crossing.before};
+    const double* pz = point(crossing.after);
+    Expansion dx[3], dy[3];
+    for (int row = 0; row < 3; ++row) {
+      dx[row] = Expansion::difference(point(rows[row])[x], pz[x]);
+      dy[row] = Expansion::difference(point(rows[row])[y], pz[y]);
+    }
+    const auto lifted = [&](const auto& height) {
+      const Expansion hz = height(crossing.after);
+      Expansion dh[3];
+      for (int row = 0; row < 3; ++row) dh[row] = height(rows[row]) - hz;
+      return dx[0] * (dy[1] * dh[2] - dh[1] * dy[2]) -
+             dy[0] * (dx[1] * dh[2] - dh[1] * dx[2]) +
+             dh[0] * (dx[1] * dy[2] - dy[1] * dx[2]);
+    };
+    int sign = lifted(primary).sign();
+    if (sign == 0) sign = lifted(secondary).sign();
+    return sign * planar_orient(frame, crossing.left, crossing.right, crossing.before) > 0;
+  }
+
+  // Flips the planar triangulation of `frame` until ab is a mesh edge.
+  // `covered` is false when the mesh triangles in the plane do not cover ab;
+  // failures name the source entity (kind, entity) being recovered.
+  //
+  // Termination: each flip is a Lawson flip for the strictly convex
+  // (lexicographic) lifting of lifted_nonconvex, so the lifted piecewise
+  // linear surface strictly decreases and no triangulation repeats. While ab
+  // is missing, the primary lift is zero at a and b and positive at every
+  // crossing, so its restriction to ab is not convex and some crossing edge
+  // is locally nonconvex; strict convexity of the lift makes that edge's
+  // quadrilateral strictly convex, hence flippable. Collinear vertices are
+  // admitted. The final triangulation is locally convex along ab and so
+  // contains it.
+  int32_t flip_to_planar_edge(const PlanarFrame& frame, int32_t a, int32_t b,
+                              int32_t kind, int64_t entity, bool& covered) {
+    covered = false;
+    std::vector<PlanarCrossing> crossings;
+    PlanarWalk walk = PlanarWalk::kUncovered;
+    int32_t blocking = -1;
+    int32_t status = planar_crossings(frame, a, b, crossings, walk, blocking);
+    if (status != PHX_MC_OK) return status;
+    while (walk == PlanarWalk::kCovered && !crossings.empty()) {
+      bool applied = false;
+      for (const PlanarCrossing& crossing : crossings) {
+        if (!lifted_nonconvex(frame, a, b, crossing)) continue;
+        const int left_turn =
+            planar_orient(frame, crossing.before, crossing.after, crossing.left);
+        const int right_turn =
+            planar_orient(frame, crossing.before, crossing.after, crossing.right);
+        if (left_turn == 0 || right_turn == 0 || left_turn == right_turn) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kind, entity);
+        }
+        status = flip_planar_edge(frame, crossing, applied);
+        if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kind, entity);
+        if (applied) break;
+      }
+      if (!applied) {
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION,
+                    kind == kPlcEdge ? kPlcFixedSegment : kPlcFixedFacet, kind, entity);
+      }
+      status = planar_crossings(frame, a, b, crossings, walk, blocking);
+      if (status != PHX_MC_OK) return status;
+    }
+    if (walk == PlanarWalk::kVertexOnEdge) {
+      return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kind, entity,
+                  kPlcPoint, blocking);
+    }
+    if (walk != PlanarWalk::kCovered) return PHX_MC_OK;
+    bool present = false;
+    status = has_edge(a, b, present);
+    if (status != PHX_MC_OK) return status;
+    if (!present) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kind, entity);
+    covered = true;
+    return PHX_MC_OK;
+  }
+
+  int32_t recover_planar_source_edge(std::size_t edge, int32_t a, int32_t b,
+                                     bool& recovered) {
+    recovered = false;
+    for (std::size_t use = edge_triangle_offsets_[edge];
+         use < edge_triangle_offsets_[edge + 1]; ++use) {
+      const int32_t* face = candidate_.input_triangles.data() +
+                            3 * static_cast<std::size_t>(edge_triangle_rows_[use]);
+      PlanarFrame frame;
+      frame.plane = {face[0], face[1], face[2]};
+      frame.axis = projection_axis(point(face[0]), point(face[1]), point(face[2]));
+      if (frame.axis < 0 || !in_plane(frame, a) || !in_plane(frame, b)) continue;
+      const int32_t status = flip_to_planar_edge(frame, a, b, kPlcEdge,
+                                                 static_cast<int64_t>(edge), recovered);
+      if (status != PHX_MC_OK || recovered) return status;
+    }
+    return PHX_MC_OK;
+  }
+
+  // A missing source face whose current chain subdivision lies in a plane
+  // covered by mesh triangles is recovered by planar edge flips alone: once
+  // every child edge is a mesh edge of that planar triangulation, every
+  // child triangle is a mesh face. The parent row is then replaced by its
+  // children exactly as the cavity transaction does.
+  int32_t recover_planar_source_face(const Triple& key, const PlcSourceFace& source,
+                                     bool& recovered) {
+    recovered = false;
+    std::unordered_map<int32_t, std::vector<std::pair<std::size_t, std::size_t>>>
+        chain_positions;
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      for (std::size_t position = 0; position < edge_chains_[row].size(); ++position) {
+        const int32_t vertex = edge_chains_[row][position].vertex;
+        if (std::find(source.oriented.begin(), source.oriented.end(), vertex) !=
+            source.oriented.end()) {
+          chain_positions[vertex].push_back({row, position});
+        }
+      }
+    }
+    std::vector<PlcSourceFace> children;
+    if (current_source_face_triangles(source, chain_positions, children) != PHX_MC_OK) {
+      return PHX_MC_OK;
+    }
+    PlanarFrame frame;
+    frame.plane = source.oriented;
+    frame.axis = projection_axis(point(source.oriented[0]), point(source.oriented[1]),
+                                 point(source.oriented[2]));
+    if (frame.axis < 0) return PHX_MC_OK;
+    for (const PlcSourceFace& child : children) {
+      for (int side = 0; side < 3; ++side) {
+        bool covered = false;
+        const int32_t status = flip_to_planar_edge(
+            frame, child.oriented[static_cast<std::size_t>(side)],
+            child.oriented[static_cast<std::size_t>((side + 1) % 3)], kPlcFacet,
+            source.facet, covered);
+        if (status != PHX_MC_OK || !covered) return status;
+      }
+    }
+    std::vector<int32_t> cells;
+    for (const PlcSourceFace& child : children) {
+      const int32_t status = edge_cells(child.oriented[0], child.oriented[1], cells);
+      if (status != PHX_MC_OK) return status;
+      const bool present = std::any_of(cells.begin(), cells.end(), [&](int32_t cell) {
+        return vertex_slot(triangulation_->complex().tets[static_cast<std::size_t>(cell)],
+                           child.oriented[2]) >= 0;
+      });
+      if (!present) return PHX_MC_OK;
+    }
+    source_faces_.erase(key);
+    for (const PlcSourceFace& child : children) {
+      source_faces_.emplace(sorted_triple(child.oriented.data()), child);
+    }
+    recovered = true;
     return PHX_MC_OK;
   }
 
@@ -5351,6 +6306,7 @@ class PlcRecoveryBuilder {
                       point(vertices[3])) > 0;
     });
     if (edit_status == EditStatus::kOk) edit_status = edit.commit();
+    local_edits_ = local_edits_ || edit_status == EditStatus::kOk;
     if (edit_status != EditStatus::kOk) {
       edit.rollback();
       if (edit_status == EditStatus::kSlotLimit) {
@@ -6207,9 +7163,25 @@ class PlcRecoveryBuilder {
           attempted_fixed_face = true;
           previous_fixed_face = key;
         }
-        // Recover the exact current chain patch before conforming facet subdivision.
         const PlcFailure prior_failure = failure_;
         const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
+        bool planar_recovered = false;
+        const Triple planar_key = key;
+        const PlcSourceFace planar_source = source;
+        const int32_t planar_status =
+            recover_planar_source_face(planar_key, planar_source, planar_recovered);
+        if (planar_recovered) {
+          source_face_recovered = true;
+          break;
+        }
+        if (planar_status != PHX_MC_OK) {
+          if (planar_status != PHX_MC_CONSTRAINT_INTERSECTION ||
+              failure_.reason != kPlcFixedFacet) {
+            return planar_status;
+          }
+          failure_ = prior_failure;
+        }
+        // Recover the exact current chain patch before conforming facet subdivision.
         const int32_t status = recover_current_source_face(source);
         if (cavity_steiner_restart_required_) {
           failure_ = prior_failure;
@@ -6401,6 +7373,24 @@ class PlcRecoveryBuilder {
     candidate_.segment_sources.clear();
     candidate_.tets.reserve(static_cast<std::size_t>(complex.finite_count) * 4);
     candidate_.tet_regions.reserve(static_cast<std::size_t>(complex.finite_count));
+    // Volume Steiner points are published only when a domain cell uses them,
+    // in ascending work-vertex order after the source and boundary points.
+    const std::size_t published_points = candidate_.points.size() / 3;
+    const int32_t first_volume = static_cast<int32_t>(published_points) + corner_count_;
+    volume_output_.assign(volume_count_, -1);
+    for (std::size_t t = 0; t < complex.tets.size(); ++t) {
+      const Tetrahedron& tet = complex.tets[t];
+      if (tet.v[0] == kDeadVertex || is_ghost(tet) || complex.region(static_cast<int32_t>(t)) < 0) continue;
+      for (int32_t vertex : tet.v) {
+        if (vertex >= first_volume) volume_output_[static_cast<std::size_t>(vertex - first_volume)] = 0;
+      }
+    }
+    std::vector<std::size_t> published_volume;
+    for (std::size_t row = 0; row < volume_output_.size(); ++row) {
+      if (volume_output_[row] < 0) continue;
+      volume_output_[row] = static_cast<int32_t>(published_points + published_volume.size());
+      published_volume.push_back(row);
+    }
     for (std::size_t t = 0; t < complex.tets.size(); ++t) {
       const Tetrahedron& tet = complex.tets[t];
       if (tet.v[0] == kDeadVertex || is_ghost(tet) || complex.region(static_cast<int32_t>(t)) < 0) continue;
@@ -6442,8 +7432,16 @@ class PlcRecoveryBuilder {
       }
     }
     candidate_.protection = protection_radii(
-        candidate_.points.data(), static_cast<int64_t>(candidate_.points.size() / 3),
+        candidate_.points.data(), static_cast<int64_t>(published_points),
         candidate_.segments, candidate_.input_triangles);
+    for (std::size_t row : published_volume) {
+      const double* coordinates =
+          point(first_volume + static_cast<int32_t>(row));
+      candidate_.points.insert(candidate_.points.end(), coordinates, coordinates + 3);
+      candidate_.witnesses.push_back(PlcRecoveryWitness{});
+      candidate_.vertex_dimension.push_back(3);
+      candidate_.protection.push_back(0.0);
+    }
     candidate_.failure = {};
   }
 
@@ -6496,6 +7494,9 @@ class PlcRecoveryBuilder {
   std::vector<std::array<int32_t, 2>> protected_segments_;
   std::array<int32_t, 2> recovery_edge_{-1, -1};
   bool cavity_steiner_restart_required_ = false;
+  std::size_t volume_count_ = 0;
+  std::vector<int32_t> volume_output_;
+  bool local_edits_ = false;
 };
 
 }  // namespace
@@ -6534,7 +7535,6 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
     return PHX_MC_ALLOCATION_FAILURE;
   }
 }
- 
 
 }  // namespace phx::mc
 

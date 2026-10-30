@@ -17,18 +17,19 @@ from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
     LayerSchedule,
+    MeshingEntityKind,
     MeshingFailure,
     MeshingFailureCategory,
     MeshingScope,
     NativeMeshingOptions,
     NativeMeshingProvider,
+    prepare_boundary_layers,
     RegionRole,
     RegionSeed,
     SizeControlStrength,
     UniformSizeControl,
     VolumeFillStrategy,
     VolumeMeshingSpec,
-    prepare_boundary_layers,
 )
 from phydrax.meshing._boundary_layer import BoundaryLayerMesh
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
@@ -69,7 +70,9 @@ def _bind_layer_source(
     layer_cell_count = sum(block.cell_count for block in layers.mesh.blocks)
     cap = layers.cap
     if cap is None:
-        raise ValueError("Positive polyhedral core fixture requires the accepted layer cap.")
+        raise ValueError(
+            "Positive polyhedral core fixture requires the accepted layer cap."
+        )
     cap_cell_count = sum(block.cell_count for block in cap.blocks)
     return NativeLayerCoreSource(
         layers,
@@ -99,29 +102,14 @@ def _make_fixture() -> _LayerPolyhedralFixture:
         wall, mapped_source.source_id, mapped_source.source_revision
     )
     schedule = LayerSchedule.geometric(1, 0.02, growth_rate=1.2)
-    probe_control = BoundaryLayerControl(
+    # Native layer controls are realized on the wall mesh; the layer/core route
+    # binds them to the accepted layers by control identity.
+    control = BoundaryLayerControl(
         MeshingScope.whole(wall, 2),
         schedule,
         route=BoundaryLayerRoute.ADVANCING,
     )
-    probe_layers = prepare_boundary_layers(wall, probe_control)
-    probe_complex, probe_vertex_layer_ids = _mapped_core_cap_complex(
-        probe_layers,
-        mapped_source.reference.complex,
-        np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64),
-    )
-    probe_source = _bind_layer_source(
-        probe_layers, probe_complex, probe_vertex_layer_ids, charts, None
-    )
-    control = BoundaryLayerControl(
-        MeshingScope.whole(charts.domain, 2),
-        schedule,
-        route=BoundaryLayerRoute.ADVANCING,
-        volume_scope=MeshingScope.whole(probe_source, 3),
-    )
-    layers = prepare_boundary_layers(
-        wall, control, wall_association=charts.associations[0]
-    )
+    layers = prepare_boundary_layers(wall, control)
     complex_, vertex_layer_ids = _mapped_core_cap_complex(
         layers,
         mapped_source.reference.complex,
@@ -148,7 +136,7 @@ def _source_and_specification(
     *,
     include_power_source: bool,
 ) -> tuple[NativeLayerCoreSource, VolumeMeshingSpec]:
-    layers, layer_control, complex_, vertex_layer_ids, charts, power_source = fixture
+    layers, _, complex_, vertex_layer_ids, charts, power_source = fixture
     source = _bind_layer_source(
         layers,
         complex_,
@@ -156,7 +144,14 @@ def _source_and_specification(
         charts,
         power_source if include_power_source else None,
     )
-    boundary = MeshingScope.whole(source, 3)
+    boundary = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        np.asarray(complex_.facet_entity_ids, dtype=np.int64),
+    )
     layer_kinds = tuple(sorted({block.cell_kind for block in layers.mesh.blocks}))
     target = CellMeshingTarget(
         3,
@@ -187,7 +182,6 @@ def _source_and_specification(
             ),
         ),
         maximum_deviation=0.0,
-        layer_controls=(layer_control,),
     )
     return source, specification
 
@@ -202,9 +196,7 @@ def _options() -> NativeMeshingOptions:
 
 def test_layer_core_refuses_polyhedral_fill_without_authored_power_source() -> None:
     fixture = _make_fixture()
-    source, specification = _source_and_specification(
-        fixture, include_power_source=False
-    )
+    source, specification = _source_and_specification(fixture, include_power_source=False)
 
     with pytest.raises(MeshingFailure) as failure:
         NativeMeshingProvider(_options()).plan(
@@ -217,19 +209,14 @@ def test_layer_core_refuses_polyhedral_fill_without_authored_power_source() -> N
 
 def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure() -> None:
     fixture = _make_fixture()
-    source, specification = _source_and_specification(
-        fixture, include_power_source=True
-    )
+    source, specification = _source_and_specification(fixture, include_power_source=True)
     assert fixture.layers.control_id == fixture.control.control_id
-    assert specification.layer_controls == (fixture.control,)
-    assert specification.layer_controls[0].volume_scope is not None
-    assert (
-        specification.layer_controls[0].volume_scope.scope_id
-        == specification.boundary_scope.scope_id
+    assert specification.boundary_scope.entity_dimension == 2
+    result = (
+        NativeMeshingProvider(_options())
+        .plan(source, specification, coordinate_contract=_COORDINATES)
+        .execute()
     )
-    result = NativeMeshingProvider(_options()).plan(
-        source, specification, coordinate_contract=_COORDINATES
-    ).execute()
 
     assert result.certification is not None and result.certification.passed
     assert result.compliance.passed
@@ -283,14 +270,14 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     face_by_key = {
-        tuple(sorted(mesh_vertex_ids[face_vertices[start:stop]].tolist())): int(identifier)
+        tuple(sorted(mesh_vertex_ids[face_vertices[start:stop]].tolist())): int(
+            identifier
+        )
         for start, stop, identifier in zip(
             face_offsets[:-1], face_offsets[1:], face_ids, strict=True
         )
     }
-    assert {face_by_key[key] for key in expected_cap_keys} == set(
-        interface_ids.tolist()
-    )
+    assert {face_by_key[key] for key in expected_cap_keys} == set(interface_ids.tolist())
 
     finite_volume = prepare_polyhedral_finite_volume_geometry(result.mesh)
     assert finite_volume.mesh_id == result.mesh.mesh_id
@@ -300,7 +287,9 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     # the generated cell decomposition and FV divergence formulas.
     assert float(np.sum(cell_volumes)) == pytest.approx(1.0, rel=0.0, abs=1.0e-10)
     exterior_faces = np.flatnonzero(neighbor < 0)
-    face_centers = np.asarray(finite_volume.face_centers, dtype=np.float64)[exterior_faces]
+    face_centers = np.asarray(finite_volume.face_centers, dtype=np.float64)[
+        exterior_faces
+    ]
     exterior_measures = np.asarray(finite_volume.face_measures, dtype=np.float64)[
         exterior_faces
     ]

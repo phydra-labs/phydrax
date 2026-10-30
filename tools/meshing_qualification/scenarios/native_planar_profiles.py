@@ -785,7 +785,9 @@ def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
         )
     source_query = certification.inputs.source
     if source_query is None:
-        raise RuntimeError("Native surface certification omitted its source boundary query.")
+        raise RuntimeError(
+            "Native surface certification omitted its source boundary query."
+        )
     charts.require_bound(result.mesh, result.geometry, source_query)
     if charts.domain.content_domain_id() != domain.content_domain_id():
         raise RuntimeError(
