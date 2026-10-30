@@ -388,6 +388,9 @@ class TetMesh {
       std::span<const std::uint64_t> affected_cells,
       std::span<const std::int32_t> complete_star,
       bool star_verified);
+  // Called only by LocalIncidence for an interior quality reconnection or
+  // collapse; validation and commit touch only the cavity and its boundary.
+  TetEditStatus replace_local_cavity(const TetEdit& operation);
   TetEditStatus apply_one_edit(const TetEdit& operation, TetEditResult& result);
   TetEditStatus validate_and_commit(TetMesh& staged, const TetEdit& operation,
                                     TetEditResult& result);
