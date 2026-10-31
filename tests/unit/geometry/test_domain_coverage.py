@@ -103,7 +103,11 @@ def _embedding(mesh: CellMesh, geometry: CellGeometrySpec) -> GlobalEmbeddingCer
     certificate = _embedding_report(mesh, geometry)
     assert certificate.status == "certified"
     return certificate
-def _cube_boundary_triangles(vertices: np.ndarray, /, *, inward: bool = False) -> list[tuple[int, int, int]]:
+
+
+def _cube_boundary_triangles(
+    vertices: np.ndarray, /, *, inward: bool = False
+) -> list[tuple[int, int, int]]:
     topology = reference_cell_topology("hexahedron")
     center = np.mean(vertices, axis=0)
     result: list[tuple[int, int, int]] = []
@@ -129,10 +133,19 @@ def _cad_box_domain() -> tuple[MeshingDomain, CellMesh, CellGeometrySpec]:
         coordinate_contract=SpatialCoordinateContract(MILLIMETER),
     )
     domain = MeshingDomain.from_brep(model)
-    vertices = np.asarray(reference_cell_topology("hexahedron").vertices, dtype=np.float64)
+    vertices = np.asarray(
+        reference_cell_topology("hexahedron").vertices, dtype=np.float64
+    )
     mesh = CellMesh(
         vertices,
-        (CellBlock("cube", "hexahedron", np.arange(8, dtype=np.int32)[None, :], global_ids=(811,)),),
+        (
+            CellBlock(
+                "cube",
+                "hexahedron",
+                np.arange(8, dtype=np.int32)[None, :],
+                global_ids=(811,),
+            ),
+        ),
     )
     return domain, mesh, CellGeometrySpec.affine(mesh)
 
@@ -319,6 +332,7 @@ def test_source_partition_coverage_uses_oriented_interfaces_and_dense_regions() 
     assert certificate.covered_source_facet_count == certificate.source_facet_count == 7
     assert certificate.binding.mesh_id == mesh.mesh_id
 
+
 def test_coverage_identity_preserves_duplicate_region_names_by_occurrence() -> None:
     source, mesh, geometry, regions = _split_square()
     domain = PiecewiseLinearDomain(
@@ -343,7 +357,6 @@ def test_coverage_identity_preserves_duplicate_region_names_by_occurrence() -> N
     assert len(set(certificate.source_region_degree_ids)) == 2
     restored = DomainCoverageCertificate.from_stored_fields(certificate, domain)
     assert restored.certificate_id == certificate.certificate_id
-
 
 
 def test_exact_polyhedral_source_coverage_uses_oriented_face_loops() -> None:
@@ -402,6 +415,7 @@ def test_exact_polyhedral_source_coverage_uses_oriented_face_loops() -> None:
     assert certificate.covered_source_facet_count == certificate.source_facet_count == 12
     assert len(certificate.source_region_degree_ids) == 1
 
+
 def test_three_dimensional_source_boundary_has_exact_facet_coverage() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
@@ -437,6 +451,7 @@ def test_three_dimensional_source_boundary_has_exact_facet_coverage() -> None:
     assert certificate.achieved_region_measures == (Fraction(1, 6),)
     assert certificate.covered_source_facet_count == 4
 
+
 def test_exact_planar_cad_domain_uses_authored_source_faces() -> None:
     domain, mesh, geometry = _cad_box_domain()
     certificate = certify_domain_coverage(
@@ -470,9 +485,7 @@ def test_cad_domain_coverage_revalidates_retained_brep_authority() -> None:
         authority,
         vertex_points.at[0, 0].add(0.125),
     )
-    stale_domain = eqx.tree_at(
-        lambda value: value.brep_authority, domain, stale_geometry
-    )
+    stale_domain = eqx.tree_at(lambda value: value.brep_authority, domain, stale_geometry)
 
     with pytest.raises(ValueError, match="content has changed"):
         certify_domain_coverage(
@@ -510,7 +523,11 @@ def test_exact_source_coverage_rejects_an_omitted_cavity() -> None:
     )
     mesh = CellMesh(
         reference,
-        (CellBlock("outer-carrier", "hexahedron", np.arange(8, dtype=np.int32)[None, :]),),
+        (
+            CellBlock(
+                "outer-carrier", "hexahedron", np.arange(8, dtype=np.int32)[None, :]
+            ),
+        ),
     )
     geometry = CellGeometrySpec.affine(mesh)
     certificate = certify_domain_coverage(
@@ -525,6 +542,8 @@ def test_exact_source_coverage_rejects_an_omitted_cavity() -> None:
     assert certificate.requested_region_measures == (Fraction(7, 8),)
     assert certificate.achieved_region_measures == (Fraction(1),)
     assert any(finding.check == "uncovered_boundary" for finding in certificate.findings)
+
+
 def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> None:
     from phydrax.discretization import TensorGridPlan, UniformAxisSpec
     from phydrax.geometry import Sphere
@@ -532,6 +551,7 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
     from phydrax.geometry._source_fidelity import certify_source_fidelity
     from phydrax.geometry.implicit import (
         AdaptiveImplicitSurfacePolicy,
+        AnalyticImplicitProfile,
         discover_adaptive_implicit_surface,
     )
     from phydrax.meshing._contracts import (
@@ -541,7 +561,7 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
         VolumeMeshingSpec,
     )
     from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_implicit import prepare_native_implicit
     from phydrax.meshing.providers._native_options import NativeMeshingOptions
@@ -563,7 +583,9 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
     for axis in grid.axes:
         bounds = axis.bounds
         if bounds is None:
-            raise AssertionError("Prepared implicit discovery axes must retain physical bounds.")
+            raise AssertionError(
+                "Prepared implicit discovery axes must retain physical bounds."
+            )
         lower_bounds.append(bounds[0])
         upper_bounds.append(bounds[1])
     discovery_domain = np.asarray([lower_bounds, upper_bounds], dtype=np.float64)
@@ -573,8 +595,20 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
         policy=policy,
         source_id=source_id,
     )
+    # The sphere distance field is singular at its centre; the exact profile
+    # proves that singular set lies away from the zero-set cover.
+    profile = AnalyticImplicitProfile(
+        geometry_source,
+        SpatialCoordinateContract.si(),
+        source_id=source_id,
+        source_revision=source_revision,
+    )
     source = NativeImplicitSource(
-        geometry_source, source_id, source_revision, discovery=discovery
+        geometry_source,
+        source_id,
+        source_revision,
+        discovery=discovery,
+        authoring_profile=profile,
     )
     boundary_scope = MeshingScope(
         source.source_id,
@@ -588,7 +622,11 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
         boundary_scope,
         VolumeFillStrategy.SIMPLEX,
-        size_controls=(UniformSizeControl(boundary_scope, 0.7),),
+        # A size hint: the adaptive tetrahedral route reports, rather than
+        # matches exactly, its edge-length statistics.
+        size_controls=(
+            UniformSizeControl(boundary_scope, 0.7, strength=SizeControlStrength.SOFT),
+        ),
         maximum_deviation=0.8,
     )
     coordinate_contract = SpatialCoordinateContract.si()
@@ -636,7 +674,9 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
     assert isinstance(witness, SourceBoundaryChartWitness)
     implicit_root_edge_keys = witness.implicit_root_edge_keys
     if implicit_root_edge_keys is None:
-        raise AssertionError("Adaptive implicit source witness must retain root-edge ancestry.")
+        raise AssertionError(
+            "Adaptive implicit source witness must retain root-edge ancestry."
+        )
     changed_roots = np.array(implicit_root_edge_keys, copy=True)
     changed_roots[0, 0, 0, 0] += 1
     invalid_witness = SourceBoundaryChartWitness(
@@ -687,7 +727,6 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
         )
     finally:
         object.__setattr__(fidelity, "witness", original_witness)
-
 
 
 def test_source_partition_coverage_rejects_a_missing_material_interface() -> None:
@@ -844,6 +883,7 @@ def test_mapped_child_tabulation_preserves_compiled_values_and_derivatives() -> 
     np.testing.assert_allclose(derivative, expected, atol=1.0e-14)
     np.testing.assert_allclose(automatic, expected, atol=1.0e-14)
 
+
 def test_mapped_coverage_binds_prepared_field_queries_to_exact_map() -> None:
     domain, mesh, geometry, regions = _mapped_cube()
     embedding = _embedding(mesh, geometry)
@@ -857,9 +897,7 @@ def test_mapped_coverage_binds_prepared_field_queries_to_exact_map() -> None:
     assert coverage.status == "certified"
     discretization = FiniteElementPlan(
         mesh,
-        FiniteElementFieldSpec(
-            "u", lagrange_element("hexahedron", 1)
-        ),
+        FiniteElementFieldSpec("u", lagrange_element("hexahedron", 1)),
         coordinate_spec=geometry,
     ).prepare()
     reconstruction = prepare_finite_element_field_reconstruction(
@@ -884,7 +922,6 @@ def test_mapped_coverage_binds_prepared_field_queries_to_exact_map() -> None:
     assert membership.inside.tolist() == [True, True, False]
     assert membership.boundary.tolist() == [False, True, False]
     assert membership.outside.tolist() == [False, False, True]
-
 
 
 def test_mapped_support_authority_drives_native_overset_wall_membership() -> None:
@@ -919,7 +956,9 @@ def test_mapped_support_authority_drives_native_overset_wall_membership() -> Non
         (CellBlock("probe", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)),),
     )
     target_result = certify_cell_mesh(
-        target_mesh, SpatialCoordinateContract.si(), geometry=CellGeometrySpec.affine(target_mesh)
+        target_mesh,
+        SpatialCoordinateContract.si(),
+        geometry=CellGeometrySpec.affine(target_mesh),
     )
     target_part = MeshPart("probe", target_result)
     target_ids = np.asarray(target_mesh.entity_set(2).entity_ids, dtype=np.int64)
