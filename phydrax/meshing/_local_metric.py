@@ -54,6 +54,9 @@ from ._topology_edit import (
 _LOWER = float(1.0 / np.sqrt(2.0))
 _UPPER = float(np.sqrt(2.0))
 _COLLAPSE_LIMIT = 2.0
+# Quantum of the |ln L| edge-length deviation scores that order relocations
+# which keep their star's minimum quality (see _deviation_improves).
+_DEVIATION_QUANTUM = 2.0**-20
 # Minimum metric-quality gain of a flip or relocation; excludes rounding cycles.
 _IMPROVEMENT = 1.0e-6
 # Candidate-pair padding of the source point location; exact signs decide.
@@ -86,7 +89,10 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
     Rejection counts tally candidate evaluations: an operation rejected in several
     sub-rounds counts once per evaluation. Length and quality measurements cover
     the unprotected edges of the returned mesh (all edges when every edge is
-    protected); ``converged`` certifies the unit-mesh criterion on them.
+    protected); ``converged`` certifies the unit-mesh criterion on them. A stalled
+    adaptation records, per out-of-range edge (one per quotient edge orbit on a
+    periodic mesh), its metric length and why no operation could change it,
+    e.g. ``collapse=hysteresis+inadmissible;flip=invalid``.
     """
 
     passes: int = eqx.field(static=True)
@@ -108,6 +114,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
     relocation: bool = eqx.field(static=True)
     predicate_mode: PredicateMode = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
+    stalled_edges: tuple[tuple[float, str], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -130,6 +137,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         topology_operations: bool,
         relocation: bool,
         predicate_mode: PredicateMode,
+        stalled_edges: tuple[tuple[float, str], ...] = (),
     ) -> None:
         counts = {
             "passes": passes,
@@ -171,6 +179,14 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
             raise ValueError("Local metric adaptation uses host predicate modes.")
         if converged and stalled:
             raise ValueError("A converged adaptation cannot be stalled.")
+        records = tuple((float(length), str(reason)) for length, reason in stalled_edges)
+        if records and not stalled:
+            raise ValueError("Stalled-edge evidence requires a stalled adaptation.")
+        if any(
+            not np.isfinite(length) or length <= 0.0 or not reason
+            for length, reason in records
+        ):
+            raise ValueError("Stalled edges require finite positive lengths and reasons.")
         self.passes = passes
         self.splits = splits
         self.collapses = collapses
@@ -189,6 +205,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         self.topology_operations = topology_operations
         self.relocation = relocation
         self.predicate_mode = predicate_mode
+        self.stalled_edges = records
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "local-metric-evidence",
@@ -196,6 +213,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
                 **flags,
                 **measures,
                 "predicate_mode": str(predicate_mode),
+                **({"stalled_edges": records} if records else {}),
             }
         )
 
@@ -453,10 +471,81 @@ def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarr
 
 
 def _quality(lengths: np.ndarray, /) -> np.ndarray:
-    """Metric shape quality ``4 sqrt(3) area / sum(l^2)`` from edge lengths (Heron)."""
-    a, b, c = lengths[..., 0], lengths[..., 1], lengths[..., 2]
+    """Metric shape quality ``4 sqrt(3) area / sum(l^2)`` from edge lengths (Heron).
+
+    The lengths are sorted first, so a cell's quality does not depend on the
+    order in which its edges are listed.
+    """
+    ordered = np.sort(lengths, axis=-1)
+    a, b, c = ordered[..., 0], ordered[..., 1], ordered[..., 2]
     product = (a + b + c) * (b + c - a) * (a + c - b) * (a + b - c)
     return np.sqrt(3.0) * np.sqrt(np.maximum(product, 0.0)) / (a * a + b * b + c * c)
+
+
+def _flip_admissible(
+    before: np.ndarray,
+    after: np.ndarray,
+    new_diagonal: np.ndarray,
+    old_codes: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Admission of flips from their ``(k, 2)`` cell qualities and diagonals.
+
+    A flip is admitted when it raises the minimum quality of its two cells by
+    ``_IMPROVEMENT`` and its new diagonal lies in the unit band, or when it
+    strictly lowers the quantized ``|ln L|`` deviation of the diagonal (the
+    only edge a flip changes; ``old_codes`` holds the removed diagonal's
+    ``_deviation_codes``) without lowering the cells' quality pair, compared
+    minimum first, then maximum.
+
+    Termination: order meshes by their cell-quality multiset (ascending sorted
+    vectors, lexicographic) and then by their edge-deviation multiset (worst
+    first, see ``_deviation_improves``); both orders are kept when the same
+    cells or edges are added to both sides. A quality flip strictly raises the
+    first key; a deviation flip keeps or raises it and strictly lowers the
+    second. Flips create no vertices, so the triangulations of one vertex set
+    are finitely many and no flip sequence repeats one.
+    """
+    low_before = np.min(before, axis=1)
+    low_after = np.min(after, axis=1)
+    quality = (low_after > low_before + _IMPROVEMENT) & (
+        (new_diagonal >= _LOWER) & (new_diagonal <= _UPPER)
+    )
+    kept = (low_after > low_before) | (
+        (low_after == low_before) & (np.max(after, axis=1) >= np.max(before, axis=1))
+    )
+    return quality | (kept & (_deviation_codes(new_diagonal) < old_codes))
+
+
+def _deviation_improves(before: np.ndarray, after: np.ndarray, /) -> bool:
+    """Strict improvement of the worst-first quantized metric-length deviations.
+
+    Each affected edge scores ``floor(|ln L| / _DEVIATION_QUANTUM)``. Sorted
+    worst first, the first unequal position decides (the smaller deviation is
+    better) and a vector that ends first is better: at the largest score whose
+    multiplicity differs, the multiset holding fewer copies is better. Adding
+    the same unchanged edges to both sides keeps the order, so an edit that
+    improves its affected edges improves the whole mesh's multiset.
+
+    Termination: a relocation changes no topology. It is accepted when its
+    star's minimum quality rises by ``_IMPROVEMENT`` or, keeping that minimum,
+    when its edges strictly improve in this order. Quality never falls under
+    either rule, so quality steps are finitely many between topology edits; the
+    deviation steps between them strictly decrease the mesh's count vector over
+    the finite quantized alphabet, and count vectors under the lexicographic
+    order (worst score most significant) are well-ordered, so they are finite
+    too.
+    """
+    worse = np.sort(_deviation_codes(np.asarray(before, dtype=np.float64)))[::-1]
+    better = np.sort(_deviation_codes(np.asarray(after, dtype=np.float64)))[::-1]
+    for previous, candidate in zip(worse.tolist(), better.tolist(), strict=False):
+        if previous != candidate:
+            return candidate < previous
+    return better.size < worse.size
+
+
+def _deviation_codes(lengths: np.ndarray, /) -> np.ndarray:
+    return np.floor(np.abs(np.log(lengths)) / _DEVIATION_QUANTUM).astype(np.int64)
 
 
 def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
@@ -677,12 +766,43 @@ def _validate_controls(
         raise TypeError("topology_operations and relocation must be bool.")
 
 
-def _validate_classification(state: _State, topology: _Topology, /) -> None:
+def _validate_classification(
+    state: _State, topology: _Topology, periodic_context: _PeriodicContext | None, /
+) -> None:
     boundary = topology.edge_cells[:, 1] < 0
     second = np.maximum(topology.edge_cells[:, 1], 0)
     interface = ~boundary & (
         state.cell_region[topology.edge_cells[:, 0]] != state.cell_region[second]
     )
+    if periodic_context is not None:
+        # A fundamental-domain seam edge has one lifted cell per orbit member;
+        # boundary and interface edges are decided by the incident cell orbits.
+        incident = topology.edge_cells >= 0
+        edge_rows = np.broadcast_to(
+            np.arange(topology.edge_cells.shape[0])[:, None], incident.shape
+        )[incident]
+        cell_rows = topology.edge_cells[incident]
+        orbit_count = periodic_context.edge_quotient_ids.size
+        pairs = np.unique(
+            np.stack(
+                (
+                    periodic_context.edge_orbits[edge_rows],
+                    periodic_context.cell_orbits[cell_rows],
+                ),
+                axis=1,
+            ),
+            axis=0,
+        )
+        region_by_orbit = np.zeros(
+            (int(np.max(periodic_context.cell_orbits)) + 1,), dtype=np.int64
+        )
+        region_by_orbit[periodic_context.cell_orbits] = state.cell_region
+        regions = region_by_orbit[pairs[:, 1]]
+        low = _group_minimum(regions, pairs[:, 0], orbit_count, np.iinfo(np.int64).max)
+        high = _group_maximum(regions, pairs[:, 0], orbit_count, -1)
+        cells_per_orbit = np.bincount(pairs[:, 0], minlength=orbit_count)
+        boundary = (cells_per_orbit == 1)[periodic_context.edge_orbits]
+        interface = (low != high)[periodic_context.edge_orbits]
     if np.any((boundary | interface) & (topology.edge_class == 0)):
         raise ValueError(
             "Boundary and region-interface edges must carry a positive edge class."
@@ -1554,6 +1674,507 @@ def _collapse_records(state: _State, removed: Any, kept: Any, /) -> _State:
     )
 
 
+class _PeriodicCollapse(NamedTuple):
+    """One complete quotient collapse: every lifted member of the removed orbit.
+
+    ``kept`` holds state rows; values ``>= base`` index ``image_*`` rows that
+    must be appended as new lifted images of the kept vertex orbit.
+    """
+
+    quotient_id: int
+    length: float
+    removed: np.ndarray
+    kept: np.ndarray
+    base: int
+    image_points: np.ndarray
+    image_metrics: np.ndarray
+    image_keys: np.ndarray
+    image_windings: np.ndarray
+    image_stencils: tuple[Any, ...] | None
+    items: np.ndarray
+    # ``(kept row, neighbor row, class, protected)`` feature records of new
+    # lifted members of the kept orbit's classified quotient edges.
+    feature_additions: np.ndarray
+    # Lifted member rows the collapse empties and the surviving member of the
+    # same vertex orbit that each retires onto (see ``_collapse_orphans``).
+    retired: np.ndarray
+    retired_to: np.ndarray
+
+
+class _Orphans(NamedTuple):
+    guard_cells: np.ndarray
+    retired: np.ndarray
+    retired_to: np.ndarray
+
+
+def _ball_cells(topology: _Topology, rows: np.ndarray, /) -> np.ndarray:
+    _, positions = _expand(topology.ball_offsets, np.asarray(rows, dtype=np.int64))
+    return np.unique(topology.ball_cells[positions])
+
+
+def _collapse_orphans(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext,
+    removed: np.ndarray,
+    kept: np.ndarray,
+    /,
+) -> _Orphans | None:
+    """Guard cells and retired lifted rows of a collapse, or ``None`` if refused.
+
+    A seam vertex keeps one lifted row per member, each with part of its quotient
+    ball. Dropping the edge cells may empty such a row although its quotient
+    vertex survives. The cut lifted mesh then no longer needs that member: it is
+    retired onto another member of its vertex orbit that keeps cells, so the
+    quotient vertex, its identity and its lineage are preserved (a source row
+    retires only onto a source row, which carries the quotient vertex's source
+    ID). Each classified lifted edge of a retired row must keep another lifted
+    member of its quotient edge, which carries the feature record on. Otherwise,
+    or without such a vertex member, the collapse is refused. The returned guard
+    cells (balls of the dropped cells' corners and of the retirement targets,
+    and the cells of the surviving classified members) make simultaneously
+    selected collapses disjoint there, so they cannot empty one row, vertex
+    orbit, or classified quotient edge together.
+    """
+    empty = np.zeros((0,), dtype=np.int64)
+    dropped: set[int] = set()
+    gained: dict[int, int] = {}
+    for removed_row, kept_row in zip(removed.tolist(), kept.tolist(), strict=True):
+        cells = _ball_cells(topology, np.asarray((removed_row,), dtype=np.int64))
+        edge_cells = cells[np.any(state.cells[cells] == kept_row, axis=1)]
+        dropped.update(int(cell) for cell in edge_cells.tolist())
+        gained[int(kept_row)] = gained.get(int(kept_row), 0) + int(
+            cells.size - edge_cells.size
+        )
+    if not dropped:
+        return _Orphans(empty, empty, empty)
+    removed_set = {int(row) for row in removed.tolist()}
+    corners = np.unique(state.cells[np.asarray(sorted(dropped), dtype=np.int64)])
+
+    def remaining(row: int) -> int:
+        return gained.get(row, 0) + sum(
+            int(cell) not in dropped
+            for cell in _ball_cells(topology, np.asarray((row,), dtype=np.int64))
+        )
+
+    orphans = [
+        row
+        for row in corners.tolist()
+        if row not in removed_set and remaining(int(row)) == 0
+    ]
+    orphan_set = set(orphans)
+    gone = removed_set | orphan_set
+    targets: list[int] = []
+    kept_edge_cells: list[int] = []
+    for row in orphans:
+        # Each classified lifted edge of the row must keep a lifted member of
+        # its quotient edge (with its feature record) after the collapse.
+        for keys in state.feature_keys[np.any(state.feature_keys == row, axis=1)]:
+            edge = int(_lookup(topology.codes, _codes(keys[None, :]))[0])
+            survivors = [
+                int(member)
+                for member in np.flatnonzero(
+                    context.edge_orbits == context.edge_orbits[edge]
+                ).tolist()
+                if member != edge
+                and not any(int(end) in gone for end in topology.edges[member])
+                and any(
+                    int(cell) >= 0 and int(cell) not in dropped
+                    for cell in topology.edge_cells[member]
+                )
+            ]
+            if not survivors:
+                return None
+            kept_edge_cells.extend(
+                int(cell)
+                for cell in topology.edge_cells[survivors].reshape((-1,))
+                if cell >= 0
+            )
+        members = [
+            int(member)
+            for member in np.flatnonzero(
+                context.vertex_orbits == context.vertex_orbits[row]
+            ).tolist()
+            if member not in gone
+            and (state.source_rows[row] < 0 or state.source_rows[member] >= 0)
+            and remaining(int(member)) > 0
+        ]
+        if not members:
+            return None
+        targets.append(min(members))
+    retired = np.asarray(orphans, dtype=np.int64)
+    retired_to = np.asarray(targets, dtype=np.int64)
+    return _Orphans(
+        np.union1d(
+            _ball_cells(topology, np.concatenate((corners, retired_to))),
+            np.asarray(kept_edge_cells, dtype=np.int64),
+        ),
+        retired,
+        retired_to,
+    )
+
+
+def _cover_labels(
+    state: _State,
+    topology: _Topology,
+    rows: np.ndarray,
+    frame_row: int,
+    orders: np.ndarray,
+    /,
+) -> set[tuple[int, ...]]:
+    """Cover-vertex labels of every neighbor of an orbit, in one member's frame.
+
+    A neighbor ``x`` of member ``m`` is the cover vertex
+    ``(key(x), winding(x) + winding(frame) - winding(m))``.
+    """
+    keys = state.orbit_keys
+    windings = state.orbit_windings
+    if keys is None or windings is None:
+        raise ValueError("Periodic cover labels require explicit orbit identity.")
+    labels: set[tuple[int, ...]] = set()
+    for row in np.asarray(rows, dtype=np.int64).tolist():
+        neighbors = topology.neighbor_values[
+            topology.neighbor_offsets[row] : topology.neighbor_offsets[row + 1]
+        ]
+        reduced = reduce_periodic_exponents(
+            windings[neighbors] + (windings[frame_row] - windings[row]), orders
+        )
+        labels.update(
+            (*(int(value) for value in keys[neighbor]), *(int(value) for value in shift))
+            for neighbor, shift in zip(neighbors.tolist(), reduced, strict=True)
+        )
+    return labels
+
+
+def _periodic_cover_collapse(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext,
+    source: _Source,
+    mode: PredicateMode,
+    edges: np.ndarray,
+    removed: np.ndarray,
+    kept: np.ndarray,
+    quotient_id: int,
+    /,
+) -> _PeriodicCollapse | str:
+    """Collapse a removed vertex orbit whose lifted members are not all edge ends.
+
+    The lifted mesh cuts the quotient along a fundamental-domain seam, so a seam
+    vertex has several lifted members, each carrying part of its quotient ball.
+    Every member is removed: a member at an edge end collapses onto that edge's
+    kept end, and any other member collapses onto the exact deck image of the
+    kept vertex in its own frame (an existing lifted member of the kept orbit or
+    a new lifted image of it). Admissibility, the link condition, and validity
+    are decided on the quotient (the cover around the edge), not on the cut. A
+    refused collapse returns its reason (the stall evidence reports it).
+    """
+    cell_value = source.periodic_cell
+    keys = state.orbit_keys
+    windings = state.orbit_windings
+    if cell_value is None or keys is None or windings is None:
+        return "identity"
+    orbits = context.vertex_orbits
+    removed_orbit = int(orbits[removed[0]])
+    kept_orbit = int(orbits[kept[0]])
+    if (
+        removed_orbit < 0
+        or kept_orbit < 0
+        or removed_orbit == kept_orbit
+        or np.any(orbits[removed] != removed_orbit)
+        or np.any(orbits[kept] != kept_orbit)
+        or np.any(topology.edge_class[edges] != 0)
+        or np.any(topology.edge_protected[edges])
+    ):
+        return "classified"
+    removed_rows = np.flatnonzero(orbits == removed_orbit)
+    kept_rows = np.flatnonzero(orbits == kept_orbit)
+    if any(
+        context.vertex_stabilizers[int(row)]
+        for row in np.concatenate((removed_rows, kept_rows)).tolist()
+    ):
+        return "stabilized"
+    removed_ball = _ball_cells(topology, removed_rows)
+    if (
+        np.any(topology.kind[removed_rows] != _INTERIOR)
+        or not np.all(topology.uniform_region[removed_rows])
+        or np.unique(state.cell_region[removed_ball]).size != 1
+    ):
+        return "inadmissible"
+    orders = identification_orders(cell_value)
+
+    def reduced(values: np.ndarray) -> tuple[int, ...]:
+        return tuple(
+            int(value)
+            for value in reduce_periodic_exponents(
+                np.asarray(values, dtype=np.int64)[None, :], orders
+            )[0]
+        )
+
+    root_removed = int(removed[0])
+    root_kept = int(kept[0])
+    kept_by_removed = dict(zip(removed.tolist(), kept.tolist(), strict=True))
+    kept_by_winding = {reduced(windings[row]): int(row) for row in kept_rows.tolist()}
+    base = state.points.shape[0]
+    targets: list[int] = []
+    image_windings: list[tuple[int, ...]] = []
+    for row in removed_rows.tolist():
+        target_winding = reduced(
+            windings[root_kept] + windings[row] - windings[root_removed]
+        )
+        target = kept_by_removed.get(int(row))
+        if target is not None:
+            if reduced(windings[target]) != target_winding:
+                return "winding"
+        else:
+            target = kept_by_winding.get(target_winding)
+            if target is None:
+                target = base + len(image_windings)
+                image_windings.append(target_winding)
+        targets.append(int(target))
+    target_rows = np.asarray(targets, dtype=np.int64)
+    orphans = _collapse_orphans(state, topology, context, removed_rows, target_rows)
+    if orphans is None:
+        return "orphaned"
+
+    removed_label = (*map(int, keys[root_removed]), *reduced(windings[root_removed]))
+    kept_label = (*map(int, keys[root_kept]), *reduced(windings[root_kept]))
+    removed_neighbors = _cover_labels(state, topology, removed_rows, root_removed, orders)
+    kept_neighbors = _cover_labels(state, topology, kept_rows, root_kept, orders)
+    key_width = keys.shape[1]
+    if any(
+        label[:key_width] == kept_label[:key_width] and label != kept_label
+        for label in removed_neighbors
+    ) or any(
+        label[:key_width] == removed_label[:key_width] and label != removed_label
+        for label in kept_neighbors
+    ):
+        # Another image of the kept orbit next to the removed orbit would turn
+        # into a quotient loop edge.
+        return "loop"
+    common = (removed_neighbors & kept_neighbors) - {removed_label, kept_label}
+    if len(common) != int(np.count_nonzero(topology.edge_cells[edges] >= 0)):
+        return "link"
+
+    # A removed member's edge to a common neighbor becomes a new lifted member
+    # of the kept orbit's existing quotient edge; it carries that edge's class.
+    classified: dict[tuple[int, ...], tuple[int, int]] = {}
+    for row in kept_rows.tolist():
+        for neighbor in topology.neighbor_values[
+            topology.neighbor_offsets[row] : topology.neighbor_offsets[row + 1]
+        ].tolist():
+            edge = int(
+                _lookup(
+                    topology.codes,
+                    _codes(_sorted_pairs(np.asarray((row,)), np.asarray((neighbor,)))),
+                )[0]
+            )
+            if topology.edge_class[edge] > 0 or topology.edge_protected[edge]:
+                label = (
+                    *map(int, keys[neighbor]),
+                    *reduced(windings[neighbor] + windings[root_kept] - windings[row]),
+                )
+                classified[label] = (
+                    int(topology.edge_class[edge]),
+                    int(topology.edge_protected[edge]),
+                )
+    removed_set = {int(row) for row in removed_rows.tolist()}
+    feature_additions: list[tuple[int, int, int, int]] = []
+    for row, target in zip(removed_rows.tolist(), targets, strict=True):
+        target_winding = (
+            windings[target]
+            if target < base
+            else np.asarray(image_windings[target - base], dtype=np.int64)
+        )
+        for neighbor in topology.neighbor_values[
+            topology.neighbor_offsets[row] : topology.neighbor_offsets[row + 1]
+        ].tolist():
+            if neighbor in removed_set or neighbor == target:
+                continue
+            if (
+                target < base
+                and _lookup(
+                    topology.codes,
+                    _codes(_sorted_pairs(np.asarray((target,)), np.asarray((neighbor,)))),
+                )[0]
+                >= 0
+            ):
+                continue
+            label = (
+                *map(int, keys[neighbor]),
+                *reduced(windings[neighbor] + windings[root_kept] - target_winding),
+            )
+            if label in classified:
+                feature_additions.append((int(target), int(neighbor), *classified[label]))
+
+    image_count = len(image_windings)
+    dimension = state.points.shape[1]
+    image_points = np.zeros((image_count, dimension), dtype=np.float64)
+    image_metrics = np.zeros((image_count, dimension, dimension), dtype=np.float64)
+    representative = int(context.vertex_representatives[root_kept])
+    for image, winding in enumerate(image_windings):
+        isometry = exact_periodic_element(
+            cell_value,
+            np.asarray(winding, dtype=np.int64) - windings[representative],
+        )
+        image_points[image] = _exact_periodic_point(
+            isometry, state.points[representative]
+        )
+        image_metrics[image] = _exact_periodic_metric(
+            isometry, state.metric[representative]
+        )
+    extended = (
+        state
+        if image_count == 0
+        else state._replace(
+            points=np.concatenate((state.points, image_points)),
+            metric=np.concatenate((state.metric, image_metrics)),
+        )
+    )
+    status, longest = _collapse_geometry(
+        extended, topology, removed_rows, target_rows, mode
+    )
+    if np.any(status != _OK):
+        return "invalid" if np.all(status != _UNCERTAIN) else "uncertain"
+    # The same split/collapse hysteresis as lifted collapses: removing or keeping
+    # a birth requires every new edge to stay below the split threshold.
+    births = bool(np.any(state.source_rows[removed_rows] < 0)) or bool(
+        np.any(state.source_rows[kept_rows] < 0)
+    )
+    if np.any(longest > (_UPPER if births else _COLLAPSE_LIMIT)):
+        return "hysteresis" if births else "long"
+    stencils = None
+    if image_count:
+        stencils = _located_stencil_bank(
+            source,
+            image_points,
+            mode,
+            allow_invalid_rows=True,
+            stencil_width=state.source_stencil_weights.shape[1],
+        )
+        if not np.all(stencils[3]):
+            return "unlocated"
+    return _PeriodicCollapse(
+        quotient_id=quotient_id,
+        length=float(np.min(topology.lengths[edges])),
+        removed=removed_rows,
+        kept=target_rows,
+        base=base,
+        image_points=image_points,
+        image_metrics=image_metrics,
+        image_keys=np.repeat(keys[root_kept][None, :], image_count, axis=0),
+        image_windings=np.asarray(image_windings, dtype=np.int64).reshape(
+            (image_count, windings.shape[1])
+        ),
+        image_stencils=stencils,
+        feature_additions=np.asarray(feature_additions, dtype=np.int64).reshape((-1, 4)),
+        items=np.union1d(
+            np.union1d(removed_ball, _ball_cells(topology, kept_rows)),
+            orphans.guard_cells,
+        ),
+        retired=orphans.retired,
+        retired_to=orphans.retired_to,
+    )
+
+
+def _periodic_collapse_operations(
+    state: _State,
+    topology: _Topology,
+    found: _CollapseCandidates,
+    mode: PredicateMode,
+    context: _PeriodicContext,
+    source: _Source,
+    /,
+) -> list[_PeriodicCollapse]:
+    """Complete quotient collapse operations, one per admissible edge orbit."""
+    half = found.edge.size // 2
+    short_edges = found.edge[:half]
+    canonical_removed = context.edge_canonical_vertices[short_edges, 0]
+    forward = found.removed[:half] == canonical_removed
+    first_candidates = np.where(forward, np.arange(half), np.arange(half) + half)
+    second_candidates = np.where(forward, np.arange(half) + half, np.arange(half))
+    candidate_orbits = context.edge_orbits[short_edges]
+    member_count = np.bincount(
+        context.edge_orbits, minlength=context.edge_quotient_ids.size
+    )
+    vertex_members = np.bincount(
+        context.vertex_orbits[context.vertex_orbits >= 0],
+        minlength=context.vertex_quotient_ids.size,
+    )
+    operations: list[_PeriodicCollapse] = []
+    for orbit in np.unique(candidate_orbits).tolist():
+        members = np.flatnonzero(candidate_orbits == orbit)
+        if members.size != member_count[orbit]:
+            continue
+        edges = short_edges[members]
+        for candidates in (first_candidates[members], second_candidates[members]):
+            removed = found.removed[candidates]
+            kept = found.kept[candidates]
+            removed_orbit = int(context.vertex_orbits[removed[0]])
+            kept_orbit = int(context.vertex_orbits[kept[0]])
+            # Seam members (one lifted cell, no class) or orbit members away
+            # from the edge need the quotient decision; otherwise every lifted
+            # member carries its full quotient ball.
+            cover = bool(
+                np.any(
+                    (topology.edge_cells[edges, 1] < 0)
+                    & (topology.edge_class[edges] == 0)
+                )
+                or vertex_members[removed_orbit] != np.unique(removed).size
+                or vertex_members[kept_orbit] != np.unique(kept).size
+            )
+            operation: _PeriodicCollapse | None
+            if cover:
+                covered = _periodic_cover_collapse(
+                    state,
+                    topology,
+                    context,
+                    source,
+                    mode,
+                    edges,
+                    removed,
+                    kept,
+                    int(context.edge_quotient_ids[orbit]),
+                )
+                operation = None if isinstance(covered, str) else covered
+            else:
+                endpoints = np.concatenate((removed, kept))
+                operation = None
+                if np.all(found.status[candidates] == _OK) and (
+                    np.unique(endpoints).size == endpoints.size
+                ):
+                    balls = [
+                        _ball_cells(topology, np.asarray(pair, dtype=np.int64))
+                        for pair in zip(removed.tolist(), kept.tolist(), strict=True)
+                    ]
+                    items = np.concatenate(balls)
+                    orphans = _collapse_orphans(state, topology, context, removed, kept)
+                    if np.unique(items).size == items.size and orphans is not None:
+                        items = np.union1d(items, orphans.guard_cells)
+                        operation = _PeriodicCollapse(
+                            quotient_id=int(context.edge_quotient_ids[orbit]),
+                            length=float(np.min(topology.lengths[edges])),
+                            removed=removed,
+                            kept=kept,
+                            base=state.points.shape[0],
+                            image_points=np.zeros((0, state.points.shape[1])),
+                            image_metrics=np.zeros(
+                                (0, state.points.shape[1], state.points.shape[1])
+                            ),
+                            image_keys=np.zeros((0, 2), dtype=np.int64),
+                            image_windings=np.zeros((0, 0), dtype=np.int64),
+                            image_stencils=None,
+                            feature_additions=np.zeros((0, 4), dtype=np.int64),
+                            items=items,
+                            retired=orphans.retired,
+                            retired_to=orphans.retired_to,
+                        )
+            if operation is not None:
+                operations.append(operation)
+                break
+    return operations
+
+
 def _collapse_round(
     state: _State,
     topology: _Topology,
@@ -1570,9 +2191,11 @@ def _collapse_round(
     best = np.minimum(found.status[:half], found.status[half:])
     counts = _tally(counts, np.where(best == _INADMISSIBLE, _INVALID, best))
     valid = np.flatnonzero(found.status == _OK)
-    if valid.size == 0:
+    if valid.size == 0 and periodic_context is None:
         return state, counts, 0
 
+    retired = np.zeros((0,), dtype=np.int64)
+    retired_to = np.zeros((0,), dtype=np.int64)
     if periodic_context is None:
         ids = state.vertex_ids
         removed = found.removed[valid]
@@ -1596,98 +2219,105 @@ def _collapse_round(
         removed = removed[selected]
         kept = kept[selected]
     else:
-        short_edges = found.edge[:half]
-        canonical_removed = periodic_context.edge_canonical_vertices[short_edges, 0]
-        first_candidates = np.where(
-            found.removed[:half] == canonical_removed,
-            np.arange(half),
-            np.arange(half) + half,
+        operations = _periodic_collapse_operations(
+            state, topology, found, mode, periodic_context, _source
         )
-        second_candidates = np.where(
-            found.removed[:half] == canonical_removed,
-            np.arange(half) + half,
-            np.arange(half),
-        )
-        candidate_orbits = periodic_context.edge_orbits[short_edges]
-        canonical_candidates = first_candidates.copy()
-        candidate_valid = np.zeros((half,), dtype=np.bool_)
-        for orbit in np.unique(candidate_orbits):
-            members = np.flatnonzero(candidate_orbits == orbit)
-            first_valid = found.status[first_candidates[members]] == _OK
-            second_valid = found.status[second_candidates[members]] == _OK
-            if np.all(first_valid):
-                candidate_valid[members] = True
-            elif np.all(second_valid):
-                canonical_candidates[members] = second_candidates[members]
-                candidate_valid[members] = True
-        removed = found.removed[canonical_candidates]
-        kept = found.kept[canonical_candidates]
-        for orbit in np.unique(candidate_orbits):
-            members = np.flatnonzero(candidate_orbits == orbit)
-            endpoints = np.concatenate((removed[members], kept[members]))
-            if np.unique(endpoints).size != endpoints.size:
-                candidate_valid[members] = False
-                continue
-            occupied_cells: set[int] = set()
-            conflict = False
-            for member in members:
-                _, positions = _expand(
-                    topology.ball_offsets,
-                    np.asarray((removed[member], kept[member]), dtype=np.int64),
-                )
-                cells = np.unique(topology.ball_cells[positions])
-                if any(int(cell_id) in occupied_cells for cell_id in cells):
-                    conflict = True
-                    break
-                occupied_cells.update(int(cell_id) for cell_id in cells)
-            if conflict:
-                candidate_valid[members] = False
-        eligible, operation_of_edge = _complete_periodic_operations(
-            short_edges,
-            periodic_context.edge_orbits,
-            candidate_valid,
-            periodic_context.edge_quotient_ids.size,
-        )
-        if eligible.size == 0:
+        if not operations:
             return state, counts, 0
-        orbit_lengths = np.full(
-            (periodic_context.edge_quotient_ids.size,), np.inf, dtype=np.float64
-        )
-        np.minimum.at(orbit_lengths, periodic_context.edge_orbits, topology.lengths)
         rank = _ranks(
-            orbit_lengths[eligible],
-            periodic_context.edge_quotient_ids[eligible],
+            np.asarray([operation.length for operation in operations], dtype=np.float64),
+            np.asarray(
+                [operation.quotient_id for operation in operations], dtype=np.int64
+            ),
         )
-        owner_a, position_a = _expand(topology.ball_offsets, removed)
-        owner_b, position_b = _expand(topology.ball_offsets, kept)
-        pair_operations = np.concatenate(
-            (operation_of_edge[owner_a], operation_of_edge[owner_b])
-        )
-        pair_items = np.concatenate(
-            (topology.ball_cells[position_a], topology.ball_cells[position_b])
-        )
-        active_pairs = pair_operations >= 0
-        selected_operations = _disjoint_selection(
+        selected = _disjoint_selection(
             rank,
-            pair_operations[active_pairs],
-            pair_items[active_pairs],
+            np.concatenate(
+                [
+                    np.full((operation.items.size,), index, dtype=np.int64)
+                    for index, operation in enumerate(operations)
+                ]
+            ),
+            np.concatenate([operation.items for operation in operations]),
             state.cells.shape[0],
         )
-        active_edges = operation_of_edge >= 0
-        selected_edges = np.flatnonzero(
-            active_edges & selected_operations[np.maximum(operation_of_edge, 0)]
-        )
-        removed = removed[selected_edges]
-        kept = kept[selected_edges]
+        removed_parts: list[np.ndarray] = []
+        kept_parts: list[np.ndarray] = []
+        retired_parts: list[np.ndarray] = [retired]
+        retired_to_parts: list[np.ndarray] = [retired_to]
+        for operation, chosen in zip(operations, selected.tolist(), strict=True):
+            if not chosen:
+                continue
+            kept_rows = operation.kept
+            first_image = state.points.shape[0]
+            if operation.image_points.shape[0]:
+                stencils = operation.image_stencils
+                if stencils is None:
+                    raise RuntimeError("Periodic collapse images lost their stencils.")
+                state = _append_vertices(
+                    state,
+                    operation.image_points,
+                    operation.image_metrics,
+                    stencils[0],
+                    stencils[1],
+                    stencils[2],
+                    stencils[4],
+                    operation.image_keys,
+                    operation.image_windings,
+                )
+                kept_rows = np.where(
+                    kept_rows >= operation.base,
+                    kept_rows - operation.base + first_image,
+                    kept_rows,
+                )
+            additions = operation.feature_additions
+            if additions.shape[0]:
+                owners = np.where(
+                    additions[:, 0] >= operation.base,
+                    additions[:, 0] - operation.base + first_image,
+                    additions[:, 0],
+                )
+                state = state._replace(
+                    feature_keys=np.concatenate(
+                        (state.feature_keys, _sorted_pairs(owners, additions[:, 1]))
+                    ),
+                    feature_class=np.concatenate((state.feature_class, additions[:, 2])),
+                    feature_protected=np.concatenate(
+                        (state.feature_protected, additions[:, 3].astype(np.bool_))
+                    ),
+                )
+            removed_parts.append(operation.removed)
+            kept_parts.append(kept_rows)
+            retired_parts.append(operation.retired)
+            retired_to_parts.append(operation.retired_to)
+        removed = np.concatenate(removed_parts)
+        kept = np.concatenate(kept_parts)
+        retired = np.concatenate(retired_parts)
+        retired_to = np.concatenate(retired_to_parts)
 
     updated = _collapse_records(
         _collapse_cells(state, topology, removed, kept), removed, kept
     )
+    # Retired lifted members have no edges left; their quotient edges keep
+    # their lineage and feature records on the surviving members.
+    lineage = ~np.any(np.isin(updated.lineage_keys, retired), axis=1)
+    features = ~np.any(np.isin(updated.feature_keys, retired), axis=1)
     alive = updated.alive.copy()
     alive[removed] = False
+    alive[retired] = False
     collapse_to = updated.collapse_to.copy()
     collapse_to[removed] = kept
-    updated = updated._replace(alive=alive, collapse_to=collapse_to)
+    collapse_to[retired] = retired_to
+    updated = updated._replace(
+        alive=alive,
+        collapse_to=collapse_to,
+        lineage_keys=updated.lineage_keys[lineage],
+        lineage_sources=updated.lineage_sources[lineage],
+        lineage_ranks=updated.lineage_ranks[lineage],
+        feature_keys=updated.feature_keys[features],
+        feature_class=updated.feature_class[features],
+        feature_protected=updated.feature_protected[features],
+    )
     return (
         updated,
         counts._replace(collapses=counts.collapses + removed.size),
@@ -1696,6 +2326,360 @@ def _collapse_round(
 
 
 # ------------------------------------------------------------------ flip
+
+
+class _SeamFlip(NamedTuple):
+    """Flip of a seam edge orbit whose two lifted members each bound one cell.
+
+    ``children`` holds state rows; values ``>= base`` index ``image_*`` rows
+    that must be appended as new lifted images of an apex vertex orbit.
+    """
+
+    quotient_id: int
+    gain: float
+    removed_cells: np.ndarray
+    children: np.ndarray
+    base: int
+    image_points: np.ndarray
+    image_metrics: np.ndarray
+    image_keys: np.ndarray
+    image_windings: np.ndarray
+    image_stencils: tuple[Any, ...] | None
+    flipped_edges: np.ndarray
+    items: np.ndarray
+    # ``(row, row, class, protected)`` feature records of new lifted members of
+    # classified quotient edges.
+    feature_additions: np.ndarray
+
+
+def _reduced_winding(values: np.ndarray, orders: np.ndarray, /) -> tuple[int, ...]:
+    return tuple(
+        int(value)
+        for value in reduce_periodic_exponents(
+            np.asarray(values, dtype=np.int64)[None, :], orders
+        )[0]
+    )
+
+
+def _cover_edge_exists(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext,
+    first: int,
+    second: int,
+    orders: np.ndarray,
+    /,
+) -> bool:
+    """Whether two lifted rows of one frame are already adjacent in the cover."""
+    keys = state.orbit_keys
+    windings = state.orbit_windings
+    if keys is None or windings is None:
+        return False
+    rows = np.flatnonzero(context.vertex_orbits == context.vertex_orbits[first])
+    label = (*map(int, keys[second]), *_reduced_winding(windings[second], orders))
+    return label in _cover_labels(state, topology, rows, first, orders)
+
+
+def _periodic_seam_flips(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext,
+    source: _Source,
+    mode: PredicateMode,
+    /,
+) -> list[_SeamFlip]:
+    """Improving flips of seam edge orbits, decided on the quotient.
+
+    A fundamental-domain seam edge has two lifted members, each bounding one
+    lifted cell. Its quotient flip joins the two apexes: both new cells are
+    placed in one member's frame, with the other apex as its exact deck image
+    there (an existing lifted member of that orbit or a new lifted image). The
+    frame is chosen so that no lifted vertex row loses its last cell.
+    """
+    cell_value = source.periodic_cell
+    keys = state.orbit_keys
+    windings = state.orbit_windings
+    if cell_value is None or keys is None or windings is None:
+        return []
+    seam = (
+        (topology.edge_cells[:, 1] < 0)
+        & (topology.edge_class == 0)
+        & ~topology.edge_protected
+    )
+    if not np.any(seam):
+        return []
+    orders = identification_orders(cell_value)
+    orbits = context.vertex_orbits
+    ball_sizes = np.diff(topology.ball_offsets)
+    base = state.points.shape[0]
+    dimension = state.points.shape[1]
+
+    def corners(cell: int, edge: int) -> tuple[int, int, int]:
+        rows = state.cells[cell]
+        local = int(np.flatnonzero(topology.cell_edges[cell] == edge)[0])
+        return int(rows[local]), int(rows[(local + 1) % 3]), int(rows[(local + 2) % 3])
+
+    def existing_row(row: int, winding: tuple[int, ...]) -> int | None:
+        for member in np.flatnonzero(orbits == orbits[row]).tolist():
+            if _reduced_winding(windings[member], orders) == winding:
+                return int(member)
+        return None
+
+    flips: list[_SeamFlip] = []
+    for orbit in np.unique(context.edge_orbits[seam]).tolist():
+        members = np.flatnonzero(context.edge_orbits == orbit)
+        if members.size != 2 or not np.all(seam[members]):
+            continue
+        first_edge, second_edge = (int(member) for member in members)
+        cell_a = int(topology.edge_cells[first_edge, 0])
+        cell_b = int(topology.edge_cells[second_edge, 0])
+        if cell_a == cell_b or state.cell_region[cell_a] != state.cell_region[cell_b]:
+            continue
+        u_a, v_a, x_a = corners(cell_a, first_edge)
+        p_b, q_b, x_b = corners(cell_b, second_edge)
+        # The second member's cell traverses the quotient edge backwards.
+        if orbits[p_b] != orbits[v_a] or orbits[q_b] != orbits[u_a]:
+            continue
+        shift = windings[u_a] - windings[q_b]
+        if _reduced_winding(windings[v_a] - windings[p_b], orders) != _reduced_winding(
+            shift, orders
+        ) or any(
+            context.vertex_stabilizers[row] for row in (u_a, v_a, x_a, p_b, q_b, x_b)
+        ):
+            continue
+        far_b = _reduced_winding(windings[x_b] + shift, orders)
+        far_a = _reduced_winding(windings[x_a] - shift, orders)
+        if orbits[x_a] == orbits[x_b] and far_b == _reduced_winding(
+            windings[x_a], orders
+        ):
+            continue
+        diagonal_label = (*map(int, keys[x_b]), *far_b)
+        if diagonal_label in _cover_labels(
+            state, topology, np.flatnonzero(orbits == orbits[x_a]), x_a, orders
+        ):
+            continue
+
+        def keeps_lifted_rows(cell: int, edge: int, rows: tuple[int, ...]) -> bool:
+            # The cell leaves its frame: no corner row may lose its last cell and
+            # no outer lifted edge (with its feature and lineage records) may
+            # lose its last cell.
+            outer = [int(value) for value in topology.cell_edges[cell] if value != edge]
+            return all(ball_sizes[row] > 1 for row in rows) and bool(
+                np.all(topology.edge_cells[outer, 1] >= 0)
+            )
+
+        options: list[tuple[bool, tuple[int, int, int], int, tuple[int, ...]]] = []
+        if keeps_lifted_rows(cell_b, second_edge, (p_b, q_b, x_b)):
+            options.append(
+                (existing_row(x_b, far_b) is None, (u_a, v_a, x_a), x_b, far_b)
+            )
+        if keeps_lifted_rows(cell_a, first_edge, (u_a, v_a, x_a)):
+            # The second cell traverses the edge p_b -> q_b counterclockwise.
+            options.append(
+                (existing_row(x_a, far_a) is None, (p_b, q_b, x_b), x_a, far_a)
+            )
+        if not options:
+            continue
+        needs_image, (u, v, x0), apex, apex_winding = min(
+            options, key=lambda item: item[0]
+        )
+        image_points = np.zeros((0, dimension), dtype=np.float64)
+        image_metrics = np.zeros((0, dimension, dimension), dtype=np.float64)
+        image_windings = np.zeros((0, windings.shape[1]), dtype=np.int64)
+        x1 = existing_row(apex, apex_winding)
+        points = state.points
+        tensors = state.metric
+        if x1 is None:
+            representative = int(context.vertex_representatives[apex])
+            isometry = exact_periodic_element(
+                cell_value,
+                np.asarray(apex_winding, dtype=np.int64) - windings[representative],
+            )
+            image_points = _exact_periodic_point(isometry, state.points[representative])[
+                None, :
+            ]
+            image_metrics = _exact_periodic_metric(
+                isometry, state.metric[representative]
+            )[None, :, :]
+            image_windings = np.asarray(apex_winding, dtype=np.int64)[None, :]
+            points = np.concatenate((points, image_points))
+            tensors = np.concatenate((tensors, image_metrics))
+            x1 = base
+        children = np.asarray(((u, x1, x0), (v, x0, x1)), dtype=np.int64)
+        status = max(
+            int(
+                _orientation(
+                    points[children[:, 0]],
+                    points[children[:, 1]],
+                    points[children[:, 2]],
+                    mode,
+                ).max()
+            ),
+            _OK,
+        )
+        lengths = _metric_lengths(
+            tensors,
+            points,
+            np.sort(
+                np.stack((children, children[:, (1, 2, 0)]), axis=2).reshape((-1, 2)),
+                axis=1,
+            ),
+        ).reshape((-1, 3))
+        quality = _quality(lengths)
+        after = float(np.min(quality))
+        before = float(min(topology.quality[cell_a], topology.quality[cell_b]))
+        # Both lifted members of the seam orbit must improve on the quotient.
+        if status != _OK or not bool(
+            _flip_admissible(
+                np.asarray(
+                    ((topology.quality[cell_a], topology.quality[cell_b]),),
+                    dtype=np.float64,
+                ),
+                quality[None, :],
+                lengths[:1, 1],
+                np.min(_deviation_codes(topology.lengths[members]), keepdims=True),
+            )[0]
+        ):
+            continue
+        # The cell leaving its frame hands each classified outer edge to the new
+        # lifted member of that quotient edge in the kept frame.
+        if u == u_a:
+            lost_cell, lost_edge = cell_b, second_edge
+            lost_map = {p_b: v_a, q_b: u_a, x_b: x1}
+        else:
+            lost_cell, lost_edge = cell_a, first_edge
+            lost_map = {u_a: q_b, v_a: p_b, x_a: x1}
+        feature_additions: list[tuple[int, int, int, int]] = []
+        for outer in topology.cell_edges[lost_cell].tolist():
+            if outer == lost_edge or not (
+                topology.edge_class[outer] > 0 or topology.edge_protected[outer]
+            ):
+                continue
+            first, second = (lost_map[int(row)] for row in topology.edges[outer])
+            if (
+                max(first, second) < base
+                and _lookup(
+                    topology.codes,
+                    _codes(_sorted_pairs(np.asarray((first,)), np.asarray((second,)))),
+                )[0]
+                >= 0
+            ):
+                continue
+            feature_additions.append(
+                (
+                    first,
+                    second,
+                    int(topology.edge_class[outer]),
+                    int(topology.edge_protected[outer]),
+                )
+            )
+        stencils = None
+        # The corners of both cells lose a cell; guarding their balls keeps two
+        # selected flips from emptying one lifted row together.
+        items = _ball_cells(
+            topology, np.asarray((u_a, v_a, x_a, p_b, q_b, x_b), dtype=np.int64)
+        )
+        if needs_image:
+            stencils = _located_stencil_bank(
+                source,
+                image_points,
+                mode,
+                allow_invalid_rows=True,
+                stencil_width=state.source_stencil_weights.shape[1],
+            )
+            if not np.all(stencils[3]):
+                continue
+            # Two flips must not create the same lifted image in one round.
+            items = np.union1d(
+                items, _ball_cells(topology, np.flatnonzero(orbits == orbits[apex]))
+            )
+        flips.append(
+            _SeamFlip(
+                quotient_id=int(context.edge_quotient_ids[orbit]),
+                gain=before - after,
+                removed_cells=np.asarray((cell_a, cell_b), dtype=np.int64),
+                children=children,
+                base=base,
+                image_points=image_points,
+                image_metrics=image_metrics,
+                image_keys=np.repeat(keys[apex][None, :], image_points.shape[0], axis=0),
+                image_windings=image_windings,
+                image_stencils=stencils,
+                flipped_edges=members.astype(np.int64),
+                items=items,
+                feature_additions=np.asarray(feature_additions, dtype=np.int64).reshape(
+                    (-1, 4)
+                ),
+            )
+        )
+    return flips
+
+
+class _FlipCandidates(NamedTuple):
+    c0: np.ndarray
+    c1: np.ndarray
+    x0: np.ndarray
+    x1: np.ndarray
+    left: np.ndarray
+    right: np.ndarray
+    quality: np.ndarray
+    status: np.ndarray
+    improving: np.ndarray
+
+
+def _flip_candidates(
+    state: _State, topology: _Topology, candidates: np.ndarray, mode: PredicateMode, /
+) -> _FlipCandidates:
+    """Children, validity, and admission of flipping interior edges ``candidates``."""
+    c0 = topology.edge_cells[candidates, 0]
+    c1 = topology.edge_cells[candidates, 1]
+    local = np.argmax(topology.cell_edges[c0] == candidates[:, None], axis=1)
+    rows = state.cells[c0]
+    span = np.arange(candidates.size)
+    u = rows[span, local]
+    v = rows[span, (local + 1) % 3]
+    x0 = rows[span, (local + 2) % 3]
+    x1 = topology.edge_apex[candidates, 1]
+
+    def outer(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+        return topology.lengths[
+            _lookup(topology.codes, _codes(_sorted_pairs(first, second)))
+        ]
+
+    diagonal = _metric_lengths(state.metric, state.points, _sorted_pairs(x0, x1))
+    quality = np.stack(
+        (
+            _quality(np.stack((outer(u, x1), diagonal, outer(x0, u)), axis=1)),
+            _quality(np.stack((outer(v, x0), diagonal, outer(x1, v)), axis=1)),
+        ),
+        axis=1,
+    )
+    points = state.points
+    status = np.maximum(
+        _orientation(points[u], points[x1], points[x0], mode),
+        _orientation(points[v], points[x0], points[x1], mode),
+    )
+    duplicate = _lookup(topology.codes, _codes(_sorted_pairs(x0, x1))) >= 0
+    status = np.where(duplicate, _INVALID, status)
+    # A quality flip may not create an edge the next metric pass must
+    # immediately edit; a deviation flip only shortens the diagonal's deviation.
+    improving = _flip_admissible(
+        np.stack((topology.quality[c0], topology.quality[c1]), axis=1),
+        quality,
+        diagonal,
+        _deviation_codes(topology.lengths[candidates]),
+    )
+    return _FlipCandidates(
+        c0,
+        c1,
+        x0,
+        x1,
+        np.stack((u, x1, x0), axis=1),
+        np.stack((v, x0, x1), axis=1),
+        quality,
+        status,
+        improving,
+    )
 
 
 def _flip_round(
@@ -1715,44 +2699,26 @@ def _flip_round(
         & ~topology.edge_protected
         & (state.cell_region[first_cell] == state.cell_region[np.maximum(second_cell, 0)])
     )
-    if candidates.size == 0:
+    if candidates.size == 0 and periodic_context is None:
         return state, counts, 0
-    c0 = first_cell[candidates]
-    c1 = second_cell[candidates]
-    local = np.argmax(topology.cell_edges[c0] == candidates[:, None], axis=1)
-    rows = state.cells[c0]
-    span = np.arange(candidates.size)
-    u = rows[span, local]
-    v = rows[span, (local + 1) % 3]
-    x0 = rows[span, (local + 2) % 3]
-    x1 = topology.edge_apex[candidates, 1]
-    left = np.stack((u, x1, x0), axis=1)
-    right = np.stack((v, x0, x1), axis=1)
-    triangles = np.concatenate((left, right))
-    lengths = _metric_lengths(
-        state.metric,
-        state.points,
-        np.stack((triangles, triangles[:, (1, 2, 0)]), axis=2).reshape((-1, 2)),
-    ).reshape((-1, 3))
-    quality = _quality(lengths)
-    after = np.minimum(quality[: candidates.size], quality[candidates.size :])
+    found = _flip_candidates(state, topology, candidates, mode)
+    c0, c1, x0, x1 = found.c0, found.c1, found.x0, found.x1
+    left, right, status, improving = (
+        found.left,
+        found.right,
+        found.status,
+        found.improving,
+    )
+    after = np.min(found.quality, axis=1)
     before = np.minimum(topology.quality[c0], topology.quality[c1])
-    points = state.points
-    status = np.maximum(
-        _orientation(points[u], points[x1], points[x0], mode),
-        _orientation(points[v], points[x0], points[x1], mode),
-    )
-    duplicate = _lookup(topology.codes, _codes(_sorted_pairs(x0, x1))) >= 0
-    status = np.where(duplicate, _INVALID, status)
-    diagonal_lengths = lengths[:, 1].reshape((2, candidates.size))
-    metric_admissible = np.all(
-        (diagonal_lengths >= _LOWER) & (diagonal_lengths <= _UPPER), axis=0
-    )
-    # A flip may not create an edge the next metric pass must immediately edit.
-    improving = (after > before + _IMPROVEMENT) & metric_admissible
     counts = _tally(counts, status[improving])
     valid = np.flatnonzero(improving & (status == _OK))
-    if valid.size == 0:
+    seam_flips: list[_SeamFlip] = []
+    if periodic_context is not None:
+        seam_flips = _periodic_seam_flips(
+            state, topology, periodic_context, _source, mode
+        )
+    if valid.size == 0 and not seam_flips:
         return state, counts, 0
     if periodic_context is None:
         ids = state.vertex_ids
@@ -1767,12 +2733,32 @@ def _flip_round(
                 state.cells.shape[0],
             )
         ]
+        selected_seam: list[_SeamFlip] = []
     else:
         candidate_valid = improving & (status == _OK)
+        orders = (
+            None
+            if _source.periodic_cell is None
+            else identification_orders(_source.periodic_cell)
+        )
         for orbit in np.unique(periodic_context.edge_orbits[candidates]):
             members = np.flatnonzero(periodic_context.edge_orbits[candidates] == orbit)
             incident_cells = np.concatenate((c0[members], c1[members]))
             if np.unique(incident_cells).size != incident_cells.size:
+                candidate_valid[members] = False
+            elif (
+                orders is not None
+                and bool(np.all(candidate_valid[members]))
+                and _cover_edge_exists(
+                    state,
+                    topology,
+                    periodic_context,
+                    int(x0[members[0]]),
+                    int(x1[members[0]]),
+                    orders,
+                )
+            ):
+                # The new diagonal already exists through a seam image.
                 candidate_valid[members] = False
         eligible, operation_of_candidate = _complete_periodic_operations(
             candidates,
@@ -1780,8 +2766,6 @@ def _flip_round(
             candidate_valid,
             periodic_context.edge_quotient_ids.size,
         )
-        if eligible.size == 0:
-            return state, counts, 0
         orbit_gain = np.full(
             (periodic_context.edge_quotient_ids.size,), np.inf, dtype=np.float64
         )
@@ -1790,9 +2774,22 @@ def _flip_round(
             periodic_context.edge_orbits[candidates],
             before - after,
         )
+        operation_count = eligible.size + len(seam_flips)
+        if operation_count == 0:
+            return state, counts, 0
         rank = _ranks(
-            orbit_gain[eligible],
-            periodic_context.edge_quotient_ids[eligible],
+            np.concatenate(
+                (
+                    orbit_gain[eligible],
+                    np.asarray([flip.gain for flip in seam_flips], dtype=np.float64),
+                )
+            ),
+            np.concatenate(
+                (
+                    periodic_context.edge_quotient_ids[eligible],
+                    np.asarray([flip.quotient_id for flip in seam_flips], dtype=np.int64),
+                )
+            ),
         )
         pair_operations = operation_of_candidate[
             np.concatenate((np.arange(candidates.size), np.arange(candidates.size)))
@@ -1801,26 +2798,90 @@ def _flip_round(
         inside = pair_operations >= 0
         selected_operations = _disjoint_selection(
             rank,
-            pair_operations[inside],
-            pair_items[inside],
+            np.concatenate(
+                (
+                    pair_operations[inside],
+                    *(
+                        np.full((flip.items.size,), eligible.size + index, np.int64)
+                        for index, flip in enumerate(seam_flips)
+                    ),
+                )
+            ),
+            np.concatenate((pair_items[inside], *(flip.items for flip in seam_flips))),
             state.cells.shape[0],
         )
         selected = np.flatnonzero(
             (operation_of_candidate >= 0)
             & selected_operations[np.maximum(operation_of_candidate, 0)]
         )
+        selected_seam = [
+            flip
+            for index, flip in enumerate(seam_flips)
+            if selected_operations[eligible.size + index]
+        ]
     count = selected.size
-    children = np.concatenate((left[selected], right[selected]))
+    removed_cells = [c0[selected], c1[selected]]
+    children_parts = [left[selected], right[selected]]
     child = np.arange(2 * count, dtype=np.int64)
+    child_of = [child, child]
+    parent_of = [c0[selected], c1[selected], c1[selected], c0[selected]]
+    flipped_edges = [candidates[selected]]
+    next_child = 2 * count
+    for flip in selected_seam:
+        flip_children = flip.children
+        first_image = state.points.shape[0]
+        if flip.image_points.shape[0]:
+            stencils = flip.image_stencils
+            if stencils is None:
+                raise RuntimeError("Periodic flip images lost their stencils.")
+            state = _append_vertices(
+                state,
+                flip.image_points,
+                flip.image_metrics,
+                stencils[0],
+                stencils[1],
+                stencils[2],
+                stencils[4],
+                flip.image_keys,
+                flip.image_windings,
+            )
+            flip_children = np.where(
+                flip_children >= flip.base,
+                flip_children - flip.base + first_image,
+                flip_children,
+            )
+        additions = flip.feature_additions
+        if additions.shape[0]:
+            ends = np.where(
+                additions[:, :2] >= flip.base,
+                additions[:, :2] - flip.base + first_image,
+                additions[:, :2],
+            )
+            state = state._replace(
+                feature_keys=np.concatenate((state.feature_keys, np.sort(ends, axis=1))),
+                feature_class=np.concatenate((state.feature_class, additions[:, 2])),
+                feature_protected=np.concatenate(
+                    (state.feature_protected, additions[:, 3].astype(np.bool_))
+                ),
+            )
+        first, second = (int(cell) for cell in flip.removed_cells)
+        removed_cells.append(flip.removed_cells)
+        children_parts.append(flip_children)
+        pair = np.asarray((next_child, next_child + 1), dtype=np.int64)
+        child_of.append(np.concatenate((pair, pair)))
+        parent_of.append(np.asarray((first, second, second, first), dtype=np.int64))
+        flipped_edges.append(flip.flipped_edges)
+        next_child += 2
+    count += len(selected_seam)
     updated = _replace_cells(
         state,
-        np.concatenate((c0[selected], c1[selected])),
-        children,
-        np.concatenate((child, child)),
-        np.concatenate((c0[selected], c1[selected], c1[selected], c0[selected])),
+        np.concatenate(removed_cells),
+        np.concatenate(children_parts),
+        np.concatenate(child_of),
+        np.concatenate(parent_of),
         _SWAPPED,
     )
-    flipped = np.sort(_codes(topology.edges[candidates[selected]]))
+    flipped = np.sort(_codes(topology.edges[np.concatenate(flipped_edges)]))
     survive = _lookup(flipped, _codes(updated.lineage_keys)) < 0
     updated = updated._replace(
         lineage_keys=updated.lineage_keys[survive],
@@ -1861,6 +2922,13 @@ def _proposal_metric(
     state: _State, topology: _Topology, vertex: Any, target: Any, /
 ) -> Any:
     """Log-Euclidean P1 metric at each proposal inside the current vertex ball."""
+    return _scored_proposal_metric(state, topology, vertex, target)[0]
+
+
+def _scored_proposal_metric(
+    state: _State, topology: _Topology, vertex: Any, target: Any, /
+) -> Any:
+    """Proposal metrics and the best minimum barycentric weight of each target."""
     owner, position = _expand(topology.ball_offsets, vertex)
     cell = topology.ball_cells[position]
     weights = _barycentric(state.points[state.cells[cell]], target[owner])
@@ -1868,7 +2936,87 @@ def _proposal_metric(
     order = np.lexsort((cell, -score, owner))
     first = order[np.searchsorted(owner[order], np.arange(vertex.size))]
     samples = state.metric[state.cells[cell[first]]]
-    return _interpolate_metrics(samples, _normalized(weights[first]))
+    return _interpolate_metrics(samples, _normalized(weights[first])), score[first]
+
+
+def _periodic_orbit_pull(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext,
+    members: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Spring displacement of an interior vertex orbit in its representative frame.
+
+    A seam vertex has several lifted members, each holding part of its quotient
+    ball, so the pull sums every member's edges, counting each quotient edge
+    orbit once, and maps each member-frame vector back through the orthogonal
+    linear part of that member's exact deck element.
+    """
+    owner, position = _expand(topology.neighbor_offsets, members)
+    other = topology.neighbor_values[position]
+    edge = _lookup(topology.codes, _codes(_sorted_pairs(members[owner], other)))
+    _, first = np.unique(context.edge_orbits[edge], return_index=True)
+    owner, other, edge = owner[first], other[first], edge[first]
+    length = topology.lengths[edge]
+    pull = (1.0 - 1.0 / length)[:, None] * (
+        state.points[other] - state.points[members[owner]]
+    )
+    dimension = state.points.shape[1]
+    total = np.zeros((dimension,), dtype=np.float64)
+    for row, vector in zip(owner.tolist(), pull, strict=True):
+        linear = np.asarray(
+            context.vertex_exact_isometries[int(members[row])], dtype=np.float64
+        )[:dimension, :dimension]
+        total += linear.T @ vector
+    return total / max(int(owner.size), 1)
+
+
+def _relocation_deviation_gains(
+    state: _State,
+    topology: _Topology,
+    vertices: np.ndarray,
+    targets: np.ndarray,
+    metrics: np.ndarray,
+    proposals: np.ndarray,
+    edge_orbits: np.ndarray | None,
+    /,
+) -> np.ndarray:
+    """Whether each relocation proposal strictly improves its edges' deviations.
+
+    Row ``i`` moves ``vertices[i]`` to ``targets[i]`` with ``metrics[i]``; rows
+    sharing a proposal ID move together (the lifted members of one periodic
+    vertex orbit). A proposal's affected edges are those incident to its moved
+    rows, one per edge orbit when ``edge_orbits`` is given. Topology does not
+    change, so the before and after edge sets coincide.
+    """
+    count = state.points.shape[0]
+    owner, position = _expand(topology.neighbor_offsets, vertices)
+    other = topology.neighbor_values[position]
+    edges = _lookup(topology.codes, _codes(_sorted_pairs(vertices[owner], other)))
+    # A neighbor moved by the same proposal is read at its proposed position.
+    mover_keys = proposals * count + vertices
+    mover_order = np.argsort(mover_keys, kind="stable")
+    lookup_keys = proposals[owner] * count + other
+    spot = np.minimum(
+        np.searchsorted(mover_keys[mover_order], lookup_keys), mover_keys.size - 1
+    )
+    moved_other = mover_keys[mover_order[spot]] == lookup_keys
+    other_rows = np.where(moved_other, count + mover_order[spot], other)
+    after = _metric_lengths(
+        np.concatenate((state.metric, metrics)),
+        np.concatenate((state.points, targets)),
+        np.stack((count + owner, other_rows), axis=1),
+    )
+    keys = edges if edge_orbits is None else edge_orbits[edges]
+    gains = np.zeros((int(np.max(proposals)) + 1,), dtype=np.bool_)
+    for proposal in np.unique(proposals).tolist():
+        rows = np.flatnonzero(proposals[owner] == proposal)
+        _, first = np.unique(keys[rows], return_index=True)
+        gains[proposal] = _deviation_improves(
+            topology.lengths[edges[rows[first]]], after[rows[first]]
+        )
+    return gains[proposals]
 
 
 def _proposal_checks(
@@ -1984,10 +3132,28 @@ def _relocation_round_nonperiodic(
         metric_bank = metric_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size, 2, 2))
         status_bank = status_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size))
         quality_bank = quality_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size))
-        improving_bank = (
+        quality_gain = quality_bank > before[None, :] + _IMPROVEMENT
+        # A move that keeps its star's minimum quality may also be accepted
+        # when it strictly improves the deviation measure of its edges.
+        deviation_bank = np.zeros_like(quality_gain)
+        lanes, columns = np.nonzero(
             active_bank
-            & (quality_bank > before[None, :] + _IMPROVEMENT)
+            & ~quality_gain
+            & (quality_bank >= before[None, :])
             & (status_bank == _OK)
+        )
+        if lanes.size:
+            deviation_bank[lanes, columns] = _relocation_deviation_gains(
+                state,
+                topology,
+                vertices[columns],
+                target_bank[lanes, columns],
+                metric_bank[lanes, columns],
+                np.arange(lanes.size, dtype=np.int64),
+                None,
+            )
+        improving_bank = (
+            active_bank & (quality_gain | deviation_bank) & (status_bank == _OK)
         )
         candidate_indices = np.flatnonzero(improving_bank.reshape((-1,)))
         source_stencil_rows = np.full((improving_bank.size,), -1, dtype=np.int64)
@@ -2025,7 +3191,7 @@ def _relocation_round_nonperiodic(
             candidate_support[candidate_indices] = source_stencils[3]
         for lane in range(_RELOCATION_SCALE_LANES):
             active = pending & active_bank[lane]
-            improving = active & (quality_bank[lane] > before + _IMPROVEMENT)
+            improving = active & (quality_gain[lane] | deviation_bank[lane])
             accepted = improving & (status_bank[lane] == _OK)
             lane_rows = lane * vertices.size + np.arange(vertices.size)
             has_support = candidate_support[lane_rows]
@@ -2204,23 +3370,26 @@ def _relocation_round_periodic(
         # ``origin`` and ``member_displacement`` follow member order, while
         # ``representative_position`` indexes the movable-vertex bank.
         representative_member = int(np.flatnonzero(members == representative)[0])
+        # A seam orbit splits its quotient ball over several lifted members; its
+        # spring pull and proposal metric are taken over the whole quotient ball.
+        seam_orbit = members.size > 1 and bool(
+            np.all(topology.kind[members] == _INTERIOR)
+        )
+        representative_displacement = (
+            _periodic_orbit_pull(state, topology, periodic_context, members)
+            if seam_orbit
+            else member_displacement[representative_member]
+        )
         scale = 1.0
         had_uncertain = False
         had_invalid = False
         accepted: dict[str, Any] | None = None
         while True:
             representative_target = (
-                origin[representative_member]
-                + scale * member_displacement[representative_member]
+                origin[representative_member] + scale * representative_displacement
             )
             if np.array_equal(representative_target, origin[representative_member]):
                 break
-            representative_metric = _proposal_metric(
-                state,
-                topology,
-                np.asarray((representative,), dtype=np.int64),
-                representative_target[None, :],
-            )[0]
             target = np.stack(
                 [
                     _exact_periodic_point(
@@ -2230,6 +3399,25 @@ def _relocation_round_periodic(
                     for vertex in members.tolist()
                 ]
             )
+            if seam_orbit:
+                member_metrics, scores = _scored_proposal_metric(
+                    state, topology, members, target
+                )
+                best = int(np.argmax(scores))
+                dimension = state.points.shape[1]
+                linear = np.asarray(
+                    periodic_context.vertex_exact_isometries[int(members[best])],
+                    dtype=np.float64,
+                )[:dimension, :dimension]
+                pulled = linear.T @ member_metrics[best] @ linear
+                representative_metric = 0.5 * (pulled + pulled.T)
+            else:
+                representative_metric = _proposal_metric(
+                    state,
+                    topology,
+                    np.asarray((representative,), dtype=np.int64),
+                    representative_target[None, :],
+                )[0]
             metric = np.stack(
                 [
                     _exact_periodic_metric(
@@ -2244,8 +3432,27 @@ def _relocation_round_periodic(
             status, after = _proposal_checks(
                 state, topology, members, target, metric, mode
             )
-            improving = after > before + _IMPROVEMENT
-            valid = bool(np.all((status == _OK) & improving))
+            # The quotient ball is the union of the member balls: a seam member
+            # holds only part of it, so the orbit minimum must improve, or keep
+            # while the orbit's quotient edges strictly improve their deviations.
+            improving = float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT
+            if (
+                not improving
+                and bool(np.all(status == _OK))
+                and float(np.min(after)) >= float(np.min(before))
+            ):
+                improving = bool(
+                    _relocation_deviation_gains(
+                        state,
+                        topology,
+                        members,
+                        target,
+                        metric,
+                        np.zeros((members.size,), dtype=np.int64),
+                        periodic_context.edge_orbits,
+                    )[0]
+                )
+            valid = bool(np.all(status == _OK) and improving)
             geometry_invalid = False
             if valid:
                 for member_position, vertex in enumerate(members.tolist()):
@@ -2282,7 +3489,7 @@ def _relocation_round_periodic(
                     "source_stencils": source_stencils,
                     "cavity": cavity,
                     "quotient_id": int(periodic_context.vertex_quotient_ids[int(orbit)]),
-                    "gain": float(np.min(after - before)),
+                    "gain": float(np.min(after) - np.min(before)),
                     "badness": float(badness[representative_position]),
                 }
                 break
@@ -2801,6 +4008,14 @@ def _vertex_relations(state: Any, final: Any, /) -> Any:
     ids = state.vertex_ids
     rows = np.flatnonzero((state.source_rows >= 0) & state.alive & state.moved)
     collapsed = np.flatnonzero((state.source_rows >= 0) & ~state.alive)
+    if state.orbit_keys is not None:
+        # A retired lifted member points at another member of its own vertex
+        # orbit; its quotient vertex survives and is not a collapse.
+        retired = np.all(
+            state.orbit_keys[collapsed] == state.orbit_keys[state.collapse_to[collapsed]],
+            axis=1,
+        )
+        collapsed = collapsed[~retired]
     survivor = _surviving(state)[collapsed]
     sources = np.concatenate((ids[rows], ids[collapsed]))
     targets = np.concatenate((ids[rows], final[survivor]))
@@ -3107,6 +4322,126 @@ def _periodic_state_context(
     )
 
 
+def _collapse_refusal(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext | None,
+    source: _Source,
+    mode: PredicateMode,
+    members: np.ndarray,
+    removed: np.ndarray,
+    kept: np.ndarray,
+    /,
+) -> str:
+    """Why collapsing ``removed`` onto ``kept`` along lifted ``members`` is refused."""
+    if not np.all(_collapse_admissible(topology, members, removed, kept)):
+        return "inadmissible"
+    if context is not None:
+        vertex_members = np.bincount(
+            context.vertex_orbits[context.vertex_orbits >= 0],
+            minlength=context.vertex_quotient_ids.size,
+        )
+        if (
+            np.any(
+                (topology.edge_cells[members, 1] < 0)
+                & (topology.edge_class[members] == 0)
+            )
+            or vertex_members[context.vertex_orbits[removed[0]]]
+            != np.unique(removed).size
+            or vertex_members[context.vertex_orbits[kept[0]]] != np.unique(kept).size
+        ):
+            refusal = _periodic_cover_collapse(
+                state, topology, context, source, mode, members, removed, kept, 0
+            )
+            return refusal if isinstance(refusal, str) else "unselected"
+    if not np.all(_collapse_link(topology, members, removed, kept)):
+        return "link"
+    status, longest = _collapse_geometry(state, topology, removed, kept, mode)
+    if np.any(status != _OK):
+        return "invalid" if np.all(status != _UNCERTAIN) else "uncertain"
+    births = (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0)
+    if np.any(births & (longest > _UPPER)):
+        return "hysteresis"
+    if np.any(longest > _COLLAPSE_LIMIT):
+        return "long"
+    return "unselected"
+
+
+def _flip_refusal(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext | None,
+    edge: int,
+    mode: PredicateMode,
+    /,
+) -> str:
+    """Why flipping ``edge`` is refused."""
+    first, second = (int(cell) for cell in topology.edge_cells[edge])
+    if topology.edge_class[edge] > 0 or topology.edge_protected[edge]:
+        return "classified"
+    if second < 0:
+        return "boundary" if context is None else "seam"
+    if state.cell_region[first] != state.cell_region[second]:
+        return "interface"
+    found = _flip_candidates(state, topology, np.asarray((edge,), dtype=np.int64), mode)
+    status = int(found.status[0])
+    if status != _OK:
+        return "uncertain" if status == _UNCERTAIN else "invalid"
+    return "unselected" if bool(found.improving[0]) else "not-improving"
+
+
+def _stall_findings(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext | None,
+    source: _Source,
+    mode: PredicateMode,
+    /,
+) -> tuple[tuple[float, str], ...]:
+    """Length and refusal reasons of each out-of-range edge (orbit) at a stall.
+
+    A short edge reports both collapse directions (sorted, joined by ``+``) and
+    its flip; a long edge reports its refused split.
+    """
+    lengths = topology.lengths
+    unprotected = ~topology.edge_protected
+    measured = unprotected if np.any(unprotected) else np.ones_like(unprotected)
+    outside = np.flatnonzero(measured & ((lengths < _LOWER) | (lengths > _UPPER)))
+    if context is not None:
+        _, first = np.unique(context.edge_orbits[outside], return_index=True)
+        outside = outside[np.sort(first)]
+    records: list[tuple[float, str]] = []
+    for edge in outside.tolist():
+        length = float(lengths[edge])
+        if length > _UPPER:
+            records.append((length, "split=refused"))
+            continue
+        if context is None:
+            members = np.asarray((edge,), dtype=np.int64)
+            ends = topology.edges[members]
+        else:
+            members = np.flatnonzero(context.edge_orbits == context.edge_orbits[edge])
+            ends = context.edge_canonical_vertices[members]
+        collapse = "+".join(
+            sorted(
+                _collapse_refusal(
+                    state,
+                    topology,
+                    context,
+                    source,
+                    mode,
+                    members,
+                    ends[:, column],
+                    ends[:, 1 - column],
+                )
+                for column in (0, 1)
+            )
+        )
+        flip = _flip_refusal(state, topology, context, edge, mode)
+        records.append((length, f"collapse={collapse};flip={flip}"))
+    return tuple(sorted(records))
+
+
 def _evidence(
     topology: _Topology,
     counts: _Counts,
@@ -3115,6 +4450,7 @@ def _evidence(
     topology_operations: bool,
     relocation: bool,
     mode: PredicateMode,
+    stalled_edges: tuple[tuple[float, str], ...],
     /,
 ) -> LocalMetricEvidence:
     lengths = _measured(topology)
@@ -3139,6 +4475,7 @@ def _evidence(
         topology_operations=topology_operations,
         relocation=relocation,
         predicate_mode=mode,
+        stalled_edges=stalled_edges if stalled and not converged else (),
     )
 
 
@@ -3179,8 +4516,10 @@ def execute_local_metric_adaptation(
         predicate_mode,
     )
     topology = _topology(state, predicate_mode)
-    _validate_classification(state, topology)
-    topology, _ = _periodic_topology(mesh, source, state, topology, predicate_mode)
+    topology, periodic_context = _periodic_topology(
+        mesh, source, state, topology, predicate_mode
+    )
+    _validate_classification(state, topology, periodic_context)
     counts = _Counts()
     passes = 0
     stalled = False
@@ -3198,10 +4537,17 @@ def execute_local_metric_adaptation(
             source,
         )
         topology = _topology(state, predicate_mode)
-        topology, _ = _periodic_topology(mesh, source, state, topology, predicate_mode)
+        topology, periodic_context = _periodic_topology(
+            mesh, source, state, topology, predicate_mode
+        )
         if applied == 0:
             stalled = True
             break
+    stalled_edges = (
+        _stall_findings(state, topology, periodic_context, source, predicate_mode)
+        if stalled and topology_operations
+        else ()
+    )
     edit, target_metric = _assemble(state, source, predicate_mode)
     stage_periodic_topology_edit(mesh, edit)
     evidence = _evidence(
@@ -3212,6 +4558,7 @@ def execute_local_metric_adaptation(
         topology_operations,
         relocation,
         predicate_mode,
+        stalled_edges,
     )
     return LocalMetricOutcome(edit, target_metric, evidence)
 
