@@ -16,6 +16,9 @@ from phydrax.discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
 )
+from phydrax.discretization.finite_volume._automatic_remap import (
+    prepare_unstructured_conservative_remap,
+)
 from phydrax.discretization.finite_volume._material_chain_action import (
     material_chain_apply,
     material_chain_transpose,
@@ -296,16 +299,16 @@ def _curved_material_refinement_case() -> tuple[
     )
 
 
-def _tetrahedral_fv_plan(
+def _simplicial_fv_plan(
     result: CellMeshingResult, component_names: tuple[str, ...], /
 ) -> UnstructuredFiniteVolumePlan:
+    cells = np.concatenate(
+        tuple(np.asarray(block.vertices, dtype=np.int32) for block in result.mesh.blocks)
+    )
+    connectivity = "tetrahedra" if cells.shape[1] == 4 else "triangles"
     return UnstructuredFiniteVolumePlan(
         np.asarray(result.mesh.coordinates),
-        tetrahedra=np.concatenate(
-            tuple(
-                np.asarray(block.vertices, dtype=np.int32) for block in result.mesh.blocks
-            )
-        ),
+        **{connectivity: cells},
         vertex_global_ids=np.asarray(result.mesh.vertex_global_ids, dtype=np.int64),
         cell_global_ids=np.concatenate(
             tuple(
@@ -645,7 +648,7 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
 def _euler_fv_runtime(
     result: CellMeshingResult, system: phx.equations.EulerSystem, /
 ) -> tuple[object, object]:
-    discretization = _tetrahedral_fv_plan(result, system.component_names).prepare()
+    discretization = _simplicial_fv_plan(result, system.component_names).prepare()
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
         {
@@ -724,8 +727,75 @@ def test_fv_commit_remesh_routes_material_and_eulerian_content() -> None:
     continued = material.successor_runtime.advance(material.runtime_state)
     assert bool(np.asarray(continued.accepted))
 
+    # Straight-sided cells cannot certify the physical overlap of a curved
+    # refinement, so the Eulerian route refuses and keeps the predecessor.
+    eulerian = runtime.commit_remesh(accepted, transition, target_dynamics)
+    assert eulerian.successor_runtime is None
+    assert (
+        eulerian.runtime_state.topology_journal.current_epoch_id
+        == accepted.runtime_state.topology_journal.current_epoch_id
+    )
+    np.testing.assert_array_equal(
+        np.asarray(eulerian.runtime_state.content_state.conservative_content),
+        np.asarray(source_content.conservative_content),
+    )
+
+    assert prior.volume_material_chain is None
+    with pytest.raises(ValueError, match="accepted volume material chain"):
+        runtime.commit_remesh(
+            accepted,
+            prior,
+            target_dynamics,
+            content_semantics="material_following_content",
+        )
+
+
+def test_fv_commit_remesh_carries_eulerian_content_through_physical_overlap() -> None:
+    source, _ = _certified_square()
+    source_ids = np.concatenate(
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in source.mesh.blocks
+        )
+    )
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(source_ids),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+            ),
+        )
+    )
+    transition = refined.transition
+    assert transition is not None
+    system = phx.equations.EulerSystem(2)
+    source_geometry, source_dynamics = _euler_fv_runtime(source, system)
+    target_geometry, target_dynamics = _euler_fv_runtime(refined.target, system)
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        source_dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        phx.solver.FiniteVolumeStepPolicy(maximum_retries=2),
+    )
+    cell_count = source_geometry.cell_count
+    density = 1.0 + 0.25 * np.arange(cell_count, dtype=np.float64)
+    primitive = jnp.stack(
+        (
+            jnp.asarray(density),
+            jnp.full((cell_count,), 0.1),
+            jnp.full((cell_count,), -0.05),
+            jnp.full((cell_count,), 1.0),
+        ),
+        axis=1,
+    )
+    accepted = runtime.advance(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1.0e-4)
+    )
+    assert bool(np.asarray(accepted.accepted))
+    source_content = accepted.runtime_state.content_state
     eulerian = runtime.commit_remesh(accepted, transition, target_dynamics)
     assert eulerian.successor_runtime is not None
+    assert eulerian.runtime_state.topology_journal.epoch_table[-1].index == 1
     overlap = prepare_unstructured_conservative_remap(
         source_geometry, target_geometry, provenance="eulerian-oracle"
     ).plan
@@ -741,18 +811,11 @@ def test_fv_commit_remesh_routes_material_and_eulerian_content() -> None:
             np.asarray(eulerian.runtime_state.content_state.conservative_content),
             axis=0,
         ),
-        source_total,
-        rtol=1.0e-14,
+        np.sum(np.asarray(source_content.conservative_content), axis=0),
+        rtol=1.0e-13,
     )
-
-    assert prior.volume_material_chain is None
-    with pytest.raises(ValueError, match="accepted volume material chain"):
-        runtime.commit_remesh(
-            accepted,
-            prior,
-            target_dynamics,
-            content_semantics="material_following_content",
-        )
+    continued = eulerian.successor_runtime.advance(eulerian.runtime_state)
+    assert bool(np.asarray(continued.accepted))
 
 
 def test_fixed_topology_motion_reproves_source_coverage_or_rolls_back() -> None:
