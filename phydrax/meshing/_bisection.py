@@ -29,6 +29,15 @@ labellings that violate it are rejected or first made compatible by one
 barycentric subdivision, whose simplices are pairwise reflected neighbors. That
 subdivision is a recorded refinement level of the forest: coarsening removes it
 once every created vertex's star is undone, restoring the source cells exactly.
+
+Tetrahedral meshes whose longest-edge labels violate the matching condition are
+otherwise labelled as the marked tetrahedra of Arnold, Mukherjee and Pouly
+(2000): each face marks its longest edge under the global strict edge order, so
+neighbors agree on every shared face and the closure terminates on any
+conforming mesh. Planar, mixed and flagged-planar marked tetrahedra are Maubach
+tags 2, 3 and 1; adjacent and opposite ones carry tags 4 and 5 (refinement edge
+``(x0, x3)``), whose children are tag 2, so the descendants of every marked
+tetrahedron are Maubach simplices with finitely many similarity classes.
 """
 
 from __future__ import annotations
@@ -48,7 +57,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
-from ..discretization._adaptive_simplex import maubach_bisection_tables
+from ..discretization._adaptive_simplex import bisection_label_tables
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._lineage import EntityLineageKind
 from ._periodic import PeriodicRefinementEdgeLock
@@ -63,7 +72,13 @@ from ._topology_edit import (
 
 
 class BisectionCompatibility(StrEnum):
-    """Handling of an initial labelling that violates the matching condition."""
+    """Handling of an initial labelling that violates the matching condition.
+
+    ``REJECT`` refuses an incompatible triangle labelling and relabels an
+    incompatible tetrahedral one as marked tetrahedra, whose closure needs no
+    matching condition. ``UNIFORM_REFINEMENT`` first subdivides every source cell
+    barycentrically into a compatible mesh in both dimensions.
+    """
 
     REJECT = "reject"
     UNIFORM_REFINEMENT = "uniform_refinement"
@@ -80,10 +95,9 @@ def _tag_array(
     values: ArrayLike, count: int, dimension: int, name: str, /, *, lowest: int = 1
 ) -> np.ndarray:
     tags = np.asarray(values, dtype=np.int32)
-    if tags.shape != (count,) or np.any(tags < lowest) or np.any(tags > dimension):
-        raise ValueError(
-            f"{name} must hold one tag in {lowest}..{dimension} per simplex."
-        )
+    highest = _TABLES[dimension].child.size - 1
+    if tags.shape != (count,) or np.any(tags < lowest) or np.any(tags > highest):
+        raise ValueError(f"{name} must hold one tag in {lowest}..{highest} per simplex.")
     return tags
 
 
@@ -213,12 +227,13 @@ def _validated_forest(
 
 @final
 class BisectionHierarchy(StrictModule, NonTrainableState):
-    """Persistent Maubach labels and refinement forest of one bisection mesh.
+    """Persistent bisection labels and refinement forest of one bisection mesh.
 
-    Active cells are listed by ascending global ID with their canonical Maubach
-    tuple (vertex global IDs), tag, and generation. Each forest record is one
+    Active cells are listed by ascending global ID with their canonical tagged
+    tuple (vertex global IDs), tag (Maubach ``1..d``; marked-tetrahedron ``4``
+    and ``5``), and generation. Each forest record is one
     bisection whose children are leaves or have descendants: the parent cell ID,
-    source block, exact block row (global IDs), Maubach tuple and tag, the two
+    source block, exact block row (global IDs), tagged tuple and tag, the two
     child cell IDs (first, second), and the bisection vertex. Retired entity
     tables keep the global IDs of edges/faces removed by refinement so that
     coarsening restores them under their original IDs. Vertex and cell IDs are
@@ -494,9 +509,9 @@ _SHIFT = np.int64(1 << 31)
 _VERTEX_LIMIT = 1 << 31
 
 
-# The Maubach templates are owned by the device layout so that host and device
-# bisection share one table set.
-_TABLES = {dimension: maubach_bisection_tables(dimension) for dimension in (2, 3)}
+# The bisection label templates are owned by the device layout so that host and
+# device bisection share one table set.
+_TABLES = {dimension: bisection_label_tables(dimension) for dimension in (2, 3)}
 
 
 def _subdivision_tables(dimension: int, /) -> tuple[tuple[tuple[int, ...], ...], Any]:
@@ -733,14 +748,21 @@ def _merged_rows(sources: np.ndarray, weights: np.ndarray, width: int, /) -> Any
 def _odd_relative(rows: np.ndarray, tuples: np.ndarray, dimension: int, /) -> Any:
     """Whether each tuple is an odd permutation of its oriented row."""
 
-    pairs = _TABLES[dimension][3]
+    pairs = _TABLES[dimension].pairs
     position = np.argmax(tuples[:, :, None] == rows[:, None, :], axis=2)
     inversions = np.sum(position[:, pairs[:, 0]] > position[:, pairs[:, 1]], axis=1)
     return inversions % 2 == 1
 
 
 def _reversed(tuples: np.ndarray, tags: np.ndarray, dimension: int, /) -> Any:
-    return np.take_along_axis(tuples, _TABLES[dimension][2][tags], axis=1)
+    return np.take_along_axis(tuples, _TABLES[dimension].equivalent[tags], axis=1)
+
+
+def _refinement_ends(tuples: np.ndarray, tags: np.ndarray, dimension: int, /) -> Any:
+    """Second refinement-edge endpoint ``x_position(tag)`` of each tagged tuple."""
+
+    position = _TABLES[dimension].position[tags]
+    return tuples[np.arange(tuples.shape[0]), position]
 
 
 def _canonical(tuples: Any, tags: Any, odd: Any, dimension: int, /) -> Any:
@@ -751,7 +773,7 @@ def _canonical(tuples: Any, tags: Any, odd: Any, dimension: int, /) -> Any:
     first = np.argmax(differs, axis=1)
     rows = np.arange(tuples.shape[0])
     smaller = np.any(differs, axis=1) & (reversed_[rows, first] < tuples[rows, first])
-    flips = (tags * (tags + 1) // 2) % 2 == 1
+    flips = _TABLES[dimension].equivalent_odd[tags]
     return (
         np.where(smaller[:, None], reversed_, tuples),
         odd ^ (smaller & flips),
@@ -830,7 +852,8 @@ def _oriented_rows(tuples: np.ndarray, odd: np.ndarray, /) -> np.ndarray:
 
 
 def _children(tuples: Any, tags: Any, midpoints: Any, dimension: int, /) -> Any:
-    first_table, second_table = _TABLES[dimension][:2]
+    tables = _TABLES[dimension]
+    first_table, second_table = tables.first, tables.second
     extended = np.concatenate((tuples, midpoints[:, None]), axis=1)
     return (
         np.take_along_axis(extended, first_table[tags], axis=1),
@@ -943,42 +966,133 @@ def _prepared_request(
     )
 
 
-def _longest_edge_labels(
-    cells: _Cells, coordinates: np.ndarray, dimension: int, /
-) -> Any:
-    """Maubach labels from the global strict edge order (longest first, then key)."""
+class _EdgeOrder(NamedTuple):
+    """Global strict edge order: longest first, ties by ascending edge code."""
 
-    pairs = _TABLES[dimension][3]
+    codes: np.ndarray
+    ranks: np.ndarray
+
+
+def _edge_order(cells: _Cells, coordinates: np.ndarray, dimension: int, /) -> Any:
+    pairs = _TABLES[dimension].pairs
     low = np.minimum(cells.rows[:, pairs[:, 0]], cells.rows[:, pairs[:, 1]])
     high = np.maximum(cells.rows[:, pairs[:, 0]], cells.rows[:, pairs[:, 1]])
-    codes = low * _SHIFT + high
-    unique, first, inverse = np.unique(
-        codes.reshape((-1,)), return_index=True, return_inverse=True
-    )
+    unique, first = np.unique((low * _SHIFT + high).reshape((-1,)), return_index=True)
     lengths = np.sum(
         (coordinates[high.reshape((-1,))[first]] - coordinates[low.reshape((-1,))[first]])
         ** 2,
         axis=1,
     )
-    rank = np.empty(unique.shape, dtype=np.int64)
-    rank[np.lexsort((unique, -lengths))] = np.arange(unique.size)
+    ranks = np.empty(unique.shape, dtype=np.int64)
+    ranks[np.lexsort((unique, -lengths))] = np.arange(unique.size)
+    return _EdgeOrder(unique, ranks)
+
+
+def _edge_ranks(order: _EdgeOrder, first: np.ndarray, second: np.ndarray, /) -> Any:
+    return order.ranks[np.searchsorted(order.codes, _edge_codes(first, second))]
+
+
+def _longest_edges(cells: _Cells, order: _EdgeOrder, dimension: int, /) -> Any:
+    """Longest edge ``(low, high)`` of each cell and its other vertices."""
+
+    pairs = _TABLES[dimension].pairs
+    rows = cells.rows
     count = cells.ids.size
-    best = np.argmin(rank[inverse.reshape(codes.shape)], axis=1)
-    x0 = low[np.arange(count), best]
-    xk = high[np.arange(count), best]
-    others = cells.rows[(cells.rows != x0[:, None]) & (cells.rows != xk[:, None])]
-    others = others.reshape((count, dimension - 1))
+    best = np.argmin(
+        _edge_ranks(order, rows[:, pairs[:, 0]], rows[:, pairs[:, 1]]), axis=1
+    )
+    ends = rows[np.arange(count)[:, None], pairs[best]]
+    low, high = np.min(ends, axis=1), np.max(ends, axis=1)
+    others = rows[(rows != low[:, None]) & (rows != high[:, None])]
+    return low, high, others.reshape((count, dimension - 1))
+
+
+def _longest_edge_labels(
+    cells: _Cells, coordinates: np.ndarray, dimension: int, /
+) -> Any:
+    """Maubach labels from the global strict edge order (longest first, then key)."""
+
+    order = _edge_order(cells, coordinates, dimension)
+    x0, xk, others = _longest_edges(cells, order, dimension)
+    count = cells.ids.size
     if dimension == 2:
         tuples = np.stack((x0, others[:, 0], xk), axis=1)
     else:
-        first_rank = rank[np.searchsorted(unique, _edge_codes(x0, others[:, 0]))]
-        second_rank = rank[np.searchsorted(unique, _edge_codes(x0, others[:, 1]))]
+        first_rank = _edge_ranks(order, x0, others[:, 0])
+        second_rank = _edge_ranks(order, x0, others[:, 1])
         greater = first_rank < second_rank
         x2 = np.where(greater, others[:, 0], others[:, 1])
         x1 = np.where(greater, others[:, 1], others[:, 0])
         tuples = np.stack((x0, x1, x2, xk), axis=1)
     tags = np.full((count,), dimension, dtype=np.int64)
     tuples, _ = _canonical(tuples, tags, np.zeros((count,), dtype=np.bool_), dimension)
+    return tuples, tags
+
+
+def _marked_tetrahedron_labels(cells: _Cells, coordinates: np.ndarray, /) -> Any:
+    """Arnold-Mukherjee-Pouly initial marking under the global strict edge order.
+
+    Every face is marked by its longest edge and every tetrahedron bisects its
+    longest edge ``(a, b)``. With ``e_a``/``e_b`` the marks of the faces opposite
+    ``b``/``a`` and ``{c, d}`` the other vertices, the tetrahedron is planar
+    (``e_a = (a, k)``, ``e_b = (b, k)``: Maubach ``(a, k, b, j)_2``), mixed
+    (``e_a = (a, k_a)``, ``e_b = (b, k_b)``, ``k_a != k_b``: ``(a, k_b, k_a, b)_3``),
+    adjacent (``e_a = (c, d)``, ``e_b = (b, k)``: ``(a, j, k, b)_4``, and
+    symmetrically) or opposite (``e_a = e_b = (c, d)``:
+    ``(min(a, b), min(c, d), max(c, d), max(a, b))_5``). Flagged planar children
+    are Maubach tag 1. Neighbors see one mark per shared face, so the conformity
+    closure terminates on any conforming tetrahedral mesh without the matching
+    condition (Arnold, Mukherjee and Pouly 2000).
+    """
+
+    order = _edge_order(cells, coordinates, 3)
+    a, b, others = _longest_edges(cells, order, 3)
+    c, d = others[:, 0], others[:, 1]
+
+    def face_mark(apex: np.ndarray) -> np.ndarray:
+        """Longest edge of face ``(apex, c, d)``: 0 = (apex, c), 1 = (apex, d), 2 = (c, d)."""
+
+        return np.argmin(
+            np.stack(
+                (
+                    _edge_ranks(order, apex, c),
+                    _edge_ranks(order, apex, d),
+                    _edge_ranks(order, c, d),
+                ),
+                axis=1,
+            ),
+            axis=1,
+        )
+
+    mark_a, mark_b = face_mark(a), face_mark(b)
+    k_a, j_a = np.where(mark_a == 0, c, d), np.where(mark_a == 0, d, c)
+    k_b, j_b = np.where(mark_b == 0, c, d), np.where(mark_b == 0, d, c)
+    opposite = (mark_a == 2) & (mark_b == 2)
+    adjacent_a = (mark_a == 2) & (mark_b < 2)
+    adjacent_b = (mark_b == 2) & (mark_a < 2)
+    planar = (mark_a < 2) & (mark_b < 2) & (k_a == k_b)
+    conditions = (opposite, adjacent_a, adjacent_b, planar)
+    tuples = np.select(
+        tuple(condition[:, None] for condition in conditions),
+        (
+            np.stack(
+                (
+                    np.minimum(a, b),
+                    np.minimum(c, d),
+                    np.maximum(c, d),
+                    np.maximum(a, b),
+                ),
+                axis=1,
+            ),
+            np.stack((a, j_b, k_b, b), axis=1),
+            np.stack((b, j_a, k_a, a), axis=1),
+            np.stack((a, k_a, b, j_a), axis=1),
+        ),
+        np.stack((a, k_b, k_a, b), axis=1),
+    )
+    tags = np.select(conditions, (5, 4, 4, 2), 3).astype(np.int64)
+    count = cells.ids.size
+    tuples, _ = _canonical(tuples, tags, np.zeros((count,), dtype=np.bool_), 3)
     return tuples, tags
 
 
@@ -995,7 +1109,7 @@ def _facet_children(cells: _Cells, owners: Any, opposite: Any, dimension: int, /
     tuples, tags = cells.tuples[owners], cells.tags[owners]
     first, second = _children(tuples, tags, -1 - owners, dimension)
     at_start = opposite == tuples[:, 0]
-    at_end = opposite == tuples[np.arange(owners.size), tags]
+    at_end = opposite == _refinement_ends(tuples, tags, dimension)
     child = np.where(at_start[:, None], second, first)
     return child, at_start | at_end
 
@@ -1028,7 +1142,7 @@ def _incompatible_facets(cells: _Cells, dimension: int, /) -> int:
     )
     left_child, left_open = _facet_children(cells, left, opposite[pair], dimension)
     right_child, right_open = _facet_children(cells, right, opposite[pair + 1], dimension)
-    child_tags = np.where(tags > 1, tags - 1, dimension)
+    child_tags = _TABLES[dimension].child[tags]
     matched |= (
         same_tag
         & left_open
@@ -1063,7 +1177,7 @@ def _subdivided(
     if front.growth.levels.size:
         raise ValueError("Barycentric subdivision precedes every bisection vertex.")
     cells, width = _select(front.cells, selected), dimension + 1
-    orders, odd_orders = _TABLES[dimension][4:]
+    orders, odd_orders = _TABLES[dimension].orders, _TABLES[dimension].odd_orders
     count, arrangements = cells.ids.size, orders.shape[0]
     tables = [_simplex_keys(cells.rows, size) for size in range(2, width)]
     tables.append(cells.rows)
@@ -1169,13 +1283,19 @@ def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /
     cells = front.cells
     chosen = _select(cells, selected)
     count = selected.size
-    codes = _edge_codes(chosen.tuples[:, 0], chosen.tuples[np.arange(count), chosen.tags])
+    tables = _TABLES[dimension]
+    codes = _edge_codes(
+        chosen.tuples[:, 0], _refinement_ends(chosen.tuples, chosen.tags, dimension)
+    )
     front, midpoints, created = _split_edges(front, codes, level, dimension)
     first, second = _children(chosen.tuples, chosen.tags, midpoints, dimension)
     odd = _odd_relative(chosen.rows, chosen.tuples, dimension)
     tuples = np.stack((first, second), axis=1).reshape((2 * count, dimension + 1))
-    odd = np.stack((odd, odd ^ (chosen.tags % 2 == 1)), axis=1).reshape((-1,))
-    tags = np.repeat(np.where(chosen.tags > 1, chosen.tags - 1, dimension), 2)
+    odd = np.stack(
+        (odd ^ tables.first_odd[chosen.tags], odd ^ tables.second_odd[chosen.tags]),
+        axis=1,
+    ).reshape((-1,))
+    tags = np.repeat(tables.child[chosen.tags], 2)
     tuples, odd = _canonical(tuples, tags, odd, dimension)
     ids = front.next_cell + np.arange(2 * count, dtype=np.int64)
     children = _Cells(
@@ -1206,7 +1326,7 @@ def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /
 
 
 def _nonconforming(cells: _Cells, split_keys: np.ndarray, dimension: int, /) -> Any:
-    pairs = _TABLES[dimension][3]
+    pairs = _TABLES[dimension].pairs
     codes = _edge_codes(cells.tuples[:, pairs[:, 0]], cells.tuples[:, pairs[:, 1]])
     return np.any(_members(split_keys, codes), axis=1)
 
@@ -1255,7 +1375,8 @@ def _admissible_marks(
         return marks, empty, 0
     tuples, tags = front.cells.tuples[marks], front.cells.tags[marks]
     direct = _members(
-        protected, _edge_codes(tuples[:, 0], tuples[np.arange(marks.size), tags])
+        protected,
+        _edge_codes(tuples[:, 0], _refinement_ends(tuples, tags, dimension)),
     )
     accepted, rejected = [empty], [marks[direct]]
     pending = [marks[~direct]] if np.any(~direct) else []
@@ -1329,6 +1450,7 @@ def _labelled_start(
     if periodic_edge_lock is not None:
         front = _periodic_locked_front(source, front, request, periodic_edge_lock)
     incompatible = _incompatible_facets(front.cells, dimension)
+    uniform = False
     if incompatible:
         if periodic_edge_lock is not None:
             raise MeshingFailure(
@@ -1336,15 +1458,22 @@ def _labelled_start(
                 "Locked periodic Maubach edges violate the local matching condition.",
                 stage="bisection-closure",
             )
-        front, subdivisions = _barycentric_front(
-            front,
-            np.ones(front.cells.ids.shape, dtype=np.bool_),
-            request,
-            compatibility,
-            f"{incompatible} interior facets violate the bisection matching "
-            "condition of the longest-edge labelling",
-            dimension,
-        )
+        if dimension == 3 and compatibility is BisectionCompatibility.REJECT:
+            # Marked tetrahedra need no matching condition: the closure of any
+            # conforming tetrahedral mesh terminates under their labels.
+            tuples, tags = _marked_tetrahedron_labels(source.cells, source.coordinates)
+            front = front._replace(cells=cells._replace(tuples=tuples, tags=tags))
+        else:
+            front, subdivisions = _barycentric_front(
+                front,
+                np.ones(front.cells.ids.shape, dtype=np.bool_),
+                request,
+                compatibility,
+                f"{incompatible} interior facets violate the bisection matching "
+                "condition of the longest-edge labelling",
+                dimension,
+            )
+            uniform = True
     marks = np.flatnonzero(np.isin(front.cells.origins, request.refine_ids))
     retired = tuple(
         (np.zeros((0, degree + 1), dtype=np.int64), np.zeros((0,), dtype=np.int64))
@@ -1357,7 +1486,7 @@ def _labelled_start(
         int(source.vertex_ids[-1]) + 1,
         incompatible == 0,
         incompatible,
-        bool(incompatible),
+        uniform,
         retired,
         subdivisions,
     )
@@ -1381,7 +1510,7 @@ def _barycentric_front(
                 "subdivide barycentrically into a compatible mesh first."
             )
         case BisectionCompatibility.UNIFORM_REFINEMENT:
-            pairs = _TABLES[dimension][3]
+            pairs = _TABLES[dimension].pairs
             rows = front.cells.rows[selected]
             edges = _edge_codes(rows[:, pairs[:, 0]], rows[:, pairs[:, 1]])
             if np.any(_members(request.protected_codes, edges)):
@@ -1534,16 +1663,17 @@ def _facet_merges(
     """Class agreement of the facet halves each undone bisection merges."""
 
     keys, classes = facets
-    tuples, tags = records.tuples[family], records.tags[family]
+    tuples = records.tuples[family]
+    position = _TABLES[dimension].position[records.tags[family]]
     count = family.size
     first = tuples.copy()
-    first[np.arange(count), tags] = records.vertices[family]
+    first[np.arange(count), position] = records.vertices[family]
     second = tuples.copy()
     second[:, 0] = records.vertices[family]
     agree = np.ones((count,), dtype=np.bool_)
     restored, restored_classes, owners = [], [], []
     for column in range(1, dimension + 1):
-        active = np.flatnonzero(tags != column)
+        active = np.flatnonzero(position != column)
         halves = [
             np.sort(np.delete(value[active], column, axis=1), axis=1)
             for value in (first, second, tuples)
@@ -1835,7 +1965,7 @@ def _coarsening(
         tuples, tags = records.tuples[undo], records.tags[undo]
         spans = np.full((undo.size, width), -1, dtype=np.int64)
         spans[:, 0] = tuples[:, 0]
-        spans[:, 1] = tuples[np.arange(undo.size), tags]
+        spans[:, 1] = _refinement_ends(tuples, tags, dimension)
         steps.append((records.vertices[undo], spans))
         children.append(records.child_ids[undo].reshape((-1,)))
         parents.append(np.repeat(records.parent_ids[undo], 2))
@@ -2410,8 +2540,9 @@ def _refinement_operation_rows(
     split_source_edges = np.full((len(generated),), -1, dtype=np.int64)
     split_vertices = np.empty((len(generated), 2), dtype=np.int64)
     for output_row, (record_row, origin) in enumerate(generated):
-        tag = int(tags[record_row])
-        first, second = int(tuples[record_row, 0]), int(tuples[record_row, tag])
+        position = int(_TABLES[source.dimension].position[tags[record_row]])
+        first = int(tuples[record_row, 0])
+        second = int(tuples[record_row, position])
         endpoints = tuple(sorted((global_vertex(first), global_vertex(second))))
         split_parents[output_row] = origin
         split_vertices[output_row] = endpoints
@@ -2435,7 +2566,7 @@ def execute_bisection(
     facet_classes: np.ndarray,
     periodic_edge_lock: PeriodicRefinementEdgeLock | None = None,
 ) -> BisectionOutcome:
-    """Refine and coarsen one simplex mesh by compatible Maubach bisection.
+    """Refine and coarsen one simplex mesh by tagged-simplex bisection.
 
     Refinement marks whose own conformity closure would split a protected edge are
     rejected (reported in the evidence); the rest are bisected once and closed to

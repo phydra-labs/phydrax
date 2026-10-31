@@ -1350,9 +1350,20 @@ bound to the source vertices). Routes:
 
 - `NATIVE_BISECTION`: Maubach/Stevenson tagged-simplex bisection of triangle
   (newest-vertex bisection) and tetrahedron meshes. The initial refinement edge
-  is the longest edge (ties by global IDs); an incompatible initial labelling is
-  rejected unless `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests
-  one barycentric compatibility refinement. That subdivision is recorded in the
+  is the longest edge (ties by global IDs). A triangle labelling that violates
+  the matching condition is rejected unless
+  `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests one barycentric
+  compatibility refinement. An incompatible tetrahedral labelling under the
+  default `REJECT` is instead relabelled as Arnold–Mukherjee–Pouly marked
+  tetrahedra: every face marks its longest edge under the same strict global
+  order, so neighbors agree on shared faces and the conformity closure of any
+  conforming tetrahedral mesh terminates without the matching condition.
+  Planar, mixed and flagged-planar marked tetrahedra are Maubach tags 2, 3 and
+  1; adjacent and opposite ones carry tags 4 and 5, whose children are tag 2.
+  The evidence then reports `initially_compatible=False` with
+  `uniform_refinement_applied=False`, and the hierarchy persists the tags, so
+  later refinement and coarsening continue the same forest (device bisection
+  included). The barycentric subdivision is recorded in the
   `BisectionHierarchy` as a refinement level (each source cell, its exact block
   row, its (d+1)! children, and its created edge, face, and center vertices). The
   conformity closure is vectorized per iteration; coarsening removes complete
