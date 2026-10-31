@@ -708,14 +708,13 @@ def _construct_intersection_dataclass(
             raise ValueError("Stored B-Rep branch-node roots differ from their proof.")
         return branch_node
     if model_type is BRepVertexRoot:
-        # Vertices stored without a branch-node witness keep that absence.
         return BRepVertexRoot(
             fields["primary"],
             aliases=fields["aliases"],
             spatial_root=fields["spatial_root"],
             joint_root=fields["joint_root"],
             source_edge_lifts=fields["source_edge_lifts"],
-            branch_node=fields.get("branch_node"),
+            branch_node=fields["branch_node"],
         )
     if model_type is BRepPlacedVertex:
         return BRepPlacedVertex(

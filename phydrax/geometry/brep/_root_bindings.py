@@ -1725,6 +1725,32 @@ def branch_node_roots_payload(roots: BRepBranchNodeRoots, /) -> dict[str, object
     }
 
 
+def _branch_node_binds_vertex(
+    branch_node: object,
+    primary: BRepPrimaryVertexRoot,
+    spatial_root: CurveSurfaceIntersectionRoot | None,
+    source_edge_lifts: tuple[BRepCurveSurfaceLift, ...],
+    /,
+) -> bool:
+    """Whether a branch-node witness names the vertex's own source root.
+
+    A source-root vertex is bound when its primary root is a witnessed root. A
+    joint vertex keeps a witness only through its spatial root: the witness
+    certifies that root as the branch node and the joint root certifies the
+    same root, so both name one point.
+    """
+    if not isinstance(branch_node, BRepBranchNodeRoots):
+        return False
+    if isinstance(primary, CurveSurfaceIntersectionRoot):
+        return branch_node.binds(primary)
+    return (
+        isinstance(primary, TripleSurfaceIntersectionRoot)
+        and spatial_root is not None
+        and branch_node.binds(spatial_root)
+        and primary.certifies_root(spatial_root, source_edge_lifts=source_edge_lifts)
+    )
+
+
 class BRepVertexRoot(StrictModule):
     """One exact source-root vertex and its alternative face/edge witnesses."""
 
@@ -1820,13 +1846,11 @@ class BRepVertexRoot(StrictModule):
             raise ValueError(
                 "TripleSurfaceIntersectionRoot aliases need an exact joint-root proof."
             )
-        if branch_node is not None and (
-            not isinstance(branch_node, BRepBranchNodeRoots)
-            or not isinstance(primary, CurveSurfaceIntersectionRoot)
-            or not branch_node.binds(primary)
+        if branch_node is not None and not _branch_node_binds_vertex(
+            branch_node, primary, spatial_root, source_edge_lifts
         ):
             raise ValueError(
-                "BRepVertexRoot.branch_node must certify the primary source root as its node."
+                "BRepVertexRoot.branch_node must certify the vertex source root as its node."
             )
         self.primary, self.aliases = primary, aliases
         self.spatial_root, self.joint_root = spatial_root, joint_root
