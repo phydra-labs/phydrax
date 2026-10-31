@@ -471,7 +471,10 @@ def test_cylindrical_through_hole_defeature_restores_the_capped_solid() -> None:
     face = next(
         index
         for index, patch in enumerate(source.patches)
-        if isinstance(patch, CylinderPatch) and float(patch.radius) == 0.5
+        if isinstance(patch, RevolutionSurface)
+        and (wall := _hole_wall_data(source, index)) is not None
+        and wall.family == "revolved-cylinder"
+        and wall.reference_radius == Fraction(1, 2)
     )
     before = _snapshot(source)
 
