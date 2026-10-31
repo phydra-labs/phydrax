@@ -30,7 +30,10 @@ from .._geometry_predicates import PredicateMode, resolve_host_predicate_mode
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
-from ..discretization._adaptive_simplex import AdaptiveSimplexPolicy
+from ..discretization._adaptive_simplex import (
+    AdaptiveSimplexPolicy,
+    bisection_label_tables,
+)
 from ..discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     PerCellRestrictedCellGeometryElement,
@@ -2356,11 +2359,11 @@ def _bisection_coarsening_witness(
                 continue
             tag = int(record_parent_tags[row])
             vertices = record_parent_vertices[row]
-            if not 1 <= tag < vertices.size:
-                raise ValueError(
-                    "Bisection parent tag is outside its exact vertex tuple."
-                )
-            first, second = int(vertices[0]), int(vertices[tag])
+            positions = bisection_label_tables(source.topological_dimension).position
+            if not 1 <= tag < positions.size:
+                raise ValueError("Bisection parent tag is outside the label tables.")
+            first = int(vertices[0])
+            second = int(vertices[positions[tag]])
             first_reference = reference_by_vertex.get(first)
             second_reference = reference_by_vertex.get(second)
             if first_reference is None or second_reference is None:
