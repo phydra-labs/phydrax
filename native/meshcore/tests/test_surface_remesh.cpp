@@ -1,0 +1,293 @@
+// Copyright © 2026 PHYDRA, Inc. All rights reserved.
+// Source-agnostic surface remesher: the source-relative fold factor of the
+// quality score and the quality pass's relocation candidates.
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <map>
+#include <utility>
+#include <vector>
+
+#include "check.hpp"
+#include "phydrax_meshcore.h"
+#include "surface_remesh.hpp"
+
+namespace {
+using phx::mc::remesh::AdmissionKind;
+using phx::mc::remesh::NormalCone;
+using phx::mc::remesh::Point;
+using phx::mc::remesh::RemeshCounters;
+using phx::mc::remesh::RemeshTargets;
+using phx::mc::remesh::Triangle;
+using phx::mc::remesh::TriangleAdmission;
+using phx::mc::remesh::VertexEvidence;
+
+// Admits every triangle and reports one fixed source normal cone: isolates
+// the score and topology rules.
+class SourceCone final : public TriangleAdmission {
+ public:
+  explicit SourceCone(const NormalCone& source) : cone(source) {}
+  AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
+  VertexEvidence evaluate(const Point&) const override { return {}; }
+  bool admits(const Point&, const Point&, const Point&,
+              const std::array<VertexEvidence, 3>&) const override {
+    return true;
+  }
+  Point project(const Point& position) const override { return position; }
+  NormalCone normal_cone(const Point&, const Point&, const Point&,
+                         const std::array<VertexEvidence, 3>&) const override {
+    return cone;
+  }
+  double normal_cone_floor(const Point&, const Point&, const Point&,
+                           const std::array<VertexEvidence, 3>&) const override {
+    return cone.half_angle;
+  }
+  NormalCone cone;
+};
+
+Point normal(const std::vector<Point>& points, const Triangle& t) {
+  const Point& a = points[static_cast<size_t>(t[0])];
+  const Point& b = points[static_cast<size_t>(t[1])];
+  const Point& c = points[static_cast<size_t>(t[2])];
+  const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+  const Point n{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+  const double length = std::hypot(n[0], n[1], n[2]);
+  return {n[0] / length, n[1] / length, n[2] / length};
+}
+
+// Largest angle in degrees between the normals of two triangles sharing an edge.
+double maximum_turn(const std::vector<Point>& points, const std::vector<Triangle>& triangles) {
+  std::map<std::pair<int64_t, int64_t>, std::vector<size_t>> edges;
+  for (size_t row = 0; row < triangles.size(); ++row)
+    for (int k = 0; k < 3; ++k) {
+      const int64_t a = triangles[row][k], b = triangles[row][(k + 1) % 3];
+      edges[{std::min(a, b), std::max(a, b)}].push_back(row);
+    }
+  double turn = 0;
+  for (const auto& [edge, rows] : edges) {
+    if (rows.size() != 2) continue;
+    const Point n = normal(points, triangles[rows[0]]);
+    const Point m = normal(points, triangles[rows[1]]);
+    const double cosine = std::clamp(n[0] * m[0] + n[1] * m[1] + n[2] * m[2], -1.0, 1.0);
+    turn = std::max(turn, std::acos(cosine) * 180.0 / std::acos(-1.0));
+  }
+  return turn;
+}
+
+// A folded valence-3 cluster cut from a remeshed envelope (target edge 0.04):
+// every triangle has angles of at least 24 degrees and edges far below the
+// target, so shape and size alone score the fold almost full, and collapsing
+// it lowers the minimum angle. Two of its faces turn 174 degrees against
+// their neighbors, which bounds every tetrahedron on those edges to a 6 degree
+// dihedral angle.
+void folded_cluster() {
+  const std::vector<Point> input{
+      {-0x1.8e7701e5af140p-9, -0x1.f7b9cf6361500p-11, -0x1.1031c32d768a0p-8},
+      {0x1.270d344f59120p-9, 0x1.270d344f59100p-9, -0x1.35bd147b25c00p-11},
+      {0x0.0p+0, 0x0.0p+0, 0x0.0p+0},
+      {0x1.baf29b33b86a0p-8, -0x1.4404d4584b900p-9, 0x1.3dd52d68d3700p-9},
+      {0x1.0e87e202f2c00p-14, 0x1.bc491fddb6f00p-10, -0x1.840ec0e1ec400p-9},
+      {0x1.83f73b385c000p-10, 0x1.4fcc567d938e0p-8, -0x1.7be911acdc360p-8},
+      {-0x1.cb69ff4954dc0p-6, -0x1.05265f9162df0p-7, -0x1.1b1dd6b9350b0p-6},
+      {-0x1.8135e4def9d08p-6, -0x1.54e9bb1ef2540p-6, -0x1.042e974eef240p-8},
+      {-0x1.39429fc704098p-6, -0x1.12c763514b760p-7, -0x1.5c8b6f2321aa0p-7},
+      {-0x1.8008df7210d00p-9, -0x1.7a12764aa9120p-7, 0x1.cbca84f7418c0p-9},
+      {0x1.fc26941a76fd0p-7, -0x1.e52b78fa9b3c0p-8, 0x1.417a97e3f7720p-7},
+      {-0x1.1d7c4f7511ba0p-6, 0x1.e48903f0a8c80p-8, -0x1.82ef6f6de8fc0p-6},
+      {-0x1.02cc971ce7968p-6, 0x1.3b5b62af916e0p-6, -0x1.32fb942b02cf0p-5},
+      {0x1.f723b646155a0p-8, 0x1.aeba5cae26d00p-6, -0x1.b8329b316eba0p-6},
+      {0x1.36a0fc8fe79a6p-5, 0x1.515a4693e9c38p-5, -0x1.e8fbd4c3c3df0p-6},
+      {-0x1.d48496e1d0a80p-8, -0x1.2c7cfbc8a5638p-5, 0x1.3c79162bbda98p-6},
+      {0x1.2cb02a396e600p-6, -0x1.6c4d1b350d100p-6, 0x1.84a3b6ab0e698p-6},
+      {0x1.b0fc53c7de8e6p-5, 0x1.39a5e6980abe8p-6, 0x1.7300274df2280p-10},
+      {0x1.631adffac3098p-7, 0x1.22fa3ceb80450p-7, -0x1.bfe1b9ccccac0p-9},
+      {0x1.45bb78b3dc2fep-5, -0x1.3a4cded54e340p-9, 0x1.0017690ce6720p-6},
+      {-0x1.e93b24f5a4780p-9, 0x1.168bd3e1a3740p-7, -0x1.f70f03524e9e0p-7},
+  };
+  const std::vector<Triangle> triangles{
+      {0, 1, 2},
+      {0, 3, 1},
+      {2, 1, 4},
+      {0, 2, 4},
+      {5, 4, 1},
+      {0, 4, 5},
+      {6, 7, 8},
+      {3, 0, 9},
+      {0, 8, 9},
+      {7, 9, 8},
+      {9, 10, 3},
+      {6, 8, 11},
+      {7, 15, 9},
+      {9, 15, 16},
+      {9, 16, 10},
+      {5, 1, 18},
+      {3, 18, 1},
+      {18, 3, 10},
+      {14, 13, 18},
+      {14, 18, 17},
+      {10, 16, 19},
+      {18, 10, 19},
+      {18, 19, 17},
+      {0, 5, 20},
+      {0, 20, 8},
+      {11, 8, 20},
+      {20, 5, 18},
+      {13, 20, 18},
+      {20, 13, 12},
+      {20, 12, 11},
+  };
+  PHX_CHECK(maximum_turn(input, triangles) > 170);
+  // A source that admits any normal (open cones) explains every turn: the
+  // fold stays, as a genuine crease would.
+  {
+    const SourceCone admission(NormalCone{});
+    std::vector<Point> points = input;
+    std::vector<Triangle> remeshed = triangles;
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30},
+                                             counters) == PHX_MC_OK);
+    PHX_CHECK(maximum_turn(points, remeshed) > 170);
+  }
+  // A smooth source (normals within 30 degrees of the patch's mean normal)
+  // admits turns up to 60 degrees: the 174 degree fold is unmet and removed.
+  Point mean{0, 0, 0};
+  for (const Triangle& t : triangles) {
+    const Point& a = input[static_cast<size_t>(t[0])];
+    const Point& b = input[static_cast<size_t>(t[1])];
+    const Point& c = input[static_cast<size_t>(t[2])];
+    const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    mean[0] += u[1] * v[2] - u[2] * v[1];
+    mean[1] += u[2] * v[0] - u[0] * v[2];
+    mean[2] += u[0] * v[1] - u[1] * v[0];
+  }
+  const double norm = std::hypot(mean[0], mean[1], mean[2]);
+  const double half = 30 * std::acos(-1.0) / 180;
+  const SourceCone admission(NormalCone{{mean[0] / norm, mean[1] / norm, mean[2] / norm}, half});
+  PHX_CHECK(phx::mc::remesh::cone_separation(admission.cone, admission.cone) == 2 * half);
+  std::vector<Point> points = input;
+  std::vector<Triangle> remeshed = triangles;
+  RemeshCounters counters;
+  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30}, counters) ==
+            PHX_MC_OK);
+  PHX_CHECK(maximum_turn(points, remeshed) <= 60);
+}
+
+// Admits a triangle whose corners lie within `width` of the unit sphere and
+// projects onto the sphere; open cones (no fold penalty).
+class SphereBand final : public TriangleAdmission {
+ public:
+  explicit SphereBand(double band) : width(band) {}
+  AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
+  VertexEvidence evaluate(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {radius - 1, radius - 1};
+  }
+  bool admits(const Point&, const Point&, const Point&,
+              const std::array<VertexEvidence, 3>& evidence) const override {
+    for (const VertexEvidence& corner : evidence)
+      if (!(std::abs(corner.lower) <= width)) return false;
+    return true;
+  }
+  Point project(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {p[0] / radius, p[1] / radius, p[2] / radius};
+  }
+  NormalCone normal_cone(const Point&, const Point&, const Point&,
+                         const std::array<VertexEvidence, 3>&) const override {
+    return NormalCone{};
+  }
+  double normal_cone_floor(const Point&, const Point&, const Point&,
+                           const std::array<VertexEvidence, 3>&) const override {
+    return NormalCone{}.half_angle;
+  }
+  double width;
+};
+
+double minimum_angle(const std::vector<Point>& points, const std::vector<Triangle>& triangles) {
+  double result = 180;
+  for (const Triangle& t : triangles)
+    for (int k = 0; k < 3; ++k) {
+      const Point& p = points[static_cast<size_t>(t[k])];
+      const Point& a = points[static_cast<size_t>(t[(k + 1) % 3])];
+      const Point& b = points[static_cast<size_t>(t[(k + 2) % 3])];
+      const Point u{a[0] - p[0], a[1] - p[1], a[2] - p[2]};
+      const Point v{b[0] - p[0], b[1] - p[1], b[2] - p[2]};
+      const Point w{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0]};
+      result = std::min(result, std::atan2(std::hypot(w[0], w[1], w[2]),
+                                           u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) *
+                                    180 / std::acos(-1.0));
+    }
+  return result;
+}
+
+// Octahedron subdivided `levels` times onto the unit sphere, each vertex
+// moved radially and tangentially by a deterministic pseudo-random jitter.
+void jittered_sphere(int levels, double jitter, uint64_t seed, std::vector<Point>& points,
+                     std::vector<Triangle>& triangles) {
+  points = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  triangles = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4},
+               {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
+  for (int level = 0; level < levels; ++level) {
+    std::map<std::pair<int64_t, int64_t>, int64_t> middle;
+    auto split = [&](int64_t a, int64_t b) {
+      const auto key = std::minmax(a, b);
+      const auto found = middle.find(key);
+      if (found != middle.end()) return found->second;
+      const Point& p = points[static_cast<size_t>(a)];
+      const Point& q = points[static_cast<size_t>(b)];
+      Point m{(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2};
+      const double r = std::hypot(m[0], m[1], m[2]);
+      points.push_back({m[0] / r, m[1] / r, m[2] / r});
+      return middle[key] = static_cast<int64_t>(points.size()) - 1;
+    };
+    std::vector<Triangle> refined;
+    for (const Triangle& t : triangles) {
+      const int64_t ab = split(t[0], t[1]), bc = split(t[1], t[2]), ca = split(t[2], t[0]);
+      refined.push_back({t[0], ab, ca});
+      refined.push_back({ab, t[1], bc});
+      refined.push_back({ca, bc, t[2]});
+      refined.push_back({ab, bc, ca});
+    }
+    triangles = refined;
+  }
+  uint64_t state = seed;
+  auto uniform = [&]() {
+    state = state * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<double>(state >> 11) * 0x1p-53 * 2 - 1;
+  };
+  for (Point& p : points)
+    for (double& value : p) value += jitter * uniform();
+}
+
+// A jittered sphere inside a thin band, remeshed toward a 44 degree minimum
+// angle. Every remaining shortfall is a remesher limit, not the source: moving
+// a corner all the way to its star centroid either fails to lift the worst
+// triangle or pushes another star triangle below it, while a partial move or
+// a move toward the corner's equilateral apex succeeds (only the full moves
+// left 2 to 10 triangles below the target on these seeds).
+void sphere_band_quality() {
+  for (uint64_t seed = 1; seed <= 6; ++seed) {
+    std::vector<Point> points;
+    std::vector<Triangle> triangles;
+    jittered_sphere(3, 0.01, seed, points, triangles);
+    const SphereBand admission(0.02);
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission, {0.25, 44},
+                                             counters) == PHX_MC_OK);
+    PHX_CHECK(counters.unmet == 0);
+    PHX_CHECK(minimum_angle(points, triangles) > 43.99);
+    for (const Point& p : points) PHX_CHECK(std::abs(std::hypot(p[0], p[1], p[2]) - 1) <= 0.02);
+  }
+}
+
+}  // namespace
+
+int main() {
+  folded_cluster();
+  sphere_band_quality();
+  return phx::mc::test::finish("test_surface_remesh");
+}

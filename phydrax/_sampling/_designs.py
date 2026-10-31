@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +13,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from scipy.stats.qmc import Halton, LatinHypercube, Sobol
 
 from ..typing import PRNGKey
 from ._types import (
@@ -27,6 +27,10 @@ from ._types import (
     resolve_design,
     SobolDesign,
 )
+
+
+if TYPE_CHECKING:
+    from scipy.stats.qmc import QMCEngine
 
 
 def seed_from_key(key: ArrayLike, /) -> int:
@@ -61,10 +65,16 @@ def _radical_inverse(indices: np.ndarray, base: int, /) -> np.ndarray:
 
 
 def _qmc_engine(
-    design: HaltonDesign | SobolDesign | RandomizedQMCDesign,
+    design: HaltonDesign | SobolDesign | RandomizedQMCDesign | LatinHypercubeDesign,
     dimension: int,
     seed: int | np.random.Generator,
-) -> Halton | Sobol:
+) -> QMCEngine:
+    # Resolved on first use: importing scipy.stats loads scipy.spatial (Qhull),
+    # which must stay out of the import of the package.
+    from scipy.stats.qmc import Halton, LatinHypercube, Sobol
+
+    if isinstance(design, LatinHypercubeDesign):
+        return LatinHypercube(dimension, seed=seed)
     if isinstance(design, RandomizedQMCDesign):
         sequence = design.sequence
         scrambled = design.scrambled
@@ -125,12 +135,9 @@ def host_design(
             for prime in _first_primes(max(dimension_ - 1, 0))
         )
         return np.stack(columns, axis=1)
-    if isinstance(resolved, LatinHypercubeDesign):
-        engine = LatinHypercube(dimension_, seed=seed)
-    else:
-        engine = _qmc_engine(resolved, dimension_, seed)
-        if start_:
-            engine.fast_forward(start_)
+    engine = _qmc_engine(resolved, dimension_, seed)
+    if start_ and not isinstance(resolved, LatinHypercubeDesign):
+        engine.fast_forward(start_)
     return np.asarray(engine.random(count_), dtype=np.float64).reshape(
         (count_, dimension_)
     )
@@ -184,10 +191,7 @@ def host_design_factory(
             )
 
         return materialize_hammersley
-    if isinstance(resolved, LatinHypercubeDesign):
-        engine = LatinHypercube(dimension_, seed=seed)
-    else:
-        engine = _qmc_engine(resolved, dimension_, seed)
+    engine = _qmc_engine(resolved, dimension_, seed)
 
     def materialize_next(count: int, /) -> np.ndarray:
         count_ = checked_count(count)

@@ -2069,9 +2069,15 @@ trusted native refinement or optimization and returns a
 `MeshProposalTransaction`. Safety audit and compliance are separate evidence;
 rejection or rollback retains the accepted source.
 
-The native size/metric proposal route performs one triangle-refinement step.
-It does not claim anisotropic adaptation or that requested final sizes were
-achieved. Use an appropriate external metric provider for those requests.
+Native marking, size, and metric proposals require one simplex block: T3
+triangles (planar or embedded surfaces) or T4 tetrahedra (`tetrahedron` or the
+native PLC `simplex:3` block). Positive marks execute native triangle or
+tetrahedron bisection. Vertex sizes are clamped
+and graded over the mesh edges, then executed as the isotropic metric
+`I / h**2`; vertex metric tensors are symmetrized, projected SPD, bounded, and
+graded. Both execute through `NATIVE_METRIC_2D`, `NATIVE_METRIC_SURFACE`, or
+`NATIVE_METRIC_3D` toward the unit-mesh criterion; compliance reports any
+unmet target rather than claiming it.
 Mesh promotion does not implicitly transfer PDE fields: consume the exposed
 transition/transfer through the solver topology transaction.
 
@@ -2235,6 +2241,33 @@ caps. The band bounds and the interpolation error are unchanged; the
 input-to-envelope bound (`bounds[0]`) is recomputed on the remeshed vertices.
 `remesh_counters` reports splits, collapses, flips, relocations, and the
 surviving triangles still below the quality target.
+
+A triangle's quantized score is its shape (minimum angle over 30 degrees,
+capped at 1) times its size (`4/3 h` over its longest edge, capped at 1) times a
+source-relative fold factor. Each admission reports a certified source normal
+cone per triangle: for the envelope, the directions from every source point
+that can be nearest to some point of the triangle; for an implicit zero set,
+the gradient enclosure over the triangle widened by the tilt the surface
+tolerance allows. Two triangles sharing an edge may turn against each other by
+up to the largest angle between normals of their two cones (the angle between
+the axes plus both half-angles). A turn within that separation scores full, so
+genuine creases the source has (an implicit CSG lens edge, an offset's concave
+ridge) are kept; a turn beyond it is a fold the source does not have and lowers
+the score by `(pi - turn) / (pi - allowed)`, so the quality pass removes it.
+Without this factor a folded cluster of well-shaped envelope triangles scores
+full, and two boundary triangles meeting at turn `t` bound every tetrahedron on
+their edge to a dihedral angle of at most `pi - t`. Cones are computed only for
+edges turning beyond the cheap lower bound of both cones' half-angles.
+
+A quality edit for one triangle tries, in order: a split of an over-long longest
+edge, flips of its edges, a collapse of its shortest edge, relocation of each
+corner to its star centroid or its projection, relocation of each corner part
+of the way toward its star centroid (1/2 down to 2^-10 of the move) or toward
+its equilateral apex over the opposite edge (the full move down to 2^-10), and
+a midpoint split. A full move that lifts the triangle can push another star
+triangle below it where a shorter one does not; the reconstruction profiles'
+last sub-target envelope triangles, inside a band with about `0.7 h` of slack,
+were such local limits of the edit list, not limits of the source.
 
 The remesher is a source-agnostic native substrate: the topology operations,
 quality acceptance, and manifold and self-intersection checks are shared, and

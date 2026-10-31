@@ -18,9 +18,16 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..discretization import CellBlock, CellMesh, PolyhedralConnectivity
+from ..discretization import (
+    CellBlock,
+    CellMesh,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ..discretization._cell_complex import polyhedral_connectivity
-from ..discretization._cell_mesh import PolyhedralBlock
+from ..discretization._cell_mesh import PolyhedralBlock, SimplicialConnectivity
+from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._nested_reference_types import (
     exact_reference_vertices,
     NestedReferenceWitnesses,
@@ -36,6 +43,7 @@ from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
+from ..discretization._triangular import TriangleConnectivity
 from ._lineage import (
     EntityLineage,
     EntityLineageKind,
@@ -245,26 +253,32 @@ def source_family_blocks(
 
 def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
     """Return each intermediate entity's ordered vertex row."""
-    if dimension == 1:
-        edges = getattr(connectivity, "edges", None)
-        if edges is None:
-            raise ValueError("Edge connectivity is unavailable.")
-        return tuple(np.asarray(row, dtype=np.int64) for row in np.asarray(edges))
-    if dimension != 2:
-        raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
-    offsets = getattr(connectivity, "face_vertex_offsets", None)
-    values = getattr(connectivity, "face_vertex_values", None)
-    if offsets is not None and values is not None:
-        offsets_ = np.asarray(offsets, dtype=np.int64)
-        values_ = np.asarray(values, dtype=np.int64)
-        return tuple(
-            values_[offsets_[index] : offsets_[index + 1]]
-            for index in range(offsets_.size - 1)
-        )
-    faces = getattr(connectivity, "faces", None)
-    if faces is None:
-        raise ValueError("Face connectivity is unavailable.")
-    return tuple(np.asarray(row, dtype=np.int64) for row in np.asarray(faces))
+    match connectivity, dimension:
+        case SimplicialConnectivity(), _ if 0 < dimension < connectivity.dimension:
+            rows = np.asarray(connectivity.entities[dimension], dtype=np.int64)
+        case (
+            (
+                PolygonalConnectivity()
+                | TriangleConnectivity()
+                | TetrahedralConnectivity()
+                | HexahedralConnectivity()
+                | PolyhedralConnectivity()
+            ),
+            1,
+        ):
+            rows = np.asarray(connectivity.edges, dtype=np.int64)
+        case PolyhedralConnectivity(), 2:
+            offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+            values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+            return tuple(
+                values[offsets[index] : offsets[index + 1]]
+                for index in range(offsets.size - 1)
+            )
+        case TetrahedralConnectivity() | HexahedralConnectivity(), 2:
+            rows = np.asarray(connectivity.faces, dtype=np.int64)
+        case _:
+            raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
+    return tuple(rows)
 
 
 def _padded_keys(
@@ -1012,6 +1026,10 @@ def _build_mesh(
         cell_ids.append(ids)
     if not blocks:
         raise ValueError("A topology edit must retain at least one target cell block.")
+    if source.topological_dimension == 2:
+        # Polygonal meshes order blocks by increasing arity; the stable sort keeps
+        # the edit's block order among equal arities.
+        blocks.sort(key=lambda block: block.arity)
     packed = (
         polyhedral_connectivity(
             entries,

@@ -1740,25 +1740,23 @@ def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
             target_measure,
             report_tolerance,
         ) = (float(value) for value in scalars)
-        if (
-            report_tolerance <= 0.0
-            or report_tolerance > tolerance
-            or source_measure <= 0.0
-            or target_measure <= 0.0
-        ):
+        # The report's certificate must hold (defects within its own relative
+        # tolerance), and the measured defects must be admissible under the
+        # scheduler's absolute coverage tolerance, as in the per-cell branch.
+        # A certificate issued at a looser tolerance than the scheduler's does
+        # not by itself reject exactly covered content.
+        if report_tolerance <= 0.0 or source_measure <= 0.0 or target_measure <= 0.0:
             return False
+        target_worst = max(abs(target_defect), abs(target_uncovered))
+        source_worst = max(
+            abs(source_defect),
+            abs(source_uncovered),
+            abs(source_excess),
+        )
         return (
-            max(
-                abs(target_defect),
-                abs(target_uncovered),
-            )
-            <= report_tolerance * target_measure
-            and max(
-                abs(source_defect),
-                abs(source_uncovered),
-                abs(source_excess),
-            )
-            <= report_tolerance * source_measure
+            target_worst <= report_tolerance * target_measure
+            and source_worst <= report_tolerance * source_measure
+            and max(target_worst, source_worst) <= tolerance
         )
     coverage_error = _host_field(report, "coverage_error")
     coverage_passed = _host_field(report, "coverage_passed")

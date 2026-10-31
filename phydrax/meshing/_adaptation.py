@@ -1021,6 +1021,13 @@ def _check_route_request(
 ) -> None:
     mesh = source.mesh
     kinds = {block.cell_kind for block in mesh.blocks}
+    # Host routes treat native 3-simplex blocks as T4; device layouts are T4 only.
+    tetrahedra = (
+        {"tetrahedron"}
+        if policy.route
+        in (MeshAdaptationRoute.DEVICE_BISECTION, MeshAdaptationRoute.DEVICE_METRIC_3D)
+        else {"tetrahedron", "simplex:3"}
+    )
     match policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION | MeshAdaptationRoute.DEVICE_BISECTION:
             if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
@@ -1031,8 +1038,10 @@ def _check_route_request(
                 )
             if request.layer_columns is not None:
                 raise ValueError("layer_columns applies only to NATIVE_MIXED.")
-            if kinds != {"triangle"} and kinds != {"tetrahedron"}:
-                raise ValueError("Bisection requires triangle or tetrahedron blocks.")
+            if kinds != {"triangle"} and not kinds <= tetrahedra:
+                raise ValueError(
+                    f"{policy.route.name} requires triangle or tetrahedron blocks."
+                )
             _require_native_source(source, policy.association_transfer)
             _check_marked_source(source, request)
         case MeshAdaptationRoute.NATIVE_MIXED:
@@ -1089,7 +1098,7 @@ def _check_route_request(
             if not isinstance(request, MetricMeshAdaptation):
                 raise TypeError(f"{policy.route.name} requires a metric request.")
             if (
-                kinds != {"tetrahedron"}
+                not kinds <= tetrahedra
                 or mesh.ambient_dimension != 3
                 or mesh.topological_dimension != 3
             ):
@@ -2295,7 +2304,7 @@ def _bisection_coarsening_witness(
         if root is None or record_row is None:
             raise ValueError("Coarsening target is not a retained refinement parent.")
         root_block, root_row = root
-        if root_block.cell_kind not in ("triangle", "tetrahedron"):
+        if root_block.cell_kind not in ("triangle", "tetrahedron", "simplex:3"):
             raise ValueError("Exact bisection coarsening maps require simplex parents.")
         root_vertices = source_vertex_ids[
             np.asarray(root_block.vertices[root_row], dtype=np.int64)
@@ -2845,6 +2854,11 @@ def _restricted_target_geometry(
     }
     source_elements, source_routes, _ = source.geometry.resolve(source.mesh)
     source_vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    # Host vertex and route tables per source block, read per target row below.
+    source_cells = tuple(
+        np.asarray(block.vertices, dtype=np.int64) for block in source.mesh.blocks
+    )
+    source_route_tables = tuple(np.asarray(route) for route in source_routes)
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
     target_elements: dict[str, Any] = {}
     target_routes: dict[str, np.ndarray] = {}
@@ -2907,14 +2921,12 @@ def _restricted_target_geometry(
                 )
                 block_roots.append(root)
                 charts.append(composed)
-                routes.append(np.asarray(source_routes[source_block_index])[source_row])
+                routes.append(source_route_tables[source_block_index][source_row])
                 if roots is None:
                     # The source is the root: ancestry is the target→source map itself.
                     parent_ids.append(source_id)
                     parent_vertices.append(
-                        source_vertex_ids[
-                            np.asarray(source_block.vertices[source_row], dtype=np.int64)
-                        ]
+                        source_vertex_ids[source_cells[source_block_index][source_row]]
                     )
                     parent_blocks.append(source_block.name)
                     parent_kinds.add(witness.source_cell_kind)
@@ -4462,6 +4474,7 @@ def _retarget_fidelity_witness(
             envelope_triangles=np.asarray(witness.envelope_triangles),
             target_vertex_global_ids=np.asarray(witness.target_vertex_global_ids),
             target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
+            reproduction=witness.reproduction,
         )
     raise TypeError("No transition ancestry rule accepts this source fidelity witness.")
 

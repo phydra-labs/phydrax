@@ -21,6 +21,12 @@ from phydrax.geometry.brep._boolean_core import (
     pcurve_surface_period_shifts,
     PeriodicPCurve,
 )
+from phydrax.geometry.brep._constructors import (
+    _axial_plane,
+    brep_revolution,
+    PlanarProfile,
+    ProfileLoop,
+)
 from phydrax.geometry.brep._intersection import (
     CurveSurfaceIntersectionRoot,
     ExactLineCylinderTangency,
@@ -37,6 +43,8 @@ from phydrax.geometry.brep._intersection_curve import (
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
+    CircleCurve,
+    ConicRootLinePCurve,
     CylinderPatch,
     LineCurve,
     PlanePatch,
@@ -624,6 +632,114 @@ def test_notch_edge_touching_the_cap_circle_from_inside_is_an_exact_double_root(
         )
         == 2
     )
+
+
+def test_notch_corner_on_the_cap_circle_shares_its_generator_edge(
+    tmp_path: Path,
+) -> None:
+    # The notch corner (3/4, 1) lies on the cap circle of radius 5/4, so its
+    # vertical edge lies on a cylinder generator: the notch faces x = 3/4 and
+    # y = 1 meet the cylinder exactly along that edge, and the cap arcs end at
+    # the notch's corner vertices.
+    cylinder = brep_cylinder(1.25, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box((0.75, 0.0, 0.5), (2.0, 1.0, 1.5), coordinate_contract=_COORDINATES)
+    corners = {
+        (Fraction(3, 4), Fraction(1), Fraction(1, 2)),
+        (Fraction(3, 4), Fraction(1), Fraction(3, 2)),
+    }
+    for operation, faces in (("difference", 7), ("union", 8)):
+        result = boolean_brep(cylinder, notch, operation)
+        assert result.model.topology.num_solids == 1
+        geometry = result.model.geometry
+        assert geometry is not None
+        assert len(geometry.face_loops) == faces
+        _assert_exhaustive_oriented_lineage(result)
+        # The generator is the notch's own edge, shared with the cylinder face
+        # through its exact lift; no branch runs along it.
+        lifted = [
+            (face, coedge)
+            for face, loops in enumerate(geometry.face_loops)
+            for loop in loops
+            for coedge in loop
+            if isinstance(geometry.pcurves[coedge], ConicRootLinePCurve)
+        ]
+        assert len(lifted) == 1
+        assert not isinstance(result.model.patches[lifted[0][0]], PlanePatch)
+        edge = geometry.coedge_edges[lifted[0][1]]
+        assert isinstance(geometry.curves[geometry.edge_curves[edge]], LineCurve)
+        assert list(geometry.coedge_edges).count(edge) == 2
+        assert {
+            geometry.vertex_exact_points[vertex]
+            for vertex in geometry.edge_vertices[edge]
+        } == corners
+        branches = [
+            curve for curve in geometry.curves if isinstance(curve, IntersectionCurve)
+        ]
+        assert len(branches) == 3
+    archive = tmp_path / "corner-notch.phx"
+    save_brep_archive(result.model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert restored.vertex_exact_points == geometry.vertex_exact_points
+    assert tuple(type(pcurve).__name__ for pcurve in restored.pcurves) == tuple(
+        type(pcurve).__name__ for pcurve in geometry.pcurves
+    )
+
+
+def test_slab_across_a_cylinder_cone_edge_joins_branches_on_curved_faces(
+    tmp_path: Path,
+) -> None:
+    # A revolved cylinder (r = 1, 0 <= z <= 1) and cone (r = 1 -> 1/4, 1 <= z
+    # <= 2) share the circle z = 1. The notch face y = 1/2 cuts generator
+    # lines from the cylinder and hyperbola arcs from the cone; each line and
+    # arc meet on the shared circle, whose partner faces are both curved.
+    profile = PlanarProfile(
+        _axial_plane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        ProfileLoop.polygon(
+            [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.25, 2.0), (0.0, 2.0)]
+        ),
+    )
+    solid = brep_revolution(
+        profile, (0.0, 0.0), (0.0, 1.0), coordinate_contract=_COORDINATES
+    )
+    notch = brep_box((-2.0, 0.5, 0.5), (2.0, 2.0, 1.5), coordinate_contract=_COORDINATES)
+    result = boolean_brep(solid, notch, "difference")
+    assert result.model.topology.num_solids == 1
+    geometry = result.model.geometry
+    assert geometry is not None
+    assert len(geometry.face_loops) == 7
+    _assert_exhaustive_oriented_lineage(result)
+    branches = [
+        curve for curve in geometry.curves if isinstance(curve, IntersectionCurve)
+    ]
+    assert all(branch.fully_certified for branch in branches)
+    # The line/arc junctions are roots of the shared circle with the notch
+    # plane, at x = -+ sqrt(3)/2: one vertex each, joining both branches.
+    junctions = [
+        vertex
+        for vertex, root in enumerate(geometry.vertex_roots)
+        if root is not None
+        and isinstance(root.primary, CurveSurfaceIntersectionRoot)
+        and isinstance(root.primary.curve, CircleCurve)
+    ]
+    assert len(junctions) == 2
+    for vertex in junctions:
+        point = np.asarray(geometry.vertex_points[vertex])
+        np.testing.assert_allclose(np.abs(point), (np.sqrt(0.75), 0.5, 1.0), atol=1e-12)
+        incident = [
+            edge
+            for edge, ends in enumerate(geometry.edge_vertices)
+            if vertex in ends
+            and isinstance(geometry.curves[geometry.edge_curves[edge]], IntersectionCurve)
+        ]
+        assert len(incident) == 2
+    archive = tmp_path / "cylinder-cone-slab.phx"
+    save_brep_archive(result.model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert tuple(
+        None if root is None else root.root_id for root in restored.vertex_roots
+    ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

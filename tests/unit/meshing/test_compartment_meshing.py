@@ -180,9 +180,11 @@ def _native_compartment_mesh(
             minimum_dihedral_degrees=0.0,
         ),
     )
-    return phx.meshing.NativeMeshingProvider(options).plan(
-        source, specification, coordinate_contract=contract
-    ).execute()
+    return (
+        phx.meshing.NativeMeshingProvider(options)
+        .plan(source, specification, coordinate_contract=contract)
+        .execute()
+    )
 
 
 def _network(contract: phx.SpatialCoordinateContract) -> Any:
@@ -217,7 +219,27 @@ def test_native_compartment_case_preserves_regions_and_coupled_transport() -> No
     assert source.compartments.observed_adjacencies == (("inner", "outer"),)
     assert source.compartments.interfaces[0].interface_role == "exchange"
     assert result.boundary is not None
-    assert result.boundary.model_id == source.outer_surface.model_id
+    outer = source.outer_surface
+    assert result.boundary.metadata.source_id == outer.metadata.source_id
+    assert result.boundary.metadata.source_revision == outer.metadata.source_revision
+    assert outer.model_id in result.boundary.metadata.provenance
+    boundary_points = np.asarray(result.boundary.mesh.coordinates)
+    assert np.all(np.any(np.abs(np.abs(boundary_points - 2.0) - 2.5) == 0.0, axis=1))
+    boundary_triangles = boundary_points[
+        np.asarray(result.boundary.mesh.blocks[0].vertices)
+    ]
+    boundary_vectors = np.cross(
+        boundary_triangles[:, 1] - boundary_triangles[:, 0],
+        boundary_triangles[:, 2] - boundary_triangles[:, 0],
+    )
+    np.testing.assert_allclose(boundary_vectors.sum(axis=0), 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        0.5 * np.linalg.norm(boundary_vectors, axis=1).sum(), 150.0, rtol=1e-14
+    )
+    assert (
+        np.einsum("ij,ij->i", boundary_vectors, boundary_triangles.mean(axis=1) - 2.0)
+        > 0.0
+    ).all()
     zones_by_material = {zone.material_id: zone for zone in result.zones}
     assert set(zones_by_material) == {"outer", "inner"}
     assert zones_by_material["outer"].region_role is phx.meshing.RegionRole.FLUID
@@ -246,9 +268,9 @@ def test_native_compartment_case_preserves_regions_and_coupled_transport() -> No
         if source_id == facet_id and role is GeometrySourceEntityRole.FACET
     )
     assert source_face_rows
-    assert {
-        face_association.source_region_sides[row] for row in source_face_rows
-    } == {source_sides}
+    assert {face_association.source_region_sides[row] for row in source_face_rows} == {
+        source_sides
+    }
     assert set(interface.adjacent_zone_ids) == {
         zones_by_material["outer"].zone_id,
         zones_by_material["inner"].zone_id,
@@ -263,7 +285,10 @@ def test_native_compartment_case_preserves_regions_and_coupled_transport() -> No
     assert cell_association.source_id == source.source_id
     assert cell_association.source_revision == source.source_revision
     assert set(cell_association.source_entity_ids) == {"outer", "inner"}
-    assert all(role is not None and role.value == "region" for role in cell_association.source_roles)
+    assert all(
+        role is not None and role.value == "region"
+        for role in cell_association.source_roles
+    )
     cell_count = mesh.entity_set(3).count
     connectivity = mesh.connectivity
     assert isinstance(connectivity, (TetrahedralConnectivity, SimplicialConnectivity))
@@ -318,6 +343,35 @@ def test_native_compartment_case_preserves_regions_and_coupled_transport() -> No
         phx.applications.neurofluid.NeurofluidCase(
             "wrong-frame", source, result, _network(foreign_contract)
         )
+
+
+@pytest.mark.parametrize("inner_index", [(2, 2, 2), (0, 1, 4)])
+def test_compartment_plc_facet_rows_name_the_right_hand_normal_side_first(
+    inner_index: tuple[int, int, int],
+) -> None:
+    source, _ = _compartment_source(inner_index=inner_index)
+    complex_ = prepare_compartment_plc(source).complex
+    vertices = np.asarray(complex_.vertices)
+    offsets = np.asarray(complex_.polygon_offsets)
+    loops = np.asarray(complex_.polygon_vertices)
+
+    def region_at(point: np.ndarray) -> str | None:
+        voxel = tuple(int(value) for value in np.rint(point))
+        if not all(0 <= value < 5 for value in voxel):
+            return None
+        return "inner" if voxel == inner_index else "outer"
+
+    for row, facet in enumerate(np.asarray(complex_.polygon_facets).tolist()):
+        loop = vertices[loops[offsets[row] : offsets[row + 1]]]
+        normal = np.cross(loop[1] - loop[0], loop[2] - loop[0])
+        normal /= np.linalg.norm(normal)
+        center = loop.mean(axis=0)
+        positive, negative = (
+            None if region < 0 else complex_.region_ids[region]
+            for region in np.asarray(complex_.facet_regions)[facet].tolist()
+        )
+        assert region_at(center + 0.25 * normal) == positive
+        assert region_at(center - 0.25 * normal) == negative
 
 
 def test_optional_compartment_interface_requires_declared_endpoints() -> None:
