@@ -1011,7 +1011,9 @@ typedef struct phx_mc_interval_box_program {
  * grad f with the carrier's orientation (declared by the input triangles whose
  * sign is certified; disagreement is PHX_MC_INVALID_INPUT, none PHX_MC_UNRESOLVED).
  * `value` has one output, `gradient` three. Writes counters (splits, collapses,
- * flips, relocations, triangles below the angle or size target, orientation) and
+ * flips, relocations, triangles below the angle or size target, orientation,
+ * admissions refused for undecided or wrong transversality, admissions refused
+ * for an uncertified distance) and
  * `distance`: the maximum over surviving triangles of the admitted certified
  * distance, or `carrier_distance` (the input carrier's declared bound) for
  * untouched input triangles. */

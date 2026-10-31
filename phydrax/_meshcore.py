@@ -3407,7 +3407,8 @@ class ZeroSetRemeshResult(NamedTuple):
     triangles: np.ndarray
     distance: float
     counters: np.ndarray
-    """Splits, collapses, flips, relocations, unmet triangles, orientation."""
+    """Splits, collapses, flips, relocations, unmet triangles, orientation, and
+    admissions refused for transversality and for distance."""
 
 
 def _interval_box_program(
@@ -3499,7 +3500,7 @@ def zero_set_remesh(
     value_view, value_arrays = _interval_box_program(value, 1, "value")
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
-    counters = np.zeros((6,), dtype=np.int64)
+    counters = np.zeros((8,), dtype=np.int64)
     distance = np.zeros((1,), dtype=np.float64)
     request = _ZeroSetRemeshRequest(
         points.ctypes.data,

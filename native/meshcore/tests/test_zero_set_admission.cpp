@@ -309,7 +309,7 @@ void remesh_sphere_carrier() {
   const double before = minimum_angle(input.vertices, input.triangles);
   const Program value = sphere_value(), gradient = sphere_gradient();
   void* handle = nullptr;
-  std::array<int64_t, 6> counters{};
+  std::array<int64_t, 8> counters{};
   double distance = -1;
   constexpr double tolerance = 0.05;
   phx_mc_zero_set_remesh_request request{
