@@ -294,7 +294,10 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         safe_neighbor = jnp.maximum(neighbor, 0)
         left = self.optimal.evaluate_coefficients(value, coefficients, owner, points)
         right = self.optimal.evaluate_coefficients(
-            value, coefficients, safe_neighbor, points
+            value,
+            coefficients,
+            safe_neighbor,
+            self.discretization.neighbor_side_points(points),
         )
         return (
             self._limit(value, left, owner),
